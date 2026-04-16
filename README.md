@@ -29,23 +29,28 @@ cairn init                    # creates ./.cairn/
 ```python
 import cairn
 
-with cairn.Run(
+run = cairn.Run(
     project="image-classification",
     task="baseline-cnn",
     repo="./.cairn",          # or: export CAIRN_REPO=./.cairn
-) as run:
-    run["hparams"] = {"lr": 3e-4, "batch_size": 32}
-    for step, loss in training_loop():
-        run.track(loss, name="loss", step=step)
+)
+run["hparams"] = {"lr": 3e-4, "batch_size": 32}
+for step, loss in training_loop():
+    run.track(loss, name="loss", step=step)
+# No run.finish() needed — an atexit hook marks the run completed
+# when your script exits. You can still use `with cairn.Run(...) as run:`
+# or call run.finish() explicitly if you want deterministic cleanup.
 ```
 
-When you're ready to browse results, start the UI:
+Browse results at any time with the UI:
 
 ```bash
-cairn ui                      # reads ./.cairn/ and opens http://localhost:4301/
+cairn ui                      # reads ./.cairn/, serves http://localhost:4301/
 ```
 
-If you're logging live and also want the UI open simultaneously, use `cairn server` instead (see below) — it runs the tracking API and the UI together.
+**You can run the UI while you're logging.** The SDK detects that a `cairn ui` is already serving the repo and transparently switches to HTTP mode (rather than fighting for the DuckDB write-lock), so metrics land in the UI live as they're tracked. Just run `cairn ui` first, then start your training script — no special flags needed.
+
+For multi-machine setups, use `cairn server` instead (see below) — it runs the tracking API and the UI together and accepts writes from SDK clients on other machines.
 
 ## Quick start — server mode
 

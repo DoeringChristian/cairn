@@ -11,6 +11,7 @@ instance per experimental execution; lifecycle:
 
 from __future__ import annotations
 
+import atexit
 import logging
 import threading
 from datetime import datetime, timezone
@@ -27,8 +28,9 @@ from ..sdk.capture.system import SystemMetricsCollector
 from ..sdk.handlers.registry import HandlerRegistry, default_registry
 from ..sdk.wrappers import _TypeWrapper
 from .buffer import MetricBuffer
-from .local import LocalTransport
+from .local import LocalTransport, _RepoServedByOtherError
 from .transport import Transport
+from ..server.storage.datadir import DataDir, RepoLockedError
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +45,46 @@ def _context_key(context: Any) -> tuple:
     if isinstance(context, dict):
         return tuple(sorted((str(k), str(v)) for k, v in context.items()))
     return (str(context),)
+
+
+def _url_from_holder(holder: dict[str, Any]) -> str | None:
+    """Reconstruct an HTTP base URL from a lock-file holder dict, if it has
+    both ``host`` and ``port``. Returns None otherwise.
+    """
+    host = holder.get("host")
+    port = holder.get("port")
+    if isinstance(host, str) and isinstance(port, int):
+        return f"http://{host}:{port}"
+    return None
+
+
+def _verify_reachable(url: str, repo: Path) -> None:
+    """Probe ``<url>/api/health`` so the SDK fails fast if the holder is hung.
+
+    Raises :class:`RepoLockedError` with an actionable message if the
+    holder's declared endpoint doesn't respond with 200.
+    """
+    import httpx
+
+    try:
+        resp = httpx.get(f"{url}/api/health", timeout=2.0)
+        if resp.status_code != 200:
+            raise RuntimeError(f"status {resp.status_code}")
+    except Exception as exc:  # noqa: BLE001
+        lock_path = DataDir(repo).lock_path
+        raise RepoLockedError(
+            repo,
+            {
+                "mode": "unreachable",
+                "pid": "?",
+                "hint": (
+                    f"The repo lock at {lock_path} claims a server/UI is "
+                    f"running at {url}, but {url}/api/health didn't "
+                    f"respond ({exc}). Restart the UI or delete the lock "
+                    f"file if the owning process is truly gone."
+                ),
+            },
+        ) from exc
 
 
 class Run:
@@ -82,8 +124,18 @@ class Run:
         else:
             target = config.resolve_target(repo=repo, server=server)
             if target.is_local:
-                self._transport = LocalTransport(target.location)
-                self._server = self._transport.server_url
+                try:
+                    self._transport = LocalTransport(target.location)
+                    self._server = self._transport.server_url
+                except _RepoServedByOtherError as exc:
+                    # A `cairn ui` / `cairn server` is already serving the
+                    # repo. Transparently switch to HTTP mode against it.
+                    url = _url_from_holder(exc.holder)
+                    if url is None:
+                        raise
+                    _verify_reachable(url, Path(target.location))
+                    self._transport = Transport(url, timeout=timeout)
+                    self._server = url
             else:
                 self._transport = Transport(target.location, timeout=timeout)
                 self._server = target.location
@@ -177,6 +229,13 @@ class Run:
             self._source_thread.start()
         else:
             self._source_thread = None
+
+        # Register an atexit hook so users don't have to call ``finish()``
+        # explicitly — matches Aim's ergonomics. If ``finish()`` is called
+        # explicitly (directly or via the context-manager __exit__), it
+        # unregisters the hook so a second Run in the same process doesn't
+        # double-clean.
+        atexit.register(self._atexit_finish)
 
     # ---- properties -------------------------------------------------------
 
@@ -319,6 +378,25 @@ class Run:
             stdout_capture.clear_active_run(self._run_id)
             if self._owns_transport:
                 self._transport.close()
+            # Don't fire the atexit hook now that we've finished explicitly.
+            try:
+                atexit.unregister(self._atexit_finish)
+            except Exception:  # noqa: BLE001 - defensive; unregister is cheap
+                pass
+
+    def _atexit_finish(self) -> None:
+        """Fallback cleanup if ``finish()`` was never called explicitly.
+
+        Registered in ``__init__``; removed in ``finish()``. Swallows errors
+        because the interpreter is shutting down and reraising would just
+        produce noise in an unrecoverable state.
+        """
+        if self._finished:
+            return
+        try:
+            self.finish(status="completed")
+        except Exception:  # noqa: BLE001
+            log.warning("atexit finish failed", exc_info=True)
 
     # ---- context manager --------------------------------------------------
 

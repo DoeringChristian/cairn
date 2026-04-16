@@ -103,20 +103,35 @@ class DataDir:
         except (OSError, json.JSONDecodeError):
             return None
 
-    def acquire_lock(self, mode: str) -> None:
-        """Claim the exclusive write-lock. ``mode`` is ``"server"`` or ``"sdk"``.
+    def acquire_lock(
+        self,
+        mode: str,
+        *,
+        host: str | None = None,
+        port: int | None = None,
+    ) -> None:
+        """Claim the exclusive write-lock. ``mode`` is one of
+        ``"server"`` | ``"ui"`` | ``"sdk"``.
+
+        If the holder is a network-reachable service (``"server"`` or
+        ``"ui"``), callers should pass ``host`` and ``port`` so that a
+        later SDK ``Run(repo=...)`` on the same repo can detect the holder
+        and transparently switch to HTTP mode instead of erroring.
 
         Raises:
             RepoLockedError: if another living process already holds the lock.
         """
         pid = os.getpid()
-        payload = json.dumps(
-            {
-                "pid": pid,
-                "mode": mode,
-                "started_at": datetime.now(timezone.utc).isoformat(),
-            }
-        )
+        payload_dict: dict[str, Any] = {
+            "pid": pid,
+            "mode": mode,
+            "started_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if host is not None:
+            payload_dict["host"] = host
+        if port is not None:
+            payload_dict["port"] = port
+        payload = json.dumps(payload_dict)
 
         def _create_exclusive() -> None:
             fd = os.open(

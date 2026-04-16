@@ -69,6 +69,33 @@ def test_sdk_mode_lock(tmp_path):
         dd.release_lock()
 
 
+def test_lock_records_host_and_port(tmp_path):
+    """host/port in the payload let an SDK Run auto-switch to HTTP."""
+    dd = DataDir(tmp_path)
+    dd.acquire_lock("ui", host="127.0.0.1", port=4301)
+    try:
+        payload = json.loads(dd.lock_path.read_text())
+        assert payload["mode"] == "ui"
+        assert payload["host"] == "127.0.0.1"
+        assert payload["port"] == 4301
+    finally:
+        dd.release_lock()
+
+
+def test_lock_without_host_port_omits_them(tmp_path):
+    """Backwards-compat: callers that don't supply network coords don't
+    write host/port fields. An SDK reading such a lock won't try to
+    proxy and will fail over to the normal RepoLockedError path."""
+    dd = DataDir(tmp_path)
+    dd.acquire_lock("sdk")
+    try:
+        payload = json.loads(dd.lock_path.read_text())
+        assert "host" not in payload
+        assert "port" not in payload
+    finally:
+        dd.release_lock()
+
+
 def test_lock_refuses_when_live_holder(tmp_path):
     dd = DataDir(tmp_path)
     dd.lock_path.write_text(json.dumps({"pid": 99999, "mode": "server"}))

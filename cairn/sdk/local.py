@@ -7,6 +7,12 @@ Writes go straight to the DuckDB file and blob store in that directory.
 The repo-level write lock (``DataDir.acquire_lock("sdk")``) is held for the
 lifetime of this transport. A running ``cairn server`` on the same repo will
 refuse to start (and vice versa), preserving DuckDB's single-writer invariant.
+
+If a ``cairn ui`` or ``cairn server`` is already serving the repo (holder
+mode is ``"ui"`` or ``"server"`` with ``host``/``port`` recorded),
+``LocalTransport.__init__`` raises :class:`_RepoServedByOtherError` instead
+of attempting to acquire the lock. The ``Run`` constructor catches that and
+swaps in an HTTP ``Transport`` pointing at the holder.
 """
 
 from __future__ import annotations
@@ -14,6 +20,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from typing import Any
+
+import psutil
 
 from ..server import ingest_ops
 from ..server.storage.blobs import BlobStore
@@ -23,6 +31,30 @@ from ..server.storage.db import Database
 log = logging.getLogger(__name__)
 
 
+class _RepoServedByOtherError(Exception):
+    """Internal signal: a server/ui is already serving this repo.
+
+    Carries the lock-file ``holder`` dict so the Run constructor can
+    extract ``host``/``port`` and connect over HTTP. Not part of the public
+    API; treat like an InternalError.
+    """
+
+    def __init__(self, holder: dict[str, Any]):
+        self.holder = holder
+        super().__init__(
+            f"repo is being served by {holder.get('mode')!r} on "
+            f"{holder.get('host')!r}:{holder.get('port')!r}"
+        )
+
+
+def _holder_is_live(holder: dict[str, Any] | None) -> bool:
+    """True if ``holder`` contains an alive PID."""
+    if not holder:
+        return False
+    pid = holder.get("pid")
+    return isinstance(pid, int) and psutil.pid_exists(pid)
+
+
 class LocalTransport:
     """Mirrors the public surface of ``cairn.sdk.transport.Transport`` but
     writes directly to the on-disk repo instead of going over HTTP.
@@ -30,6 +62,17 @@ class LocalTransport:
 
     def __init__(self, repo: str | Path):
         self.data_dir = DataDir(Path(repo))
+        holder = self.data_dir.read_lock()
+        # If a server/ui is serving this repo, don't try to acquire the lock
+        # locally — the caller (Run) is expected to switch to HTTP mode.
+        if (
+            _holder_is_live(holder)
+            and holder is not None
+            and holder.get("mode") in {"ui", "server"}
+            and holder.get("host")
+            and holder.get("port")
+        ):
+            raise _RepoServedByOtherError(holder)
         self.data_dir.acquire_lock("sdk")
         try:
             self.db = Database.open(self.data_dir.db_path)

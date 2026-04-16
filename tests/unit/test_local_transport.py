@@ -142,6 +142,48 @@ def test_lock_held_during_lifetime(tmp_path):
     t2.close()
 
 
+def test_raises_served_by_other_when_ui_holds_lock(tmp_path):
+    """A UI (or server) holding the lock with host+port should trigger
+    _RepoServedByOtherError instead of RepoLockedError — so the Run
+    constructor can auto-switch to HTTP.
+    """
+    import json
+    import os
+
+    from cairn.sdk.local import _RepoServedByOtherError
+    from cairn.server.storage.datadir import DataDir
+
+    dd = DataDir(tmp_path / ".cairn")
+    # Hand-craft a lock as if `cairn ui` were running on port 9999.
+    dd.lock_path.write_text(
+        json.dumps(
+            {
+                "pid": os.getpid(),  # live PID (our own, close enough)
+                "mode": "ui",
+                "host": "127.0.0.1",
+                "port": 9999,
+                "started_at": "2026-01-01T00:00:00Z",
+            }
+        )
+    )
+    with pytest.raises(_RepoServedByOtherError) as exc:
+        LocalTransport(tmp_path / ".cairn")
+    assert exc.value.holder["mode"] == "ui"
+    assert exc.value.holder["port"] == 9999
+
+
+def test_still_raises_repo_locked_for_sdk_holder(tmp_path):
+    """Two SDKs on the same repo is still wrong: should raise RepoLockedError,
+    not _RepoServedByOtherError (we don't have an HTTP endpoint to fall back to).
+    """
+    t1 = LocalTransport(tmp_path / ".cairn")
+    try:
+        with pytest.raises(RepoLockedError):
+            LocalTransport(tmp_path / ".cairn")
+    finally:
+        t1.close()
+
+
 def test_lock_released_if_db_open_fails(tmp_path, monkeypatch):
     """If Database.open raises, we must not leak the lock."""
     from cairn.sdk import local as local_mod

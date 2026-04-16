@@ -131,6 +131,50 @@ def test_second_run_while_first_active_raises(tmp_path):
         run1.finish()
 
 
+def test_auto_finish_on_interpreter_exit(tmp_path):
+    """A script that never calls finish() should still land a 'completed' run.
+
+    Uses a subprocess so the Python interpreter genuinely exits and the
+    atexit hook runs.
+    """
+    import subprocess
+    import sys
+    import textwrap
+
+    repo = tmp_path / ".cairn"
+    script = textwrap.dedent(
+        f"""
+        import cairn
+        run = cairn.Run(
+            project="auto", task="finish",
+            repo=r"{repo}",
+            capture_source=False, capture_stdout=False,
+            capture_env=False, capture_system_metrics=False,
+        )
+        run["lr"] = 0.01
+        for i in range(5):
+            run.track(float(i), name="loss", step=i)
+        # Intentionally do NOT call run.finish() — atexit must handle it.
+        """
+    )
+    subprocess.check_call([sys.executable, "-c", script])
+
+    db, _ = _inspect(repo)
+    try:
+        rows = db.read_columns("SELECT id, status FROM runs")
+        assert len(rows) == 1
+        assert rows[0]["status"] == "completed"
+        (loss_count,) = db.read_one(
+            "SELECT COUNT(*) FROM sequences WHERE name = 'loss'"
+        ) or (0,)
+        assert loss_count == 5
+        # Params landed.
+        (param_count,) = db.read_one("SELECT COUNT(*) FROM params") or (0,)
+        assert param_count == 1
+    finally:
+        db.close()
+
+
 def test_local_mode_uses_env_var(tmp_path, monkeypatch):
     repo = tmp_path / ".cairn"
     monkeypatch.setenv("CAIRN_REPO", str(repo))

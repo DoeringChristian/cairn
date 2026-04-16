@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from unittest.mock import MagicMock
 
@@ -79,3 +80,33 @@ def test_thread_runs_and_stops():
     coll.join(timeout=2.0)
     assert not coll.is_alive()
     assert received  # we collected something
+
+
+def test_join_does_not_shadow_thread_internals():
+    """Regression: ``threading.Thread._stop`` is a private method the parent
+    class calls inside join() → _wait_for_tstate_lock(). If we shadow it with
+    a ``threading.Event`` attribute (our prior bug), join() raises
+    ``TypeError: 'Event' object is not callable`` on CPython 3.12.
+
+    The fix renamed our attribute to ``_stop_event``. This test asserts we
+    don't regress by checking the rename stuck AND that join() completes
+    cleanly after a realistic sample/stop cycle.
+    """
+    coll = sysmod.SystemMetricsCollector(
+        track=lambda n, v: None, interval=0.01
+    )
+    # Our event lives under the non-shadowing name.
+    assert hasattr(coll, "_stop_event")
+    assert isinstance(coll._stop_event, threading.Event)
+    # Our instance attributes do not include a bare ``_stop``; any ``_stop``
+    # resolved via attribute access comes from threading.Thread itself.
+    assert "_stop" not in coll.__dict__, (
+        "Instance attribute named '_stop' would shadow Thread._stop method"
+    )
+    coll.start()
+    time.sleep(0.05)
+    coll.stop()
+    # If _stop were an Event instance, this join() would raise
+    # ``TypeError: 'Event' object is not callable``.
+    coll.join(timeout=2.0)
+    assert not coll.is_alive()

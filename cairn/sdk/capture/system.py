@@ -133,7 +133,10 @@ class SystemMetricsCollector(threading.Thread):
         super().__init__(daemon=True, name="cairn-sysmetrics")
         self._track = track
         self._interval = interval
-        self._stop = threading.Event()
+        # NB: don't name this ``_stop`` — threading.Thread._stop is a private
+        # method the parent class calls inside join(), and an attribute here
+        # would shadow it (TypeError: 'Event' object is not callable).
+        self._stop_event = threading.Event()
         self._include_per_core = include_per_core
         self._proc = psutil.Process(os.getpid())
         self._nvml = _NvmlSession()
@@ -143,7 +146,7 @@ class SystemMetricsCollector(threading.Thread):
         self._last_time: float | None = None
 
     def stop(self) -> None:
-        self._stop.set()
+        self._stop_event.set()
 
     def sample_once(self) -> None:
         now = time.time()
@@ -221,10 +224,10 @@ class SystemMetricsCollector(threading.Thread):
 
     def run(self) -> None:
         _safe_nice(10)
-        while not self._stop.is_set():
+        while not self._stop_event.is_set():
             try:
                 self.sample_once()
             except Exception:  # noqa: BLE001
                 log.exception("system metrics sample failed")
-            if self._stop.wait(timeout=self._interval):
+            if self._stop_event.wait(timeout=self._interval):
                 return

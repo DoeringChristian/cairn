@@ -147,8 +147,14 @@ def server_cmd(
     ui_port = ui_port or port + 1
 
     dd = DataDir(repo)
+    # Record the UI port (if present, else the ingest port) in the lock
+    # file so a concurrent SDK ``Run(repo=...)`` on the same repo can
+    # transparently switch to HTTP mode. We store 127.0.0.1 as the host
+    # even when --host is 0.0.0.0 because the SDK that detects the lock
+    # will always be on the same machine.
+    lock_port = port if no_ui else ui_port
     try:
-        dd.acquire_lock("server")
+        dd.acquire_lock("server", host="127.0.0.1", port=lock_port)
     except RepoLockedError as exc:
         click.echo(f"ERROR: {exc}", err=True)
         sys.exit(1)
@@ -285,7 +291,9 @@ def ui_cmd(
     repo = _ensure_repo(repo or _default_repo())
     dd = DataDir(repo)
     try:
-        dd.acquire_lock("ui")
+        # Record the UI port in the lock so an SDK Run(repo=...) on the same
+        # repo can auto-switch to HTTP mode instead of erroring on the lock.
+        dd.acquire_lock("ui", host="127.0.0.1", port=port)
     except RepoLockedError as exc:
         holder = exc.holder
         if holder.get("mode") == "server":
