@@ -1,13 +1,78 @@
 import { useState } from "react";
 import { useParams } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import type { Highlighter } from "shiki";
 import { useSourceFile, useSourceTree } from "../api/hooks";
 import { formatBytes } from "../lib/format";
+
+const SHIKI_LANGS = [
+  "python",
+  "typescript",
+  "json",
+  "yaml",
+  "toml",
+  "markdown",
+  "ini",
+  "bash",
+] as const;
+
+let highlighterPromise: Promise<Highlighter> | null = null;
+function getHighlighter(): Promise<Highlighter> {
+  if (!highlighterPromise) {
+    highlighterPromise = import("shiki").then((mod) =>
+      mod.createHighlighter({
+        themes: ["github-dark"],
+        langs: [...SHIKI_LANGS],
+      }),
+    );
+  }
+  return highlighterPromise;
+}
+
+function langFromPath(path: string): string | null {
+  const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  const map: Record<string, string> = {
+    py: "python",
+    ts: "typescript",
+    tsx: "typescript",
+    mjs: "typescript",
+    cjs: "typescript",
+    js: "typescript",
+    jsx: "typescript",
+    json: "json",
+    yaml: "yaml",
+    yml: "yaml",
+    toml: "toml",
+    md: "markdown",
+    ini: "ini",
+    cfg: "ini",
+    sh: "bash",
+    bash: "bash",
+  };
+  return map[ext] ?? null;
+}
 
 export default function RunSourceTab() {
   const { runId } = useParams<{ runId: string }>();
   const tree = useSourceTree(runId!);
   const [selected, setSelected] = useState<string | null>(null);
   const file = useSourceFile(runId!, selected);
+
+  const highlighted = useQuery({
+    queryKey: ["highlight", selected, file.data?.content],
+    enabled: !!file.data && file.data.encoding === "utf-8",
+    queryFn: async () => {
+      const lang = langFromPath(selected!);
+      if (!lang) return null;
+      const h = await getHighlighter();
+      return h.codeToHtml(file.data!.content, {
+        lang,
+        theme: "github-dark",
+      });
+    },
+    retry: false,
+    staleTime: Infinity,
+  });
 
   if (tree.isLoading) return <p className="text-fg-muted">Loading source…</p>;
   if (tree.isError)
@@ -18,8 +83,8 @@ export default function RunSourceTab() {
     );
   const files = tree.data?.files ?? [];
   return (
-    <div className="grid grid-cols-[260px_1fr] gap-4">
-      <aside className="card max-h-[70vh] overflow-auto p-3">
+    <div className="grid grid-cols-1 gap-4 md:grid-cols-[260px_1fr]">
+      <aside className="card max-h-[30vh] overflow-auto p-3 md:max-h-[70vh]">
         <div className="mb-2 text-xs uppercase tracking-wide text-fg-muted">
           {files.length} files
           {tree.data?.marker ? ` · marker: ${tree.data.marker}` : ""}
@@ -49,6 +114,11 @@ export default function RunSourceTab() {
           <p className="text-fg-muted">
             Binary file ({formatBytes(file.data.content.length)} base64).
           </p>
+        ) : highlighted.data ? (
+          <div
+            className="text-xs overflow-auto"
+            dangerouslySetInnerHTML={{ __html: highlighted.data }}
+          />
         ) : (
           <pre className="mono whitespace-pre-wrap text-xs">
             {file.data?.content ?? ""}

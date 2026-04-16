@@ -1,6 +1,13 @@
+import { Suspense, lazy } from "react";
 import ScalarPlotCard from "./ScalarPlotCard";
 import ImageGalleryCard from "./ImageGalleryCard";
 import TextViewerCard from "./TextViewerCard";
+import AudioPlayerCard from "./AudioPlayerCard";
+import VideoPlayerCard from "./VideoPlayerCard";
+import HistogramCard from "./HistogramCard";
+// Plotly is ~4.9 MB unminified; lazy-load it so users without figures
+// don't pay the cost. The Suspense fallback below shows a skeleton.
+const FigureInteractiveCard = lazy(() => import("./FigureInteractiveCard"));
 import type { SequenceMeta } from "../api/types";
 import { groupIntoSections } from "../lib/sections";
 
@@ -26,7 +33,7 @@ export default function CardGrid({ runId, sequences }: Props) {
             </h2>
             <span className="text-xs text-fg-subtle">{section.items.length} card(s)</span>
           </header>
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-2">
             {collapseScalars(section.items).map((entry) => (
               <CardFor key={entry.primary.name + entry.primary.context_hash}
                 runId={runId} entry={entry} />
@@ -73,13 +80,35 @@ function CardFor({ runId, entry }: { runId: string; entry: Entry }) {
       return <ImageGalleryCard runId={runId} metric={primary} />;
     case "text":
       return <TextViewerCard runId={runId} metric={primary} />;
+    case "figure":
+      return (
+        <Suspense
+          fallback={
+            <div className="card p-4">
+              <div className="mb-2 flex items-baseline justify-between gap-2">
+                <h3 className="mono text-sm font-semibold">{primary.name}</h3>
+                <span className="text-xs text-fg-subtle">loading plotly…</span>
+              </div>
+              <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
+            </div>
+          }
+        >
+          <FigureInteractiveCard runId={runId} metric={primary} />
+        </Suspense>
+      );
+    case "audio":
+      return <AudioPlayerCard runId={runId} metric={primary} />;
+    case "video":
+      return <VideoPlayerCard runId={runId} metric={primary} />;
+    case "histogram":
+      return <HistogramCard runId={runId} metric={primary} />;
     default:
       return (
         <div className="card p-4 text-sm text-fg-muted">
           <div className="mono mb-1 font-semibold">{primary.name}</div>
           <div>
-            object_type <span className="mono">{primary.object_type}</span> renderer
-            will arrive in the next UI pass.
+            object_type <span className="mono">{primary.object_type}</span> has
+            no dedicated renderer yet.
           </div>
         </div>
       );

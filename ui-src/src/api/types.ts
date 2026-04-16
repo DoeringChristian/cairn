@@ -71,6 +71,12 @@ export interface SequencePoint {
   wall_time: string;
   scalar_value: number | null;
   artifact_hash: string | null;
+  /** MIME type of the artifact (null for scalar rows). */
+  artifact_mime?: string | null;
+  /** Byte size of the artifact (null for scalar rows). */
+  artifact_size?: number | null;
+  /** JSON-stringified handler-specific metadata (null for scalar rows). */
+  artifact_metadata?: string | null;
   context: string | null;
   object_type: string;
 }

@@ -5,6 +5,8 @@ import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import App from "./App";
 import ProjectsPage from "./pages/ProjectsPage";
 import ProjectPage from "./pages/ProjectPage";
+import RunsTablePage from "./pages/RunsTablePage";
+import ComparePage from "./pages/ComparePage";
 import RunDetailPage from "./pages/RunDetailPage";
 import RunOverviewTab from "./pages/RunOverviewTab";
 import RunMetricsTab from "./pages/RunMetricsTab";
@@ -30,6 +32,8 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <ProjectsPage /> },
       { path: "p/:projectId", element: <ProjectPage /> },
+      { path: "p/:projectId/runs", element: <RunsTablePage /> },
+      { path: "p/:projectId/compare", element: <ComparePage /> },
       {
         path: "p/:projectId/r/:runId",
         element: <RunDetailPage />,

@@ -51,7 +51,7 @@ export default function ScalarPlotCard({ runId, metric, extraContexts = [] }: Pr
         <span className="text-xs text-fg-subtle">{metric.count} pts</span>
       </div>
       {anyLoading && data.length === 0 ? (
-        <div className="h-48 animate-pulse rounded bg-bg-hover" />
+        <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
       ) : (
         <div className="h-48">
           <ResponsiveContainer width="100%" height="100%">

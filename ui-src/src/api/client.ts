@@ -10,6 +10,16 @@ async function get<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+async function post<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${path}`);
+  return (await res.json()) as T;
+}
+
 export const api = {
   health: () => get<import("./types").Health>("/api/health"),
   projects: () =>
@@ -70,4 +80,8 @@ export const api = {
     get<import("./types").SourceFileResponse>(
       `/api/runs/${runId}/source/file?path=${encodeURIComponent(path)}`,
     ),
+  setTags: (runId: string, tags: string[]) =>
+    post<{ run_id: string; tags: string[] }>(`/api/runs/${runId}/tags`, { tags }),
+  setNotes: (runId: string, notes: string) =>
+    post<{ run_id: string; notes: string }>(`/api/runs/${runId}/notes`, { notes }),
 };

@@ -1,4 +1,6 @@
+import { useEffect, useState } from "react";
 import { useOutletContext } from "react-router-dom";
+import { useSetNotes, useSetTags } from "../api/hooks";
 import type { Param, Run } from "../api/types";
 import { safeJsonParse } from "../lib/format";
 
@@ -47,21 +49,8 @@ export default function RunOverviewTab() {
         />
       </Section>
       <Section title="Tags / Notes" className="lg:col-span-2">
-        <div className="mb-3 flex flex-wrap gap-2">
-          {tags.length === 0 ? (
-            <span className="text-sm text-fg-subtle">(none)</span>
-          ) : (
-            tags.map((t) => (
-              <span
-                key={t}
-                className="mono rounded border border-border bg-bg px-2 py-0.5 text-xs text-fg-muted"
-              >
-                {t}
-              </span>
-            ))
-          )}
-        </div>
-        <p className="text-sm text-fg-muted">{run.notes || "(no notes)"}</p>
+        <TagsEditor runId={run.id} tags={tags} />
+        <NotesEditor runId={run.id} notes={run.notes ?? ""} />
       </Section>
       <Section title={`Params (${params.length})`} className="lg:col-span-2">
         {params.length === 0 ? (
@@ -149,5 +138,123 @@ function DefinitionList({ rows }: { rows: Array<[string, React.ReactNode]> }) {
         </div>
       ))}
     </dl>
+  );
+}
+
+function TagsEditor({ runId, tags }: { runId: string; tags: string[] }) {
+  const mutation = useSetTags(runId);
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState("");
+
+  const commitAdd = () => {
+    const next = draft.trim();
+    if (next && !tags.includes(next)) {
+      mutation.mutate([...tags, next]);
+    }
+    setDraft("");
+    setAdding(false);
+  };
+
+  const removeTag = (tag: string) => {
+    mutation.mutate(tags.filter((t) => t !== tag));
+  };
+
+  return (
+    <div className="mb-3">
+      <div className="flex flex-wrap items-center gap-2">
+        {tags.length === 0 && !adding ? (
+          <span className="text-sm text-fg-subtle">(none)</span>
+        ) : (
+          tags.map((t) => (
+            <span
+              key={t}
+              className="mono group inline-flex items-center gap-1 rounded border border-border bg-bg px-2 py-0.5 text-xs text-fg-muted"
+            >
+              {t}
+              <button
+                type="button"
+                onClick={() => removeTag(t)}
+                className="ml-0.5 transition-opacity hover:border-status-failed hover:text-status-failed md:opacity-0 md:group-hover:opacity-100"
+                aria-label={`remove tag ${t}`}
+              >
+                &times;
+              </button>
+            </span>
+          ))
+        )}
+        {adding ? (
+          <input
+            autoFocus
+            className="input w-40 py-0.5 text-xs"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                commitAdd();
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                setDraft("");
+                setAdding(false);
+              }
+            }}
+            onBlur={() => {
+              setDraft("");
+              setAdding(false);
+            }}
+            placeholder="tag"
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => setAdding(true)}
+            className="btn px-2 py-0.5 text-xs"
+            aria-label="add tag"
+          >
+            +
+          </button>
+        )}
+      </div>
+      {mutation.isError && (
+        <span className="text-xs text-status-failed">save failed</span>
+      )}
+    </div>
+  );
+}
+
+function NotesEditor({ runId, notes }: { runId: string; notes: string }) {
+  const mutation = useSetNotes(runId);
+  const [draft, setDraft] = useState(notes);
+
+  useEffect(() => {
+    setDraft(notes);
+  }, [notes]);
+
+  const dirty = draft !== notes;
+
+  return (
+    <div className="flex flex-col gap-2">
+      <textarea
+        className="input min-h-[4rem] resize-y text-sm"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        placeholder="(no notes)"
+      />
+      <div className="flex items-center gap-2">
+        {dirty && (
+          <button
+            type="button"
+            className="btn px-2 py-0.5 text-xs"
+            onClick={() => mutation.mutate(draft)}
+            disabled={mutation.isPending}
+          >
+            {mutation.isPending ? "saving…" : "save"}
+          </button>
+        )}
+        {mutation.isError && (
+          <span className="text-xs text-status-failed">save failed</span>
+        )}
+      </div>
+    </div>
   );
 }

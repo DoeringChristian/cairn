@@ -22,11 +22,11 @@ export default function RunDetailPage() {
 
   return (
     <div>
-      <nav className="mb-3 text-sm text-fg-muted">
+      <nav className="mb-3 flex flex-wrap items-center gap-x-1 text-sm text-fg-muted">
         <Link to="/" className="hover:text-fg">Projects</Link>
-        <span className="mx-1">›</span>
+        <span>›</span>
         <Link to={`/p/${projectId}`} className="mono hover:text-fg">{projectId}</Link>
-        <span className="mx-1">›</span>
+        <span>›</span>
         <span className="mono text-fg">{run.id}</span>
       </nav>
       <div className="mb-4 flex flex-wrap items-baseline gap-3">
@@ -42,7 +42,7 @@ export default function RunDetailPage() {
           <span className="mono num">{formatDuration(run.created_at, run.ended_at)}</span>
         </span>
       </div>
-      <nav className="mb-6 flex gap-1 border-b border-border">
+      <nav className="mb-6 flex gap-1 overflow-x-auto whitespace-nowrap border-b border-border">
         {TABS.map((t) => (
           <NavLink
             key={t.id}

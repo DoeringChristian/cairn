@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./client";
 
 export function useHealth() {
@@ -85,5 +85,21 @@ export function useSourceFile(runId: string, path: string | null) {
       return api.sourceFile(runId, path);
     },
     enabled: !!path,
+  });
+}
+
+export function useSetTags(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (tags: string[]) => api.setTags(runId, tags),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["run", runId] }),
+  });
+}
+
+export function useSetNotes(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (notes: string) => api.setNotes(runId, notes),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["run", runId] }),
   });
 }

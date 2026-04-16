@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { useSequence } from "../api/hooks";
-import { api } from "../api/client";
+import { safeJsonParse } from "../lib/format";
 import type { SequenceMeta } from "../api/types";
 
 interface Props {
@@ -8,10 +8,24 @@ interface Props {
   metric: SequenceMeta;
 }
 
-export default function ImageGalleryCard({ runId, metric }: Props) {
+interface HistogramMeta {
+  num_bins: number;
+  min: number;
+  max: number;
+  count: number;
+  mean: number;
+}
+
+function fmtSig(n: number, sig = 4): string {
+  if (!Number.isFinite(n)) return String(n);
+  if (n === 0) return "0";
+  return Number(n.toPrecision(sig)).toString();
+}
+
+export default function HistogramCard({ runId, metric }: Props) {
   const q = useSequence(runId, metric.name, {
     context: metric.context_hash || undefined,
-    maxPoints: 500,
+    maxPoints: 200,
   });
   const points = useMemo(
     () => (q.data?.points ?? []).filter((p) => p.artifact_hash),
@@ -20,6 +34,10 @@ export default function ImageGalleryCard({ runId, metric }: Props) {
   const [idx, setIdx] = useState(0);
   const safeIdx = Math.min(Math.max(0, idx), Math.max(0, points.length - 1));
   const current = points[safeIdx];
+  const meta = useMemo(
+    () => safeJsonParse<HistogramMeta>(current?.artifact_metadata),
+    [current],
+  );
 
   return (
     <div className="card p-4">
@@ -33,15 +51,23 @@ export default function ImageGalleryCard({ runId, metric }: Props) {
       </div>
       {q.isLoading ? (
         <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
-      ) : current?.artifact_hash ? (
+      ) : current?.artifact_hash && meta ? (
         <>
-          <div className="flex justify-center rounded bg-bg p-2">
-            <img
-              src={api.artifactUrl(current.artifact_hash)}
-              alt={`${metric.name} @ step ${current.step}`}
-              className="max-h-64 object-contain"
-            />
+          <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-fg-muted">
+            <span>min</span>
+            <span className="mono num">{fmtSig(meta.min)}</span>
+            <span>max</span>
+            <span className="mono num">{fmtSig(meta.max)}</span>
+            <span>mean</span>
+            <span className="mono num">{fmtSig(meta.mean)}</span>
+            <span>count</span>
+            <span className="mono num">{meta.count}</span>
+            <span>num_bins</span>
+            <span className="mono num">{meta.num_bins}</span>
           </div>
+          <p className="text-xs text-fg-subtle mt-2">
+            Bin counts available in the raw artifact blob.
+          </p>
           {points.length > 1 && (
             <input
               type="range"
@@ -54,7 +80,7 @@ export default function ImageGalleryCard({ runId, metric }: Props) {
           )}
         </>
       ) : (
-        <div className="text-sm text-fg-muted">no image logged yet</div>
+        <div className="text-sm text-fg-muted">no histogram logged yet</div>
       )}
     </div>
   );

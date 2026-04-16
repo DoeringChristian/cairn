@@ -1,17 +1,27 @@
 import { useState, useMemo } from "react";
 import { useSequence } from "../api/hooks";
 import { api } from "../api/client";
+import { safeJsonParse } from "../lib/format";
 import type { SequenceMeta } from "../api/types";
+
+interface VideoMetadata {
+  fps: number;
+  num_frames: number;
+  width: number;
+  height: number;
+  channels: number;
+  preview?: string;
+}
 
 interface Props {
   runId: string;
   metric: SequenceMeta;
 }
 
-export default function ImageGalleryCard({ runId, metric }: Props) {
+export default function VideoPlayerCard({ runId, metric }: Props) {
   const q = useSequence(runId, metric.name, {
     context: metric.context_hash || undefined,
-    maxPoints: 500,
+    maxPoints: 200,
   });
   const points = useMemo(
     () => (q.data?.points ?? []).filter((p) => p.artifact_hash),
@@ -20,6 +30,7 @@ export default function ImageGalleryCard({ runId, metric }: Props) {
   const [idx, setIdx] = useState(0);
   const safeIdx = Math.min(Math.max(0, idx), Math.max(0, points.length - 1));
   const current = points[safeIdx];
+  const meta = safeJsonParse<VideoMetadata>(current?.artifact_metadata);
 
   return (
     <div className="card p-4">
@@ -36,12 +47,21 @@ export default function ImageGalleryCard({ runId, metric }: Props) {
       ) : current?.artifact_hash ? (
         <>
           <div className="flex justify-center rounded bg-bg p-2">
-            <img
+            <video
+              key={current.artifact_hash}
+              controls
+              preload="metadata"
               src={api.artifactUrl(current.artifact_hash)}
-              alt={`${metric.name} @ step ${current.step}`}
+              poster={meta?.preview}
               className="max-h-64 object-contain"
             />
           </div>
+          {meta && (
+            <div className="mono mt-2 text-xs text-fg-subtle">
+              {meta.width}×{meta.height} · {meta.num_frames} frames @ {meta.fps}
+              fps
+            </div>
+          )}
           {points.length > 1 && (
             <input
               type="range"
@@ -54,7 +74,7 @@ export default function ImageGalleryCard({ runId, metric }: Props) {
           )}
         </>
       ) : (
-        <div className="text-sm text-fg-muted">no image logged yet</div>
+        <div className="text-sm text-fg-muted">no video logged yet</div>
       )}
     </div>
   );

@@ -65,12 +65,40 @@ def get_sequence(
         clauses.append("step <= ?")
         params.append(step_to)
 
+    # LEFT JOIN so non-artifact (scalar) rows still come through. The UI
+    # needs artifact_meta + mime_type for media cards (audio peaks, figure
+    # has_source / source_hash, histogram bin count, etc.).
+    prefixed_clauses = [c.replace("run_id", "s.run_id").replace("name", "s.name")
+                        if ("run_id" in c or c.startswith("name ")) else c
+                        for c in clauses]
+    # Safer: just prefix explicitly since the clauses come from a small set.
+    prefixed_clauses = []
+    for c in clauses:
+        # ``clauses`` values are like "run_id = ?", "name = ?",
+        # "context_hash = ?", "step >= ?", "step <= ?". Prefix bare column refs
+        # with ``s.`` so they're unambiguous after the JOIN.
+        if c.startswith("run_id "):
+            prefixed_clauses.append("s." + c)
+        elif c.startswith("name "):
+            prefixed_clauses.append("s." + c)
+        elif c.startswith("context_hash "):
+            prefixed_clauses.append("s." + c)
+        elif c.startswith("step "):
+            prefixed_clauses.append("s." + c)
+        else:
+            prefixed_clauses.append(c)
+
     rows = db.read_columns(
         f"""
-        SELECT step, wall_time, scalar_value, artifact_hash, context, object_type
-        FROM sequences
-        WHERE {' AND '.join(clauses)}
-        ORDER BY step
+        SELECT s.step, s.wall_time, s.scalar_value, s.artifact_hash,
+               s.context, s.object_type,
+               a.mime_type AS artifact_mime,
+               a.size_bytes AS artifact_size,
+               a.metadata AS artifact_metadata
+        FROM sequences s
+        LEFT JOIN artifacts a ON a.hash = s.artifact_hash
+        WHERE {' AND '.join(prefixed_clauses)}
+        ORDER BY s.step
         """,
         params,
     )
