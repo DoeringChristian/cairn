@@ -11,12 +11,9 @@ from typing import Any
 
 from fastapi import (
     APIRouter,
-    File,
-    Form,
     HTTPException,
     Request,
     Response,
-    UploadFile,
 )
 from pydantic import BaseModel, Field
 
@@ -172,15 +169,29 @@ def head_artifact(digest: str, request: Request) -> Response:
     return Response(status_code=404)
 
 
+#: Largest permitted multipart-part size. Starlette's default is 1 MiB,
+#: which trips on videos, tensors, large figure sources, and on the source
+#: manifest JSON for repos with many files (~150 bytes/entry × thousands of
+#: files easily exceeds 1 MiB). 256 MiB is generous enough for any artifact
+#: we realistically accept and still bounds memory on hostile input.
+MAX_MULTIPART_PART_BYTES = 256 * 1024 * 1024
+
+
 @router.post("/artifacts")
-async def post_artifact(
-    request: Request,
-    file: UploadFile = File(...),
-    mime_type: str = Form(...),
-    metadata: str = Form("{}"),
-) -> dict[str, Any]:
+async def post_artifact(request: Request) -> dict[str, Any]:
     db = get_db(request)
     blobs = get_blobs(request)
+    try:
+        form = await request.form(max_part_size=MAX_MULTIPART_PART_BYTES)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"multipart error: {exc}") from None
+    file = form.get("file")
+    mime_type = form.get("mime_type")
+    metadata = form.get("metadata", "{}")
+    if file is None or not hasattr(file, "read"):
+        raise HTTPException(status_code=400, detail="missing `file` multipart field")
+    if not isinstance(mime_type, str):
+        raise HTTPException(status_code=400, detail="missing `mime_type` form field")
     data = await file.read()
     try:
         meta_dict = json.loads(metadata) if metadata else {}
@@ -205,14 +216,19 @@ def attach_run_artifact(
 
 
 @router.post("/runs/{run_id}/source")
-async def post_source(
-    run_id: str,
-    request: Request,
-    archive: UploadFile = File(...),
-    manifest: str = Form(...),
-) -> dict[str, Any]:
+async def post_source(run_id: str, request: Request) -> dict[str, Any]:
     db = get_db(request)
     dd = get_data_dir(request)
+    try:
+        form = await request.form(max_part_size=MAX_MULTIPART_PART_BYTES)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"multipart error: {exc}") from None
+    archive = form.get("archive")
+    manifest = form.get("manifest")
+    if archive is None or not hasattr(archive, "read"):
+        raise HTTPException(status_code=400, detail="missing `archive` multipart field")
+    if not isinstance(manifest, str):
+        raise HTTPException(status_code=400, detail="missing `manifest` form field")
     try:
         manifest_dict = json.loads(manifest)
     except json.JSONDecodeError:

@@ -68,6 +68,47 @@ def test_missing_source_404s(client):
     assert r.status_code == 404
 
 
+def test_large_manifest_accepted(client):
+    """Regression: Starlette's default 1 MiB per-part cap was rejecting the
+    source manifest JSON for repos with lots of files. We override
+    ``max_part_size`` on the /source and /artifacts handlers.
+    """
+    rid = client.post("/api/runs", json={"project": "p", "task": "t"}).json()["run_id"]
+    # Build a manifest with enough entries to exceed 1 MiB when JSON-encoded.
+    # Each entry is ~160 bytes; 10k entries → ~1.6 MB of form data.
+    files = {f"pkg/file_{i:05d}.py": b"print(1)\n" for i in range(10_000)}
+    archive, manifest = _build_archive({k: v for k, v in list(files.items())[:10]})
+    # Swap in the big files[] list (archive can stay small — only manifest
+    # size matters for the multipart-part cap).
+    manifest["files"] = [
+        {"path": name, "size": len(b), "sha256": "a" * 64}
+        for name, b in files.items()
+    ]
+    manifest_json = json.dumps(manifest)
+    assert len(manifest_json) > 1_000_000, "test setup: need >1 MiB manifest"
+    r = client.post(
+        f"/api/runs/{rid}/source",
+        files={"archive": ("a.tar.zst", io.BytesIO(archive), "application/zstd")},
+        data={"manifest": manifest_json},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["num_files"] == 10_000
+
+
+def test_large_artifact_accepted(client):
+    """Regression: uploading a >1 MiB artifact (e.g. a short video or tensor)
+    was failing before we raised max_part_size on /artifacts.
+    """
+    payload = b"x" * (2 * 1024 * 1024)  # 2 MiB
+    r = client.post(
+        "/api/artifacts",
+        files={"file": ("big.bin", io.BytesIO(payload), "application/octet-stream")},
+        data={"mime_type": "application/octet-stream"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["size_bytes"] == len(payload)
+
+
 def test_binary_file_returned_as_base64(client):
     rid = client.post("/api/runs", json={"project": "p", "task": "t"}).json()["run_id"]
     archive, manifest = _build_archive({"bin.dat": b"\x00\x01\xff\xfe"})
