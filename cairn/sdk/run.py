@@ -27,6 +27,7 @@ from ..sdk.capture.system import SystemMetricsCollector
 from ..sdk.handlers.registry import HandlerRegistry, default_registry
 from ..sdk.wrappers import _TypeWrapper
 from .buffer import MetricBuffer
+from .local import LocalTransport
 from .transport import Transport
 
 log = logging.getLogger(__name__)
@@ -56,6 +57,7 @@ class Run:
         tags: list[str] | None = None,
         notes: str | None = None,
         server: str | None = None,
+        repo: str | Path | None = None,
         capture_source: bool = True,
         capture_stdout: bool = True,
         capture_env: bool = True,
@@ -68,12 +70,24 @@ class Run:
         source_max_file_size_mb: float = 1.0,
         timeout: float = 10.0,
         registry: HandlerRegistry | None = None,
-        transport: Transport | None = None,
+        transport: Transport | LocalTransport | None = None,
     ):
-        self._server = config.resolve_server(server)
         self._registry = registry or default_registry
-        self._transport = transport or Transport(self._server, timeout=timeout)
-        self._owns_transport = transport is None
+        if transport is not None:
+            self._transport = transport
+            self._owns_transport = False
+            # Caller-supplied transport picks the mode; expose its location
+            # via ``self._server`` so ``run.url`` works for both kinds.
+            self._server = getattr(transport, "server_url", "")
+        else:
+            target = config.resolve_target(repo=repo, server=server)
+            if target.is_local:
+                self._transport = LocalTransport(target.location)
+                self._server = self._transport.server_url
+            else:
+                self._transport = Transport(target.location, timeout=timeout)
+                self._server = target.location
+            self._owns_transport = True
         self._project = project
         self._task = task
         self._name = name

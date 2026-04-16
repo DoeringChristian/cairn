@@ -1018,9 +1018,44 @@ A user on a clean Python 3.11 environment can:
 
 If all eight work end-to-end on macOS, Linux, and Windows (for the server and client), and on iOS Safari and Android Chrome (for the UI), v1 is done.
 
-## Future: offline mode
+## Local (server-less) mode — implemented
 
-Post-v1, add a true offline mode where the SDK can write to a local DuckDB file with no server reachable at all, and `cairn push --from <path> --to <server>` replays it. The current architecture (HTTP batching with spill-to-disk) is a stepping stone toward this — the spilled batches on disk are already the raw material for offline replay. But don't build this in v1; get the happy-path cross-device experience rock solid first.
+Cairn supports an Aim-style local workflow alongside server mode:
+
+```
+cairn init                      # creates ./.cairn/ (DB + schema + layout dirs)
+cairn.Run(project=..., task=..., repo="./.cairn") as run:
+    run.track(...)              # writes straight to DuckDB, no server
+cairn server --data-dir ./.cairn   # serve the same repo in a viewer later
+```
+
+The SDK uses `LocalTransport` (`cairn/sdk/local.py`) when a `repo=` path is
+resolved; otherwise it uses the HTTP `Transport`. Both paths call the same
+`cairn.server.ingest_ops` functions, so server-mode runs and local-mode runs
+land in byte-identical DB/blob layouts.
+
+**Write-lock contract.** A single lock file `.cairn/repo.lock` records
+`{pid, mode}` where mode is `"server"` or `"sdk"`. It's acquired for the
+lifetime of `cairn server` and for the lifetime of each `LocalTransport`
+instance. A second writer on the same repo — regardless of which mode — is
+refused with `RepoLockedError`. Stale locks from crashed processes are
+detected via `psutil.pid_exists` and transparently replaced. This preserves
+DuckDB's one-writer invariant without requiring the SDK and server to
+coordinate over a socket.
+
+**Resolution order** (in `cairn.config.resolve_target`):
+kwarg `repo=` → kwarg `server=` → `configure(repo=...)` / `configure(server=...)`
+→ `CAIRN_REPO` env → `CAIRN_SERVER` env → config file `repo` / `server` key
+→ auto-discovered `./.cairn/` in CWD → fallback `http://localhost:4300`.
+
+## Future: offline buffering across network outages
+
+A narrower post-v1 variant: when in server mode, let the SDK survive the
+server being down for hours (beyond the current spill-to-disk retry budget)
+and reconcile on reconnect. The `cairn sync` command already handles the
+reconciliation path; what's missing is a longer-lived spill format and a
+`cairn push --from <path> --to <server>` that can replay a local repo into
+a remote server.
 
 ## v2: Editable workspace layouts
 

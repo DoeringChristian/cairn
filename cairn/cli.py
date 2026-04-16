@@ -42,6 +42,37 @@ def main() -> None:
     """Cairn — open-source ML experiment tracker."""
 
 
+# ---------- init ------------------------------------------------------------
+
+
+@main.command("init")
+@click.argument(
+    "path",
+    default=".",
+    type=click.Path(file_okay=False, dir_okay=True, path_type=Path),
+)
+def init_cmd(path: Path) -> None:
+    """Create a local Cairn repo at PATH/.cairn (default: CWD).
+
+    After `cairn init`, you can either log directly to the repo with
+    ``cairn.Run(repo="./.cairn", ...)`` or serve it via
+    ``cairn server --data-dir ./.cairn``.
+    """
+    from .server.storage.db import Database
+
+    repo = (path / ".cairn").resolve()
+    already = repo.exists() and (repo / "cairn.db").exists()
+    dd = DataDir(repo)
+    # ``Database.open`` runs migrations idempotently, so init is safe to
+    # re-run on an existing repo.
+    db = Database.open(dd.db_path)
+    db.close()
+    if already:
+        click.echo(f"Cairn repo already initialized at {repo}")
+    else:
+        click.echo(f"Initialized empty Cairn repo at {repo}")
+
+
 # ---------- server ----------------------------------------------------------
 
 

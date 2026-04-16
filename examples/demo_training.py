@@ -3,7 +3,7 @@
 Simulates a short training run that exercises every built-in media type so
 you can click around the UI and confirm each card renders correctly.
 
-Usage::
+**Server mode** (two terminals)::
 
     # terminal 1
     uv run cairn server --data-dir /tmp/cairn-demo --port 4300
@@ -11,13 +11,19 @@ Usage::
     # terminal 2
     CAIRN_SERVER=http://localhost:4300 uv run python examples/demo_training.py
 
+**Local mode** (one terminal, no server needed during logging)::
+
+    uv run cairn init /tmp/cairn-demo
+    CAIRN_REPO=/tmp/cairn-demo/.cairn uv run python examples/demo_training.py
+    # then serve the same repo to view:
+    uv run cairn server --data-dir /tmp/cairn-demo/.cairn --port 4300
+
 Then open http://localhost:4300/ in a browser.
 """
 
 from __future__ import annotations
 
 import math
-import os
 import random
 import time
 
@@ -67,8 +73,11 @@ def make_audio_clip(step: int, sample_rate: int = 16000) -> np.ndarray:
 
 
 def main() -> None:
-    server = os.environ.get("CAIRN_SERVER", "http://localhost:4300")
-    print(f"Logging to {server}")
+    # Destination is auto-resolved: CAIRN_REPO > CAIRN_SERVER > ./.cairn > default.
+    from cairn.config import resolve_target
+
+    target = resolve_target()
+    print(f"Logging to {target.kind} at {target.location}")
 
     run = cairn.Run(
         project="demo",
@@ -76,7 +85,6 @@ def main() -> None:
         name="full-demo",
         tags=["demo", "smoke"],
         notes="Exercises every built-in handler for manual UI testing.",
-        server=server,
         # Keep source + system metrics on so the Source / Environment / System
         # tabs also have content to show.
         capture_source=True,

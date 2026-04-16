@@ -1,12 +1,12 @@
 """Ingest endpoints: SDK → server.
 
-All endpoints are POST except ``HEAD /api/artifacts/{hash}`` for dedup.
+Thin HTTP wrappers around ``cairn.server.ingest_ops``. All actual DB logic
+lives there so it can be reused by the local-mode SDK transport.
 """
 
 from __future__ import annotations
 
 import json
-import secrets
 from typing import Any
 
 from fastapi import (
@@ -20,17 +20,8 @@ from fastapi import (
 )
 from pydantic import BaseModel, Field
 
-from ..storage.migrations import hash_context
-from ._common import (
-    flatten,
-    get_blobs,
-    get_data_dir,
-    get_db,
-    require_run,
-    slugify,
-    utc_now,
-    value_type,
-)
+from .. import ingest_ops
+from ._common import get_blobs, get_data_dir, get_db
 
 router = APIRouter(prefix="/api", tags=["ingest"])
 
@@ -106,6 +97,13 @@ class RunArtifactRequest(BaseModel):
     step: int | None = None
 
 
+# ---------- Helpers ---------------------------------------------------------
+
+
+def _run_not_found(exc: ingest_ops.RunNotFound) -> HTTPException:
+    return HTTPException(status_code=404, detail=str(exc))
+
+
 # ---------- Routes ----------------------------------------------------------
 
 
@@ -113,153 +111,57 @@ class RunArtifactRequest(BaseModel):
 def create_run(body: CreateRunRequest, request: Request) -> dict[str, Any]:
     db = get_db(request)
     try:
-        project_id = slugify(body.project)
-        task_slug = slugify(body.task)
+        return ingest_ops.create_run(
+            db,
+            project=body.project,
+            task=body.task,
+            name=body.name,
+            tags=body.tags,
+            notes=body.notes,
+            env=body.env,
+            git=body.git.model_dump() if body.git else None,
+            cli_args=body.cli_args,
+            hostname=body.hostname,
+            user=body.user,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
-    task_id = f"{project_id}/{task_slug}"
-    run_id = secrets.token_hex(6)
-    now = utc_now()
-
-    with db.transaction() as con:
-        con.execute(
-            """
-            INSERT INTO projects (id, name, created_at, description, tags)
-            VALUES (?, ?, ?, NULL, NULL)
-            ON CONFLICT (id) DO NOTHING
-            """,
-            [project_id, body.project, now],
-        )
-        con.execute(
-            """
-            INSERT INTO tasks (id, project_id, name, created_at, description, tags)
-            VALUES (?, ?, ?, ?, NULL, NULL)
-            ON CONFLICT (id) DO NOTHING
-            """,
-            [task_id, project_id, body.task, now],
-        )
-        con.execute(
-            """
-            INSERT INTO runs (
-                id, project_id, task_id, display_name, created_at, ended_at,
-                status, exit_code, git_sha, git_dirty, git_branch,
-                cli_args, env_snapshot, hostname, "user", tags, notes
-            ) VALUES (?, ?, ?, ?, ?, NULL, 'running', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            [
-                run_id,
-                project_id,
-                task_id,
-                body.name,
-                now,
-                body.git.sha if body.git else None,
-                body.git.dirty if body.git else None,
-                body.git.branch if body.git else None,
-                json.dumps(body.cli_args) if body.cli_args is not None else None,
-                json.dumps(body.env) if body.env is not None else None,
-                body.hostname,
-                body.user,
-                json.dumps(body.tags) if body.tags is not None else None,
-                body.notes,
-            ],
-        )
-
-    return {
-        "run_id": run_id,
-        "project_id": project_id,
-        "task_id": task_id,
-        "url": f"/p/{project_id}/r/{run_id}",
-    }
 
 
 @router.post("/runs/{run_id}/params")
 def set_params(run_id: str, body: ParamsRequest, request: Request) -> dict[str, Any]:
     db = get_db(request)
-    require_run(db, run_id)
-    flat = flatten(body.params)
-    rows = [
-        (run_id, k, json.dumps(v), value_type(v))
-        for k, v in flat.items()
-    ]
-    # INSERT OR REPLACE (DuckDB uses ON CONFLICT DO UPDATE)
-    with db.transaction() as con:
-        for row in rows:
-            con.execute(
-                """
-                INSERT INTO params (run_id, key, value, value_type)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT (run_id, key) DO UPDATE
-                  SET value = EXCLUDED.value, value_type = EXCLUDED.value_type
-                """,
-                list(row),
-            )
-    return {"updated": len(rows)}
+    try:
+        updated = ingest_ops.set_params(db, run_id, body.params)
+    except ingest_ops.RunNotFound as exc:
+        raise _run_not_found(exc) from None
+    return {"updated": updated}
 
 
 @router.post("/runs/{run_id}/batch")
 def post_batch(run_id: str, body: BatchRequest, request: Request) -> dict[str, Any]:
     db = get_db(request)
-    require_run(db, run_id)
-    rows = []
-    for p in body.points:
-        ctx_json = json.dumps(p.context) if p.context is not None else None
-        rows.append(
-            (
-                run_id,
-                p.name,
-                p.step,
-                p.wall_time,
-                ctx_json,
-                hash_context(p.context),
-                p.object_type,
-                p.scalar_value,
-                p.artifact_hash,
-            )
-        )
-    sql = """
-        INSERT INTO sequences (
-            run_id, name, step, wall_time, context, context_hash,
-            object_type, scalar_value, artifact_hash
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """
-    # Plain bulk insert; duplicate (run_id, name, step, context_hash) keys
-    # will raise a constraint violation, which is the correct behavior for
-    # a client that mis-emits the same step twice.
+    points = [p.model_dump() for p in body.points]
     try:
-        db.executemany(sql, rows)
+        accepted = ingest_ops.insert_batch(db, run_id, points)
+    except ingest_ops.RunNotFound as exc:
+        raise _run_not_found(exc) from None
     except Exception as exc:  # noqa: BLE001
-        # Re-raise as 409 rather than 500 so the client sees a distinguishable
-        # error; we still log so server operators can see the offender.
+        # Duplicate (run_id, name, step, context_hash) → 409.
         raise HTTPException(status_code=409, detail=str(exc)) from None
-    return {"accepted": len(rows)}
+    return {"accepted": accepted}
 
 
 @router.post("/runs/{run_id}/logs")
 def post_logs(run_id: str, body: LogsRequest, request: Request) -> dict[str, Any]:
     db = get_db(request)
     dd = get_data_dir(request)
-    require_run(db, run_id)
-    rows = [
-        (run_id, line.stream, line.wall_time, line.line_no, line.content)
-        for line in body.lines
-    ]
-    db.executemany("INSERT INTO log_lines VALUES (?, ?, ?, ?, ?)", rows)
-    # Append to on-disk log files, preserving ANSI if provided.
-    log_dir = dd.run_log_dir(run_id)
-    combined_path = log_dir / "combined.log"
-    stream_paths: dict[str, Any] = {
-        "stdout": log_dir / "stdout.log",
-        "stderr": log_dir / "stderr.log",
-    }
-    with combined_path.open("a", encoding="utf-8") as comb_fh:
-        for line in body.lines:
-            raw = line.content_raw if line.content_raw is not None else line.content
-            stream_path = stream_paths.get(line.stream)
-            if stream_path is not None:
-                with stream_path.open("a", encoding="utf-8") as fh:
-                    fh.write(raw + "\n")
-            comb_fh.write(f"[{line.stream}] {raw}\n")
-    return {"accepted": len(rows)}
+    lines = [line.model_dump() for line in body.lines]
+    try:
+        accepted = ingest_ops.insert_logs(db, dd, run_id, lines)
+    except ingest_ops.RunNotFound as exc:
+        raise _run_not_found(exc) from None
+    return {"accepted": accepted}
 
 
 @router.head("/artifacts/{digest}")
@@ -284,38 +186,21 @@ async def post_artifact(
         meta_dict = json.loads(metadata) if metadata else {}
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="metadata must be JSON") from None
-    digest, size = blobs.put(data, mime_type, meta_dict)
-    db.write(
-        """
-        INSERT INTO artifacts (hash, mime_type, size_bytes, metadata, created_at)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT (hash) DO NOTHING
-        """,
-        [digest, mime_type, size, json.dumps(meta_dict), utc_now()],
-    )
-    return {"hash": digest, "size_bytes": size}
+    return ingest_ops.put_artifact(db, blobs, data, mime_type, meta_dict)
 
 
 @router.post("/runs/{run_id}/artifacts")
 def attach_run_artifact(
     run_id: str, body: RunArtifactRequest, request: Request
 ) -> dict[str, Any]:
-    """Attach a named (non-sequence) artifact to a run — backs ``run.log_artifact``."""
     db = get_db(request)
     blobs = get_blobs(request)
-    require_run(db, run_id)
-    if not blobs.exists(body.hash):
-        raise HTTPException(status_code=404, detail=f"artifact {body.hash} unknown")
-    step_val = -1 if body.step is None else body.step
-    db.write(
-        """
-        INSERT INTO run_artifacts (run_id, name, hash, step, created_at)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT (run_id, name, step) DO UPDATE
-          SET hash = EXCLUDED.hash, created_at = EXCLUDED.created_at
-        """,
-        [run_id, body.name, body.hash, step_val, utc_now()],
-    )
+    try:
+        ingest_ops.attach_artifact(db, blobs, run_id, body.name, body.hash, body.step)
+    except ingest_ops.RunNotFound as exc:
+        raise _run_not_found(exc) from None
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from None
     return {"run_id": run_id, "name": body.name, "hash": body.hash}
 
 
@@ -328,22 +213,15 @@ async def post_source(
 ) -> dict[str, Any]:
     db = get_db(request)
     dd = get_data_dir(request)
-    require_run(db, run_id)
     try:
         manifest_dict = json.loads(manifest)
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="manifest must be JSON") from None
-    src_dir = dd.run_source_dir(run_id)
-    archive_path = src_dir / "tree.tar.zst"
-    manifest_path = src_dir / "manifest.json"
     data = await archive.read()
-    archive_path.write_bytes(data)
-    manifest_path.write_text(json.dumps(manifest_dict))
-    return {
-        "run_id": run_id,
-        "archive_bytes": len(data),
-        "num_files": len(manifest_dict.get("files", [])),
-    }
+    try:
+        return ingest_ops.save_source(db, dd, run_id, data, manifest_dict)
+    except ingest_ops.RunNotFound as exc:
+        raise _run_not_found(exc) from None
 
 
 @router.post("/runs/{run_id}/finish")
@@ -351,53 +229,40 @@ def finish_run(
     run_id: str, body: FinishRequest, request: Request
 ) -> dict[str, Any]:
     db = get_db(request)
-    require_run(db, run_id)
-    db.write(
-        "UPDATE runs SET status = ?, ended_at = ?, exit_code = ? WHERE id = ?",
-        [body.status, utc_now(), body.exit_code, run_id],
-    )
+    try:
+        ingest_ops.finish_run(db, run_id, body.status, body.exit_code)
+    except ingest_ops.RunNotFound as exc:
+        raise _run_not_found(exc) from None
     return {"run_id": run_id, "status": body.status}
 
 
 @router.post("/runs/{run_id}/tags")
 def set_tags(run_id: str, body: TagsRequest, request: Request) -> dict[str, Any]:
     db = get_db(request)
-    require_run(db, run_id)
-    db.write(
-        "UPDATE runs SET tags = ? WHERE id = ?", [json.dumps(body.tags), run_id]
-    )
+    try:
+        ingest_ops.set_tags(db, run_id, body.tags)
+    except ingest_ops.RunNotFound as exc:
+        raise _run_not_found(exc) from None
     return {"run_id": run_id, "tags": body.tags}
 
 
 @router.post("/runs/{run_id}/notes")
 def set_notes(run_id: str, body: NotesRequest, request: Request) -> dict[str, Any]:
     db = get_db(request)
-    require_run(db, run_id)
-    db.write("UPDATE runs SET notes = ? WHERE id = ?", [body.notes, run_id])
+    try:
+        ingest_ops.set_notes(db, run_id, body.notes)
+    except ingest_ops.RunNotFound as exc:
+        raise _run_not_found(exc) from None
     return {"run_id": run_id, "notes": body.notes}
 
 
 @router.delete("/runs/{run_id}")
 def delete_run(run_id: str, request: Request) -> dict[str, Any]:
-    """Delete a run, its params, sequences, logs, and run-level artifact rows.
-
-    Shared artifact blobs are NOT reference-counted — they remain on disk. That
-    matches the spec's "no automatic deletion" retention policy.
-    """
+    """Delete a run. Shared artifact blobs are not reference-counted."""
     db = get_db(request)
     dd = get_data_dir(request)
-    require_run(db, run_id)
-    # DuckDB FK enforcement inside an explicit transaction doesn't recognize
-    # deleted child rows; run each DELETE as its own auto-committed statement.
-    db.write("DELETE FROM sequences WHERE run_id = ?", [run_id])
-    db.write("DELETE FROM params WHERE run_id = ?", [run_id])
-    db.write("DELETE FROM log_lines WHERE run_id = ?", [run_id])
-    db.write("DELETE FROM run_artifacts WHERE run_id = ?", [run_id])
-    db.write("DELETE FROM runs WHERE id = ?", [run_id])
-    # Remove per-run on-disk dirs (best-effort).
-    import shutil
-
-    for d in (dd.logs_dir / run_id, dd.sources_dir / run_id):
-        if d.exists():
-            shutil.rmtree(d, ignore_errors=True)
+    try:
+        ingest_ops.delete_run(db, dd, run_id)
+    except ingest_ops.RunNotFound as exc:
+        raise _run_not_found(exc) from None
     return {"deleted": run_id}
