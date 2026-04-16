@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+  /* Numbers and identifiers in monospace per spec §Design principles */
+  .num,
+  .mono {
+    font-family: theme("fontFamily.mono");
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center gap-2 rounded border border-border bg-bg-elevated px-3 py-1.5 text-sm text-fg transition-colors hover:border-accent hover:bg-bg-hover;
+  }
+  .input {
+    @apply w-full rounded border border-border bg-bg-elevated px-3 py-1.5 text-sm text-fg placeholder:text-fg-subtle focus:border-accent focus:outline-none;
+  }
+  .card {
+    @apply rounded-lg border border-border bg-bg-elevated;
+  }
+  .kbd {
+    @apply mono rounded border border-border bg-bg px-1.5 py-0.5 text-xs;
+  }
+}

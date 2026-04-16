@@ -2,9 +2,9 @@
 
 An open-source ML experiment tracker. Two ways to use it:
 
-**Local mode** (Aim-style, single machine): `cairn init` in your project, then log directly to the `.cairn/` directory. No server required; open a viewer later with `cairn server --data-dir ./.cairn`.
+**Local mode** (Aim-style, single machine): `cairn init` in your project, then log directly to `./.cairn/`. No server required. Run `cairn ui` later to browse results.
 
-**Server mode** (W&B-style, cross-device): run `cairn server` on one machine, point the SDK at its URL from any other machine on the network. Same process serves the UI.
+**Server mode** (W&B-style, cross-device): run `cairn server` on one machine and it starts both the tracking API **and** the viewer on two ports. Other machines on the network point the SDK at the tracking server's URL.
 
 Both modes share the same on-disk format — a repo created locally can later be served without any migration.
 
@@ -39,24 +39,34 @@ with cairn.Run(
         run.track(loss, name="loss", step=step)
 ```
 
-Open a viewer on the same repo:
+When you're ready to browse results, start the UI:
 
 ```bash
-cairn server --data-dir ./.cairn
-# browse http://localhost:4300/
+cairn ui                      # reads ./.cairn/ and opens http://localhost:4301/
 ```
 
-The SDK and the server share a single write-lock — the server refuses to start while a `Run` is active, and vice versa. Reads from other processes (e.g. ad-hoc DuckDB queries) are fine.
+If you're logging live and also want the UI open simultaneously, use `cairn server` instead (see below) — it runs the tracking API and the UI together.
 
 ## Quick start — server mode
 
-On the machine that will hold the data:
+On the machine that will hold the data (typically a workstation or shared GPU box):
 
 ```bash
-cairn server
+cairn server                  # defaults to ./.cairn; creates it if missing
 ```
 
-You'll see a banner with the local and network URLs. From any training machine:
+You'll see a banner with both URLs:
+
+```
+Cairn tracking server:
+  Ingest API local:   http://localhost:4300
+  Ingest API network: http://192.168.1.42:4300
+  UI local:           http://localhost:4301
+  UI network:         http://192.168.1.42:4301
+Repo: /home/you/project/.cairn
+```
+
+From any training machine:
 
 ```python
 import cairn
@@ -70,7 +80,30 @@ with cairn.Run(
     run.track(0.5, name="loss", step=0)
 ```
 
-Open `http://<lan-ip>:4300/` in any browser to view runs.
+Open the UI URL in any browser on the network.
+
+### Why two ports?
+
+`cairn server` runs the **ingest API** (where clients POST metrics) and the **UI viewer** (what browsers load) on separate ports, in the same process. This lets you, e.g., expose only the UI port publicly while keeping the ingest port firewalled, or serve the UI from a different path. Both ports also expose the full `/api/*` surface — the UI talks to its own port.
+
+Flags:
+
+- `cairn server --port 4300 --ui-port 4301 --repo ./.cairn` — all defaults shown explicitly.
+- `cairn server --no-ui` — skip spawning the UI.
+- `cairn server --open-browser` — auto-open a browser tab (off by default).
+- `cairn server --host 127.0.0.1` — LAN-restrict.
+- `cairn server --advertise` — broadcast on mDNS (requires `cairn-track[discovery]`).
+
+### `cairn server` vs `cairn ui`
+
+| | `cairn server` | `cairn ui` |
+|---|---|---|
+| Starts tracking API? | ✅ (port 4300) | ❌ |
+| Starts UI server? | ✅ (port 4301) | ✅ (port 4301) |
+| Acquires repo write-lock? | ✅ (mode `server`) | ✅ (mode `ui`) |
+| Use when | you want to log from other machines, or log + view simultaneously | you only want to browse an existing `./.cairn/` repo |
+
+They can't run on the same repo simultaneously (single-writer DuckDB rule). If a tracking server is already running, just open its UI URL in a browser.
 
 ## Resolution order
 
@@ -85,12 +118,25 @@ If you don't pass `repo=` or `server=` explicitly, the SDK picks a destination i
 
 ## Development
 
-This project uses [uv](https://docs.astral.sh/uv/) for dependency management.
+This project uses [uv](https://docs.astral.sh/uv/) for Python and npm for the UI.
 
 ```bash
 uv sync --extra dev
+cd ui-src && npm install && npm run build   # build the React bundle once
 uv run pytest
 ```
+
+For UI development, run Vite's dev server with HMR against a local tracking server:
+
+```bash
+# terminal 1
+uv run cairn server --repo ./.cairn --no-ui
+
+# terminal 2
+cd ui-src && npm run dev   # http://localhost:5173, proxies /api to :4300
+```
+
+The wheel's build hook (`hatch_build.py`) automatically invokes `npm run build` when you run `uv build`, so published wheels ship with the UI prebuilt — end users don't need Node.
 
 ## License
 

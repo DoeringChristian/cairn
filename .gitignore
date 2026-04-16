@@ -25,6 +25,11 @@ env/
 cairn/ui/dist/*
 !cairn/ui/dist/.gitkeep
 
+# Frontend build deps
+ui-src/node_modules/
+ui-src/dist/
+ui-src/*.tsbuildinfo
+
 # Cairn runtime
 .cairn/
 ~/.cache/cairn/

@@ -62,7 +62,21 @@ def test_workspace_default_layout(client):
     assert types == ["image_gallery", "scalar_plot"]
 
 
-def test_root_without_ui(client):
+def test_root_serves_spa_or_placeholder(client):
+    """When the UI bundle exists we serve HTML; otherwise the JSON placeholder."""
+    import pathlib
+
     r = client.get("/")
     assert r.status_code == 200
-    assert r.json()["status"] == "no_ui"
+    ui_dist = (
+        pathlib.Path(__file__).resolve().parents[2]
+        / "cairn"
+        / "ui"
+        / "dist"
+        / "index.html"
+    )
+    if ui_dist.exists():
+        assert r.headers["content-type"].startswith("text/html")
+        assert "<html" in r.text.lower()
+    else:
+        assert r.json()["status"] == "no_ui"

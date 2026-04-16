@@ -1,7 +1,16 @@
-"""Cairn CLI: ``cairn server``, ``cairn list``, etc.
+"""Cairn CLI: ``cairn server``, ``cairn ui``, ``cairn init``, ``cairn list``, …
+
+The two server commands:
+
+* ``cairn server [--repo PATH]`` — runs the ingest tracking API **and** the UI
+  viewer on two ports in the same process. Single Ctrl+C kills both.
+* ``cairn ui [--repo PATH]`` — standalone UI over a local repo when no
+  tracking server is running. Acquires the repo write-lock in ``mode="ui"``.
+  A running ``cairn server`` on the same repo will make this error out; in
+  that case just open the server's UI URL in a browser.
 
 Client commands (``list``, ``ping``, ``open``, ``rm``, ``export``, ``sync``)
-talk to a running server over HTTP. ``cairn server`` is the server itself.
+talk to a running server over HTTP.
 """
 
 from __future__ import annotations
@@ -20,7 +29,9 @@ import click
 from . import config as _config
 from .sdk.transport import Transport, default_spill_dir
 from .server.app import create_app
-from .server.storage.datadir import DataDir, default_data_dir
+from .server.storage.blobs import BlobStore
+from .server.storage.datadir import DataDir, RepoLockedError, default_data_dir
+from .server.storage.db import Database
 
 
 def _lan_ip() -> str:
@@ -34,6 +45,15 @@ def _lan_ip() -> str:
             s.close()
     except OSError:
         return "127.0.0.1"
+
+
+def _default_repo() -> Path:
+    """CWD/.cairn if present, else home fallback."""
+    cwd_repo = Path.cwd() / ".cairn"
+    if cwd_repo.exists():
+        return cwd_repo
+    # If nothing is in CWD yet, default to CWD/.cairn too (will be created).
+    return cwd_repo
 
 
 @click.group()
@@ -54,12 +74,10 @@ def main() -> None:
 def init_cmd(path: Path) -> None:
     """Create a local Cairn repo at PATH/.cairn (default: CWD).
 
-    After `cairn init`, you can either log directly to the repo with
-    ``cairn.Run(repo="./.cairn", ...)`` or serve it via
-    ``cairn server --data-dir ./.cairn``.
+    After ``cairn init`` you can log directly to the repo with
+    ``cairn.Run(repo="./.cairn", ...)`` or start the viewer with
+    ``cairn server`` / ``cairn ui``.
     """
-    from .server.storage.db import Database
-
     repo = (path / ".cairn").resolve()
     already = repo.exists() and (repo / "cairn.db").exists()
     dd = DataDir(repo)
@@ -73,39 +91,83 @@ def init_cmd(path: Path) -> None:
         click.echo(f"Initialized empty Cairn repo at {repo}")
 
 
-# ---------- server ----------------------------------------------------------
+# ---------- server (ingest + UI, two ports in one process) -----------------
+
+
+def _ensure_repo(repo: Path) -> Path:
+    """Resolve + create the repo tree on demand.
+
+    The tracking server expects to be pointed at a ``.cairn/`` directory;
+    we create it lazily if it doesn't exist so the quickstart is a single
+    command.
+    """
+    repo = repo.expanduser().resolve()
+    if not repo.exists():
+        click.echo(f"Creating new Cairn repo at {repo}")
+    DataDir(repo)  # idempotent
+    return repo
 
 
 @main.command("server")
 @click.option("--host", default="0.0.0.0", show_default=True)
-@click.option("--port", default=4300, show_default=True, type=int)
+@click.option("--port", default=4300, show_default=True, type=int,
+              help="Port for the ingest (tracking) API.")
+@click.option("--ui-port", default=None, type=int,
+              help="Port for the UI viewer. Default: --port + 1.")
 @click.option(
-    "--data-dir",
+    "--repo",
     default=None,
     type=click.Path(dir_okay=True, file_okay=False, path_type=Path),
-    help="Override ~/.cairn as the storage location.",
+    help="Path to the .cairn/ directory. Default: ./.cairn (created if missing).",
 )
-@click.option("--no-browser", is_flag=True, help="Don't try to open a browser.")
+@click.option(
+    "--open-browser",
+    is_flag=True,
+    help="Open the UI in a browser tab after startup (off by default).",
+)
+@click.option("--no-ui", is_flag=True, help="Skip spawning the UI server.")
 @click.option(
     "--advertise",
     is_flag=True,
-    help="Broadcast this server on the LAN via zeroconf/mDNS.",
+    help="Broadcast the ingest server on the LAN via zeroconf/mDNS.",
 )
 def server_cmd(
-    host: str, port: int, data_dir: Path | None, no_browser: bool, advertise: bool
+    host: str,
+    port: int,
+    ui_port: int | None,
+    repo: Path | None,
+    open_browser: bool,
+    no_ui: bool,
+    advertise: bool,
 ) -> None:
-    """Start the Cairn server."""
+    """Start the Cairn tracking server (and its paired UI viewer)."""
     import uvicorn
 
-    resolved = data_dir or default_data_dir()
-    dd = DataDir(resolved)
+    repo = _ensure_repo(repo or _default_repo())
+    ui_port = ui_port or port + 1
+
+    dd = DataDir(repo)
     try:
-        dd.acquire_pid_lock()
-    except RuntimeError as exc:
+        dd.acquire_lock("server")
+    except RepoLockedError as exc:
         click.echo(f"ERROR: {exc}", err=True)
         sys.exit(1)
 
-    app = create_app(data_dir=resolved)
+    # One Database, shared by both apps: DuckDB permits only one connection
+    # per file in this process, so both FastAPI apps must share the same one.
+    db = Database.open(dd.db_path)
+    blobs = BlobStore(dd.artifacts_dir)
+
+    # Ingest-only app (no SPA mount).
+    ingest_app = create_app(
+        db=db, blobs=blobs, data_dir_obj=dd, mount_ui=False
+    )
+    # UI app (ingest + read + SPA). Only built if UI is enabled.
+    ui_app = (
+        None
+        if no_ui
+        else create_app(db=db, blobs=blobs, data_dir_obj=dd, mount_ui=True)
+    )
 
     advertiser = None
     if advertise:
@@ -113,7 +175,9 @@ def server_cmd(
             from .server.advertise import Advertiser
 
             advertiser = Advertiser()
-            advertiser.start(host=_lan_ip() if host == "0.0.0.0" else host, port=port)
+            advertiser.start(
+                host=_lan_ip() if host == "0.0.0.0" else host, port=port
+            )
         except ImportError:
             click.echo(
                 "WARN: `cairn-track[discovery]` not installed; --advertise ignored.",
@@ -121,26 +185,137 @@ def server_cmd(
             )
 
     lan = _lan_ip()
-    banner = (
-        f"\n  Cairn server running at:\n"
+    banner_lines = [
+        "",
+        "  Cairn tracking server:",
+        f"    Ingest API local:   http://localhost:{port}",
+        f"    Ingest API network: http://{lan}:{port}",
+    ]
+    if ui_app is not None:
+        banner_lines += [
+            f"    UI local:           http://localhost:{ui_port}",
+            f"    UI network:         http://{lan}:{ui_port}",
+        ]
+    banner_lines += [
+        f"  Repo: {dd.root}",
+        "  Press Ctrl+C to stop.",
+        "",
+    ]
+    click.echo("\n".join(banner_lines))
+
+    if open_browser and ui_app is not None and host in ("0.0.0.0", "127.0.0.1", "localhost"):
+        try:
+            webbrowser.open(f"http://localhost:{ui_port}/")
+        except Exception:  # noqa: BLE001
+            pass
+
+    servers: list[uvicorn.Server] = []
+    threads: list[threading.Thread] = []
+
+    ingest_config = uvicorn.Config(
+        app=ingest_app, host=host, port=port, log_level="info", lifespan="on"
+    )
+    ingest_server = uvicorn.Server(ingest_config)
+    servers.append(ingest_server)
+
+    if ui_app is not None:
+        ui_config = uvicorn.Config(
+            app=ui_app, host=host, port=ui_port, log_level="warning", lifespan="on"
+        )
+        ui_server = uvicorn.Server(ui_config)
+        servers.append(ui_server)
+
+    def _sigint(_sig, _frame):
+        for s in servers:
+            s.should_exit = True
+
+    signal.signal(signal.SIGINT, _sigint)
+
+    # Run all-but-first uvicorns in background threads; the first one in the
+    # main thread so Ctrl+C propagates naturally. (uvicorn.Server.run() installs
+    # its own handlers, but our earlier signal.signal() wins since it's set on
+    # the main thread last.)
+    for s in servers[1:]:
+        t = threading.Thread(target=s.run, name=f"uvicorn-{id(s)}", daemon=True)
+        t.start()
+        threads.append(t)
+
+    try:
+        servers[0].run()
+    finally:
+        for s in servers:
+            s.should_exit = True
+        for t in threads:
+            t.join(timeout=10)
+        if advertiser is not None:
+            advertiser.stop()
+        db.close()
+        dd.release_lock()
+
+
+# ---------- ui (standalone UI over a local repo) ----------------------------
+
+
+@main.command("ui")
+@click.option("--host", default="127.0.0.1", show_default=True)
+@click.option("--port", default=4301, show_default=True, type=int)
+@click.option(
+    "--repo",
+    default=None,
+    type=click.Path(dir_okay=True, file_okay=False, path_type=Path),
+    help="Path to the .cairn/ directory. Default: ./.cairn.",
+)
+@click.option(
+    "--open-browser",
+    is_flag=True,
+    help="Open the UI in a browser tab after startup (off by default).",
+)
+def ui_cmd(
+    host: str, port: int, repo: Path | None, open_browser: bool
+) -> None:
+    """Serve the Cairn viewer over a local repo (no tracking server).
+
+    Use this after ``cairn init`` + a local ``Run(repo=...)`` session to
+    browse the results. If a tracking server is already running against the
+    same repo, point your browser at its UI port instead (this command will
+    error to prevent double-writer corruption).
+    """
+    import uvicorn
+
+    repo = _ensure_repo(repo or _default_repo())
+    dd = DataDir(repo)
+    try:
+        dd.acquire_lock("ui")
+    except RepoLockedError as exc:
+        holder = exc.holder
+        if holder.get("mode") == "server":
+            click.echo(
+                "ERROR: A `cairn server` is already running on this repo. "
+                "Open its UI URL in your browser instead of starting another one.",
+                err=True,
+            )
+        else:
+            click.echo(f"ERROR: {exc}", err=True)
+        sys.exit(1)
+
+    db = Database.open(dd.db_path)
+    blobs = BlobStore(dd.artifacts_dir)
+    app = create_app(db=db, blobs=blobs, data_dir_obj=dd, mount_ui=True)
+
+    click.echo(
+        f"\n  Cairn UI:\n"
         f"    Local:   http://localhost:{port}\n"
-        f"    Network: http://{lan}:{port}\n"
-        f"  Data directory: {dd.root}\n"
+        f"  Repo: {dd.root}\n"
         f"  Press Ctrl+C to stop.\n"
     )
-    click.echo(banner)
-    if not no_browser and host in ("0.0.0.0", "127.0.0.1", "localhost"):
+    if open_browser and host in ("0.0.0.0", "127.0.0.1", "localhost"):
         try:
             webbrowser.open(f"http://localhost:{port}/")
         except Exception:  # noqa: BLE001
             pass
 
     uv_config = uvicorn.Config(
-        app=app,
-        host=host,
-        port=port,
-        log_level="info",
-        lifespan="on",
+        app=app, host=host, port=port, log_level="info", lifespan="on"
     )
     uv_server = uvicorn.Server(uv_config)
 
@@ -151,9 +326,8 @@ def server_cmd(
     try:
         uv_server.run()
     finally:
-        if advertiser is not None:
-            advertiser.stop()
-        dd.release_pid_lock()
+        db.close()
+        dd.release_lock()
 
 
 # ---------- client commands -------------------------------------------------
@@ -200,7 +374,6 @@ def list_cmd(
         if not runs:
             click.echo("(no runs)")
             return
-        # Simple tabular output.
         click.echo(
             f"{'RUN_ID':<14} {'STATUS':<10} {'PROJECT':<20} {'TASK':<24} NAME"
         )
@@ -277,7 +450,6 @@ def export_cmd(run_id: str, fmt: str, out: Path) -> None:
         if fmt == "json":
             out.write_text(json.dumps(payload, default=str, indent=2))
         else:
-            # Parquet: flatten all scalar points and write via DuckDB.
             import duckdb
 
             rows = []
@@ -292,7 +464,9 @@ def export_cmd(run_id: str, fmt: str, out: Path) -> None:
                         }
                     )
             con = duckdb.connect(":memory:")
-            con.execute("CREATE TABLE r (run_id VARCHAR, name VARCHAR, step BIGINT, value DOUBLE)")
+            con.execute(
+                "CREATE TABLE r (run_id VARCHAR, name VARCHAR, step BIGINT, value DOUBLE)"
+            )
             con.executemany(
                 "INSERT INTO r VALUES (?, ?, ?, ?)",
                 [(r["run_id"], r["name"], r["step"], r["value"]) for r in rows],
@@ -309,7 +483,6 @@ def sync_cmd() -> None:
     """Reconcile any spilled batches with the server."""
     t = _client()
     try:
-        # Walk all run dirs and replay each.
         spill = default_spill_dir()
         if not spill.exists():
             click.echo("no spill to sync")
@@ -326,7 +499,10 @@ def configure_cmd(server: str | None) -> None:
     """Write the config file with defaults."""
     existing = _config.load_config_file()
     if server is None:
-        server = click.prompt("Server URL", default=existing.get("server") or _config.DEFAULT_SERVER)
+        server = click.prompt(
+            "Server URL",
+            default=existing.get("server") or _config.DEFAULT_SERVER,
+        )
     existing["server"] = server
     _config.write_config_file(existing)
     click.echo(f"wrote {_config.config_file_path()}")

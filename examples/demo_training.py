@@ -6,19 +6,20 @@ you can click around the UI and confirm each card renders correctly.
 **Server mode** (two terminals)::
 
     # terminal 1
-    uv run cairn server --data-dir /tmp/cairn-demo --port 4300
+    uv run cairn server --repo /tmp/cairn-demo/.cairn
 
     # terminal 2
     CAIRN_SERVER=http://localhost:4300 uv run python examples/demo_training.py
 
-**Local mode** (one terminal, no server needed during logging)::
+    # browse http://localhost:4301/  (server spawns the UI automatically)
+
+**Local mode** (no tracking server)::
 
     uv run cairn init /tmp/cairn-demo
     CAIRN_REPO=/tmp/cairn-demo/.cairn uv run python examples/demo_training.py
-    # then serve the same repo to view:
-    uv run cairn server --data-dir /tmp/cairn-demo/.cairn --port 4300
+    uv run cairn ui --repo /tmp/cairn-demo/.cairn
 
-Then open http://localhost:4300/ in a browser.
+    # browse http://localhost:4301/
 """
 
 from __future__ import annotations
