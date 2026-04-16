@@ -424,13 +424,19 @@ export default function ScalarPlotCard({
     [series, settings.promotedSeries],
   );
 
+  type RightAxisDragMode = "pan" | "scale";
+
   const rightAxisDragRef = useRef<{
     key: string;
     pointerId: number;
+    mode: RightAxisDragMode;
     startY: number;
     startMin: number;
     startMax: number;
     axisHeightPx: number;
+    axisTopPx: number;
+    /** For "scale": data value under the cursor at pointerdown (fixed point). */
+    anchorData: number;
   } | null>(null);
 
   // We close over `updateSettings` and current `promotedSeries` lazily via a
@@ -441,18 +447,38 @@ export default function ScalarPlotCard({
   const promotedAxisStripWidth = 14; // px clickable gutter per promoted axis
 
   const onAxisStripPointerDown = useCallback(
-    (key: string, e: React.PointerEvent<SVGRectElement>, axisHeightPx: number) => {
+    (
+      key: string,
+      e: React.PointerEvent<SVGRectElement>,
+      axisHeightPx: number,
+      axisTopPx: number,
+    ) => {
       const cfg = settingsRef.current.promotedSeries[key];
       if (!cfg) return;
       e.stopPropagation();
       (e.currentTarget as SVGRectElement).setPointerCapture(e.pointerId);
+      // Convert cursor Y (viewport px) to data coordinate using the axis rect.
+      // Recharts renders axes with y growing upward, so a cursor near axisTopPx
+      // maps to `max`, and near (axisTopPx + axisHeightPx) maps to `min`.
+      const rect = (e.currentTarget as SVGRectElement)
+        .ownerSVGElement?.getBoundingClientRect();
+      const svgTop = rect?.top ?? 0;
+      const localY = e.clientY - svgTop; // y within the chart SVG
+      const fracFromTop = Math.max(
+        0,
+        Math.min(1, (localY - axisTopPx) / Math.max(1, axisHeightPx)),
+      );
+      const anchorData = cfg.max - fracFromTop * (cfg.max - cfg.min);
       rightAxisDragRef.current = {
         key,
         pointerId: e.pointerId,
+        mode: e.shiftKey ? "scale" : "pan",
         startY: e.clientY,
         startMin: cfg.min,
         startMax: cfg.max,
         axisHeightPx,
+        axisTopPx,
+        anchorData,
       };
     },
     [],
@@ -463,19 +489,34 @@ export default function ScalarPlotCard({
       const s = rightAxisDragRef.current;
       if (!s || s.pointerId !== e.pointerId) return;
       const dyPx = e.clientY - s.startY;
-      const range = s.startMax - s.startMin;
-      // Drag down (dy > 0) → series moves UP on screen → subtract from both.
-      // Pixel is top-down but Y axis is bottom-up, so dyPx>0 means pointer
-      // moved toward smaller y-values → shift domain upward.
-      const dyData = (dyPx / Math.max(1, s.axisHeightPx)) * range;
-      const next: PromotedSeriesConfig = {
-        min: s.startMin + dyData,
-        max: s.startMax + dyData,
-      };
+      if (s.mode === "pan") {
+        const range = s.startMax - s.startMin;
+        // Drag down (dy > 0) → series moves UP on screen → subtract from both.
+        // Pixel is top-down but Y axis is bottom-up, so dyPx>0 means pointer
+        // moved toward smaller y-values → shift domain upward.
+        const dyData = (dyPx / Math.max(1, s.axisHeightPx)) * range;
+        const next: PromotedSeriesConfig = {
+          min: s.startMin + dyData,
+          max: s.startMax + dyData,
+        };
+        updateSettings({
+          promotedSeries: {
+            ...settingsRef.current.promotedSeries,
+            [s.key]: next,
+          },
+        });
+        return;
+      }
+      // scale: anchor stays fixed; drag down expands, drag up compresses.
+      const factor = Math.exp(dyPx / Math.max(1, s.axisHeightPx));
+      const newMin = s.anchorData - (s.anchorData - s.startMin) * factor;
+      const newMax = s.anchorData + (s.startMax - s.anchorData) * factor;
+      if (!Number.isFinite(newMin) || !Number.isFinite(newMax)) return;
+      if (newMax - newMin <= 0) return;
       updateSettings({
         promotedSeries: {
           ...settingsRef.current.promotedSeries,
-          [s.key]: next,
+          [s.key]: { min: newMin, max: newMax },
         },
       });
     },
@@ -508,14 +549,14 @@ export default function ScalarPlotCard({
   const effectiveRef = useRef({ x: effectiveX, y: effectiveY });
   effectiveRef.current = { x: effectiveX, y: effectiveY };
 
-  // Wheel: zoom both X and default-Y around cursor's data coords.
+  // Wheel: alt+wheel zooms both X and Y around cursor's data coords. Plain
+  // wheel (no alt) is passed through so the page scrolls normally.
   useEffect(() => {
     const el = chartBoxRef.current;
     if (!el) return;
     const handler = (e: WheelEvent) => {
-      // Ignore wheel that originated on a promoted-axis strip (its pointer
-      // target will be an <svg> element inside the chart; we rely on the
-      // horizontal cursor position to decide).
+      // Only alt+wheel triggers zoom; otherwise let the page scroll.
+      if (!e.altKey) return;
       const rect = el.getBoundingClientRect();
       const plotLeft = rect.left + CHART_MARGIN.left + 46; // YAxis width ≈ 46
       const plotRight =
@@ -529,7 +570,7 @@ export default function ScalarPlotCard({
         e.clientY < plotTop ||
         e.clientY > plotBottom
       ) {
-        return; // let native scroll through when cursor is on axes/legend
+        return; // outside plot body — don't hijack scroll
       }
       e.preventDefault();
 
@@ -556,16 +597,50 @@ export default function ScalarPlotCard({
     return () => el.removeEventListener("wheel", handler);
   }, [updateSettings, promotedKeysOrdered.length]);
 
-  // Drag-pan across plot area.
+  // Plot-body gesture: either "pan" (Alt held at pointerdown) or "select"
+  // (rubber-band zoom, no modifier). Mode is latched at pointerdown.
+  type PlotDragMode = "pan" | "select";
+
   const plotDragRef = useRef<{
     pointerId: number;
-    startX: number;
-    startY: number;
-    startXDomain: [number, number];
-    startYDomain: [number, number];
+    mode: PlotDragMode;
+    startClientX: number;
+    startClientY: number;
+    /** Plot-rect in client (viewport) coords, cached at pointerdown. */
+    plotLeft: number;
+    plotTop: number;
     plotW: number;
     plotH: number;
+    startXDomain: [number, number];
+    startYDomain: [number, number];
   } | null>(null);
+
+  // Rubber-band selection rect (local coords relative to chartBoxRef).
+  const [selection, setSelection] = useState<
+    { x0: number; y0: number; x1: number; y1: number } | null
+  >(null);
+
+  // Track alt-key state so we can flip the cursor between crosshair (select)
+  // and move (pan). Listeners are on window so modifier changes reach us even
+  // when focus is elsewhere.
+  const [altDown, setAltDown] = useState(false);
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Alt") setAltDown(true);
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key === "Alt") setAltDown(false);
+    };
+    const onBlur = () => setAltDown(false);
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, []);
 
   const onChartPointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
@@ -586,16 +661,28 @@ export default function ScalarPlotCard({
       ) {
         return; // keep right-axis drag reachable & don't steal legend clicks
       }
+      // Only left mouse button (or primary touch/pen).
+      if (e.button !== 0) return;
       (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+      const mode: PlotDragMode = e.altKey ? "pan" : "select";
       plotDragRef.current = {
         pointerId: e.pointerId,
-        startX: e.clientX,
-        startY: e.clientY,
-        startXDomain: effectiveRef.current.x,
-        startYDomain: effectiveRef.current.y,
+        mode,
+        startClientX: e.clientX,
+        startClientY: e.clientY,
+        plotLeft,
+        plotTop,
         plotW: Math.max(1, plotRight - plotLeft),
         plotH: Math.max(1, plotBottom - plotTop),
+        startXDomain: effectiveRef.current.x,
+        startYDomain: effectiveRef.current.y,
       };
+      if (mode === "select") {
+        // Local-rect coords (relative to chartBoxRef) for the overlay div.
+        const localX = e.clientX - rect.left;
+        const localY = e.clientY - rect.top;
+        setSelection({ x0: localX, y0: localY, x1: localX, y1: localY });
+      }
     },
     [promotedKeysOrdered.length],
   );
@@ -604,21 +691,33 @@ export default function ScalarPlotCard({
     (e: React.PointerEvent<HTMLDivElement>) => {
       const s = plotDragRef.current;
       if (!s || s.pointerId !== e.pointerId) return;
-      const dxPx = e.clientX - s.startX;
-      const dyPx = e.clientY - s.startY;
-      const [x0, x1] = s.startXDomain;
-      const [y0, y1] = s.startYDomain;
-      const dxData = (dxPx / s.plotW) * (x1 - x0);
-      const dyData = (dyPx / s.plotH) * (y1 - y0);
-      updateSettings({
-        viewport: {
-          xMin: x0 - dxData,
-          xMax: x1 - dxData,
-          // pixel y grows downward; axis y grows upward → add dyData to shift up
-          yMin: y0 + dyData,
-          yMax: y1 + dyData,
-        },
-      });
+      if (s.mode === "pan") {
+        const dxPx = e.clientX - s.startClientX;
+        const dyPx = e.clientY - s.startClientY;
+        const [x0, x1] = s.startXDomain;
+        const [y0, y1] = s.startYDomain;
+        const dxData = (dxPx / s.plotW) * (x1 - x0);
+        const dyData = (dyPx / s.plotH) * (y1 - y0);
+        updateSettings({
+          viewport: {
+            xMin: x0 - dxData,
+            xMax: x1 - dxData,
+            // pixel y grows downward; axis y grows upward → add dyData to shift up
+            yMin: y0 + dyData,
+            yMax: y1 + dyData,
+          },
+        });
+        return;
+      }
+      // select: update rubber-band rect.
+      const el = chartBoxRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const localX = e.clientX - rect.left;
+      const localY = e.clientY - rect.top;
+      setSelection((prev) =>
+        prev === null ? prev : { ...prev, x1: localX, y1: localY },
+      );
     },
     [updateSettings],
   );
@@ -632,9 +731,52 @@ export default function ScalarPlotCard({
       } catch {
         /* ignore */
       }
+      // Finalize based on latched mode.
+      if (s.mode === "select") {
+        const wPx = Math.abs(e.clientX - s.startClientX);
+        const hPx = Math.abs(e.clientY - s.startClientY);
+        if (wPx >= 6 && hPx >= 6) {
+          // Convert the two client-space corners to data coords using the same
+          // linear map the wheel handler uses.
+          const x0c = Math.min(s.startClientX, e.clientX);
+          const x1c = Math.max(s.startClientX, e.clientX);
+          const y0c = Math.min(s.startClientY, e.clientY);
+          const y1c = Math.max(s.startClientY, e.clientY);
+          const fxLo = (x0c - s.plotLeft) / s.plotW;
+          const fxHi = (x1c - s.plotLeft) / s.plotW;
+          // Pixel Y grows downward; plot bottom = low data, top = high data.
+          const plotBottom = s.plotTop + s.plotH;
+          const fyLo = (plotBottom - y1c) / s.plotH;
+          const fyHi = (plotBottom - y0c) / s.plotH;
+          const [xa, xb] = s.startXDomain;
+          const [ya, yb] = s.startYDomain;
+          const xMinNew = xa + fxLo * (xb - xa);
+          const xMaxNew = xa + fxHi * (xb - xa);
+          const yMinNew = ya + fyLo * (yb - ya);
+          const yMaxNew = ya + fyHi * (yb - ya);
+          if (
+            Number.isFinite(xMinNew) &&
+            Number.isFinite(xMaxNew) &&
+            Number.isFinite(yMinNew) &&
+            Number.isFinite(yMaxNew) &&
+            xMaxNew > xMinNew &&
+            yMaxNew > yMinNew
+          ) {
+            updateSettings({
+              viewport: {
+                xMin: xMinNew,
+                xMax: xMaxNew,
+                yMin: yMinNew,
+                yMax: yMaxNew,
+              },
+            });
+          }
+        }
+        setSelection(null);
+      }
       plotDragRef.current = null;
     },
-    [],
+    [updateSettings],
   );
 
   // -------------------------------------------------------------------------
@@ -777,8 +919,12 @@ export default function ScalarPlotCard({
       ) : (
         <div
           ref={chartBoxRef}
-          className="h-48"
-          style={{ touchAction: "none", cursor: "crosshair" }}
+          className="h-48 relative"
+          style={{
+            touchAction: "none",
+            cursor: altDown ? "move" : "crosshair",
+          }}
+          aria-label="Scalar plot. Drag to box-zoom. Alt+drag to pan. Alt+wheel to zoom. Drag the right axis to pan; Shift+drag to rescale."
           onPointerDown={onChartPointerDown}
           onPointerMove={onChartPointerMove}
           onPointerUp={onChartPointerUp}
@@ -911,7 +1057,7 @@ export default function ScalarPlotCard({
                                 touchAction: "none",
                               }}
                               onPointerDown={(e) =>
-                                onAxisStripPointerDown(key, e, height)
+                                onAxisStripPointerDown(key, e, height, top)
                               }
                               onPointerMove={onAxisStripPointerMove}
                               onPointerUp={onAxisStripPointerUp}
@@ -926,6 +1072,21 @@ export default function ScalarPlotCard({
               />
             </LineChart>
           </ResponsiveContainer>
+          {selection && (
+            <div
+              aria-hidden="true"
+              style={{
+                position: "absolute",
+                left: Math.min(selection.x0, selection.x1),
+                top: Math.min(selection.y0, selection.y1),
+                width: Math.abs(selection.x1 - selection.x0),
+                height: Math.abs(selection.y1 - selection.y0),
+                border: "1px solid #539bf5",
+                background: "rgba(83, 155, 245, 0.12)",
+                pointerEvents: "none",
+              }}
+            />
+          )}
         </div>
       )}
 
