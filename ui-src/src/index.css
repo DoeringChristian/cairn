@@ -33,3 +33,20 @@
     @apply mono rounded border border-border bg-bg px-1.5 py-0.5 text-xs;
   }
 }
+
+/* Drag-and-drop reordering: reveal the grip icon on card hover, switch cursor.
+ * The grip lives inside CardHeader; the `.cairn-draggable-card` class is
+ * added by DraggableCard to the outer wrapper. Only apply these affordances
+ * on devices that can hover (desktop), so mobile users aren't distracted by
+ * unreachable UI. */
+@media (hover: hover) {
+  .cairn-draggable-card .cairn-drag-grip {
+    cursor: grab;
+  }
+  .cairn-draggable-card:hover .cairn-drag-grip {
+    opacity: 1;
+  }
+  .cairn-draggable-card:active .cairn-drag-grip {
+    cursor: grabbing;
+  }
+}
