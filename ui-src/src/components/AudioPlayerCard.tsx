@@ -1,7 +1,11 @@
-import { useState, useMemo } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useSequence } from "../api/hooks";
 import { api } from "../api/client";
 import { safeJsonParse } from "../lib/format";
+import { useCardSettings } from "../lib/card-settings";
+import CardHeader from "./CardHeader";
+import SettingsPopover from "./SettingsPopover";
+import Toggle from "./settings/Toggle";
 import type { SequenceMeta } from "../api/types";
 
 interface Props {
@@ -16,6 +20,13 @@ interface AudioMeta {
   peaks: number[];
   num_samples: number;
 }
+
+interface AudioSettings {
+  version: 1;
+  autoplay: boolean;
+}
+
+const DEFAULT_AUDIO_SETTINGS: AudioSettings = { version: 1, autoplay: false };
 
 const ACCENT = "#539bf5";
 
@@ -75,16 +86,38 @@ export default function AudioPlayerCard({ runId, metric }: Props) {
     [current],
   );
 
+  const [settings, updateSettings, resetSettings] = useCardSettings<AudioSettings>(
+    {
+      runId,
+      metricName: metric.name,
+      contextHash: metric.context_hash,
+    },
+    DEFAULT_AUDIO_SETTINGS,
+  );
+
+  const settingsBtnRef = useRef<HTMLButtonElement | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  const subtitle =
+    points.length > 0
+      ? `step ${current?.step ?? "—"} of ${points.length}`
+      : `${metric.count} pts`;
+
   return (
     <div className="card p-4">
-      <div className="mb-2 flex items-baseline justify-between gap-2">
-        <h3 className="mono text-sm font-semibold">{metric.name}</h3>
-        <span className="text-xs text-fg-subtle">
-          {points.length > 0
-            ? `step ${current?.step ?? "—"} of ${points.length}`
-            : `${metric.count} pts`}
-        </span>
-      </div>
+      <CardHeader title={metric.name} subtitle={subtitle}>
+        <button
+          ref={settingsBtnRef}
+          type="button"
+          aria-label="Card settings"
+          aria-haspopup="dialog"
+          aria-expanded={settingsOpen}
+          onClick={() => setSettingsOpen((v) => !v)}
+          className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
+        >
+          ⚙
+        </button>
+      </CardHeader>
       {q.isLoading ? (
         <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
       ) : current?.artifact_hash ? (
@@ -98,6 +131,7 @@ export default function AudioPlayerCard({ runId, metric }: Props) {
             <audio
               key={current.artifact_hash}
               controls
+              autoPlay={settings.autoplay}
               src={api.artifactUrl(current.artifact_hash)}
               className="mt-2 w-full"
             />
@@ -127,6 +161,26 @@ export default function AudioPlayerCard({ runId, metric }: Props) {
       ) : (
         <div className="text-sm text-fg-muted">no audio logged yet</div>
       )}
+      <SettingsPopover
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        anchorRef={settingsBtnRef}
+        title="Audio"
+      >
+        <Toggle
+          label="Autoplay"
+          checked={settings.autoplay}
+          onChange={(v) => updateSettings({ autoplay: v })}
+          description="Play the clip automatically when the card loads"
+        />
+        <button
+          type="button"
+          onClick={() => resetSettings()}
+          className="btn w-full mt-2"
+        >
+          Reset to defaults
+        </button>
+      </SettingsPopover>
     </div>
   );
 }

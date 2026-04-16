@@ -1,5 +1,15 @@
 import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import type { CSSProperties } from "react";
+import { useQueries } from "@tanstack/react-query";
+import {
   CartesianGrid,
+  Customized,
   Legend,
   Line,
   LineChart,
@@ -8,8 +18,123 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { useSequence } from "../api/hooks";
-import type { SequenceMeta } from "../api/types";
+import { api } from "../api/client";
+import { useRun } from "../api/hooks";
+import { useCardSettings } from "../lib/card-settings";
+import type {
+  SequenceMeta,
+  SequencePoint,
+  SequenceResponse,
+} from "../api/types";
+import CardHeader from "./CardHeader";
+import SettingsPopover from "./SettingsPopover";
+import MetricChips from "./settings/MetricChips";
+import NumberInput from "./settings/NumberInput";
+import Select from "./settings/Select";
+import Slider from "./settings/Slider";
+import Toggle from "./settings/Toggle";
+
+// -----------------------------------------------------------------------------
+// Settings shape
+// -----------------------------------------------------------------------------
+
+type AxisSource = "step" | "relative_time" | "wall_time";
+type AxisScale = "linear" | "log";
+
+interface PromotedSeriesConfig {
+  min: number;
+  max: number;
+}
+
+interface ScalarSettings {
+  version: 1;
+  metrics: Array<{ name: string; context_hash: string }>;
+  xAxis: AxisSource;
+  xScale: AxisScale;
+  yScale: AxisScale;
+  xRange: [number | null, number | null];
+  yRange: [number | null, number | null];
+  smoothing: number;
+  outlierPct: [number, number];
+  showLegend: boolean;
+  tooltip: { showContext: boolean; showWallTime: boolean };
+  promotedSeries: Record<string, PromotedSeriesConfig>;
+  viewport: {
+    xMin: number | null;
+    xMax: number | null;
+    yMin: number | null;
+    yMax: number | null;
+  };
+}
+
+const DEFAULT_SCALAR_SETTINGS = (seed: {
+  name: string;
+  context_hash: string;
+}): ScalarSettings => ({
+  version: 1,
+  metrics: [seed],
+  xAxis: "step",
+  xScale: "linear",
+  yScale: "linear",
+  xRange: [null, null],
+  yRange: [null, null],
+  smoothing: 0,
+  outlierPct: [0, 100],
+  showLegend: true,
+  tooltip: { showContext: true, showWallTime: true },
+  promotedSeries: {},
+  viewport: { xMin: null, xMax: null, yMin: null, yMax: null },
+});
+
+// -----------------------------------------------------------------------------
+// Palette & helpers
+// -----------------------------------------------------------------------------
+
+const SERIES_COLORS = [
+  "#539bf5",
+  "#d29922",
+  "#3fb950",
+  "#f85149",
+  "#c678dd",
+  "#56d4dd",
+];
+
+function seriesKey(m: { name: string; context_hash: string }): string {
+  return `${m.name}::${m.context_hash}`;
+}
+
+function seriesLabel(name: string, contextHash: string): string {
+  if (!contextHash) return name;
+  return `${name} ${contextHash.slice(0, 6)}`;
+}
+
+function percentile(sorted: number[], p: number): number {
+  if (sorted.length === 0) return 0;
+  if (p <= 0) return sorted[0]!;
+  if (p >= 100) return sorted[sorted.length - 1]!;
+  const rank = (p / 100) * (sorted.length - 1);
+  const lo = Math.floor(rank);
+  const hi = Math.ceil(rank);
+  if (lo === hi) return sorted[lo]!;
+  const frac = rank - lo;
+  return sorted[lo]! * (1 - frac) + sorted[hi]! * frac;
+}
+
+function defaultsEqual(a: ScalarSettings, b: ScalarSettings): boolean {
+  // Intentionally compares the working settings object to the per-card defaults
+  // to decide whether to show the "reset all" icon.
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function viewportIsAuto(v: ScalarSettings["viewport"]): boolean {
+  return (
+    v.xMin === null && v.xMax === null && v.yMin === null && v.yMax === null
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Component
+// -----------------------------------------------------------------------------
 
 interface Props {
   runId: string;
@@ -18,54 +143,701 @@ interface Props {
   extraContexts?: SequenceMeta[];
 }
 
-const SERIES_COLORS = ["#539bf5", "#d29922", "#3fb950", "#f85149", "#c678dd", "#56d4dd"];
+// Chart margins; used both by Recharts and by our wheel/drag px→data math.
+const CHART_MARGIN = { top: 4, right: 8, left: 0, bottom: 4 } as const;
 
-export default function ScalarPlotCard({ runId, metric, extraContexts = [] }: Props) {
-  const series = [metric, ...extraContexts];
-  const queries = series.map((s) =>
-    useSequence(runId, s.name, {
-      context: s.context_hash || undefined,
-      maxPoints: 2000,
-    }),
+export default function ScalarPlotCard({
+  runId,
+  metric,
+  extraContexts = [],
+}: Props) {
+  const seedMetric = useMemo(
+    () => ({ name: metric.name, context_hash: metric.context_hash }),
+    [metric.name, metric.context_hash],
   );
-  // Merge into a single chart data array: { step, <seriesKey>: value, ... }
-  type Row = { step: number } & Record<string, number | null>;
-  const dataByStep = new Map<number, Row>();
-  queries.forEach((q, idx) => {
-    const s = series[idx]!;
-    const key = seriesLabel(s);
-    if (!q.data) return;
-    for (const p of q.data.points) {
-      const row: Row = dataByStep.get(p.step) ?? { step: p.step };
-      row[key] = p.scalar_value;
-      dataByStep.set(p.step, row);
-    }
-  });
-  const data = Array.from(dataByStep.values()).sort((a, b) => a.step - b.step);
-  const anyLoading = queries.some((q) => q.isLoading);
 
+  const defaults = useMemo<ScalarSettings>(() => {
+    const all = [
+      seedMetric,
+      ...(extraContexts ?? []).map((e) => ({
+        name: e.name,
+        context_hash: e.context_hash,
+      })),
+    ];
+    const seen = new Set<string>();
+    const unique = all.filter((m) => {
+      const k = seriesKey(m);
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+    return { ...DEFAULT_SCALAR_SETTINGS(seedMetric), metrics: unique };
+  }, [seedMetric, extraContexts]);
+
+  const settingsKey = useMemo(
+    () => ({
+      runId,
+      metricName: metric.name,
+      contextHash: metric.context_hash,
+    }),
+    [runId, metric.name, metric.context_hash],
+  );
+
+  const [settings, updateSettings, resetSettings] = useCardSettings(
+    settingsKey,
+    defaults,
+  );
+
+  // -------------------------------------------------------------------------
+  // Run meta — needed for `relative_time` x-axis anchor.
+  // -------------------------------------------------------------------------
+  const runQuery = useRun(runId);
+  const runCreatedAtMs = useMemo(() => {
+    const raw = runQuery.data?.run.created_at;
+    if (!raw) return null;
+    const t = new Date(raw).getTime();
+    return Number.isFinite(t) ? t : null;
+  }, [runQuery.data]);
+
+  // -------------------------------------------------------------------------
+  // Data fetch — one query per metric, variable length.
+  // -------------------------------------------------------------------------
+  const queries = useQueries({
+    queries: settings.metrics.map((m) => ({
+      queryKey: ["sequence", runId, m.name, m.context_hash],
+      queryFn: () =>
+        api.sequence(runId, m.name, {
+          context: m.context_hash || undefined,
+          maxPoints: 2000,
+        }),
+      refetchInterval: 2_000,
+      staleTime: 2_000,
+    })),
+  });
+
+  // -------------------------------------------------------------------------
+  // Build series + merged data, applying x-axis source, smoothing, outliers.
+  // -------------------------------------------------------------------------
+  type Series = {
+    key: string;
+    label: string;
+    color: string;
+    points: Array<{ x: number; y: number; wall_time: string; context: string | null }>;
+  };
+
+  const { series, data, isLoading } = useMemo(() => {
+    const anyLoading = queries.some((q) => q.isLoading);
+
+    const built: Series[] = settings.metrics.map((m, idx) => {
+      const key = seriesKey(m);
+      const resp = queries[idx]?.data as SequenceResponse | undefined;
+      const raw: SequencePoint[] = resp?.points ?? [];
+
+      // Map to (x, y) based on the current x-axis source.
+      const mapped: Array<{
+        x: number;
+        y: number;
+        wall_time: string;
+        context: string | null;
+      }> = [];
+      for (const p of raw) {
+        if (p.scalar_value == null) continue;
+        let x: number;
+        if (settings.xAxis === "step") {
+          x = p.step;
+        } else if (settings.xAxis === "wall_time") {
+          const t = new Date(p.wall_time).getTime();
+          if (!Number.isFinite(t)) continue;
+          x = t;
+        } else {
+          // relative_time
+          if (runCreatedAtMs == null) continue;
+          const t = new Date(p.wall_time).getTime();
+          if (!Number.isFinite(t)) continue;
+          x = (t - runCreatedAtMs) / 1000;
+        }
+        mapped.push({
+          x,
+          y: p.scalar_value,
+          wall_time: p.wall_time,
+          context: p.context,
+        });
+      }
+      mapped.sort((a, b) => a.x - b.x);
+
+      // Smoothing (EMA) — lower alpha = less smoothing. Spec uses α as the
+      // weight on the *previous* value, so: y[i] = α·prev + (1−α)·raw[i].
+      if (settings.smoothing > 0 && mapped.length > 0) {
+        const alpha = settings.smoothing;
+        let prev = mapped[0]!.y;
+        for (let i = 0; i < mapped.length; i++) {
+          const cur = mapped[i]!.y;
+          const sm = alpha * prev + (1 - alpha) * cur;
+          mapped[i] = { ...mapped[i]!, y: sm };
+          prev = sm;
+        }
+      }
+
+      // Outlier clamp by percentile over this series' y values.
+      let filtered = mapped;
+      const [pLo, pHi] = settings.outlierPct;
+      if ((pLo > 0 || pHi < 100) && mapped.length > 1) {
+        const ys = mapped.map((p) => p.y).slice().sort((a, b) => a - b);
+        const yLo = percentile(ys, pLo);
+        const yHi = percentile(ys, pHi);
+        filtered = mapped.filter((p) => p.y >= yLo && p.y <= yHi);
+      }
+
+      return {
+        key,
+        label: seriesLabel(m.name, m.context_hash),
+        color: SERIES_COLORS[idx % SERIES_COLORS.length]!,
+        points: filtered,
+      };
+    });
+
+    // Merge into a single row-per-x dataset. Missing series at a given x → null
+    // (Recharts' connectNulls keeps the line continuous).
+    type Row = { x: number } & Record<string, number | null | string>;
+    const byX = new Map<number, Row>();
+    for (const s of built) {
+      for (const p of s.points) {
+        const row = byX.get(p.x) ?? ({ x: p.x } as Row);
+        row[s.key] = p.y;
+        // Stash raw metadata for the tooltip; overwrite with latest per series.
+        row[`${s.key}__wall`] = p.wall_time;
+        if (p.context != null) row[`${s.key}__ctx`] = p.context;
+        byX.set(p.x, row);
+      }
+    }
+    const rows = Array.from(byX.values()).sort((a, b) => a.x - b.x);
+
+    return { series: built, data: rows, isLoading: anyLoading };
+    // queries is new object every render; depend on stable bits.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    settings.metrics,
+    settings.xAxis,
+    settings.smoothing,
+    settings.outlierPct[0],
+    settings.outlierPct[1],
+    runCreatedAtMs,
+    // react-query data identity changes on refetch which is what we want:
+    queries.map((q) => q.dataUpdatedAt).join("|"),
+  ]);
+
+  // -------------------------------------------------------------------------
+  // Domain resolution — axis ranges + viewport take precedence over auto.
+  // -------------------------------------------------------------------------
+  type DomainTuple = [number | string, number | string];
+
+  const resolveAxisDomain = (
+    rangeLo: number | null,
+    rangeHi: number | null,
+    vpLo: number | null,
+    vpHi: number | null,
+    scale: AxisScale,
+  ): DomainTuple => {
+    // Viewport (from zoom/pan) wins over `xRange`/`yRange` hard limits which
+    // win over auto. In log scale, auto becomes "auto" which lets d3 pick a
+    // safe positive domain.
+    const lo = vpLo ?? rangeLo;
+    const hi = vpHi ?? rangeHi;
+    const autoLo: number | string = scale === "log" ? "auto" : "dataMin";
+    const autoHi: number | string = scale === "log" ? "auto" : "dataMax";
+    return [lo ?? autoLo, hi ?? autoHi];
+  };
+
+  const xDomain = resolveAxisDomain(
+    settings.xRange[0],
+    settings.xRange[1],
+    settings.viewport.xMin,
+    settings.viewport.xMax,
+    settings.xScale,
+  );
+  const yDomain = resolveAxisDomain(
+    settings.yRange[0],
+    settings.yRange[1],
+    settings.viewport.yMin,
+    settings.viewport.yMax,
+    settings.yScale,
+  );
+
+  // For pan/zoom we need numeric domain endpoints. Fall back to data extents
+  // when the axis is auto.
+  const dataXs = useMemo(() => {
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const s of series) {
+      for (const p of s.points) {
+        if (p.x < lo) lo = p.x;
+        if (p.x > hi) hi = p.x;
+      }
+    }
+    if (!Number.isFinite(lo) || !Number.isFinite(hi)) return [0, 1] as const;
+    if (lo === hi) return [lo - 0.5, hi + 0.5] as const;
+    return [lo, hi] as const;
+  }, [series]);
+
+  const dataYs = useMemo(() => {
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const s of series) {
+      // Exclude promoted series — they render on their own axis.
+      if (settings.promotedSeries[s.key]) continue;
+      for (const p of s.points) {
+        if (p.y < lo) lo = p.y;
+        if (p.y > hi) hi = p.y;
+      }
+    }
+    if (!Number.isFinite(lo) || !Number.isFinite(hi)) return [0, 1] as const;
+    if (lo === hi) return [lo - 0.5, hi + 0.5] as const;
+    return [lo, hi] as const;
+  }, [series, settings.promotedSeries]);
+
+  const effectiveX: [number, number] = [
+    typeof xDomain[0] === "number" ? xDomain[0] : dataXs[0],
+    typeof xDomain[1] === "number" ? xDomain[1] : dataXs[1],
+  ];
+  const effectiveY: [number, number] = [
+    typeof yDomain[0] === "number" ? yDomain[0] : dataYs[0],
+    typeof yDomain[1] === "number" ? yDomain[1] : dataYs[1],
+  ];
+
+  // -------------------------------------------------------------------------
+  // Promoted right-axis drag-to-pan.
+  //
+  // Approach: we inject transparent SVG `<rect>` strips via Recharts'
+  // `<Customized>` component. Each promoted series gets one strip positioned
+  // flush against the right edge of the plot area, offset horizontally by its
+  // index so that strips don't stack (they'd steal each other's pointer
+  // events). Strips receive pointerdown/move/up; we convert pixel deltas into
+  // data-unit shifts and update `promotedSeries[key] = { min, max }`.
+  //
+  // Why overlay instead of DOM-sniffing the rendered axis <g>? Recharts does
+  // not reliably tag axis groups with `data-yaxis-id`, and attaching to the
+  // ticks region is brittle across versions. The overlay is layout-aware
+  // (Customized receives the chart's `offset`) and survives re-renders.
+  // -------------------------------------------------------------------------
+  const promotedKeysOrdered = useMemo(
+    () => series.map((s) => s.key).filter((k) => settings.promotedSeries[k]),
+    [series, settings.promotedSeries],
+  );
+
+  const rightAxisDragRef = useRef<{
+    key: string;
+    pointerId: number;
+    startY: number;
+    startMin: number;
+    startMax: number;
+    axisHeightPx: number;
+  } | null>(null);
+
+  // We close over `updateSettings` and current `promotedSeries` lazily via a
+  // ref so the SVG rect handlers always see fresh values.
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+
+  const promotedAxisStripWidth = 14; // px clickable gutter per promoted axis
+
+  const onAxisStripPointerDown = useCallback(
+    (key: string, e: React.PointerEvent<SVGRectElement>, axisHeightPx: number) => {
+      const cfg = settingsRef.current.promotedSeries[key];
+      if (!cfg) return;
+      e.stopPropagation();
+      (e.currentTarget as SVGRectElement).setPointerCapture(e.pointerId);
+      rightAxisDragRef.current = {
+        key,
+        pointerId: e.pointerId,
+        startY: e.clientY,
+        startMin: cfg.min,
+        startMax: cfg.max,
+        axisHeightPx,
+      };
+    },
+    [],
+  );
+
+  const onAxisStripPointerMove = useCallback(
+    (e: React.PointerEvent<SVGRectElement>) => {
+      const s = rightAxisDragRef.current;
+      if (!s || s.pointerId !== e.pointerId) return;
+      const dyPx = e.clientY - s.startY;
+      const range = s.startMax - s.startMin;
+      // Drag down (dy > 0) → series moves UP on screen → subtract from both.
+      // Pixel is top-down but Y axis is bottom-up, so dyPx>0 means pointer
+      // moved toward smaller y-values → shift domain upward.
+      const dyData = (dyPx / Math.max(1, s.axisHeightPx)) * range;
+      const next: PromotedSeriesConfig = {
+        min: s.startMin + dyData,
+        max: s.startMax + dyData,
+      };
+      updateSettings({
+        promotedSeries: {
+          ...settingsRef.current.promotedSeries,
+          [s.key]: next,
+        },
+      });
+    },
+    [updateSettings],
+  );
+
+  const onAxisStripPointerUp = useCallback(
+    (e: React.PointerEvent<SVGRectElement>) => {
+      const s = rightAxisDragRef.current;
+      if (!s || s.pointerId !== e.pointerId) return;
+      try {
+        (e.currentTarget as SVGRectElement).releasePointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+      rightAxisDragRef.current = null;
+    },
+    [],
+  );
+
+  // -------------------------------------------------------------------------
+  // Plot-area wheel-zoom + drag-pan.
+  //
+  // We attach native (non-passive) listeners to the chart container <div> so
+  // `e.preventDefault()` in wheel actually inhibits page scroll. Pointer
+  // handlers are React synthetic — pan uses pointer capture on the container.
+  // -------------------------------------------------------------------------
+  const chartBoxRef = useRef<HTMLDivElement | null>(null);
+
+  const effectiveRef = useRef({ x: effectiveX, y: effectiveY });
+  effectiveRef.current = { x: effectiveX, y: effectiveY };
+
+  // Wheel: zoom both X and default-Y around cursor's data coords.
+  useEffect(() => {
+    const el = chartBoxRef.current;
+    if (!el) return;
+    const handler = (e: WheelEvent) => {
+      // Ignore wheel that originated on a promoted-axis strip (its pointer
+      // target will be an <svg> element inside the chart; we rely on the
+      // horizontal cursor position to decide).
+      const rect = el.getBoundingClientRect();
+      const plotLeft = rect.left + CHART_MARGIN.left + 46; // YAxis width ≈ 46
+      const plotRight =
+        rect.right - CHART_MARGIN.right -
+        promotedKeysOrdered.length * promotedAxisStripWidth;
+      const plotTop = rect.top + CHART_MARGIN.top;
+      const plotBottom = rect.bottom - CHART_MARGIN.bottom - 20; // XAxis height
+      if (
+        e.clientX < plotLeft ||
+        e.clientX > plotRight ||
+        e.clientY < plotTop ||
+        e.clientY > plotBottom
+      ) {
+        return; // let native scroll through when cursor is on axes/legend
+      }
+      e.preventDefault();
+
+      const factor = e.deltaY < 0 ? 1 / 1.1 : 1.1; // wheel up → zoom in
+      const { x, y } = effectiveRef.current;
+      const fx = (e.clientX - plotLeft) / Math.max(1, plotRight - plotLeft);
+      const fy = (plotBottom - e.clientY) / Math.max(1, plotBottom - plotTop);
+      const ax = x[0] + fx * (x[1] - x[0]);
+      const ay = y[0] + fy * (y[1] - y[0]);
+      const newXMin = ax - (ax - x[0]) * factor;
+      const newXMax = ax + (x[1] - ax) * factor;
+      const newYMin = ay - (ay - y[0]) * factor;
+      const newYMax = ay + (y[1] - ay) * factor;
+      updateSettings({
+        viewport: {
+          xMin: newXMin,
+          xMax: newXMax,
+          yMin: newYMin,
+          yMax: newYMax,
+        },
+      });
+    };
+    el.addEventListener("wheel", handler, { passive: false });
+    return () => el.removeEventListener("wheel", handler);
+  }, [updateSettings, promotedKeysOrdered.length]);
+
+  // Drag-pan across plot area.
+  const plotDragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    startXDomain: [number, number];
+    startYDomain: [number, number];
+    plotW: number;
+    plotH: number;
+  } | null>(null);
+
+  const onChartPointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const el = chartBoxRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const plotLeft = rect.left + CHART_MARGIN.left + 46;
+      const plotRight =
+        rect.right - CHART_MARGIN.right -
+        promotedKeysOrdered.length * promotedAxisStripWidth;
+      const plotTop = rect.top + CHART_MARGIN.top;
+      const plotBottom = rect.bottom - CHART_MARGIN.bottom - 20;
+      if (
+        e.clientX < plotLeft ||
+        e.clientX > plotRight ||
+        e.clientY < plotTop ||
+        e.clientY > plotBottom
+      ) {
+        return; // keep right-axis drag reachable & don't steal legend clicks
+      }
+      (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+      plotDragRef.current = {
+        pointerId: e.pointerId,
+        startX: e.clientX,
+        startY: e.clientY,
+        startXDomain: effectiveRef.current.x,
+        startYDomain: effectiveRef.current.y,
+        plotW: Math.max(1, plotRight - plotLeft),
+        plotH: Math.max(1, plotBottom - plotTop),
+      };
+    },
+    [promotedKeysOrdered.length],
+  );
+
+  const onChartPointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const s = plotDragRef.current;
+      if (!s || s.pointerId !== e.pointerId) return;
+      const dxPx = e.clientX - s.startX;
+      const dyPx = e.clientY - s.startY;
+      const [x0, x1] = s.startXDomain;
+      const [y0, y1] = s.startYDomain;
+      const dxData = (dxPx / s.plotW) * (x1 - x0);
+      const dyData = (dyPx / s.plotH) * (y1 - y0);
+      updateSettings({
+        viewport: {
+          xMin: x0 - dxData,
+          xMax: x1 - dxData,
+          // pixel y grows downward; axis y grows upward → add dyData to shift up
+          yMin: y0 + dyData,
+          yMax: y1 + dyData,
+        },
+      });
+    },
+    [updateSettings],
+  );
+
+  const onChartPointerUp = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const s = plotDragRef.current;
+      if (!s || s.pointerId !== e.pointerId) return;
+      try {
+        (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+      plotDragRef.current = null;
+    },
+    [],
+  );
+
+  // -------------------------------------------------------------------------
+  // Viewport state flags.
+  // -------------------------------------------------------------------------
+  const viewportModified = !viewportIsAuto(settings.viewport);
+  const anySettingModified = !defaultsEqual(settings, defaults);
+
+  // -------------------------------------------------------------------------
+  // Toggle promote / demote for a series.
+  // -------------------------------------------------------------------------
+  const togglePromote = useCallback(
+    (key: string) => {
+      const existing = settingsRef.current.promotedSeries[key];
+      if (existing) {
+        const next = { ...settingsRef.current.promotedSeries };
+        delete next[key];
+        updateSettings({ promotedSeries: next });
+        return;
+      }
+      // Seed the promoted-axis domain with the series' current data range.
+      const s = series.find((x) => x.key === key);
+      if (!s || s.points.length === 0) {
+        updateSettings({
+          promotedSeries: {
+            ...settingsRef.current.promotedSeries,
+            [key]: { min: 0, max: 1 },
+          },
+        });
+        return;
+      }
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (const p of s.points) {
+        if (p.y < lo) lo = p.y;
+        if (p.y > hi) hi = p.y;
+      }
+      if (lo === hi) {
+        lo -= 0.5;
+        hi += 0.5;
+      }
+      updateSettings({
+        promotedSeries: {
+          ...settingsRef.current.promotedSeries,
+          [key]: { min: lo, max: hi },
+        },
+      });
+    },
+    [series, updateSettings],
+  );
+
+  // -------------------------------------------------------------------------
+  // Header quick-toggle buttons + settings anchor.
+  // -------------------------------------------------------------------------
+  const settingsBtnRef = useRef<HTMLButtonElement | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  const flipYScale = () =>
+    updateSettings({ yScale: settings.yScale === "log" ? "linear" : "log" });
+
+  const resetViewport = () =>
+    updateSettings({
+      viewport: { xMin: null, xMax: null, yMin: null, yMax: null },
+    });
+
+  const subtitle = `${series.length} ${series.length === 1 ? "series" : "series"}${
+    settings.metrics.length > 0 && queries[0]?.data
+      ? ` · ${queries[0].data.points.length} pts`
+      : ""
+  }`;
+
+  // -------------------------------------------------------------------------
+  // Render
+  // -------------------------------------------------------------------------
   return (
     <div className="card p-4">
-      <div className="mb-2 flex items-baseline justify-between gap-2">
-        <h3 className="mono text-sm font-semibold">{metric.name}</h3>
-        <span className="text-xs text-fg-subtle">{metric.count} pts</span>
-      </div>
-      {anyLoading && data.length === 0 ? (
+      <CardHeader title={metric.name} subtitle={subtitle}>
+        {settings.smoothing > 0 && (
+          <button
+            type="button"
+            onClick={() => setSettingsOpen((v) => !v)}
+            className="h-5 inline-flex items-center justify-center rounded px-1.5 text-[10px] text-accent hover:bg-bg-hover"
+            title="Smoothing active — click to open settings"
+          >
+            α={settings.smoothing.toFixed(2)}
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={flipYScale}
+          className={`h-5 inline-flex items-center justify-center rounded px-1.5 text-[10px] hover:bg-bg-hover ${
+            settings.yScale === "log"
+              ? "text-accent"
+              : "text-fg-muted hover:text-fg"
+          }`}
+          title={
+            settings.yScale === "log" ? "Y: log (click for linear)" : "Y: linear (click for log)"
+          }
+        >
+          {settings.yScale === "log" ? "lin" : "log"}
+        </button>
+        {viewportModified && (
+          <button
+            type="button"
+            onClick={resetViewport}
+            className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
+            aria-label="Reset view"
+            title="Reset view (zoom/pan)"
+          >
+            {"\u21BA"}
+          </button>
+        )}
+        {anySettingModified && (
+          <button
+            type="button"
+            onClick={() => resetSettings()}
+            className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
+            aria-label="Reset all settings"
+            title="Reset all settings"
+          >
+            {"\u27F2"}
+          </button>
+        )}
+        <button
+          ref={settingsBtnRef}
+          type="button"
+          onClick={() => setSettingsOpen((v) => !v)}
+          className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
+          aria-label="Plot settings"
+          aria-haspopup="dialog"
+          aria-expanded={settingsOpen}
+          title="Plot settings"
+        >
+          {"\u2699"}
+        </button>
+      </CardHeader>
+
+      {isLoading && data.length === 0 ? (
         <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
       ) : (
-        <div className="h-48">
+        <div
+          ref={chartBoxRef}
+          className="h-48"
+          style={{ touchAction: "none", cursor: "crosshair" }}
+          onPointerDown={onChartPointerDown}
+          onPointerMove={onChartPointerMove}
+          onPointerUp={onChartPointerUp}
+          onPointerCancel={onChartPointerUp}
+        >
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
+            <LineChart data={data} margin={CHART_MARGIN}>
               <CartesianGrid stroke="#30363d" strokeDasharray="2 4" />
               <XAxis
-                dataKey="step"
+                dataKey="x"
                 type="number"
-                domain={["dataMin", "dataMax"]}
+                scale={settings.xScale === "log" ? "log" : "linear"}
+                domain={xDomain as [number | string, number | string]}
+                allowDataOverflow
                 stroke="#8b949e"
                 fontSize={11}
+                tickFormatter={(v: number) => formatXTick(v, settings.xAxis)}
               />
-              <YAxis stroke="#8b949e" fontSize={11} width={46} />
+              <YAxis
+                yAxisId="__left__"
+                scale={settings.yScale === "log" ? "log" : "linear"}
+                domain={yDomain as [number | string, number | string]}
+                allowDataOverflow
+                stroke="#8b949e"
+                fontSize={11}
+                width={46}
+              />
+              {promotedKeysOrdered.map((key, i) => {
+                const s = series.find((x) => x.key === key);
+                const color = s?.color ?? "#8b949e";
+                const cfg = settings.promotedSeries[key]!;
+                return (
+                  <YAxis
+                    key={key}
+                    yAxisId={key}
+                    orientation="right"
+                    scale="linear"
+                    domain={[cfg.min, cfg.max]}
+                    allowDataOverflow
+                    stroke={color}
+                    tick={{ fill: color }}
+                    fontSize={11}
+                    width={40}
+                    // Offset stacked right axes so they don't overlap.
+                    // Recharts renders them in `xAxisId` order; our strips use
+                    // the same order so clicks line up.
+                    mirror={i > 0 ? true : false}
+                  />
+                );
+              })}
               <Tooltip
+                content={
+                  <CustomTooltip
+                    seriesByKey={Object.fromEntries(series.map((s) => [s.key, s]))}
+                    xAxis={settings.xAxis}
+                    showContext={settings.tooltip.showContext}
+                    showWallTime={settings.tooltip.showWallTime}
+                  />
+                }
                 contentStyle={{
                   background: "#13171c",
                   border: "1px solid #30363d",
@@ -73,36 +845,407 @@ export default function ScalarPlotCard({ runId, metric, extraContexts = [] }: Pr
                 }}
                 labelStyle={{ color: "#8b949e" }}
               />
-              {series.length > 1 && <Legend wrapperStyle={{ fontSize: 11 }} />}
-              {series.map((s, idx) => (
+              {settings.showLegend && series.length > 0 && (
+                <Legend
+                  wrapperStyle={{ fontSize: 11 }}
+                  content={
+                    <CustomLegend
+                      series={series}
+                      promoted={settings.promotedSeries}
+                      onToggle={togglePromote}
+                    />
+                  }
+                />
+              )}
+              {series.map((s) => (
                 <Line
-                  key={seriesLabel(s)}
+                  key={s.key}
                   type="monotone"
-                  dataKey={seriesLabel(s)}
-                  stroke={SERIES_COLORS[idx % SERIES_COLORS.length]}
+                  name={s.label}
+                  dataKey={s.key}
+                  stroke={s.color}
                   strokeWidth={1.5}
                   dot={false}
                   isAnimationActive={false}
                   connectNulls
+                  yAxisId={settings.promotedSeries[s.key] ? s.key : "__left__"}
                 />
               ))}
+              {/* Transparent overlay strips for drag-to-pan on promoted axes. */}
+              <Customized
+                component={
+                  ((props: unknown) => {
+                    const p = props as {
+                      offset?: {
+                        top?: number;
+                        left?: number;
+                        width?: number;
+                        height?: number;
+                        right?: number;
+                      };
+                    };
+                    const o = p.offset;
+                    if (!o || o.width == null || o.height == null) return null;
+                    if (promotedKeysOrdered.length === 0) return null;
+                    const top = o.top ?? 0;
+                    const height = o.height;
+                    // Right edge of plot area in Recharts' local SVG coords.
+                    const plotRight = (o.left ?? 0) + o.width;
+                    return (
+                      <g>
+                        {promotedKeysOrdered.map((key, i) => {
+                          const s = series.find((x) => x.key === key);
+                          const color = s?.color ?? "#8b949e";
+                          const x = plotRight + i * promotedAxisStripWidth;
+                          return (
+                            <rect
+                              key={key}
+                              x={x}
+                              y={top}
+                              width={promotedAxisStripWidth}
+                              height={height}
+                              fill={color}
+                              opacity={0.001}
+                              style={{
+                                cursor: "ns-resize",
+                                touchAction: "none",
+                              }}
+                              onPointerDown={(e) =>
+                                onAxisStripPointerDown(key, e, height)
+                              }
+                              onPointerMove={onAxisStripPointerMove}
+                              onPointerUp={onAxisStripPointerUp}
+                              onPointerCancel={onAxisStripPointerUp}
+                            />
+                          );
+                        })}
+                      </g>
+                    );
+                  }) as unknown as React.FunctionComponent
+                }
+              />
             </LineChart>
           </ResponsiveContainer>
         </div>
       )}
+
+      <SettingsPopover
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        anchorRef={settingsBtnRef}
+        title="Scalar plot"
+      >
+        <h4 className="text-xs uppercase tracking-wide text-fg-muted mb-2">
+          Content
+        </h4>
+        <MetricChips
+          runId={runId}
+          value={settings.metrics}
+          onChange={(v) => updateSettings({ metrics: v })}
+        />
+
+        <h4 className="text-xs uppercase tracking-wide text-fg-muted mt-4 mb-2">
+          Axes
+        </h4>
+        <Select
+          label="X axis"
+          value={settings.xAxis}
+          onChange={(v) => updateSettings({ xAxis: v })}
+          options={[
+            { value: "step", label: "Step" },
+            { value: "relative_time", label: "Relative time (s)" },
+            { value: "wall_time", label: "Wall time" },
+          ]}
+        />
+        <Select
+          label="X scale"
+          value={settings.xScale}
+          onChange={(v) => updateSettings({ xScale: v })}
+          options={[
+            { value: "linear", label: "Linear" },
+            { value: "log", label: "Log" },
+          ]}
+        />
+        <Select
+          label="Y scale"
+          value={settings.yScale}
+          onChange={(v) => updateSettings({ yScale: v })}
+          options={[
+            { value: "linear", label: "Linear" },
+            { value: "log", label: "Log" },
+          ]}
+        />
+        <div className="grid grid-cols-2 gap-2">
+          <NumberInput
+            label="X min"
+            value={settings.viewport.xMin ?? settings.xRange[0]}
+            onChange={(v) =>
+              updateSettings({ xRange: [v, settings.xRange[1]] })
+            }
+          />
+          <NumberInput
+            label="X max"
+            value={settings.viewport.xMax ?? settings.xRange[1]}
+            onChange={(v) =>
+              updateSettings({ xRange: [settings.xRange[0], v] })
+            }
+          />
+          <NumberInput
+            label="Y min"
+            value={settings.viewport.yMin ?? settings.yRange[0]}
+            onChange={(v) =>
+              updateSettings({ yRange: [v, settings.yRange[1]] })
+            }
+          />
+          <NumberInput
+            label="Y max"
+            value={settings.viewport.yMax ?? settings.yRange[1]}
+            onChange={(v) =>
+              updateSettings({ yRange: [settings.yRange[0], v] })
+            }
+          />
+        </div>
+
+        <h4 className="text-xs uppercase tracking-wide text-fg-muted mt-4 mb-2">
+          Smoothing
+        </h4>
+        <Slider
+          label="EMA α"
+          value={settings.smoothing}
+          onChange={(v) => updateSettings({ smoothing: v })}
+          min={0}
+          max={0.99}
+          step={0.01}
+          format={(v) => v.toFixed(2)}
+          description="exponential moving average over each series"
+        />
+
+        <h4 className="text-xs uppercase tracking-wide text-fg-muted mt-4 mb-2">
+          Outliers
+        </h4>
+        <Slider
+          label="Low percentile"
+          value={settings.outlierPct[0]}
+          onChange={(v) =>
+            updateSettings({ outlierPct: [v, settings.outlierPct[1]] })
+          }
+          min={0}
+          max={100}
+          step={0.5}
+          format={(v) => `${v.toFixed(1)}%`}
+        />
+        <Slider
+          label="High percentile"
+          value={settings.outlierPct[1]}
+          onChange={(v) =>
+            updateSettings({ outlierPct: [settings.outlierPct[0], v] })
+          }
+          min={0}
+          max={100}
+          step={0.5}
+          format={(v) => `${v.toFixed(1)}%`}
+        />
+        <p className="text-xs text-fg-subtle">Set [0, 100] to disable.</p>
+
+        <h4 className="text-xs uppercase tracking-wide text-fg-muted mt-4 mb-2">
+          Display
+        </h4>
+        <Toggle
+          label="Show legend"
+          checked={settings.showLegend}
+          onChange={(v) => updateSettings({ showLegend: v })}
+        />
+        <Toggle
+          label="Tooltip: context"
+          checked={settings.tooltip.showContext}
+          onChange={(v) =>
+            updateSettings({
+              tooltip: { ...settings.tooltip, showContext: v },
+            })
+          }
+        />
+        <Toggle
+          label="Tooltip: wall time"
+          checked={settings.tooltip.showWallTime}
+          onChange={(v) =>
+            updateSettings({
+              tooltip: { ...settings.tooltip, showWallTime: v },
+            })
+          }
+        />
+
+        <button
+          type="button"
+          className="btn w-full mt-2"
+          onClick={() => {
+            resetSettings();
+            setSettingsOpen(false);
+          }}
+        >
+          Reset to defaults
+        </button>
+      </SettingsPopover>
     </div>
   );
 }
 
-function seriesLabel(s: SequenceMeta): string {
-  if (!s.context) return "value";
-  try {
-    const parsed = JSON.parse(s.context);
-    const entries = Object.entries(parsed)
-      .map(([k, v]) => `${k}=${v}`)
-      .join(",");
-    return entries || "value";
-  } catch {
-    return s.context_hash.slice(0, 6);
+// -----------------------------------------------------------------------------
+// Custom legend: color swatch + label + ↕ promote toggle.
+// -----------------------------------------------------------------------------
+
+interface LegendSeries {
+  key: string;
+  label: string;
+  color: string;
+}
+
+interface CustomLegendProps {
+  series: LegendSeries[];
+  promoted: Record<string, PromotedSeriesConfig>;
+  onToggle: (key: string) => void;
+}
+
+function CustomLegend({ series, promoted, onToggle }: CustomLegendProps) {
+  return (
+    <ul className="flex flex-wrap justify-center gap-x-3 gap-y-1">
+      {series.map((s) => {
+        const isPromoted = !!promoted[s.key];
+        return (
+          <li
+            key={s.key}
+            className="inline-flex items-center gap-1 text-[11px] text-fg-muted"
+          >
+            <span
+              aria-hidden="true"
+              style={{
+                display: "inline-block",
+                width: 10,
+                height: 2,
+                background: s.color,
+                marginRight: 2,
+              }}
+            />
+            <span>{s.label}</span>
+            <button
+              type="button"
+              onClick={() => onToggle(s.key)}
+              className={`ml-1 inline-flex h-4 w-4 items-center justify-center rounded text-xs hover:bg-bg-hover ${
+                isPromoted ? "text-accent" : "text-fg-muted"
+              }`}
+              title={
+                isPromoted ? "Demote (single Y axis)" : "Promote to own Y axis"
+              }
+            >
+              {"\u2195"}
+            </button>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Custom tooltip.
+// -----------------------------------------------------------------------------
+
+interface TooltipPayloadEntry {
+  dataKey?: string | number;
+  name?: string | number;
+  color?: string;
+  value?: number | string | Array<number | string>;
+  payload?: Record<string, unknown>;
+}
+
+interface CustomTooltipProps {
+  active?: boolean;
+  label?: number | string;
+  payload?: TooltipPayloadEntry[];
+  seriesByKey: Record<string, LegendSeries>;
+  xAxis: AxisSource;
+  showContext: boolean;
+  showWallTime: boolean;
+}
+
+function CustomTooltip({
+  active,
+  label,
+  payload,
+  seriesByKey,
+  xAxis,
+  showContext,
+  showWallTime,
+}: CustomTooltipProps) {
+  if (!active || !payload || payload.length === 0) return null;
+  const style: CSSProperties = {
+    background: "#13171c",
+    border: "1px solid #30363d",
+    padding: "6px 8px",
+    fontSize: 12,
+    color: "#e6edf3",
+    minWidth: 140,
+  };
+  const labelNum = typeof label === "number" ? label : Number(label);
+  return (
+    <div style={style}>
+      <div style={{ color: "#8b949e", marginBottom: 4 }}>
+        {formatXTick(labelNum, xAxis)}
+      </div>
+      {payload.map((entry, i) => {
+        const key = String(entry.dataKey ?? "");
+        const meta = seriesByKey[key];
+        const val = entry.value;
+        const rawCtx =
+          (entry.payload?.[`${key}__ctx`] as string | undefined) ?? null;
+        const rawWall =
+          (entry.payload?.[`${key}__wall`] as string | undefined) ?? null;
+        return (
+          <div key={`${key}-${i}`} style={{ lineHeight: 1.4 }}>
+            <div style={{ color: meta?.color ?? entry.color ?? "#8b949e" }}>
+              <span style={{ fontFamily: "ui-monospace, monospace" }}>
+                {meta?.label ?? entry.name ?? key}
+              </span>
+              <span style={{ color: "#e6edf3", marginLeft: 8 }}>
+                {typeof val === "number" ? formatNum(val) : String(val ?? "")}
+              </span>
+            </div>
+            {showContext && rawCtx && (
+              <div style={{ color: "#6e7681", fontSize: 11 }}>{rawCtx}</div>
+            )}
+            {showWallTime && rawWall && (
+              <div style={{ color: "#6e7681", fontSize: 11 }}>{rawWall}</div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Formatting utilities.
+// -----------------------------------------------------------------------------
+
+function formatNum(n: number): string {
+  if (!Number.isFinite(n)) return String(n);
+  if (n === 0) return "0";
+  const abs = Math.abs(n);
+  if (abs >= 1_000 || abs < 1e-3) return n.toExponential(3);
+  return Number(n.toPrecision(5)).toString();
+}
+
+function formatXTick(v: number, axis: AxisSource): string {
+  if (!Number.isFinite(v)) return String(v);
+  if (axis === "step") {
+    return Number.isInteger(v) ? String(v) : v.toFixed(1);
   }
+  if (axis === "relative_time") {
+    if (v < 60) return `${v.toFixed(1)}s`;
+    if (v < 3600) return `${(v / 60).toFixed(1)}m`;
+    return `${(v / 3600).toFixed(2)}h`;
+  }
+  // wall_time: epoch ms
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return String(v);
+  return d.toLocaleTimeString();
 }

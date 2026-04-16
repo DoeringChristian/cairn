@@ -1,7 +1,10 @@
-import { useState, useMemo } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useSequence } from "../api/hooks";
 import { safeJsonParse } from "../lib/format";
+import { useCardSettings } from "../lib/card-settings";
 import type { SequenceMeta } from "../api/types";
+import CardHeader from "./CardHeader";
+import SettingsPopover from "./SettingsPopover";
 
 interface Props {
   runId: string;
@@ -15,6 +18,12 @@ interface HistogramMeta {
   count: number;
   mean: number;
 }
+
+interface HistogramSettings {
+  version: 1;
+}
+
+const DEFAULT_HISTOGRAM_SETTINGS: HistogramSettings = { version: 1 };
 
 function fmtSig(n: number, sig = 4): string {
   if (!Number.isFinite(n)) return String(n);
@@ -39,16 +48,41 @@ export default function HistogramCard({ runId, metric }: Props) {
     [current],
   );
 
+  const settingsKey = useMemo(
+    () => ({
+      runId,
+      metricName: metric.name,
+      contextHash: metric.context_hash,
+    }),
+    [runId, metric.name, metric.context_hash],
+  );
+  // Scaffolding only: settings aren't read anywhere yet.
+  useCardSettings(settingsKey, DEFAULT_HISTOGRAM_SETTINGS);
+
+  const settingsBtnRef = useRef<HTMLButtonElement | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  const subtitle =
+    points.length > 0
+      ? `step ${current?.step ?? "\u2014"} of ${points.length}`
+      : `${metric.count} pts`;
+
   return (
     <div className="card p-4">
-      <div className="mb-2 flex items-baseline justify-between gap-2">
-        <h3 className="mono text-sm font-semibold">{metric.name}</h3>
-        <span className="text-xs text-fg-subtle">
-          {points.length > 0
-            ? `step ${current?.step ?? "—"} of ${points.length}`
-            : `${metric.count} pts`}
-        </span>
-      </div>
+      <CardHeader title={metric.name} subtitle={subtitle}>
+        <button
+          ref={settingsBtnRef}
+          type="button"
+          onClick={() => setSettingsOpen((v) => !v)}
+          className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
+          aria-label="Histogram settings"
+          aria-haspopup="dialog"
+          aria-expanded={settingsOpen}
+          title="Histogram settings"
+        >
+          {"\u2699"}
+        </button>
+      </CardHeader>
       {q.isLoading ? (
         <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
       ) : current?.artifact_hash && meta ? (
@@ -82,6 +116,18 @@ export default function HistogramCard({ runId, metric }: Props) {
       ) : (
         <div className="text-sm text-fg-muted">no histogram logged yet</div>
       )}
+
+      <SettingsPopover
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        anchorRef={settingsBtnRef}
+        title="Histogram"
+      >
+        <p className="text-xs text-fg-subtle">
+          No settings yet. Full histogram visualization (bin counts + axis
+          scale) is coming in a later pass.
+        </p>
+      </SettingsPopover>
     </div>
   );
 }
