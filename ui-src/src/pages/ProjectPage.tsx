@@ -2,6 +2,7 @@ import { Link, NavLink, useParams } from "react-router-dom";
 import { useRuns } from "../api/hooks";
 import { formatDuration, formatRelative } from "../lib/format";
 import RunStatusBadge from "../components/RunStatusBadge";
+import { ProjectProvider } from "../lib/project-context";
 
 export default function ProjectPage() {
   const { projectId } = useParams<{ projectId: string }>();
@@ -13,6 +14,7 @@ export default function ProjectPage() {
   const runs = q.data?.runs ?? [];
 
   return (
+    <ProjectProvider value={projectId}>
     <div>
       <nav className="mb-4 flex flex-wrap items-center gap-x-1 text-sm text-fg-muted">
         <Link to="/" className="hover:text-fg">Projects</Link>
@@ -135,5 +137,6 @@ export default function ProjectPage() {
         </>
       )}
     </div>
+    </ProjectProvider>
   );
 }

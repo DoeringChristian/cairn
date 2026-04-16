@@ -4,6 +4,8 @@ import { useRuns } from "../api/hooks";
 import type { Run, RunStatus } from "../api/types";
 import RunStatusBadge from "../components/RunStatusBadge";
 import { formatDuration, formatRelative, safeJsonParse } from "../lib/format";
+import { createComparison } from "../lib/comparisons";
+import { ProjectProvider } from "../lib/project-context";
 
 type SortColumn =
   | "name"
@@ -149,11 +151,16 @@ export default function RunsTablePage() {
   const selectedCount = selected.size;
 
   const onCompare = () => {
-    const ids = Array.from(selected).join(",");
-    navigate(`/p/${projectId}/compare?runs=${encodeURIComponent(ids)}`);
+    // Create an empty comparison and take the user there. They add cards via
+    // the "+" button on individual run pages.
+    const now = new Date();
+    const label = `${now.toLocaleDateString()} ${now.toLocaleTimeString()}`;
+    const cmp = createComparison(projectId, `Comparison ${label}`);
+    navigate(`/p/${projectId}/compare?c=${encodeURIComponent(cmp.id)}`);
   };
 
   return (
+    <ProjectProvider value={projectId}>
     <div>
       <nav className="mb-4 flex flex-wrap items-center gap-x-1 text-sm text-fg-muted">
         <Link to="/" className="hover:text-fg">
@@ -438,6 +445,7 @@ export default function RunsTablePage() {
         </>
       )}
     </div>
+    </ProjectProvider>
   );
 }
 

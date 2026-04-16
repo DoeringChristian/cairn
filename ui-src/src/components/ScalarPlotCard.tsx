@@ -19,8 +19,14 @@ import {
   YAxis,
 } from "recharts";
 import { api } from "../api/client";
-import { useRun } from "../api/hooks";
-import { useCardSettings } from "../lib/card-settings";
+import { useCardSettings, type CardSettingsKey } from "../lib/card-settings";
+import {
+  addCardToComparison,
+  createComparison,
+  useComparisons,
+  type ComparisonSeriesRef,
+} from "../lib/comparisons";
+import { useProjectId } from "../lib/project-context";
 import type {
   SequenceMeta,
   SequencePoint,
@@ -33,6 +39,7 @@ import NumberInput from "./settings/NumberInput";
 import Select from "./settings/Select";
 import Slider from "./settings/Slider";
 import Toggle from "./settings/Toggle";
+import { formatRelative } from "../lib/format";
 
 // -----------------------------------------------------------------------------
 // Settings shape
@@ -48,7 +55,12 @@ interface PromotedSeriesConfig {
 
 interface ScalarSettings {
   version: 1;
-  metrics: Array<{ name: string; context_hash: string }>;
+  /**
+   * Series to render. `runId` is optional; when absent, the card's top-level
+   * `runId` prop is used as the fallback. Cross-run overlays (comparisons)
+   * set `runId` on each entry so different series can target different runs.
+   */
+  metrics: Array<{ runId?: string; name: string; context_hash: string }>;
   xAxis: AxisSource;
   xScale: AxisScale;
   yScale: AxisScale;
@@ -99,13 +111,28 @@ const SERIES_COLORS = [
   "#56d4dd",
 ];
 
-function seriesKey(m: { name: string; context_hash: string }): string {
-  return `${m.name}::${m.context_hash}`;
+function seriesKey(m: {
+  runId?: string;
+  name: string;
+  context_hash: string;
+}): string {
+  return `${m.runId ?? ""}::${m.name}::${m.context_hash}`;
 }
 
-function seriesLabel(name: string, contextHash: string): string {
-  if (!contextHash) return name;
-  return `${name} ${contextHash.slice(0, 6)}`;
+function shortRunId(id: string): string {
+  return id.length > 6 ? id.slice(0, 6) : id;
+}
+
+function seriesLabel(
+  name: string,
+  contextHash: string,
+  runId: string | undefined,
+  includeRun: boolean,
+): string {
+  const parts: string[] = [name];
+  if (includeRun && runId) parts.push(shortRunId(runId));
+  if (contextHash) parts.push(contextHash.slice(0, 6));
+  return parts.join(" · ");
 }
 
 function percentile(sorted: number[], p: number): number {
@@ -137,10 +164,22 @@ function viewportIsAuto(v: ScalarSettings["viewport"]): boolean {
 // -----------------------------------------------------------------------------
 
 interface Props {
+  /** Fallback run for series entries that don't carry their own `runId`. */
   runId: string;
+  /** Seed metric (within this card's default runId). */
   metric: SequenceMeta;
   /** Merge multiple series (e.g. all contexts of the same metric) onto one plot. */
   extraContexts?: SequenceMeta[];
+  /** Cross-run series to overlay (used by comparison pages). */
+  extraSeries?: ComparisonSeriesRef[];
+  /** If provided, render a "−" remove button in the header. */
+  onRemove?: () => void;
+  /**
+   * Override the storage key used for per-card settings. Used by the
+   * comparison view so that a comparison's scalar card has settings
+   * independent from the per-run workspace view of the same metric.
+   */
+  settingsKeyOverride?: CardSettingsKey;
 }
 
 // Chart margins; used both by Recharts and by our wheel/drag px→data math.
@@ -150,6 +189,9 @@ export default function ScalarPlotCard({
   runId,
   metric,
   extraContexts = [],
+  extraSeries = [],
+  onRemove,
+  settingsKeyOverride,
 }: Props) {
   const seedMetric = useMemo(
     () => ({ name: metric.name, context_hash: metric.context_hash }),
@@ -157,11 +199,20 @@ export default function ScalarPlotCard({
   );
 
   const defaults = useMemo<ScalarSettings>(() => {
-    const all = [
+    const all: Array<{
+      runId?: string;
+      name: string;
+      context_hash: string;
+    }> = [
       seedMetric,
       ...(extraContexts ?? []).map((e) => ({
         name: e.name,
         context_hash: e.context_hash,
+      })),
+      ...(extraSeries ?? []).map((s) => ({
+        runId: s.runId,
+        name: s.name,
+        context_hash: s.context_hash,
       })),
     ];
     const seen = new Set<string>();
@@ -172,15 +223,16 @@ export default function ScalarPlotCard({
       return true;
     });
     return { ...DEFAULT_SCALAR_SETTINGS(seedMetric), metrics: unique };
-  }, [seedMetric, extraContexts]);
+  }, [seedMetric, extraContexts, extraSeries]);
 
-  const settingsKey = useMemo(
-    () => ({
-      runId,
-      metricName: metric.name,
-      contextHash: metric.context_hash,
-    }),
-    [runId, metric.name, metric.context_hash],
+  const settingsKey = useMemo<CardSettingsKey>(
+    () =>
+      settingsKeyOverride ?? {
+        runId,
+        metricName: metric.name,
+        contextHash: metric.context_hash,
+      },
+    [settingsKeyOverride, runId, metric.name, metric.context_hash],
   );
 
   const [settings, updateSettings, resetSettings] = useCardSettings(
@@ -190,29 +242,52 @@ export default function ScalarPlotCard({
 
   // -------------------------------------------------------------------------
   // Run meta — needed for `relative_time` x-axis anchor.
+  //
+  // With multi-run overlays we need the creation time of every distinct run
+  // that contributes a series, not just the card's default run.
   // -------------------------------------------------------------------------
-  const runQuery = useRun(runId);
-  const runCreatedAtMs = useMemo(() => {
-    const raw = runQuery.data?.run.created_at;
-    if (!raw) return null;
-    const t = new Date(raw).getTime();
-    return Number.isFinite(t) ? t : null;
-  }, [runQuery.data]);
+  const uniqueRunIds = useMemo(() => {
+    const set = new Set<string>([runId]);
+    for (const m of settings.metrics) set.add(m.runId ?? runId);
+    return Array.from(set);
+  }, [runId, settings.metrics]);
+
+  const runQueries = useQueries({
+    queries: uniqueRunIds.map((rid) => ({
+      queryKey: ["run", rid],
+      queryFn: () => api.run(rid),
+      staleTime: 5_000,
+    })),
+  });
+
+  const runCreatedAtByRunId = useMemo(() => {
+    const map = new Map<string, number>();
+    uniqueRunIds.forEach((rid, i) => {
+      const raw = runQueries[i]?.data?.run.created_at;
+      if (!raw) return;
+      const t = new Date(raw).getTime();
+      if (Number.isFinite(t)) map.set(rid, t);
+    });
+    return map;
+  }, [uniqueRunIds, runQueries]);
 
   // -------------------------------------------------------------------------
-  // Data fetch — one query per metric, variable length.
+  // Data fetch — one query per (runId, metric) series, variable length.
   // -------------------------------------------------------------------------
   const queries = useQueries({
-    queries: settings.metrics.map((m) => ({
-      queryKey: ["sequence", runId, m.name, m.context_hash],
-      queryFn: () =>
-        api.sequence(runId, m.name, {
-          context: m.context_hash || undefined,
-          maxPoints: 2000,
-        }),
-      refetchInterval: 2_000,
-      staleTime: 2_000,
-    })),
+    queries: settings.metrics.map((m) => {
+      const rid = m.runId ?? runId;
+      return {
+        queryKey: ["sequence", rid, m.name, m.context_hash],
+        queryFn: () =>
+          api.sequence(rid, m.name, {
+            context: m.context_hash || undefined,
+            maxPoints: 2000,
+          }),
+        refetchInterval: 2_000,
+        staleTime: 2_000,
+      };
+    }),
   });
 
   // -------------------------------------------------------------------------
@@ -225,6 +300,12 @@ export default function ScalarPlotCard({
     points: Array<{ x: number; y: number; wall_time: string; context: string | null }>;
   };
 
+  const multipleRuns = useMemo(() => {
+    const seen = new Set<string>();
+    for (const m of settings.metrics) seen.add(m.runId ?? runId);
+    return seen.size > 1;
+  }, [settings.metrics, runId]);
+
   const { series, data, isLoading } = useMemo(() => {
     const anyLoading = queries.some((q) => q.isLoading);
 
@@ -232,6 +313,7 @@ export default function ScalarPlotCard({
       const key = seriesKey(m);
       const resp = queries[idx]?.data as SequenceResponse | undefined;
       const raw: SequencePoint[] = resp?.points ?? [];
+      const rid = m.runId ?? runId;
 
       // Map to (x, y) based on the current x-axis source.
       const mapped: Array<{
@@ -250,11 +332,12 @@ export default function ScalarPlotCard({
           if (!Number.isFinite(t)) continue;
           x = t;
         } else {
-          // relative_time
-          if (runCreatedAtMs == null) continue;
+          // relative_time — use this series' run creation time as anchor.
+          const anchor = runCreatedAtByRunId.get(rid) ?? null;
+          if (anchor == null) continue;
           const t = new Date(p.wall_time).getTime();
           if (!Number.isFinite(t)) continue;
-          x = (t - runCreatedAtMs) / 1000;
+          x = (t - anchor) / 1000;
         }
         mapped.push({
           x,
@@ -290,7 +373,7 @@ export default function ScalarPlotCard({
 
       return {
         key,
-        label: seriesLabel(m.name, m.context_hash),
+        label: seriesLabel(m.name, m.context_hash, rid, multipleRuns),
         color: SERIES_COLORS[idx % SERIES_COLORS.length]!,
         points: filtered,
       };
@@ -321,7 +404,9 @@ export default function ScalarPlotCard({
     settings.smoothing,
     settings.outlierPct[0],
     settings.outlierPct[1],
-    runCreatedAtMs,
+    multipleRuns,
+    runId,
+    runCreatedAtByRunId,
     // react-query data identity changes on refetch which is what we want:
     queries.map((q) => q.dataUpdatedAt).join("|"),
   ]);
@@ -834,6 +919,72 @@ export default function ScalarPlotCard({
   const settingsBtnRef = useRef<HTMLButtonElement | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
+  // "Add to comparison" popover state.
+  const addBtnRef = useRef<HTMLButtonElement | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const projectId = useProjectId();
+  const { comparisons, refresh: refreshComparisons } =
+    useComparisons(projectId ?? "");
+  const [addConfirmation, setAddConfirmation] = useState<string | null>(null);
+  const addConfirmationTimer = useRef<number | null>(null);
+  const [newCmpName, setNewCmpName] = useState("");
+
+  const currentSeriesRefs = useCallback((): ComparisonSeriesRef[] => {
+    return settingsRef.current.metrics.map((m) => ({
+      runId: m.runId ?? runId,
+      name: m.name,
+      context_hash: m.context_hash,
+    }));
+  }, [runId]);
+
+  const addToExistingComparison = useCallback(
+    (comparisonId: string, label: string) => {
+      if (!projectId) return;
+      addCardToComparison(projectId, comparisonId, {
+        type: "scalar",
+        series: currentSeriesRefs(),
+      });
+      refreshComparisons();
+      if (addConfirmationTimer.current != null) {
+        window.clearTimeout(addConfirmationTimer.current);
+      }
+      setAddConfirmation(`Added to ${label}`);
+      addConfirmationTimer.current = window.setTimeout(() => {
+        setAddConfirmation(null);
+        setAddOpen(false);
+      }, 1500);
+    },
+    [projectId, currentSeriesRefs, refreshComparisons],
+  );
+
+  const createAndAdd = useCallback(() => {
+    if (!projectId) return;
+    const name = newCmpName.trim() || "New comparison";
+    const cmp = createComparison(projectId, name);
+    addCardToComparison(projectId, cmp.id, {
+      type: "scalar",
+      series: currentSeriesRefs(),
+    });
+    refreshComparisons();
+    setNewCmpName("");
+    if (addConfirmationTimer.current != null) {
+      window.clearTimeout(addConfirmationTimer.current);
+    }
+    setAddConfirmation(`Added to ${name}`);
+    addConfirmationTimer.current = window.setTimeout(() => {
+      setAddConfirmation(null);
+      setAddOpen(false);
+    }, 1500);
+  }, [projectId, newCmpName, currentSeriesRefs, refreshComparisons]);
+
+  useEffect(() => {
+    return () => {
+      if (addConfirmationTimer.current != null) {
+        window.clearTimeout(addConfirmationTimer.current);
+      }
+    };
+  }, []);
+
   const flipYScale = () =>
     updateSettings({ yScale: settings.yScale === "log" ? "linear" : "log" });
 
@@ -898,6 +1049,31 @@ export default function ScalarPlotCard({
             title="Reset all settings"
           >
             {"\u27F2"}
+          </button>
+        )}
+        {projectId && (
+          <button
+            ref={addBtnRef}
+            type="button"
+            onClick={() => setAddOpen((v) => !v)}
+            className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
+            aria-label="Add to comparison"
+            aria-haspopup="dialog"
+            aria-expanded={addOpen}
+            title="Add to comparison"
+          >
+            {"\u002B"}
+          </button>
+        )}
+        {onRemove && (
+          <button
+            type="button"
+            onClick={onRemove}
+            className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
+            aria-label="Remove from comparison"
+            title="Remove from comparison"
+          >
+            {"\u2212"}
           </button>
         )}
         <button
@@ -1099,11 +1275,60 @@ export default function ScalarPlotCard({
         <h4 className="text-xs uppercase tracking-wide text-fg-muted mb-2">
           Content
         </h4>
-        <MetricChips
-          runId={runId}
-          value={settings.metrics}
-          onChange={(v) => updateSettings({ metrics: v })}
-        />
+        {multipleRuns ? (
+          <div className="flex flex-col gap-1 mb-2">
+            {settings.metrics.map((m) => {
+              const rid = m.runId ?? runId;
+              const key = seriesKey(m);
+              return (
+                <div
+                  key={key}
+                  className="mono flex items-center justify-between gap-2 rounded border border-border-subtle bg-bg px-2 py-1 text-xs text-fg-muted"
+                >
+                  <span className="truncate">
+                    {m.name}
+                    {m.context_hash ? ` · ${m.context_hash.slice(0, 6)}` : ""}
+                    {` · ${shortRunId(rid)}`}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label={`Remove ${m.name}`}
+                    className="text-fg-subtle hover:text-fg"
+                    onClick={() =>
+                      updateSettings({
+                        metrics: settings.metrics.filter(
+                          (x) => seriesKey(x) !== key,
+                        ),
+                      })
+                    }
+                  >
+                    {"\u00D7"}
+                  </button>
+                </div>
+              );
+            })}
+            <p className="text-[10px] text-fg-subtle">
+              Multi-run overlay — use the Runs list or the comparison page to
+              add series from other runs.
+            </p>
+          </div>
+        ) : (
+          <MetricChips
+            runId={runId}
+            value={settings.metrics.map((m) => ({
+              name: m.name,
+              context_hash: m.context_hash,
+            }))}
+            onChange={(v) =>
+              updateSettings({
+                metrics: v.map((m) => ({
+                  name: m.name,
+                  context_hash: m.context_hash,
+                })),
+              })
+            }
+          />
+        )}
 
         <h4 className="text-xs uppercase tracking-wide text-fg-muted mt-4 mb-2">
           Axes
@@ -1245,6 +1470,78 @@ export default function ScalarPlotCard({
         >
           Reset to defaults
         </button>
+      </SettingsPopover>
+
+      <SettingsPopover
+        open={addOpen && projectId != null}
+        onClose={() => {
+          setAddOpen(false);
+          setAddConfirmation(null);
+        }}
+        anchorRef={addBtnRef}
+        title="Add to comparison"
+      >
+        {addConfirmation ? (
+          <p className="text-xs text-accent">{addConfirmation}</p>
+        ) : (
+          <>
+            {comparisons.length === 0 ? (
+              <p className="text-xs text-fg-subtle mb-2">
+                No comparisons yet.
+              </p>
+            ) : (
+              <div className="flex flex-col gap-1 mb-2 max-h-48 overflow-y-auto">
+                {comparisons.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => addToExistingComparison(c.id, c.name)}
+                    className="text-left text-xs text-fg-muted hover:bg-bg-hover rounded px-2 py-1.5 border border-border-subtle"
+                  >
+                    <div className="truncate">{c.name}</div>
+                    <div className="text-[10px] text-fg-subtle">
+                      {c.cards.length} card(s) · {formatRelative(c.createdAt)}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="border-t border-border-subtle pt-2 mt-1">
+              <label className="text-[10px] uppercase tracking-wide text-fg-muted block mb-1">
+                Create new comparison
+              </label>
+              <div className="flex gap-1">
+                <input
+                  type="text"
+                  value={newCmpName}
+                  onChange={(e) => setNewCmpName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      createAndAdd();
+                    }
+                  }}
+                  placeholder="Name"
+                  className="input flex-1 text-xs"
+                />
+                <button
+                  type="button"
+                  onClick={createAndAdd}
+                  className="btn text-xs px-2"
+                >
+                  Create
+                </button>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setAddOpen(false)}
+              className="btn w-full mt-2 text-xs"
+            >
+              Cancel
+            </button>
+          </>
+        )}
       </SettingsPopover>
     </div>
   );

@@ -2,6 +2,7 @@ import { Link, NavLink, Outlet, useParams } from "react-router-dom";
 import { useRun } from "../api/hooks";
 import RunStatusBadge from "../components/RunStatusBadge";
 import { formatDuration, formatRelative } from "../lib/format";
+import { ProjectProvider } from "../lib/project-context";
 
 const TABS = [
   { id: "overview", label: "Overview" },
@@ -20,7 +21,10 @@ export default function RunDetailPage() {
   if (!q.data) return null;
   const run = q.data.run;
 
+  if (!projectId) return null;
+
   return (
+    <ProjectProvider value={projectId}>
     <div>
       <nav className="mb-3 flex flex-wrap items-center gap-x-1 text-sm text-fg-muted">
         <Link to="/" className="hover:text-fg">Projects</Link>
@@ -63,5 +67,6 @@ export default function RunDetailPage() {
       </nav>
       <Outlet context={{ run, params: q.data.params }} />
     </div>
+    </ProjectProvider>
   );
 }

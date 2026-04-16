@@ -1,120 +1,156 @@
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { useQueries, useQuery } from "@tanstack/react-query";
+import ScalarPlotCard from "../components/ScalarPlotCard";
 import {
-  CartesianGrid,
-  Legend,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
-import { api } from "../api/client";
-import { useRun } from "../api/hooks";
-import RunStatusBadge from "../components/RunStatusBadge";
-import type { RunDetailResponse, SequenceMeta } from "../api/types";
-
-const SERIES_COLORS = [
-  "#539bf5",
-  "#d29922",
-  "#3fb950",
-  "#f85149",
-  "#c678dd",
-  "#56d4dd",
-];
-
-interface ComparePoint {
-  step: number;
-  value: number;
-  context: string | null;
-}
-
-interface CompareSeries {
-  run_id: string;
-  name: string;
-  points: ComparePoint[];
-}
-
-interface CompareResponse {
-  series: CompareSeries[];
-}
-
-function shortId(id: string): string {
-  return id.length > 8 ? id.slice(0, 8) : id;
-}
+  createComparison,
+  deleteComparison,
+  removeCardFromComparison,
+  renameComparison,
+  useComparisons,
+  type Comparison,
+  type ComparisonCard,
+} from "../lib/comparisons";
+import { ProjectProvider } from "../lib/project-context";
+import { formatRelative } from "../lib/format";
+import SettingsPopover from "../components/SettingsPopover";
+import type { SequenceMeta } from "../api/types";
 
 export default function ComparePage() {
   const { projectId } = useParams<{ projectId: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
-  const runsParam = searchParams.get("runs") ?? "";
-  const runs = useMemo(
-    () => runsParam.split(",").filter(Boolean),
-    [runsParam],
+  const { comparisons, refresh } = useComparisons(projectId ?? "");
+
+  const selectedId = searchParams.get("c") ?? "";
+
+  // Auto-select the first comparison when the URL param is missing.
+  useEffect(() => {
+    if (!projectId) return;
+    if (selectedId) return;
+    if (comparisons.length === 0) return;
+    const params = new URLSearchParams(searchParams);
+    params.set("c", comparisons[0]!.id);
+    setSearchParams(params, { replace: true });
+  }, [projectId, selectedId, comparisons, searchParams, setSearchParams]);
+
+  const selected = useMemo(
+    () => comparisons.find((c) => c.id === selectedId) ?? null,
+    [comparisons, selectedId],
   );
 
-  const colorFor = (idx: number): string =>
-    SERIES_COLORS[idx % SERIES_COLORS.length]!;
+  const selectComparison = useCallback(
+    (id: string) => {
+      const params = new URLSearchParams(searchParams);
+      params.set("c", id);
+      setSearchParams(params, { replace: true });
+    },
+    [searchParams, setSearchParams],
+  );
 
-  const removeRun = (id: string) => {
-    const next = runs.filter((r) => r !== id);
+  const clearSelection = useCallback(() => {
     const params = new URLSearchParams(searchParams);
-    if (next.length === 0) {
-      params.delete("runs");
-    } else {
-      params.set("runs", next.join(","));
-    }
+    params.delete("c");
     setSearchParams(params, { replace: true });
-  };
+  }, [searchParams, setSearchParams]);
+
+  const handleCreate = useCallback(() => {
+    if (!projectId) return;
+    const cmp = createComparison(projectId, "New comparison");
+    refresh();
+    selectComparison(cmp.id);
+  }, [projectId, refresh, selectComparison]);
+
+  const handleRename = useCallback(
+    (id: string, name: string) => {
+      if (!projectId) return;
+      renameComparison(projectId, id, name);
+      refresh();
+    },
+    [projectId, refresh],
+  );
+
+  const handleDelete = useCallback(
+    (id: string) => {
+      if (!projectId) return;
+      deleteComparison(projectId, id);
+      // If we just deleted the currently-selected comparison, drop the URL
+      // param so auto-select kicks in on the next render.
+      if (id === selectedId) clearSelection();
+      refresh();
+    },
+    [projectId, selectedId, clearSelection, refresh],
+  );
+
+  const handleRemoveCard = useCallback(
+    (comparisonId: string, cardId: string) => {
+      if (!projectId) return;
+      removeCardFromComparison(projectId, comparisonId, cardId);
+      refresh();
+    },
+    [projectId, refresh],
+  );
+
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   if (!projectId) return null;
 
-  if (runs.length === 0) {
-    return (
+  return (
+    <ProjectProvider value={projectId}>
       <div>
         <Breadcrumbs projectId={projectId} />
         <h1 className="mono mb-4 text-xl font-semibold">
           {projectId} / compare
         </h1>
-        <div className="card p-6 text-sm text-fg-muted">
-          <p className="mb-2 text-fg">No runs selected.</p>
-          <p>
-            Go to the{" "}
-            <Link
-              to={`/p/${projectId}/runs`}
-              className="text-accent hover:underline"
-            >
-              Runs table
-            </Link>{" "}
-            and pick some to compare.
-          </p>
+
+        {/* Mobile sidebar toggle */}
+        <div className="mb-3 md:hidden">
+          <button
+            type="button"
+            onClick={() => setSidebarOpen((v) => !v)}
+            className="btn text-xs"
+            aria-expanded={sidebarOpen}
+          >
+            Comparisons ({comparisons.length}) {sidebarOpen ? "\u25B2" : "\u25BC"}
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-[320px_1fr]">
+          <aside
+            className={`card h-fit p-3 ${sidebarOpen ? "" : "hidden md:block"}`}
+          >
+            <Sidebar
+              comparisons={comparisons}
+              selectedId={selectedId}
+              onSelect={selectComparison}
+              onCreate={handleCreate}
+              onRename={handleRename}
+              onDelete={handleDelete}
+            />
+          </aside>
+          <main>
+            {selected ? (
+              <ComparisonView
+                comparison={selected}
+                projectId={projectId}
+                onRename={(name) => handleRename(selected.id, name)}
+                onDelete={() => handleDelete(selected.id)}
+                onRemoveCard={(cardId) => handleRemoveCard(selected.id, cardId)}
+              />
+            ) : (
+              <EmptyMainPane
+                hasAny={comparisons.length > 0}
+                onCreate={handleCreate}
+              />
+            )}
+          </main>
         </div>
       </div>
-    );
-  }
-
-  return (
-    <div>
-      <Breadcrumbs projectId={projectId} />
-      <div className="mb-6 flex items-baseline justify-between gap-4">
-        <h1 className="mono text-xl font-semibold">{projectId} / compare</h1>
-        <p className="text-sm text-fg-muted">
-          {runs.length} run{runs.length === 1 ? "" : "s"}
-        </p>
-      </div>
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[240px_1fr]">
-        <LeftRail
-          runs={runs}
-          projectId={projectId}
-          colorFor={colorFor}
-          onRemove={removeRun}
-        />
-        <MainArea runs={runs} colorFor={colorFor} />
-      </div>
-    </div>
+    </ProjectProvider>
   );
 }
+
+// -----------------------------------------------------------------------------
+// Breadcrumbs
+// -----------------------------------------------------------------------------
 
 function Breadcrumbs({ projectId }: { projectId: string }) {
   return (
@@ -132,256 +168,373 @@ function Breadcrumbs({ projectId }: { projectId: string }) {
   );
 }
 
-function LeftRail({
-  runs,
-  projectId,
-  colorFor,
-  onRemove,
-}: {
-  runs: string[];
-  projectId: string;
-  colorFor: (idx: number) => string;
-  onRemove: (id: string) => void;
-}) {
-  return (
-    <aside className="card h-fit p-3">
-      <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-fg-muted">
-        Selected runs
-      </h2>
-      <ul className="flex flex-col gap-2">
-        {runs.map((runId, idx) => (
-          <RailItem
-            key={runId}
-            runId={runId}
-            projectId={projectId}
-            color={colorFor(idx)}
-            onRemove={() => onRemove(runId)}
-          />
-        ))}
-      </ul>
-    </aside>
-  );
+// -----------------------------------------------------------------------------
+// Sidebar
+// -----------------------------------------------------------------------------
+
+interface SidebarProps {
+  comparisons: Comparison[];
+  selectedId: string;
+  onSelect: (id: string) => void;
+  onCreate: () => void;
+  onRename: (id: string, name: string) => void;
+  onDelete: (id: string) => void;
 }
 
-function RailItem({
-  runId,
-  projectId,
-  color,
-  onRemove,
-}: {
-  runId: string;
-  projectId: string;
-  color: string;
-  onRemove: () => void;
-}) {
-  const q = useRun(runId);
-  const run = q.data?.run;
-  const label = run?.display_name ?? shortId(runId);
+function Sidebar({
+  comparisons,
+  selectedId,
+  onSelect,
+  onCreate,
+  onRename,
+  onDelete,
+}: SidebarProps) {
   return (
-    <li className="flex items-center gap-2 rounded border border-border-subtle bg-bg px-2 py-1.5 text-sm">
-      <span
-        className="inline-block h-3 w-3 flex-shrink-0 rounded-sm"
-        style={{ backgroundColor: color }}
-        aria-hidden
-      />
-      <Link
-        to={`/p/${projectId}/r/${runId}`}
-        className="mono min-w-0 flex-1 truncate text-accent hover:underline"
-        title={runId}
-      >
-        {label}
-      </Link>
-      {run ? <RunStatusBadge status={run.status} /> : null}
-      <button
-        type="button"
-        aria-label={`remove ${label} from selection`}
-        className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center text-fg-subtle hover:text-fg-muted md:min-h-0 md:min-w-0"
-        onClick={onRemove}
-      >
-        ×
-      </button>
-    </li>
-  );
-}
-
-function MainArea({
-  runs,
-  colorFor,
-}: {
-  runs: string[];
-  colorFor: (idx: number) => string;
-}) {
-  const seqQueries = useQueries({
-    queries: runs.map((runId) => ({
-      queryKey: ["sequences", runId],
-      queryFn: () => api.sequences(runId),
-      refetchInterval: 5_000,
-    })),
-  });
-  const runQueries = useQueries({
-    queries: runs.map((runId) => ({
-      queryKey: ["run", runId],
-      queryFn: () => api.run(runId),
-    })),
-  });
-
-  const anySeqLoading = seqQueries.some((q) => q.isLoading);
-  const metricNames = useMemo(() => {
-    const names = new Set<string>();
-    for (const q of seqQueries) {
-      const data = q.data;
-      if (!data) continue;
-      for (const s of data.sequences as SequenceMeta[]) {
-        if (s.object_type === "scalar") names.add(s.name);
-      }
-    }
-    return Array.from(names).sort((a, b) => a.localeCompare(b));
-  }, [seqQueries]);
-
-  const runLabels = useMemo(() => {
-    const map = new Map<string, string>();
-    runs.forEach((runId, idx) => {
-      const data = runQueries[idx]?.data as RunDetailResponse | undefined;
-      map.set(runId, data?.run?.display_name ?? shortId(runId));
-    });
-    return map;
-  }, [runs, runQueries]);
-
-  if (anySeqLoading && metricNames.length === 0) {
-    return <p className="text-fg-muted">Loading sequences…</p>;
-  }
-
-  if (metricNames.length === 0) {
-    return (
-      <div className="card p-6 text-sm text-fg-muted">
-        No scalar metrics in the selected runs to compare.
+    <div>
+      <div className="mb-2 flex items-center justify-between">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-fg-muted">
+          Comparisons
+        </h2>
+        <button
+          type="button"
+          onClick={onCreate}
+          className="inline-flex h-6 w-6 items-center justify-center rounded border border-border bg-bg text-sm text-fg-muted hover:border-accent hover:text-fg"
+          aria-label="New comparison"
+          title="New comparison"
+        >
+          {"\u002B"}
+        </button>
       </div>
-    );
-  }
-
-  return (
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-      {metricNames.map((name) => (
-        <CompareCard
-          key={name}
-          metricName={name}
-          runs={runs}
-          runLabels={runLabels}
-          colorFor={colorFor}
-        />
-      ))}
+      {comparisons.length === 0 ? (
+        <p className="text-xs text-fg-subtle">
+          No comparisons yet. Click + to create one.
+        </p>
+      ) : (
+        <ul className="flex flex-col gap-1">
+          {comparisons.map((c) => (
+            <SidebarRow
+              key={c.id}
+              comparison={c}
+              selected={c.id === selectedId}
+              onSelect={() => onSelect(c.id)}
+              onRename={(name) => onRename(c.id, name)}
+              onDelete={() => onDelete(c.id)}
+            />
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
 
-function CompareCard({
-  metricName,
-  runs,
-  runLabels,
-  colorFor,
-}: {
-  metricName: string;
-  runs: string[];
-  runLabels: Map<string, string>;
-  colorFor: (idx: number) => string;
-}) {
-  const cmp = useQuery({
-    queryKey: ["compare", runs, metricName],
-    queryFn: async (): Promise<CompareResponse> => {
-      const res = await fetch("/api/compare", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          run_ids: runs,
-          metrics: [metricName],
-          max_points: 2000,
-        }),
-      });
-      if (!res.ok) throw new Error(`${res.status}`);
-      return (await res.json()) as CompareResponse;
-    },
-    refetchInterval: 5_000,
-  });
+interface SidebarRowProps {
+  comparison: Comparison;
+  selected: boolean;
+  onSelect: () => void;
+  onRename: (name: string) => void;
+  onDelete: () => void;
+}
 
-  type Row = { step: number } & Record<string, number | null>;
-  const data: Row[] = useMemo(() => {
-    const byStep = new Map<number, Row>();
-    const series = cmp.data?.series ?? [];
-    for (const s of series) {
-      for (const p of s.points) {
-        const row = byStep.get(p.step) ?? { step: p.step };
-        row[s.run_id] = p.value;
-        byStep.set(p.step, row);
-      }
-    }
-    return Array.from(byStep.values()).sort((a, b) => a.step - b.step);
-  }, [cmp.data]);
+function SidebarRow({
+  comparison,
+  selected,
+  onSelect,
+  onRename,
+  onDelete,
+}: SidebarRowProps) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(comparison.name);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuBtnRef = useRef<HTMLButtonElement | null>(null);
 
-  const nameFormatter = (value: string): string =>
-    runLabels.get(value) ?? shortId(value);
+  useEffect(() => {
+    if (!editing) setDraft(comparison.name);
+  }, [comparison.name, editing]);
+
+  const commit = () => {
+    const trimmed = draft.trim();
+    if (trimmed && trimmed !== comparison.name) onRename(trimmed);
+    setEditing(false);
+  };
 
   return (
-    <div className="card p-4">
-      <div className="mb-2 flex items-baseline justify-between gap-2">
-        <h3 className="mono text-sm font-semibold">{metricName}</h3>
-        {cmp.isError ? (
-          <span className="text-xs text-status-failed">error</span>
-        ) : null}
+    <li
+      className={`group flex items-center gap-1 rounded border px-2 py-1.5 text-sm ${
+        selected
+          ? "border-accent/60 bg-accent/5"
+          : "border-border-subtle bg-bg hover:border-border"
+      }`}
+    >
+      {editing ? (
+        <input
+          autoFocus
+          type="text"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commit();
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              setEditing(false);
+              setDraft(comparison.name);
+            }
+          }}
+          className="input flex-1 text-xs"
+        />
+      ) : (
+        <button
+          type="button"
+          onClick={onSelect}
+          onDoubleClick={() => setEditing(true)}
+          className="min-w-0 flex-1 text-left"
+          title={comparison.name}
+        >
+          <div
+            className={`truncate ${
+              selected ? "font-semibold text-fg" : "text-fg-muted"
+            }`}
+          >
+            {comparison.name}
+          </div>
+          <div className="text-[10px] text-fg-subtle">
+            {comparison.cards.length} card
+            {comparison.cards.length === 1 ? "" : "s"} ·{" "}
+            {formatRelative(comparison.createdAt)}
+          </div>
+        </button>
+      )}
+      <button
+        ref={menuBtnRef}
+        type="button"
+        aria-label="Comparison menu"
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
+        onClick={(e) => {
+          e.stopPropagation();
+          setMenuOpen((v) => !v);
+        }}
+        className="inline-flex h-6 w-6 items-center justify-center rounded text-fg-subtle hover:bg-bg-hover hover:text-fg"
+        title="More"
+      >
+        {"\u22EF"}
+      </button>
+      <SettingsPopover
+        open={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        anchorRef={menuBtnRef}
+        title={comparison.name}
+      >
+        <div className="flex flex-col gap-1">
+          <button
+            type="button"
+            onClick={() => {
+              setMenuOpen(false);
+              setEditing(true);
+            }}
+            className="btn text-xs text-left"
+          >
+            Rename
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (confirm(`Delete "${comparison.name}"?`)) {
+                setMenuOpen(false);
+                onDelete();
+              }
+            }}
+            className="btn text-xs text-left text-status-failed"
+          >
+            Delete
+          </button>
+        </div>
+      </SettingsPopover>
+    </li>
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Main pane — renders the selected comparison.
+// -----------------------------------------------------------------------------
+
+interface ComparisonViewProps {
+  comparison: Comparison;
+  projectId: string;
+  onRename: (name: string) => void;
+  onDelete: () => void;
+  onRemoveCard: (cardId: string) => void;
+}
+
+function ComparisonView({
+  comparison,
+  projectId,
+  onRename,
+  onDelete,
+  onRemoveCard,
+}: ComparisonViewProps) {
+  const [editingName, setEditingName] = useState(false);
+  const [draft, setDraft] = useState(comparison.name);
+
+  useEffect(() => {
+    if (!editingName) setDraft(comparison.name);
+  }, [comparison.name, editingName]);
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-baseline justify-between gap-2">
+        {editingName ? (
+          <input
+            autoFocus
+            type="text"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={() => {
+              const t = draft.trim();
+              if (t && t !== comparison.name) onRename(t);
+              setEditingName(false);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                const t = draft.trim();
+                if (t && t !== comparison.name) onRename(t);
+                setEditingName(false);
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                setEditingName(false);
+                setDraft(comparison.name);
+              }
+            }}
+            className="input text-lg font-semibold"
+          />
+        ) : (
+          <h2
+            className="text-lg font-semibold cursor-text"
+            title="Click to rename"
+            onClick={() => setEditingName(true)}
+          >
+            {comparison.name}
+          </h2>
+        )}
+        <button
+          type="button"
+          onClick={() => {
+            if (confirm(`Delete "${comparison.name}"?`)) onDelete();
+          }}
+          className="btn text-xs"
+        >
+          Delete
+        </button>
       </div>
-      {cmp.isLoading && data.length === 0 ? (
-        <div className="h-64 motion-safe:animate-pulse rounded bg-bg-hover" />
-      ) : data.length === 0 ? (
-        <div className="flex h-64 items-center justify-center text-xs text-fg-subtle">
-          No data
+
+      {comparison.cards.length === 0 ? (
+        <div className="card p-6 text-sm text-fg-muted">
+          Add scalar cards from any run using the{" "}
+          <span className="mono">+</span> button in the card header.
         </div>
       ) : (
-        <div className="h-64">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart
-              data={data}
-              margin={{ top: 4, right: 8, left: 0, bottom: 4 }}
-            >
-              <CartesianGrid stroke="#30363d" strokeDasharray="2 4" />
-              <XAxis
-                dataKey="step"
-                type="number"
-                domain={["dataMin", "dataMax"]}
-                stroke="#8b949e"
-                fontSize={11}
-              />
-              <YAxis stroke="#8b949e" fontSize={11} width={46} />
-              <Tooltip
-                contentStyle={{
-                  background: "#13171c",
-                  border: "1px solid #30363d",
-                  fontSize: 12,
-                }}
-                labelStyle={{ color: "#8b949e" }}
-                formatter={(value: number | string, name: string) => [
-                  value,
-                  nameFormatter(name),
-                ]}
-              />
-              <Legend
-                wrapperStyle={{ fontSize: 11 }}
-                formatter={(value: string) => nameFormatter(value)}
-              />
-              {runs.map((runId, idx) => (
-                <Line
-                  key={runId}
-                  type="monotone"
-                  dataKey={runId}
-                  name={runId}
-                  stroke={colorFor(idx)}
-                  strokeWidth={1.5}
-                  dot={false}
-                  isAnimationActive={false}
-                  connectNulls
-                />
-              ))}
-            </LineChart>
-          </ResponsiveContainer>
+        <div className="flex flex-col gap-4">
+          {comparison.cards.map((card) => (
+            <ComparisonCardRenderer
+              key={card.id}
+              card={card}
+              comparisonId={comparison.id}
+              projectId={projectId}
+              onRemove={() => onRemoveCard(card.id)}
+            />
+          ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+interface ComparisonCardRendererProps {
+  card: ComparisonCard;
+  comparisonId: string;
+  projectId: string;
+  onRemove: () => void;
+}
+
+function ComparisonCardRenderer({
+  card,
+  comparisonId,
+  onRemove,
+}: ComparisonCardRendererProps) {
+  // We synthesize a seed SequenceMeta from the first series. ScalarPlotCard
+  // only uses `metric.name`, `metric.context_hash` for display/defaults, so
+  // the remaining fields are best-effort placeholders.
+  const primary = card.series[0];
+  if (!primary) {
+    return (
+      <div className="card p-4 text-sm text-fg-muted flex items-baseline justify-between gap-2">
+        <span>Empty scalar card.</span>
+        <button type="button" className="btn text-xs" onClick={onRemove}>
+          Remove
+        </button>
+      </div>
+    );
+  }
+
+  const seedMetric: SequenceMeta = {
+    name: primary.name,
+    object_type: "scalar",
+    context: null,
+    context_hash: primary.context_hash,
+    min_step: 0,
+    max_step: 0,
+    count: 0,
+  };
+
+  const extraSeries = card.series.slice(1);
+
+  return (
+    <ScalarPlotCard
+      runId={primary.runId}
+      metric={seedMetric}
+      extraSeries={extraSeries}
+      onRemove={onRemove}
+      settingsKeyOverride={{
+        runId: `compare:${comparisonId}`,
+        metricName: card.id,
+        contextHash: "",
+      }}
+    />
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Empty state
+// -----------------------------------------------------------------------------
+
+function EmptyMainPane({
+  hasAny,
+  onCreate,
+}: {
+  hasAny: boolean;
+  onCreate: () => void;
+}) {
+  return (
+    <div className="card p-6 text-sm text-fg-muted">
+      {hasAny ? (
+        <p>Select a comparison on the left to view its cards.</p>
+      ) : (
+        <>
+          <p className="mb-2 text-fg">No comparisons yet.</p>
+          <p>
+            <button
+              type="button"
+              className="text-accent hover:underline"
+              onClick={onCreate}
+            >
+              Create one
+            </button>{" "}
+            to start collecting scalar cards across runs.
+          </p>
+        </>
       )}
     </div>
   );
