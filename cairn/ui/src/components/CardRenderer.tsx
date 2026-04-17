@@ -27,6 +27,8 @@ export interface CardRendererProps {
   settingsKeyOverride?: CardSettingsKey;
   /** Show a remove button in the card header (scalar only for now). */
   onRemove?: () => void;
+  /** When true, ignore persisted metrics — always use props. */
+  controlledSeries?: boolean;
 }
 
 export default function CardRenderer({
@@ -35,6 +37,7 @@ export default function CardRenderer({
   extraSeries,
   settingsKeyOverride,
   onRemove,
+  controlledSeries,
 }: CardRendererProps) {
   const baseProps = { runId, metric };
 
@@ -44,6 +47,7 @@ export default function CardRenderer({
         <ScalarPlotCard
           {...baseProps}
           extraSeries={extraSeries}
+          controlledSeries={controlledSeries}
           settingsKeyOverride={settingsKeyOverride}
           onRemove={onRemove}
         />

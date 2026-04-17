@@ -175,8 +175,16 @@ interface Props {
   metric: SequenceMeta;
   /** Merge multiple series (e.g. all contexts of the same metric) onto one plot. */
   extraContexts?: SequenceMeta[];
-  /** Cross-run series to overlay (used by comparison pages). */
+  /** Cross-run series to overlay (seeds defaults on first mount). */
   extraSeries?: ComparisonSeriesRef[];
+  /**
+   * When true, the card always renders the series derived from
+   * `metric` + `extraSeries`, ignoring any persisted metrics in
+   * card settings. Used by the workspace view where run visibility
+   * toggles control which runs appear — the card should not "remember"
+   * hidden runs.
+   */
+  controlledSeries?: boolean;
   /** If provided, render a "−" remove button in the header. */
   onRemove?: () => void;
   /**
@@ -195,6 +203,7 @@ export default function ScalarPlotCard({
   metric,
   extraContexts = [],
   extraSeries = [],
+  controlledSeries = false,
   onRemove,
   settingsKeyOverride,
 }: Props) {
@@ -281,6 +290,35 @@ export default function ScalarPlotCard({
     [rawUpdateSettings],
   );
 
+  // When controlledSeries is true, always use the props-derived metrics list
+  // (ignoring any persisted customizations). This is used by the workspace
+  // where run visibility toggles should immediately update the cards.
+  const effectiveMetrics = useMemo(() => {
+    if (!controlledSeries) return settings.metrics;
+    // Rebuild from props: seed metric + extraSeries, same as defaults but
+    // always current (not cached in localStorage).
+    const all: Array<{ runId?: string; name: string; context_hash: string }> = [
+      { name: metric.name, context_hash: metric.context_hash },
+      ...(extraContexts ?? []).map((e) => ({
+        name: e.name,
+        context_hash: e.context_hash,
+      })),
+      ...(extraSeries ?? []).map((s) => ({
+        runId: s.runId,
+        name: s.name,
+        context_hash: s.context_hash,
+      })),
+    ];
+    const seen = new Set<string>();
+    return all.filter((m) => {
+      const k = seriesKey(m);
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [controlledSeries, settings.metrics, metric.name, metric.context_hash, extraContextsKey, extraSeriesKey]);
+
   // -------------------------------------------------------------------------
   // Run meta — needed for `relative_time` x-axis anchor.
   //
@@ -289,9 +327,9 @@ export default function ScalarPlotCard({
   // -------------------------------------------------------------------------
   const uniqueRunIds = useMemo(() => {
     const set = new Set<string>([runId]);
-    for (const m of settings.metrics) set.add(m.runId ?? runId);
+    for (const m of effectiveMetrics) set.add(m.runId ?? runId);
     return Array.from(set);
-  }, [runId, settings.metrics]);
+  }, [runId, effectiveMetrics]);
 
   const runQueries = useQueries({
     queries: uniqueRunIds.map((rid) => ({
@@ -316,7 +354,7 @@ export default function ScalarPlotCard({
   // Data fetch — one query per (runId, metric) series, variable length.
   // -------------------------------------------------------------------------
   const queries = useQueries({
-    queries: settings.metrics.map((m) => {
+    queries: effectiveMetrics.map((m) => {
       const rid = m.runId ?? runId;
       return {
         queryKey: ["sequence", rid, m.name, m.context_hash],
@@ -343,14 +381,14 @@ export default function ScalarPlotCard({
 
   const multipleRuns = useMemo(() => {
     const seen = new Set<string>();
-    for (const m of settings.metrics) seen.add(m.runId ?? runId);
+    for (const m of effectiveMetrics) seen.add(m.runId ?? runId);
     return seen.size > 1;
-  }, [settings.metrics, runId]);
+  }, [effectiveMetrics, runId]);
 
   const { series, data, isLoading } = useMemo(() => {
     const anyLoading = queries.some((q) => q.isLoading);
 
-    const built: Series[] = settings.metrics.map((m, idx) => {
+    const built: Series[] = effectiveMetrics.map((m, idx) => {
       const key = seriesKey(m);
       const resp = queries[idx]?.data as SequenceResponse | undefined;
       const raw: SequencePoint[] = resp?.points ?? [];
@@ -440,7 +478,7 @@ export default function ScalarPlotCard({
     // queries is new object every render; depend on stable bits.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    settings.metrics,
+    effectiveMetrics,
     settings.xAxis,
     settings.smoothing,
     settings.outlierPct[0],
@@ -571,8 +609,8 @@ export default function ScalarPlotCard({
   settingsRef.current = settings;
 
   // Ref to current metrics for the drop hook (avoids re-render on dragover).
-  const metricsRef = useRef(settings.metrics);
-  metricsRef.current = settings.metrics;
+  const metricsRef = useRef(effectiveMetrics);
+  metricsRef.current = effectiveMetrics;
 
   const { highlight: dropHighlight, dropProps } = useSeriesDrop({
     metricsRef,
@@ -1051,7 +1089,7 @@ export default function ScalarPlotCard({
     });
 
   const subtitle = `${series.length} ${series.length === 1 ? "series" : "series"}${
-    settings.metrics.length > 0 && queries[0]?.data
+    effectiveMetrics.length > 0 && queries[0]?.data
       ? ` · ${queries[0].data.points.length} pts`
       : ""
   }`;
@@ -1339,9 +1377,9 @@ export default function ScalarPlotCard({
       <div className="mt-2 flex flex-wrap gap-1.5">
         {series.map((s, idx) => {
           const ref: SeriesRef = {
-            runId: settings.metrics[idx]?.runId,
-            name: settings.metrics[idx]?.name ?? "",
-            context_hash: settings.metrics[idx]?.context_hash ?? "",
+            runId: effectiveMetrics[idx]?.runId,
+            name: effectiveMetrics[idx]?.name ?? "",
+            context_hash: effectiveMetrics[idx]?.context_hash ?? "",
           };
           return (
             <SeriesChip
@@ -1351,9 +1389,9 @@ export default function ScalarPlotCard({
               label={s.label}
               runId={runId}
               onRemove={
-                settings.metrics.length > 1
+                effectiveMetrics.length > 1
                   ? () => {
-                      const next = settings.metrics.filter(
+                      const next = effectiveMetrics.filter(
                         (_, i) => i !== idx,
                       );
                       updateSettings({ metrics: next });
@@ -1376,7 +1414,7 @@ export default function ScalarPlotCard({
         </h4>
         {multipleRuns ? (
           <div className="flex flex-col gap-1 mb-2">
-            {settings.metrics.map((m) => {
+            {effectiveMetrics.map((m) => {
               const rid = m.runId ?? runId;
               const key = seriesKey(m);
               return (
@@ -1395,7 +1433,7 @@ export default function ScalarPlotCard({
                     className="text-fg-subtle hover:text-fg"
                     onClick={() =>
                       updateSettings({
-                        metrics: settings.metrics.filter(
+                        metrics: effectiveMetrics.filter(
                           (x) => seriesKey(x) !== key,
                         ),
                       })
@@ -1414,7 +1452,7 @@ export default function ScalarPlotCard({
         ) : (
           <MetricChips
             runId={runId}
-            value={settings.metrics.map((m) => ({
+            value={effectiveMetrics.map((m) => ({
               name: m.name,
               context_hash: m.context_hash,
             }))}

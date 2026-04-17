@@ -254,6 +254,7 @@ export default function ProjectPage() {
                     runId={primary.runId}
                     metric={seedMetric}
                     extraSeries={extra.length > 0 ? extra : undefined}
+                    controlledSeries
                     settingsKeyOverride={{
                       runId: `workspace:${projectId}`,
                       metricName: card.name,
