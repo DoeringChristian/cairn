@@ -155,6 +155,7 @@ function ImagePane({
     artifactHash != null &&
     baselineHash !== artifactHash;
 
+
   useEffect(() => {
     if (!showDiff) {
       setDiffReady(false);
@@ -163,40 +164,24 @@ function ImagePane({
     let cancelled = false;
     setDiffReady(false);
 
-    console.log("[cairn] ImagePane diff: starting", { baselineHash, artifactHash, diffMode });
-
     (async () => {
-      const baseUrl = api.artifactUrl(baselineHash!);
-      const otherUrl = api.artifactUrl(artifactHash!);
-      console.log("[cairn] ImagePane diff: loading", baseUrl, otherUrl);
-
       const [baseData, otherData] = await Promise.all([
-        loadImageData(baseUrl),
-        loadImageData(otherUrl),
+        loadImageData(api.artifactUrl(baselineHash!)),
+        loadImageData(api.artifactUrl(artifactHash!)),
       ]);
       if (cancelled) return;
-      if (!baseData || !otherData) {
-        console.warn("[cairn] ImagePane diff: failed to load image data", { baseData: !!baseData, otherData: !!otherData });
-        return;
-      }
-      console.log("[cairn] ImagePane diff: computing", baseData.width, "x", baseData.height);
+      if (!baseData || !otherData) return;
       const diffData = computeDiff(
         baseData,
         otherData,
         diffMode as DiffMode,
       );
       const canvas = canvasRef.current;
-      if (!canvas || cancelled) {
-        console.warn("[cairn] ImagePane diff: canvas ref missing or cancelled");
-        return;
-      }
+      if (!canvas || cancelled) return;
       canvas.width = diffData.width;
       canvas.height = diffData.height;
       const ctx = canvas.getContext("2d");
-      if (ctx) {
-        ctx.putImageData(diffData, 0, 0);
-        console.log("[cairn] ImagePane diff: rendered to canvas", diffData.width, "x", diffData.height);
-      }
+      if (ctx) ctx.putImageData(diffData, 0, 0);
       setDiffReady(true);
     })();
 
