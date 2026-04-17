@@ -10,6 +10,10 @@ interface Props {
   children?: ReactNode;
   /** If provided, the title becomes editable. */
   onTitleChange?: (newTitle: string) => void;
+  /** Whether the card body is collapsed (only header visible). */
+  collapsed?: boolean;
+  /** Toggle collapse state. When provided, a chevron is rendered. */
+  onToggleCollapse?: () => void;
 }
 
 /**
@@ -30,6 +34,8 @@ export default function CardHeader({
   subtitle,
   children,
   onTitleChange,
+  collapsed,
+  onToggleCollapse,
 }: Props) {
   const drag = useDraggableCard();
   const [editing, setEditing] = useState(false);
@@ -74,6 +80,18 @@ export default function CardHeader({
   return (
     <div className="group mb-2 flex items-baseline justify-between gap-2">
       <div className="flex items-baseline gap-1.5 min-w-0">
+        {onToggleCollapse && (
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            className="select-none text-fg-subtle hover:text-fg text-xs leading-none transition-transform"
+            style={{ transform: collapsed ? "rotate(-90deg)" : undefined }}
+            aria-label={collapsed ? "Expand card" : "Collapse card"}
+            title={collapsed ? "Expand card" : "Collapse card"}
+          >
+            {"\u25BC"}
+          </button>
+        )}
         <span
           aria-hidden="true"
           draggable={!!drag}

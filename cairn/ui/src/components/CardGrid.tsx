@@ -26,13 +26,57 @@ interface Entry {
   extras: SequenceMeta[];
 }
 
+// ---------------------------------------------------------------------------
+// Section collapse persistence helpers.
+// ---------------------------------------------------------------------------
+const COLLAPSED_SECTIONS_KEY_PREFIX = "cairn:collapsed-sections:";
+
+function loadCollapsedSections(runId: string): Set<string> {
+  try {
+    const raw = localStorage.getItem(COLLAPSED_SECTIONS_KEY_PREFIX + runId);
+    if (!raw) return new Set();
+    return new Set(JSON.parse(raw) as string[]);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveCollapsedSections(runId: string, set: Set<string>): void {
+  try {
+    localStorage.setItem(
+      COLLAPSED_SECTIONS_KEY_PREFIX + runId,
+      JSON.stringify(Array.from(set)),
+    );
+  } catch {
+    /* quota exceeded or disabled storage; silently drop */
+  }
+}
+
 export default function CardGrid({ runId, sequences }: Props) {
   const [layout, setLayout] = useState<RunLayout>(() => loadRunLayout(runId));
+
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(
+    () => loadCollapsedSections(runId),
+  );
 
   // Reload persisted layout when the run changes.
   useEffect(() => {
     setLayout(loadRunLayout(runId));
+    setCollapsedSections(loadCollapsedSections(runId));
   }, [runId]);
+
+  const toggleSectionCollapse = useCallback(
+    (sectionName: string) => {
+      setCollapsedSections((prev) => {
+        const next = new Set(prev);
+        if (next.has(sectionName)) next.delete(sectionName);
+        else next.add(sectionName);
+        saveCollapsedSections(runId, next);
+        return next;
+      });
+    },
+    [runId],
+  );
 
   // Track which section is currently being dragged over (for ring highlight).
   const [dragOverSection, setDragOverSection] = useState<string | null>(null);
@@ -106,6 +150,8 @@ export default function CardGrid({ runId, sequences }: Props) {
             key={section.name}
             sectionName={section.name}
             itemCount={entries.length}
+            collapsed={collapsedSections.has(section.name)}
+            onToggleCollapse={() => toggleSectionCollapse(section.name)}
             isOver={isOver}
             onSectionDragEnter={() => setDragOverSection(section.name)}
             onSectionDragLeave={() => {
@@ -172,6 +218,8 @@ export default function CardGrid({ runId, sequences }: Props) {
 interface SectionBlockProps {
   sectionName: string;
   itemCount: number;
+  collapsed: boolean;
+  onToggleCollapse: () => void;
   isOver: boolean;
   onSectionDragEnter: () => void;
   onSectionDragLeave: () => void;
@@ -183,6 +231,8 @@ interface SectionBlockProps {
 function SectionBlock({
   sectionName,
   itemCount,
+  collapsed,
+  onToggleCollapse,
   isOver,
   onSectionDragEnter,
   onSectionDragLeave,
@@ -214,28 +264,42 @@ function SectionBlock({
       }}
     >
       <header
-        className="mb-3 flex items-baseline justify-between border-b border-border pb-1"
+        className="mb-3 flex items-baseline justify-between border-b border-border pb-1 cursor-pointer select-none"
         onDragOver={allowDrop}
         onDrop={onHeaderDrop}
+        onClick={onToggleCollapse}
       >
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-fg-muted">
-          {sectionName}
-        </h2>
-        <span className="text-xs text-fg-subtle">{itemCount} card(s)</span>
+        <div className="flex items-baseline gap-1.5">
+          <span
+            className="text-fg-subtle text-xs leading-none transition-transform"
+            style={{ transform: collapsed ? "rotate(-90deg)" : undefined, display: "inline-block" }}
+            aria-hidden="true"
+          >
+            {"\u25BC"}
+          </span>
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-fg-muted">
+            {sectionName}
+          </h2>
+        </div>
+        <span className="text-xs text-fg-subtle">
+          {collapsed ? `${itemCount} card(s) hidden` : `${itemCount} card(s)`}
+        </span>
       </header>
-      <div
-        ref={gridRef}
-        className={`grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-2 rounded transition-shadow ${
-          isOver ? "outline outline-2 outline-accent -outline-offset-2" : ""
-        }`}
-        onDragOver={allowDrop}
-        onDrop={(e) => {
-          if (!gridRef.current) return;
-          onGridDrop(e, gridRef.current);
-        }}
-      >
-        {children}
-      </div>
+      {!collapsed && (
+        <div
+          ref={gridRef}
+          className={`grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-2 rounded transition-shadow ${
+            isOver ? "outline outline-2 outline-accent -outline-offset-2" : ""
+          }`}
+          onDragOver={allowDrop}
+          onDrop={(e) => {
+            if (!gridRef.current) return;
+            onGridDrop(e, gridRef.current);
+          }}
+        >
+          {children}
+        </div>
+      )}
     </section>
   );
 }

@@ -43,6 +43,7 @@ interface VideoSettings {
   metrics: Array<{ runId?: string; name: string; context_hash: string }>;
   paneWidths?: number[];
   title?: string;
+  collapsed?: boolean;
   sliderStep?: number;
   height?: number;
   fullWidth?: boolean;
@@ -355,6 +356,8 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
         title={settings.title ?? metric.name}
         onTitleChange={(t) => updateSettings({ title: t || undefined })}
         subtitle={subtitle}
+        collapsed={settings.collapsed}
+        onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
       >
         {projectId && (
           <button
@@ -383,6 +386,7 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
         </button>
       </CardHeader>
 
+      {!settings.collapsed && (<>
       {isMulti ? (
         <>
           <SplitPane
@@ -571,6 +575,7 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
           </>
         )}
       </SettingsPopover>
+      </>)}
       <CardResizeHandle
         height={settings.height}
         onHeightChange={(h) => updateSettings({ height: h })}

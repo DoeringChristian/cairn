@@ -42,6 +42,7 @@ interface Props {
 interface ImageSettings {
   version: 1;
   title?: string;
+  collapsed?: boolean;
   metrics: Array<{ runId?: string; name: string; context_hash: string }>;
   paneWidths?: number[];
   brightness: number;
@@ -581,6 +582,8 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
         title={settings.title ?? metric.name}
         subtitle={subtitle}
         onTitleChange={(t) => updateSettings({ title: t || undefined })}
+        collapsed={settings.collapsed}
+        onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
       >
         {modified && (
           <button
@@ -621,6 +624,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
         </button>
       </CardHeader>
 
+      {!settings.collapsed && (<>
       {anyLoading && maxLen === 0 ? (
         <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
       ) : maxLen > 0 ? (
@@ -918,6 +922,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
           </>
         )}
       </SettingsPopover>
+      </>)}
 
       <CardResizeHandle
         height={settings.height}

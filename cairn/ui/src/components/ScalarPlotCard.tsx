@@ -60,6 +60,7 @@ interface PromotedSeriesConfig {
 interface ScalarSettings {
   version: 1;
   title?: string;
+  collapsed?: boolean;
   height?: number;
   fullWidth?: boolean;
   /**
@@ -1497,6 +1498,8 @@ export default function ScalarPlotCard({
         title={settings.title ?? metric.name}
         onTitleChange={(t) => updateSettings({ title: t || undefined })}
         subtitle={subtitle}
+        collapsed={settings.collapsed}
+        onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
       >
         {settings.smoothing > 0 && (
           <button
@@ -1592,6 +1595,7 @@ export default function ScalarPlotCard({
         </button>
       </CardHeader>
 
+      {!settings.collapsed && (<>
       {isLoading && data.length === 0 ? (
         <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
       ) : (
@@ -1716,6 +1720,7 @@ export default function ScalarPlotCard({
       >
         {renderChart("h-[calc(100vh-12rem)]")}
       </CardDetailModal>
+      </>)}
       <CardResizeHandle
         height={settings.height}
         onHeightChange={(h) => updateSettings({ height: h })}

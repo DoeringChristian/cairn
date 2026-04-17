@@ -23,6 +23,7 @@ interface Props {
 interface TextSettings {
   version: 1;
   title?: string;
+  collapsed?: boolean;
   height?: number;
   fullWidth?: boolean;
   fontSize: "xs" | "sm" | "base";
@@ -137,6 +138,8 @@ export default function TextViewerCard({ runId, metric }: Props) {
         title={settings.title ?? metric.name}
         onTitleChange={(t) => updateSettings({ title: t || undefined })}
         subtitle={subtitle}
+        collapsed={settings.collapsed}
+        onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
       >
         {projectId && (
           <button
@@ -165,6 +168,7 @@ export default function TextViewerCard({ runId, metric }: Props) {
           {"\u2699"}
         </button>
       </CardHeader>
+      {!settings.collapsed && (<>
       <pre
         className={`mono max-h-48 overflow-auto ${wrapClass} rounded bg-bg p-3 ${FONT_SIZE_CLASS[settings.fontSize]} text-fg-muted`}
       >
@@ -272,6 +276,7 @@ export default function TextViewerCard({ runId, metric }: Props) {
           </>
         )}
       </SettingsPopover>
+      </>)}
       <CardResizeHandle
         height={settings.height}
         onHeightChange={(h) => updateSettings({ height: h })}

@@ -29,6 +29,7 @@ interface HistogramMeta {
 interface HistogramSettings {
   version: 1;
   title?: string;
+  collapsed?: boolean;
   height?: number;
   fullWidth?: boolean;
 }
@@ -124,6 +125,8 @@ export default function HistogramCard({ runId, metric }: Props) {
         title={settings.title ?? metric.name}
         onTitleChange={(t) => updateSettings({ title: t || undefined })}
         subtitle={subtitle}
+        collapsed={settings.collapsed}
+        onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
       >
         {projectId && (
           <button
@@ -152,6 +155,7 @@ export default function HistogramCard({ runId, metric }: Props) {
           {"\u2699"}
         </button>
       </CardHeader>
+      {!settings.collapsed && (<>
       {q.isLoading ? (
         <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
       ) : current?.artifact_hash && meta ? (
@@ -255,6 +259,7 @@ export default function HistogramCard({ runId, metric }: Props) {
           </>
         )}
       </SettingsPopover>
+      </>)}
       <CardResizeHandle
         height={settings.height}
         onHeightChange={(h) => updateSettings({ height: h })}
