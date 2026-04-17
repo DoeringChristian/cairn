@@ -37,9 +37,10 @@ function storageKey(projectId: string): string {
 
 function isComparisonCard(x: unknown): x is ComparisonCard {
   if (!x || typeof x !== "object") return false;
+  const VALID_TYPES = new Set(["scalar", "image", "figure", "audio", "video", "histogram", "text"]);
   const c = x as Partial<ComparisonCard>;
   if (typeof c.id !== "string") return false;
-  if (c.type !== "scalar") return false;
+  if (typeof c.type !== "string" || !VALID_TYPES.has(c.type)) return false;
   if (!Array.isArray(c.series)) return false;
   return c.series.every((s) => {
     if (!s || typeof s !== "object") return false;
