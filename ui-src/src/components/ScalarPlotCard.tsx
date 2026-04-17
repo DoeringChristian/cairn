@@ -1018,7 +1018,7 @@ export default function ScalarPlotCard({
       onDragOver={(e) => {
         if (!e.dataTransfer.types.includes(CAIRN_SERIES_MIME)) return;
         e.preventDefault();
-        e.dataTransfer.dropEffect = "move";
+        e.dataTransfer.dropEffect = "copy";
       }}
       onDragEnter={(e) => {
         if (!e.dataTransfer.types.includes(CAIRN_SERIES_MIME)) return;
@@ -1344,16 +1344,6 @@ export default function ScalarPlotCard({
               label={s.label}
               runId={runId}
               onRemove={
-                settings.metrics.length > 1
-                  ? () => {
-                      const next = settings.metrics.filter(
-                        (_, i) => i !== idx,
-                      );
-                      updateSettings({ metrics: next });
-                    }
-                  : undefined
-              }
-              onDraggedOut={
                 settings.metrics.length > 1
                   ? () => {
                       const next = settings.metrics.filter(

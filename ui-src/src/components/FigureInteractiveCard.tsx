@@ -426,7 +426,7 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
       onDragOver={(e) => {
         if (!e.dataTransfer.types.includes(CAIRN_SERIES_MIME)) return;
         e.preventDefault();
-        e.dataTransfer.dropEffect = "move";
+        e.dataTransfer.dropEffect = "copy";
       }}
       onDragEnter={(e) => {
         if (!e.dataTransfer.types.includes(CAIRN_SERIES_MIME)) return;
@@ -564,14 +564,6 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
                   label={seriesLabel(m.name, m.context_hash, m.runId, multipleRuns)}
                   runId={runId}
                   onRemove={
-                    settings.metrics.length > 1
-                      ? () => {
-                          const next = settings.metrics.filter((_, j) => j !== i);
-                          updateSettings({ metrics: next });
-                        }
-                      : undefined
-                  }
-                  onDraggedOut={
                     settings.metrics.length > 1
                       ? () => {
                           const next = settings.metrics.filter((_, j) => j !== i);
