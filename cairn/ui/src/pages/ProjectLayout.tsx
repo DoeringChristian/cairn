@@ -49,7 +49,7 @@ const NAV_ITEMS = [
 ];
 
 export default function ProjectLayout() {
-  const { projectId } = useParams<{ projectId: string }>();
+  const { projectId, runId } = useParams<{ projectId: string; runId?: string }>();
   if (!projectId) return null;
 
   return (
@@ -84,7 +84,15 @@ export default function ProjectLayout() {
               Projects
             </Link>
             <span>›</span>
-            <span className="mono text-fg">{projectId}</span>
+            <Link to={`/p/${projectId}`} className="mono hover:text-fg">
+              {projectId}
+            </Link>
+            {runId && (
+              <>
+                <span>›</span>
+                <span className="mono text-fg">{runId.slice(0, 8)}</span>
+              </>
+            )}
           </nav>
           <Outlet />
         </div>
