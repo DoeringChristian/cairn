@@ -624,6 +624,16 @@ export default function ScalarPlotCard({
     [],
   );
 
+  // Safety: if pointer capture is lost (e.g. element re-rendered, browser
+  // cancelled), clear the drag state so stale refs don't cause phantom
+  // pan/scale on subsequent pointer moves.
+  const onAxisStripLostCapture = useCallback(
+    () => {
+      rightAxisDragRef.current = null;
+    },
+    [],
+  );
+
   // -------------------------------------------------------------------------
   // Plot-area wheel-zoom + drag-pan.
   //
@@ -1111,6 +1121,10 @@ export default function ScalarPlotCard({
           onPointerMove={onChartPointerMove}
           onPointerUp={onChartPointerUp}
           onPointerCancel={onChartPointerUp}
+          onLostPointerCapture={() => {
+            plotDragRef.current = null;
+            setSelection(null);
+          }}
         >
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={data} margin={CHART_MARGIN}>
@@ -1244,6 +1258,7 @@ export default function ScalarPlotCard({
                               onPointerMove={onAxisStripPointerMove}
                               onPointerUp={onAxisStripPointerUp}
                               onPointerCancel={onAxisStripPointerUp}
+                              onLostPointerCapture={onAxisStripLostCapture}
                             />
                           );
                         })}
