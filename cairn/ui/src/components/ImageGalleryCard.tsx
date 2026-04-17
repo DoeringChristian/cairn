@@ -51,6 +51,7 @@ interface ImageSettings {
   pan: { x: number; y: number };
   baselineIndex?: number;
   diffMode: "none" | DiffMode;
+  sliderStep?: number;
   height?: number;
   fullWidth?: boolean;
 }
@@ -342,7 +343,11 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
 
   // Shared step slider
   const maxLen = Math.max(...perSeriesPoints.map((pts) => pts.length), 0);
-  const [idx, setIdx] = useState(0);
+  const [idx, setIdx] = useState(settings.sliderStep ?? 0);
+  const handleSliderChange = (newIdx: number) => {
+    setIdx(newIdx);
+    updateSettings({ sliderStep: newIdx });
+  };
   const safeIdx = Math.min(Math.max(0, idx), Math.max(0, maxLen - 1));
 
   const isMulti = effectiveMetrics.length > 1;
@@ -702,7 +707,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
               min={0}
               max={maxLen - 1}
               value={safeIdx}
-              onChange={(e) => setIdx(Number(e.target.value))}
+              onChange={(e) => handleSliderChange(Number(e.target.value))}
               className="mt-3 w-full accent-accent"
             />
           )}

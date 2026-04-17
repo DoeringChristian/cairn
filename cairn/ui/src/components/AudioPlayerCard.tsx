@@ -41,6 +41,7 @@ interface AudioSettings {
   metrics: Array<{ runId?: string; name: string; context_hash: string }>;
   paneWidths?: number[];
   title?: string;
+  sliderStep?: number;
   height?: number;
   fullWidth?: boolean;
   autoplay: boolean;
@@ -310,7 +311,11 @@ export default function AudioPlayerCard({ runId, metric, extraContexts = [], ext
     return max;
   }, [effectiveMetrics.length, points.length, multiQueries]);
 
-  const [idx, setIdx] = useState(0);
+  const [idx, setIdx] = useState(settings.sliderStep ?? 0);
+  const handleSliderChange = (newIdx: number) => {
+    setIdx(newIdx);
+    updateSettings({ sliderStep: newIdx });
+  };
   const safeIdx = Math.min(Math.max(0, idx), Math.max(0, maxStepCount - 1));
   const current = points[safeIdx];
 
@@ -441,7 +446,7 @@ export default function AudioPlayerCard({ runId, metric, extraContexts = [], ext
               min={0}
               max={maxStepCount - 1}
               value={safeIdx}
-              onChange={(e) => setIdx(Number(e.target.value))}
+              onChange={(e) => handleSliderChange(Number(e.target.value))}
               className="mt-3 w-full accent-accent"
             />
           )}
@@ -508,7 +513,7 @@ export default function AudioPlayerCard({ runId, metric, extraContexts = [], ext
               min={0}
               max={points.length - 1}
               value={safeIdx}
-              onChange={(e) => setIdx(Number(e.target.value))}
+              onChange={(e) => handleSliderChange(Number(e.target.value))}
               className="mt-3 w-full accent-accent"
             />
           )}
