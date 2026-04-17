@@ -145,7 +145,8 @@ function ImagePane({
   label,
 }: ImagePaneProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [computing, setComputing] = useState(false);
+  // Track whether a diff has been successfully rendered to the canvas.
+  const [diffReady, setDiffReady] = useState(false);
 
   const showDiff =
     !isBaseline &&
@@ -155,20 +156,20 @@ function ImagePane({
     baselineHash !== artifactHash;
 
   useEffect(() => {
-    if (!showDiff) return;
+    if (!showDiff) {
+      setDiffReady(false);
+      return;
+    }
     let cancelled = false;
-    setComputing(true);
+    setDiffReady(false);
 
     (async () => {
       const [baseData, otherData] = await Promise.all([
-        loadImageData(api.artifactUrl(baselineHash)),
-        loadImageData(api.artifactUrl(artifactHash)),
+        loadImageData(api.artifactUrl(baselineHash!)),
+        loadImageData(api.artifactUrl(artifactHash!)),
       ]);
       if (cancelled) return;
-      if (!baseData || !otherData) {
-        setComputing(false);
-        return;
-      }
+      if (!baseData || !otherData) return;
       const diffData = computeDiff(
         baseData,
         otherData,
@@ -180,7 +181,7 @@ function ImagePane({
       canvas.height = diffData.height;
       const ctx = canvas.getContext("2d");
       if (ctx) ctx.putImageData(diffData, 0, 0);
-      setComputing(false);
+      setDiffReady(true);
     })();
 
     return () => {
@@ -211,16 +212,18 @@ function ImagePane({
         {!artifactHash ? (
           <span className="text-xs text-fg-muted">no image</span>
         ) : showDiff ? (
-          computing ? (
-            <span className="text-xs text-fg-muted motion-safe:animate-pulse">
-              computing...
-            </span>
-          ) : (
+          <>
+            {!diffReady && (
+              <span className="text-xs text-fg-muted motion-safe:animate-pulse">
+                computing diff...
+              </span>
+            )}
             <canvas
               ref={canvasRef}
               className="max-h-full max-w-full object-contain"
+              style={{ display: diffReady ? "block" : "none" }}
             />
-          )
+          </>
         ) : (
           <img
             src={api.artifactUrl(artifactHash)}
@@ -593,14 +596,18 @@ export default function ImageGalleryCard({ runId, metric }: Props) {
                     isBaseline={baselineIdx === paneIdx}
                     diffMode={settings.diffMode}
                     filterStr={filterStr}
-                    onSetBaseline={() =>
+                    onSetBaseline={() => {
+                      const isUnsetting = settings.baselineIndex === paneIdx;
                       updateSettings({
-                        baselineIndex:
-                          settings.baselineIndex === paneIdx
-                            ? undefined
-                            : paneIdx,
-                      })
-                    }
+                        baselineIndex: isUnsetting ? undefined : paneIdx,
+                        // Auto-enable diff when setting baseline for the first time.
+                        diffMode: isUnsetting
+                          ? "none"
+                          : settings.diffMode === "none"
+                            ? "absolute"
+                            : settings.diffMode,
+                      });
+                    }}
                     label={seriesLabel(m, runId, multipleRuns)}
                   />
                 );
