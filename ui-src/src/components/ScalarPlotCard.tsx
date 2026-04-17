@@ -202,6 +202,21 @@ export default function ScalarPlotCard({
     [metric.name, metric.context_hash],
   );
 
+  // Stabilize extraContexts/extraSeries across renders by serializing to a
+  // string key. CardGrid creates new array references every render; without
+  // this, useMemo recomputes defaults every render, which causes chip order
+  // flickering when no persisted settings exist.
+  const extraContextsKey = useMemo(
+    () => (extraContexts ?? []).map((e) => `${e.name}::${e.context_hash}`).sort().join("|"),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [JSON.stringify((extraContexts ?? []).map((e) => [e.name, e.context_hash]).sort())],
+  );
+  const extraSeriesKey = useMemo(
+    () => (extraSeries ?? []).map((s) => `${s.runId}::${s.name}::${s.context_hash}`).sort().join("|"),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [JSON.stringify((extraSeries ?? []).map((s) => [s.runId, s.name, s.context_hash]).sort())],
+  );
+
   const defaults = useMemo<ScalarSettings>(() => {
     const all: Array<{
       runId?: string;
@@ -226,8 +241,11 @@ export default function ScalarPlotCard({
       seen.add(k);
       return true;
     });
+    // Sort deterministically so the order is stable across re-renders.
+    unique.sort((a, b) => seriesKey(a).localeCompare(seriesKey(b)));
     return { ...DEFAULT_SCALAR_SETTINGS(seedMetric), metrics: unique };
-  }, [seedMetric, extraContexts, extraSeries]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seedMetric, extraContextsKey, extraSeriesKey]);
 
   const settingsKey = useMemo<CardSettingsKey>(
     () =>
