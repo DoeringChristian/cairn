@@ -257,10 +257,21 @@ export default function ScalarPlotCard({
     [settingsKeyOverride, runId, metric.name, metric.context_hash],
   );
 
-  const [settings, updateSettings, resetSettings] = useCardSettings(
+  const [rawSettings, updateSettings, resetSettings] = useCardSettings(
     settingsKey,
     defaults,
   );
+
+  // Ensure metrics order is always deterministic — persisted settings from
+  // before the sort fix may have an unstable order.
+  const settings = useMemo(() => {
+    const sorted = [...rawSettings.metrics].sort((a, b) =>
+      seriesKey(a).localeCompare(seriesKey(b)),
+    );
+    // Only create a new object if the order actually changed.
+    const changed = sorted.some((m, i) => seriesKey(m) !== seriesKey(rawSettings.metrics[i]!));
+    return changed ? { ...rawSettings, metrics: sorted } : rawSettings;
+  }, [rawSettings]);
 
   // -------------------------------------------------------------------------
   // Run meta — needed for `relative_time` x-axis anchor.
