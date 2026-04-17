@@ -6,9 +6,9 @@ import {
   useRef,
   useState,
 } from "react";
-import { useSequence } from "../api/hooks";
+import { useQueries } from "@tanstack/react-query";
 import { api } from "../api/client";
-import type { SequenceMeta } from "../api/types";
+import type { SequenceMeta, SequencePoint } from "../api/types";
 import { useCardSettings } from "../lib/card-settings";
 import {
   addCardToComparison,
@@ -17,9 +17,18 @@ import {
 } from "../lib/comparisons";
 import { useProjectId } from "../lib/project-context";
 import { formatRelative } from "../lib/format";
+import { computeDiff, loadImageData, type DiffMode } from "../lib/image-diff";
 import CardHeader from "./CardHeader";
+import CardResizeHandle from "./CardResizeHandle";
+import SeriesChip, { CAIRN_SERIES_MIME, type SeriesRef } from "./SeriesChip";
 import SettingsPopover from "./SettingsPopover";
+import SplitPane from "./SplitPane";
+import Select from "./settings/Select";
 import Slider from "./settings/Slider";
+
+// ---------------------------------------------------------------------------
+// Settings
+// ---------------------------------------------------------------------------
 
 interface Props {
   runId: string;
@@ -28,24 +37,37 @@ interface Props {
 
 interface ImageSettings {
   version: 1;
-  brightness: number; // -1..1, default 0
-  contrast: number; // -1..1, default 0
-  gamma: number; // 0.1..3, default 1
-  zoom: number; // 0.25..16, default 1
-  pan: { x: number; y: number }; // default {0,0}
+  title?: string;
+  metrics: Array<{ runId?: string; name: string; context_hash: string }>;
+  paneWidths?: number[];
+  brightness: number;
+  contrast: number;
+  gamma: number;
+  zoom: number;
+  pan: { x: number; y: number };
+  baselineIndex?: number;
+  diffMode: "none" | "absolute" | "relative" | "squared";
+  height?: number;
 }
-
-const DEFAULT_IMAGE_SETTINGS: ImageSettings = {
-  version: 1,
-  brightness: 0,
-  contrast: 0,
-  gamma: 1,
-  zoom: 1,
-  pan: { x: 0, y: 0 },
-};
 
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 16;
+
+function defaultImageSettings(seed: {
+  name: string;
+  context_hash: string;
+}): ImageSettings {
+  return {
+    version: 1,
+    metrics: [{ name: seed.name, context_hash: seed.context_hash }],
+    brightness: 0,
+    contrast: 0,
+    gamma: 1,
+    zoom: 1,
+    pan: { x: 0, y: 0 },
+    diffMode: "none",
+  };
+}
 
 function isModified(s: ImageSettings): boolean {
   return (
@@ -54,22 +76,177 @@ function isModified(s: ImageSettings): boolean {
     s.gamma !== 1 ||
     s.zoom !== 1 ||
     s.pan.x !== 0 ||
-    s.pan.y !== 0
+    s.pan.y !== 0 ||
+    s.diffMode !== "none" ||
+    s.baselineIndex != null ||
+    s.title != null ||
+    s.height != null
   );
 }
 
-export default function ImageGalleryCard({ runId, metric }: Props) {
-  const q = useSequence(runId, metric.name, {
-    context: metric.context_hash || undefined,
-    maxPoints: 500,
-  });
-  const points = useMemo(
-    () => (q.data?.points ?? []).filter((p) => p.artifact_hash),
-    [q.data],
+// Palette (same as ScalarPlotCard)
+const SERIES_COLORS = [
+  "#539bf5",
+  "#d29922",
+  "#3fb950",
+  "#f85149",
+  "#c678dd",
+  "#56d4dd",
+];
+
+function shortRunId(id: string): string {
+  return id.length > 6 ? id.slice(0, 6) : id;
+}
+
+function seriesLabel(
+  m: { runId?: string; name: string; context_hash: string },
+  fallbackRunId: string,
+  multiRun: boolean,
+): string {
+  const parts: string[] = [m.name];
+  if (multiRun && (m.runId ?? fallbackRunId))
+    parts.push(shortRunId(m.runId ?? fallbackRunId));
+  if (m.context_hash) parts.push(m.context_hash.slice(0, 6));
+  return parts.join(" \u00b7 ");
+}
+
+function seriesKey(m: {
+  runId?: string;
+  name: string;
+  context_hash: string;
+}): string {
+  return `${m.runId ?? ""}::${m.name}::${m.context_hash}`;
+}
+
+// ---------------------------------------------------------------------------
+// ImagePane — renders a single image or canvas diff inside a split pane.
+// ---------------------------------------------------------------------------
+
+interface ImagePaneProps {
+  metricEntry: { runId?: string; name: string; context_hash: string };
+  paneIndex: number;
+  artifactHash: string | undefined;
+  baselineHash: string | undefined;
+  isBaseline: boolean;
+  diffMode: ImageSettings["diffMode"];
+  filterStr: string;
+  onSetBaseline: () => void;
+  label: string;
+}
+
+function ImagePane({
+  artifactHash,
+  baselineHash,
+  isBaseline,
+  diffMode,
+  filterStr,
+  onSetBaseline,
+  label,
+}: ImagePaneProps) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [computing, setComputing] = useState(false);
+
+  const showDiff =
+    !isBaseline &&
+    diffMode !== "none" &&
+    baselineHash != null &&
+    artifactHash != null &&
+    baselineHash !== artifactHash;
+
+  useEffect(() => {
+    if (!showDiff) return;
+    let cancelled = false;
+    setComputing(true);
+
+    (async () => {
+      const [baseData, otherData] = await Promise.all([
+        loadImageData(api.artifactUrl(baselineHash)),
+        loadImageData(api.artifactUrl(artifactHash)),
+      ]);
+      if (cancelled) return;
+      if (!baseData || !otherData) {
+        setComputing(false);
+        return;
+      }
+      const diffData = computeDiff(
+        baseData,
+        otherData,
+        diffMode as DiffMode,
+      );
+      const canvas = canvasRef.current;
+      if (!canvas || cancelled) return;
+      canvas.width = diffData.width;
+      canvas.height = diffData.height;
+      const ctx = canvas.getContext("2d");
+      if (ctx) ctx.putImageData(diffData, 0, 0);
+      setComputing(false);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [baselineHash, artifactHash, diffMode, showDiff]);
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Pane header */}
+      <div className="flex items-center gap-1 px-1 py-0.5 text-[10px] text-fg-muted">
+        <button
+          type="button"
+          onClick={onSetBaseline}
+          className={`inline-flex items-center justify-center h-4 w-4 rounded text-xs hover:bg-bg-hover ${
+            isBaseline ? "text-accent" : "text-fg-subtle"
+          }`}
+          title={isBaseline ? "Baseline" : "Set as baseline"}
+          aria-label={isBaseline ? "Baseline" : "Set as baseline"}
+        >
+          {"\u2605"}
+        </button>
+        <span className="truncate">{label}</span>
+      </div>
+
+      {/* Image / diff canvas */}
+      <div className="flex-1 flex items-center justify-center overflow-hidden rounded bg-bg p-1">
+        {!artifactHash ? (
+          <span className="text-xs text-fg-muted">no image</span>
+        ) : showDiff ? (
+          computing ? (
+            <span className="text-xs text-fg-muted motion-safe:animate-pulse">
+              computing...
+            </span>
+          ) : (
+            <canvas
+              ref={canvasRef}
+              className="max-h-full max-w-full object-contain"
+            />
+          )
+        ) : (
+          <img
+            src={api.artifactUrl(artifactHash)}
+            alt={label}
+            className="max-h-full max-w-full object-contain"
+            draggable={false}
+            style={{ filter: filterStr }}
+          />
+        )}
+      </div>
+    </div>
   );
-  const [idx, setIdx] = useState(0);
-  const safeIdx = Math.min(Math.max(0, idx), Math.max(0, points.length - 1));
-  const current = points[safeIdx];
+}
+
+// ---------------------------------------------------------------------------
+// ImageGalleryCard
+// ---------------------------------------------------------------------------
+
+export default function ImageGalleryCard({ runId, metric }: Props) {
+  const defaults = useMemo(
+    () =>
+      defaultImageSettings({
+        name: metric.name,
+        context_hash: metric.context_hash,
+      }),
+    [metric.name, metric.context_hash],
+  );
 
   const settingsKey = useMemo(
     () => ({
@@ -81,8 +258,54 @@ export default function ImageGalleryCard({ runId, metric }: Props) {
   );
   const [settings, updateSettings, resetSettings] = useCardSettings(
     settingsKey,
-    DEFAULT_IMAGE_SETTINGS,
+    defaults,
   );
+
+  // -----------------------------------------------------------------------
+  // Multi-series fetch
+  // -----------------------------------------------------------------------
+  const queries = useQueries({
+    queries: settings.metrics.map((m) => ({
+      queryKey: ["sequence", m.runId ?? runId, m.name, m.context_hash],
+      queryFn: () =>
+        api.sequence(m.runId ?? runId, m.name, {
+          context: m.context_hash || undefined,
+          maxPoints: 500,
+        }),
+      refetchInterval: 2000,
+    })),
+  });
+
+  // Per-series points that have artifacts.
+  const perSeriesPoints = useMemo(
+    () =>
+      queries.map((q) =>
+        (q.data?.points ?? []).filter(
+          (p: SequencePoint) => p.artifact_hash,
+        ),
+      ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [queries.map((q) => q.dataUpdatedAt).join("|")],
+  );
+
+  // Shared step slider
+  const maxLen = Math.max(...perSeriesPoints.map((pts) => pts.length), 0);
+  const [idx, setIdx] = useState(0);
+  const safeIdx = Math.min(Math.max(0, idx), Math.max(0, maxLen - 1));
+
+  const isMulti = settings.metrics.length > 1;
+
+  const multipleRuns = useMemo(() => {
+    const seen = new Set<string>();
+    for (const m of settings.metrics) seen.add(m.runId ?? runId);
+    return seen.size > 1;
+  }, [settings.metrics, runId]);
+
+  // -----------------------------------------------------------------------
+  // Settings refs for non-passive handlers
+  // -----------------------------------------------------------------------
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
 
   const settingsBtnRef = useRef<HTMLButtonElement | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -102,17 +325,22 @@ export default function ImageGalleryCard({ runId, metric }: Props) {
       if (!projectId) return;
       addCardToComparison(projectId, comparisonId, {
         type: "image",
-        series: [{ runId, name: metric.name, context_hash: metric.context_hash }],
+        series: settings.metrics.map((m) => ({
+          runId: m.runId ?? runId,
+          name: m.name,
+          context_hash: m.context_hash,
+        })),
       });
       refreshComparisons();
-      if (addCompTimer.current != null) window.clearTimeout(addCompTimer.current);
+      if (addCompTimer.current != null)
+        window.clearTimeout(addCompTimer.current);
       setAddCompConfirm(`Added to ${compName}`);
       addCompTimer.current = window.setTimeout(() => {
         setAddCompConfirm(null);
         setAddCompOpen(false);
       }, 1500);
     },
-    [projectId, runId, metric.name, metric.context_hash, refreshComparisons],
+    [projectId, runId, settings.metrics, refreshComparisons],
   );
 
   const createAndAdd = useCallback(() => {
@@ -125,25 +353,33 @@ export default function ImageGalleryCard({ runId, metric }: Props) {
 
   useEffect(() => {
     return () => {
-      if (addCompTimer.current != null) window.clearTimeout(addCompTimer.current);
+      if (addCompTimer.current != null)
+        window.clearTimeout(addCompTimer.current);
     };
   }, []);
 
-  // Unique, DOM-safe filter id per card instance for SVG gamma.
+  // -----------------------------------------------------------------------
+  // SVG gamma filter
+  // -----------------------------------------------------------------------
   const rawId = useId();
   const gammaFilterId = `cairn-gamma-${rawId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 
-  // Image container ref for native non-passive wheel listener.
+  const filterStr = [
+    `url(#${gammaFilterId})`,
+    `brightness(${1 + settings.brightness})`,
+    `contrast(${1 + settings.contrast})`,
+  ].join(" ");
+
+  const transformStr = `translate(${settings.pan.x}px, ${settings.pan.y}px) scale(${settings.zoom})`;
+
+  // -----------------------------------------------------------------------
+  // Single-image zoom/pan (disabled in multi-pane)
+  // -----------------------------------------------------------------------
   const containerRef = useRef<HTMLDivElement | null>(null);
 
-  // Track latest settings/zoom in refs for event handlers to avoid stale closures.
-  const settingsRef = useRef(settings);
-  settingsRef.current = settings;
-
-  // Native non-passive wheel listener so preventDefault() actually works.
   useEffect(() => {
     const el = containerRef.current;
-    if (!el) return;
+    if (!el || isMulti) return;
     const handler = (e: WheelEvent) => {
       e.preventDefault();
       const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
@@ -155,9 +391,8 @@ export default function ImageGalleryCard({ runId, metric }: Props) {
     return () => {
       el.removeEventListener("wheel", handler);
     };
-  }, [updateSettings]);
+  }, [updateSettings, isMulti]);
 
-  // Pointer drag for panning.
   const dragStateRef = useRef<{
     pointerId: number;
     startX: number;
@@ -168,6 +403,7 @@ export default function ImageGalleryCard({ runId, metric }: Props) {
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
+      if (isMulti) return;
       if (settingsRef.current.zoom <= 1) return;
       (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
       dragStateRef.current = {
@@ -178,7 +414,7 @@ export default function ImageGalleryCard({ runId, metric }: Props) {
         panY: settingsRef.current.pan.y,
       };
     },
-    [],
+    [isMulti],
   );
 
   const onPointerMove = useCallback(
@@ -206,25 +442,86 @@ export default function ImageGalleryCard({ runId, metric }: Props) {
     [],
   );
 
-  const filterStr = [
-    `url(#${gammaFilterId})`,
-    `brightness(${1 + settings.brightness})`,
-    `contrast(${1 + settings.contrast})`,
-  ].join(" ");
+  // -----------------------------------------------------------------------
+  // Drop target
+  // -----------------------------------------------------------------------
+  const [dropHighlight, setDropHighlight] = useState(false);
 
-  const transformStr = `translate(${settings.pan.x}px, ${settings.pan.y}px) scale(${settings.zoom})`;
-
+  // -----------------------------------------------------------------------
+  // Derived
+  // -----------------------------------------------------------------------
+  const canPan = !isMulti && settings.zoom > 1;
   const modified = isModified(settings);
-  const canPan = settings.zoom > 1;
+
+  // First series' points for subtitle
+  const firstPoints = perSeriesPoints[0] ?? [];
+  const firstCurrent = firstPoints[safeIdx];
 
   const subtitle =
-    points.length > 0
-      ? `step ${current?.step ?? "\u2014"} of ${points.length}`
+    maxLen > 0
+      ? `step ${firstCurrent?.step ?? "\u2014"} of ${maxLen}`
       : `${metric.count} pts`;
 
+  const anyLoading = queries.some((q) => q.isLoading);
+
+  // Baseline hash for diff
+  const baselineIdx = settings.baselineIndex;
+  const baselineHash =
+    baselineIdx != null
+      ? perSeriesPoints[baselineIdx]?.[safeIdx]?.artifact_hash ?? undefined
+      : undefined;
+
   return (
-    <div className="card p-4">
-      {/* SVG gamma filter, one per card instance. */}
+    <div
+      className={`card p-4${dropHighlight ? " ring-2 ring-accent ring-offset-2 ring-offset-bg" : ""}`}
+      style={{
+        position: "relative",
+        minHeight: settings.height ?? undefined,
+      }}
+      onDragOver={(e) => {
+        if (!e.dataTransfer.types.includes(CAIRN_SERIES_MIME)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+      }}
+      onDragEnter={(e) => {
+        if (!e.dataTransfer.types.includes(CAIRN_SERIES_MIME)) return;
+        setDropHighlight(true);
+      }}
+      onDragLeave={(e) => {
+        const related = e.relatedTarget as Node | null;
+        if (related && e.currentTarget.contains(related)) return;
+        setDropHighlight(false);
+      }}
+      onDrop={(e) => {
+        setDropHighlight(false);
+        const raw = e.dataTransfer.getData(CAIRN_SERIES_MIME);
+        if (!raw) return;
+        e.preventDefault();
+        try {
+          const dropped: SeriesRef = JSON.parse(raw);
+          const existing = settingsRef.current.metrics;
+          const key = `${dropped.runId ?? ""}::${dropped.name}::${dropped.context_hash}`;
+          const alreadyHas = existing.some(
+            (m) => `${m.runId ?? ""}::${m.name}::${m.context_hash}` === key,
+          );
+          if (!alreadyHas) {
+            updateSettings({
+              metrics: [
+                ...existing,
+                {
+                  runId: dropped.runId,
+                  name: dropped.name,
+                  context_hash: dropped.context_hash,
+                },
+              ],
+            });
+          }
+        } catch {
+          /* malformed payload, ignore */
+        }
+      }}
+    >
+      {/* SVG gamma filter */}
       <svg
         aria-hidden="true"
         style={{ position: "absolute", width: 0, height: 0 }}
@@ -253,7 +550,11 @@ export default function ImageGalleryCard({ runId, metric }: Props) {
         </filter>
       </svg>
 
-      <CardHeader title={metric.name} subtitle={subtitle}>
+      <CardHeader
+        title={settings.title ?? metric.name}
+        subtitle={subtitle}
+        onTitleChange={(t) => updateSettings({ title: t || undefined })}
+      >
         {modified && (
           <button
             type="button"
@@ -293,40 +594,87 @@ export default function ImageGalleryCard({ runId, metric }: Props) {
         </button>
       </CardHeader>
 
-      {q.isLoading ? (
+      {anyLoading && maxLen === 0 ? (
         <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
-      ) : current?.artifact_hash ? (
+      ) : maxLen > 0 ? (
         <>
-          <div
-            ref={containerRef}
-            className="flex justify-center rounded bg-bg p-2"
-            style={{
-              overflow: "hidden",
-              cursor: canPan ? "move" : "default",
-              touchAction: canPan ? "none" : undefined,
-            }}
-            onPointerDown={onPointerDown}
-            onPointerMove={onPointerMove}
-            onPointerUp={onPointerUp}
-            onPointerCancel={onPointerUp}
-          >
-            <img
-              src={api.artifactUrl(current.artifact_hash)}
-              alt={`${metric.name} @ step ${current.step}`}
-              className="max-h-64 object-contain"
-              draggable={false}
+          {isMulti ? (
+            /* ---------- Multi-pane layout ---------- */
+            <SplitPane
+              widths={
+                settings.paneWidths ??
+                Array(settings.metrics.length).fill(
+                  1 / settings.metrics.length,
+                )
+              }
+              onWidthsChange={(w) => updateSettings({ paneWidths: w })}
+            >
+              {settings.metrics.map((m, paneIdx) => {
+                const pts = perSeriesPoints[paneIdx] ?? [];
+                const pCurrent = pts[safeIdx];
+                const hash = pCurrent?.artifact_hash ?? undefined;
+                return (
+                  <ImagePane
+                    key={seriesKey(m)}
+                    metricEntry={m}
+                    paneIndex={paneIdx}
+                    artifactHash={hash}
+                    baselineHash={baselineHash}
+                    isBaseline={baselineIdx === paneIdx}
+                    diffMode={settings.diffMode}
+                    filterStr={filterStr}
+                    onSetBaseline={() =>
+                      updateSettings({
+                        baselineIndex:
+                          settings.baselineIndex === paneIdx
+                            ? undefined
+                            : paneIdx,
+                      })
+                    }
+                    label={seriesLabel(m, runId, multipleRuns)}
+                  />
+                );
+              })}
+            </SplitPane>
+          ) : (
+            /* ---------- Single-image layout (original) ---------- */
+            <div
+              ref={containerRef}
+              className="flex justify-center rounded bg-bg p-2"
               style={{
-                filter: filterStr,
-                transform: transformStr,
-                transformOrigin: "center center",
+                overflow: "hidden",
+                cursor: canPan ? "move" : "default",
+                touchAction: canPan ? "none" : undefined,
               }}
-            />
-          </div>
-          {points.length > 1 && (
+              onPointerDown={onPointerDown}
+              onPointerMove={onPointerMove}
+              onPointerUp={onPointerUp}
+              onPointerCancel={onPointerUp}
+            >
+              {firstCurrent?.artifact_hash ? (
+                <img
+                  src={api.artifactUrl(firstCurrent.artifact_hash)}
+                  alt={`${metric.name} @ step ${firstCurrent.step}`}
+                  className="max-h-64 object-contain"
+                  draggable={false}
+                  style={{
+                    filter: filterStr,
+                    transform: transformStr,
+                    transformOrigin: "center center",
+                  }}
+                />
+              ) : (
+                <span className="text-sm text-fg-muted">no image</span>
+              )}
+            </div>
+          )}
+
+          {/* Shared step slider */}
+          {maxLen > 1 && (
             <input
               type="range"
               min={0}
-              max={points.length - 1}
+              max={maxLen - 1}
               value={safeIdx}
               onChange={(e) => setIdx(Number(e.target.value))}
               className="mt-3 w-full accent-accent"
@@ -337,6 +685,47 @@ export default function ImageGalleryCard({ runId, metric }: Props) {
         <div className="text-sm text-fg-muted">no image logged yet</div>
       )}
 
+      {/* Series chip strip */}
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {settings.metrics.map((m, i) => {
+          const ref: SeriesRef = {
+            runId: m.runId,
+            name: m.name,
+            context_hash: m.context_hash,
+          };
+          return (
+            <SeriesChip
+              key={seriesKey(m)}
+              series={ref}
+              color={SERIES_COLORS[i % SERIES_COLORS.length]!}
+              label={seriesLabel(m, runId, multipleRuns)}
+              runId={runId}
+              onRemove={
+                settings.metrics.length > 1
+                  ? () => {
+                      const next = settings.metrics.filter(
+                        (_, idx2) => idx2 !== i,
+                      );
+                      // Adjust baselineIndex
+                      let newBaseline = settings.baselineIndex;
+                      if (newBaseline != null) {
+                        if (newBaseline === i) newBaseline = undefined;
+                        else if (newBaseline > i) newBaseline -= 1;
+                      }
+                      updateSettings({
+                        metrics: next,
+                        baselineIndex: newBaseline,
+                        paneWidths: undefined,
+                      });
+                    }
+                  : undefined
+              }
+            />
+          );
+        })}
+      </div>
+
+      {/* Settings popover */}
       <SettingsPopover
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
@@ -371,16 +760,45 @@ export default function ImageGalleryCard({ runId, metric }: Props) {
           format={(v) => v.toFixed(2)}
           description="1 = no change; <1 brightens shadows, >1 darkens"
         />
-        <Slider
-          label="Zoom"
-          value={settings.zoom}
-          onChange={(v) => updateSettings({ zoom: v })}
-          min={MIN_ZOOM}
-          max={MAX_ZOOM}
-          step={0.05}
-          format={(v) => `${v.toFixed(2)}x`}
-          description="Scroll on the image to zoom; drag to pan when zoomed in."
-        />
+
+        {!isMulti && (
+          <Slider
+            label="Zoom"
+            value={settings.zoom}
+            onChange={(v) => updateSettings({ zoom: v })}
+            min={MIN_ZOOM}
+            max={MAX_ZOOM}
+            step={0.05}
+            format={(v) => `${v.toFixed(2)}x`}
+            description="Scroll on the image to zoom; drag to pan when zoomed in."
+          />
+        )}
+
+        {isMulti && (
+          <p className="text-xs text-fg-subtle mt-2">
+            Zoom/pan available in single-image mode.
+          </p>
+        )}
+
+        {isMulti && (
+          <>
+            <h4 className="text-xs uppercase tracking-wide text-fg-muted mt-4 mb-2">
+              Diff
+            </h4>
+            <Select
+              label="Diff mode"
+              value={settings.diffMode}
+              onChange={(v) => updateSettings({ diffMode: v })}
+              options={[
+                { value: "none" as const, label: "None" },
+                { value: "absolute" as const, label: "Absolute" },
+                { value: "relative" as const, label: "Relative" },
+                { value: "squared" as const, label: "Squared" },
+              ]}
+            />
+          </>
+        )}
+
         <button
           type="button"
           className="btn w-full mt-2"
@@ -393,9 +811,13 @@ export default function ImageGalleryCard({ runId, metric }: Props) {
         </button>
       </SettingsPopover>
 
+      {/* Add to comparison popover */}
       <SettingsPopover
         open={addCompOpen && projectId != null}
-        onClose={() => { setAddCompOpen(false); setAddCompConfirm(null); }}
+        onClose={() => {
+          setAddCompOpen(false);
+          setAddCompConfirm(null);
+        }}
         anchorRef={addCompBtnRef}
         title="Add to comparison"
       >
@@ -404,7 +826,9 @@ export default function ImageGalleryCard({ runId, metric }: Props) {
         ) : (
           <>
             {comparisons.length === 0 ? (
-              <p className="text-xs text-fg-subtle mb-2">No comparisons yet.</p>
+              <p className="text-xs text-fg-subtle mb-2">
+                No comparisons yet.
+              </p>
             ) : (
               <div className="flex flex-col gap-1 mb-2 max-h-48 overflow-y-auto">
                 {comparisons.map((c) => (
@@ -416,7 +840,8 @@ export default function ImageGalleryCard({ runId, metric }: Props) {
                   >
                     <div className="truncate">{c.name}</div>
                     <div className="text-[10px] text-fg-subtle">
-                      {c.cards.length} card(s) · {formatRelative(c.createdAt)}
+                      {c.cards.length} card(s) ·{" "}
+                      {formatRelative(c.createdAt)}
                     </div>
                   </button>
                 ))}
@@ -431,11 +856,20 @@ export default function ImageGalleryCard({ runId, metric }: Props) {
                   type="text"
                   value={newCompName}
                   onChange={(e) => setNewCompName(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); createAndAdd(); } }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      createAndAdd();
+                    }
+                  }}
                   placeholder="Name"
                   className="input flex-1 text-xs"
                 />
-                <button type="button" onClick={createAndAdd} className="btn text-xs px-2">
+                <button
+                  type="button"
+                  onClick={createAndAdd}
+                  className="btn text-xs px-2"
+                >
                   Create
                 </button>
               </div>
@@ -450,6 +884,11 @@ export default function ImageGalleryCard({ runId, metric }: Props) {
           </>
         )}
       </SettingsPopover>
+
+      <CardResizeHandle
+        height={settings.height}
+        onHeightChange={(h) => updateSettings({ height: h })}
+      />
     </div>
   );
 }

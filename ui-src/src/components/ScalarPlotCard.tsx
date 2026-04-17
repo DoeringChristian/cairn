@@ -34,6 +34,7 @@ import type {
 } from "../api/types";
 import SeriesChip, { CAIRN_SERIES_MIME, type SeriesRef } from "./SeriesChip";
 import CardHeader from "./CardHeader";
+import CardResizeHandle from "./CardResizeHandle";
 import SettingsPopover from "./SettingsPopover";
 import MetricChips from "./settings/MetricChips";
 import NumberInput from "./settings/NumberInput";
@@ -56,6 +57,8 @@ interface PromotedSeriesConfig {
 
 interface ScalarSettings {
   version: 1;
+  title?: string;
+  height?: number;
   /**
    * Series to render. `runId` is optional; when absent, the card's top-level
    * `runId` prop is used as the fallback. Cross-run overlays (comparisons)
@@ -1011,6 +1014,7 @@ export default function ScalarPlotCard({
   return (
     <div
       className={`card p-4${dropHighlight ? " ring-2 ring-accent ring-offset-2 ring-offset-bg" : ""}`}
+      style={{ minHeight: settings.height ?? undefined, position: "relative" }}
       onDragOver={(e) => {
         if (!e.dataTransfer.types.includes(CAIRN_SERIES_MIME)) return;
         e.preventDefault();
@@ -1054,7 +1058,11 @@ export default function ScalarPlotCard({
         }
       }}
     >
-      <CardHeader title={metric.name} subtitle={subtitle}>
+      <CardHeader
+        title={settings.title ?? metric.name}
+        onTitleChange={(t) => updateSettings({ title: t || undefined })}
+        subtitle={subtitle}
+      >
         {settings.smoothing > 0 && (
           <button
             type="button"
@@ -1627,6 +1635,10 @@ export default function ScalarPlotCard({
           </>
         )}
       </SettingsPopover>
+      <CardResizeHandle
+        height={settings.height}
+        onHeightChange={(h) => updateSettings({ height: h })}
+      />
     </div>
   );
 }

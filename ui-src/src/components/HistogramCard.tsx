@@ -10,6 +10,7 @@ import {
 import { useProjectId } from "../lib/project-context";
 import type { SequenceMeta } from "../api/types";
 import CardHeader from "./CardHeader";
+import CardResizeHandle from "./CardResizeHandle";
 import SettingsPopover from "./SettingsPopover";
 
 interface Props {
@@ -27,6 +28,8 @@ interface HistogramMeta {
 
 interface HistogramSettings {
   version: 1;
+  title?: string;
+  height?: number;
 }
 
 const DEFAULT_HISTOGRAM_SETTINGS: HistogramSettings = { version: 1 };
@@ -62,8 +65,7 @@ export default function HistogramCard({ runId, metric }: Props) {
     }),
     [runId, metric.name, metric.context_hash],
   );
-  // Scaffolding only: settings aren't read anywhere yet.
-  useCardSettings(settingsKey, DEFAULT_HISTOGRAM_SETTINGS);
+  const [settings, updateSettings] = useCardSettings(settingsKey, DEFAULT_HISTOGRAM_SETTINGS);
 
   const settingsBtnRef = useRef<HTMLButtonElement | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -116,8 +118,12 @@ export default function HistogramCard({ runId, metric }: Props) {
       : `${metric.count} pts`;
 
   return (
-    <div className="card p-4">
-      <CardHeader title={metric.name} subtitle={subtitle}>
+    <div className="card p-4" style={{ minHeight: settings.height ?? undefined, position: "relative" }}>
+      <CardHeader
+        title={settings.title ?? metric.name}
+        onTitleChange={(t) => updateSettings({ title: t || undefined })}
+        subtitle={subtitle}
+      >
         {projectId && (
           <button
             ref={addCompBtnRef}
@@ -248,6 +254,10 @@ export default function HistogramCard({ runId, metric }: Props) {
           </>
         )}
       </SettingsPopover>
+      <CardResizeHandle
+        height={settings.height}
+        onHeightChange={(h) => updateSettings({ height: h })}
+      />
     </div>
   );
 }

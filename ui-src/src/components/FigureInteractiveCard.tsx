@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, useMemo, useRef } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueries } from "@tanstack/react-query";
 import createPlotlyComponent from "react-plotly.js/factory";
 // @ts-expect-error - plotly.js-dist-min has no bundled types, but is runtime-compatible with the factory.
 import Plotly from "plotly.js-dist-min";
@@ -13,17 +13,21 @@ import {
   useComparisons,
 } from "../lib/comparisons";
 import { useProjectId } from "../lib/project-context";
+import type { SequenceMeta, SequenceResponse, SequencePoint } from "../api/types";
 import CardHeader from "./CardHeader";
+import CardResizeHandle from "./CardResizeHandle";
+import SplitPane from "./SplitPane";
+import SeriesChip, { CAIRN_SERIES_MIME, type SeriesRef } from "./SeriesChip";
 import SettingsPopover from "./SettingsPopover";
 import Toggle from "./settings/Toggle";
 import Select from "./settings/Select";
-import type { SequenceMeta } from "../api/types";
 
 const Plot = createPlotlyComponent(Plotly);
 
 interface Props {
   runId: string;
   metric: SequenceMeta;
+  extraContexts?: SequenceMeta[];
 }
 
 interface FigureMetadata {
@@ -40,8 +44,21 @@ interface PlotlyFigure {
 type HoverMode = "closest" | "x unified" | "y unified" | "none";
 type DragMode = "zoom" | "pan" | "select" | "lasso" | "none";
 
+const SERIES_COLORS = [
+  "#539bf5",
+  "#d29922",
+  "#3fb950",
+  "#f85149",
+  "#c678dd",
+  "#56d4dd",
+];
+
 interface FigureSettings {
   version: 1;
+  metrics: Array<{ runId?: string; name: string; context_hash: string }>;
+  paneWidths?: number[];
+  title?: string;
+  height?: number;
   displayModeBar: boolean;
   scrollZoom: boolean;
   hoverMode: HoverMode;
@@ -49,14 +66,18 @@ interface FigureSettings {
   showLegend: boolean;
 }
 
-const DEFAULT_FIGURE_SETTINGS: FigureSettings = {
+const DEFAULT_FIGURE_SETTINGS = (seed: {
+  name: string;
+  context_hash: string;
+}): FigureSettings => ({
   version: 1,
+  metrics: [seed],
   displayModeBar: false,
   scrollZoom: true,
   hoverMode: "closest",
   dragMode: "zoom",
   showLegend: true,
-};
+});
 
 const HOVER_OPTIONS: Array<{ value: HoverMode; label: string }> = [
   { value: "closest", label: "Closest" },
@@ -96,28 +117,153 @@ function usePlotlySource(sourceHash: string | null | undefined) {
   });
 }
 
-function settingsDifferFromDefaults(s: FigureSettings): boolean {
+function seriesKey(m: { runId?: string; name: string; context_hash: string }): string {
+  return `${m.runId ?? ""}::${m.name}::${m.context_hash}`;
+}
+
+function shortRunId(id: string): string {
+  return id.length > 6 ? id.slice(0, 6) : id;
+}
+
+function seriesLabel(
+  name: string,
+  contextHash: string,
+  runId: string | undefined,
+  includeRun: boolean,
+): string {
+  const parts: string[] = [name];
+  if (includeRun && runId) parts.push(shortRunId(runId));
+  if (contextHash) parts.push(contextHash.slice(0, 6));
+  return parts.join(" \u00B7 ");
+}
+
+function settingsDifferFromDefaults(s: FigureSettings, d: FigureSettings): boolean {
   return (
-    s.displayModeBar !== DEFAULT_FIGURE_SETTINGS.displayModeBar ||
-    s.scrollZoom !== DEFAULT_FIGURE_SETTINGS.scrollZoom ||
-    s.hoverMode !== DEFAULT_FIGURE_SETTINGS.hoverMode ||
-    s.dragMode !== DEFAULT_FIGURE_SETTINGS.dragMode ||
-    s.showLegend !== DEFAULT_FIGURE_SETTINGS.showLegend
+    s.displayModeBar !== d.displayModeBar ||
+    s.scrollZoom !== d.scrollZoom ||
+    s.hoverMode !== d.hoverMode ||
+    s.dragMode !== d.dragMode ||
+    s.showLegend !== d.showLegend
   );
 }
 
-export default function FigureInteractiveCard({ runId, metric }: Props) {
-  const q = useSequence(runId, metric.name, {
-    context: metric.context_hash || undefined,
+// ---------------------------------------------------------------------------
+// Single pane: renders one figure (by metric index) at the shared step index.
+// ---------------------------------------------------------------------------
+function FigurePane({
+  runId,
+  m,
+  stepIdx,
+  settings,
+}: {
+  runId: string;
+  m: { runId?: string; name: string; context_hash: string };
+  stepIdx: number;
+  settings: FigureSettings;
+}) {
+  const rid = m.runId ?? runId;
+  const q = useSequence(rid, m.name, {
+    context: m.context_hash || undefined,
     maxPoints: 200,
   });
   const points = useMemo(
     () => (q.data?.points ?? []).filter((p) => p.artifact_hash),
     [q.data],
   );
-  const [idx, setIdx] = useState(0);
-  const safeIdx = Math.min(Math.max(0, idx), Math.max(0, points.length - 1));
+  const safeIdx = Math.min(Math.max(0, stepIdx), Math.max(0, points.length - 1));
   const current = points[safeIdx];
+
+  const meta = useMemo(
+    () => safeJsonParse<FigureMetadata>(current?.artifact_metadata ?? null),
+    [current],
+  );
+  const sourceHash =
+    meta?.has_source && meta?.source_format === "plotly_json"
+      ? meta.source_hash ?? null
+      : null;
+
+  const sourceQ = usePlotlySource(sourceHash);
+
+  const mergedLayout = useMemo(() => {
+    const base = (sourceQ.data?.layout ?? {}) as Record<string, unknown>;
+    return {
+      ...base,
+      ...DARK_LAYOUT,
+      font: { ...((base.font as object) ?? {}), ...(DARK_LAYOUT.font as object) },
+      margin: DARK_LAYOUT.margin,
+      hovermode: settings.hoverMode === "none" ? false : settings.hoverMode,
+      dragmode: settings.dragMode === "none" ? false : settings.dragMode,
+      showlegend: settings.showLegend,
+    };
+  }, [sourceQ.data, settings.hoverMode, settings.dragMode, settings.showLegend]);
+
+  const plotlyConfig = useMemo(
+    () => ({
+      displayModeBar: settings.displayModeBar,
+      scrollZoom: settings.scrollZoom,
+      responsive: true,
+    }),
+    [settings.displayModeBar, settings.scrollZoom],
+  );
+
+  const showPlotly = !!sourceHash && sourceQ.isSuccess && !!sourceQ.data?.data;
+
+  if (q.isLoading) {
+    return <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />;
+  }
+  if (!current?.artifact_hash) {
+    return <div className="text-sm text-fg-muted">no figure logged yet</div>;
+  }
+  if (showPlotly) {
+    return (
+      <div className="rounded bg-bg">
+        <Plot
+          data={(sourceQ.data?.data ?? []) as Plotly.Data[]}
+          layout={mergedLayout as Partial<Plotly.Layout>}
+          config={plotlyConfig}
+          useResizeHandler
+          style={{ width: "100%", height: "320px" }}
+        />
+      </div>
+    );
+  }
+  if (sourceHash && sourceQ.isLoading) {
+    return <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />;
+  }
+  return (
+    <div className="flex justify-center rounded bg-bg p-2">
+      <img
+        src={api.artifactUrl(current.artifact_hash)}
+        alt={`${m.name} @ step ${current.step}`}
+        className="max-h-64 object-contain"
+      />
+    </div>
+  );
+}
+
+export default function FigureInteractiveCard({ runId, metric, extraContexts = [] }: Props) {
+  const seedMetric = useMemo(
+    () => ({ name: metric.name, context_hash: metric.context_hash }),
+    [metric.name, metric.context_hash],
+  );
+
+  const defaults = useMemo<FigureSettings>(() => {
+    const all: Array<{ runId?: string; name: string; context_hash: string }> = [
+      seedMetric,
+      ...(extraContexts ?? []).map((e) => ({
+        name: e.name,
+        context_hash: e.context_hash,
+      })),
+    ];
+    const seen = new Set<string>();
+    const unique = all.filter((m) => {
+      const k = seriesKey(m);
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+    return { ...DEFAULT_FIGURE_SETTINGS(seedMetric), metrics: unique };
+  }, [seedMetric, extraContexts]);
 
   const settingsKey = {
     runId,
@@ -126,8 +272,56 @@ export default function FigureInteractiveCard({ runId, metric }: Props) {
   };
   const [settings, updateSettings, resetSettings] = useCardSettings(
     settingsKey,
-    DEFAULT_FIGURE_SETTINGS,
+    defaults,
   );
+
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+
+  // For the single-metric path, fetch points to drive the step slider.
+  const q = useSequence(runId, metric.name, {
+    context: metric.context_hash || undefined,
+    maxPoints: 200,
+  });
+  const points = useMemo(
+    () => (q.data?.points ?? []).filter((p) => p.artifact_hash),
+    [q.data],
+  );
+
+  // For multi-metric, fetch all sequences to determine max step count.
+  const multiQueries = useQueries({
+    queries: settings.metrics.length > 1
+      ? settings.metrics.map((m) => {
+          const rid = m.runId ?? runId;
+          return {
+            queryKey: ["sequence", rid, m.name, m.context_hash],
+            queryFn: () =>
+              api.sequence(rid, m.name, {
+                context: m.context_hash || undefined,
+                maxPoints: 200,
+              }),
+            refetchInterval: 2_000,
+            staleTime: 2_000,
+          };
+        })
+      : [],
+  });
+
+  const maxStepCount = useMemo(() => {
+    if (settings.metrics.length <= 1) return points.length;
+    let max = 0;
+    for (const mq of multiQueries) {
+      const pts = (mq.data as SequenceResponse | undefined)?.points?.filter(
+        (p: SequencePoint) => p.artifact_hash,
+      );
+      if (pts && pts.length > max) max = pts.length;
+    }
+    return max;
+  }, [settings.metrics.length, points.length, multiQueries]);
+
+  const [idx, setIdx] = useState(0);
+  const safeIdx = Math.min(Math.max(0, idx), Math.max(0, maxStepCount - 1));
+  const current = points[safeIdx];
 
   const settingsButtonRef = useRef<HTMLButtonElement | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -141,6 +335,7 @@ export default function FigureInteractiveCard({ runId, metric }: Props) {
   const [addCompConfirm, setAddCompConfirm] = useState<string | null>(null);
   const addCompTimer = useRef<number | null>(null);
   const [newCompName, setNewCompName] = useState("");
+  const [dropHighlight, setDropHighlight] = useState(false);
 
   const addToComp = useCallback(
     (comparisonId: string, compName: string) => {
@@ -174,6 +369,7 @@ export default function FigureInteractiveCard({ runId, metric }: Props) {
     };
   }, []);
 
+  // Single-metric path: Plotly source for the current figure.
   const meta = useMemo(
     () => safeJsonParse<FigureMetadata>(current?.artifact_metadata ?? null),
     [current],
@@ -187,9 +383,6 @@ export default function FigureInteractiveCard({ runId, metric }: Props) {
 
   const mergedLayout = useMemo(() => {
     const base = (sourceQ.data?.layout ?? {}) as Record<string, unknown>;
-    // Start from the source JSON's layout, then overlay dark-theme overrides
-    // so our bg/font/margin always win. Settings are applied last so the
-    // user's choices override both the source and any theme defaults.
     return {
       ...base,
       ...DARK_LAYOUT,
@@ -211,16 +404,73 @@ export default function FigureInteractiveCard({ runId, metric }: Props) {
   );
 
   const showPlotly = !!sourceHash && sourceQ.isSuccess && !!sourceQ.data?.data;
-  const isDirty = settingsDifferFromDefaults(settings);
+  const isDirty = settingsDifferFromDefaults(settings, defaults);
+
+  const multipleRuns = useMemo(() => {
+    const seen = new Set<string>();
+    for (const m of settings.metrics) seen.add(m.runId ?? runId);
+    return seen.size > 1;
+  }, [settings.metrics, runId]);
 
   const subtitle =
-    points.length > 0
-      ? `step ${current?.step ?? "—"} of ${points.length}`
+    maxStepCount > 0
+      ? `step ${current?.step ?? safeIdx} of ${maxStepCount}`
       : `${metric.count} pts`;
 
+  const isMulti = settings.metrics.length > 1;
+
   return (
-    <div className="card p-4">
-      <CardHeader title={metric.name} subtitle={subtitle}>
+    <div
+      className={`card p-4${dropHighlight ? " ring-2 ring-accent ring-offset-2 ring-offset-bg" : ""}`}
+      style={{ minHeight: settings.height ?? undefined, position: "relative" }}
+      onDragOver={(e) => {
+        if (!e.dataTransfer.types.includes(CAIRN_SERIES_MIME)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+      }}
+      onDragEnter={(e) => {
+        if (!e.dataTransfer.types.includes(CAIRN_SERIES_MIME)) return;
+        setDropHighlight(true);
+      }}
+      onDragLeave={(e) => {
+        const related = e.relatedTarget as Node | null;
+        if (related && e.currentTarget.contains(related)) return;
+        setDropHighlight(false);
+      }}
+      onDrop={(e) => {
+        setDropHighlight(false);
+        const raw = e.dataTransfer.getData(CAIRN_SERIES_MIME);
+        if (!raw) return;
+        e.preventDefault();
+        try {
+          const dropped: SeriesRef = JSON.parse(raw);
+          const existing = settingsRef.current.metrics;
+          const key = `${dropped.runId ?? ""}::${dropped.name}::${dropped.context_hash}`;
+          const alreadyHas = existing.some(
+            (m) => `${m.runId ?? ""}::${m.name}::${m.context_hash}` === key,
+          );
+          if (!alreadyHas) {
+            updateSettings({
+              metrics: [
+                ...existing,
+                {
+                  runId: dropped.runId,
+                  name: dropped.name,
+                  context_hash: dropped.context_hash,
+                },
+              ],
+            });
+          }
+        } catch {
+          /* malformed payload, ignore */
+        }
+      }}
+    >
+      <CardHeader
+        title={settings.title ?? metric.name}
+        onTitleChange={(t) => updateSettings({ title: t || undefined })}
+        subtitle={subtitle}
+      >
         <button
           type="button"
           onClick={() => updateSettings({ displayModeBar: !settings.displayModeBar })}
@@ -241,7 +491,7 @@ export default function FigureInteractiveCard({ runId, metric }: Props) {
             title="Reset settings"
             className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
           >
-            ↺
+            {"\u21BA"}
           </button>
         )}
         {projectId && (
@@ -268,10 +518,65 @@ export default function FigureInteractiveCard({ runId, metric }: Props) {
           title="Settings"
           className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
         >
-          ⚙
+          {"\u2699"}
         </button>
       </CardHeader>
-      {q.isLoading ? (
+
+      {isMulti ? (
+        <>
+          <SplitPane
+            widths={settings.paneWidths ?? Array(settings.metrics.length).fill(1 / settings.metrics.length)}
+            onWidthsChange={(w) => updateSettings({ paneWidths: w })}
+          >
+            {settings.metrics.map((m) => (
+              <FigurePane
+                key={seriesKey(m)}
+                runId={runId}
+                m={m}
+                stepIdx={safeIdx}
+                settings={settings}
+              />
+            ))}
+          </SplitPane>
+          {maxStepCount > 1 && (
+            <input
+              type="range"
+              min={0}
+              max={maxStepCount - 1}
+              value={safeIdx}
+              onChange={(e) => setIdx(Number(e.target.value))}
+              className="mt-3 w-full accent-accent"
+            />
+          )}
+          {/* Series chip strip */}
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {settings.metrics.map((m, i) => {
+              const ref: SeriesRef = {
+                runId: m.runId,
+                name: m.name,
+                context_hash: m.context_hash,
+              };
+              return (
+                <SeriesChip
+                  key={seriesKey(m)}
+                  series={ref}
+                  color={SERIES_COLORS[i % SERIES_COLORS.length]!}
+                  label={seriesLabel(m.name, m.context_hash, m.runId, multipleRuns)}
+                  runId={runId}
+                  onRemove={
+                    settings.metrics.length > 1
+                      ? () => {
+                          const next = settings.metrics.filter((_, j) => j !== i);
+                          updateSettings({ metrics: next });
+                        }
+                      : undefined
+                  }
+                />
+              );
+            })}
+          </div>
+        </>
+      ) : q.isLoading ? (
         <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
       ) : current?.artifact_hash ? (
         <>
@@ -410,6 +715,10 @@ export default function FigureInteractiveCard({ runId, metric }: Props) {
           </>
         )}
       </SettingsPopover>
+      <CardResizeHandle
+        height={settings.height}
+        onHeightChange={(h) => updateSettings({ height: h })}
+      />
     </div>
   );
 }

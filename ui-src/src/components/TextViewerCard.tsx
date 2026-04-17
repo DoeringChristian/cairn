@@ -10,6 +10,7 @@ import { useProjectId } from "../lib/project-context";
 import { formatRelative } from "../lib/format";
 import type { SequenceMeta } from "../api/types";
 import CardHeader from "./CardHeader";
+import CardResizeHandle from "./CardResizeHandle";
 import SettingsPopover from "./SettingsPopover";
 import Select from "./settings/Select";
 import Toggle from "./settings/Toggle";
@@ -21,6 +22,8 @@ interface Props {
 
 interface TextSettings {
   version: 1;
+  title?: string;
+  height?: number;
   fontSize: "xs" | "sm" | "base";
   wordWrap: boolean;
 }
@@ -128,8 +131,12 @@ export default function TextViewerCard({ runId, metric }: Props) {
     : "whitespace-pre overflow-x-auto";
 
   return (
-    <div className="card p-4">
-      <CardHeader title={metric.name} subtitle={subtitle}>
+    <div className="card p-4" style={{ minHeight: settings.height ?? undefined, position: "relative" }}>
+      <CardHeader
+        title={settings.title ?? metric.name}
+        onTitleChange={(t) => updateSettings({ title: t || undefined })}
+        subtitle={subtitle}
+      >
         {projectId && (
           <button
             ref={addCompBtnRef}
@@ -264,6 +271,10 @@ export default function TextViewerCard({ runId, metric }: Props) {
           </>
         )}
       </SettingsPopover>
+      <CardResizeHandle
+        height={settings.height}
+        onHeightChange={(h) => updateSettings({ height: h })}
+      />
     </div>
   );
 }
