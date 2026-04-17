@@ -1,8 +1,7 @@
-import { Link, NavLink, useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { useRuns } from "../api/hooks";
 import { formatDuration, formatRelative } from "../lib/format";
 import RunStatusBadge from "../components/RunStatusBadge";
-import { ProjectProvider } from "../lib/project-context";
 
 export default function ProjectPage() {
   const { projectId } = useParams<{ projectId: string }>();
@@ -14,55 +13,7 @@ export default function ProjectPage() {
   const runs = q.data?.runs ?? [];
 
   return (
-    <ProjectProvider value={projectId}>
     <div>
-      <nav className="mb-4 flex flex-wrap items-center gap-x-1 text-sm text-fg-muted">
-        <Link to="/" className="hover:text-fg">Projects</Link>
-        <span>›</span>
-        <span className="mono text-fg">{projectId}</span>
-      </nav>
-      <nav className="mb-4 flex gap-1 overflow-x-auto whitespace-nowrap border-b border-border">
-        <NavLink
-          to={`/p/${projectId}`}
-          end
-          className={({ isActive }) =>
-            [
-              "border-b-2 px-3 py-2 text-sm transition-colors",
-              isActive
-                ? "border-accent text-fg"
-                : "border-transparent text-fg-muted hover:text-fg",
-            ].join(" ")
-          }
-        >
-          Workspace
-        </NavLink>
-        <NavLink
-          to={`/p/${projectId}/runs`}
-          className={({ isActive }) =>
-            [
-              "border-b-2 px-3 py-2 text-sm transition-colors",
-              isActive
-                ? "border-accent text-fg"
-                : "border-transparent text-fg-muted hover:text-fg",
-            ].join(" ")
-          }
-        >
-          Runs table
-        </NavLink>
-        <NavLink
-          to={`/p/${projectId}/compare`}
-          className={({ isActive }) =>
-            [
-              "border-b-2 px-3 py-2 text-sm transition-colors",
-              isActive
-                ? "border-accent text-fg"
-                : "border-transparent text-fg-muted hover:text-fg",
-            ].join(" ")
-          }
-        >
-          Compare
-        </NavLink>
-      </nav>
       <div className="mb-6 flex items-baseline justify-between gap-4">
         <h1 className="mono text-xl font-semibold">{projectId}</h1>
         <p className="text-sm text-fg-muted">{runs.length} run(s)</p>
@@ -137,6 +88,5 @@ export default function ProjectPage() {
         </>
       )}
     </div>
-    </ProjectProvider>
   );
 }

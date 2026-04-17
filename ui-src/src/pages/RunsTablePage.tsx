@@ -5,7 +5,6 @@ import type { Run, RunStatus } from "../api/types";
 import RunStatusBadge from "../components/RunStatusBadge";
 import { formatDuration, formatRelative, safeJsonParse } from "../lib/format";
 import { createComparison } from "../lib/comparisons";
-import { ProjectProvider } from "../lib/project-context";
 
 type SortColumn =
   | "name"
@@ -160,19 +159,7 @@ export default function RunsTablePage() {
   };
 
   return (
-    <ProjectProvider value={projectId}>
     <div>
-      <nav className="mb-4 flex flex-wrap items-center gap-x-1 text-sm text-fg-muted">
-        <Link to="/" className="hover:text-fg">
-          Projects
-        </Link>
-        <span>›</span>
-        <Link to={`/p/${projectId}`} className="mono hover:text-fg">
-          {projectId}
-        </Link>
-        <span>›</span>
-        <span className="text-fg">Runs</span>
-      </nav>
       <div className="mb-6 flex items-baseline justify-between gap-4">
         <h1 className="mono text-xl font-semibold">{projectId} / runs</h1>
         <p className="text-sm text-fg-muted">
@@ -445,7 +432,6 @@ export default function RunsTablePage() {
         </>
       )}
     </div>
-    </ProjectProvider>
   );
 }
 

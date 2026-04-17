@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import CardRenderer from "../components/CardRenderer";
 import DraggableCard from "../components/DraggableCard";
 import {
@@ -11,7 +11,6 @@ import {
   type Comparison,
   type ComparisonCard,
 } from "../lib/comparisons";
-import { ProjectProvider } from "../lib/project-context";
 import { formatRelative } from "../lib/format";
 import SettingsPopover from "../components/SettingsPopover";
 import type { SequenceMeta } from "../api/types";
@@ -95,11 +94,9 @@ export default function ComparePage() {
   if (!projectId) return null;
 
   return (
-    <ProjectProvider value={projectId}>
       <div>
-        <Breadcrumbs projectId={projectId} />
         <h1 className="mono mb-4 text-xl font-semibold">
-          {projectId} / compare
+          Compare
         </h1>
 
         {/* Mobile sidebar toggle */}
@@ -144,29 +141,10 @@ export default function ComparePage() {
           </main>
         </div>
       </div>
-    </ProjectProvider>
   );
 }
 
 // -----------------------------------------------------------------------------
-// Breadcrumbs
-// -----------------------------------------------------------------------------
-
-function Breadcrumbs({ projectId }: { projectId: string }) {
-  return (
-    <nav className="mb-4 flex flex-wrap items-center gap-x-1 text-sm text-fg-muted">
-      <Link to="/" className="hover:text-fg">
-        Projects
-      </Link>
-      <span>›</span>
-      <Link to={`/p/${projectId}`} className="mono hover:text-fg">
-        {projectId}
-      </Link>
-      <span>›</span>
-      <span className="text-fg">Compare</span>
-    </nav>
-  );
-}
 
 // -----------------------------------------------------------------------------
 // Sidebar
