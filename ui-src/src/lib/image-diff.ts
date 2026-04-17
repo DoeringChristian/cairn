@@ -47,12 +47,11 @@ export function computeDiff(
         const b = other.data[oi + c]!;
         const diff = a - b;
         const absDiff = Math.abs(diff);
-        const denom = Math.max(a, 1); // avoid division by zero
+        const denom = Math.max(a, 1);
         let v: number;
 
         switch (mode) {
           case "signed":
-            // Map [-255, 255] → [0, 255] via midpoint. 128 = no diff.
             v = (diff + 255) / 2;
             break;
           case "absolute":
@@ -62,7 +61,6 @@ export function computeDiff(
             v = (diff * diff) / 255;
             break;
           case "relative_signed":
-            // Map [-1, 1] → [0, 255] via midpoint. 128 = no diff.
             v = ((diff / denom) + 1) * 127.5;
             break;
           case "relative_absolute":
@@ -76,7 +74,7 @@ export function computeDiff(
         result.data[ri + c] = Math.min(255, Math.max(0, Math.round(v)));
       }
 
-      result.data[ri + 3] = 255; // full alpha
+      result.data[ri + 3] = 255;
     }
   }
 
@@ -85,25 +83,35 @@ export function computeDiff(
 
 /**
  * Load an image URL into an ImageData by drawing to an offscreen canvas.
- * Returns null if the image fails to load.
+ * Returns null if the image fails to load or the canvas is tainted.
  */
 export async function loadImageData(url: string): Promise<ImageData | null> {
   return new Promise((resolve) => {
     const img = new Image();
-    img.crossOrigin = "anonymous";
+    // Same-origin: don't set crossOrigin — it would force a CORS preflight
+    // which can fail on proxy setups and taint the canvas.
     img.onload = () => {
-      const canvas = document.createElement("canvas");
-      canvas.width = img.naturalWidth;
-      canvas.height = img.naturalHeight;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) {
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          resolve(null);
+          return;
+        }
+        ctx.drawImage(img, 0, 0);
+        resolve(ctx.getImageData(0, 0, canvas.width, canvas.height));
+      } catch (err) {
+        // SecurityError if canvas is tainted (cross-origin without CORS).
+        console.warn("[cairn] loadImageData failed:", err);
         resolve(null);
-        return;
       }
-      ctx.drawImage(img, 0, 0);
-      resolve(ctx.getImageData(0, 0, canvas.width, canvas.height));
     };
-    img.onerror = () => resolve(null);
+    img.onerror = (err) => {
+      console.warn("[cairn] loadImageData: image failed to load:", url, err);
+      resolve(null);
+    };
     img.src = url;
   });
 }
