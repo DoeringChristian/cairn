@@ -34,11 +34,22 @@
   }
 }
 
-/* Drag-and-drop reordering: reveal the grip icon on card hover, switch cursor.
- * The grip lives inside CardHeader; the `.cairn-draggable-card` class is
- * added by DraggableCard to the outer wrapper. Only apply these affordances
- * on devices that can hover (desktop), so mobile users aren't distracted by
- * unreachable UI. */
+/* ---------------------------------------------------------------------------
+ * Drag-and-drop reordering
+ *
+ * The ONLY drag source per card is the grip icon (.cairn-drag-grip) inside
+ * CardHeader. Every other descendant of .cairn-draggable-card is forced
+ * non-draggable via the wildcard rule below so that native browser drags
+ * (images, SVGs, text selection) cannot accidentally trigger the reorder
+ * system.
+ * --------------------------------------------------------------------------- */
+
+/* Force all descendants non-draggable. The grip overrides this for itself. */
+.cairn-draggable-card *:not(.cairn-drag-grip) {
+  -webkit-user-drag: none;
+}
+
+/* Reveal the grip on hover (desktop-only). */
 @media (hover: hover) {
   .cairn-draggable-card .cairn-drag-grip {
     cursor: grab;

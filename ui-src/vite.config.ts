@@ -13,10 +13,11 @@ export default defineConfig({
   },
   server: {
     port: 5173,
-    // `npm run dev` proxies /api to the local tracking server so the dev
-    // experience matches production (browser always sees /api/*).
+    // `npm run dev` proxies /api to the cairn backend. Set CAIRN_API_URL
+    // env var to override (e.g. http://localhost:4300 for `cairn server`).
+    // Default: 4301 which is `cairn ui`'s port.
     proxy: {
-      "/api": "http://localhost:4300",
+      "/api": "http://localhost:4301",
     },
   },
 });

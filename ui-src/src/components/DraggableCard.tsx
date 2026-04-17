@@ -1,11 +1,14 @@
 /**
- * Thin wrapper that enables drag-to-reorder for cards.
+ * Wrapper that enables drag-to-reorder for cards.
  *
- * IMPORTANT: The ``draggable`` attribute is NOT on this wrapper — that would
- * steal every pointer gesture (slider drags, plot pan, box-zoom, etc.) from
- * the card's body. Instead, only the grip icon inside ``CardHeader`` is
- * ``draggable``. This wrapper provides a React Context that the grip reads
- * to configure its ``dataTransfer`` payload and fire the correct callbacks.
+ * The wrapper div is completely inert — no draggable, no onDragStart. The
+ * ONLY drag source is the grip icon (≡) inside CardHeader, which reads the
+ * context provided here. This ensures plot zoom, slider drags, image pan,
+ * etc. are never intercepted by the browser's HTML5 drag system.
+ *
+ * The grip's onDragStart sets the drag image to the whole card container
+ * (via closest(".cairn-draggable-card")) so the user sees the full card
+ * being dragged, not just the tiny grip icon.
  */
 
 import { createContext, useContext, useState } from "react";
@@ -53,6 +56,13 @@ export default function DraggableCard({
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData(CAIRN_CARD_MIME, cardKey);
     e.dataTransfer.setData("text/plain", cardKey);
+
+    // Use the whole card as the drag ghost, not just the tiny grip icon.
+    const cardEl = (e.target as HTMLElement).closest(".cairn-draggable-card");
+    if (cardEl) {
+      e.dataTransfer.setDragImage(cardEl, 20, 20);
+    }
+
     setDragging(true);
     onDragStart(cardKey, section);
   };
@@ -66,20 +76,9 @@ export default function DraggableCard({
     <DraggableCardCtx.Provider
       value={{ cardKey, section, dragging, handleDragStart, handleDragEnd }}
     >
+      {/* Completely inert: NO draggable, NO onDragStart on this div. */}
       <div
         data-card-key={cardKey}
-        draggable={false}
-        onDragStart={(e) => {
-          // Belt-and-suspenders: if a drag somehow starts from anywhere other
-          // than the grip (e.g. browser-native image/text/selection drag
-          // that bubbles up), kill it immediately so it never reaches the
-          // grid's drop handler or shows a drag ghost of the whole card.
-          const target = e.target as HTMLElement;
-          if (!target.closest?.(".cairn-drag-grip")) {
-            e.preventDefault();
-            e.stopPropagation();
-          }
-        }}
         className={`cairn-draggable-card ${dragging ? "opacity-50" : ""}`}
       >
         {children}

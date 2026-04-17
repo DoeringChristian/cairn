@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import ScalarPlotCard from "../components/ScalarPlotCard";
+import DraggableCard from "../components/DraggableCard";
 import {
   createComparison,
   deleteComparison,
@@ -438,13 +439,20 @@ function ComparisonView({
       ) : (
         <div className="flex flex-col gap-4">
           {comparison.cards.map((card) => (
-            <ComparisonCardRenderer
+            <DraggableCard
               key={card.id}
-              card={card}
-              comparisonId={comparison.id}
-              projectId={projectId}
-              onRemove={() => onRemoveCard(card.id)}
-            />
+              cardKey={card.id}
+              section="comparison"
+              onDragStart={() => {}}
+              onDragEnd={() => {}}
+            >
+              <ComparisonCardRenderer
+                card={card}
+                comparisonId={comparison.id}
+                projectId={projectId}
+                onRemove={() => onRemoveCard(card.id)}
+              />
+            </DraggableCard>
           ))}
         </div>
       )}
