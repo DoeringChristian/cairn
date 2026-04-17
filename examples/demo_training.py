@@ -40,6 +40,7 @@ import cairn
 
 def make_sample_image(step: int) -> Image.Image:
     """A 64×64 RGB image whose contents change each step."""
+    step += 1
     img = Image.new("RGB", (64, 64), (20, 20, 40))
     draw = ImageDraw.Draw(img)
     # Moving circle
@@ -121,8 +122,12 @@ def main() -> None:
         run.track(train_loss, name="train.loss", step=step)
         run.track(val_loss, name="train.loss", step=step, context={"subset": "val"})
         run.track(acc, name="train.accuracy", step=step)
-        run.track(acc + random.uniform(-0.05, 0.0), name="train.accuracy",
-                  step=step, context={"subset": "val"})
+        run.track(
+            acc + random.uniform(-0.05, 0.0),
+            name="train.accuracy",
+            step=step,
+            context={"subset": "val"},
+        )
 
         # Metric that lives in its own section (no dot prefix)
         run.track(random.uniform(0.5, 1.0), name="grad_norm", step=step)
@@ -181,7 +186,9 @@ def main() -> None:
         time.sleep(0.1)
 
     # One-off artifact (not tied to a step) — exercises log_artifact path
-    final_checkpoint = np.random.default_rng(42).normal(size=(32, 32)).astype(np.float32)
+    final_checkpoint = (
+        np.random.default_rng(42).normal(size=(32, 32)).astype(np.float32)
+    )
     run.log_artifact(cairn.Tensor(final_checkpoint), name="final_weights")
 
     # A dedicated figure artifact attached to the run itself

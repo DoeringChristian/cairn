@@ -4,7 +4,7 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
   build: {
-    outDir: "../cairn/ui/dist",
+    outDir: "./dist",
     emptyOutDir: true,
     // Keep the output small and easy to inspect.
     sourcemap: false,

@@ -1,8 +1,8 @@
 """Hatch build hook: run `npm run build` so the wheel includes the UI bundle.
 
-If Node/npm isn't available (or ui-src/ is missing), print a warning and
-skip — the wheel will ship without the UI, which is fine for API-only
-deployments or for developers building from an editable checkout.
+Since cairn/ui/dist/ is committed to git, this hook is only needed when
+building from a clean checkout without the pre-built assets. If dist/
+already exists and contains index.html, the hook is a no-op.
 """
 
 from __future__ import annotations
@@ -20,16 +20,21 @@ class CairnUIBuildHook(BuildHookInterface):
 
     def initialize(self, version: str, build_data: dict) -> None:
         root = Path(self.root)
-        ui_src = root / "ui-src"
-        ui_dist = root / "cairn" / "ui" / "dist"
+        ui_dir = root / "cairn" / "ui"
+        ui_dist = ui_dir / "dist"
 
         if os.environ.get("CAIRN_SKIP_UI_BUILD"):
             self.app.display_info("CAIRN_SKIP_UI_BUILD set — skipping UI build")
             return
 
-        if not ui_src.exists():
+        # If dist/ already has index.html (committed or from a prior build), skip.
+        if (ui_dist / "index.html").exists():
+            self.app.display_info("cairn/ui/dist/index.html exists — skipping UI build")
+            return
+
+        if not (ui_dir / "package.json").exists():
             self.app.display_warning(
-                "ui-src/ not present; skipping UI build (wheel will have no UI bundle)"
+                "cairn/ui/package.json not present; skipping UI build"
             )
             return
 
@@ -41,14 +46,12 @@ class CairnUIBuildHook(BuildHookInterface):
             )
             return
 
-        # Only run `npm ci` if node_modules is missing (avoid reinstalling
-        # on every incremental build).
-        if not (ui_src / "node_modules").exists():
-            self.app.display_info("Running `npm ci` in ui-src/…")
-            subprocess.check_call([npm, "ci"], cwd=str(ui_src))
+        if not (ui_dir / "node_modules").exists():
+            self.app.display_info("Running `npm ci` in cairn/ui/…")
+            subprocess.check_call([npm, "ci"], cwd=str(ui_dir))
 
-        self.app.display_info("Running `npm run build` in ui-src/…")
-        subprocess.check_call([npm, "run", "build"], cwd=str(ui_src))
+        self.app.display_info("Running `npm run build` in cairn/ui/…")
+        subprocess.check_call([npm, "run", "build"], cwd=str(ui_dir))
 
         if not (ui_dist / "index.html").exists():
             self.app.display_warning(

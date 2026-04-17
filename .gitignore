@@ -21,14 +21,10 @@ htmlcov/
 venv/
 env/
 
-# UI build artifacts (included in wheel only when built separately)
-cairn/ui/dist/*
-!cairn/ui/dist/.gitkeep
-
-# Frontend build deps
-ui-src/node_modules/
-ui-src/dist/
-ui-src/*.tsbuildinfo
+# Frontend build deps (source now lives at cairn/ui/)
+cairn/ui/node_modules/
+cairn/ui/*.tsbuildinfo
+# cairn/ui/dist/ is COMMITTED so pip install doesn't need Node.
 
 # Cairn runtime
 .cairn/
