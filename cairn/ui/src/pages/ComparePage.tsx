@@ -19,6 +19,7 @@ export default function ComparePage() {
   const { projectId } = useParams<{ projectId: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
   const { comparisons, refresh } = useComparisons(projectId ?? "");
+  console.log("[cairn] ComparePage: projectId", projectId, "comparisons", comparisons.length, "selectedId", searchParams.get("c"));
 
   const selectedId = searchParams.get("c") ?? "";
 

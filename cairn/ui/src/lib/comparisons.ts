@@ -20,7 +20,7 @@ export interface ComparisonSeriesRef {
 export interface ComparisonCard {
   /** Stable uuid. Distinct from the settings storage key — see lib/card-settings.ts. */
   id: string;
-  type: "scalar" | "image" | "figure" | "audio" | "video" | "histogram" | "text";
+  type: "scalar" | "image" | "figure" | "audio" | "video" | "histogram" | "text" | "tensor";
   series: ComparisonSeriesRef[];
 }
 
@@ -37,10 +37,11 @@ function storageKey(projectId: string): string {
 
 function isComparisonCard(x: unknown): x is ComparisonCard {
   if (!x || typeof x !== "object") return false;
-  const VALID_TYPES = new Set(["scalar", "image", "figure", "audio", "video", "histogram", "text"]);
   const c = x as Partial<ComparisonCard>;
   if (typeof c.id !== "string") return false;
-  if (typeof c.type !== "string" || !VALID_TYPES.has(c.type)) return false;
+  // Accept any non-empty string as type — don't hardcode a set that
+  // silently drops entire comparisons when a new card type is added.
+  if (typeof c.type !== "string" || c.type.length === 0) return false;
   if (!Array.isArray(c.series)) return false;
   return c.series.every((s) => {
     if (!s || typeof s !== "object") return false;

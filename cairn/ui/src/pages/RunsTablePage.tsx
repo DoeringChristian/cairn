@@ -154,6 +154,7 @@ export default function RunsTablePage() {
     // Create a comparison pre-populated with cards: one card per shared
     // metric across the selected runs (same tags → same cards).
     const selectedIds = Array.from(selected);
+    console.log("[cairn] onCompare: selectedIds", selectedIds);
     const now = new Date();
     const label = `${now.toLocaleDateString()} ${now.toLocaleTimeString()}`;
     const cmp = createComparison(projectId, `Comparison ${label}`);
@@ -196,12 +197,18 @@ export default function RunsTablePage() {
     });
 
     // Add each card to the comparison.
+    console.log("[cairn] onCompare: cardMap size", cardMap.size, Array.from(cardMap.keys()));
     for (const card of cardMap.values()) {
+      console.log("[cairn] onCompare: adding card", card.name, card.object_type, card.series.length, "series");
       addCardToComparison(projectId, cmp.id, {
         type: card.object_type as "scalar",
         series: card.series,
       });
     }
+
+    // Verify what was saved
+    const saved = localStorage.getItem(`cairn:comparisons:${projectId}`);
+    console.log("[cairn] onCompare: saved to localStorage, length:", saved?.length ?? 0);
 
     navigate(`/p/${projectId}/compare?c=${encodeURIComponent(cmp.id)}`);
   };
