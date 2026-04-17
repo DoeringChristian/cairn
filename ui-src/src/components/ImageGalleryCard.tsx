@@ -10,6 +10,7 @@ import { useQueries } from "@tanstack/react-query";
 import { api } from "../api/client";
 import type { SequenceMeta, SequencePoint } from "../api/types";
 import { useCardSettings } from "../lib/card-settings";
+import { useSeriesDrop } from "../lib/use-series-drop";
 import {
   addCardToComparison,
   createComparison,
@@ -307,6 +308,17 @@ export default function ImageGalleryCard({ runId, metric }: Props) {
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
+  const metricsRef = useRef(settings.metrics);
+  metricsRef.current = settings.metrics;
+
+  const { highlight: dropHighlight, dropProps } = useSeriesDrop({
+    metricsRef,
+    onMetricsChange: useCallback(
+      (next) => updateSettings({ metrics: next }),
+      [updateSettings],
+    ),
+  });
+
   const settingsBtnRef = useRef<HTMLButtonElement | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -472,11 +484,12 @@ export default function ImageGalleryCard({ runId, metric }: Props) {
 
   return (
     <div
-      className={`card p-4`}
+      className={`card p-4${dropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
       style={{
         position: "relative",
         minHeight: settings.height ?? undefined,
       }}
+      {...dropProps}
     >
       {/* SVG gamma filter */}
       <svg

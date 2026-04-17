@@ -27,6 +27,7 @@ import {
   type ComparisonSeriesRef,
 } from "../lib/comparisons";
 import { useProjectId } from "../lib/project-context";
+import { useSeriesDrop } from "../lib/use-series-drop";
 import type {
   SequenceMeta,
   SequencePoint,
@@ -562,6 +563,18 @@ export default function ScalarPlotCard({
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
+  // Ref to current metrics for the drop hook (avoids re-render on dragover).
+  const metricsRef = useRef(settings.metrics);
+  metricsRef.current = settings.metrics;
+
+  const { highlight: dropHighlight, dropProps } = useSeriesDrop({
+    metricsRef,
+    onMetricsChange: useCallback(
+      (next) => updateSettings({ metrics: next }),
+      [updateSettings],
+    ),
+  });
+
   const promotedAxisStripWidth = 14; // px clickable gutter per promoted axis
 
   const onAxisStripPointerDown = useCallback(
@@ -1041,8 +1054,9 @@ export default function ScalarPlotCard({
   // -------------------------------------------------------------------------
   return (
     <div
-      className={`card p-4`}
+      className={`card p-4${dropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
       style={{ minHeight: settings.height ?? undefined, position: "relative" }}
+      {...dropProps}
     >
       <CardHeader
         title={settings.title ?? metric.name}

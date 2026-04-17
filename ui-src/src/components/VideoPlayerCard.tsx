@@ -4,6 +4,7 @@ import { useSequence } from "../api/hooks";
 import { api } from "../api/client";
 import { safeJsonParse, formatRelative } from "../lib/format";
 import { useCardSettings } from "../lib/card-settings";
+import { useSeriesDrop } from "../lib/use-series-drop";
 import {
   addCardToComparison,
   createComparison,
@@ -180,6 +181,17 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [] }: P
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
+  const metricsRef = useRef(settings.metrics);
+  metricsRef.current = settings.metrics;
+
+  const { highlight: dropHighlight, dropProps } = useSeriesDrop({
+    metricsRef,
+    onMetricsChange: useCallback(
+      (next) => updateSettings({ metrics: next }),
+      [updateSettings],
+    ),
+  });
+
   // Single-metric path.
   const q = useSequence(runId, metric.name, {
     context: metric.context_hash || undefined,
@@ -286,8 +298,9 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [] }: P
 
   return (
     <div
-      className={`card p-4`}
+      className={`card p-4${dropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
       style={{ minHeight: settings.height ?? undefined, position: "relative" }}
+      {...dropProps}
     >
       <CardHeader
         title={settings.title ?? metric.name}
