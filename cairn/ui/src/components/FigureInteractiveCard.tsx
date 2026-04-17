@@ -63,6 +63,7 @@ interface FigureSettings {
   paneWidths?: number[];
   title?: string;
   height?: number;
+  fullWidth?: boolean;
   displayModeBar: boolean;
   scrollZoom: boolean;
   hoverMode: HoverMode;
@@ -472,7 +473,11 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
   return (
     <div
       className={`card p-4${dropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
-      style={{ minHeight: settings.height ?? undefined, position: "relative" }}
+      style={{
+        minHeight: settings.height ?? undefined,
+        position: "relative",
+        gridColumn: settings.fullWidth ? "1 / -1" : undefined,
+      }}
       {...dropProps}
     >
       <CardHeader
@@ -727,6 +732,8 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
       <CardResizeHandle
         height={settings.height}
         onHeightChange={(h) => updateSettings({ height: h })}
+        fullWidth={settings.fullWidth ?? false}
+        onFullWidthToggle={() => updateSettings({ fullWidth: !settings.fullWidth })}
       />
     </div>
   );

@@ -52,6 +52,7 @@ interface ImageSettings {
   baselineIndex?: number;
   diffMode: "none" | DiffMode;
   height?: number;
+  fullWidth?: boolean;
 }
 
 const MIN_ZOOM = 0.25;
@@ -155,8 +156,7 @@ function ImagePane({
     !isBaseline &&
     diffMode !== "none" &&
     baselineHash != null &&
-    artifactHash != null &&
-    baselineHash !== artifactHash;
+    artifactHash != null;
 
 
   useEffect(() => {
@@ -539,6 +539,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
       style={{
         position: "relative",
         minHeight: settings.height ?? undefined,
+        gridColumn: settings.fullWidth ? "1 / -1" : undefined,
       }}
       {...dropProps}
     >
@@ -916,6 +917,8 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
       <CardResizeHandle
         height={settings.height}
         onHeightChange={(h) => updateSettings({ height: h })}
+        fullWidth={settings.fullWidth ?? false}
+        onFullWidthToggle={() => updateSettings({ fullWidth: !settings.fullWidth })}
       />
     </div>
   );

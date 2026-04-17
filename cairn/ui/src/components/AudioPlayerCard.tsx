@@ -42,6 +42,7 @@ interface AudioSettings {
   paneWidths?: number[];
   title?: string;
   height?: number;
+  fullWidth?: boolean;
   autoplay: boolean;
 }
 
@@ -379,7 +380,11 @@ export default function AudioPlayerCard({ runId, metric, extraContexts = [], ext
   return (
     <div
       className={`card p-4${dropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
-      style={{ minHeight: settings.height ?? undefined, position: "relative" }}
+      style={{
+        minHeight: settings.height ?? undefined,
+        position: "relative",
+        gridColumn: settings.fullWidth ? "1 / -1" : undefined,
+      }}
       {...dropProps}
     >
       <CardHeader
@@ -592,6 +597,8 @@ export default function AudioPlayerCard({ runId, metric, extraContexts = [], ext
       <CardResizeHandle
         height={settings.height}
         onHeightChange={(h) => updateSettings({ height: h })}
+        fullWidth={settings.fullWidth ?? false}
+        onFullWidthToggle={() => updateSettings({ fullWidth: !settings.fullWidth })}
       />
     </div>
   );

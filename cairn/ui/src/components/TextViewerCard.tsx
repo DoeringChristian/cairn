@@ -24,6 +24,7 @@ interface TextSettings {
   version: 1;
   title?: string;
   height?: number;
+  fullWidth?: boolean;
   fontSize: "xs" | "sm" | "base";
   wordWrap: boolean;
 }
@@ -131,7 +132,7 @@ export default function TextViewerCard({ runId, metric }: Props) {
     : "whitespace-pre overflow-x-auto";
 
   return (
-    <div className="card p-4" style={{ minHeight: settings.height ?? undefined, position: "relative" }}>
+    <div className="card p-4" style={{ minHeight: settings.height ?? undefined, position: "relative", gridColumn: settings.fullWidth ? "1 / -1" : undefined }}>
       <CardHeader
         title={settings.title ?? metric.name}
         onTitleChange={(t) => updateSettings({ title: t || undefined })}
@@ -274,6 +275,8 @@ export default function TextViewerCard({ runId, metric }: Props) {
       <CardResizeHandle
         height={settings.height}
         onHeightChange={(h) => updateSettings({ height: h })}
+        fullWidth={settings.fullWidth ?? false}
+        onFullWidthToggle={() => updateSettings({ fullWidth: !settings.fullWidth })}
       />
     </div>
   );

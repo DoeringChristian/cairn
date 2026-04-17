@@ -30,6 +30,7 @@ interface HistogramSettings {
   version: 1;
   title?: string;
   height?: number;
+  fullWidth?: boolean;
 }
 
 const DEFAULT_HISTOGRAM_SETTINGS: HistogramSettings = { version: 1 };
@@ -118,7 +119,7 @@ export default function HistogramCard({ runId, metric }: Props) {
       : `${metric.count} pts`;
 
   return (
-    <div className="card p-4" style={{ minHeight: settings.height ?? undefined, position: "relative" }}>
+    <div className="card p-4" style={{ minHeight: settings.height ?? undefined, position: "relative", gridColumn: settings.fullWidth ? "1 / -1" : undefined }}>
       <CardHeader
         title={settings.title ?? metric.name}
         onTitleChange={(t) => updateSettings({ title: t || undefined })}
@@ -257,6 +258,8 @@ export default function HistogramCard({ runId, metric }: Props) {
       <CardResizeHandle
         height={settings.height}
         onHeightChange={(h) => updateSettings({ height: h })}
+        fullWidth={settings.fullWidth ?? false}
+        onFullWidthToggle={() => updateSettings({ fullWidth: !settings.fullWidth })}
       />
     </div>
   );

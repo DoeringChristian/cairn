@@ -60,6 +60,7 @@ interface ScalarSettings {
   version: 1;
   title?: string;
   height?: number;
+  fullWidth?: boolean;
   /**
    * Series to render. `runId` is optional; when absent, the card's top-level
    * `runId` prop is used as the fallback. Cross-run overlays (comparisons)
@@ -1100,7 +1101,11 @@ export default function ScalarPlotCard({
   return (
     <div
       className={`card p-4${dropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
-      style={{ minHeight: settings.height ?? undefined, position: "relative" }}
+      style={{
+        minHeight: settings.height ?? undefined,
+        position: "relative",
+        gridColumn: settings.fullWidth ? "1 / -1" : undefined,
+      }}
       {...dropProps}
     >
       <CardHeader
@@ -1683,6 +1688,8 @@ export default function ScalarPlotCard({
       <CardResizeHandle
         height={settings.height}
         onHeightChange={(h) => updateSettings({ height: h })}
+        fullWidth={settings.fullWidth ?? false}
+        onFullWidthToggle={() => updateSettings({ fullWidth: !settings.fullWidth })}
       />
     </div>
   );
