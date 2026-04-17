@@ -473,7 +473,7 @@ export default function ImageGalleryCard({ runId, metric }: Props) {
 
   return (
     <div
-      className={`card p-4${dropHighlight ? " ring-2 ring-accent ring-offset-2 ring-offset-bg" : ""}`}
+      className={`card p-4${dropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
       style={{
         position: "relative",
         minHeight: settings.height ?? undefined,

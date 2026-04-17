@@ -287,7 +287,7 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [] }: P
 
   return (
     <div
-      className={`card p-4${dropHighlight ? " ring-2 ring-accent ring-offset-2 ring-offset-bg" : ""}`}
+      className={`card p-4${dropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
       style={{ minHeight: settings.height ?? undefined, position: "relative" }}
       onDragOver={(e) => {
         if (!e.dataTransfer.types.includes(CAIRN_SERIES_MIME)) return;
