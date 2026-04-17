@@ -202,13 +202,31 @@ function FigurePane({
     };
   }, [sourceQ.data, settings.hoverMode, settings.dragMode, settings.showLegend]);
 
+  // Plotly zoom/pan only while Alt is held (consistent with scalar plots).
+  const [altDown, setAltDown] = useState(false);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Alt") setAltDown(e.type === "keydown");
+    };
+    const onBlur = () => setAltDown(false);
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("keyup", onKey);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keyup", onKey);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, []);
+
   const plotlyConfig = useMemo(
     () => ({
       displayModeBar: settings.displayModeBar,
-      scrollZoom: settings.scrollZoom,
+      scrollZoom: altDown && settings.scrollZoom,
       responsive: true,
+      staticPlot: !altDown,
     }),
-    [settings.displayModeBar, settings.scrollZoom],
+    [settings.displayModeBar, settings.scrollZoom, altDown],
   );
 
   const showPlotly = !!sourceHash && sourceQ.isSuccess && !!sourceQ.data?.data;
@@ -445,13 +463,31 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
     };
   }, [sourceQ.data, settings.hoverMode, settings.dragMode, settings.showLegend]);
 
+  // Plotly zoom/pan only while Alt is held (consistent with scalar plots).
+  const [altDown, setAltDown] = useState(false);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Alt") setAltDown(e.type === "keydown");
+    };
+    const onBlur = () => setAltDown(false);
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("keyup", onKey);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keyup", onKey);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, []);
+
   const plotlyConfig = useMemo(
     () => ({
       displayModeBar: settings.displayModeBar,
-      scrollZoom: settings.scrollZoom,
+      scrollZoom: altDown && settings.scrollZoom,
       responsive: true,
+      staticPlot: !altDown,
     }),
-    [settings.displayModeBar, settings.scrollZoom],
+    [settings.displayModeBar, settings.scrollZoom, altDown],
   );
 
   const showPlotly = !!sourceHash && sourceQ.isSuccess && !!sourceQ.data?.data;
