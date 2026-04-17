@@ -69,6 +69,17 @@ export default function DraggableCard({
       <div
         data-card-key={cardKey}
         draggable={false}
+        onDragStart={(e) => {
+          // Belt-and-suspenders: if a drag somehow starts from anywhere other
+          // than the grip (e.g. browser-native image/text/selection drag
+          // that bubbles up), kill it immediately so it never reaches the
+          // grid's drop handler or shows a drag ghost of the whole card.
+          const target = e.target as HTMLElement;
+          if (!target.closest?.(".cairn-drag-grip")) {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+        }}
         className={`cairn-draggable-card ${dragging ? "opacity-50" : ""}`}
       >
         {children}
