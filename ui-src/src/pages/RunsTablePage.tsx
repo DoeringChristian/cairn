@@ -4,7 +4,8 @@ import { useRuns } from "../api/hooks";
 import type { Run, RunStatus } from "../api/types";
 import RunStatusBadge from "../components/RunStatusBadge";
 import { formatDuration, formatRelative, safeJsonParse } from "../lib/format";
-import { createComparison } from "../lib/comparisons";
+import { addCardToComparison, createComparison } from "../lib/comparisons";
+import { api } from "../api/client";
 
 type SortColumn =
   | "name"
@@ -149,12 +150,59 @@ export default function RunsTablePage() {
 
   const selectedCount = selected.size;
 
-  const onCompare = () => {
-    // Create an empty comparison and take the user there. They add cards via
-    // the "+" button on individual run pages.
+  const onCompare = async () => {
+    // Create a comparison pre-populated with cards: one card per shared
+    // metric across the selected runs (same tags → same cards).
+    const selectedIds = Array.from(selected);
     const now = new Date();
     const label = `${now.toLocaleDateString()} ${now.toLocaleTimeString()}`;
     const cmp = createComparison(projectId, `Comparison ${label}`);
+
+    // Fetch sequences for each selected run.
+    const seqResults = await Promise.all(
+      selectedIds.map((rid) => api.sequences(rid)),
+    );
+
+    // Union metrics by (name, object_type) → one card per unique metric.
+    const cardMap = new Map<
+      string,
+      {
+        name: string;
+        object_type: string;
+        series: Array<{ runId: string; name: string; context_hash: string }>;
+      }
+    >();
+    seqResults.forEach((result, idx) => {
+      const runId = selectedIds[idx]!;
+      for (const seq of result.sequences) {
+        const key = `${seq.name}::${seq.object_type}`;
+        const existing = cardMap.get(key);
+        if (existing) {
+          existing.series.push({
+            runId,
+            name: seq.name,
+            context_hash: seq.context_hash,
+          });
+        } else {
+          cardMap.set(key, {
+            name: seq.name,
+            object_type: seq.object_type,
+            series: [
+              { runId, name: seq.name, context_hash: seq.context_hash },
+            ],
+          });
+        }
+      }
+    });
+
+    // Add each card to the comparison.
+    for (const card of cardMap.values()) {
+      addCardToComparison(projectId, cmp.id, {
+        type: card.object_type as "scalar",
+        series: card.series,
+      });
+    }
+
     navigate(`/p/${projectId}/compare?c=${encodeURIComponent(cmp.id)}`);
   };
 
