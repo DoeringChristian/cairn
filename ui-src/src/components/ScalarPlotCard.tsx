@@ -541,6 +541,8 @@ export default function ScalarPlotCard({
       const cfg = settingsRef.current.promotedSeries[key];
       if (!cfg) return;
       e.stopPropagation();
+      // Prevent text selection during axis drag (tick labels etc.).
+      e.preventDefault();
       (e.currentTarget as SVGRectElement).setPointerCapture(e.pointerId);
       // Convert cursor Y (viewport px) to data coordinate using the axis rect.
       // Recharts renders axes with y growing upward, so a cursor near axisTopPx
@@ -748,6 +750,8 @@ export default function ScalarPlotCard({
       }
       // Only left mouse button (or primary touch/pen).
       if (e.button !== 0) return;
+      // Prevent text selection while dragging (axis labels, legend text, etc.).
+      e.preventDefault();
       (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
       const mode: PlotDragMode = e.altKey ? "pan" : "select";
       plotDragRef.current = {
@@ -1099,6 +1103,8 @@ export default function ScalarPlotCard({
           style={{
             touchAction: "none",
             cursor: altDown ? "move" : "crosshair",
+            userSelect: "none",
+            WebkitUserSelect: "none",
           }}
           aria-label="Scalar plot. Drag to box-zoom. Alt+drag to pan. Alt+wheel to zoom. Drag the right axis to pan; Shift+drag to rescale."
           onPointerDown={onChartPointerDown}
