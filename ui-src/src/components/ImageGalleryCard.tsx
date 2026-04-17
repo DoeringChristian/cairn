@@ -481,7 +481,7 @@ export default function ImageGalleryCard({ runId, metric }: Props) {
       onDragOver={(e) => {
         if (!e.dataTransfer.types.includes(CAIRN_SERIES_MIME)) return;
         e.preventDefault();
-        e.dataTransfer.dropEffect = "copy";
+        e.dataTransfer.dropEffect = "move";
       }}
       onDragEnter={(e) => {
         if (!e.dataTransfer.types.includes(CAIRN_SERIES_MIME)) return;
@@ -707,6 +707,25 @@ export default function ImageGalleryCard({ runId, metric }: Props) {
                         (_, idx2) => idx2 !== i,
                       );
                       // Adjust baselineIndex
+                      let newBaseline = settings.baselineIndex;
+                      if (newBaseline != null) {
+                        if (newBaseline === i) newBaseline = undefined;
+                        else if (newBaseline > i) newBaseline -= 1;
+                      }
+                      updateSettings({
+                        metrics: next,
+                        baselineIndex: newBaseline,
+                        paneWidths: undefined,
+                      });
+                    }
+                  : undefined
+              }
+              onDraggedOut={
+                settings.metrics.length > 1
+                  ? () => {
+                      const next = settings.metrics.filter(
+                        (_, idx2) => idx2 !== i,
+                      );
                       let newBaseline = settings.baselineIndex;
                       if (newBaseline != null) {
                         if (newBaseline === i) newBaseline = undefined;

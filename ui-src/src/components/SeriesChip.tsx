@@ -15,6 +15,8 @@ interface Props {
   label: string;
   runId: string;
   onRemove?: () => void;
+  /** Called after a successful drop on another target (move semantics). */
+  onDraggedOut?: () => void;
 }
 
 export default function SeriesChip({
@@ -23,11 +25,13 @@ export default function SeriesChip({
   label,
   runId,
   onRemove,
+  onDraggedOut,
 }: Props) {
   const [dragging, setDragging] = useState(false);
 
   const onDragStart = (e: DragEvent<HTMLSpanElement>) => {
-    e.dataTransfer.effectAllowed = "copy";
+    // "move" tells the drop target we want move semantics (source removes).
+    e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData(
       CAIRN_SERIES_MIME,
       JSON.stringify({
@@ -40,8 +44,14 @@ export default function SeriesChip({
     setDragging(true);
   };
 
-  const onDragEnd = () => {
+  const onDragEnd = (e: DragEvent<HTMLSpanElement>) => {
     setDragging(false);
+    // If the drop was accepted (dropEffect === "move"), notify the source
+    // card so it can remove this series. If the drag was cancelled (e.g.
+    // user pressed Escape or dropped on a non-target), dropEffect is "none".
+    if (e.dataTransfer.dropEffect === "move" && onDraggedOut) {
+      onDraggedOut();
+    }
   };
 
   return (

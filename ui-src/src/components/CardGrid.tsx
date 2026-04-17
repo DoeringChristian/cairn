@@ -23,6 +23,7 @@ import {
 } from "../lib/run-layout";
 import type { RunLayout } from "../lib/run-layout";
 import DraggableCard, { CAIRN_CARD_MIME } from "./DraggableCard";
+import { CAIRN_SERIES_MIME } from "./SeriesChip";
 
 interface Props {
   runId: string;
@@ -90,7 +91,25 @@ export default function CardGrid({ runId, sequences }: Props) {
   const showReset = !isEmptyLayout(layout);
 
   return (
-    <div className="space-y-8">
+    <div
+      className="space-y-8"
+      onDragOver={(e) => {
+        // Accept series-chip drops on the grid background (empty space).
+        // This enables "extract from a merged card into its own card":
+        // the drop sets dropEffect="move" so the source card's onDraggedOut
+        // fires and removes the series. The series still appears as its own
+        // auto-generated card from the sequences list.
+        if (!e.dataTransfer.types.includes(CAIRN_SERIES_MIME)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+      }}
+      onDrop={(e) => {
+        if (!e.dataTransfer.types.includes(CAIRN_SERIES_MIME)) return;
+        e.preventDefault();
+        // No action needed — the series already has its own card in the grid.
+        // The source card will remove it via onDraggedOut.
+      }}
+    >
       {showReset && (
         <div className="flex justify-end">
           <button
