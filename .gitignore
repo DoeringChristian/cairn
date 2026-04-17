@@ -25,6 +25,7 @@ env/
 cairn/ui/node_modules/
 cairn/ui/*.tsbuildinfo
 # cairn/ui/dist/ is COMMITTED so pip install doesn't need Node.
+!cairn/ui/dist/
 
 # Cairn runtime
 .cairn/
