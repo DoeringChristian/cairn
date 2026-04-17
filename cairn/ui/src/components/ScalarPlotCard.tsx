@@ -35,6 +35,7 @@ import type {
 } from "../api/types";
 import SeriesChip , { type SeriesRef } from "./SeriesChip";
 import CardHeader from "./CardHeader";
+import CardDetailModal from "./CardDetailModal";
 import CardResizeHandle from "./CardResizeHandle";
 import SettingsPopover from "./SettingsPopover";
 import MetricChips from "./settings/MetricChips";
@@ -1014,6 +1015,7 @@ export default function ScalarPlotCard({
   // -------------------------------------------------------------------------
   const settingsBtnRef = useRef<HTMLButtonElement | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   // "Add to comparison" popover state.
   const addBtnRef = useRef<HTMLButtonElement | null>(null);
@@ -1094,6 +1096,389 @@ export default function ScalarPlotCard({
       ? ` · ${queries[0].data.points.length} pts`
       : ""
   }`;
+
+  // -------------------------------------------------------------------------
+  // Shared settings panel JSX (used in both popover and expanded modal).
+  // -------------------------------------------------------------------------
+  const settingsPanel = (
+    <>
+      <h4 className="text-xs uppercase tracking-wide text-fg-muted mb-2">
+        Content
+      </h4>
+      {multipleRuns ? (
+        <div className="flex flex-col gap-1 mb-2">
+          {effectiveMetrics.map((m) => {
+            const rid = m.runId ?? runId;
+            const key = seriesKey(m);
+            return (
+              <div
+                key={key}
+                className="mono flex items-center justify-between gap-2 rounded border border-border-subtle bg-bg px-2 py-1 text-xs text-fg-muted"
+              >
+                <span className="truncate">
+                  {m.name}
+                  {m.context_hash ? ` · ${m.context_hash.slice(0, 6)}` : ""}
+                  {` · ${shortRunId(rid)}`}
+                </span>
+                <button
+                  type="button"
+                  aria-label={`Remove ${m.name}`}
+                  className="text-fg-subtle hover:text-fg"
+                  onClick={() =>
+                    updateSettings({
+                      metrics: effectiveMetrics.filter(
+                        (x) => seriesKey(x) !== key,
+                      ),
+                    })
+                  }
+                >
+                  {"\u00D7"}
+                </button>
+              </div>
+            );
+          })}
+          <p className="text-[10px] text-fg-subtle">
+            Multi-run overlay — use the Runs list or the comparison page to
+            add series from other runs.
+          </p>
+        </div>
+      ) : (
+        <MetricChips
+          runId={runId}
+          value={effectiveMetrics.map((m) => ({
+            name: m.name,
+            context_hash: m.context_hash,
+          }))}
+          onChange={(v) =>
+            updateSettings({
+              metrics: v.map((m) => ({
+                name: m.name,
+                context_hash: m.context_hash,
+              })),
+            })
+          }
+        />
+      )}
+
+      <h4 className="text-xs uppercase tracking-wide text-fg-muted mt-4 mb-2">
+        Axes
+      </h4>
+      <Select
+        label="X axis"
+        value={settings.xAxis}
+        onChange={(v) => updateSettings({ xAxis: v })}
+        options={[
+          { value: "step", label: "Step" },
+          { value: "relative_time", label: "Relative time (s)" },
+          { value: "wall_time", label: "Wall time" },
+        ]}
+      />
+      <Select
+        label="X scale"
+        value={settings.xScale}
+        onChange={(v) => updateSettings({ xScale: v })}
+        options={[
+          { value: "linear", label: "Linear" },
+          { value: "log", label: "Log" },
+        ]}
+      />
+      <Select
+        label="Y scale"
+        value={settings.yScale}
+        onChange={(v) => updateSettings({ yScale: v })}
+        options={[
+          { value: "linear", label: "Linear" },
+          { value: "log", label: "Log" },
+        ]}
+      />
+      <div className="grid grid-cols-2 gap-2">
+        <NumberInput
+          label="X min"
+          value={settings.viewport.xMin ?? settings.xRange[0]}
+          onChange={(v) =>
+            updateSettings({ xRange: [v, settings.xRange[1]] })
+          }
+        />
+        <NumberInput
+          label="X max"
+          value={settings.viewport.xMax ?? settings.xRange[1]}
+          onChange={(v) =>
+            updateSettings({ xRange: [settings.xRange[0], v] })
+          }
+        />
+        <NumberInput
+          label="Y min"
+          value={settings.viewport.yMin ?? settings.yRange[0]}
+          onChange={(v) =>
+            updateSettings({ yRange: [v, settings.yRange[1]] })
+          }
+        />
+        <NumberInput
+          label="Y max"
+          value={settings.viewport.yMax ?? settings.yRange[1]}
+          onChange={(v) =>
+            updateSettings({ yRange: [settings.yRange[0], v] })
+          }
+        />
+      </div>
+
+      <h4 className="text-xs uppercase tracking-wide text-fg-muted mt-4 mb-2">
+        Smoothing
+      </h4>
+      <Slider
+        label="EMA \u03B1"
+        value={settings.smoothing}
+        onChange={(v) => updateSettings({ smoothing: v })}
+        min={0}
+        max={0.99}
+        step={0.01}
+        format={(v) => v.toFixed(2)}
+        description="exponential moving average over each series"
+      />
+
+      <h4 className="text-xs uppercase tracking-wide text-fg-muted mt-4 mb-2">
+        Outliers
+      </h4>
+      <Slider
+        label="Low percentile"
+        value={settings.outlierPct[0]}
+        onChange={(v) =>
+          updateSettings({ outlierPct: [v, settings.outlierPct[1]] })
+        }
+        min={0}
+        max={100}
+        step={0.5}
+        format={(v) => `${v.toFixed(1)}%`}
+      />
+      <Slider
+        label="High percentile"
+        value={settings.outlierPct[1]}
+        onChange={(v) =>
+          updateSettings({ outlierPct: [settings.outlierPct[0], v] })
+        }
+        min={0}
+        max={100}
+        step={0.5}
+        format={(v) => `${v.toFixed(1)}%`}
+      />
+      <p className="text-xs text-fg-subtle">Set [0, 100] to disable.</p>
+
+      <h4 className="text-xs uppercase tracking-wide text-fg-muted mt-4 mb-2">
+        Display
+      </h4>
+      <Toggle
+        label="Show legend"
+        checked={settings.showLegend}
+        onChange={(v) => updateSettings({ showLegend: v })}
+      />
+      <Toggle
+        label="Tooltip: context"
+        checked={settings.tooltip.showContext}
+        onChange={(v) =>
+          updateSettings({
+            tooltip: { ...settings.tooltip, showContext: v },
+          })
+        }
+      />
+      <Toggle
+        label="Tooltip: wall time"
+        checked={settings.tooltip.showWallTime}
+        onChange={(v) =>
+          updateSettings({
+            tooltip: { ...settings.tooltip, showWallTime: v },
+          })
+        }
+      />
+
+      <button
+        type="button"
+        className="btn w-full mt-2"
+        onClick={() => {
+          resetSettings();
+          setSettingsOpen(false);
+        }}
+      >
+        Reset to defaults
+      </button>
+    </>
+  );
+
+  // -------------------------------------------------------------------------
+  // Chart JSX factory — used for both inline (h-48) and expanded (full) views.
+  // -------------------------------------------------------------------------
+  const renderChart = (heightClass: string) => (
+    <div
+      ref={chartBoxRef}
+      className={`${heightClass} relative`}
+      style={{
+        touchAction: "none",
+        cursor: altDown ? "move" : "crosshair",
+        userSelect: "none",
+        WebkitUserSelect: "none",
+      }}
+      aria-label="Scalar plot. Drag to box-zoom. Alt+drag to pan. Alt+wheel to zoom. Drag the right axis to pan; Shift+drag to rescale."
+      onPointerDown={onChartPointerDown}
+      onPointerMove={onChartPointerMove}
+      onPointerUp={onChartPointerUp}
+      onPointerCancel={onChartPointerUp}
+      onLostPointerCapture={() => {
+        plotDragRef.current = null;
+        rightAxisDragRef.current = null;
+        setSelection(null);
+      }}
+    >
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={data} margin={CHART_MARGIN}>
+          <CartesianGrid stroke="#d0d7de" strokeDasharray="2 4" />
+          <XAxis
+            dataKey="x"
+            type="number"
+            scale={settings.xScale === "log" ? "log" : "linear"}
+            domain={xDomain as [number | string, number | string]}
+            allowDataOverflow
+            stroke="#656d76"
+            fontSize={11}
+            tickFormatter={(v: number) => formatXTick(v, settings.xAxis)}
+          />
+          <YAxis
+            yAxisId="__left__"
+            scale={settings.yScale === "log" ? "log" : "linear"}
+            domain={yDomain as [number | string, number | string]}
+            allowDataOverflow
+            stroke="#656d76"
+            fontSize={11}
+            width={46}
+          />
+          {promotedKeysOrdered.map((key, i) => {
+            const s = series.find((x) => x.key === key);
+            const color = s?.color ?? "#656d76";
+            const cfg = settings.promotedSeries[key]!;
+            return (
+              <YAxis
+                key={key}
+                yAxisId={key}
+                orientation="right"
+                scale="linear"
+                domain={[cfg.min, cfg.max]}
+                allowDataOverflow
+                stroke={color}
+                tick={{ fill: color }}
+                fontSize={11}
+                width={40}
+                mirror={i > 0 ? true : false}
+              />
+            );
+          })}
+          <Tooltip
+            content={
+              <CustomTooltip
+                seriesByKey={Object.fromEntries(series.map((s) => [s.key, s]))}
+                xAxis={settings.xAxis}
+                showContext={settings.tooltip.showContext}
+                showWallTime={settings.tooltip.showWallTime}
+              />
+            }
+            contentStyle={{
+              background: "#f6f8fa",
+              border: "1px solid #d0d7de",
+              fontSize: 12,
+            }}
+            labelStyle={{ color: "#656d76" }}
+          />
+          {settings.showLegend && series.length > 0 && (
+            <Legend
+              wrapperStyle={{ fontSize: 11 }}
+              content={
+                <CustomLegend
+                  series={series}
+                  promoted={settings.promotedSeries}
+                  onToggle={togglePromote}
+                />
+              }
+            />
+          )}
+          {series.map((s) => (
+            <Line
+              key={s.key}
+              type="monotone"
+              name={s.label}
+              dataKey={s.key}
+              stroke={s.color}
+              strokeWidth={1.5}
+              dot={false}
+              isAnimationActive={false}
+              connectNulls
+              yAxisId={settings.promotedSeries[s.key] ? s.key : "__left__"}
+            />
+          ))}
+          {/* Transparent overlay strips for drag-to-pan on promoted axes. */}
+          <Customized
+            component={
+              ((props: unknown) => {
+                const p = props as {
+                  offset?: {
+                    top?: number;
+                    left?: number;
+                    width?: number;
+                    height?: number;
+                    right?: number;
+                  };
+                };
+                const o = p.offset;
+                if (!o || o.width == null || o.height == null) return null;
+                if (promotedKeysOrdered.length === 0) return null;
+                const top = o.top ?? 0;
+                const height = o.height;
+                const plotRight = (o.left ?? 0) + o.width;
+                return (
+                  <g>
+                    {promotedKeysOrdered.map((key, i) => {
+                      const s = series.find((x) => x.key === key);
+                      const color = s?.color ?? "#656d76";
+                      const x = plotRight + i * promotedAxisStripWidth;
+                      return (
+                        <rect
+                          key={key}
+                          x={x}
+                          y={top}
+                          width={promotedAxisStripWidth}
+                          height={height}
+                          fill={color}
+                          opacity={0.001}
+                          style={{
+                            cursor: "ns-resize",
+                            touchAction: "none",
+                          }}
+                          onPointerDown={(e) =>
+                            onAxisStripPointerDown(key, e, height, top)
+                          }
+                        />
+                      );
+                    })}
+                  </g>
+                );
+              }) as unknown as React.FunctionComponent
+            }
+          />
+        </LineChart>
+      </ResponsiveContainer>
+      {selection && (
+        <div
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            left: Math.min(selection.x0, selection.x1),
+            top: Math.min(selection.y0, selection.y1),
+            width: Math.abs(selection.x1 - selection.x0),
+            height: Math.abs(selection.y1 - selection.y0),
+            border: "1px solid #0969da",
+            background: "rgba(83, 155, 245, 0.12)",
+            pointerEvents: "none",
+          }}
+        />
+      )}
+    </div>
+  );
 
   // -------------------------------------------------------------------------
   // Render
@@ -1185,6 +1570,15 @@ export default function ScalarPlotCard({
           </button>
         )}
         <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
+          aria-label="Expand card"
+          title="Expand card"
+        >
+          {"\u2922"}
+        </button>
+        <button
           ref={settingsBtnRef}
           type="button"
           onClick={() => setSettingsOpen((v) => !v)}
@@ -1201,181 +1595,7 @@ export default function ScalarPlotCard({
       {isLoading && data.length === 0 ? (
         <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
       ) : (
-        <div
-          ref={chartBoxRef}
-          className="h-48 relative"
-          style={{
-            touchAction: "none",
-            cursor: altDown ? "move" : "crosshair",
-            userSelect: "none",
-            WebkitUserSelect: "none",
-          }}
-          aria-label="Scalar plot. Drag to box-zoom. Alt+drag to pan. Alt+wheel to zoom. Drag the right axis to pan; Shift+drag to rescale."
-          onPointerDown={onChartPointerDown}
-          onPointerMove={onChartPointerMove}
-          onPointerUp={onChartPointerUp}
-          onPointerCancel={onChartPointerUp}
-          onLostPointerCapture={() => {
-            plotDragRef.current = null;
-            rightAxisDragRef.current = null;
-            setSelection(null);
-          }}
-        >
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={data} margin={CHART_MARGIN}>
-              <CartesianGrid stroke="#d0d7de" strokeDasharray="2 4" />
-              <XAxis
-                dataKey="x"
-                type="number"
-                scale={settings.xScale === "log" ? "log" : "linear"}
-                domain={xDomain as [number | string, number | string]}
-                allowDataOverflow
-                stroke="#656d76"
-                fontSize={11}
-                tickFormatter={(v: number) => formatXTick(v, settings.xAxis)}
-              />
-              <YAxis
-                yAxisId="__left__"
-                scale={settings.yScale === "log" ? "log" : "linear"}
-                domain={yDomain as [number | string, number | string]}
-                allowDataOverflow
-                stroke="#656d76"
-                fontSize={11}
-                width={46}
-              />
-              {promotedKeysOrdered.map((key, i) => {
-                const s = series.find((x) => x.key === key);
-                const color = s?.color ?? "#656d76";
-                const cfg = settings.promotedSeries[key]!;
-                return (
-                  <YAxis
-                    key={key}
-                    yAxisId={key}
-                    orientation="right"
-                    scale="linear"
-                    domain={[cfg.min, cfg.max]}
-                    allowDataOverflow
-                    stroke={color}
-                    tick={{ fill: color }}
-                    fontSize={11}
-                    width={40}
-                    // Offset stacked right axes so they don't overlap.
-                    // Recharts renders them in `xAxisId` order; our strips use
-                    // the same order so clicks line up.
-                    mirror={i > 0 ? true : false}
-                  />
-                );
-              })}
-              <Tooltip
-                content={
-                  <CustomTooltip
-                    seriesByKey={Object.fromEntries(series.map((s) => [s.key, s]))}
-                    xAxis={settings.xAxis}
-                    showContext={settings.tooltip.showContext}
-                    showWallTime={settings.tooltip.showWallTime}
-                  />
-                }
-                contentStyle={{
-                  background: "#f6f8fa",
-                  border: "1px solid #d0d7de",
-                  fontSize: 12,
-                }}
-                labelStyle={{ color: "#656d76" }}
-              />
-              {settings.showLegend && series.length > 0 && (
-                <Legend
-                  wrapperStyle={{ fontSize: 11 }}
-                  content={
-                    <CustomLegend
-                      series={series}
-                      promoted={settings.promotedSeries}
-                      onToggle={togglePromote}
-                    />
-                  }
-                />
-              )}
-              {series.map((s) => (
-                <Line
-                  key={s.key}
-                  type="monotone"
-                  name={s.label}
-                  dataKey={s.key}
-                  stroke={s.color}
-                  strokeWidth={1.5}
-                  dot={false}
-                  isAnimationActive={false}
-                  connectNulls
-                  yAxisId={settings.promotedSeries[s.key] ? s.key : "__left__"}
-                />
-              ))}
-              {/* Transparent overlay strips for drag-to-pan on promoted axes. */}
-              <Customized
-                component={
-                  ((props: unknown) => {
-                    const p = props as {
-                      offset?: {
-                        top?: number;
-                        left?: number;
-                        width?: number;
-                        height?: number;
-                        right?: number;
-                      };
-                    };
-                    const o = p.offset;
-                    if (!o || o.width == null || o.height == null) return null;
-                    if (promotedKeysOrdered.length === 0) return null;
-                    const top = o.top ?? 0;
-                    const height = o.height;
-                    // Right edge of plot area in Recharts' local SVG coords.
-                    const plotRight = (o.left ?? 0) + o.width;
-                    return (
-                      <g>
-                        {promotedKeysOrdered.map((key, i) => {
-                          const s = series.find((x) => x.key === key);
-                          const color = s?.color ?? "#656d76";
-                          const x = plotRight + i * promotedAxisStripWidth;
-                          return (
-                            <rect
-                              key={key}
-                              x={x}
-                              y={top}
-                              width={promotedAxisStripWidth}
-                              height={height}
-                              fill={color}
-                              opacity={0.001}
-                              style={{
-                                cursor: "ns-resize",
-                                touchAction: "none",
-                              }}
-                              onPointerDown={(e) =>
-                                onAxisStripPointerDown(key, e, height, top)
-                              }
-                            />
-                          );
-                        })}
-                      </g>
-                    );
-                  }) as unknown as React.FunctionComponent
-                }
-              />
-            </LineChart>
-          </ResponsiveContainer>
-          {selection && (
-            <div
-              aria-hidden="true"
-              style={{
-                position: "absolute",
-                left: Math.min(selection.x0, selection.x1),
-                top: Math.min(selection.y0, selection.y1),
-                width: Math.abs(selection.x1 - selection.x0),
-                height: Math.abs(selection.y1 - selection.y0),
-                border: "1px solid #0969da",
-                background: "rgba(83, 155, 245, 0.12)",
-                pointerEvents: "none",
-              }}
-            />
-          )}
-        </div>
+        renderChart("h-48")
       )}
 
       {/* Series chip strip — shows each plotted series as a draggable chip */}
@@ -1414,204 +1634,7 @@ export default function ScalarPlotCard({
         anchorRef={settingsBtnRef}
         title="Scalar plot"
       >
-        <h4 className="text-xs uppercase tracking-wide text-fg-muted mb-2">
-          Content
-        </h4>
-        {multipleRuns ? (
-          <div className="flex flex-col gap-1 mb-2">
-            {effectiveMetrics.map((m) => {
-              const rid = m.runId ?? runId;
-              const key = seriesKey(m);
-              return (
-                <div
-                  key={key}
-                  className="mono flex items-center justify-between gap-2 rounded border border-border-subtle bg-bg px-2 py-1 text-xs text-fg-muted"
-                >
-                  <span className="truncate">
-                    {m.name}
-                    {m.context_hash ? ` · ${m.context_hash.slice(0, 6)}` : ""}
-                    {` · ${shortRunId(rid)}`}
-                  </span>
-                  <button
-                    type="button"
-                    aria-label={`Remove ${m.name}`}
-                    className="text-fg-subtle hover:text-fg"
-                    onClick={() =>
-                      updateSettings({
-                        metrics: effectiveMetrics.filter(
-                          (x) => seriesKey(x) !== key,
-                        ),
-                      })
-                    }
-                  >
-                    {"\u00D7"}
-                  </button>
-                </div>
-              );
-            })}
-            <p className="text-[10px] text-fg-subtle">
-              Multi-run overlay — use the Runs list or the comparison page to
-              add series from other runs.
-            </p>
-          </div>
-        ) : (
-          <MetricChips
-            runId={runId}
-            value={effectiveMetrics.map((m) => ({
-              name: m.name,
-              context_hash: m.context_hash,
-            }))}
-            onChange={(v) =>
-              updateSettings({
-                metrics: v.map((m) => ({
-                  name: m.name,
-                  context_hash: m.context_hash,
-                })),
-              })
-            }
-          />
-        )}
-
-        <h4 className="text-xs uppercase tracking-wide text-fg-muted mt-4 mb-2">
-          Axes
-        </h4>
-        <Select
-          label="X axis"
-          value={settings.xAxis}
-          onChange={(v) => updateSettings({ xAxis: v })}
-          options={[
-            { value: "step", label: "Step" },
-            { value: "relative_time", label: "Relative time (s)" },
-            { value: "wall_time", label: "Wall time" },
-          ]}
-        />
-        <Select
-          label="X scale"
-          value={settings.xScale}
-          onChange={(v) => updateSettings({ xScale: v })}
-          options={[
-            { value: "linear", label: "Linear" },
-            { value: "log", label: "Log" },
-          ]}
-        />
-        <Select
-          label="Y scale"
-          value={settings.yScale}
-          onChange={(v) => updateSettings({ yScale: v })}
-          options={[
-            { value: "linear", label: "Linear" },
-            { value: "log", label: "Log" },
-          ]}
-        />
-        <div className="grid grid-cols-2 gap-2">
-          <NumberInput
-            label="X min"
-            value={settings.viewport.xMin ?? settings.xRange[0]}
-            onChange={(v) =>
-              updateSettings({ xRange: [v, settings.xRange[1]] })
-            }
-          />
-          <NumberInput
-            label="X max"
-            value={settings.viewport.xMax ?? settings.xRange[1]}
-            onChange={(v) =>
-              updateSettings({ xRange: [settings.xRange[0], v] })
-            }
-          />
-          <NumberInput
-            label="Y min"
-            value={settings.viewport.yMin ?? settings.yRange[0]}
-            onChange={(v) =>
-              updateSettings({ yRange: [v, settings.yRange[1]] })
-            }
-          />
-          <NumberInput
-            label="Y max"
-            value={settings.viewport.yMax ?? settings.yRange[1]}
-            onChange={(v) =>
-              updateSettings({ yRange: [settings.yRange[0], v] })
-            }
-          />
-        </div>
-
-        <h4 className="text-xs uppercase tracking-wide text-fg-muted mt-4 mb-2">
-          Smoothing
-        </h4>
-        <Slider
-          label="EMA α"
-          value={settings.smoothing}
-          onChange={(v) => updateSettings({ smoothing: v })}
-          min={0}
-          max={0.99}
-          step={0.01}
-          format={(v) => v.toFixed(2)}
-          description="exponential moving average over each series"
-        />
-
-        <h4 className="text-xs uppercase tracking-wide text-fg-muted mt-4 mb-2">
-          Outliers
-        </h4>
-        <Slider
-          label="Low percentile"
-          value={settings.outlierPct[0]}
-          onChange={(v) =>
-            updateSettings({ outlierPct: [v, settings.outlierPct[1]] })
-          }
-          min={0}
-          max={100}
-          step={0.5}
-          format={(v) => `${v.toFixed(1)}%`}
-        />
-        <Slider
-          label="High percentile"
-          value={settings.outlierPct[1]}
-          onChange={(v) =>
-            updateSettings({ outlierPct: [settings.outlierPct[0], v] })
-          }
-          min={0}
-          max={100}
-          step={0.5}
-          format={(v) => `${v.toFixed(1)}%`}
-        />
-        <p className="text-xs text-fg-subtle">Set [0, 100] to disable.</p>
-
-        <h4 className="text-xs uppercase tracking-wide text-fg-muted mt-4 mb-2">
-          Display
-        </h4>
-        <Toggle
-          label="Show legend"
-          checked={settings.showLegend}
-          onChange={(v) => updateSettings({ showLegend: v })}
-        />
-        <Toggle
-          label="Tooltip: context"
-          checked={settings.tooltip.showContext}
-          onChange={(v) =>
-            updateSettings({
-              tooltip: { ...settings.tooltip, showContext: v },
-            })
-          }
-        />
-        <Toggle
-          label="Tooltip: wall time"
-          checked={settings.tooltip.showWallTime}
-          onChange={(v) =>
-            updateSettings({
-              tooltip: { ...settings.tooltip, showWallTime: v },
-            })
-          }
-        />
-
-        <button
-          type="button"
-          className="btn w-full mt-2"
-          onClick={() => {
-            resetSettings();
-            setSettingsOpen(false);
-          }}
-        >
-          Reset to defaults
-        </button>
+        {settingsPanel}
       </SettingsPopover>
 
       <SettingsPopover
@@ -1685,6 +1708,14 @@ export default function ScalarPlotCard({
           </>
         )}
       </SettingsPopover>
+      <CardDetailModal
+        open={expanded}
+        onClose={() => setExpanded(false)}
+        title={settings.title ?? metric.name}
+        settingsContent={settingsPanel}
+      >
+        {renderChart("h-[calc(100vh-12rem)]")}
+      </CardDetailModal>
       <CardResizeHandle
         height={settings.height}
         onHeightChange={(h) => updateSettings({ height: h })}
