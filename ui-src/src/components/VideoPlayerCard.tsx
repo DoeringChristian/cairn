@@ -14,7 +14,7 @@ import type { SequenceMeta, SequenceResponse, SequencePoint } from "../api/types
 import CardHeader from "./CardHeader";
 import CardResizeHandle from "./CardResizeHandle";
 import SplitPane from "./SplitPane";
-import SeriesChip, { CAIRN_SERIES_MIME, type SeriesRef } from "./SeriesChip";
+import SeriesChip , { type SeriesRef } from "./SeriesChip";
 import SettingsPopover from "./SettingsPopover";
 import Toggle from "./settings/Toggle";
 import Select from "./settings/Select";
@@ -238,7 +238,6 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [] }: P
   const [addCompConfirm, setAddCompConfirm] = useState<string | null>(null);
   const addCompTimer = useRef<number | null>(null);
   const [newCompName, setNewCompName] = useState("");
-  const [dropHighlight, setDropHighlight] = useState(false);
 
   const addToComp = useCallback(
     (comparisonId: string, compName: string) => {
@@ -287,50 +286,8 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [] }: P
 
   return (
     <div
-      className={`card p-4${dropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
+      className={`card p-4`}
       style={{ minHeight: settings.height ?? undefined, position: "relative" }}
-      onDragOver={(e) => {
-        if (!e.dataTransfer.types.includes(CAIRN_SERIES_MIME)) return;
-        e.preventDefault();
-        e.dataTransfer.dropEffect = "copy";
-      }}
-      onDragEnter={(e) => {
-        if (!e.dataTransfer.types.includes(CAIRN_SERIES_MIME)) return;
-        setDropHighlight(true);
-      }}
-      onDragLeave={(e) => {
-        const related = e.relatedTarget as Node | null;
-        if (related && e.currentTarget.contains(related)) return;
-        setDropHighlight(false);
-      }}
-      onDrop={(e) => {
-        setDropHighlight(false);
-        const raw = e.dataTransfer.getData(CAIRN_SERIES_MIME);
-        if (!raw) return;
-        e.preventDefault();
-        try {
-          const dropped: SeriesRef = JSON.parse(raw);
-          const existing = settingsRef.current.metrics;
-          const key = `${dropped.runId ?? ""}::${dropped.name}::${dropped.context_hash}`;
-          const alreadyHas = existing.some(
-            (m) => `${m.runId ?? ""}::${m.name}::${m.context_hash}` === key,
-          );
-          if (!alreadyHas) {
-            updateSettings({
-              metrics: [
-                ...existing,
-                {
-                  runId: dropped.runId,
-                  name: dropped.name,
-                  context_hash: dropped.context_hash,
-                },
-              ],
-            });
-          }
-        } catch {
-          /* malformed payload, ignore */
-        }
-      }}
     >
       <CardHeader
         title={settings.title ?? metric.name}

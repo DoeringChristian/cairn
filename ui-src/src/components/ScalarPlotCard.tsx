@@ -32,7 +32,7 @@ import type {
   SequencePoint,
   SequenceResponse,
 } from "../api/types";
-import SeriesChip, { CAIRN_SERIES_MIME, type SeriesRef } from "./SeriesChip";
+import SeriesChip , { type SeriesRef } from "./SeriesChip";
 import CardHeader from "./CardHeader";
 import CardResizeHandle from "./CardResizeHandle";
 import SettingsPopover from "./SettingsPopover";
@@ -672,7 +672,6 @@ export default function ScalarPlotCard({
   // and move (pan). Listeners are on window so modifier changes reach us even
   // when focus is elsewhere.
   const [altDown, setAltDown] = useState(false);
-  const [dropHighlight, setDropHighlight] = useState(false);
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Alt") setAltDown(true);
@@ -1013,50 +1012,8 @@ export default function ScalarPlotCard({
   // -------------------------------------------------------------------------
   return (
     <div
-      className={`card p-4${dropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
+      className={`card p-4`}
       style={{ minHeight: settings.height ?? undefined, position: "relative" }}
-      onDragOver={(e) => {
-        if (!e.dataTransfer.types.includes(CAIRN_SERIES_MIME)) return;
-        e.preventDefault();
-        e.dataTransfer.dropEffect = "copy";
-      }}
-      onDragEnter={(e) => {
-        if (!e.dataTransfer.types.includes(CAIRN_SERIES_MIME)) return;
-        setDropHighlight(true);
-      }}
-      onDragLeave={(e) => {
-        const related = e.relatedTarget as Node | null;
-        if (related && e.currentTarget.contains(related)) return;
-        setDropHighlight(false);
-      }}
-      onDrop={(e) => {
-        setDropHighlight(false);
-        const raw = e.dataTransfer.getData(CAIRN_SERIES_MIME);
-        if (!raw) return;
-        e.preventDefault();
-        try {
-          const dropped: SeriesRef = JSON.parse(raw);
-          const existing = settingsRef.current.metrics;
-          const key = `${dropped.runId ?? ""}::${dropped.name}::${dropped.context_hash}`;
-          const alreadyHas = existing.some(
-            (m) => `${m.runId ?? ""}::${m.name}::${m.context_hash}` === key,
-          );
-          if (!alreadyHas) {
-            updateSettings({
-              metrics: [
-                ...existing,
-                {
-                  runId: dropped.runId,
-                  name: dropped.name,
-                  context_hash: dropped.context_hash,
-                },
-              ],
-            });
-          }
-        } catch {
-          /* malformed payload, ignore */
-        }
-      }}
     >
       <CardHeader
         title={settings.title ?? metric.name}

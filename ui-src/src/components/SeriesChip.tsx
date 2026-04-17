@@ -1,5 +1,11 @@
-import { useState } from "react";
-import type { DragEvent } from "react";
+/**
+ * Visual pill representing one plotted series in a card's chip strip.
+ *
+ * Shows a color swatch + label + optional × remove button. Chips are NOT
+ * draggable — series management is done via the × button (to remove) and
+ * the settings popover's MetricChips picker (to add). The drag-drop
+ * approach caused cascading re-render bugs and has been disabled.
+ */
 
 export const CAIRN_SERIES_MIME = "application/x-cairn-series";
 
@@ -18,41 +24,13 @@ interface Props {
 }
 
 export default function SeriesChip({
-  series,
   color,
   label,
-  runId,
   onRemove,
 }: Props) {
-  const [dragging, setDragging] = useState(false);
-
-  const onDragStart = (e: DragEvent<HTMLSpanElement>) => {
-    e.dataTransfer.effectAllowed = "copy";
-    e.dataTransfer.setData(
-      CAIRN_SERIES_MIME,
-      JSON.stringify({
-        runId: series.runId ?? runId,
-        name: series.name,
-        context_hash: series.context_hash,
-      }),
-    );
-    e.dataTransfer.setData("text/plain", label);
-    setDragging(true);
-  };
-
-  const onDragEnd = () => {
-    setDragging(false);
-  };
-
   return (
     <span
-      draggable
-      onDragStart={onDragStart}
-      onDragEnd={onDragEnd}
-      className={`mono inline-flex items-center gap-1 rounded border border-border bg-bg px-2 py-0.5 text-xs text-fg-muted cursor-grab active:cursor-grabbing ${
-        dragging ? "opacity-50" : ""
-      }`}
-      style={{ WebkitUserDrag: "element" } as React.CSSProperties}
+      className="mono inline-flex items-center gap-1 rounded border border-border bg-bg px-2 py-0.5 text-xs text-fg-muted"
     >
       <span
         aria-hidden="true"
@@ -75,7 +53,6 @@ export default function SeriesChip({
             e.stopPropagation();
             onRemove();
           }}
-          draggable={false}
         >
           {"\u00D7"}
         </button>
