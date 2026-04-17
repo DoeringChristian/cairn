@@ -136,10 +136,29 @@ def create_app(
 
 
 def _mount_spa_or_placeholder(app: FastAPI) -> None:
-    """Mount the built React bundle at ``/``; fall back to a JSON explainer."""
+    """Mount the built React bundle with SPA-style fallback routing.
+
+    Any request that isn't handled by an ``/api/*`` route and doesn't match
+    a static asset in ``ui/dist/`` gets ``index.html`` so React Router can
+    handle client-side routing (e.g. ``/p/demo/r/abc123/metrics``).
+    """
     ui_dist = Path(__file__).resolve().parent.parent / "ui" / "dist"
     if (ui_dist / "index.html").exists():
-        app.mount("/", StaticFiles(directory=str(ui_dist), html=True), name="ui")
+        index_html = (ui_dist / "index.html").read_bytes()
+
+        # Mount static assets first (JS, CSS, images, etc.)
+        app.mount(
+            "/assets",
+            StaticFiles(directory=str(ui_dist / "assets")),
+            name="ui-assets",
+        )
+
+        # SPA catch-all: serve index.html for any non-API, non-asset path.
+        @app.get("/{path:path}", include_in_schema=False)
+        async def _spa_fallback(path: str) -> Response:
+            from fastapi.responses import Response
+
+            return Response(content=index_html, media_type="text/html")
     else:
         @app.get("/", include_in_schema=False)
         def _no_ui() -> JSONResponse:
