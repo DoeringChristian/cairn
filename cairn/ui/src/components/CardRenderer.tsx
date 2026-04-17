@@ -21,7 +21,7 @@ const FigureInteractiveCard = lazy(
 export interface CardRendererProps {
   runId: string;
   metric: SequenceMeta;
-  /** Extra series for cross-run overlays (scalar cards). */
+  /** Extra series for cross-run overlays. */
   extraSeries?: ComparisonSeriesRef[];
   /** Override the settings localStorage key (used in comparisons). */
   settingsKeyOverride?: CardSettingsKey;
@@ -53,7 +53,7 @@ export default function CardRenderer({
         />
       );
     case "image":
-      return <ImageGalleryCard {...baseProps} />;
+      return <ImageGalleryCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} />;
     case "figure":
       return (
         <Suspense
@@ -67,13 +67,13 @@ export default function CardRenderer({
             </div>
           }
         >
-          <FigureInteractiveCard {...baseProps} />
+          <FigureInteractiveCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} />
         </Suspense>
       );
     case "audio":
-      return <AudioPlayerCard {...baseProps} />;
+      return <AudioPlayerCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} />;
     case "video":
-      return <VideoPlayerCard {...baseProps} />;
+      return <VideoPlayerCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} />;
     case "histogram":
       return <HistogramCard {...baseProps} />;
     case "text":

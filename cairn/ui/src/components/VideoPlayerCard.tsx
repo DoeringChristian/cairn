@@ -9,6 +9,7 @@ import {
   addCardToComparison,
   createComparison,
   useComparisons,
+  type ComparisonSeriesRef,
 } from "../lib/comparisons";
 import { useProjectId } from "../lib/project-context";
 import type { SequenceMeta, SequenceResponse, SequencePoint } from "../api/types";
@@ -33,6 +34,8 @@ interface Props {
   runId: string;
   metric: SequenceMeta;
   extraContexts?: SequenceMeta[];
+  extraSeries?: ComparisonSeriesRef[];
+  controlledSeries?: boolean;
 }
 
 interface VideoSettings {
@@ -145,10 +148,16 @@ function VideoPane({
   );
 }
 
-export default function VideoPlayerCard({ runId, metric, extraContexts = [] }: Props) {
+export default function VideoPlayerCard({ runId, metric, extraContexts = [], extraSeries, controlledSeries }: Props) {
   const seedMetric = useMemo(
     () => ({ name: metric.name, context_hash: metric.context_hash }),
     [metric.name, metric.context_hash],
+  );
+
+  const extraSeriesKey = useMemo(
+    () => (extraSeries ?? []).map((s) => `${s.runId}::${s.name}::${s.context_hash}`).sort().join("|"),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [JSON.stringify((extraSeries ?? []).map((s) => [s.runId, s.name, s.context_hash]).sort())],
   );
 
   const defaults = useMemo<VideoSettings>(() => {
@@ -157,6 +166,11 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [] }: P
       ...(extraContexts ?? []).map((e) => ({
         name: e.name,
         context_hash: e.context_hash,
+      })),
+      ...(extraSeries ?? []).map((s) => ({
+        runId: s.runId,
+        name: s.name,
+        context_hash: s.context_hash,
       })),
     ];
     const seen = new Set<string>();
@@ -167,7 +181,8 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [] }: P
       return true;
     });
     return { ...DEFAULT_VIDEO_SETTINGS(seedMetric), metrics: unique };
-  }, [seedMetric, extraContexts]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seedMetric, extraContexts, extraSeriesKey]);
 
   const [settings, updateSettings, resetSettings] = useCardSettings<VideoSettings>(
     {
@@ -178,11 +193,35 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [] }: P
     defaults,
   );
 
+  const effectiveMetrics = useMemo(() => {
+    if (!controlledSeries) return settings.metrics;
+    const all: Array<{ runId?: string; name: string; context_hash: string }> = [
+      { name: metric.name, context_hash: metric.context_hash },
+      ...(extraContexts ?? []).map((e) => ({
+        name: e.name,
+        context_hash: e.context_hash,
+      })),
+      ...(extraSeries ?? []).map((s) => ({
+        runId: s.runId,
+        name: s.name,
+        context_hash: s.context_hash,
+      })),
+    ];
+    const seen = new Set<string>();
+    return all.filter((m) => {
+      const k = seriesKey(m);
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [controlledSeries, settings.metrics, metric.name, metric.context_hash, extraContexts, extraSeriesKey]);
+
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
-  const metricsRef = useRef(settings.metrics);
-  metricsRef.current = settings.metrics;
+  const metricsRef = useRef(effectiveMetrics);
+  metricsRef.current = effectiveMetrics;
 
   const { highlight: dropHighlight, dropProps } = useSeriesDrop({
     metricsRef,
@@ -204,8 +243,8 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [] }: P
 
   // Multi-metric: fetch all sequences.
   const multiQueries = useQueries({
-    queries: settings.metrics.length > 1
-      ? settings.metrics.map((m) => {
+    queries: effectiveMetrics.length > 1
+      ? effectiveMetrics.map((m) => {
           const rid = m.runId ?? runId;
           return {
             queryKey: ["sequence", rid, m.name, m.context_hash],
@@ -222,7 +261,7 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [] }: P
   });
 
   const maxStepCount = useMemo(() => {
-    if (settings.metrics.length <= 1) return points.length;
+    if (effectiveMetrics.length <= 1) return points.length;
     let max = 0;
     for (const mq of multiQueries) {
       const pts = (mq.data as SequenceResponse | undefined)?.points?.filter(
@@ -231,7 +270,7 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [] }: P
       if (pts && pts.length > max) max = pts.length;
     }
     return max;
-  }, [settings.metrics.length, points.length, multiQueries]);
+  }, [effectiveMetrics.length, points.length, multiQueries]);
 
   const [idx, setIdx] = useState(0);
   const safeIdx = Math.min(Math.max(0, idx), Math.max(0, maxStepCount - 1));
@@ -285,16 +324,16 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [] }: P
 
   const multipleRuns = useMemo(() => {
     const seen = new Set<string>();
-    for (const m of settings.metrics) seen.add(m.runId ?? runId);
+    for (const m of effectiveMetrics) seen.add(m.runId ?? runId);
     return seen.size > 1;
-  }, [settings.metrics, runId]);
+  }, [effectiveMetrics, runId]);
 
   const subtitle =
     maxStepCount > 0
       ? `step ${current?.step ?? safeIdx} of ${maxStepCount}`
       : `${metric.count} pts`;
 
-  const isMulti = settings.metrics.length > 1;
+  const isMulti = effectiveMetrics.length > 1;
 
   return (
     <div
@@ -337,10 +376,10 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [] }: P
       {isMulti ? (
         <>
           <SplitPane
-            widths={settings.paneWidths ?? Array(settings.metrics.length).fill(1 / settings.metrics.length)}
+            widths={settings.paneWidths ?? Array(effectiveMetrics.length).fill(1 / effectiveMetrics.length)}
             onWidthsChange={(w) => updateSettings({ paneWidths: w })}
           >
-            {settings.metrics.map((m) => (
+            {effectiveMetrics.map((m) => (
               <VideoPane
                 key={seriesKey(m)}
                 runId={runId}
@@ -362,7 +401,7 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [] }: P
           )}
           {/* Series chip strip */}
           <div className="mt-2 flex flex-wrap gap-1.5">
-            {settings.metrics.map((m, i) => {
+            {effectiveMetrics.map((m, i) => {
               const ref: SeriesRef = {
                 runId: m.runId,
                 name: m.name,
@@ -376,9 +415,9 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [] }: P
                   label={seriesLabel(m.name, m.context_hash, m.runId, multipleRuns)}
                   runId={runId}
                   onRemove={
-                    settings.metrics.length > 1
+                    effectiveMetrics.length > 1
                       ? () => {
-                          const next = settings.metrics.filter((_, j) => j !== i);
+                          const next = effectiveMetrics.filter((_, j) => j !== i);
                           updateSettings({ metrics: next });
                         }
                       : undefined

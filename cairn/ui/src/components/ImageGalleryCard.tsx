@@ -15,6 +15,7 @@ import {
   addCardToComparison,
   createComparison,
   useComparisons,
+  type ComparisonSeriesRef,
 } from "../lib/comparisons";
 import { useProjectId } from "../lib/project-context";
 import { formatRelative } from "../lib/format";
@@ -34,6 +35,8 @@ import Slider from "./settings/Slider";
 interface Props {
   runId: string;
   metric: SequenceMeta;
+  extraSeries?: ComparisonSeriesRef[];
+  controlledSeries?: boolean;
 }
 
 interface ImageSettings {
@@ -243,14 +246,38 @@ function ImagePane({
 // ImageGalleryCard
 // ---------------------------------------------------------------------------
 
-export default function ImageGalleryCard({ runId, metric }: Props) {
+export default function ImageGalleryCard({ runId, metric, extraSeries, controlledSeries }: Props) {
+  const extraSeriesKey = useMemo(
+    () => (extraSeries ?? []).map((s) => `${s.runId}::${s.name}::${s.context_hash}`).sort().join("|"),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [JSON.stringify((extraSeries ?? []).map((s) => [s.runId, s.name, s.context_hash]).sort())],
+  );
+
   const defaults = useMemo(
-    () =>
-      defaultImageSettings({
+    () => {
+      const base = defaultImageSettings({
         name: metric.name,
         context_hash: metric.context_hash,
-      }),
-    [metric.name, metric.context_hash],
+      });
+      const all: Array<{ runId?: string; name: string; context_hash: string }> = [
+        { name: metric.name, context_hash: metric.context_hash },
+        ...(extraSeries ?? []).map((s) => ({
+          runId: s.runId,
+          name: s.name,
+          context_hash: s.context_hash,
+        })),
+      ];
+      const seen = new Set<string>();
+      const unique = all.filter((m) => {
+        const k = seriesKey(m);
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      });
+      return { ...base, metrics: unique };
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [metric.name, metric.context_hash, extraSeriesKey],
   );
 
   const settingsKey = useMemo(
@@ -266,11 +293,31 @@ export default function ImageGalleryCard({ runId, metric }: Props) {
     defaults,
   );
 
+  const effectiveMetrics = useMemo(() => {
+    if (!controlledSeries) return settings.metrics;
+    const all: Array<{ runId?: string; name: string; context_hash: string }> = [
+      { name: metric.name, context_hash: metric.context_hash },
+      ...(extraSeries ?? []).map((s) => ({
+        runId: s.runId,
+        name: s.name,
+        context_hash: s.context_hash,
+      })),
+    ];
+    const seen = new Set<string>();
+    return all.filter((m) => {
+      const k = seriesKey(m);
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [controlledSeries, settings.metrics, metric.name, metric.context_hash, extraSeriesKey]);
+
   // -----------------------------------------------------------------------
   // Multi-series fetch
   // -----------------------------------------------------------------------
   const queries = useQueries({
-    queries: settings.metrics.map((m) => ({
+    queries: effectiveMetrics.map((m) => ({
       queryKey: ["sequence", m.runId ?? runId, m.name, m.context_hash],
       queryFn: () =>
         api.sequence(m.runId ?? runId, m.name, {
@@ -298,13 +345,13 @@ export default function ImageGalleryCard({ runId, metric }: Props) {
   const [idx, setIdx] = useState(0);
   const safeIdx = Math.min(Math.max(0, idx), Math.max(0, maxLen - 1));
 
-  const isMulti = settings.metrics.length > 1;
+  const isMulti = effectiveMetrics.length > 1;
 
   const multipleRuns = useMemo(() => {
     const seen = new Set<string>();
-    for (const m of settings.metrics) seen.add(m.runId ?? runId);
+    for (const m of effectiveMetrics) seen.add(m.runId ?? runId);
     return seen.size > 1;
-  }, [settings.metrics, runId]);
+  }, [effectiveMetrics, runId]);
 
   // -----------------------------------------------------------------------
   // Settings refs for non-passive handlers
@@ -312,8 +359,8 @@ export default function ImageGalleryCard({ runId, metric }: Props) {
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
-  const metricsRef = useRef(settings.metrics);
-  metricsRef.current = settings.metrics;
+  const metricsRef = useRef(effectiveMetrics);
+  metricsRef.current = effectiveMetrics;
 
   const { highlight: dropHighlight, dropProps } = useSeriesDrop({
     metricsRef,
@@ -341,7 +388,7 @@ export default function ImageGalleryCard({ runId, metric }: Props) {
       if (!projectId) return;
       addCardToComparison(projectId, comparisonId, {
         type: "image",
-        series: settings.metrics.map((m) => ({
+        series: effectiveMetrics.map((m) => ({
           runId: m.runId ?? runId,
           name: m.name,
           context_hash: m.context_hash,
@@ -356,7 +403,7 @@ export default function ImageGalleryCard({ runId, metric }: Props) {
         setAddCompOpen(false);
       }, 1500);
     },
-    [projectId, runId, settings.metrics, refreshComparisons],
+    [projectId, runId, effectiveMetrics, refreshComparisons],
   );
 
   const createAndAdd = useCallback(() => {
@@ -577,13 +624,13 @@ export default function ImageGalleryCard({ runId, metric }: Props) {
             <SplitPane
               widths={
                 settings.paneWidths ??
-                Array(settings.metrics.length).fill(
-                  1 / settings.metrics.length,
+                Array(effectiveMetrics.length).fill(
+                  1 / effectiveMetrics.length,
                 )
               }
               onWidthsChange={(w) => updateSettings({ paneWidths: w })}
             >
-              {settings.metrics.map((m, paneIdx) => {
+              {effectiveMetrics.map((m, paneIdx) => {
                 const pts = perSeriesPoints[paneIdx] ?? [];
                 const pCurrent = pts[safeIdx];
                 const hash = pCurrent?.artifact_hash ?? undefined;
@@ -665,7 +712,7 @@ export default function ImageGalleryCard({ runId, metric }: Props) {
 
       {/* Series chip strip */}
       <div className="mt-2 flex flex-wrap gap-1.5">
-        {settings.metrics.map((m, i) => {
+        {effectiveMetrics.map((m, i) => {
           const ref: SeriesRef = {
             runId: m.runId,
             name: m.name,
@@ -679,9 +726,9 @@ export default function ImageGalleryCard({ runId, metric }: Props) {
               label={seriesLabel(m, runId, multipleRuns)}
               runId={runId}
               onRemove={
-                settings.metrics.length > 1
+                effectiveMetrics.length > 1
                   ? () => {
-                      const next = settings.metrics.filter(
+                      const next = effectiveMetrics.filter(
                         (_, idx2) => idx2 !== i,
                       );
                       // Adjust baselineIndex
