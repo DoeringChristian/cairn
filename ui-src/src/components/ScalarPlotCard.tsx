@@ -32,6 +32,7 @@ import type {
   SequencePoint,
   SequenceResponse,
 } from "../api/types";
+import SeriesChip, { CAIRN_SERIES_MIME, type SeriesRef } from "./SeriesChip";
 import CardHeader from "./CardHeader";
 import SettingsPopover from "./SettingsPopover";
 import MetricChips from "./settings/MetricChips";
@@ -668,6 +669,7 @@ export default function ScalarPlotCard({
   // and move (pan). Listeners are on window so modifier changes reach us even
   // when focus is elsewhere.
   const [altDown, setAltDown] = useState(false);
+  const [dropHighlight, setDropHighlight] = useState(false);
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Alt") setAltDown(true);
@@ -1007,7 +1009,51 @@ export default function ScalarPlotCard({
   // Render
   // -------------------------------------------------------------------------
   return (
-    <div className="card p-4">
+    <div
+      className={`card p-4${dropHighlight ? " ring-2 ring-accent ring-offset-2 ring-offset-bg" : ""}`}
+      onDragOver={(e) => {
+        if (!e.dataTransfer.types.includes(CAIRN_SERIES_MIME)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+      }}
+      onDragEnter={(e) => {
+        if (!e.dataTransfer.types.includes(CAIRN_SERIES_MIME)) return;
+        setDropHighlight(true);
+      }}
+      onDragLeave={(e) => {
+        const related = e.relatedTarget as Node | null;
+        if (related && e.currentTarget.contains(related)) return;
+        setDropHighlight(false);
+      }}
+      onDrop={(e) => {
+        setDropHighlight(false);
+        const raw = e.dataTransfer.getData(CAIRN_SERIES_MIME);
+        if (!raw) return;
+        e.preventDefault();
+        try {
+          const dropped: SeriesRef = JSON.parse(raw);
+          const existing = settingsRef.current.metrics;
+          const key = `${dropped.runId ?? ""}::${dropped.name}::${dropped.context_hash}`;
+          const alreadyHas = existing.some(
+            (m) => `${m.runId ?? ""}::${m.name}::${m.context_hash}` === key,
+          );
+          if (!alreadyHas) {
+            updateSettings({
+              metrics: [
+                ...existing,
+                {
+                  runId: dropped.runId,
+                  name: dropped.name,
+                  context_hash: dropped.context_hash,
+                },
+              ],
+            });
+          }
+        } catch {
+          /* malformed payload, ignore */
+        }
+      }}
+    >
       <CardHeader title={metric.name} subtitle={subtitle}>
         {settings.smoothing > 0 && (
           <button
@@ -1273,6 +1319,36 @@ export default function ScalarPlotCard({
           )}
         </div>
       )}
+
+      {/* Series chip strip — shows each plotted series as a draggable chip */}
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {series.map((s, idx) => {
+          const ref: SeriesRef = {
+            runId: settings.metrics[idx]?.runId,
+            name: settings.metrics[idx]?.name ?? "",
+            context_hash: settings.metrics[idx]?.context_hash ?? "",
+          };
+          return (
+            <SeriesChip
+              key={s.key}
+              series={ref}
+              color={s.color}
+              label={s.label}
+              runId={runId}
+              onRemove={
+                settings.metrics.length > 1
+                  ? () => {
+                      const next = settings.metrics.filter(
+                        (_, i) => i !== idx,
+                      );
+                      updateSettings({ metrics: next });
+                    }
+                  : undefined
+              }
+            />
+          );
+        })}
+      </div>
 
       <SettingsPopover
         open={settingsOpen}

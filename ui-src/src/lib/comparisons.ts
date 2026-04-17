@@ -20,7 +20,7 @@ export interface ComparisonSeriesRef {
 export interface ComparisonCard {
   /** Stable uuid. Distinct from the settings storage key — see lib/card-settings.ts. */
   id: string;
-  type: "scalar";
+  type: "scalar" | "image" | "figure" | "audio" | "video" | "histogram" | "text";
   series: ComparisonSeriesRef[];
 }
 

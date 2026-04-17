@@ -1,12 +1,18 @@
-import { useState, useMemo, useRef } from "react";
+import { useCallback, useEffect, useState, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import createPlotlyComponent from "react-plotly.js/factory";
 // @ts-expect-error - plotly.js-dist-min has no bundled types, but is runtime-compatible with the factory.
 import Plotly from "plotly.js-dist-min";
 import { useSequence } from "../api/hooks";
 import { api } from "../api/client";
-import { safeJsonParse } from "../lib/format";
+import { safeJsonParse, formatRelative } from "../lib/format";
 import { useCardSettings } from "../lib/card-settings";
+import {
+  addCardToComparison,
+  createComparison,
+  useComparisons,
+} from "../lib/comparisons";
+import { useProjectId } from "../lib/project-context";
 import CardHeader from "./CardHeader";
 import SettingsPopover from "./SettingsPopover";
 import Toggle from "./settings/Toggle";
@@ -126,6 +132,48 @@ export default function FigureInteractiveCard({ runId, metric }: Props) {
   const settingsButtonRef = useRef<HTMLButtonElement | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
+  // "Add to comparison" popover state.
+  const projectId = useProjectId();
+  const { comparisons, refresh: refreshComparisons } =
+    useComparisons(projectId ?? "");
+  const addCompBtnRef = useRef<HTMLButtonElement | null>(null);
+  const [addCompOpen, setAddCompOpen] = useState(false);
+  const [addCompConfirm, setAddCompConfirm] = useState<string | null>(null);
+  const addCompTimer = useRef<number | null>(null);
+  const [newCompName, setNewCompName] = useState("");
+
+  const addToComp = useCallback(
+    (comparisonId: string, compName: string) => {
+      if (!projectId) return;
+      addCardToComparison(projectId, comparisonId, {
+        type: "figure",
+        series: [{ runId, name: metric.name, context_hash: metric.context_hash }],
+      });
+      refreshComparisons();
+      if (addCompTimer.current != null) window.clearTimeout(addCompTimer.current);
+      setAddCompConfirm(`Added to ${compName}`);
+      addCompTimer.current = window.setTimeout(() => {
+        setAddCompConfirm(null);
+        setAddCompOpen(false);
+      }, 1500);
+    },
+    [projectId, runId, metric.name, metric.context_hash, refreshComparisons],
+  );
+
+  const createAndAdd = useCallback(() => {
+    if (!projectId) return;
+    const name = newCompName.trim() || "New comparison";
+    const cmp = createComparison(projectId, name);
+    addToComp(cmp.id, cmp.name);
+    setNewCompName("");
+  }, [projectId, newCompName, addToComp]);
+
+  useEffect(() => {
+    return () => {
+      if (addCompTimer.current != null) window.clearTimeout(addCompTimer.current);
+    };
+  }, []);
+
   const meta = useMemo(
     () => safeJsonParse<FigureMetadata>(current?.artifact_metadata ?? null),
     [current],
@@ -194,6 +242,20 @@ export default function FigureInteractiveCard({ runId, metric }: Props) {
             className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
           >
             ↺
+          </button>
+        )}
+        {projectId && (
+          <button
+            ref={addCompBtnRef}
+            type="button"
+            onClick={() => setAddCompOpen((v) => !v)}
+            className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
+            aria-label="Add to comparison"
+            aria-haspopup="dialog"
+            aria-expanded={addCompOpen}
+            title="Add to comparison"
+          >
+            {"\u002B"}
           </button>
         )}
         <button
@@ -289,6 +351,64 @@ export default function FigureInteractiveCard({ runId, metric }: Props) {
         >
           Reset to defaults
         </button>
+      </SettingsPopover>
+
+      <SettingsPopover
+        open={addCompOpen && projectId != null}
+        onClose={() => { setAddCompOpen(false); setAddCompConfirm(null); }}
+        anchorRef={addCompBtnRef}
+        title="Add to comparison"
+      >
+        {addCompConfirm ? (
+          <p className="text-xs text-accent">{addCompConfirm}</p>
+        ) : (
+          <>
+            {comparisons.length === 0 ? (
+              <p className="text-xs text-fg-subtle mb-2">No comparisons yet.</p>
+            ) : (
+              <div className="flex flex-col gap-1 mb-2 max-h-48 overflow-y-auto">
+                {comparisons.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => addToComp(c.id, c.name)}
+                    className="text-left text-xs text-fg-muted hover:bg-bg-hover rounded px-2 py-1.5 border border-border-subtle"
+                  >
+                    <div className="truncate">{c.name}</div>
+                    <div className="text-[10px] text-fg-subtle">
+                      {c.cards.length} card(s) · {formatRelative(c.createdAt)}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="border-t border-border-subtle pt-2 mt-1">
+              <label className="text-[10px] uppercase tracking-wide text-fg-muted block mb-1">
+                Create new comparison
+              </label>
+              <div className="flex gap-1">
+                <input
+                  type="text"
+                  value={newCompName}
+                  onChange={(e) => setNewCompName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); createAndAdd(); } }}
+                  placeholder="Name"
+                  className="input flex-1 text-xs"
+                />
+                <button type="button" onClick={createAndAdd} className="btn text-xs px-2">
+                  Create
+                </button>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setAddCompOpen(false)}
+              className="btn w-full mt-2 text-xs"
+            >
+              Cancel
+            </button>
+          </>
+        )}
       </SettingsPopover>
     </div>
   );
