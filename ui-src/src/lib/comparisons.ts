@@ -85,6 +85,8 @@ export function saveComparisons(
   } catch {
     /* quota exceeded or disabled storage; silently drop */
   }
+  // Notify all useComparisons hooks in this tab that data changed.
+  notifyChange(projectId);
 }
 
 function newId(): string {
@@ -169,6 +171,17 @@ export function removeCardFromComparison(
  * Re-reads localStorage on mount + when `refresh()` is called. Also listens
  * for the cross-tab `storage` event so another tab's mutations propagate.
  */
+// ---------------------------------------------------------------------------
+// In-tab notification channel. StorageEvent only fires cross-tab; this
+// EventTarget lets all useComparisons hooks in the SAME tab react when
+// any component creates, renames, deletes, or adds a card to a comparison.
+// ---------------------------------------------------------------------------
+const comparisonsChanged = new EventTarget();
+
+function notifyChange(projectId: string) {
+  comparisonsChanged.dispatchEvent(new CustomEvent("change", { detail: projectId }));
+}
+
 export function useComparisons(projectId: string): {
   comparisons: Comparison[];
   refresh: () => void;
@@ -185,6 +198,7 @@ export function useComparisons(projectId: string): {
     refresh();
   }, [refresh]);
 
+  // Cross-tab: StorageEvent fires when another tab writes.
   useEffect(() => {
     const key = storageKey(projectId);
     const onStorage = (e: StorageEvent) => {
@@ -193,6 +207,18 @@ export function useComparisons(projectId: string): {
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
+  }, [projectId]);
+
+  // Same-tab: listen for writes from other components in this tab.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail === projectId) {
+        setComparisons(loadComparisons(projectId));
+      }
+    };
+    comparisonsChanged.addEventListener("change", handler);
+    return () => comparisonsChanged.removeEventListener("change", handler);
   }, [projectId]);
 
   return { comparisons, refresh };
