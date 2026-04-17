@@ -591,6 +591,15 @@ export default function ScalarPlotCard({
     [series, settings.promotedSeries],
   );
 
+  const promotedCount = Object.keys(settings.promotedSeries).length;
+  const dynamicMargin = useMemo(
+    () => ({
+      ...CHART_MARGIN,
+      right: CHART_MARGIN.right + promotedCount * promotedAxisStripWidth,
+    }),
+    [promotedCount],
+  );
+
   type RightAxisDragMode = "pan" | "scale";
 
   const rightAxisDragRef = useRef<{
@@ -697,9 +706,7 @@ export default function ScalarPlotCard({
       if (!e.altKey) return;
       const rect = el.getBoundingClientRect();
       const plotLeft = rect.left + CHART_MARGIN.left + 46; // YAxis width ≈ 46
-      const plotRight =
-        rect.right - CHART_MARGIN.right -
-        promotedKeysOrdered.length * promotedAxisStripWidth;
+      const plotRight = rect.right - dynamicMargin.right;
       const plotTop = rect.top + CHART_MARGIN.top;
       const plotBottom = rect.bottom - CHART_MARGIN.bottom - 20; // XAxis height
       if (
@@ -733,7 +740,7 @@ export default function ScalarPlotCard({
     };
     el.addEventListener("wheel", handler, { passive: false });
     return () => el.removeEventListener("wheel", handler);
-  }, [updateSettings, promotedKeysOrdered.length]);
+  }, [updateSettings, dynamicMargin.right]);
 
   // Plot-body gesture: either "pan" (Alt held at pointerdown) or "select"
   // (rubber-band zoom, no modifier). Mode is latched at pointerdown.
@@ -786,9 +793,7 @@ export default function ScalarPlotCard({
       if (!el) return;
       const rect = el.getBoundingClientRect();
       const plotLeft = rect.left + CHART_MARGIN.left + 46;
-      const plotRight =
-        rect.right - CHART_MARGIN.right -
-        promotedKeysOrdered.length * promotedAxisStripWidth;
+      const plotRight = rect.right - dynamicMargin.right;
       const plotTop = rect.top + CHART_MARGIN.top;
       const plotBottom = rect.bottom - CHART_MARGIN.bottom - 20;
       if (
@@ -824,7 +829,7 @@ export default function ScalarPlotCard({
         setSelection({ x0: localX, y0: localY, x1: localX, y1: localY });
       }
     },
-    [promotedKeysOrdered.length],
+    [dynamicMargin.right],
   );
 
   const onChartPointerMove = useCallback(
@@ -1329,7 +1334,7 @@ export default function ScalarPlotCard({
       }}
     >
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data} margin={CHART_MARGIN}>
+        <LineChart data={data} margin={dynamicMargin}>
           <CartesianGrid stroke="#d0d7de" strokeDasharray="2 4" />
           <XAxis
             dataKey="x"

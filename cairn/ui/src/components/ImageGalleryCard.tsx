@@ -541,10 +541,10 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
 
   return (
     <div
-      className={`card p-4${dropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
+      className={`card p-4 flex flex-col${dropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
       style={{
         position: "relative",
-        minHeight: settings.height ?? undefined,
+        height: settings.height ?? undefined,
         gridColumn: settings.fullWidth ? "1 / -1" : undefined,
       }}
       {...dropProps}
@@ -629,6 +629,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
         <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
       ) : maxLen > 0 ? (
         <>
+          <div className={`flex-1 min-h-0 flex flex-col${settings.height == null ? ' h-48' : ''}`}>
           {isMulti ? (
             /* ---------- Multi-pane layout ---------- */
             <SplitPane
@@ -675,7 +676,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
             /* ---------- Single-image layout (original) ---------- */
             <div
               ref={containerRef}
-              className="flex justify-center rounded bg-bg p-2"
+              className="flex flex-1 min-h-0 justify-center rounded bg-bg p-2"
               style={{
                 overflow: "hidden",
                 cursor: canPan ? "move" : "default",
@@ -690,7 +691,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                 <img
                   src={api.artifactUrl(firstCurrent.artifact_hash)}
                   alt={`${metric.name} @ step ${firstCurrent.step}`}
-                  className="max-h-64 object-contain"
+                  className="max-h-full max-w-full object-contain"
                   draggable={false}
                   style={{
                     filter: filterStr,
@@ -703,6 +704,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
               )}
             </div>
           )}
+          </div>
 
           {/* Shared step slider */}
           {maxLen > 1 && (
