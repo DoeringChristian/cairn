@@ -1,20 +1,36 @@
 /**
- * Thin wrapper that makes its children draggable via HTML5 native drag & drop.
+ * Thin wrapper that enables drag-to-reorder for cards.
  *
- * We stash the cardKey on the DataTransfer under a custom MIME type so
- * accidental drops onto non-card targets (e.g. a file input) can't misinterpret
- * the payload. The drag-image is whatever the browser picks (the element
- * itself, typically).
- *
- * Visual feedback: while being dragged, the element is rendered at 50% opacity.
- * The `.cairn-draggable-card` class wires up the hover-reveal grip styling
- * defined in `index.css`.
+ * IMPORTANT: The ``draggable`` attribute is NOT on this wrapper — that would
+ * steal every pointer gesture (slider drags, plot pan, box-zoom, etc.) from
+ * the card's body. Instead, only the grip icon inside ``CardHeader`` is
+ * ``draggable``. This wrapper provides a React Context that the grip reads
+ * to configure its ``dataTransfer`` payload and fire the correct callbacks.
  */
 
-import { useState } from "react";
+import { createContext, useContext, useState } from "react";
 import type { DragEvent, ReactNode } from "react";
 
 export const CAIRN_CARD_MIME = "application/x-cairn-card";
+
+// ---------- Context for the grip handle ------------------------------------
+
+interface DragCtx {
+  cardKey: string;
+  section: string;
+  dragging: boolean;
+  handleDragStart: (e: DragEvent<HTMLSpanElement>) => void;
+  handleDragEnd: () => void;
+}
+
+const DraggableCardCtx = createContext<DragCtx | null>(null);
+
+/** Used by ``CardHeader``'s grip icon to wire into the drag system. */
+export function useDraggableCard(): DragCtx | null {
+  return useContext(DraggableCardCtx);
+}
+
+// ---------- Wrapper --------------------------------------------------------
 
 interface Props {
   cardKey: string;
@@ -33,11 +49,9 @@ export default function DraggableCard({
 }: Props) {
   const [dragging, setDragging] = useState(false);
 
-  const handleDragStart = (e: DragEvent<HTMLDivElement>) => {
+  const handleDragStart = (e: DragEvent<HTMLSpanElement>) => {
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData(CAIRN_CARD_MIME, cardKey);
-    // Some browsers require at least one "text/plain" payload to treat the
-    // drag as valid on certain drop targets. Include both.
     e.dataTransfer.setData("text/plain", cardKey);
     setDragging(true);
     onDragStart(cardKey, section);
@@ -49,14 +63,15 @@ export default function DraggableCard({
   };
 
   return (
-    <div
-      data-card-key={cardKey}
-      draggable
-      onDragStart={handleDragStart}
-      onDragEnd={handleDragEnd}
-      className={`cairn-draggable-card ${dragging ? "opacity-50" : ""}`}
+    <DraggableCardCtx.Provider
+      value={{ cardKey, section, dragging, handleDragStart, handleDragEnd }}
     >
-      {children}
-    </div>
+      <div
+        data-card-key={cardKey}
+        className={`cairn-draggable-card ${dragging ? "opacity-50" : ""}`}
+      >
+        {children}
+      </div>
+    </DraggableCardCtx.Provider>
   );
 }

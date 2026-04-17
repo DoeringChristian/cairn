@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { useDraggableCard } from "./DraggableCard";
 
 interface Props {
   /** Metric name, e.g. "train.loss". */
@@ -12,19 +13,30 @@ interface Props {
 /**
  * Standardized card header.
  *
- * A small grip-icon (≡) is rendered to the left of the title and stays hidden
- * by default. When the card is wrapped in a `DraggableCard`, CSS in
- * `index.css` reveals the grip on hover and switches the cursor to `grab`.
- * The actual HTML5 `draggable` attribute lives on the outer wrapper, not
- * here — this icon is purely a visual affordance.
+ * A grip icon (≡) is rendered to the left of the title. When the card is
+ * wrapped in a ``DraggableCard``, the grip becomes the **sole** drag handle
+ * (``draggable`` on the grip ``<span>``, not on the outer card wrapper) so
+ * that pointer gestures elsewhere on the card (plot zoom, slider drag, etc.)
+ * are never intercepted by the browser's HTML5 drag system.
  */
 export default function CardHeader({ title, subtitle, children }: Props) {
+  const drag = useDraggableCard();
+
   return (
     <div className="mb-2 flex items-baseline justify-between gap-2">
       <div className="flex items-baseline gap-1.5 min-w-0">
         <span
           aria-hidden="true"
-          className="cairn-drag-grip select-none text-fg-subtle opacity-0 transition-opacity"
+          draggable={!!drag}
+          onDragStart={drag?.handleDragStart}
+          onDragEnd={drag?.handleDragEnd}
+          className={[
+            "cairn-drag-grip select-none text-fg-subtle transition-opacity",
+            drag ? "cursor-grab active:cursor-grabbing" : "",
+            // Visible on hover when inside a DraggableCard (via CSS in index.css);
+            // always opacity-0 otherwise.
+            "opacity-0",
+          ].join(" ")}
           title="Drag to reorder"
         >
           {"\u2630"}
