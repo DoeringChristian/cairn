@@ -543,7 +543,12 @@ export default function ScalarPlotCard({
       e.stopPropagation();
       // Prevent text selection during axis drag (tick labels etc.).
       e.preventDefault();
-      (e.currentTarget as SVGRectElement).setPointerCapture(e.pointerId);
+      // Capture the pointer on the CHART CONTAINER (not the <rect>) so that
+      // pointermove/pointerup keep firing even after the cursor leaves the
+      // tiny axis strip. The <rect> is inside Recharts' <Customized> and
+      // gets recreated on every re-render, which would kill capture if it
+      // were on the <rect>.
+      chartBoxRef.current?.setPointerCapture(e.pointerId);
       // Convert cursor Y (viewport px) to data coordinate using the axis rect.
       // Recharts renders axes with y growing upward, so a cursor near axisTopPx
       // maps to `max`, and near (axisTopPx + axisHeightPx) maps to `min`.
@@ -571,68 +576,10 @@ export default function ScalarPlotCard({
     [],
   );
 
-  const onAxisStripPointerMove = useCallback(
-    (e: React.PointerEvent<SVGRectElement>) => {
-      const s = rightAxisDragRef.current;
-      if (!s || s.pointerId !== e.pointerId) return;
-      const dyPx = e.clientY - s.startY;
-      if (s.mode === "pan") {
-        const range = s.startMax - s.startMin;
-        // Drag down (dy > 0) → series moves UP on screen → subtract from both.
-        // Pixel is top-down but Y axis is bottom-up, so dyPx>0 means pointer
-        // moved toward smaller y-values → shift domain upward.
-        const dyData = (dyPx / Math.max(1, s.axisHeightPx)) * range;
-        const next: PromotedSeriesConfig = {
-          min: s.startMin + dyData,
-          max: s.startMax + dyData,
-        };
-        updateSettings({
-          promotedSeries: {
-            ...settingsRef.current.promotedSeries,
-            [s.key]: next,
-          },
-        });
-        return;
-      }
-      // scale: anchor stays fixed; drag down expands, drag up compresses.
-      const factor = Math.exp(dyPx / Math.max(1, s.axisHeightPx));
-      const newMin = s.anchorData - (s.anchorData - s.startMin) * factor;
-      const newMax = s.anchorData + (s.startMax - s.anchorData) * factor;
-      if (!Number.isFinite(newMin) || !Number.isFinite(newMax)) return;
-      if (newMax - newMin <= 0) return;
-      updateSettings({
-        promotedSeries: {
-          ...settingsRef.current.promotedSeries,
-          [s.key]: { min: newMin, max: newMax },
-        },
-      });
-    },
-    [updateSettings],
-  );
-
-  const onAxisStripPointerUp = useCallback(
-    (e: React.PointerEvent<SVGRectElement>) => {
-      const s = rightAxisDragRef.current;
-      if (!s || s.pointerId !== e.pointerId) return;
-      try {
-        (e.currentTarget as SVGRectElement).releasePointerCapture(e.pointerId);
-      } catch {
-        /* ignore */
-      }
-      rightAxisDragRef.current = null;
-    },
-    [],
-  );
-
-  // Safety: if pointer capture is lost (e.g. element re-rendered, browser
-  // cancelled), clear the drag state so stale refs don't cause phantom
-  // pan/scale on subsequent pointer moves.
-  const onAxisStripLostCapture = useCallback(
-    () => {
-      rightAxisDragRef.current = null;
-    },
-    [],
-  );
+  // Note: axis-strip pointermove/pointerup are handled by onChartPointerMove
+  // and onChartPointerUp on the stable container div, not on the <rect> itself.
+  // This ensures the drag survives Recharts re-renders that destroy/recreate
+  // the SVG <rect> elements.
 
   // -------------------------------------------------------------------------
   // Plot-area wheel-zoom + drag-pan.
@@ -788,6 +735,38 @@ export default function ScalarPlotCard({
 
   const onChartPointerMove = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
+      // Handle axis-strip drags (right-side promoted axis pan/scale).
+      // These are initiated by pointerdown on the SVG <rect> but tracked
+      // here on the stable container div so the drag survives re-renders.
+      const ax = rightAxisDragRef.current;
+      if (ax && ax.pointerId === e.pointerId) {
+        const dyPx = e.clientY - ax.startY;
+        if (ax.mode === "pan") {
+          const range = ax.startMax - ax.startMin;
+          const dyData = (dyPx / Math.max(1, ax.axisHeightPx)) * range;
+          updateSettings({
+            promotedSeries: {
+              ...settingsRef.current.promotedSeries,
+              [ax.key]: { min: ax.startMin + dyData, max: ax.startMax + dyData },
+            },
+          });
+        } else {
+          const factor = Math.exp(dyPx / Math.max(1, ax.axisHeightPx));
+          const newMin = ax.anchorData - (ax.anchorData - ax.startMin) * factor;
+          const newMax = ax.anchorData + (ax.startMax - ax.anchorData) * factor;
+          if (Number.isFinite(newMin) && Number.isFinite(newMax) && newMax > newMin) {
+            updateSettings({
+              promotedSeries: {
+                ...settingsRef.current.promotedSeries,
+                [ax.key]: { min: newMin, max: newMax },
+              },
+            });
+          }
+        }
+        return;
+      }
+
+      // Handle plot-body drags (box-zoom or pan).
       const s = plotDragRef.current;
       if (!s || s.pointerId !== e.pointerId) return;
       if (s.mode === "pan") {
@@ -823,6 +802,17 @@ export default function ScalarPlotCard({
 
   const onChartPointerUp = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
+      // End axis-strip drag if active.
+      const ax = rightAxisDragRef.current;
+      if (ax && ax.pointerId === e.pointerId) {
+        rightAxisDragRef.current = null;
+        try {
+          (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId);
+        } catch { /* ignore */ }
+        return;
+      }
+
+      // End plot-body drag.
       const s = plotDragRef.current;
       if (!s || s.pointerId !== e.pointerId) return;
       try {
@@ -1123,6 +1113,7 @@ export default function ScalarPlotCard({
           onPointerCancel={onChartPointerUp}
           onLostPointerCapture={() => {
             plotDragRef.current = null;
+            rightAxisDragRef.current = null;
             setSelection(null);
           }}
         >
@@ -1255,10 +1246,6 @@ export default function ScalarPlotCard({
                               onPointerDown={(e) =>
                                 onAxisStripPointerDown(key, e, height, top)
                               }
-                              onPointerMove={onAxisStripPointerMove}
-                              onPointerUp={onAxisStripPointerUp}
-                              onPointerCancel={onAxisStripPointerUp}
-                              onLostPointerCapture={onAxisStripLostCapture}
                             />
                           );
                         })}
