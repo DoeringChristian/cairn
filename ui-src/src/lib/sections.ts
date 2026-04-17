@@ -33,9 +33,13 @@ export function groupIntoSections(meta: SequenceMeta[]): Section[] {
     arr.push(m);
     buckets.set(section, arr);
   }
-  // Sort members alphabetically.
+  // Sort members deterministically by (name, context_hash).
   for (const arr of buckets.values()) {
-    arr.sort((a, b) => a.name.localeCompare(b.name));
+    arr.sort((a, b) => {
+      const c = a.name.localeCompare(b.name);
+      if (c !== 0) return c;
+      return (a.context_hash ?? "").localeCompare(b.context_hash ?? "");
+    });
   }
   // Deterministic section order.
   const order = (name: string): number => {

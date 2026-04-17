@@ -104,7 +104,7 @@ export default function CardGrid({ runId, sequences }: Props) {
         </div>
       )}
       {sections.map((section) => {
-        const entries = collapseScalars(section.items);
+        const entries = toEntries(section.items);
         // cardKey per rendered entry. Use the same convention `run-layout`
         // uses so drag payloads and layout lookups stay in sync.
         const entryKeys = entries.map((e) => cardKeyOf(e.primary));
@@ -310,32 +310,17 @@ function isNoopSelfDrop(
 // Scalar collapsing + dispatch (unchanged behavior).
 // -----------------------------------------------------------------------------
 
-function collapseScalars(metas: SequenceMeta[]): Entry[] {
-  // Group scalar metrics with the same name into one card.
-  const byKey = new Map<string, Entry>();
-  const out: Entry[] = [];
-  for (const m of metas) {
-    if (m.object_type === "scalar") {
-      const existing = byKey.get(m.name);
-      if (existing) {
-        existing.extras.push(m);
-      } else {
-        const e: Entry = { primary: m, extras: [] };
-        byKey.set(m.name, e);
-        out.push(e);
-      }
-    } else {
-      out.push({ primary: m, extras: [] });
-    }
-  }
-  return out;
+function toEntries(metas: SequenceMeta[]): Entry[] {
+  // Each (name, context_hash) pair is an independent card — no grouping.
+  // Users can merge metrics via chip drag-drop or the settings picker.
+  return metas.map((m) => ({ primary: m, extras: [] }));
 }
 
 function CardFor({ runId, entry }: { runId: string; entry: Entry }) {
-  const { primary, extras } = entry;
+  const { primary } = entry;
   switch (primary.object_type) {
     case "scalar":
-      return <ScalarPlotCard runId={runId} metric={primary} extraContexts={extras} />;
+      return <ScalarPlotCard runId={runId} metric={primary} />;
     case "image":
       return <ImageGalleryCard runId={runId} metric={primary} />;
     case "text":
