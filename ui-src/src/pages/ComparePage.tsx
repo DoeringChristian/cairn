@@ -1,13 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import ScalarPlotCard from "../components/ScalarPlotCard";
-import ImageGalleryCard from "../components/ImageGalleryCard";
-import AudioPlayerCard from "../components/AudioPlayerCard";
-import VideoPlayerCard from "../components/VideoPlayerCard";
-import HistogramCard from "../components/HistogramCard";
-import TextViewerCard from "../components/TextViewerCard";
-import { Suspense, lazy } from "react";
-const FigureInteractiveCard = lazy(() => import("../components/FigureInteractiveCard"));
+import CardRenderer from "../components/CardRenderer";
 import DraggableCard from "../components/DraggableCard";
 import {
   createComparison,
@@ -138,7 +131,6 @@ export default function ComparePage() {
             {selected ? (
               <ComparisonView
                 comparison={selected}
-                projectId={projectId}
                 onRename={(name) => handleRename(selected.id, name)}
                 onDelete={() => handleDelete(selected.id)}
                 onRemoveCard={(cardId) => handleRemoveCard(selected.id, cardId)}
@@ -370,7 +362,6 @@ function SidebarRow({
 
 interface ComparisonViewProps {
   comparison: Comparison;
-  projectId: string;
   onRename: (name: string) => void;
   onDelete: () => void;
   onRemoveCard: (cardId: string) => void;
@@ -378,7 +369,6 @@ interface ComparisonViewProps {
 
 function ComparisonView({
   comparison,
-  projectId,
   onRename,
   onDelete,
   onRemoveCard,
@@ -456,7 +446,6 @@ function ComparisonView({
               <ComparisonCardRenderer
                 card={card}
                 comparisonId={comparison.id}
-                projectId={projectId}
                 onRemove={() => onRemoveCard(card.id)}
               />
             </DraggableCard>
@@ -470,7 +459,6 @@ function ComparisonView({
 interface ComparisonCardRendererProps {
   card: ComparisonCard;
   comparisonId: string;
-  projectId: string;
   onRemove: () => void;
 }
 
@@ -501,65 +489,21 @@ function ComparisonCardRenderer({
     count: 0,
   };
 
-  const extraSeries = card.series.slice(1);
-  const baseProps = { runId: primary.runId, metric: seedMetric };
-
-  // Wrap the card with a remove button since non-scalar cards don't
-  // have an onRemove prop yet.
-  const withRemove = (cardEl: React.ReactNode) => (
+  return (
     <div>
-      {cardEl}
-      <div className="flex justify-end mt-1">
-        <button type="button" className="btn text-xs" onClick={onRemove}>
-          Remove from comparison
-        </button>
-      </div>
+      <CardRenderer
+        runId={primary.runId}
+        metric={seedMetric}
+        extraSeries={card.series.slice(1)}
+        onRemove={onRemove}
+        settingsKeyOverride={{
+          runId: `compare:${comparisonId}`,
+          metricName: card.id,
+          contextHash: "",
+        }}
+      />
     </div>
   );
-
-  switch (card.type) {
-    case "scalar":
-      return (
-        <ScalarPlotCard
-          {...baseProps}
-          extraSeries={extraSeries}
-          onRemove={onRemove}
-          settingsKeyOverride={{
-            runId: `compare:${comparisonId}`,
-            metricName: card.id,
-            contextHash: "",
-          }}
-        />
-      );
-    case "image":
-      return withRemove(<ImageGalleryCard {...baseProps} />);
-    case "figure":
-      return withRemove(
-        <Suspense
-          fallback={
-            <div className="card p-4">
-              <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
-            </div>
-          }
-        >
-          <FigureInteractiveCard {...baseProps} />
-        </Suspense>
-      );
-    case "audio":
-      return withRemove(<AudioPlayerCard {...baseProps} />);
-    case "video":
-      return withRemove(<VideoPlayerCard {...baseProps} />);
-    case "histogram":
-      return withRemove(<HistogramCard {...baseProps} />);
-    case "text":
-      return withRemove(<TextViewerCard {...baseProps} />);
-    default:
-      return (
-        <div className="card p-4 text-sm text-fg-muted">
-          Unknown card type: {card.type}
-        </div>
-      );
-  }
 }
 
 // -----------------------------------------------------------------------------

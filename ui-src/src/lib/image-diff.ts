@@ -1,9 +1,31 @@
-export type DiffMode = "absolute" | "relative" | "squared";
+/**
+ * Client-side per-pixel image diff computation.
+ *
+ * Six diff modes covering signed/absolute/squared × raw/relative.
+ * Signed modes map to [0, 255] via midpoint offset (128 = no diff).
+ */
+
+export type DiffMode =
+  | "signed"
+  | "absolute"
+  | "squared"
+  | "relative_signed"
+  | "relative_absolute"
+  | "relative_squared";
+
+export const DIFF_MODE_LABELS: Record<DiffMode, string> = {
+  signed: "Signed Error",
+  absolute: "Absolute Error",
+  squared: "Squared Error",
+  relative_signed: "Relative Signed",
+  relative_absolute: "Relative Absolute",
+  relative_squared: "Relative Squared",
+};
 
 /**
  * Compute a per-pixel diff between a baseline and another image.
  * Both inputs and the output are ImageData objects (from Canvas getImageData).
- * If dimensions differ, crop to the intersection (min width x min height).
+ * If dimensions differ, crop to the intersection (min width × min height).
  */
 export function computeDiff(
   baseline: ImageData,
@@ -21,25 +43,37 @@ export function computeDiff(
       const ri = (y * w + x) * 4;
 
       for (let c = 0; c < 3; c++) {
-        // R, G, B — skip alpha
         const a = baseline.data[bi + c]!;
         const b = other.data[oi + c]!;
+        const diff = a - b;
+        const absDiff = Math.abs(diff);
+        const denom = Math.max(a, 1); // avoid division by zero
         let v: number;
 
         switch (mode) {
-          case "absolute":
-            v = Math.abs(a - b);
+          case "signed":
+            // Map [-255, 255] → [0, 255] via midpoint. 128 = no diff.
+            v = (diff + 255) / 2;
             break;
-          case "relative":
-            // Dividing by max(a, 1) avoids division-by-zero when baseline pixel is 0.
-            v = (Math.abs(a - b) / Math.max(a, 1)) * 255;
+          case "absolute":
+            v = absDiff;
             break;
           case "squared":
-            v = ((a - b) * (a - b)) / 255;
+            v = (diff * diff) / 255;
+            break;
+          case "relative_signed":
+            // Map [-1, 1] → [0, 255] via midpoint. 128 = no diff.
+            v = ((diff / denom) + 1) * 127.5;
+            break;
+          case "relative_absolute":
+            v = (absDiff / denom) * 255;
+            break;
+          case "relative_squared":
+            v = ((diff * diff) / (denom * denom)) * 255;
             break;
         }
 
-        result.data[ri + c] = Math.min(255, Math.round(v));
+        result.data[ri + c] = Math.min(255, Math.max(0, Math.round(v)));
       }
 
       result.data[ri + 3] = 255; // full alpha
@@ -56,7 +90,7 @@ export function computeDiff(
 export async function loadImageData(url: string): Promise<ImageData | null> {
   return new Promise((resolve) => {
     const img = new Image();
-    img.crossOrigin = "anonymous"; // same-origin, but set for safety
+    img.crossOrigin = "anonymous";
     img.onload = () => {
       const canvas = document.createElement("canvas");
       canvas.width = img.naturalWidth;

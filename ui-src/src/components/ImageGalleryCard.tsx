@@ -47,7 +47,7 @@ interface ImageSettings {
   zoom: number;
   pan: { x: number; y: number };
   baselineIndex?: number;
-  diffMode: "none" | "absolute" | "relative" | "squared";
+  diffMode: "none" | DiffMode;
   height?: number;
 }
 
@@ -761,9 +761,12 @@ export default function ImageGalleryCard({ runId, metric }: Props) {
               onChange={(v) => updateSettings({ diffMode: v })}
               options={[
                 { value: "none" as const, label: "None" },
-                { value: "absolute" as const, label: "Absolute" },
-                { value: "relative" as const, label: "Relative" },
-                { value: "squared" as const, label: "Squared" },
+                { value: "signed" as const, label: "Signed Error" },
+                { value: "absolute" as const, label: "Absolute Error" },
+                { value: "squared" as const, label: "Squared Error" },
+                { value: "relative_signed" as const, label: "Relative Signed" },
+                { value: "relative_absolute" as const, label: "Relative Absolute" },
+                { value: "relative_squared" as const, label: "Relative Squared" },
               ]}
             />
           </>
