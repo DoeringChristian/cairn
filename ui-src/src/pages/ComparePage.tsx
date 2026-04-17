@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import ScalarPlotCard from "../components/ScalarPlotCard";
+import ImageGalleryCard from "../components/ImageGalleryCard";
+import AudioPlayerCard from "../components/AudioPlayerCard";
+import VideoPlayerCard from "../components/VideoPlayerCard";
+import HistogramCard from "../components/HistogramCard";
+import TextViewerCard from "../components/TextViewerCard";
+import { Suspense, lazy } from "react";
+const FigureInteractiveCard = lazy(() => import("../components/FigureInteractiveCard"));
 import DraggableCard from "../components/DraggableCard";
 import {
   createComparison,
@@ -472,14 +479,11 @@ function ComparisonCardRenderer({
   comparisonId,
   onRemove,
 }: ComparisonCardRendererProps) {
-  // We synthesize a seed SequenceMeta from the first series. ScalarPlotCard
-  // only uses `metric.name`, `metric.context_hash` for display/defaults, so
-  // the remaining fields are best-effort placeholders.
   const primary = card.series[0];
   if (!primary) {
     return (
       <div className="card p-4 text-sm text-fg-muted flex items-baseline justify-between gap-2">
-        <span>Empty scalar card.</span>
+        <span>Empty card.</span>
         <button type="button" className="btn text-xs" onClick={onRemove}>
           Remove
         </button>
@@ -489,7 +493,7 @@ function ComparisonCardRenderer({
 
   const seedMetric: SequenceMeta = {
     name: primary.name,
-    object_type: "scalar",
+    object_type: card.type,
     context: null,
     context_hash: primary.context_hash,
     min_step: 0,
@@ -498,20 +502,64 @@ function ComparisonCardRenderer({
   };
 
   const extraSeries = card.series.slice(1);
+  const baseProps = { runId: primary.runId, metric: seedMetric };
 
-  return (
-    <ScalarPlotCard
-      runId={primary.runId}
-      metric={seedMetric}
-      extraSeries={extraSeries}
-      onRemove={onRemove}
-      settingsKeyOverride={{
-        runId: `compare:${comparisonId}`,
-        metricName: card.id,
-        contextHash: "",
-      }}
-    />
+  // Wrap the card with a remove button since non-scalar cards don't
+  // have an onRemove prop yet.
+  const withRemove = (cardEl: React.ReactNode) => (
+    <div>
+      {cardEl}
+      <div className="flex justify-end mt-1">
+        <button type="button" className="btn text-xs" onClick={onRemove}>
+          Remove from comparison
+        </button>
+      </div>
+    </div>
   );
+
+  switch (card.type) {
+    case "scalar":
+      return (
+        <ScalarPlotCard
+          {...baseProps}
+          extraSeries={extraSeries}
+          onRemove={onRemove}
+          settingsKeyOverride={{
+            runId: `compare:${comparisonId}`,
+            metricName: card.id,
+            contextHash: "",
+          }}
+        />
+      );
+    case "image":
+      return withRemove(<ImageGalleryCard {...baseProps} />);
+    case "figure":
+      return withRemove(
+        <Suspense
+          fallback={
+            <div className="card p-4">
+              <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
+            </div>
+          }
+        >
+          <FigureInteractiveCard {...baseProps} />
+        </Suspense>
+      );
+    case "audio":
+      return withRemove(<AudioPlayerCard {...baseProps} />);
+    case "video":
+      return withRemove(<VideoPlayerCard {...baseProps} />);
+    case "histogram":
+      return withRemove(<HistogramCard {...baseProps} />);
+    case "text":
+      return withRemove(<TextViewerCard {...baseProps} />);
+    default:
+      return (
+        <div className="card p-4 text-sm text-fg-muted">
+          Unknown card type: {card.type}
+        </div>
+      );
+  }
 }
 
 // -----------------------------------------------------------------------------
