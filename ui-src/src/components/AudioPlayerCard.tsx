@@ -43,7 +43,7 @@ interface AudioSettings {
 }
 
 const SERIES_COLORS = [
-  "#539bf5",
+  "#0969da",
   "#d29922",
   "#3fb950",
   "#f85149",
@@ -80,7 +80,7 @@ function seriesLabel(
   return parts.join(" \u00B7 ");
 }
 
-const ACCENT = "#539bf5";
+const ACCENT = "#0969da";
 
 function Waveform({ peaks }: { peaks: number[] }) {
   const width = 320;

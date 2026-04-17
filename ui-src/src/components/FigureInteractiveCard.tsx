@@ -46,7 +46,7 @@ type HoverMode = "closest" | "x unified" | "y unified" | "none";
 type DragMode = "zoom" | "pan" | "select" | "lasso" | "none";
 
 const SERIES_COLORS = [
-  "#539bf5",
+  "#0969da",
   "#d29922",
   "#3fb950",
   "#f85149",
@@ -96,9 +96,9 @@ const DRAG_OPTIONS: Array<{ value: DragMode; label: string }> = [
 ];
 
 const DARK_LAYOUT: Record<string, unknown> = {
-  paper_bgcolor: "#13171c",
-  plot_bgcolor: "#0b0d10",
-  font: { color: "#e6edf3" },
+  paper_bgcolor: "#f6f8fa",
+  plot_bgcolor: "#ffffff",
+  font: { color: "#1f2328" },
   margin: { l: 40, r: 20, t: 20, b: 40 },
 };
 

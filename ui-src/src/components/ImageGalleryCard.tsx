@@ -87,7 +87,7 @@ function isModified(s: ImageSettings): boolean {
 
 // Palette (same as ScalarPlotCard)
 const SERIES_COLORS = [
-  "#539bf5",
+  "#0969da",
   "#d29922",
   "#3fb950",
   "#f85149",

@@ -9,7 +9,7 @@ export default function App() {
   return (
     <div className="min-h-full flex flex-col">
       <header className="sticky top-0 z-10 border-b border-border bg-bg/80 backdrop-blur">
-        <div className="mx-auto flex max-w-[1400px] items-center gap-4 px-4 py-2">
+        <div className="mx-auto flex w-full items-center gap-4 px-4 py-2">
           <Link
             to="/"
             className="flex items-center gap-2"
@@ -41,7 +41,7 @@ export default function App() {
         </div>
         {menuOpen && (
           <div className="border-t border-border bg-bg md:hidden">
-            <div className="mx-auto flex max-w-[1400px] flex-col gap-2 px-4 py-3">
+            <div className="mx-auto flex w-full flex-col gap-2 px-4 py-3">
               <Link
                 to="/"
                 onClick={() => setMenuOpen(false)}
@@ -54,7 +54,7 @@ export default function App() {
           </div>
         )}
       </header>
-      <main className="mx-auto w-full max-w-[1400px] flex-1 px-4 py-6">
+      <main className="mx-auto w-full w-full flex-1 px-4 py-6">
         <Outlet />
       </main>
       <footer className="border-t border-border px-4 py-3 text-center text-xs text-fg-subtle">

@@ -108,7 +108,7 @@ const DEFAULT_SCALAR_SETTINGS = (seed: {
 // -----------------------------------------------------------------------------
 
 const SERIES_COLORS = [
-  "#539bf5",
+  "#0969da",
   "#d29922",
   "#3fb950",
   "#f85149",
@@ -1180,14 +1180,14 @@ export default function ScalarPlotCard({
         >
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={data} margin={CHART_MARGIN}>
-              <CartesianGrid stroke="#30363d" strokeDasharray="2 4" />
+              <CartesianGrid stroke="#d0d7de" strokeDasharray="2 4" />
               <XAxis
                 dataKey="x"
                 type="number"
                 scale={settings.xScale === "log" ? "log" : "linear"}
                 domain={xDomain as [number | string, number | string]}
                 allowDataOverflow
-                stroke="#8b949e"
+                stroke="#656d76"
                 fontSize={11}
                 tickFormatter={(v: number) => formatXTick(v, settings.xAxis)}
               />
@@ -1196,13 +1196,13 @@ export default function ScalarPlotCard({
                 scale={settings.yScale === "log" ? "log" : "linear"}
                 domain={yDomain as [number | string, number | string]}
                 allowDataOverflow
-                stroke="#8b949e"
+                stroke="#656d76"
                 fontSize={11}
                 width={46}
               />
               {promotedKeysOrdered.map((key, i) => {
                 const s = series.find((x) => x.key === key);
-                const color = s?.color ?? "#8b949e";
+                const color = s?.color ?? "#656d76";
                 const cfg = settings.promotedSeries[key]!;
                 return (
                   <YAxis
@@ -1233,11 +1233,11 @@ export default function ScalarPlotCard({
                   />
                 }
                 contentStyle={{
-                  background: "#13171c",
-                  border: "1px solid #30363d",
+                  background: "#f6f8fa",
+                  border: "1px solid #d0d7de",
                   fontSize: 12,
                 }}
-                labelStyle={{ color: "#8b949e" }}
+                labelStyle={{ color: "#656d76" }}
               />
               {settings.showLegend && series.length > 0 && (
                 <Legend
@@ -1289,7 +1289,7 @@ export default function ScalarPlotCard({
                       <g>
                         {promotedKeysOrdered.map((key, i) => {
                           const s = series.find((x) => x.key === key);
-                          const color = s?.color ?? "#8b949e";
+                          const color = s?.color ?? "#656d76";
                           const x = plotRight + i * promotedAxisStripWidth;
                           return (
                             <rect
@@ -1326,7 +1326,7 @@ export default function ScalarPlotCard({
                 top: Math.min(selection.y0, selection.y1),
                 width: Math.abs(selection.x1 - selection.x0),
                 height: Math.abs(selection.y1 - selection.y0),
-                border: "1px solid #539bf5",
+                border: "1px solid #0969da",
                 background: "rgba(83, 155, 245, 0.12)",
                 pointerEvents: "none",
               }}
@@ -1739,17 +1739,17 @@ function CustomTooltip({
 }: CustomTooltipProps) {
   if (!active || !payload || payload.length === 0) return null;
   const style: CSSProperties = {
-    background: "#13171c",
-    border: "1px solid #30363d",
+    background: "#f6f8fa",
+    border: "1px solid #d0d7de",
     padding: "6px 8px",
     fontSize: 12,
-    color: "#e6edf3",
+    color: "#1f2328",
     minWidth: 140,
   };
   const labelNum = typeof label === "number" ? label : Number(label);
   return (
     <div style={style}>
-      <div style={{ color: "#8b949e", marginBottom: 4 }}>
+      <div style={{ color: "#656d76", marginBottom: 4 }}>
         {formatXTick(labelNum, xAxis)}
       </div>
       {payload.map((entry, i) => {
@@ -1762,11 +1762,11 @@ function CustomTooltip({
           (entry.payload?.[`${key}__wall`] as string | undefined) ?? null;
         return (
           <div key={`${key}-${i}`} style={{ lineHeight: 1.4 }}>
-            <div style={{ color: meta?.color ?? entry.color ?? "#8b949e" }}>
+            <div style={{ color: meta?.color ?? entry.color ?? "#656d76" }}>
               <span style={{ fontFamily: "ui-monospace, monospace" }}>
                 {meta?.label ?? entry.name ?? key}
               </span>
-              <span style={{ color: "#e6edf3", marginLeft: 8 }}>
+              <span style={{ color: "#1f2328", marginLeft: 8 }}>
                 {typeof val === "number" ? formatNum(val) : String(val ?? "")}
               </span>
             </div>

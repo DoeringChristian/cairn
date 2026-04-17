@@ -16,29 +16,29 @@ export default {
         ],
       },
       colors: {
-        // Semantic dark-first palette. Light variants used via `dark:` inversion.
+        // Semantic light-first palette.
         bg: {
-          DEFAULT: "#0b0d10",
-          elevated: "#13171c",
-          hover: "#1a2028",
+          DEFAULT: "#ffffff",
+          elevated: "#f6f8fa",
+          hover: "#ebedf0",
         },
         fg: {
-          DEFAULT: "#e6edf3",
-          muted: "#8b949e",
-          subtle: "#6e7681",
+          DEFAULT: "#1f2328",
+          muted: "#656d76",
+          subtle: "#8b949e",
         },
         border: {
-          DEFAULT: "#30363d",
-          subtle: "#21262d",
+          DEFAULT: "#d0d7de",
+          subtle: "#e8ebef",
         },
         accent: {
-          DEFAULT: "#539bf5",
-          hover: "#4184e4",
+          DEFAULT: "#0969da",
+          hover: "#0550ae",
         },
         status: {
-          running: "#d29922",
-          completed: "#3fb950",
-          failed: "#f85149",
+          running: "#bf8700",
+          completed: "#1a7f37",
+          failed: "#cf222e",
           killed: "#8b949e",
         },
       },
