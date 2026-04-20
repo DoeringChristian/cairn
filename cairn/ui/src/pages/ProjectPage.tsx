@@ -72,7 +72,10 @@ export default function ProjectPage() {
         const key = `${seq.name}::${seq.object_type}`;
         const existing = map.get(key);
         if (existing) {
-          existing.runs.push({ runId, context_hash: seq.context_hash });
+          // Only one entry per run per metric (skip duplicate contexts).
+          if (!existing.runs.some((r) => r.runId === runId)) {
+            existing.runs.push({ runId, context_hash: seq.context_hash });
+          }
         } else {
           map.set(key, {
             name: seq.name,

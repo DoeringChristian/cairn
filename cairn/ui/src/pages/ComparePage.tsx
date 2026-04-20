@@ -473,6 +473,7 @@ function ComparisonCardRenderer({
         runId={primary.runId}
         metric={seedMetric}
         extraSeries={card.series.slice(1)}
+        controlledSeries
         onRemove={onRemove}
         settingsKeyOverride={{
           runId: `compare:${comparisonId}`,

@@ -178,11 +178,14 @@ export default function RunsTablePage() {
         const key = `${seq.name}::${seq.object_type}`;
         const existing = cardMap.get(key);
         if (existing) {
-          existing.series.push({
-            runId,
-            name: seq.name,
-            context_hash: seq.context_hash,
-          });
+          // Only add one entry per run per metric (skip duplicate contexts).
+          if (!existing.series.some((s) => s.runId === runId && s.name === seq.name)) {
+            existing.series.push({
+              runId,
+              name: seq.name,
+              context_hash: seq.context_hash,
+            });
+          }
         } else {
           cardMap.set(key, {
             name: seq.name,

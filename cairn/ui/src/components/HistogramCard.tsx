@@ -120,7 +120,7 @@ export default function HistogramCard({ runId, metric }: Props) {
       : `${metric.count} pts`;
 
   return (
-    <div className="card p-4" style={{ minHeight: settings.height ?? undefined, position: "relative", gridColumn: settings.fullWidth ? "1 / -1" : undefined }}>
+    <div className="card p-4 flex flex-col" style={{ height: settings.collapsed ? undefined : (settings.height ?? undefined), position: "relative", gridColumn: settings.fullWidth ? "1 / -1" : undefined }}>
       <CardHeader
         title={settings.title ?? metric.name}
         onTitleChange={(t) => updateSettings({ title: t || undefined })}

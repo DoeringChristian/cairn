@@ -133,7 +133,7 @@ export default function TextViewerCard({ runId, metric }: Props) {
     : "whitespace-pre overflow-x-auto";
 
   return (
-    <div className="card p-4" style={{ minHeight: settings.height ?? undefined, position: "relative", gridColumn: settings.fullWidth ? "1 / -1" : undefined }}>
+    <div className="card p-4 flex flex-col" style={{ height: settings.collapsed ? undefined : (settings.height ?? undefined), position: "relative", gridColumn: settings.fullWidth ? "1 / -1" : undefined }}>
       <CardHeader
         title={settings.title ?? metric.name}
         onTitleChange={(t) => updateSettings({ title: t || undefined })}
@@ -170,7 +170,8 @@ export default function TextViewerCard({ runId, metric }: Props) {
       </CardHeader>
       {!settings.collapsed && (<>
       <pre
-        className={`mono max-h-48 overflow-auto ${wrapClass} rounded bg-bg p-3 ${FONT_SIZE_CLASS[settings.fontSize]} text-fg-muted`}
+        className={`mono flex-1 min-h-0 overflow-auto ${wrapClass} rounded bg-bg p-3 ${FONT_SIZE_CLASS[settings.fontSize]} text-fg-muted`}
+        style={{ maxHeight: settings.height ? undefined : "12rem" }}
       >
         {content}
       </pre>

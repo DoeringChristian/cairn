@@ -241,26 +241,26 @@ function FigurePane({
   }
   if (showPlotly) {
     return (
-      <div className="rounded bg-bg">
+      <div className="rounded bg-bg h-full">
         <Plot
           data={(sourceQ.data?.data ?? []) as Plotly.Data[]}
           layout={mergedLayout as Partial<Plotly.Layout>}
           config={plotlyConfig}
           useResizeHandler
-          style={{ width: "100%", height: "320px" }}
+          style={{ width: "100%", height: "100%" }}
         />
       </div>
     );
   }
   if (sourceHash && sourceQ.isLoading) {
-    return <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />;
+    return <div className="h-full min-h-[12rem] motion-safe:animate-pulse rounded bg-bg-hover" />;
   }
   return (
-    <div className="flex justify-center rounded bg-bg p-2">
+    <div className="flex h-full justify-center items-center rounded bg-bg p-2 overflow-hidden">
       <img
         src={api.artifactUrl(current.artifact_hash)}
         alt={`${m.name} @ step ${current.step}`}
-        className="max-h-64 object-contain"
+        className="max-h-full max-w-full object-contain"
       />
     </div>
   );
@@ -514,9 +514,9 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
 
   return (
     <div
-      className={`card p-4${dropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
+      className={`card p-4 flex flex-col${dropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
       style={{
-        minHeight: settings.height ?? undefined,
+        height: settings.collapsed ? undefined : (settings.height ?? undefined),
         position: "relative",
         gridColumn: settings.fullWidth ? "1 / -1" : undefined,
       }}
@@ -583,6 +583,7 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
       {!settings.collapsed && (<>
       {isMulti ? (
         <>
+          <div className="flex-1 min-h-0" style={{ height: settings.height ? undefined : "320px" }}>
           <SplitPane
             widths={settings.paneWidths ?? Array(effectiveMetrics.length).fill(1 / effectiveMetrics.length)}
             onWidthsChange={(w) => updateSettings({ paneWidths: w })}
@@ -597,6 +598,7 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
               />
             ))}
           </SplitPane>
+          </div>
           {maxStepCount > 1 && (
             <input
               type="range"
@@ -640,13 +642,13 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
       ) : current?.artifact_hash ? (
         <>
           {showPlotly ? (
-            <div className="rounded bg-bg">
+            <div className="rounded bg-bg" style={{ height: settings.height ? undefined : "320px" }}>
               <Plot
                 data={(sourceQ.data?.data ?? []) as Plotly.Data[]}
                 layout={mergedLayout as Partial<Plotly.Layout>}
                 config={plotlyConfig}
                 useResizeHandler
-                style={{ width: "100%", height: "320px" }}
+                style={{ width: "100%", height: "100%" }}
               />
             </div>
           ) : sourceHash && sourceQ.isLoading ? (
@@ -656,7 +658,8 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
               <img
                 src={api.artifactUrl(current.artifact_hash)}
                 alt={`${metric.name} @ step ${current.step}`}
-                className="max-h-64 object-contain"
+                className="max-w-full object-contain"
+                style={{ maxHeight: settings.height ? undefined : "320px" }}
               />
             </div>
           )}

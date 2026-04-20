@@ -27,6 +27,7 @@ import SettingsPopover from "./SettingsPopover";
 import SplitPane from "./SplitPane";
 import Select from "./settings/Select";
 import Slider from "./settings/Slider";
+import Toggle from "./settings/Toggle";
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -38,6 +39,8 @@ interface Props {
   extraSeries?: ComparisonSeriesRef[];
   controlledSeries?: boolean;
 }
+
+type Interpolation = "auto" | "pixelated" | "crisp-edges";
 
 interface ImageSettings {
   version: 1;
@@ -52,6 +55,8 @@ interface ImageSettings {
   pan: { x: number; y: number };
   baselineIndex?: number;
   diffMode: "none" | DiffMode;
+  interpolation: Interpolation;
+  showAxes: boolean;
   sliderStep?: number;
   height?: number;
   fullWidth?: boolean;
@@ -73,6 +78,8 @@ function defaultImageSettings(seed: {
     zoom: 1,
     pan: { x: 0, y: 0 },
     diffMode: "none",
+    interpolation: "auto",
+    showAxes: false,
   };
 }
 
@@ -85,6 +92,7 @@ function isModified(s: ImageSettings): boolean {
     s.pan.x !== 0 ||
     s.pan.y !== 0 ||
     s.diffMode !== "none" ||
+    (s.interpolation ?? "auto") !== "auto" ||
     s.baselineIndex != null ||
     s.title != null ||
     s.height != null
@@ -126,6 +134,54 @@ function seriesKey(m: {
 }
 
 // ---------------------------------------------------------------------------
+// PixelAxes — lightweight SVG overlay showing pixel coordinates.
+// ---------------------------------------------------------------------------
+
+function PixelAxes({
+  naturalWidth,
+  naturalHeight,
+}: {
+  naturalWidth: number;
+  naturalHeight: number;
+}) {
+  // We overlay the axes as absolutely-positioned elements around the image.
+  // The tick interval adapts to image size.
+  const tickInterval = (dim: number) => {
+    if (dim <= 32) return 4;
+    if (dim <= 128) return 16;
+    if (dim <= 512) return 64;
+    if (dim <= 2048) return 256;
+    return 512;
+  };
+
+  const xInterval = tickInterval(naturalWidth);
+  const yInterval = tickInterval(naturalHeight);
+
+  const xTicks: number[] = [];
+  for (let x = 0; x <= naturalWidth; x += xInterval) xTicks.push(x);
+
+  const yTicks: number[] = [];
+  for (let y = 0; y <= naturalHeight; y += yInterval) yTicks.push(y);
+
+  return (
+    <>
+      {/* Top axis */}
+      <div className="absolute top-0 left-0 right-0 flex justify-between px-0 text-[8px] text-fg-muted leading-none pointer-events-none select-none" style={{ transform: "translateY(-12px)" }}>
+        {xTicks.map((x) => (
+          <span key={x} className="mono" style={{ position: "absolute", left: `${(x / naturalWidth) * 100}%`, transform: "translateX(-50%)" }}>{x}</span>
+        ))}
+      </div>
+      {/* Left axis */}
+      <div className="absolute top-0 left-0 bottom-0 flex flex-col justify-between py-0 text-[8px] text-fg-muted leading-none pointer-events-none select-none" style={{ transform: "translateX(-2px)" }}>
+        {yTicks.map((y) => (
+          <span key={y} className="mono" style={{ position: "absolute", top: `${(y / naturalHeight) * 100}%`, transform: "translate(-100%, -50%)", paddingRight: "3px" }}>{y}</span>
+        ))}
+      </div>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // ImagePane — renders a single image or canvas diff inside a split pane.
 // ---------------------------------------------------------------------------
 
@@ -136,6 +192,9 @@ interface ImagePaneProps {
   baselineHash: string | undefined;
   isBaseline: boolean;
   diffMode: ImageSettings["diffMode"];
+  interpolation: Interpolation;
+  showAxes: boolean;
+  transformStr: string;
   filterStr: string;
   onSetBaseline: () => void;
   label: string;
@@ -146,13 +205,16 @@ function ImagePane({
   baselineHash,
   isBaseline,
   diffMode,
+  interpolation,
+  showAxes,
+  transformStr,
   filterStr,
   onSetBaseline,
   label,
 }: ImagePaneProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  // Track whether a diff has been successfully rendered to the canvas.
   const [diffReady, setDiffReady] = useState(false);
+  const [naturalDims, setNaturalDims] = useState<{ w: number; h: number } | null>(null);
 
   const showDiff =
     !isBaseline &&
@@ -187,6 +249,7 @@ function ImagePane({
       canvas.height = diffData.height;
       const ctx = canvas.getContext("2d");
       if (ctx) ctx.putImageData(diffData, 0, 0);
+      setNaturalDims({ w: diffData.width, h: diffData.height });
       setDiffReady(true);
     })();
 
@@ -214,31 +277,40 @@ function ImagePane({
       </div>
 
       {/* Image / diff canvas */}
-      <div className="flex-1 flex items-center justify-center overflow-hidden rounded bg-bg p-1">
-        {!artifactHash ? (
-          <span className="text-xs text-fg-muted">no image</span>
-        ) : showDiff ? (
-          <>
-            {!diffReady && (
-              <span className="text-xs text-fg-muted motion-safe:animate-pulse">
-                computing diff...
-              </span>
-            )}
-            <canvas
-              ref={canvasRef}
-              className="max-h-full max-w-full object-contain"
-              style={{ display: diffReady ? "block" : "none" }}
+      <div className="flex-1 flex items-center justify-center overflow-hidden rounded bg-bg" style={{ padding: showAxes && naturalDims ? "16px 4px 4px 28px" : "4px" }}>
+        <div className="relative max-h-full max-w-full">
+          {!artifactHash ? (
+            <span className="text-xs text-fg-muted">no image</span>
+          ) : showDiff ? (
+            <>
+              {!diffReady && (
+                <span className="text-xs text-fg-muted motion-safe:animate-pulse">
+                  computing diff...
+                </span>
+              )}
+              <canvas
+                ref={canvasRef}
+                className="max-h-full max-w-full object-contain block"
+                style={{ display: diffReady ? "block" : "none", imageRendering: interpolation === "auto" ? undefined : interpolation, transform: transformStr, transformOrigin: "center center" }}
+              />
+            </>
+          ) : (
+            <img
+              src={api.artifactUrl(artifactHash)}
+              alt={label}
+              className="max-h-full max-w-full object-contain block"
+              draggable={false}
+              style={{ filter: filterStr, imageRendering: interpolation === "auto" ? undefined : interpolation, transform: transformStr, transformOrigin: "center center" }}
+              onLoad={(e) => {
+                const img = e.currentTarget;
+                setNaturalDims({ w: img.naturalWidth, h: img.naturalHeight });
+              }}
             />
-          </>
-        ) : (
-          <img
-            src={api.artifactUrl(artifactHash)}
-            alt={label}
-            className="max-h-full max-w-full object-contain"
-            draggable={false}
-            style={{ filter: filterStr }}
-          />
-        )}
+          )}
+          {showAxes && naturalDims && (
+            <PixelAxes naturalWidth={naturalDims.w} naturalHeight={naturalDims.h} />
+          )}
+        </div>
       </div>
     </div>
   );
@@ -446,10 +518,31 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
   // -----------------------------------------------------------------------
   const containerRef = useRef<HTMLDivElement | null>(null);
 
+  // Alt key tracking — zoom/pan only while Alt is held (consistent with scalar plots).
+  const [altDown, setAltDown] = useState(false);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Alt") setAltDown(e.type === "keydown");
+    };
+    const onBlur = () => setAltDown(false);
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("keyup", onKey);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keyup", onKey);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, []);
+
+  const altDownRef = useRef(altDown);
+  altDownRef.current = altDown;
+
   useEffect(() => {
     const el = containerRef.current;
-    if (!el || isMulti) return;
+    if (!el) return;
     const handler = (e: WheelEvent) => {
+      if (!altDownRef.current) return; // Let page scroll through
       e.preventDefault();
       const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
       const cur = settingsRef.current.zoom;
@@ -460,7 +553,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     return () => {
       el.removeEventListener("wheel", handler);
     };
-  }, [updateSettings, isMulti]);
+  }, [updateSettings]);
 
   const dragStateRef = useRef<{
     pointerId: number;
@@ -472,8 +565,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
-      if (isMulti) return;
-      if (settingsRef.current.zoom <= 1) return;
+      if (!altDownRef.current) return; // Only pan with Alt held
       (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
       dragStateRef.current = {
         pointerId: e.pointerId,
@@ -483,7 +575,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
         panY: settingsRef.current.pan.y,
       };
     },
-    [isMulti],
+    [],
   );
 
   const onPointerMove = useCallback(
@@ -518,8 +610,9 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
   // -----------------------------------------------------------------------
   // Derived
   // -----------------------------------------------------------------------
-  const canPan = !isMulti && settings.zoom > 1;
+  const canPan = altDown;
   const modified = isModified(settings);
+  const [singleNaturalDims, setSingleNaturalDims] = useState<{ w: number; h: number } | null>(null);
 
   // First series' points for subtitle
   const firstPoints = perSeriesPoints[0] ?? [];
@@ -544,7 +637,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
       className={`card p-4 flex flex-col${dropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
       style={{
         position: "relative",
-        height: settings.height ?? undefined,
+        height: settings.collapsed ? undefined : (settings.height ?? undefined),
         gridColumn: settings.fullWidth ? "1 / -1" : undefined,
       }}
       {...dropProps}
@@ -629,7 +722,19 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
         <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
       ) : maxLen > 0 ? (
         <>
-          <div className={`flex-1 min-h-0 flex flex-col${settings.height == null ? ' h-48' : ''}`}>
+          <div
+            ref={containerRef}
+            className={`min-h-0 flex flex-col overflow-hidden${settings.height != null ? " flex-1" : ""}`}
+            style={{
+              height: settings.height == null ? "20rem" : undefined,
+              cursor: canPan ? "move" : "default",
+              touchAction: canPan ? "none" : undefined,
+            }}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerCancel={onPointerUp}
+          >
           {isMulti ? (
             /* ---------- Multi-pane layout ---------- */
             <SplitPane
@@ -654,6 +759,9 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                     baselineHash={baselineHash}
                     isBaseline={baselineIdx === paneIdx}
                     diffMode={settings.diffMode}
+                    interpolation={settings.interpolation ?? "auto"}
+                    showAxes={settings.showAxes ?? false}
+                    transformStr={transformStr}
                     filterStr={filterStr}
                     onSetBaseline={() => {
                       const isUnsetting = settings.baselineIndex === paneIdx;
@@ -675,33 +783,37 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
           ) : (
             /* ---------- Single-image layout (original) ---------- */
             <div
-              ref={containerRef}
-              className="flex flex-1 min-h-0 justify-center rounded bg-bg p-2"
+              className="flex flex-1 min-h-0 justify-center items-center rounded bg-bg"
               style={{
                 overflow: "hidden",
-                cursor: canPan ? "move" : "default",
-                touchAction: canPan ? "none" : undefined,
+                padding: settings.showAxes && singleNaturalDims ? "16px 4px 4px 28px" : "8px",
               }}
-              onPointerDown={onPointerDown}
-              onPointerMove={onPointerMove}
-              onPointerUp={onPointerUp}
-              onPointerCancel={onPointerUp}
             >
+              <div className="relative max-h-full max-w-full">
               {firstCurrent?.artifact_hash ? (
                 <img
                   src={api.artifactUrl(firstCurrent.artifact_hash)}
                   alt={`${metric.name} @ step ${firstCurrent.step}`}
-                  className="max-h-full max-w-full object-contain"
+                  className="max-h-full max-w-full object-contain block"
                   draggable={false}
                   style={{
                     filter: filterStr,
                     transform: transformStr,
                     transformOrigin: "center center",
+                    imageRendering: settings.interpolation === "auto" ? undefined : settings.interpolation,
+                  }}
+                  onLoad={(e) => {
+                    const img = e.currentTarget;
+                    setSingleNaturalDims({ w: img.naturalWidth, h: img.naturalHeight });
                   }}
                 />
               ) : (
                 <span className="text-sm text-fg-muted">no image</span>
               )}
+              {settings.showAxes && singleNaturalDims && (
+                <PixelAxes naturalWidth={singleNaturalDims.w} naturalHeight={singleNaturalDims.h} />
+              )}
+              </div>
             </div>
           )}
           </div>
@@ -798,24 +910,33 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
           description="1 = no change; <1 brightens shadows, >1 darkens"
         />
 
-        {!isMulti && (
-          <Slider
-            label="Zoom"
-            value={settings.zoom}
-            onChange={(v) => updateSettings({ zoom: v })}
-            min={MIN_ZOOM}
-            max={MAX_ZOOM}
-            step={0.05}
-            format={(v) => `${v.toFixed(2)}x`}
-            description="Scroll on the image to zoom; drag to pan when zoomed in."
-          />
-        )}
+        <Slider
+          label="Zoom"
+          value={settings.zoom}
+          onChange={(v) => updateSettings({ zoom: v })}
+          min={MIN_ZOOM}
+          max={MAX_ZOOM}
+          step={0.05}
+          format={(v) => `${v.toFixed(2)}x`}
+          description="Alt+scroll to zoom; Alt+drag to pan."
+        />
 
-        {isMulti && (
-          <p className="text-xs text-fg-subtle mt-2">
-            Zoom/pan available in single-image mode.
-          </p>
-        )}
+        <Select<Interpolation>
+          label="Interpolation"
+          value={settings.interpolation ?? "auto"}
+          onChange={(v) => updateSettings({ interpolation: v })}
+          options={[
+            { value: "auto", label: "Smooth (bilinear)" },
+            { value: "pixelated", label: "Nearest (pixelated)" },
+            { value: "crisp-edges", label: "Crisp edges" },
+          ]}
+        />
+        <Toggle
+          label="Pixel axes"
+          checked={settings.showAxes ?? false}
+          onChange={(v) => updateSettings({ showAxes: v })}
+          description="Show pixel coordinate ticks along edges"
+        />
 
         {isMulti && (
           <>

@@ -200,6 +200,7 @@ interface Props {
 
 // Chart margins; used both by Recharts and by our wheel/drag px→data math.
 const CHART_MARGIN = { top: 4, right: 8, left: 0, bottom: 4 } as const;
+const promotedAxisStripWidth = 14; // px clickable gutter per promoted axis
 
 export default function ScalarPlotCard({
   runId,
@@ -631,8 +632,6 @@ export default function ScalarPlotCard({
       [updateSettings],
     ),
   });
-
-  const promotedAxisStripWidth = 14; // px clickable gutter per promoted axis
 
   const onAxisStripPointerDown = useCallback(
     (
@@ -1491,9 +1490,9 @@ export default function ScalarPlotCard({
   // -------------------------------------------------------------------------
   return (
     <div
-      className={`card p-4${dropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
+      className={`card p-4 flex flex-col${dropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
       style={{
-        minHeight: settings.height ?? undefined,
+        height: settings.collapsed ? undefined : (settings.height ?? undefined),
         position: "relative",
         gridColumn: settings.fullWidth ? "1 / -1" : undefined,
       }}
@@ -1604,7 +1603,7 @@ export default function ScalarPlotCard({
       {isLoading && data.length === 0 ? (
         <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
       ) : (
-        renderChart("h-48")
+        renderChart(settings.height ? "flex-1 min-h-0" : "h-48")
       )}
 
       {/* Series chip strip — shows each plotted series as a draggable chip */}

@@ -23,6 +23,7 @@ const MAX_HEIGHT = 2000;
  * (or `hidden` if you don't want the grip to overflow).
  */
 export default function CardResizeHandle({
+  height,
   onHeightChange,
   fullWidth,
   onFullWidthToggle,
@@ -39,7 +40,8 @@ export default function CardResizeHandle({
 
       const startX = e.clientX;
       const startY = e.clientY;
-      const startHeight = parent.getBoundingClientRect().height;
+      // Use the persisted height if available; fall back to DOM measurement.
+      const startHeight = height ?? parent.getBoundingClientRect().height;
       const startFullWidth = fullWidth;
       let toggled = false;
 
@@ -75,7 +77,7 @@ export default function CardResizeHandle({
       window.addEventListener("pointermove", onPointerMove);
       window.addEventListener("pointerup", onPointerUp);
     },
-    [minHeight, onHeightChange, fullWidth, onFullWidthToggle],
+    [height, minHeight, onHeightChange, fullWidth, onFullWidthToggle],
   );
 
   return (

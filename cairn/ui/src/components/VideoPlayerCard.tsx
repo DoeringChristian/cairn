@@ -344,9 +344,9 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
 
   return (
     <div
-      className={`card p-4${dropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
+      className={`card p-4 flex flex-col${dropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
       style={{
-        minHeight: settings.height ?? undefined,
+        height: settings.collapsed ? undefined : (settings.height ?? undefined),
         position: "relative",
         gridColumn: settings.fullWidth ? "1 / -1" : undefined,
       }}

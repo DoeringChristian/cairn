@@ -7,29 +7,54 @@ interface Props {
   onWidthsChange: (widths: number[]) => void;
   /** Optional minimum fraction per pane (default 0.1). */
   minFraction?: number;
+  /** Minimum pixel width per pane before wrapping to grid (default 200). */
+  minPaneWidth?: number;
   children: ReactNode[];
 }
 
 /**
- * N-way horizontal split with draggable handles between panes.
+ * N-way split layout.
  *
- * Each child is rendered in a flex-item whose width is controlled by the
- * `widths` fraction array. Drag handles between panes let the user
- * redistribute space.
+ * When all children fit side-by-side (container width / n >= minPaneWidth),
+ * renders a horizontal flex layout with draggable resize handles.
+ *
+ * When children are too numerous, falls back to a CSS grid that wraps
+ * items into rows automatically.
  */
 export default function SplitPane({
   widths: widthsProp,
   onWidthsChange,
   minFraction = 0.1,
+  minPaneWidth = 200,
   children,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
+  const [containerWidth, setContainerWidth] = useState(0);
 
-  // Fall back to equal widths when length mismatch.
+  // Measure container on mount + resize.
+  const measureRef = useCallback(
+    (el: HTMLDivElement | null) => {
+      (containerRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
+      if (!el) return;
+      const ro = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          setContainerWidth(entry.contentRect.width);
+        }
+      });
+      ro.observe(el);
+      setContainerWidth(el.getBoundingClientRect().width);
+      return () => ro.disconnect();
+    },
+    [],
+  );
+
   const n = children.length;
   const widths =
     widthsProp.length === n ? widthsProp : Array<number>(n).fill(1 / n);
+
+  // Decide layout mode: flex (side-by-side with handles) vs grid (wrapping).
+  const useGrid = containerWidth > 0 && containerWidth / n < minPaneWidth;
 
   const handlePointerDown = useCallback(
     (handleIndex: number, startX: number) => {
@@ -37,17 +62,16 @@ export default function SplitPane({
       if (!container) return;
 
       setDragging(true);
-      const containerWidth = container.getBoundingClientRect().width;
+      const cw = container.getBoundingClientRect().width;
       const startWidths = [...widths];
 
       const onPointerMove = (e: PointerEvent) => {
         const dx = e.clientX - startX;
-        const deltaFraction = dx / containerWidth;
+        const deltaFraction = dx / cw;
 
         let leftW = startWidths[handleIndex]! + deltaFraction;
         let rightW = startWidths[handleIndex + 1]! - deltaFraction;
 
-        // Clamp both panes to minFraction.
         if (leftW < minFraction) {
           rightW -= minFraction - leftW;
           leftW = minFraction;
@@ -56,8 +80,6 @@ export default function SplitPane({
           leftW -= minFraction - rightW;
           rightW = minFraction;
         }
-
-        // Safety: if still under min after double-clamp, bail.
         if (leftW < minFraction || rightW < minFraction) return;
 
         const next = [...startWidths];
@@ -78,32 +100,59 @@ export default function SplitPane({
     [widths, minFraction, onWidthsChange],
   );
 
-  return (
-    <div
-      ref={containerRef}
-      className="flex h-full"
-      style={dragging ? { userSelect: "none" } : undefined}
-    >
-      {children.map((child, i) => (
-        <div key={i} className="flex items-stretch">
-          <div
-            style={{ flex: `0 0 ${widths[i]! * 100}%` }}
-            className="overflow-hidden"
-          >
+  // --- Grid mode: auto-fill wrapping grid ---
+  if (useGrid) {
+    return (
+      <div
+        ref={measureRef}
+        className="grid h-full min-h-0 gap-1"
+        style={{
+          gridTemplateColumns: `repeat(auto-fill, minmax(${minPaneWidth}px, 1fr))`,
+        }}
+      >
+        {children.map((child, i) => (
+          <div key={i} className="min-w-0 min-h-0 overflow-hidden">
             {child}
           </div>
-          {i < n - 1 && (
-            <div
-              className="w-1 shrink-0 cursor-col-resize bg-transparent transition-colors hover:bg-border"
-              onPointerDown={(e) => {
-                e.preventDefault();
-                (e.target as HTMLElement).setPointerCapture(e.pointerId);
-                handlePointerDown(i, e.clientX);
-              }}
-            />
-          )}
-        </div>
-      ))}
+        ))}
+      </div>
+    );
+  }
+
+  // --- Flex mode: side-by-side with drag handles ---
+  const items: ReactNode[] = [];
+  children.forEach((child, i) => {
+    items.push(
+      <div
+        key={`pane-${i}`}
+        className="min-w-0 overflow-hidden"
+        style={{ flex: `${widths[i]! * 1000} 1 0%` }}
+      >
+        {child}
+      </div>,
+    );
+    if (i < n - 1) {
+      items.push(
+        <div
+          key={`handle-${i}`}
+          className="w-1 shrink-0 cursor-col-resize bg-transparent transition-colors hover:bg-border"
+          onPointerDown={(e) => {
+            e.preventDefault();
+            (e.target as HTMLElement).setPointerCapture(e.pointerId);
+            handlePointerDown(i, e.clientX);
+          }}
+        />,
+      );
+    }
+  });
+
+  return (
+    <div
+      ref={measureRef}
+      className="flex h-full min-h-0"
+      style={dragging ? { userSelect: "none" } : undefined}
+    >
+      {items}
     </div>
   );
 }
