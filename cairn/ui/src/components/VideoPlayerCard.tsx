@@ -15,6 +15,7 @@ import { useProjectId } from "../lib/project-context";
 import type { SequenceMeta, SequenceResponse, SequencePoint } from "../api/types";
 import CardHeader from "./CardHeader";
 import CardResizeHandle from "./CardResizeHandle";
+import CardDetailModal from "./CardDetailModal";
 import SplitPane from "./SplitPane";
 import SeriesChip , { type SeriesRef } from "./SeriesChip";
 import SettingsPopover from "./SettingsPopover";
@@ -284,8 +285,7 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
   const current = points[safeIdx];
   const meta = safeJsonParse<VideoMetadata>(current?.artifact_metadata);
 
-  const settingsBtnRef = useRef<HTMLButtonElement | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   // "Add to comparison" popover state.
   const projectId = useProjectId();
@@ -374,12 +374,9 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
           </button>
         )}
         <button
-          ref={settingsBtnRef}
           type="button"
           aria-label="Card settings"
-          aria-haspopup="dialog"
-          aria-expanded={settingsOpen}
-          onClick={() => setSettingsOpen((v) => !v)}
+          onClick={() => setExpanded(true)}
           className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
         >
           {"\u2699"}
@@ -415,30 +412,66 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
           )}
           {/* Series chip strip */}
           <div className="mt-2 flex flex-wrap gap-1.5">
-            {effectiveMetrics.map((m, i) => {
-              const ref: SeriesRef = {
-                runId: m.runId,
-                name: m.name,
-                context_hash: m.context_hash,
-              };
-              return (
-                <SeriesChip
-                  key={seriesKey(m)}
-                  series={ref}
-                  color={SERIES_COLORS[i % SERIES_COLORS.length]!}
-                  label={seriesLabel(m.name, m.context_hash, m.runId, multipleRuns)}
-                  runId={runId}
-                  onRemove={
-                    effectiveMetrics.length > 1
-                      ? () => {
-                          const next = effectiveMetrics.filter((_, j) => j !== i);
-                          updateSettings({ metrics: next });
-                        }
-                      : undefined
-                  }
-                />
-              );
-            })}
+            {controlledSeries ? (
+              /* Tag-level chips in workspace/comparison mode */
+              (() => {
+                const seen = new Set<string>();
+                const tags: Array<{ name: string; color: string; firstIdx: number }> = [];
+                for (let i = 0; i < effectiveMetrics.length; i++) {
+                  const m = effectiveMetrics[i]!;
+                  if (seen.has(m.name)) continue;
+                  seen.add(m.name);
+                  tags.push({ name: m.name, color: SERIES_COLORS[tags.length % SERIES_COLORS.length]!, firstIdx: i });
+                }
+                return tags.map((tag) => {
+                  const m = effectiveMetrics[tag.firstIdx]!;
+                  const ref: SeriesRef = { runId: m.runId, name: m.name, context_hash: m.context_hash };
+                  return (
+                    <SeriesChip
+                      key={tag.name}
+                      series={ref}
+                      color={tag.color}
+                      label={tag.name}
+                      runId={runId}
+                      onRemove={
+                        tags.length > 1
+                          ? () => {
+                              const next = effectiveMetrics.filter((x) => x.name !== tag.name);
+                              updateSettings({ metrics: next });
+                            }
+                          : undefined
+                      }
+                    />
+                  );
+                });
+              })()
+            ) : (
+              /* Per-run series chips */
+              effectiveMetrics.map((m, i) => {
+                const ref: SeriesRef = {
+                  runId: m.runId,
+                  name: m.name,
+                  context_hash: m.context_hash,
+                };
+                return (
+                  <SeriesChip
+                    key={seriesKey(m)}
+                    series={ref}
+                    color={SERIES_COLORS[i % SERIES_COLORS.length]!}
+                    label={seriesLabel(m.name, m.context_hash, m.runId, multipleRuns)}
+                    runId={runId}
+                    onRemove={
+                      effectiveMetrics.length > 1
+                        ? () => {
+                            const next = effectiveMetrics.filter((_, j) => j !== i);
+                            updateSettings({ metrics: next });
+                          }
+                        : undefined
+                    }
+                  />
+                );
+              })
+            )}
           </div>
         </>
       ) : q.isLoading ? (
@@ -478,45 +511,173 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
       ) : (
         <div className="text-sm text-fg-muted">no video logged yet</div>
       )}
-      <SettingsPopover
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        anchorRef={settingsBtnRef}
-        title="Video"
+      <CardDetailModal
+        open={expanded}
+        onClose={() => setExpanded(false)}
+        title={settings.title ?? metric.name}
+        settingsContent={
+          <>
+            <Toggle
+              label="Autoplay"
+              checked={settings.autoplay}
+              onChange={(v) => updateSettings({ autoplay: v })}
+            />
+            <Toggle
+              label="Loop"
+              checked={settings.loop}
+              onChange={(v) => updateSettings({ loop: v })}
+            />
+            <Toggle
+              label="Muted"
+              checked={settings.muted}
+              onChange={(v) => updateSettings({ muted: v })}
+            />
+            <Select<VideoSettings["preload"]>
+              label="Preload"
+              value={settings.preload}
+              onChange={(v) => updateSettings({ preload: v })}
+              options={[
+                { value: "metadata", label: "Metadata" },
+                { value: "auto", label: "Auto (full)" },
+                { value: "none", label: "None" },
+              ]}
+            />
+            <button
+              type="button"
+              onClick={() => resetSettings()}
+              className="btn w-full mt-2"
+            >
+              Reset to defaults
+            </button>
+          </>
+        }
       >
-        <Toggle
-          label="Autoplay"
-          checked={settings.autoplay}
-          onChange={(v) => updateSettings({ autoplay: v })}
-        />
-        <Toggle
-          label="Loop"
-          checked={settings.loop}
-          onChange={(v) => updateSettings({ loop: v })}
-        />
-        <Toggle
-          label="Muted"
-          checked={settings.muted}
-          onChange={(v) => updateSettings({ muted: v })}
-        />
-        <Select<VideoSettings["preload"]>
-          label="Preload"
-          value={settings.preload}
-          onChange={(v) => updateSettings({ preload: v })}
-          options={[
-            { value: "metadata", label: "Metadata" },
-            { value: "auto", label: "Auto (full)" },
-            { value: "none", label: "None" },
-          ]}
-        />
-        <button
-          type="button"
-          onClick={() => resetSettings()}
-          className="btn w-full mt-2"
-        >
-          Reset to defaults
-        </button>
-      </SettingsPopover>
+        <div className="flex flex-col h-full">
+          {isMulti ? (
+            <>
+              <SplitPane
+                widths={settings.paneWidths ?? Array(effectiveMetrics.length).fill(1 / effectiveMetrics.length)}
+                onWidthsChange={(w) => updateSettings({ paneWidths: w })}
+              >
+                {effectiveMetrics.map((m) => (
+                  <VideoPane
+                    key={seriesKey(m)}
+                    runId={runId}
+                    m={m}
+                    stepIdx={safeIdx}
+                    settings={settings}
+                  />
+                ))}
+              </SplitPane>
+              {maxStepCount > 1 && (
+                <input
+                  type="range"
+                  min={0}
+                  max={maxStepCount - 1}
+                  value={safeIdx}
+                  onChange={(e) => handleSliderChange(Number(e.target.value))}
+                  className="mt-3 w-full accent-accent"
+                />
+              )}
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {controlledSeries ? (
+                  (() => {
+                    const seen = new Set<string>();
+                    const tags: Array<{ name: string; color: string; firstIdx: number }> = [];
+                    for (let i = 0; i < effectiveMetrics.length; i++) {
+                      const m = effectiveMetrics[i]!;
+                      if (seen.has(m.name)) continue;
+                      seen.add(m.name);
+                      tags.push({ name: m.name, color: SERIES_COLORS[tags.length % SERIES_COLORS.length]!, firstIdx: i });
+                    }
+                    return tags.map((tag) => {
+                      const m = effectiveMetrics[tag.firstIdx]!;
+                      const ref: SeriesRef = { runId: m.runId, name: m.name, context_hash: m.context_hash };
+                      return (
+                        <SeriesChip
+                          key={tag.name}
+                          series={ref}
+                          color={tag.color}
+                          label={tag.name}
+                          runId={runId}
+                          onRemove={
+                            tags.length > 1
+                              ? () => {
+                                  const next = effectiveMetrics.filter((x) => x.name !== tag.name);
+                                  updateSettings({ metrics: next });
+                                }
+                              : undefined
+                          }
+                        />
+                      );
+                    });
+                  })()
+                ) : (
+                  effectiveMetrics.map((m, i) => {
+                    const ref: SeriesRef = {
+                      runId: m.runId,
+                      name: m.name,
+                      context_hash: m.context_hash,
+                    };
+                    return (
+                      <SeriesChip
+                        key={seriesKey(m)}
+                        series={ref}
+                        color={SERIES_COLORS[i % SERIES_COLORS.length]!}
+                        label={seriesLabel(m.name, m.context_hash, m.runId, multipleRuns)}
+                        runId={runId}
+                        onRemove={
+                          effectiveMetrics.length > 1
+                            ? () => {
+                                const next = effectiveMetrics.filter((_, j) => j !== i);
+                                updateSettings({ metrics: next });
+                              }
+                            : undefined
+                        }
+                      />
+                    );
+                  })
+                )}
+              </div>
+            </>
+          ) : q.isLoading ? (
+            <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
+          ) : current?.artifact_hash ? (
+            <>
+              <div className="flex justify-center rounded bg-bg p-2">
+                <video
+                  key={current.artifact_hash}
+                  controls
+                  autoPlay={settings.autoplay}
+                  loop={settings.loop}
+                  muted={settings.muted}
+                  preload={settings.preload}
+                  src={api.artifactUrl(current.artifact_hash)}
+                  poster={meta?.preview}
+                  className="max-h-[70vh] object-contain"
+                />
+              </div>
+              {meta && (
+                <div className="mono mt-2 text-xs text-fg-subtle">
+                  {meta.width}{"\u00D7"}{meta.height} {"\u00B7"} {meta.num_frames} frames @ {meta.fps} fps
+                </div>
+              )}
+              {points.length > 1 && (
+                <input
+                  type="range"
+                  min={0}
+                  max={points.length - 1}
+                  value={safeIdx}
+                  onChange={(e) => handleSliderChange(Number(e.target.value))}
+                  className="mt-3 w-full accent-accent"
+                />
+              )}
+            </>
+          ) : (
+            <div className="text-sm text-fg-muted">no video logged yet</div>
+          )}
+        </div>
+      </CardDetailModal>
 
       <SettingsPopover
         open={addCompOpen && projectId != null}

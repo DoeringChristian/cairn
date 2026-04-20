@@ -313,6 +313,14 @@ export default function ScalarPlotCard({
         context_hash: s.context_hash,
       })),
     ];
+    // Also include any extra tags added via settings (TagPicker) that aren't
+    // already in the props-derived set.
+    const propsTagNames = new Set(all.map((m) => m.name));
+    for (const sm of settings.metrics) {
+      if (!propsTagNames.has(sm.name)) {
+        all.push(sm);
+      }
+    }
     const seen = new Set<string>();
     return all.filter((m) => {
       const k = seriesKey(m);
@@ -1018,8 +1026,6 @@ export default function ScalarPlotCard({
   // -------------------------------------------------------------------------
   // Header quick-toggle buttons + settings anchor.
   // -------------------------------------------------------------------------
-  const settingsBtnRef = useRef<HTMLButtonElement | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
   // "Add to comparison" popover state.
@@ -1102,15 +1108,55 @@ export default function ScalarPlotCard({
       : ""
   }`;
 
+  // Run IDs for tag picker (workspace/comparison mode)
+  const tagPickerRunIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const m of effectiveMetrics) ids.add(m.runId ?? runId);
+    return Array.from(ids);
+  }, [effectiveMetrics, runId]);
+
+
+
   // -------------------------------------------------------------------------
   // Shared settings panel JSX (used in both popover and expanded modal).
   // -------------------------------------------------------------------------
   const settingsPanel = (
     <>
       <h4 className="text-xs uppercase tracking-wide text-fg-muted mb-2">
-        Content
+        {controlledSeries ? "Tags" : "Content"}
       </h4>
-      {multipleRuns ? (
+      {controlledSeries ? (
+        /* Tag-level W&B-style chip picker. */
+        <div className="mb-2">
+          <MetricChips
+            runId={runId}
+            runIds={tagPickerRunIds}
+            tagMode
+            objectType="scalar"
+            value={effectiveMetrics.map((m) => ({
+              name: m.name,
+              context_hash: m.context_hash,
+            }))}
+            onChange={(v) => {
+              // Remove tags: keep only metrics whose name is still in v
+              const keepNames = new Set(v.map((c) => c.name));
+              const next = effectiveMetrics.filter((m) => keepNames.has(m.name));
+              updateSettings({ metrics: next });
+            }}
+            onAddTag={(_tagName, runs) => {
+              const newEntries = runs.map((r) => ({
+                runId: r.runId,
+                name: _tagName,
+                context_hash: r.context_hash,
+              }));
+              updateSettings({ metrics: [...effectiveMetrics, ...newEntries] });
+            }}
+          />
+          <p className="text-[10px] text-fg-subtle mt-1">
+            Each tag shows one line per visible run.
+          </p>
+        </div>
+      ) : multipleRuns ? (
         <div className="flex flex-col gap-1 mb-2">
           {effectiveMetrics.map((m) => {
             const rid = m.runId ?? runId;
@@ -1300,7 +1346,6 @@ export default function ScalarPlotCard({
         className="btn w-full mt-2"
         onClick={() => {
           resetSettings();
-          setSettingsOpen(false);
         }}
       >
         Reset to defaults
@@ -1508,7 +1553,7 @@ export default function ScalarPlotCard({
         {settings.smoothing > 0 && (
           <button
             type="button"
-            onClick={() => setSettingsOpen((v) => !v)}
+            onClick={() => setExpanded(true)}
             className="h-5 inline-flex items-center justify-center rounded px-1.5 text-[10px] text-accent hover:bg-bg-hover"
             title="Smoothing active — click to open settings"
           >
@@ -1580,19 +1625,7 @@ export default function ScalarPlotCard({
           type="button"
           onClick={() => setExpanded(true)}
           className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
-          aria-label="Expand card"
-          title="Expand card"
-        >
-          {"\u2922"}
-        </button>
-        <button
-          ref={settingsBtnRef}
-          type="button"
-          onClick={() => setSettingsOpen((v) => !v)}
-          className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
           aria-label="Plot settings"
-          aria-haspopup="dialog"
-          aria-expanded={settingsOpen}
           title="Plot settings"
         >
           {"\u2699"}
@@ -1606,44 +1639,75 @@ export default function ScalarPlotCard({
         renderChart(settings.height ? "flex-1 min-h-0" : "h-48")
       )}
 
-      {/* Series chip strip — shows each plotted series as a draggable chip */}
+      {/* Series chip strip */}
       <div className="mt-2 flex flex-wrap gap-1.5">
-        {series.map((s, idx) => {
-          const ref: SeriesRef = {
-            runId: effectiveMetrics[idx]?.runId,
-            name: effectiveMetrics[idx]?.name ?? "",
-            context_hash: effectiveMetrics[idx]?.context_hash ?? "",
-          };
-          return (
-            <SeriesChip
-              key={s.key}
-              series={ref}
-              color={s.color}
-              label={s.label}
-              runId={runId}
-              onRemove={
-                effectiveMetrics.length > 1
-                  ? () => {
-                      const next = effectiveMetrics.filter(
-                        (_, i) => i !== idx,
-                      );
-                      updateSettings({ metrics: next });
-                    }
-                  : undefined
-              }
-            />
-          );
-        })}
+        {controlledSeries ? (
+          /* Tag-level chips: one draggable chip per unique metric name */
+          (() => {
+            const seen = new Set<string>();
+            const tags: Array<{ name: string; color: string; firstIdx: number }> = [];
+            for (let i = 0; i < effectiveMetrics.length; i++) {
+              const m = effectiveMetrics[i]!;
+              if (seen.has(m.name)) continue;
+              seen.add(m.name);
+              tags.push({ name: m.name, color: series[i]?.color ?? SERIES_COLORS[tags.length % SERIES_COLORS.length]!, firstIdx: i });
+            }
+            return tags.map((tag) => {
+              const m = effectiveMetrics[tag.firstIdx]!;
+              const ref: SeriesRef = {
+                runId: m.runId,
+                name: m.name,
+                context_hash: m.context_hash,
+              };
+              return (
+                <SeriesChip
+                  key={tag.name}
+                  series={ref}
+                  color={tag.color}
+                  label={tag.name}
+                  runId={runId}
+                  onRemove={
+                    tags.length > 1
+                      ? () => {
+                          const next = effectiveMetrics.filter((x) => x.name !== tag.name);
+                          updateSettings({ metrics: next });
+                        }
+                      : undefined
+                  }
+                />
+              );
+            });
+          })()
+        ) : (
+          /* Per-series chips for single-run mode */
+          series.map((s, idx) => {
+            const ref: SeriesRef = {
+              runId: effectiveMetrics[idx]?.runId,
+              name: effectiveMetrics[idx]?.name ?? "",
+              context_hash: effectiveMetrics[idx]?.context_hash ?? "",
+            };
+            return (
+              <SeriesChip
+                key={s.key}
+                series={ref}
+                color={s.color}
+                label={s.label}
+                runId={runId}
+                onRemove={
+                  effectiveMetrics.length > 1
+                    ? () => {
+                        const next = effectiveMetrics.filter(
+                          (_, i) => i !== idx,
+                        );
+                        updateSettings({ metrics: next });
+                      }
+                    : undefined
+                }
+              />
+            );
+          })
+        )}
       </div>
-
-      <SettingsPopover
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        anchorRef={settingsBtnRef}
-        title="Scalar plot"
-      >
-        {settingsPanel}
-      </SettingsPopover>
 
       <SettingsPopover
         open={addOpen && projectId != null}

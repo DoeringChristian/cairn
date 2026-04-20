@@ -9,6 +9,7 @@ import {
 import { useProjectId } from "../lib/project-context";
 import { formatRelative } from "../lib/format";
 import type { SequenceMeta } from "../api/types";
+import CardDetailModal from "./CardDetailModal";
 import CardHeader from "./CardHeader";
 import CardResizeHandle from "./CardResizeHandle";
 import SettingsPopover from "./SettingsPopover";
@@ -78,8 +79,7 @@ export default function TextViewerCard({ runId, metric }: Props) {
     DEFAULT_TEXT_SETTINGS,
   );
 
-  const settingsBtnRef = useRef<HTMLButtonElement | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   // "Add to comparison" popover state.
   const projectId = useProjectId();
@@ -132,6 +132,34 @@ export default function TextViewerCard({ runId, metric }: Props) {
     ? "whitespace-pre-wrap"
     : "whitespace-pre overflow-x-auto";
 
+  const settingsPanel = (
+    <>
+      <Select
+        label="Font size"
+        value={settings.fontSize}
+        onChange={(v) => updateSettings({ fontSize: v })}
+        options={[
+          { value: "xs", label: "Extra small" },
+          { value: "sm", label: "Small" },
+          { value: "base", label: "Base" },
+        ]}
+      />
+      <Toggle
+        label="Word wrap"
+        checked={settings.wordWrap}
+        onChange={(v) => updateSettings({ wordWrap: v })}
+        description="Wrap long lines to card width. Off = horizontal scroll."
+      />
+      <button
+        type="button"
+        className="btn w-full mt-2"
+        onClick={resetSettings}
+      >
+        Reset to defaults
+      </button>
+    </>
+  );
+
   return (
     <div className="card p-4 flex flex-col" style={{ height: settings.collapsed ? undefined : (settings.height ?? undefined), position: "relative", gridColumn: settings.fullWidth ? "1 / -1" : undefined }}>
       <CardHeader
@@ -156,13 +184,10 @@ export default function TextViewerCard({ runId, metric }: Props) {
           </button>
         )}
         <button
-          ref={settingsBtnRef}
           type="button"
-          onClick={() => setSettingsOpen((v) => !v)}
+          onClick={() => setExpanded(true)}
           className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
           aria-label="Text settings"
-          aria-haspopup="dialog"
-          aria-expanded={settingsOpen}
           title="Text settings"
         >
           {"\u2699"}
@@ -186,39 +211,18 @@ export default function TextViewerCard({ runId, metric }: Props) {
         />
       )}
 
-      <SettingsPopover
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        anchorRef={settingsBtnRef}
-        title="Text"
+      <CardDetailModal
+        open={expanded}
+        onClose={() => setExpanded(false)}
+        title={settings.title ?? metric.name}
+        settingsContent={settingsPanel}
       >
-        <Select
-          label="Font size"
-          value={settings.fontSize}
-          onChange={(v) => updateSettings({ fontSize: v })}
-          options={[
-            { value: "xs", label: "Extra small" },
-            { value: "sm", label: "Small" },
-            { value: "base", label: "Base" },
-          ]}
-        />
-        <Toggle
-          label="Word wrap"
-          checked={settings.wordWrap}
-          onChange={(v) => updateSettings({ wordWrap: v })}
-          description="Wrap long lines to card width. Off = horizontal scroll."
-        />
-        <button
-          type="button"
-          className="btn w-full mt-2"
-          onClick={() => {
-            resetSettings();
-            setSettingsOpen(false);
-          }}
+        <pre
+          className={`mono flex-1 min-h-0 overflow-auto ${wrapClass} rounded bg-bg p-3 ${FONT_SIZE_CLASS[settings.fontSize]} text-fg-muted`}
         >
-          Reset to defaults
-        </button>
-      </SettingsPopover>
+          {content}
+        </pre>
+      </CardDetailModal>
 
       <SettingsPopover
         open={addCompOpen && projectId != null}

@@ -20,6 +20,7 @@ import CardHeader from "./CardHeader";
 import CardResizeHandle from "./CardResizeHandle";
 import SplitPane from "./SplitPane";
 import SeriesChip , { type SeriesRef } from "./SeriesChip";
+import CardDetailModal from "./CardDetailModal";
 import SettingsPopover from "./SettingsPopover";
 import Toggle from "./settings/Toggle";
 import Select from "./settings/Select";
@@ -399,8 +400,7 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
   const safeIdx = Math.min(Math.max(0, idx), Math.max(0, maxStepCount - 1));
   const current = points[safeIdx];
 
-  const settingsButtonRef = useRef<HTMLButtonElement | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   // "Add to comparison" popover state.
   const projectId = useProjectId();
@@ -567,12 +567,9 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
           </button>
         )}
         <button
-          ref={settingsButtonRef}
           type="button"
-          onClick={() => setSettingsOpen((v) => !v)}
+          onClick={() => setExpanded(true)}
           aria-label="Figure settings"
-          aria-haspopup="dialog"
-          aria-expanded={settingsOpen}
           title="Settings"
           className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
         >
@@ -611,30 +608,66 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
           )}
           {/* Series chip strip */}
           <div className="mt-2 flex flex-wrap gap-1.5">
-            {effectiveMetrics.map((m, i) => {
-              const ref: SeriesRef = {
-                runId: m.runId,
-                name: m.name,
-                context_hash: m.context_hash,
-              };
-              return (
-                <SeriesChip
-                  key={seriesKey(m)}
-                  series={ref}
-                  color={SERIES_COLORS[i % SERIES_COLORS.length]!}
-                  label={seriesLabel(m.name, m.context_hash, m.runId, multipleRuns)}
-                  runId={runId}
-                  onRemove={
-                    effectiveMetrics.length > 1
-                      ? () => {
-                          const next = effectiveMetrics.filter((_, j) => j !== i);
-                          updateSettings({ metrics: next });
-                        }
-                      : undefined
-                  }
-                />
-              );
-            })}
+            {controlledSeries ? (
+              /* Tag-level chips in workspace/comparison mode */
+              (() => {
+                const seen = new Set<string>();
+                const tags: Array<{ name: string; color: string; firstIdx: number }> = [];
+                for (let i = 0; i < effectiveMetrics.length; i++) {
+                  const m = effectiveMetrics[i]!;
+                  if (seen.has(m.name)) continue;
+                  seen.add(m.name);
+                  tags.push({ name: m.name, color: SERIES_COLORS[tags.length % SERIES_COLORS.length]!, firstIdx: i });
+                }
+                return tags.map((tag) => {
+                  const m = effectiveMetrics[tag.firstIdx]!;
+                  const ref: SeriesRef = { runId: m.runId, name: m.name, context_hash: m.context_hash };
+                  return (
+                    <SeriesChip
+                      key={tag.name}
+                      series={ref}
+                      color={tag.color}
+                      label={tag.name}
+                      runId={runId}
+                      onRemove={
+                        tags.length > 1
+                          ? () => {
+                              const next = effectiveMetrics.filter((x) => x.name !== tag.name);
+                              updateSettings({ metrics: next });
+                            }
+                          : undefined
+                      }
+                    />
+                  );
+                });
+              })()
+            ) : (
+              /* Per-run series chips */
+              effectiveMetrics.map((m, i) => {
+                const ref: SeriesRef = {
+                  runId: m.runId,
+                  name: m.name,
+                  context_hash: m.context_hash,
+                };
+                return (
+                  <SeriesChip
+                    key={seriesKey(m)}
+                    series={ref}
+                    color={SERIES_COLORS[i % SERIES_COLORS.length]!}
+                    label={seriesLabel(m.name, m.context_hash, m.runId, multipleRuns)}
+                    runId={runId}
+                    onRemove={
+                      effectiveMetrics.length > 1
+                        ? () => {
+                            const next = effectiveMetrics.filter((_, j) => j !== i);
+                            updateSettings({ metrics: next });
+                          }
+                        : undefined
+                    }
+                  />
+                );
+              })
+            )}
           </div>
         </>
       ) : q.isLoading ? (
@@ -677,48 +710,92 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
       ) : (
         <div className="text-sm text-fg-muted">no figure logged yet</div>
       )}
-      <SettingsPopover
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        anchorRef={settingsButtonRef}
-        title="Figure"
-      >
-        <Toggle
-          label="Show modebar"
-          checked={settings.displayModeBar}
-          onChange={(v) => updateSettings({ displayModeBar: v })}
-          description="Plotly's zoom/pan/camera/save toolbar"
-        />
-        <Toggle
-          label="Scroll to zoom"
-          checked={settings.scrollZoom}
-          onChange={(v) => updateSettings({ scrollZoom: v })}
-        />
-        <Select<HoverMode>
-          label="Hover mode"
-          value={settings.hoverMode}
-          onChange={(v) => updateSettings({ hoverMode: v })}
-          options={HOVER_OPTIONS}
-        />
-        <Select<DragMode>
-          label="Drag mode"
-          value={settings.dragMode}
-          onChange={(v) => updateSettings({ dragMode: v })}
-          options={DRAG_OPTIONS}
-        />
-        <Toggle
-          label="Show legend"
-          checked={settings.showLegend}
-          onChange={(v) => updateSettings({ showLegend: v })}
-        />
-        <button
-          type="button"
-          onClick={() => resetSettings()}
-          className="btn w-full mt-2"
-        >
-          Reset to defaults
-        </button>
-      </SettingsPopover>
+      {(() => {
+        const settingsPanel = (
+          <>
+            <Toggle
+              label="Show modebar"
+              checked={settings.displayModeBar}
+              onChange={(v) => updateSettings({ displayModeBar: v })}
+              description="Plotly's zoom/pan/camera/save toolbar"
+            />
+            <Toggle
+              label="Scroll to zoom"
+              checked={settings.scrollZoom}
+              onChange={(v) => updateSettings({ scrollZoom: v })}
+            />
+            <Select<HoverMode>
+              label="Hover mode"
+              value={settings.hoverMode}
+              onChange={(v) => updateSettings({ hoverMode: v })}
+              options={HOVER_OPTIONS}
+            />
+            <Select<DragMode>
+              label="Drag mode"
+              value={settings.dragMode}
+              onChange={(v) => updateSettings({ dragMode: v })}
+              options={DRAG_OPTIONS}
+            />
+            <Toggle
+              label="Show legend"
+              checked={settings.showLegend}
+              onChange={(v) => updateSettings({ showLegend: v })}
+            />
+            <button
+              type="button"
+              onClick={() => resetSettings()}
+              className="btn w-full mt-2"
+            >
+              Reset to defaults
+            </button>
+          </>
+        );
+        return (
+          <CardDetailModal
+            open={expanded}
+            onClose={() => setExpanded(false)}
+            title={settings.title ?? metric.name}
+            settingsContent={settingsPanel}
+          >
+            {isMulti ? (
+              <SplitPane
+                widths={settings.paneWidths ?? Array(effectiveMetrics.length).fill(1 / effectiveMetrics.length)}
+                onWidthsChange={(w) => updateSettings({ paneWidths: w })}
+              >
+                {effectiveMetrics.map((m) => (
+                  <FigurePane
+                    key={seriesKey(m)}
+                    runId={runId}
+                    m={m}
+                    stepIdx={safeIdx}
+                    settings={settings}
+                  />
+                ))}
+              </SplitPane>
+            ) : showPlotly ? (
+              <div className="rounded bg-bg h-[calc(100vh-12rem)]">
+                <Plot
+                  data={(sourceQ.data?.data ?? []) as Plotly.Data[]}
+                  layout={mergedLayout as Partial<Plotly.Layout>}
+                  config={plotlyConfig}
+                  useResizeHandler
+                  style={{ width: "100%", height: "100%" }}
+                />
+              </div>
+            ) : current?.artifact_hash ? (
+              <div className="flex h-[calc(100vh-12rem)] justify-center items-center rounded bg-bg p-2 overflow-hidden">
+                <img
+                  src={api.artifactUrl(current.artifact_hash)}
+                  alt={`${metric.name} @ step ${current.step}`}
+                  className="max-h-full max-w-full object-contain"
+                />
+              </div>
+            ) : (
+              <div className="text-sm text-fg-muted">no figure logged yet</div>
+            )}
+          </CardDetailModal>
+        );
+      })()}
 
       <SettingsPopover
         open={addCompOpen && projectId != null}

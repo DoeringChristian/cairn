@@ -20,6 +20,7 @@ import {
 import { useProjectId } from "../lib/project-context";
 import { formatRelative } from "../lib/format";
 import { computeDiff, loadImageData, type DiffMode } from "../lib/image-diff";
+import CardDetailModal from "./CardDetailModal";
 import CardHeader from "./CardHeader";
 import CardResizeHandle from "./CardResizeHandle";
 import SeriesChip , { type SeriesRef } from "./SeriesChip";
@@ -197,6 +198,7 @@ interface ImagePaneProps {
   transformStr: string;
   filterStr: string;
   onSetBaseline: () => void;
+  onNaturalSize?: (w: number, h: number) => void;
   label: string;
 }
 
@@ -210,6 +212,7 @@ function ImagePane({
   transformStr,
   filterStr,
   onSetBaseline,
+  onNaturalSize,
   label,
 }: ImagePaneProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -250,13 +253,15 @@ function ImagePane({
       const ctx = canvas.getContext("2d");
       if (ctx) ctx.putImageData(diffData, 0, 0);
       setNaturalDims({ w: diffData.width, h: diffData.height });
+      onNaturalSize?.(diffData.width, diffData.height);
       setDiffReady(true);
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [baselineHash, artifactHash, diffMode, showDiff]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [baselineHash, artifactHash, diffMode, showDiff, onNaturalSize]);
 
   return (
     <div className="flex flex-col h-full">
@@ -304,6 +309,7 @@ function ImagePane({
               onLoad={(e) => {
                 const img = e.currentTarget;
                 setNaturalDims({ w: img.naturalWidth, h: img.naturalHeight });
+                onNaturalSize?.(img.naturalWidth, img.naturalHeight);
               }}
             />
           )}
@@ -448,8 +454,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     ),
   });
 
-  const settingsBtnRef = useRef<HTMLButtonElement | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   // "Add to comparison" popover state.
   const projectId = useProjectId();
@@ -614,6 +619,37 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
   const modified = isModified(settings);
   const [singleNaturalDims, setSingleNaturalDims] = useState<{ w: number; h: number } | null>(null);
 
+  // Auto-height: compute from first image's aspect ratio so images fill panes.
+  const [imageAspect, setImageAspect] = useState<number | null>(null); // h/w
+  const [containerWidth, setContainerWidth] = useState(0);
+  const onImageNaturalSize = useCallback((w: number, h: number) => {
+    setImageAspect((prev) => prev ?? h / w);
+  }, []);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) setContainerWidth(entry.contentRect.width);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // When no user-set height and we know the aspect, compute ideal height.
+  const autoHeight = useMemo(() => {
+    if (settings.height != null) return undefined; // user has set a height
+    if (!imageAspect || containerWidth <= 0) return "20rem"; // fallback
+    const n = effectiveMetrics.length;
+    // In grid mode (SplitPane), each pane gets ~containerWidth/n.
+    // Account for pane header (~20px) + some padding.
+    const paneWidth = containerWidth / Math.min(n, Math.max(1, Math.floor(containerWidth / 200)));
+    const imgHeight = paneWidth * imageAspect;
+    // Add space for pane header + padding.
+    const total = Math.round(Math.min(800, Math.max(120, imgHeight + 28)));
+    return `${total}px`;
+  }, [settings.height, imageAspect, containerWidth, effectiveMetrics.length]);
+
   // First series' points for subtitle
   const firstPoints = perSeriesPoints[0] ?? [];
   const firstCurrent = firstPoints[safeIdx];
@@ -704,13 +740,10 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
           </button>
         )}
         <button
-          ref={settingsBtnRef}
           type="button"
-          onClick={() => setSettingsOpen((v) => !v)}
+          onClick={() => setExpanded(true)}
           className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
           aria-label="Image settings"
-          aria-haspopup="dialog"
-          aria-expanded={settingsOpen}
           title="Image settings"
         >
           {"\u2699"}
@@ -726,7 +759,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
             ref={containerRef}
             className={`min-h-0 flex flex-col overflow-hidden${settings.height != null ? " flex-1" : ""}`}
             style={{
-              height: settings.height == null ? "20rem" : undefined,
+              height: settings.height == null ? autoHeight : undefined,
               cursor: canPan ? "move" : "default",
               touchAction: canPan ? "none" : undefined,
             }}
@@ -763,6 +796,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                     showAxes={settings.showAxes ?? false}
                     transformStr={transformStr}
                     filterStr={filterStr}
+                    onNaturalSize={onImageNaturalSize}
                     onSetBaseline={() => {
                       const isUnsetting = settings.baselineIndex === paneIdx;
                       updateSettings({
@@ -805,6 +839,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                   onLoad={(e) => {
                     const img = e.currentTarget;
                     setSingleNaturalDims({ w: img.naturalWidth, h: img.naturalHeight });
+                    onImageNaturalSize(img.naturalWidth, img.naturalHeight);
                   }}
                 />
               ) : (
@@ -836,141 +871,77 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
 
       {/* Series chip strip */}
       <div className="mt-2 flex flex-wrap gap-1.5">
-        {effectiveMetrics.map((m, i) => {
-          const ref: SeriesRef = {
-            runId: m.runId,
-            name: m.name,
-            context_hash: m.context_hash,
-          };
-          return (
-            <SeriesChip
-              key={seriesKey(m)}
-              series={ref}
-              color={SERIES_COLORS[i % SERIES_COLORS.length]!}
-              label={seriesLabel(m, runId, multipleRuns)}
-              runId={runId}
-              onRemove={
-                effectiveMetrics.length > 1
-                  ? () => {
-                      const next = effectiveMetrics.filter(
-                        (_, idx2) => idx2 !== i,
-                      );
-                      // Adjust baselineIndex
-                      let newBaseline = settings.baselineIndex;
-                      if (newBaseline != null) {
-                        if (newBaseline === i) newBaseline = undefined;
-                        else if (newBaseline > i) newBaseline -= 1;
+        {controlledSeries ? (
+          /* Tag-level draggable chips in workspace/comparison mode */
+          (() => {
+            const seen = new Set<string>();
+            const tags: Array<{ name: string; color: string; firstIdx: number }> = [];
+            for (let i = 0; i < effectiveMetrics.length; i++) {
+              const m = effectiveMetrics[i]!;
+              if (seen.has(m.name)) continue;
+              seen.add(m.name);
+              tags.push({ name: m.name, color: SERIES_COLORS[tags.length % SERIES_COLORS.length]!, firstIdx: i });
+            }
+            return tags.map((tag) => {
+              const m = effectiveMetrics[tag.firstIdx]!;
+              const ref: SeriesRef = { runId: m.runId, name: m.name, context_hash: m.context_hash };
+              return (
+                <SeriesChip
+                  key={tag.name}
+                  series={ref}
+                  color={tag.color}
+                  label={tag.name}
+                  runId={runId}
+                  onRemove={
+                    tags.length > 1
+                      ? () => {
+                          const next = effectiveMetrics.filter((x) => x.name !== tag.name);
+                          updateSettings({ metrics: next, baselineIndex: undefined, paneWidths: undefined });
+                        }
+                      : undefined
+                  }
+                />
+              );
+            });
+          })()
+        ) : (
+          effectiveMetrics.map((m, i) => {
+            const ref: SeriesRef = {
+              runId: m.runId,
+              name: m.name,
+              context_hash: m.context_hash,
+            };
+            return (
+              <SeriesChip
+                key={seriesKey(m)}
+                series={ref}
+                color={SERIES_COLORS[i % SERIES_COLORS.length]!}
+                label={seriesLabel(m, runId, multipleRuns)}
+                runId={runId}
+                onRemove={
+                  effectiveMetrics.length > 1
+                    ? () => {
+                        const next = effectiveMetrics.filter(
+                          (_, idx2) => idx2 !== i,
+                        );
+                        let newBaseline = settings.baselineIndex;
+                        if (newBaseline != null) {
+                          if (newBaseline === i) newBaseline = undefined;
+                          else if (newBaseline > i) newBaseline -= 1;
+                        }
+                        updateSettings({
+                          metrics: next,
+                          baselineIndex: newBaseline,
+                          paneWidths: undefined,
+                        });
                       }
-                      updateSettings({
-                        metrics: next,
-                        baselineIndex: newBaseline,
-                        paneWidths: undefined,
-                      });
-                    }
-                  : undefined
-              }
-            />
-          );
-        })}
-      </div>
-
-      {/* Settings popover */}
-      <SettingsPopover
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        anchorRef={settingsBtnRef}
-        title="Image"
-      >
-        <Slider
-          label="Brightness"
-          value={settings.brightness}
-          onChange={(v) => updateSettings({ brightness: v })}
-          min={-1}
-          max={1}
-          step={0.01}
-          format={(v) => v.toFixed(2)}
-        />
-        <Slider
-          label="Contrast"
-          value={settings.contrast}
-          onChange={(v) => updateSettings({ contrast: v })}
-          min={-1}
-          max={1}
-          step={0.01}
-          format={(v) => v.toFixed(2)}
-        />
-        <Slider
-          label="Gamma"
-          value={settings.gamma}
-          onChange={(v) => updateSettings({ gamma: v })}
-          min={0.1}
-          max={3}
-          step={0.01}
-          format={(v) => v.toFixed(2)}
-          description="1 = no change; <1 brightens shadows, >1 darkens"
-        />
-
-        <Slider
-          label="Zoom"
-          value={settings.zoom}
-          onChange={(v) => updateSettings({ zoom: v })}
-          min={MIN_ZOOM}
-          max={MAX_ZOOM}
-          step={0.05}
-          format={(v) => `${v.toFixed(2)}x`}
-          description="Alt+scroll to zoom; Alt+drag to pan."
-        />
-
-        <Select<Interpolation>
-          label="Interpolation"
-          value={settings.interpolation ?? "auto"}
-          onChange={(v) => updateSettings({ interpolation: v })}
-          options={[
-            { value: "auto", label: "Smooth (bilinear)" },
-            { value: "pixelated", label: "Nearest (pixelated)" },
-            { value: "crisp-edges", label: "Crisp edges" },
-          ]}
-        />
-        <Toggle
-          label="Pixel axes"
-          checked={settings.showAxes ?? false}
-          onChange={(v) => updateSettings({ showAxes: v })}
-          description="Show pixel coordinate ticks along edges"
-        />
-
-        {isMulti && (
-          <>
-            <h4 className="text-xs uppercase tracking-wide text-fg-muted mt-4 mb-2">
-              Diff
-            </h4>
-            <Select
-              label="Diff mode"
-              value={settings.diffMode}
-              onChange={(v) => updateSettings({ diffMode: v })}
-              options={[
-                { value: "none" as const, label: "None" },
-                { value: "signed" as const, label: "Signed Error" },
-                { value: "absolute" as const, label: "Absolute Error" },
-                { value: "squared" as const, label: "Squared Error" },
-                { value: "relative_signed" as const, label: "Relative Signed" },
-                { value: "relative_absolute" as const, label: "Relative Absolute" },
-                { value: "relative_squared" as const, label: "Relative Squared" },
-              ]}
-            />
-          </>
+                    : undefined
+                }
+              />
+            );
+          })
         )}
-
-        <button
-          type="button"
-          className="btn w-full mt-2"
-          onClick={() => {
-            resetSettings();
-            setSettingsOpen(false);
-          }}
-        >
-          Reset to defaults
-        </button>
-      </SettingsPopover>
+      </div>
 
       {/* Add to comparison popover */}
       <SettingsPopover
@@ -1046,6 +1017,201 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
         )}
       </SettingsPopover>
       </>)}
+
+      {(() => {
+        const settingsPanel = (
+          <>
+            <Slider
+              label="Brightness"
+              value={settings.brightness}
+              onChange={(v) => updateSettings({ brightness: v })}
+              min={-1}
+              max={1}
+              step={0.01}
+              format={(v) => v.toFixed(2)}
+            />
+            <Slider
+              label="Contrast"
+              value={settings.contrast}
+              onChange={(v) => updateSettings({ contrast: v })}
+              min={-1}
+              max={1}
+              step={0.01}
+              format={(v) => v.toFixed(2)}
+            />
+            <Slider
+              label="Gamma"
+              value={settings.gamma}
+              onChange={(v) => updateSettings({ gamma: v })}
+              min={0.1}
+              max={3}
+              step={0.01}
+              format={(v) => v.toFixed(2)}
+              description="1 = no change; <1 brightens shadows, >1 darkens"
+            />
+            <Slider
+              label="Zoom"
+              value={settings.zoom}
+              onChange={(v) => updateSettings({ zoom: v })}
+              min={MIN_ZOOM}
+              max={MAX_ZOOM}
+              step={0.05}
+              format={(v) => `${v.toFixed(2)}x`}
+              description="Alt+scroll to zoom; Alt+drag to pan."
+            />
+            <Select<Interpolation>
+              label="Interpolation"
+              value={settings.interpolation ?? "auto"}
+              onChange={(v) => updateSettings({ interpolation: v })}
+              options={[
+                { value: "auto", label: "Smooth (bilinear)" },
+                { value: "pixelated", label: "Nearest (pixelated)" },
+                { value: "crisp-edges", label: "Crisp edges" },
+              ]}
+            />
+            <Toggle
+              label="Pixel axes"
+              checked={settings.showAxes ?? false}
+              onChange={(v) => updateSettings({ showAxes: v })}
+              description="Show pixel coordinate ticks along edges"
+            />
+            {isMulti && (
+              <>
+                <h4 className="text-xs uppercase tracking-wide text-fg-muted mt-4 mb-2">
+                  Diff
+                </h4>
+                <Select
+                  label="Diff mode"
+                  value={settings.diffMode}
+                  onChange={(v) => updateSettings({ diffMode: v })}
+                  options={[
+                    { value: "none" as const, label: "None" },
+                    { value: "signed" as const, label: "Signed Error" },
+                    { value: "absolute" as const, label: "Absolute Error" },
+                    { value: "squared" as const, label: "Squared Error" },
+                    { value: "relative_signed" as const, label: "Relative Signed" },
+                    { value: "relative_absolute" as const, label: "Relative Absolute" },
+                    { value: "relative_squared" as const, label: "Relative Squared" },
+                  ]}
+                />
+              </>
+            )}
+            <button
+              type="button"
+              className="btn w-full mt-2"
+              onClick={() => {
+                resetSettings();
+                setExpanded(false);
+              }}
+            >
+              Reset to defaults
+            </button>
+          </>
+        );
+        return (
+          <CardDetailModal
+            open={expanded}
+            onClose={() => setExpanded(false)}
+            title={settings.title ?? metric.name}
+            settingsContent={settingsPanel}
+          >
+            <div
+              className="h-[calc(100vh-12rem)] flex flex-col"
+              style={{ cursor: canPan ? "move" : "default", touchAction: canPan ? "none" : undefined }}
+              onPointerDown={onPointerDown}
+              onPointerMove={onPointerMove}
+              onPointerUp={onPointerUp}
+              onPointerCancel={onPointerUp}
+            >
+              {isMulti ? (
+                <SplitPane
+                  widths={
+                    settings.paneWidths ??
+                    Array(effectiveMetrics.length).fill(
+                      1 / effectiveMetrics.length,
+                    )
+                  }
+                  onWidthsChange={(w) => updateSettings({ paneWidths: w })}
+                >
+                  {effectiveMetrics.map((m, paneIdx) => {
+                    const pts = perSeriesPoints[paneIdx] ?? [];
+                    const pCurrent = pts[safeIdx];
+                    const hash = pCurrent?.artifact_hash ?? undefined;
+                    return (
+                      <ImagePane
+                        key={seriesKey(m)}
+                        metricEntry={m}
+                        paneIndex={paneIdx}
+                        artifactHash={hash}
+                        baselineHash={baselineHash}
+                        isBaseline={baselineIdx === paneIdx}
+                        diffMode={settings.diffMode}
+                        interpolation={settings.interpolation ?? "auto"}
+                        showAxes={settings.showAxes ?? false}
+                        transformStr={transformStr}
+                        filterStr={filterStr}
+                        onNaturalSize={onImageNaturalSize}
+                        onSetBaseline={() => {
+                          const isUnsetting = settings.baselineIndex === paneIdx;
+                          updateSettings({
+                            baselineIndex: isUnsetting ? undefined : paneIdx,
+                            diffMode: isUnsetting
+                              ? "none"
+                              : settings.diffMode === "none"
+                                ? "absolute"
+                                : settings.diffMode,
+                          });
+                        }}
+                        label={seriesLabel(m, runId, multipleRuns)}
+                      />
+                    );
+                  })}
+                </SplitPane>
+              ) : (
+                <div
+                  className="flex flex-1 min-h-0 justify-center items-center rounded bg-bg"
+                  style={{
+                    overflow: "hidden",
+                    padding: settings.showAxes && singleNaturalDims ? "16px 4px 4px 28px" : "8px",
+                  }}
+                >
+                  <div className="relative max-h-full max-w-full">
+                    {firstCurrent?.artifact_hash ? (
+                      <img
+                        src={api.artifactUrl(firstCurrent.artifact_hash)}
+                        alt={`${metric.name} @ step ${firstCurrent.step}`}
+                        className="max-h-full max-w-full object-contain block"
+                        draggable={false}
+                        style={{
+                          filter: filterStr,
+                          transform: transformStr,
+                          transformOrigin: "center center",
+                          imageRendering: settings.interpolation === "auto" ? undefined : settings.interpolation,
+                        }}
+                      />
+                    ) : (
+                      <span className="text-sm text-fg-muted">no image</span>
+                    )}
+                    {settings.showAxes && singleNaturalDims && (
+                      <PixelAxes naturalWidth={singleNaturalDims.w} naturalHeight={singleNaturalDims.h} />
+                    )}
+                  </div>
+                </div>
+              )}
+              {maxLen > 1 && (
+                <input
+                  type="range"
+                  min={0}
+                  max={maxLen - 1}
+                  value={safeIdx}
+                  onChange={(e) => handleSliderChange(Number(e.target.value))}
+                  className="mt-3 w-full accent-accent"
+                />
+              )}
+            </div>
+          </CardDetailModal>
+        );
+      })()}
 
       <CardResizeHandle
         height={settings.height}

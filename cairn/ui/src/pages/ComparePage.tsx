@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
+import AddCardModal, { type AddCardSelection } from "../components/AddCardModal";
 import CardRenderer from "../components/CardRenderer";
 import DraggableCard from "../components/DraggableCard";
 import {
+  addCardToComparison,
   createComparison,
   deleteComparison,
   removeCardFromComparison,
@@ -89,6 +91,22 @@ export default function ComparePage() {
     [projectId, refresh],
   );
 
+  const handleAddCard = useCallback(
+    (comparisonId: string, sel: AddCardSelection) => {
+      if (!projectId) return;
+      addCardToComparison(projectId, comparisonId, {
+        type: sel.object_type as "scalar",
+        series: sel.runs.map((r) => ({
+          runId: r.runId,
+          name: sel.name,
+          context_hash: r.context_hash,
+        })),
+      });
+      refresh();
+    },
+    [projectId, refresh],
+  );
+
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   if (!projectId) return null;
@@ -131,6 +149,7 @@ export default function ComparePage() {
                 onRename={(name) => handleRename(selected.id, name)}
                 onDelete={() => handleDelete(selected.id)}
                 onRemoveCard={(cardId) => handleRemoveCard(selected.id, cardId)}
+                onAddCard={(sel) => handleAddCard(selected.id, sel)}
               />
             ) : (
               <EmptyMainPane
@@ -343,6 +362,7 @@ interface ComparisonViewProps {
   onRename: (name: string) => void;
   onDelete: () => void;
   onRemoveCard: (cardId: string) => void;
+  onAddCard: (sel: AddCardSelection) => void;
 }
 
 function ComparisonView({
@@ -350,9 +370,33 @@ function ComparisonView({
   onRename,
   onDelete,
   onRemoveCard,
+  onAddCard,
 }: ComparisonViewProps) {
   const [editingName, setEditingName] = useState(false);
   const [draft, setDraft] = useState(comparison.name);
+  const [addCardOpen, setAddCardOpen] = useState(false);
+
+  // Collect all unique run IDs from the comparison's series
+  const compRunIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const card of comparison.cards) {
+      for (const s of card.series) ids.add(s.runId);
+    }
+    return Array.from(ids);
+  }, [comparison.cards]);
+
+  const existingMetrics = useMemo(
+    () => {
+      const set = new Set<string>();
+      for (const card of comparison.cards) {
+        if (card.series[0]) {
+          set.add(`${card.series[0].name}::${card.type}`);
+        }
+      }
+      return set;
+    },
+    [comparison.cards],
+  );
 
   useEffect(() => {
     if (!editingName) setDraft(comparison.name);
@@ -395,21 +439,37 @@ function ComparisonView({
             {comparison.name}
           </h2>
         )}
-        <button
-          type="button"
-          onClick={() => {
-            if (confirm(`Delete "${comparison.name}"?`)) onDelete();
-          }}
-          className="btn text-xs"
-        >
-          Delete
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setAddCardOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded border border-border px-3 py-1.5 text-xs font-medium text-fg-muted hover:border-accent hover:text-fg transition-colors"
+          >
+            <span aria-hidden="true">+</span> Add card
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (confirm(`Delete "${comparison.name}"?`)) onDelete();
+            }}
+            className="btn text-xs"
+          >
+            Delete
+          </button>
+        </div>
       </div>
+
+      <AddCardModal
+        open={addCardOpen}
+        onClose={() => setAddCardOpen(false)}
+        runIds={compRunIds}
+        existingMetrics={existingMetrics}
+        onAdd={onAddCard}
+      />
 
       {comparison.cards.length === 0 ? (
         <div className="card p-6 text-sm text-fg-muted">
-          Add scalar cards from any run using the{" "}
-          <span className="mono">+</span> button in the card header.
+          No cards yet. Click "Add card" to pick metrics from the comparison's runs.
         </div>
       ) : (
         <div className="flex flex-col gap-4">

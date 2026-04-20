@@ -11,6 +11,7 @@ import { useProjectId } from "../lib/project-context";
 import type { SequenceMeta } from "../api/types";
 import CardHeader from "./CardHeader";
 import CardResizeHandle from "./CardResizeHandle";
+import CardDetailModal from "./CardDetailModal";
 import SettingsPopover from "./SettingsPopover";
 
 interface Props {
@@ -69,8 +70,7 @@ export default function HistogramCard({ runId, metric }: Props) {
   );
   const [settings, updateSettings] = useCardSettings(settingsKey, DEFAULT_HISTOGRAM_SETTINGS);
 
-  const settingsBtnRef = useRef<HTMLButtonElement | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   // "Add to comparison" popover state.
   const projectId = useProjectId();
@@ -143,13 +143,10 @@ export default function HistogramCard({ runId, metric }: Props) {
           </button>
         )}
         <button
-          ref={settingsBtnRef}
           type="button"
-          onClick={() => setSettingsOpen((v) => !v)}
+          onClick={() => setExpanded(true)}
           className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
           aria-label="Histogram settings"
-          aria-haspopup="dialog"
-          aria-expanded={settingsOpen}
           title="Histogram settings"
         >
           {"\u2699"}
@@ -190,17 +187,51 @@ export default function HistogramCard({ runId, metric }: Props) {
         <div className="text-sm text-fg-muted">no histogram logged yet</div>
       )}
 
-      <SettingsPopover
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        anchorRef={settingsBtnRef}
-        title="Histogram"
+      <CardDetailModal
+        open={expanded}
+        onClose={() => setExpanded(false)}
+        title={settings.title ?? metric.name}
+        settingsContent={
+          <p className="text-xs text-fg-subtle">
+            No settings yet. Full histogram visualization (bin counts + axis
+            scale) is coming in a later pass.
+          </p>
+        }
       >
-        <p className="text-xs text-fg-subtle">
-          No settings yet. Full histogram visualization (bin counts + axis
-          scale) is coming in a later pass.
-        </p>
-      </SettingsPopover>
+        {q.isLoading ? (
+          <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
+        ) : current?.artifact_hash && meta ? (
+          <div className="flex flex-col h-full">
+            <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-fg-muted">
+              <span>min</span>
+              <span className="mono num">{fmtSig(meta.min)}</span>
+              <span>max</span>
+              <span className="mono num">{fmtSig(meta.max)}</span>
+              <span>mean</span>
+              <span className="mono num">{fmtSig(meta.mean)}</span>
+              <span>count</span>
+              <span className="mono num">{meta.count}</span>
+              <span>num_bins</span>
+              <span className="mono num">{meta.num_bins}</span>
+            </div>
+            <p className="text-xs text-fg-subtle mt-2">
+              Bin counts available in the raw artifact blob.
+            </p>
+            {points.length > 1 && (
+              <input
+                type="range"
+                min={0}
+                max={points.length - 1}
+                value={safeIdx}
+                onChange={(e) => setIdx(Number(e.target.value))}
+                className="mt-3 w-full accent-accent"
+              />
+            )}
+          </div>
+        ) : (
+          <div className="text-sm text-fg-muted">no histogram logged yet</div>
+        )}
+      </CardDetailModal>
 
       <SettingsPopover
         open={addCompOpen && projectId != null}

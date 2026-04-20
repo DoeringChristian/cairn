@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQueries } from "@tanstack/react-query";
 import { api } from "../api/client";
@@ -7,6 +7,7 @@ import type { SequenceMeta } from "../api/types";
 import { formatDuration, formatRelative } from "../lib/format";
 import { groupIntoSections } from "../lib/sections";
 import { useWorkspaceVisibility } from "../lib/workspace-visibility";
+import AddCardModal, { type AddCardSelection } from "../components/AddCardModal";
 import CardRenderer from "../components/CardRenderer";
 import RunRail from "../components/RunRail";
 import RunStatusBadge from "../components/RunStatusBadge";
@@ -92,9 +93,43 @@ export default function ProjectPage() {
     seqQueries.map((q) => q.dataUpdatedAt).join("|"),
   ]);
 
-  // Group into sections using the existing grouping logic
-  const sections = useMemo(() => {
-    const metas: SequenceMeta[] = cards.map((c) => ({
+
+
+  // Existing metric keys (for the Add Card modal to mark already-added)
+  const existingMetrics = useMemo(
+    () => new Set(cards.map((c) => `${c.name}::${c.object_type}`)),
+    [cards],
+  );
+
+  // Manually added cards (metrics not in any visible run but user wants)
+  const [extraCards, setExtraCards] = useState<
+    Array<{ name: string; object_type: string; runs: Array<{ runId: string; context_hash: string }> }>
+  >([]);
+  const [addCardOpen, setAddCardOpen] = useState(false);
+
+  const handleAddCard = useCallback((sel: AddCardSelection) => {
+    const key = `${sel.name}::${sel.object_type}`;
+    // If already in auto-generated cards, nothing to do
+    if (existingMetrics.has(key)) return;
+    setExtraCards((prev) => {
+      if (prev.some((c) => `${c.name}::${c.object_type}` === key)) return prev;
+      return [...prev, sel];
+    });
+  }, [existingMetrics]);
+
+  // Merge auto + extra cards
+  const allCards = useMemo(() => {
+    const merged = [...cards];
+    for (const ec of extraCards) {
+      const key = `${ec.name}::${ec.object_type}`;
+      if (!existingMetrics.has(key)) merged.push(ec);
+    }
+    return merged;
+  }, [cards, extraCards, existingMetrics]);
+
+  // Recompute sections from allCards
+  const allSections = useMemo(() => {
+    const metas: SequenceMeta[] = allCards.map((c) => ({
       name: c.name,
       object_type: c.object_type,
       context: null,
@@ -104,7 +139,7 @@ export default function ProjectPage() {
       count: 0,
     }));
     return groupIntoSections(metas);
-  }, [cards]);
+  }, [allCards]);
 
   // Mobile runs list collapsible
   const [mobileRunsOpen, setMobileRunsOpen] = useState(false);
@@ -219,8 +254,27 @@ export default function ProjectPage() {
           </div>
         )}
 
+        {/* Add card button */}
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={() => setAddCardOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded border border-border px-3 py-1.5 text-xs font-medium text-fg-muted hover:border-accent hover:text-fg transition-colors"
+          >
+            <span aria-hidden="true">+</span> Add card
+          </button>
+        </div>
+
+        <AddCardModal
+          open={addCardOpen}
+          onClose={() => setAddCardOpen(false)}
+          runIds={runIds}
+          existingMetrics={existingMetrics}
+          onAdd={handleAddCard}
+        />
+
         {/* Render cards grouped by section */}
-        {sections.map((section) => (
+        {allSections.map((section) => (
           <section key={section.name}>
             <header className="mb-3 flex items-baseline justify-between border-b border-border pb-1">
               <h2 className="text-sm font-semibold uppercase tracking-wide text-fg-muted">
@@ -229,7 +283,7 @@ export default function ProjectPage() {
             </header>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               {section.items.map((meta) => {
-                const card = cards.find(
+                const card = allCards.find(
                   (c) =>
                     c.name === meta.name &&
                     c.object_type === meta.object_type,
@@ -270,7 +324,7 @@ export default function ProjectPage() {
           </section>
         ))}
 
-        {cards.length === 0 && !runsQ.isLoading && (
+        {allCards.length === 0 && !runsQ.isLoading && (
           <p className="text-fg-muted">
             {runs.length === 0
               ? "No runs in this project yet."
