@@ -9,6 +9,8 @@ import { groupIntoSections } from "../lib/sections";
 import { useWorkspaceVisibility } from "../lib/workspace-visibility";
 import AddCardModal, { type AddCardSelection } from "../components/AddCardModal";
 import CardRenderer from "../components/CardRenderer";
+import ParallelCoordsCard from "../components/ParallelCoordsCard";
+import ScatterPlotCard from "../components/ScatterPlotCard";
 import RunRail from "../components/RunRail";
 import RunStatusBadge from "../components/RunStatusBadge";
 
@@ -95,39 +97,22 @@ export default function ProjectPage() {
 
 
 
-  // Existing metric keys (for the Add Card modal to mark already-added)
-  const existingMetrics = useMemo(
-    () => new Set(cards.map((c) => `${c.name}::${c.object_type}`)),
-    [cards],
-  );
-
-  // Manually added cards (metrics not in any visible run but user wants)
+  // Manually added cards
   const [extraCards, setExtraCards] = useState<
     Array<{ name: string; object_type: string; runs: Array<{ runId: string; context_hash: string }> }>
   >([]);
   const [addCardOpen, setAddCardOpen] = useState(false);
 
   const handleAddCard = useCallback((sel: AddCardSelection) => {
-    const key = `${sel.name}::${sel.object_type}`;
-    // If already in auto-generated cards, nothing to do
-    if (existingMetrics.has(key)) return;
-    setExtraCards((prev) => {
-      if (prev.some((c) => `${c.name}::${c.object_type}` === key)) return prev;
-      return [...prev, sel];
-    });
-  }, [existingMetrics]);
+    setExtraCards((prev) => [...prev, sel]);
+  }, []);
 
   // Merge auto + extra cards
   const allCards = useMemo(() => {
-    const merged = [...cards];
-    for (const ec of extraCards) {
-      const key = `${ec.name}::${ec.object_type}`;
-      if (!existingMetrics.has(key)) merged.push(ec);
-    }
-    return merged;
-  }, [cards, extraCards, existingMetrics]);
+    return [...cards, ...extraCards];
+  }, [cards, extraCards]);
 
-  // Recompute sections from allCards
+  // Group allCards into sections, preserving duplicates with indices.
   const allSections = useMemo(() => {
     const metas: SequenceMeta[] = allCards.map((c) => ({
       name: c.name,
@@ -138,7 +123,27 @@ export default function ProjectPage() {
       max_step: 0,
       count: 0,
     }));
-    return groupIntoSections(metas);
+    // Group into sections, but preserve card indices for duplicates.
+    const sections = groupIntoSections(metas);
+    // Build a map from section name to card indices.
+    type IndexedSection = { name: string; cardIndices: number[] };
+    const result: IndexedSection[] = [];
+    for (const section of sections) {
+      const indices: number[] = [];
+      // For each item in the section, find ALL matching card indices (not just first)
+      const used = new Set<number>();
+      for (const item of section.items) {
+        for (let i = 0; i < allCards.length; i++) {
+          if (used.has(i)) continue;
+          if (allCards[i]!.name === item.name && allCards[i]!.object_type === item.object_type) {
+            indices.push(i);
+            used.add(i);
+          }
+        }
+      }
+      if (indices.length > 0) result.push({ name: section.name, cardIndices: indices });
+    }
+    return result;
   }, [allCards]);
 
   // Mobile runs list collapsible
@@ -269,7 +274,6 @@ export default function ProjectPage() {
           open={addCardOpen}
           onClose={() => setAddCardOpen(false)}
           runIds={runIds}
-          existingMetrics={existingMetrics}
           onAdd={handleAddCard}
         />
 
@@ -282,14 +286,40 @@ export default function ProjectPage() {
               </h2>
             </header>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              {section.items.map((meta) => {
-                const card = allCards.find(
-                  (c) =>
-                    c.name === meta.name &&
-                    c.object_type === meta.object_type,
-                );
-                if (!card || card.runs.length === 0) return null;
-                // First run is the "primary" -- others are extraSeries
+              {section.cardIndices.map((cardIdx) => {
+                const card = allCards[cardIdx]!;
+                if (card.runs.length === 0) return null;
+
+                if (card.object_type === "parallel") {
+                  return (
+                    <ParallelCoordsCard
+                      key={`parallel::${cardIdx}`}
+                      runIds={visibleRunIds}
+                      runs={visibleRuns}
+                      settingsKey={{
+                        runId: `workspace:${projectId}`,
+                        metricName: "parallel",
+                        contextHash: `${cardIdx}`,
+                      }}
+                    />
+                  );
+                }
+
+                if (card.object_type === "scatter") {
+                  return (
+                    <ScatterPlotCard
+                      key={`scatter::${cardIdx}`}
+                      runIds={visibleRunIds}
+                      runs={visibleRuns}
+                      settingsKey={{
+                        runId: `workspace:${projectId}`,
+                        metricName: "scatter",
+                        contextHash: `${cardIdx}`,
+                      }}
+                    />
+                  );
+                }
+
                 const primary = card.runs[0]!;
                 const seedMetric: SequenceMeta = {
                   name: card.name,
@@ -307,7 +337,7 @@ export default function ProjectPage() {
                 }));
                 return (
                   <CardRenderer
-                    key={`${card.name}::${card.object_type}`}
+                    key={`${card.name}::${card.object_type}::${cardIdx}`}
                     runId={primary.runId}
                     metric={seedMetric}
                     extraSeries={extra.length > 0 ? extra : undefined}
@@ -315,7 +345,7 @@ export default function ProjectPage() {
                     settingsKeyOverride={{
                       runId: `workspace:${projectId}`,
                       metricName: card.name,
-                      contextHash: card.object_type,
+                      contextHash: `${card.object_type}::${cardIdx}`,
                     }}
                   />
                 );

@@ -42,6 +42,77 @@ interface Props {
 }
 
 type Interpolation = "auto" | "pixelated" | "crisp-edges";
+type Colormap = "none" | "viridis" | "red-green" | "red-blue";
+
+// ---------------------------------------------------------------------------
+// Colormap LUT generation
+// ---------------------------------------------------------------------------
+
+function lerp3(a: [number, number, number], b: [number, number, number], t: number): [number, number, number] {
+  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+}
+
+function buildLUT(stops: Array<[number, number, number]>): Uint8Array {
+  const lut = new Uint8Array(256 * 3);
+  for (let i = 0; i < 256; i++) {
+    const t = i / 255;
+    const seg = t * (stops.length - 1);
+    const lo = Math.floor(seg);
+    const hi = Math.min(lo + 1, stops.length - 1);
+    const f = seg - lo;
+    const [r, g, b] = lerp3(stops[lo]!, stops[hi]!, f);
+    lut[i * 3] = Math.round(r);
+    lut[i * 3 + 1] = Math.round(g);
+    lut[i * 3 + 2] = Math.round(b);
+  }
+  return lut;
+}
+
+const COLORMAP_STOPS: Record<Exclude<Colormap, "none">, Array<[number, number, number]>> = {
+  viridis:     [[68,1,84],[59,82,139],[33,145,140],[94,201,98],[253,231,37]],
+  "red-green": [[215,25,28],[255,255,255],[26,150,65]],   // diverging: red → white → green
+  "red-blue":  [[215,25,28],[255,255,255],[44,123,182]],   // diverging: red → white → blue
+};
+
+const colormapLUTs = new Map<string, Uint8Array>();
+function getColormapLUT(name: Exclude<Colormap, "none">): Uint8Array {
+  let lut = colormapLUTs.get(name);
+  if (!lut) {
+    lut = buildLUT(COLORMAP_STOPS[name]);
+    colormapLUTs.set(name, lut);
+  }
+  return lut;
+}
+
+/**
+ * Apply a colormap LUT to an ImageData.
+ * @param center — the pixel value that should map to the LUT midpoint (index 128).
+ *   For signed diffs, center=128 (default). For absolute/squared, center=0.
+ */
+function applyColormap(src: ImageData, cmap: Exclude<Colormap, "none">, center = 128): ImageData {
+  const lut = getColormapLUT(cmap);
+  const out = new ImageData(src.width, src.height);
+  const sd = src.data;
+  const od = out.data;
+  for (let i = 0; i < sd.length; i += 4) {
+    const avg = (sd[i]! + sd[i + 1]! + sd[i + 2]!) / 3;
+    // Remap so that `center` → 128 in the LUT
+    let idx: number;
+    if (center === 128) {
+      idx = Math.round(avg);
+    } else {
+      // Scale: center→128, 0→0 (if center>0) or center→128, 255→255
+      // For center=0: map [0,255] → [128,255] (only positive half of LUT)
+      idx = Math.round(128 + (avg / 255) * 127);
+    }
+    idx = Math.max(0, Math.min(255, idx));
+    od[i] = lut[idx * 3]!;
+    od[i + 1] = lut[idx * 3 + 1]!;
+    od[i + 2] = lut[idx * 3 + 2]!;
+    od[i + 3] = sd[i + 3]!;
+  }
+  return out;
+}
 
 interface ImageSettings {
   version: 1;
@@ -57,6 +128,7 @@ interface ImageSettings {
   baselineIndex?: number;
   diffMode: "none" | DiffMode;
   interpolation: Interpolation;
+  colormap: Colormap;
   showAxes: boolean;
   sliderStep?: number;
   height?: number;
@@ -80,6 +152,7 @@ function defaultImageSettings(seed: {
     pan: { x: 0, y: 0 },
     diffMode: "none",
     interpolation: "auto",
+    colormap: "none",
     showAxes: false,
   };
 }
@@ -141,12 +214,12 @@ function seriesKey(m: {
 function PixelAxes({
   naturalWidth,
   naturalHeight,
+  zoom = 1,
 }: {
   naturalWidth: number;
   naturalHeight: number;
+  zoom?: number;
 }) {
-  // We overlay the axes as absolutely-positioned elements around the image.
-  // The tick interval adapts to image size.
   const tickInterval = (dim: number) => {
     if (dim <= 32) return 4;
     if (dim <= 128) return 16;
@@ -164,21 +237,66 @@ function PixelAxes({
   const yTicks: number[] = [];
   for (let y = 0; y <= naturalHeight; y += yInterval) yTicks.push(y);
 
+  // Counter-scale so text stays constant size regardless of zoom
+  const counterScale = 1 / zoom;
+  const fontSize = 8 * counterScale;
+  const topOffset = -12 * counterScale;
+  const leftOffset = -2 * counterScale;
+
   return (
     <>
       {/* Top axis */}
-      <div className="absolute top-0 left-0 right-0 flex justify-between px-0 text-[8px] text-fg-muted leading-none pointer-events-none select-none" style={{ transform: "translateY(-12px)" }}>
+      <div className="absolute top-0 left-0 right-0 flex justify-between px-0 text-fg-muted leading-none pointer-events-none select-none" style={{ transform: `translateY(${topOffset}px)`, fontSize }}>
         {xTicks.map((x) => (
           <span key={x} className="mono" style={{ position: "absolute", left: `${(x / naturalWidth) * 100}%`, transform: "translateX(-50%)" }}>{x}</span>
         ))}
       </div>
       {/* Left axis */}
-      <div className="absolute top-0 left-0 bottom-0 flex flex-col justify-between py-0 text-[8px] text-fg-muted leading-none pointer-events-none select-none" style={{ transform: "translateX(-2px)" }}>
+      <div className="absolute top-0 left-0 bottom-0 flex flex-col justify-between py-0 text-fg-muted leading-none pointer-events-none select-none" style={{ transform: `translateX(${leftOffset}px)`, fontSize }}>
         {yTicks.map((y) => (
-          <span key={y} className="mono" style={{ position: "absolute", top: `${(y / naturalHeight) * 100}%`, transform: "translate(-100%, -50%)", paddingRight: "3px" }}>{y}</span>
+          <span key={y} className="mono" style={{ position: "absolute", top: `${(y / naturalHeight) * 100}%`, transform: "translate(-100%, -50%)", paddingRight: `${3 * counterScale}px` }}>{y}</span>
         ))}
       </div>
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Colorbar — vertical gradient showing the active colormap
+// ---------------------------------------------------------------------------
+
+function Colorbar({ colormap: cmap }: { colormap: Exclude<Colormap, "none"> }) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  useEffect(() => {
+    const c = canvasRef.current;
+    if (!c) return;
+    const lut = getColormapLUT(cmap);
+    c.width = 1;
+    c.height = 256;
+    const ctx = c.getContext("2d");
+    if (!ctx) return;
+    const img = ctx.createImageData(1, 256);
+    for (let i = 0; i < 256; i++) {
+      // Top = high value (255), bottom = low value (0)
+      const li = (255 - i) * 3;
+      const pi = i * 4;
+      img.data[pi] = lut[li]!;
+      img.data[pi + 1] = lut[li + 1]!;
+      img.data[pi + 2] = lut[li + 2]!;
+      img.data[pi + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+  }, [cmap]);
+
+  return (
+    <div className="absolute right-1 top-1 bottom-1 flex flex-col items-center w-4 pointer-events-none">
+      <canvas
+        ref={canvasRef}
+        className="h-full w-2 rounded-sm"
+        style={{ imageRendering: "auto" }}
+      />
+      <span className="text-[7px] text-fg-subtle mt-0.5">high</span>
+    </div>
   );
 }
 
@@ -194,7 +312,9 @@ interface ImagePaneProps {
   isBaseline: boolean;
   diffMode: ImageSettings["diffMode"];
   interpolation: Interpolation;
+  colormap: Colormap;
   showAxes: boolean;
+  zoom: number;
   transformStr: string;
   filterStr: string;
   onSetBaseline: () => void;
@@ -208,7 +328,9 @@ function ImagePane({
   isBaseline,
   diffMode,
   interpolation,
+  colormap,
   showAxes,
+  zoom: zoomLevel,
   transformStr,
   filterStr,
   onSetBaseline,
@@ -216,8 +338,43 @@ function ImagePane({
   label,
 }: ImagePaneProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const falseColorRef = useRef<HTMLCanvasElement | null>(null);
   const [diffReady, setDiffReady] = useState(false);
+  const [falseColorReady, setFalseColorReady] = useState(false);
   const [naturalDims, setNaturalDims] = useState<{ w: number; h: number } | null>(null);
+
+  const useFalseColor = colormap !== "none" && !isBaseline && artifactHash != null;
+
+  // False color rendering
+  useEffect(() => {
+    if (!useFalseColor || !artifactHash) { setFalseColorReady(false); return; }
+    let cancelled = false;
+    setFalseColorReady(false);
+    const img = new Image();
+    img.onload = () => {
+      if (cancelled) return;
+      const c = document.createElement("canvas");
+      c.width = img.naturalWidth;
+      c.height = img.naturalHeight;
+      const ctx = c.getContext("2d");
+      if (!ctx) return;
+      ctx.drawImage(img, 0, 0);
+      const src = ctx.getImageData(0, 0, c.width, c.height);
+      const mapped = applyColormap(src, colormap as Exclude<Colormap, "none">);
+      const fc = falseColorRef.current;
+      if (!fc || cancelled) return;
+      fc.width = mapped.width;
+      fc.height = mapped.height;
+      const fctx = fc.getContext("2d");
+      if (fctx) fctx.putImageData(mapped, 0, 0);
+      setNaturalDims({ w: mapped.width, h: mapped.height });
+      onNaturalSize?.(mapped.width, mapped.height);
+      setFalseColorReady(true);
+    };
+    img.src = api.artifactUrl(artifactHash);
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [useFalseColor, artifactHash, colormap]);
 
   const showDiff =
     !isBaseline &&
@@ -241,11 +398,18 @@ function ImagePane({
       ]);
       if (cancelled) return;
       if (!baseData || !otherData) return;
-      const diffData = computeDiff(
+      let diffData = computeDiff(
         baseData,
         otherData,
         diffMode as DiffMode,
       );
+      // Apply colormap to diff output if active
+      if (colormap !== "none") {
+        // Signed modes center at 128 (midpoint), absolute/squared center at 0
+        const isSigned = (diffMode as string).includes("signed");
+        const cmapCenter = isSigned ? 128 : 0;
+        diffData = applyColormap(diffData, colormap as Exclude<Colormap, "none">, cmapCenter);
+      }
       const canvas = canvasRef.current;
       if (!canvas || cancelled) return;
       canvas.width = diffData.width;
@@ -261,7 +425,7 @@ function ImagePane({
       cancelled = true;
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [baselineHash, artifactHash, diffMode, showDiff, onNaturalSize]);
+  }, [baselineHash, artifactHash, diffMode, showDiff, colormap, onNaturalSize]);
 
   return (
     <div className="flex flex-col h-full">
@@ -282,8 +446,8 @@ function ImagePane({
       </div>
 
       {/* Image / diff canvas */}
-      <div className="flex-1 flex items-center justify-center overflow-hidden rounded bg-bg" style={{ padding: showAxes && naturalDims ? "16px 4px 4px 28px" : "4px" }}>
-        <div className="relative max-h-full max-w-full">
+      <div className="flex-1 flex items-center justify-center overflow-hidden rounded cairn-checkerboard" style={{ padding: showAxes && naturalDims ? "16px 4px 4px 28px" : "4px" }}>
+        <div className="relative max-h-full max-w-full" style={{ transform: transformStr, transformOrigin: "center center" }}>
           {!artifactHash ? (
             <span className="text-xs text-fg-muted">no image</span>
           ) : showDiff ? (
@@ -296,7 +460,20 @@ function ImagePane({
               <canvas
                 ref={canvasRef}
                 className="max-h-full max-w-full object-contain block"
-                style={{ display: diffReady ? "block" : "none", imageRendering: interpolation === "auto" ? undefined : interpolation, transform: transformStr, transformOrigin: "center center" }}
+                style={{ display: diffReady ? "block" : "none", imageRendering: interpolation === "auto" ? undefined : interpolation }}
+              />
+            </>
+          ) : useFalseColor ? (
+            <>
+              {!falseColorReady && (
+                <span className="text-xs text-fg-muted motion-safe:animate-pulse">
+                  applying colormap...
+                </span>
+              )}
+              <canvas
+                ref={falseColorRef}
+                className="max-h-full max-w-full object-contain block"
+                style={{ display: falseColorReady ? "block" : "none", imageRendering: interpolation === "auto" ? undefined : interpolation }}
               />
             </>
           ) : (
@@ -305,7 +482,7 @@ function ImagePane({
               alt={label}
               className="max-h-full max-w-full object-contain block"
               draggable={false}
-              style={{ filter: filterStr, imageRendering: interpolation === "auto" ? undefined : interpolation, transform: transformStr, transformOrigin: "center center" }}
+              style={{ filter: filterStr, imageRendering: interpolation === "auto" ? undefined : interpolation }}
               onLoad={(e) => {
                 const img = e.currentTarget;
                 setNaturalDims({ w: img.naturalWidth, h: img.naturalHeight });
@@ -314,7 +491,7 @@ function ImagePane({
             />
           )}
           {showAxes && naturalDims && (
-            <PixelAxes naturalWidth={naturalDims.w} naturalHeight={naturalDims.h} />
+            <PixelAxes naturalWidth={naturalDims.w} naturalHeight={naturalDims.h} zoom={zoomLevel} />
           )}
         </div>
       </div>
@@ -522,6 +699,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
   // Single-image zoom/pan (disabled in multi-pane)
   // -----------------------------------------------------------------------
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const wheelHandlerRef = useRef<((e: WheelEvent) => void) | null>(null);
 
   // Alt key tracking — zoom/pan only while Alt is held (consistent with scalar plots).
   const [altDown, setAltDown] = useState(false);
@@ -543,22 +721,40 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
   const altDownRef = useRef(altDown);
   altDownRef.current = altDown;
 
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const handler = (e: WheelEvent) => {
-      if (!altDownRef.current) return; // Let page scroll through
-      e.preventDefault();
-      const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
-      const cur = settingsRef.current.zoom;
-      const nextZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, cur * factor));
-      updateSettings({ zoom: nextZoom });
-    };
-    el.addEventListener("wheel", handler, { passive: false });
-    return () => {
-      el.removeEventListener("wheel", handler);
-    };
-  }, [updateSettings]);
+  // Stable wheel handler
+  wheelHandlerRef.current = (e: WheelEvent) => {
+    if (!altDownRef.current) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+    const cur = settingsRef.current.zoom;
+    const nextZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, cur * factor));
+    updateSettings({ zoom: nextZoom });
+  };
+
+  const roRef = useRef<ResizeObserver | null>(null);
+
+  // Callback ref: attach wheel listener + ResizeObserver when element mounts
+  const setContainerRef = useCallback((el: HTMLDivElement | null) => {
+    // Detach from previous element
+    if (containerRef.current) {
+      containerRef.current.removeEventListener("wheel", (containerRef.current as any).__cairnWheel);
+      roRef.current?.disconnect();
+    }
+    containerRef.current = el;
+    if (el) {
+      const handler = (e: WheelEvent) => wheelHandlerRef.current?.(e);
+      (el as any).__cairnWheel = handler;
+      el.addEventListener("wheel", handler, { passive: false });
+      // ResizeObserver for auto-height
+      const ro = new ResizeObserver((entries) => {
+        for (const entry of entries) setContainerWidth(entry.contentRect.width);
+      });
+      ro.observe(el);
+      roRef.current = ro;
+      setContainerWidth(el.getBoundingClientRect().width);
+    }
+  }, []);
 
   const dragStateRef = useRef<{
     pointerId: number;
@@ -618,6 +814,42 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
   const canPan = altDown;
   const modified = isModified(settings);
   const [singleNaturalDims, setSingleNaturalDims] = useState<{ w: number; h: number } | null>(null);
+  const singleFCRef = useRef<HTMLCanvasElement | null>(null);
+  const [singleFCReady, setSingleFCReady] = useState(false);
+  const singleArtifactHash = useMemo(() => {
+    const pts = perSeriesPoints[0] ?? [];
+    const safeI = Math.min(Math.max(0, idx), Math.max(0, pts.length - 1));
+    return pts[safeI]?.artifact_hash ?? null;
+  }, [perSeriesPoints, idx]);
+  const singleUseFalseColor = (settings.colormap ?? "none") !== "none" && !isMulti && singleArtifactHash != null;
+
+  useEffect(() => {
+    if (!singleUseFalseColor || !singleArtifactHash) { setSingleFCReady(false); return; }
+    let cancelled = false;
+    setSingleFCReady(false);
+    const img = new Image();
+    img.onload = () => {
+      if (cancelled) return;
+      const c = document.createElement("canvas");
+      c.width = img.naturalWidth;
+      c.height = img.naturalHeight;
+      const ctx = c.getContext("2d");
+      if (!ctx) return;
+      ctx.drawImage(img, 0, 0);
+      const src = ctx.getImageData(0, 0, c.width, c.height);
+      const mapped = applyColormap(src, (settings.colormap ?? "viridis") as Exclude<Colormap, "none">);
+      const fc = singleFCRef.current;
+      if (!fc || cancelled) return;
+      fc.width = mapped.width;
+      fc.height = mapped.height;
+      const fctx = fc.getContext("2d");
+      if (fctx) fctx.putImageData(mapped, 0, 0);
+      setSingleNaturalDims({ w: mapped.width, h: mapped.height });
+      setSingleFCReady(true);
+    };
+    img.src = api.artifactUrl(singleArtifactHash);
+    return () => { cancelled = true; };
+  }, [singleUseFalseColor, singleArtifactHash, settings.colormap]);
 
   // Auto-height: compute from first image's aspect ratio so images fill panes.
   const [imageAspect, setImageAspect] = useState<number | null>(null); // h/w
@@ -626,27 +858,17 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     setImageAspect((prev) => prev ?? h / w);
   }, []);
 
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver((entries) => {
-      for (const entry of entries) setContainerWidth(entry.contentRect.width);
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
 
   // When no user-set height and we know the aspect, compute ideal height.
   const autoHeight = useMemo(() => {
     if (settings.height != null) return undefined; // user has set a height
-    if (!imageAspect || containerWidth <= 0) return "20rem"; // fallback
+    if (!imageAspect || containerWidth <= 0) return "24rem"; // fallback before image loads
     const n = effectiveMetrics.length;
-    // In grid mode (SplitPane), each pane gets ~containerWidth/n.
-    // Account for pane header (~20px) + some padding.
-    const paneWidth = containerWidth / Math.min(n, Math.max(1, Math.floor(containerWidth / 200)));
+    // Each pane gets containerWidth / n. Compute height to fit image aspect.
+    const paneWidth = containerWidth / Math.max(1, n);
     const imgHeight = paneWidth * imageAspect;
-    // Add space for pane header + padding.
-    const total = Math.round(Math.min(800, Math.max(120, imgHeight + 28)));
+    // Add space for pane header (~24px) + padding.
+    const total = Math.round(Math.min(1200, Math.max(150, imgHeight + 24)));
     return `${total}px`;
   }, [settings.height, imageAspect, containerWidth, effectiveMetrics.length]);
 
@@ -714,13 +936,24 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
         collapsed={settings.collapsed}
         onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
       >
+        {(settings.zoom !== 1 || settings.pan.x !== 0 || settings.pan.y !== 0) && (
+          <button
+            type="button"
+            onClick={() => updateSettings({ zoom: 1, pan: { x: 0, y: 0 } })}
+            className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
+            aria-label="Reset zoom and pan"
+            title="Reset zoom and pan"
+          >
+            {"\u2302"}
+          </button>
+        )}
         {modified && (
           <button
             type="button"
             onClick={() => resetSettings()}
             className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
-            aria-label="Reset image settings"
-            title="Reset image settings"
+            aria-label="Reset all image settings"
+            title="Reset all image settings"
           >
             {"\u21BA"}
           </button>
@@ -756,8 +989,8 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
       ) : maxLen > 0 ? (
         <>
           <div
-            ref={containerRef}
-            className={`min-h-0 flex flex-col overflow-hidden${settings.height != null ? " flex-1" : ""}`}
+            ref={setContainerRef}
+            className={`relative min-h-0 flex flex-col overflow-hidden${settings.height != null ? " flex-1" : ""}`}
             style={{
               height: settings.height == null ? autoHeight : undefined,
               cursor: canPan ? "move" : "default",
@@ -768,6 +1001,9 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
             onPointerUp={onPointerUp}
             onPointerCancel={onPointerUp}
           >
+          {(settings.colormap ?? "none") !== "none" && (
+            <Colorbar colormap={settings.colormap as Exclude<Colormap, "none">} />
+          )}
           {isMulti ? (
             /* ---------- Multi-pane layout ---------- */
             <SplitPane
@@ -793,7 +1029,9 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                     isBaseline={baselineIdx === paneIdx}
                     diffMode={settings.diffMode}
                     interpolation={settings.interpolation ?? "auto"}
+                    colormap={settings.colormap ?? "none"}
                     showAxes={settings.showAxes ?? false}
+                    zoom={settings.zoom}
                     transformStr={transformStr}
                     filterStr={filterStr}
                     onNaturalSize={onImageNaturalSize}
@@ -817,36 +1055,51 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
           ) : (
             /* ---------- Single-image layout (original) ---------- */
             <div
-              className="flex flex-1 min-h-0 justify-center items-center rounded bg-bg"
+              className="relative flex flex-1 min-h-0 justify-center items-center rounded cairn-checkerboard"
               style={{
                 overflow: "hidden",
                 padding: settings.showAxes && singleNaturalDims ? "16px 4px 4px 28px" : "8px",
               }}
             >
-              <div className="relative max-h-full max-w-full">
+              <div
+                className="relative max-h-full max-w-full"
+                style={{ transform: transformStr, transformOrigin: "center center" }}
+              >
               {firstCurrent?.artifact_hash ? (
-                <img
-                  src={api.artifactUrl(firstCurrent.artifact_hash)}
-                  alt={`${metric.name} @ step ${firstCurrent.step}`}
-                  className="max-h-full max-w-full object-contain block"
-                  draggable={false}
-                  style={{
-                    filter: filterStr,
-                    transform: transformStr,
-                    transformOrigin: "center center",
-                    imageRendering: settings.interpolation === "auto" ? undefined : settings.interpolation,
-                  }}
-                  onLoad={(e) => {
-                    const img = e.currentTarget;
-                    setSingleNaturalDims({ w: img.naturalWidth, h: img.naturalHeight });
-                    onImageNaturalSize(img.naturalWidth, img.naturalHeight);
-                  }}
-                />
+                singleUseFalseColor ? (
+                  <>
+                    {!singleFCReady && <span className="text-xs text-fg-muted motion-safe:animate-pulse">applying colormap...</span>}
+                    <canvas
+                      ref={singleFCRef}
+                      className="max-h-full max-w-full object-contain block"
+                      style={{
+                        display: singleFCReady ? "block" : "none",
+                        imageRendering: settings.interpolation === "auto" ? undefined : settings.interpolation,
+                      }}
+                    />
+                  </>
+                ) : (
+                  <img
+                    src={api.artifactUrl(firstCurrent.artifact_hash)}
+                    alt={`${metric.name} @ step ${firstCurrent.step}`}
+                    className="max-h-full max-w-full object-contain block"
+                    draggable={false}
+                    style={{
+                      filter: filterStr,
+                      imageRendering: settings.interpolation === "auto" ? undefined : settings.interpolation,
+                    }}
+                    onLoad={(e) => {
+                      const imgEl = e.currentTarget;
+                      setSingleNaturalDims({ w: imgEl.naturalWidth, h: imgEl.naturalHeight });
+                      onImageNaturalSize(imgEl.naturalWidth, imgEl.naturalHeight);
+                    }}
+                  />
+                )
               ) : (
                 <span className="text-sm text-fg-muted">no image</span>
               )}
               {settings.showAxes && singleNaturalDims && (
-                <PixelAxes naturalWidth={singleNaturalDims.w} naturalHeight={singleNaturalDims.h} />
+                <PixelAxes naturalWidth={singleNaturalDims.w} naturalHeight={singleNaturalDims.h} zoom={settings.zoom} />
               )}
               </div>
             </div>
@@ -1069,6 +1322,17 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                 { value: "crisp-edges", label: "Crisp edges" },
               ]}
             />
+            <Select<Colormap>
+              label="False color"
+              value={settings.colormap ?? "none"}
+              onChange={(v) => updateSettings({ colormap: v })}
+              options={[
+                { value: "none", label: "None (original)" },
+                { value: "viridis", label: "Viridis" },
+                { value: "red-green", label: "Red \u2013 Green (\u00B1)" },
+                { value: "red-blue", label: "Red \u2013 Blue (\u00B1)" },
+              ]}
+            />
             <Toggle
               label="Pixel axes"
               checked={settings.showAxes ?? false}
@@ -1116,6 +1380,14 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
             settingsContent={settingsPanel}
           >
             <div
+              ref={(el) => {
+                if (!el) return;
+                if (!(el as any).__cairnModalWheel) {
+                  const handler = (e: WheelEvent) => wheelHandlerRef.current?.(e);
+                  el.addEventListener("wheel", handler, { passive: false });
+                  (el as any).__cairnModalWheel = true;
+                }
+              }}
               className="h-[calc(100vh-12rem)] flex flex-col"
               style={{ cursor: canPan ? "move" : "default", touchAction: canPan ? "none" : undefined }}
               onPointerDown={onPointerDown}
@@ -1147,7 +1419,9 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                         isBaseline={baselineIdx === paneIdx}
                         diffMode={settings.diffMode}
                         interpolation={settings.interpolation ?? "auto"}
+                        colormap={settings.colormap ?? "none"}
                         showAxes={settings.showAxes ?? false}
+                        zoom={settings.zoom}
                         transformStr={transformStr}
                         filterStr={filterStr}
                         onNaturalSize={onImageNaturalSize}
@@ -1169,7 +1443,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                 </SplitPane>
               ) : (
                 <div
-                  className="flex flex-1 min-h-0 justify-center items-center rounded bg-bg"
+                  className="relative flex flex-1 min-h-0 justify-center items-center rounded cairn-checkerboard"
                   style={{
                     overflow: "hidden",
                     padding: settings.showAxes && singleNaturalDims ? "16px 4px 4px 28px" : "8px",
@@ -1193,7 +1467,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                       <span className="text-sm text-fg-muted">no image</span>
                     )}
                     {settings.showAxes && singleNaturalDims && (
-                      <PixelAxes naturalWidth={singleNaturalDims.w} naturalHeight={singleNaturalDims.h} />
+                      <PixelAxes naturalWidth={singleNaturalDims.w} naturalHeight={singleNaturalDims.h} zoom={settings.zoom} />
                     )}
                   </div>
                 </div>

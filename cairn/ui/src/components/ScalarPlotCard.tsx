@@ -1538,6 +1538,8 @@ export default function ScalarPlotCard({
       className={`card p-4 flex flex-col${dropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
       style={{
         height: settings.collapsed ? undefined : (settings.height ?? undefined),
+        // When no custom height, ensure chart stays usable with many series
+        minHeight: settings.collapsed || settings.height ? undefined : Math.max(250, 192 + effectiveMetrics.length * 24 + 60),
         position: "relative",
         gridColumn: settings.fullWidth ? "1 / -1" : undefined,
       }}

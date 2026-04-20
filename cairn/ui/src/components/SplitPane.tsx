@@ -111,7 +111,7 @@ export default function SplitPane({
         }}
       >
         {children.map((child, i) => (
-          <div key={i} className="min-w-0 min-h-0 overflow-hidden">
+          <div key={i} className="min-w-0 min-h-0 h-full overflow-hidden">
             {child}
           </div>
         ))}
@@ -125,7 +125,7 @@ export default function SplitPane({
     items.push(
       <div
         key={`pane-${i}`}
-        className="min-w-0 overflow-hidden"
+        className="min-w-0 h-full overflow-hidden"
         style={{ flex: `${widths[i]! * 1000} 1 0%` }}
       >
         {child}

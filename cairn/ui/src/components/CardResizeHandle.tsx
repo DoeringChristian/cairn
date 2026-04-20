@@ -23,7 +23,7 @@ const MAX_HEIGHT = 2000;
  * (or `hidden` if you don't want the grip to overflow).
  */
 export default function CardResizeHandle({
-  height,
+  height: _height,
   onHeightChange,
   fullWidth,
   onFullWidthToggle,
@@ -32,16 +32,17 @@ export default function CardResizeHandle({
   const handlePointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       e.preventDefault();
+      e.stopPropagation();
       const target = e.currentTarget;
       target.setPointerCapture(e.pointerId);
 
-      const parent = target.parentElement;
+      const parent = target.closest(".card") as HTMLElement | null;
       if (!parent) return;
 
       const startX = e.clientX;
       const startY = e.clientY;
-      // Use the persisted height if available; fall back to DOM measurement.
-      const startHeight = height ?? parent.getBoundingClientRect().height;
+      // Always measure from DOM for accurate starting height.
+      const startHeight = parent.getBoundingClientRect().height;
       const startFullWidth = fullWidth;
       let toggled = false;
 
@@ -77,40 +78,41 @@ export default function CardResizeHandle({
       window.addEventListener("pointermove", onPointerMove);
       window.addEventListener("pointerup", onPointerUp);
     },
-    [height, minHeight, onHeightChange, fullWidth, onFullWidthToggle],
+    [minHeight, onHeightChange, fullWidth, onFullWidthToggle],
   );
 
   return (
     <div className="absolute bottom-0 right-0 flex items-end gap-0.5">
       <button
         type="button"
-        onClick={onFullWidthToggle}
-        className={`flex h-3 w-4 items-center justify-center rounded-sm text-[8px] leading-none ${
+        onClick={(e) => { e.stopPropagation(); onFullWidthToggle(); }}
+        className={`flex h-5 w-5 items-center justify-center rounded text-xs leading-none hover:bg-bg-hover ${
           fullWidth
-            ? "text-accent hover:text-accent"
+            ? "text-accent"
             : "text-fg-subtle hover:text-fg-muted"
         }`}
-        title={fullWidth ? "Collapse to half width" : "Expand to full width"}
-        aria-label={fullWidth ? "Collapse to half width" : "Expand to full width"}
+        title={fullWidth ? "Half width" : "Full width"}
+        aria-label={fullWidth ? "Half width" : "Full width"}
         aria-pressed={fullWidth}
       >
         {"\u2194"}
       </button>
       <div
         onPointerDown={handlePointerDown}
-        className="flex h-3 w-3 cursor-nwse-resize items-end justify-end text-fg-subtle hover:text-fg-muted"
-        title="Drag to resize (height + width)"
+        className="flex h-5 w-5 cursor-nwse-resize items-end justify-end text-fg-subtle hover:text-fg-muted"
+        title="Drag to resize"
+        style={{ touchAction: "none" }}
       >
         <svg
-          width="10"
-          height="10"
-          viewBox="0 0 10 10"
+          width="12"
+          height="12"
+          viewBox="0 0 12 12"
           className="pointer-events-none"
           aria-hidden="true"
         >
-          <line x1="9" y1="1" x2="1" y2="9" stroke="currentColor" strokeWidth="1" />
-          <line x1="9" y1="4" x2="4" y2="9" stroke="currentColor" strokeWidth="1" />
-          <line x1="9" y1="7" x2="7" y2="9" stroke="currentColor" strokeWidth="1" />
+          <line x1="11" y1="1" x2="1" y2="11" stroke="currentColor" strokeWidth="1.5" />
+          <line x1="11" y1="5" x2="5" y2="11" stroke="currentColor" strokeWidth="1.5" />
+          <line x1="11" y1="9" x2="9" y2="11" stroke="currentColor" strokeWidth="1.5" />
         </svg>
       </div>
     </div>

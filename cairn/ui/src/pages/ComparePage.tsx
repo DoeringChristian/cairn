@@ -2,7 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import AddCardModal, { type AddCardSelection } from "../components/AddCardModal";
 import CardRenderer from "../components/CardRenderer";
+import SmartComparisonWizard from "../components/SmartComparisonWizard";
 import DraggableCard from "../components/DraggableCard";
+import ParallelCoordsCard from "../components/ParallelCoordsCard";
+import ScatterPlotCard from "../components/ScatterPlotCard";
 import {
   addCardToComparison,
   createComparison,
@@ -108,6 +111,15 @@ export default function ComparePage() {
   );
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [wizardOpen, setWizardOpen] = useState(false);
+
+  const handleWizardCreated = useCallback(
+    (comparisonId: string) => {
+      refresh();
+      selectComparison(comparisonId);
+    },
+    [refresh, selectComparison],
+  );
 
   if (!projectId) return null;
 
@@ -138,6 +150,7 @@ export default function ComparePage() {
               selectedId={selectedId}
               onSelect={selectComparison}
               onCreate={handleCreate}
+              onSmartCreate={() => setWizardOpen(true)}
               onRename={handleRename}
               onDelete={handleDelete}
             />
@@ -159,6 +172,15 @@ export default function ComparePage() {
             )}
           </main>
         </div>
+
+        {projectId && (
+          <SmartComparisonWizard
+            open={wizardOpen}
+            onClose={() => setWizardOpen(false)}
+            projectId={projectId}
+            onCreated={handleWizardCreated}
+          />
+        )}
       </div>
   );
 }
@@ -174,6 +196,7 @@ interface SidebarProps {
   selectedId: string;
   onSelect: (id: string) => void;
   onCreate: () => void;
+  onSmartCreate: () => void;
   onRename: (id: string, name: string) => void;
   onDelete: (id: string) => void;
 }
@@ -183,6 +206,7 @@ function Sidebar({
   selectedId,
   onSelect,
   onCreate,
+  onSmartCreate,
   onRename,
   onDelete,
 }: SidebarProps) {
@@ -192,19 +216,30 @@ function Sidebar({
         <h2 className="text-xs font-semibold uppercase tracking-wide text-fg-muted">
           Comparisons
         </h2>
-        <button
-          type="button"
-          onClick={onCreate}
-          className="inline-flex h-6 w-6 items-center justify-center rounded border border-border bg-bg text-sm text-fg-muted hover:border-accent hover:text-fg"
-          aria-label="New comparison"
-          title="New comparison"
-        >
-          {"\u002B"}
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={onSmartCreate}
+            className="inline-flex h-6 items-center justify-center rounded border border-border bg-bg px-1.5 text-[10px] text-fg-muted hover:border-accent hover:text-fg"
+            aria-label="Smart comparison"
+            title="Create from parameters"
+          >
+            {"\u2728"}
+          </button>
+          <button
+            type="button"
+            onClick={onCreate}
+            className="inline-flex h-6 w-6 items-center justify-center rounded border border-border bg-bg text-sm text-fg-muted hover:border-accent hover:text-fg"
+            aria-label="New comparison"
+            title="New empty comparison"
+          >
+            {"\u002B"}
+          </button>
+        </div>
       </div>
       {comparisons.length === 0 ? (
         <p className="text-xs text-fg-subtle">
-          No comparisons yet. Click + to create one.
+          No comparisons yet. Click + or ✨ to create one.
         </p>
       ) : (
         <ul className="flex flex-col gap-1">
@@ -385,18 +420,6 @@ function ComparisonView({
     return Array.from(ids);
   }, [comparison.cards]);
 
-  const existingMetrics = useMemo(
-    () => {
-      const set = new Set<string>();
-      for (const card of comparison.cards) {
-        if (card.series[0]) {
-          set.add(`${card.series[0].name}::${card.type}`);
-        }
-      }
-      return set;
-    },
-    [comparison.cards],
-  );
 
   useEffect(() => {
     if (!editingName) setDraft(comparison.name);
@@ -463,7 +486,6 @@ function ComparisonView({
         open={addCardOpen}
         onClose={() => setAddCardOpen(false)}
         runIds={compRunIds}
-        existingMetrics={existingMetrics}
         onAdd={onAddCard}
       />
 
@@ -472,7 +494,7 @@ function ComparisonView({
           No cards yet. Click "Add card" to pick metrics from the comparison's runs.
         </div>
       ) : (
-        <div className="flex flex-col gap-4">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           {comparison.cards.map((card) => (
             <DraggableCard
               key={card.id}
@@ -505,6 +527,39 @@ function ComparisonCardRenderer({
   comparisonId,
   onRemove,
 }: ComparisonCardRendererProps) {
+  const runIds = useMemo(
+    () => Array.from(new Set(card.series.map((s) => s.runId))),
+    [card.series],
+  );
+
+  if (card.type === "parallel") {
+    return (
+      <ParallelCoordsCard
+        runIds={runIds}
+        settingsKey={{
+          runId: `compare:${comparisonId}`,
+          metricName: "parallel",
+          contextHash: card.id,
+        }}
+        onRemove={onRemove}
+      />
+    );
+  }
+
+  if (card.type === "scatter") {
+    return (
+      <ScatterPlotCard
+        runIds={runIds}
+        settingsKey={{
+          runId: `compare:${comparisonId}`,
+          metricName: "scatter",
+          contextHash: card.id,
+        }}
+        onRemove={onRemove}
+      />
+    );
+  }
+
   const primary = card.series[0];
   if (!primary) {
     return (

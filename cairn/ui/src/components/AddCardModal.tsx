@@ -19,9 +19,11 @@ const TYPE_LABELS: Record<string, string> = {
   video: "Video",
   histogram: "Histograms",
   text: "Text",
+  parallel: "Parallel Coords",
+  scatter: "Scatter Plot",
 };
 
-const TYPE_ORDER = ["scalar", "image", "figure", "audio", "video", "histogram", "text"];
+const TYPE_ORDER = ["scalar", "image", "figure", "audio", "video", "histogram", "text", "parallel", "scatter"];
 
 export interface AddCardSelection {
   name: string;
@@ -35,8 +37,6 @@ interface Props {
   onClose: () => void;
   /** Run IDs to scan for available metrics. */
   runIds: string[];
-  /** Metrics that already have cards (to mark them). */
-  existingMetrics?: Set<string>;
   /** Called when the user selects a metric. */
   onAdd: (selection: AddCardSelection) => void;
 }
@@ -45,7 +45,6 @@ export default function AddCardModal({
   open,
   onClose,
   runIds,
-  existingMetrics,
   onAdd,
 }: Props) {
   const [filter, setFilter] = useState("");
@@ -134,6 +133,22 @@ export default function AddCardModal({
       arr.sort((a, b) => a.name.localeCompare(b.name));
     }
 
+    // Always show "parallel" and "scatter" as options
+    if (!byType.has("parallel")) {
+      byType.set("parallel", [{
+        name: "Parallel Coordinates",
+        object_type: "parallel",
+        runs: runIds.map((rid) => ({ runId: rid, context_hash: "" })),
+      }]);
+    }
+    if (!byType.has("scatter")) {
+      byType.set("scatter", [{
+        name: "Scatter Plot",
+        object_type: "scatter",
+        runs: runIds.map((rid) => ({ runId: rid, context_hash: "" })),
+      }]);
+    }
+
     const types = TYPE_ORDER.filter((t) => byType.has(t));
     // Add any unknown types
     for (const t of byType.keys()) {
@@ -218,37 +233,25 @@ export default function AddCardModal({
             </div>
           ) : (
             <div className="divide-y divide-border-subtle">
-              {filtered.map((m) => {
-                const key = `${m.name}::${m.object_type}`;
-                const alreadyExists = existingMetrics?.has(key);
-                return (
+              {filtered.map((m, i) => (
                   <button
-                    key={key}
+                    key={`${m.name}::${m.object_type}::${i}`}
                     type="button"
                     onClick={() => {
                       onAdd(m);
                       onClose();
                     }}
-                    disabled={alreadyExists}
-                    className={`flex w-full items-center justify-between px-4 py-2.5 text-left text-sm transition-colors ${
-                      alreadyExists
-                        ? "text-fg-subtle cursor-default"
-                        : "text-fg hover:bg-bg-hover"
-                    }`}
+                    className="flex w-full items-center justify-between px-4 py-2.5 text-left text-sm text-fg hover:bg-bg-hover transition-colors"
                   >
                     <div className="min-w-0 flex-1">
                       <div className="mono truncate">{m.name}</div>
                       <div className="text-xs text-fg-muted mt-0.5">
                         {m.runs.length} run{m.runs.length !== 1 ? "s" : ""}
-                        {alreadyExists && " · already added"}
                       </div>
                     </div>
-                    {!alreadyExists && (
-                      <span className="ml-2 shrink-0 text-xs text-accent">+ Add</span>
-                    )}
+                    <span className="ml-2 shrink-0 text-xs text-accent">+ Add</span>
                   </button>
-                );
-              })}
+              ))}
             </div>
           )}
         </div>

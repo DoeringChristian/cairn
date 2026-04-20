@@ -103,10 +103,10 @@ const DRAG_OPTIONS: Array<{ value: DragMode; label: string }> = [
 ];
 
 const DARK_LAYOUT: Record<string, unknown> = {
-  paper_bgcolor: "#f6f8fa",
-  plot_bgcolor: "#ffffff",
+  paper_bgcolor: "transparent",
+  plot_bgcolor: "transparent",
   font: { color: "#1f2328" },
-  margin: { l: 40, r: 20, t: 20, b: 40 },
+  autosize: true,
 };
 
 function usePlotlySource(sourceHash: string | null | undefined) {
@@ -198,7 +198,6 @@ function FigurePane({
       ...base,
       ...DARK_LAYOUT,
       font: { ...((base.font as object) ?? {}), ...(DARK_LAYOUT.font as object) },
-      margin: DARK_LAYOUT.margin,
       hovermode: settings.hoverMode === "none" ? false : settings.hoverMode,
       dragmode: settings.dragMode === "none" ? false : settings.dragMode,
       showlegend: settings.showLegend,
@@ -462,7 +461,6 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
       ...base,
       ...DARK_LAYOUT,
       font: { ...((base.font as object) ?? {}), ...(DARK_LAYOUT.font as object) },
-      margin: DARK_LAYOUT.margin,
       hovermode: settings.hoverMode === "none" ? false : settings.hoverMode,
       dragmode: settings.dragMode === "none" ? false : settings.dragMode,
       showlegend: settings.showLegend,
@@ -675,7 +673,7 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
       ) : current?.artifact_hash ? (
         <>
           {showPlotly ? (
-            <div className="rounded bg-bg" style={{ height: settings.height ? undefined : "320px" }}>
+            <div className={`rounded bg-bg${settings.height ? " flex-1 min-h-0" : ""}`} style={{ height: settings.height ? undefined : "320px" }}>
               <Plot
                 data={(sourceQ.data?.data ?? []) as Plotly.Data[]}
                 layout={mergedLayout as Partial<Plotly.Layout>}
@@ -687,11 +685,11 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
           ) : sourceHash && sourceQ.isLoading ? (
             <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
           ) : (
-            <div className="flex justify-center rounded bg-bg p-2">
+            <div className={`flex justify-center items-center rounded bg-bg p-2${settings.height ? " flex-1 min-h-0" : ""}`}>
               <img
                 src={api.artifactUrl(current.artifact_hash)}
                 alt={`${metric.name} @ step ${current.step}`}
-                className="max-w-full object-contain"
+                className="max-w-full max-h-full object-contain"
                 style={{ maxHeight: settings.height ? undefined : "320px" }}
               />
             </div>
