@@ -183,6 +183,10 @@ export default function ScatterPlotCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seqQueries.map((q) => q.dataUpdatedAt).join("|")]);
 
+  const [hoveredPt, setHoveredPt] = useState<string | null>(null);
+  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
+  const svgRef = useRef<SVGSVGElement | null>(null);
+
   // ---------------------------------------------------------------------------
   // SVG rendering
   // ---------------------------------------------------------------------------
@@ -204,7 +208,7 @@ export default function ScatterPlotCard({
     const toY = (v: number) => pad.top + plotH - ((v - yDomain.min) / (yDomain.max - yDomain.min)) * plotH;
 
     return (
-      <svg width={width} height={height} className="select-none">
+      <svg ref={svgRef} width={width} height={height} className="select-none" onMouseLeave={() => { setHoveredPt(null); setTooltipPos(null); }}>
         {/* Grid */}
         <rect x={pad.left} y={pad.top} width={plotW} height={plotH} fill="none" stroke="#d0d7de" />
 
@@ -237,23 +241,54 @@ export default function ScatterPlotCard({
             const t = (pt.color - colorDomain.min) / (colorDomain.max - colorDomain.min);
             color = viridis(t);
           }
-          const run = runs?.find((r) => r.id === pt.runId);
-          const label = run?.display_name ?? shortRunId(pt.runId);
+          const isHovered = hoveredPt === pt.runId;
           return (
             <circle
               key={pt.runId}
               cx={cx}
               cy={cy}
-              r={5}
+              r={isHovered ? 7 : 5}
               fill={color}
-              stroke="white"
-              strokeWidth={1.5}
+              stroke={isHovered ? "#1f2328" : "white"}
+              strokeWidth={isHovered ? 2 : 1.5}
               className="cursor-pointer"
-            >
-              <title>{`${label}\n${settings.xAxis!.key}: ${pt.x}\n${settings.yAxis!.key}: ${pt.y}${settings.colorAxis ? `\n${settings.colorAxis.key}: ${pt.color ?? "—"}` : ""}`}</title>
-            </circle>
+              onMouseEnter={(e) => {
+                setHoveredPt(pt.runId);
+                const svg = svgRef.current;
+                if (svg) {
+                  const rect = svg.getBoundingClientRect();
+                  setTooltipPos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+                }
+              }}
+              onMouseMove={(e) => {
+                const svg = svgRef.current;
+                if (svg) {
+                  const rect = svg.getBoundingClientRect();
+                  setTooltipPos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+                }
+              }}
+              onMouseLeave={() => { setHoveredPt(null); setTooltipPos(null); }}
+            />
           );
         })}
+
+        {/* Tooltip */}
+        {hoveredPt && tooltipPos && (() => {
+          const pt = scatterPoints.find((p) => p.runId === hoveredPt);
+          if (!pt) return null;
+          const run = runs?.find((r) => r.id === pt.runId);
+          const label = run?.display_name ?? shortRunId(pt.runId);
+          return (
+            <foreignObject x={tooltipPos.x + 12} y={tooltipPos.y - 10} width={220} height={200} style={{ overflow: "visible", pointerEvents: "none" }}>
+              <div className="rounded border border-border bg-bg-elevated shadow-lg p-2 text-xs w-fit max-w-[220px]" style={{ pointerEvents: "none" }}>
+                <div className="font-semibold mono mb-1 truncate">{label}</div>
+                <div className="flex justify-between gap-2"><span className="text-fg-muted">{settings.xAxis!.key}</span><span className="mono">{pt.x.toPrecision(4)}</span></div>
+                <div className="flex justify-between gap-2"><span className="text-fg-muted">{settings.yAxis!.key}</span><span className="mono">{pt.y.toPrecision(4)}</span></div>
+                {settings.colorAxis && <div className="flex justify-between gap-2"><span className="text-fg-muted">{settings.colorAxis.key}</span><span className="mono">{pt.color?.toPrecision(4) ?? "—"}</span></div>}
+              </div>
+            </foreignObject>
+          );
+        })()}
       </svg>
     );
   };

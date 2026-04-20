@@ -8,6 +8,7 @@ import {
 } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { api } from "../api/client";
+import { useSequence, useSequences } from "../api/hooks";
 import type { SequenceMeta, SequencePoint } from "../api/types";
 import { useCardSettings } from "../lib/card-settings";
 import { useSeriesDrop } from "../lib/use-series-drop";
@@ -126,6 +127,8 @@ interface ImageSettings {
   zoom: number;
   pan: { x: number; y: number };
   baselineIndex?: number;
+  /** External baseline from a different metric tag. Overrides baselineIndex when set. */
+  externalBaseline?: { runId?: string; name: string; context_hash: string };
   diffMode: "none" | DiffMode;
   interpolation: Interpolation;
   colormap: Colormap;
@@ -265,7 +268,7 @@ function PixelAxes({
 // Colorbar — vertical gradient showing the active colormap
 // ---------------------------------------------------------------------------
 
-function Colorbar({ colormap: cmap }: { colormap: Exclude<Colormap, "none"> }) {
+function Colorbar({ colormap: cmap, isDiff }: { colormap: Exclude<Colormap, "none">; isDiff?: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   useEffect(() => {
     const c = canvasRef.current;
@@ -277,7 +280,6 @@ function Colorbar({ colormap: cmap }: { colormap: Exclude<Colormap, "none"> }) {
     if (!ctx) return;
     const img = ctx.createImageData(1, 256);
     for (let i = 0; i < 256; i++) {
-      // Top = high value (255), bottom = low value (0)
       const li = (255 - i) * 3;
       const pi = i * 4;
       img.data[pi] = lut[li]!;
@@ -288,14 +290,39 @@ function Colorbar({ colormap: cmap }: { colormap: Exclude<Colormap, "none"> }) {
     ctx.putImageData(img, 0, 0);
   }, [cmap]);
 
+  // Tick labels depend on whether this is a diff view or raw values
+  const ticks = isDiff
+    ? [
+        { pos: 0, label: "+max" },
+        { pos: 50, label: "0" },
+        { pos: 100, label: "\u2212max" },
+      ]
+    : [
+        { pos: 0, label: "255" },
+        { pos: 25, label: "192" },
+        { pos: 50, label: "128" },
+        { pos: 75, label: "64" },
+        { pos: 100, label: "0" },
+      ];
+
   return (
-    <div className="absolute right-1 top-1 bottom-1 flex flex-col items-center w-4 pointer-events-none">
+    <div className="absolute right-1 top-2 bottom-2 flex items-stretch w-8 pointer-events-none z-10">
       <canvas
         ref={canvasRef}
-        className="h-full w-2 rounded-sm"
+        className="h-full w-2.5 rounded-sm shrink-0"
         style={{ imageRendering: "auto" }}
       />
-      <span className="text-[7px] text-fg-subtle mt-0.5">high</span>
+      <div className="relative flex-1 ml-0.5">
+        {ticks.map((t) => (
+          <span
+            key={t.pos}
+            className="mono absolute text-[7px] text-fg-muted leading-none whitespace-nowrap"
+            style={{ top: `${t.pos}%`, transform: "translateY(-50%)" }}
+          >
+            {t.label}
+          </span>
+        ))}
+      </div>
     </div>
   );
 }
@@ -343,7 +370,14 @@ function ImagePane({
   const [falseColorReady, setFalseColorReady] = useState(false);
   const [naturalDims, setNaturalDims] = useState<{ w: number; h: number } | null>(null);
 
-  const useFalseColor = colormap !== "none" && !isBaseline && artifactHash != null;
+  const showDiff =
+    !isBaseline &&
+    diffMode !== "none" &&
+    baselineHash != null &&
+    artifactHash != null;
+
+  // Don't show false color when diff is active (colormap applied in diff pipeline)
+  const useFalseColor = colormap !== "none" && !showDiff && artifactHash != null;
 
   // False color rendering
   useEffect(() => {
@@ -375,12 +409,6 @@ function ImagePane({
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [useFalseColor, artifactHash, colormap]);
-
-  const showDiff =
-    !isBaseline &&
-    diffMode !== "none" &&
-    baselineHash != null &&
-    artifactHash != null;
 
 
   useEffect(() => {
@@ -446,8 +474,8 @@ function ImagePane({
       </div>
 
       {/* Image / diff canvas */}
-      <div className="flex-1 flex items-center justify-center overflow-hidden rounded cairn-checkerboard" style={{ padding: showAxes && naturalDims ? "16px 4px 4px 28px" : "4px" }}>
-        <div className="relative max-h-full max-w-full" style={{ transform: transformStr, transformOrigin: "center center" }}>
+      <div className="flex-1 min-h-0 min-w-0 flex items-center justify-center overflow-hidden rounded cairn-checkerboard" style={{ padding: showAxes && naturalDims ? "16px 4px 4px 28px" : "4px" }}>
+        <div className="relative w-full h-full" style={{ transform: transformStr, transformOrigin: "center center" }}>
           {!artifactHash ? (
             <span className="text-xs text-fg-muted">no image</span>
           ) : showDiff ? (
@@ -459,7 +487,7 @@ function ImagePane({
               )}
               <canvas
                 ref={canvasRef}
-                className="max-h-full max-w-full object-contain block"
+                className="w-full h-full object-contain block"
                 style={{ display: diffReady ? "block" : "none", imageRendering: interpolation === "auto" ? undefined : interpolation }}
               />
             </>
@@ -472,7 +500,7 @@ function ImagePane({
               )}
               <canvas
                 ref={falseColorRef}
-                className="max-h-full max-w-full object-contain block"
+                className="w-full h-full object-contain block"
                 style={{ display: falseColorReady ? "block" : "none", imageRendering: interpolation === "auto" ? undefined : interpolation }}
               />
             </>
@@ -480,7 +508,7 @@ function ImagePane({
             <img
               src={api.artifactUrl(artifactHash)}
               alt={label}
-              className="max-h-full max-w-full object-contain block"
+              className="w-full h-full object-contain block"
               draggable={false}
               style={{ filter: filterStr, imageRendering: interpolation === "auto" ? undefined : interpolation }}
               onLoad={(e) => {
@@ -502,6 +530,98 @@ function ImagePane({
 // ---------------------------------------------------------------------------
 // ImageGalleryCard
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// ExternalBaselinePicker — dropdown to select a reference image from another tag
+// ---------------------------------------------------------------------------
+
+function ExternalBaselinePicker({
+  runId,
+  currentMetricName,
+  selected,
+  onSelect,
+}: {
+  runId: string;
+  currentMetricName: string;
+  selected?: string;
+  onSelect: (name: string, contextHash: string) => void;
+}) {
+  const { data } = useSequences(runId);
+  const [open, setOpen] = useState(false);
+  const [filter, setFilter] = useState("");
+  const btnRef = useRef<HTMLButtonElement | null>(null);
+  const dropRef = useRef<HTMLDivElement | null>(null);
+
+  const imageMetrics = useMemo(() => {
+    const seqs = data?.sequences ?? [];
+    return seqs
+      .filter((s) => s.object_type === "image" && s.name !== currentMetricName)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [data, currentMetricName]);
+
+  const filtered = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    return q ? imageMetrics.filter((m) => m.name.toLowerCase().includes(q)) : imageMetrics;
+  }, [imageMetrics, filter]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: PointerEvent) => {
+      if (dropRef.current?.contains(e.target as Node)) return;
+      if (btnRef.current?.contains(e.target as Node)) return;
+      setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("pointerdown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("pointerdown", onDown); document.removeEventListener("keydown", onKey); };
+  }, [open]);
+
+  return (
+    <div className="relative mt-1">
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={() => { setOpen((v) => !v); setFilter(""); }}
+        className="inline-flex items-center gap-1 rounded border border-border bg-bg px-2 py-1 text-xs text-fg-muted hover:border-accent hover:text-fg"
+      >
+        <span aria-hidden="true">+</span> Reference tag
+      </button>
+      {open && (
+        <div ref={dropRef} className="absolute left-0 top-full z-40 mt-1 w-56 overflow-hidden rounded-lg border border-border bg-bg-elevated shadow-lg">
+          <div className="border-b border-border-subtle p-2">
+            <input
+              type="text"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder="Filter image tags..."
+              className="input w-full text-xs"
+              autoFocus
+            />
+          </div>
+          <div className="max-h-40 overflow-y-auto">
+            {filtered.length === 0 ? (
+              <div className="px-3 py-2 text-[10px] text-fg-subtle">No other image tags</div>
+            ) : (
+              filtered.map((m) => (
+                <button
+                  key={`${m.name}::${m.context_hash}`}
+                  type="button"
+                  onClick={() => { onSelect(m.name, m.context_hash); setOpen(false); }}
+                  className={`mono block w-full truncate px-3 py-1.5 text-left text-xs hover:bg-bg-hover ${
+                    selected === m.name ? "text-accent" : "text-fg-muted hover:text-fg"
+                  }`}
+                >
+                  {m.name}
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function ImageGalleryCard({ runId, metric, extraSeries, controlledSeries }: Props) {
   const extraSeriesKey = useMemo(
@@ -693,7 +813,9 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     `contrast(${1 + settings.contrast})`,
   ].join(" ");
 
-  const transformStr = `translate(${settings.pan.x}px, ${settings.pan.y}px) scale(${settings.zoom})`;
+  // Only apply transform when zoomed/panned — at defaults, let object-contain handle fitting
+  const isDefaultView = settings.zoom === 1 && settings.pan.x === 0 && settings.pan.y === 0;
+  const transformStr = isDefaultView ? "none" : `translate(${settings.pan.x}px, ${settings.pan.y}px) scale(${settings.zoom})`;
 
   // -----------------------------------------------------------------------
   // Single-image zoom/pan (disabled in multi-pane)
@@ -736,7 +858,6 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
 
   // Callback ref: attach wheel listener + ResizeObserver when element mounts
   const setContainerRef = useCallback((el: HTMLDivElement | null) => {
-    // Detach from previous element
     if (containerRef.current) {
       containerRef.current.removeEventListener("wheel", (containerRef.current as any).__cairnWheel);
       roRef.current?.disconnect();
@@ -746,7 +867,6 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
       const handler = (e: WheelEvent) => wheelHandlerRef.current?.(e);
       (el as any).__cairnWheel = handler;
       el.addEventListener("wheel", handler, { passive: false });
-      // ResizeObserver for auto-height
       const ro = new ResizeObserver((entries) => {
         for (const entry of entries) setContainerWidth(entry.contentRect.width);
       });
@@ -851,25 +971,30 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     return () => { cancelled = true; };
   }, [singleUseFalseColor, singleArtifactHash, settings.colormap]);
 
-  // Auto-height: compute from first image's aspect ratio so images fill panes.
-  const [imageAspect, setImageAspect] = useState<number | null>(null); // h/w
-  const [containerWidth, setContainerWidth] = useState(0);
+  // Track image natural aspect ratio (h/w) from first loaded image
+  const [imageAspect, setImageAspect] = useState<number | null>(null);
   const onImageNaturalSize = useCallback((w: number, h: number) => {
     setImageAspect((prev) => prev ?? h / w);
   }, []);
 
+  // Track container width for auto-height calculation
+  const [containerWidth, setContainerWidth] = useState(0);
 
-  // When no user-set height and we know the aspect, compute ideal height.
-  const autoHeight = useMemo(() => {
-    if (settings.height != null) return undefined; // user has set a height
-    if (!imageAspect || containerWidth <= 0) return "24rem"; // fallback before image loads
+  // Compute viewport height from container width + image aspect ratio
+  // so the viewport matches the image proportions
+  const autoHeight = useMemo((): string | undefined => {
+    if (settings.height != null) return undefined; // user-set height
+    if (!imageAspect || containerWidth <= 0) return "20rem"; // before image loads
     const n = effectiveMetrics.length;
-    // Each pane gets containerWidth / n. Compute height to fit image aspect.
-    const paneWidth = containerWidth / Math.max(1, n);
-    const imgHeight = paneWidth * imageAspect;
-    // Add space for pane header (~24px) + padding.
-    const total = Math.round(Math.min(1200, Math.max(150, imgHeight + 24)));
-    return `${total}px`;
+    // How many columns will SplitPane use? It wraps at minPaneWidth=200
+    const cols = Math.min(n, Math.max(1, Math.floor(containerWidth / 200)));
+    const rows = Math.ceil(n / cols);
+    const paneWidth = containerWidth / cols;
+    // Height per row = pane width * image aspect + pane header (24px)
+    const rowHeight = paneWidth * imageAspect + 24;
+    // Clamp: at least 120px, at most 500px per row
+    const clampedRow = Math.max(120, Math.min(500, rowHeight));
+    return `${Math.round(rows * clampedRow)}px`;
   }, [settings.height, imageAspect, containerWidth, effectiveMetrics.length]);
 
   // First series' points for subtitle
@@ -883,10 +1008,25 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
 
   const anyLoading = queries.some((q) => q.isLoading);
 
-  // Baseline hash for diff
+  // External baseline: fetch image from a different metric tag
+  const extBase = settings.externalBaseline;
+  const extBaseRid = extBase?.runId ?? runId;
+  const extBaseName = extBase?.name ?? "";
+  const extBaseCtx = extBase?.context_hash ?? "";
+  const extBaseQuery = useSequence(extBaseRid, extBaseName, {
+    context: extBaseCtx || undefined,
+    maxPoints: 500,
+  });
+  const extBasePoints = useMemo(() => {
+    if (!extBase || !extBaseQuery.data) return [];
+    return (extBaseQuery.data.points ?? []).filter((p: SequencePoint) => p.artifact_hash);
+  }, [extBase, extBaseQuery.data]);
+
+  // Baseline hash for diff — external baseline takes priority
   const baselineIdx = settings.baselineIndex;
-  const baselineHash =
-    baselineIdx != null
+  const baselineHash = extBase
+    ? extBasePoints[Math.min(safeIdx, Math.max(0, extBasePoints.length - 1))]?.artifact_hash ?? undefined
+    : baselineIdx != null
       ? perSeriesPoints[baselineIdx]?.[safeIdx]?.artifact_hash ?? undefined
       : undefined;
 
@@ -1002,7 +1142,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
             onPointerCancel={onPointerUp}
           >
           {(settings.colormap ?? "none") !== "none" && (
-            <Colorbar colormap={settings.colormap as Exclude<Colormap, "none">} />
+            <Colorbar colormap={settings.colormap as Exclude<Colormap, "none">} isDiff={settings.diffMode !== "none" && settings.baselineIndex != null} />
           )}
           {isMulti ? (
             /* ---------- Multi-pane layout ---------- */
@@ -1062,7 +1202,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
               }}
             >
               <div
-                className="relative max-h-full max-w-full"
+                className="relative w-full h-full"
                 style={{ transform: transformStr, transformOrigin: "center center" }}
               >
               {firstCurrent?.artifact_hash ? (
@@ -1071,7 +1211,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                     {!singleFCReady && <span className="text-xs text-fg-muted motion-safe:animate-pulse">applying colormap...</span>}
                     <canvas
                       ref={singleFCRef}
-                      className="max-h-full max-w-full object-contain block"
+                      className="w-full h-full object-contain block"
                       style={{
                         display: singleFCReady ? "block" : "none",
                         imageRendering: settings.interpolation === "auto" ? undefined : settings.interpolation,
@@ -1082,7 +1222,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                   <img
                     src={api.artifactUrl(firstCurrent.artifact_hash)}
                     alt={`${metric.name} @ step ${firstCurrent.step}`}
-                    className="max-h-full max-w-full object-contain block"
+                    className="w-full h-full object-contain block"
                     draggable={false}
                     style={{
                       filter: filterStr,
@@ -1339,27 +1479,55 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
               onChange={(v) => updateSettings({ showAxes: v })}
               description="Show pixel coordinate ticks along edges"
             />
-            {isMulti && (
-              <>
-                <h4 className="text-xs uppercase tracking-wide text-fg-muted mt-4 mb-2">
-                  Diff
-                </h4>
-                <Select
-                  label="Diff mode"
-                  value={settings.diffMode}
-                  onChange={(v) => updateSettings({ diffMode: v })}
-                  options={[
-                    { value: "none" as const, label: "None" },
-                    { value: "signed" as const, label: "Signed Error" },
-                    { value: "absolute" as const, label: "Absolute Error" },
-                    { value: "squared" as const, label: "Squared Error" },
-                    { value: "relative_signed" as const, label: "Relative Signed" },
-                    { value: "relative_absolute" as const, label: "Relative Absolute" },
-                    { value: "relative_squared" as const, label: "Relative Squared" },
-                  ]}
-                />
-              </>
-            )}
+            <h4 className="text-xs uppercase tracking-wide text-fg-muted mt-4 mb-2">
+              Diff
+            </h4>
+            <Select
+              label="Diff mode"
+              value={settings.diffMode}
+              onChange={(v) => updateSettings({ diffMode: v })}
+              options={[
+                { value: "none" as const, label: "None" },
+                { value: "signed" as const, label: "Signed Error" },
+                { value: "absolute" as const, label: "Absolute Error" },
+                { value: "squared" as const, label: "Squared Error" },
+                { value: "relative_signed" as const, label: "Relative Signed" },
+                { value: "relative_absolute" as const, label: "Relative Absolute" },
+                { value: "relative_squared" as const, label: "Relative Squared" },
+              ]}
+            />
+            <div className="mt-2">
+              <label className="block text-[10px] uppercase tracking-wide text-fg-muted mb-1">
+                Reference source
+              </label>
+              {settings.externalBaseline ? (
+                <div className="flex items-center gap-1 rounded border border-accent/40 bg-accent/5 px-2 py-1 text-xs text-fg-muted">
+                  <span className="mono truncate flex-1">{settings.externalBaseline.name}</span>
+                  <button
+                    type="button"
+                    onClick={() => updateSettings({ externalBaseline: undefined, baselineIndex: undefined, diffMode: settings.diffMode === "none" ? "none" : settings.diffMode })}
+                    className="text-fg-subtle hover:text-fg shrink-0"
+                    title="Remove external reference"
+                  >{"\u00D7"}</button>
+                </div>
+              ) : (
+                <p className="text-[10px] text-fg-subtle mb-1">
+                  {isMulti ? "Click \u2605 on a pane, or select a tag below." : "Select a tag below."}
+                </p>
+              )}
+              <ExternalBaselinePicker
+                runId={runId}
+                currentMetricName={metric.name}
+                selected={settings.externalBaseline?.name}
+                onSelect={(name, ctx) => {
+                  updateSettings({
+                    externalBaseline: { name, context_hash: ctx },
+                    baselineIndex: undefined,
+                    diffMode: settings.diffMode === "none" ? "absolute" : settings.diffMode,
+                  });
+                }}
+              />
+            </div>
             <button
               type="button"
               className="btn w-full mt-2"
@@ -1449,17 +1617,18 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                     padding: settings.showAxes && singleNaturalDims ? "16px 4px 4px 28px" : "8px",
                   }}
                 >
-                  <div className="relative max-h-full max-w-full">
+                  <div
+                    className="relative w-full h-full"
+                    style={{ transform: transformStr, transformOrigin: "center center" }}
+                  >
                     {firstCurrent?.artifact_hash ? (
                       <img
                         src={api.artifactUrl(firstCurrent.artifact_hash)}
                         alt={`${metric.name} @ step ${firstCurrent.step}`}
-                        className="max-h-full max-w-full object-contain block"
+                        className="w-full h-full object-contain block"
                         draggable={false}
                         style={{
                           filter: filterStr,
-                          transform: transformStr,
-                          transformOrigin: "center center",
                           imageRendering: settings.interpolation === "auto" ? undefined : settings.interpolation,
                         }}
                       />

@@ -194,7 +194,7 @@ function FigurePane({
 
   const mergedLayout = useMemo(() => {
     const base = (sourceQ.data?.layout ?? {}) as Record<string, unknown>;
-    return {
+    const layout: Record<string, unknown> = {
       ...base,
       ...DARK_LAYOUT,
       font: { ...((base.font as object) ?? {}), ...(DARK_LAYOUT.font as object) },
@@ -202,6 +202,10 @@ function FigurePane({
       dragmode: settings.dragMode === "none" ? false : settings.dragMode,
       showlegend: settings.showLegend,
     };
+    // Remove fixed dimensions so Plotly uses container size with autosize
+    delete layout.width;
+    delete layout.height;
+    return layout;
   }, [sourceQ.data, settings.hoverMode, settings.dragMode, settings.showLegend]);
 
   // Plotly zoom/pan only while Alt is held (consistent with scalar plots).
@@ -457,7 +461,7 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
 
   const mergedLayout = useMemo(() => {
     const base = (sourceQ.data?.layout ?? {}) as Record<string, unknown>;
-    return {
+    const layout: Record<string, unknown> = {
       ...base,
       ...DARK_LAYOUT,
       font: { ...((base.font as object) ?? {}), ...(DARK_LAYOUT.font as object) },
@@ -465,6 +469,10 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
       dragmode: settings.dragMode === "none" ? false : settings.dragMode,
       showlegend: settings.showLegend,
     };
+    // Remove fixed dimensions so Plotly uses container size with autosize
+    delete layout.width;
+    delete layout.height;
+    return layout;
   }, [sourceQ.data, settings.hoverMode, settings.dragMode, settings.showLegend]);
 
   // Plotly zoom/pan only while Alt is held (consistent with scalar plots).
@@ -510,8 +518,35 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
 
   const isMulti = effectiveMetrics.length > 1;
 
+  // Measure card width for auto-sizing figure height
+  const [cardWidth, setCardWidth] = useState(0);
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = cardRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) setCardWidth(entry.contentRect.width);
+    });
+    ro.observe(el);
+    setCardWidth(el.getBoundingClientRect().width);
+    return () => ro.disconnect();
+  }, []);
+
+  // Auto-height for figure containers: 3:4 aspect (width:height = 4:3)
+  const figAutoHeight = useMemo(() => {
+    if (settings.height) return undefined;
+    if (cardWidth <= 0) return "320px";
+    // For multi-pane, use pane width not card width
+    const n = effectiveMetrics.length;
+    const paneW = isMulti ? cardWidth / Math.max(1, n) : cardWidth;
+    // 4:3 landscape ratio, clamped 200-500px
+    const h = Math.max(200, Math.min(500, Math.round(paneW * 0.75)));
+    return `${h}px`;
+  }, [settings.height, cardWidth, effectiveMetrics.length, isMulti]);
+
   return (
     <div
+      ref={cardRef}
       className={`card p-4 flex flex-col${dropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
       style={{
         height: settings.collapsed ? undefined : (settings.height ?? undefined),
@@ -578,7 +613,7 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
       {!settings.collapsed && (<>
       {isMulti ? (
         <>
-          <div className="flex-1 min-h-0" style={{ height: settings.height ? undefined : "320px" }}>
+          <div className="flex-1 min-h-0" style={{ height: settings.height ? undefined : figAutoHeight }}>
           <SplitPane
             widths={settings.paneWidths ?? Array(effectiveMetrics.length).fill(1 / effectiveMetrics.length)}
             onWidthsChange={(w) => updateSettings({ paneWidths: w })}
@@ -673,7 +708,7 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
       ) : current?.artifact_hash ? (
         <>
           {showPlotly ? (
-            <div className={`rounded bg-bg${settings.height ? " flex-1 min-h-0" : ""}`} style={{ height: settings.height ? undefined : "320px" }}>
+            <div className={`rounded${settings.height ? " flex-1 min-h-0" : ""}`} style={{ height: settings.height ? undefined : figAutoHeight }}>
               <Plot
                 data={(sourceQ.data?.data ?? []) as Plotly.Data[]}
                 layout={mergedLayout as Partial<Plotly.Layout>}

@@ -290,10 +290,12 @@ def ui_cmd(
 
     repo = _ensure_repo(repo or _default_repo())
     dd = DataDir(repo)
+    has_lock = False
     try:
-        # Record the UI port in the lock so an SDK Run(repo=...) on the same
+        # Try to record the UI port in the lock so an SDK Run(repo=...) on the same
         # repo can auto-switch to HTTP mode instead of erroring on the lock.
         dd.acquire_lock("ui", host="127.0.0.1", port=port)
+        has_lock = True
     except RepoLockedError as exc:
         holder = exc.holder
         if holder.get("mode") == "server":
@@ -302,9 +304,13 @@ def ui_cmd(
                 "Open its UI URL in your browser instead of starting another one.",
                 err=True,
             )
-        else:
-            click.echo(f"ERROR: {exc}", err=True)
-        sys.exit(1)
+            sys.exit(1)
+        # For SDK or other locks, run in read-only mode alongside.
+        click.echo(
+            f"  Note: repo is locked by {holder.get('mode', '?')} (pid={holder.get('pid', '?')}). "
+            f"Running UI in read-only mode.\n",
+            err=True,
+        )
 
     db = Database.open(dd.db_path)
     blobs = BlobStore(dd.artifacts_dir)
@@ -335,7 +341,8 @@ def ui_cmd(
         uv_server.run()
     finally:
         db.close()
-        dd.release_lock()
+        if has_lock:
+            dd.release_lock()
 
 
 # ---------- client commands -------------------------------------------------

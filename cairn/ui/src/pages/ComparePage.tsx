@@ -3,7 +3,6 @@ import { useParams, useSearchParams } from "react-router-dom";
 import AddCardModal, { type AddCardSelection } from "../components/AddCardModal";
 import CardRenderer from "../components/CardRenderer";
 import SmartComparisonWizard from "../components/SmartComparisonWizard";
-import DraggableCard from "../components/DraggableCard";
 import ParallelCoordsCard from "../components/ParallelCoordsCard";
 import ScatterPlotCard from "../components/ScatterPlotCard";
 import {
@@ -17,11 +16,17 @@ import {
   type ComparisonCard,
 } from "../lib/comparisons";
 import { formatRelative } from "../lib/format";
+import { useRuns } from "../api/hooks";
 import SettingsPopover from "../components/SettingsPopover";
 import type { SequenceMeta } from "../api/types";
 
 export default function ComparePage() {
   const { projectId } = useParams<{ projectId: string }>();
+  const runsQ = useRuns({ project: projectId, limit: 200 });
+  const allProjectRunIds = useMemo(
+    () => (runsQ.data?.runs ?? []).map((r) => r.id),
+    [runsQ.data],
+  );
   const [searchParams, setSearchParams] = useSearchParams();
   const { comparisons, refresh } = useComparisons(projectId ?? "");
 
@@ -159,6 +164,7 @@ export default function ComparePage() {
             {selected ? (
               <ComparisonView
                 comparison={selected}
+                allProjectRunIds={allProjectRunIds}
                 onRename={(name) => handleRename(selected.id, name)}
                 onDelete={() => handleDelete(selected.id)}
                 onRemoveCard={(cardId) => handleRemoveCard(selected.id, cardId)}
@@ -394,6 +400,7 @@ function SidebarRow({
 
 interface ComparisonViewProps {
   comparison: Comparison;
+  allProjectRunIds: string[];
   onRename: (name: string) => void;
   onDelete: () => void;
   onRemoveCard: (cardId: string) => void;
@@ -402,6 +409,7 @@ interface ComparisonViewProps {
 
 function ComparisonView({
   comparison,
+  allProjectRunIds,
   onRename,
   onDelete,
   onRemoveCard,
@@ -485,7 +493,8 @@ function ComparisonView({
       <AddCardModal
         open={addCardOpen}
         onClose={() => setAddCardOpen(false)}
-        runIds={compRunIds}
+        runIds={compRunIds.length > 0 ? compRunIds : allProjectRunIds}
+
         onAdd={onAddCard}
       />
 
@@ -496,19 +505,12 @@ function ComparisonView({
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           {comparison.cards.map((card) => (
-            <DraggableCard
-              key={card.id}
-              cardKey={card.id}
-              section="comparison"
-              onDragStart={() => {}}
-              onDragEnd={() => {}}
-            >
               <ComparisonCardRenderer
+                key={card.id}
                 card={card}
                 comparisonId={comparison.id}
                 onRemove={() => onRemoveCard(card.id)}
               />
-            </DraggableCard>
           ))}
         </div>
       )}
@@ -583,7 +585,6 @@ function ComparisonCardRenderer({
   };
 
   return (
-    <div>
       <CardRenderer
         runId={primary.runId}
         metric={seedMetric}
@@ -596,7 +597,6 @@ function ComparisonCardRenderer({
           contextHash: "",
         }}
       />
-    </div>
   );
 }
 

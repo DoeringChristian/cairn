@@ -76,6 +76,7 @@ interface ScalarSettings {
   yRange: [number | null, number | null];
   smoothing: number;
   outlierPct: [number, number];
+  lineType: "linear" | "monotone" | "step" | "stepBefore" | "stepAfter";
   showLegend: boolean;
   tooltip: { showContext: boolean; showWallTime: boolean };
   promotedSeries: Record<string, PromotedSeriesConfig>;
@@ -100,6 +101,7 @@ const DEFAULT_SCALAR_SETTINGS = (seed: {
   yRange: [null, null],
   smoothing: 0,
   outlierPct: [0, 100],
+  lineType: "linear",
   showLegend: true,
   tooltip: { showContext: true, showWallTime: true },
   promotedSeries: {},
@@ -1273,6 +1275,19 @@ export default function ScalarPlotCard({
         />
       </div>
 
+      <Select
+        label="Line type"
+        value={settings.lineType ?? "linear"}
+        onChange={(v) => updateSettings({ lineType: v })}
+        options={[
+          { value: "linear" as const, label: "Linear" },
+          { value: "monotone" as const, label: "Monotone (smooth)" },
+          { value: "step" as const, label: "Step" },
+          { value: "stepBefore" as const, label: "Step before" },
+          { value: "stepAfter" as const, label: "Step after" },
+        ]}
+      />
+
       <h4 className="text-xs uppercase tracking-wide text-fg-muted mt-4 mb-2">
         Smoothing
       </h4>
@@ -1450,7 +1465,7 @@ export default function ScalarPlotCard({
           {series.map((s) => (
             <Line
               key={s.key}
-              type="monotone"
+              type={settings.lineType ?? "linear"}
               name={s.label}
               dataKey={s.key}
               stroke={s.color}
