@@ -24,7 +24,7 @@ import { computeDiff, loadImageData, type DiffMode } from "../lib/image-diff";
 import CardDetailModal from "./CardDetailModal";
 import CardHeader from "./CardHeader";
 import CardResizeHandle from "./CardResizeHandle";
-import SeriesChip , { type SeriesRef } from "./SeriesChip";
+import SeriesChip , { CAIRN_SERIES_MIME, type SeriesRef } from "./SeriesChip";
 import SettingsPopover from "./SettingsPopover";
 import SplitPane from "./SplitPane";
 import Select from "./settings/Select";
@@ -239,10 +239,13 @@ function PixelAxes({
   naturalWidth,
   naturalHeight,
   zoom = 1,
+  containerRef,
 }: {
   naturalWidth: number;
   naturalHeight: number;
   zoom?: number;
+  /** Ref to the container that holds the image with object-contain */
+  containerRef?: React.RefObject<HTMLElement | null>;
 }) {
   const tickInterval = (dim: number) => {
     if (dim <= 32) return 4;
@@ -261,24 +264,50 @@ function PixelAxes({
   const yTicks: number[] = [];
   for (let y = 0; y <= naturalHeight; y += yInterval) yTicks.push(y);
 
-  // Counter-scale so text stays constant size regardless of zoom
   const counterScale = 1 / zoom;
   const fontSize = 8 * counterScale;
   const topOffset = -12 * counterScale;
   const leftOffset = -2 * counterScale;
 
+  // Compute rendered image bounds within the object-contain container
+  const el = containerRef?.current;
+  let imgLeft = 0, imgTop = 0, imgW = 0, imgH = 0;
+  if (el) {
+    const cw = el.clientWidth;
+    const ch = el.clientHeight;
+    const scaleX = cw / naturalWidth;
+    const scaleY = ch / naturalHeight;
+    const scale = Math.min(scaleX, scaleY);
+    imgW = naturalWidth * scale;
+    imgH = naturalHeight * scale;
+    imgLeft = (cw - imgW) / 2;
+    imgTop = (ch - imgH) / 2;
+  }
+
+  // Use computed bounds if available, else fall back to percentage
+  const useBounds = el && imgW > 0;
+
   return (
     <>
       {/* Top axis */}
-      <div className="absolute top-0 left-0 right-0 flex justify-between px-0 text-fg-muted leading-none pointer-events-none select-none" style={{ transform: `translateY(${topOffset}px)`, fontSize }}>
+      <div className="absolute left-0 right-0 text-fg-muted leading-none pointer-events-none select-none" style={{ top: useBounds ? imgTop : 0, transform: `translateY(${topOffset}px)`, fontSize }}>
         {xTicks.map((x) => (
-          <span key={x} className="mono" style={{ position: "absolute", left: `${(x / naturalWidth) * 100}%`, transform: "translateX(-50%)" }}>{x}</span>
+          <span key={x} className="mono" style={{
+            position: "absolute",
+            left: useBounds ? imgLeft + (x / naturalWidth) * imgW : `${(x / naturalWidth) * 100}%`,
+            transform: "translateX(-50%)",
+          }}>{x}</span>
         ))}
       </div>
       {/* Left axis */}
-      <div className="absolute top-0 left-0 bottom-0 flex flex-col justify-between py-0 text-fg-muted leading-none pointer-events-none select-none" style={{ transform: `translateX(${leftOffset}px)`, fontSize }}>
+      <div className="absolute top-0 bottom-0 text-fg-muted leading-none pointer-events-none select-none" style={{ left: useBounds ? imgLeft : 0, transform: `translateX(${leftOffset}px)`, fontSize }}>
         {yTicks.map((y) => (
-          <span key={y} className="mono" style={{ position: "absolute", top: `${(y / naturalHeight) * 100}%`, transform: "translate(-100%, -50%)", paddingRight: `${3 * counterScale}px` }}>{y}</span>
+          <span key={y} className="mono" style={{
+            position: "absolute",
+            top: useBounds ? imgTop + (y / naturalHeight) * imgH : `${(y / naturalHeight) * 100}%`,
+            transform: "translate(-100%, -50%)",
+            paddingRight: `${3 * counterScale}px`,
+          }}>{y}</span>
         ))}
       </div>
     </>
@@ -311,12 +340,13 @@ function Colorbar({ colormap: cmap, isDiff }: { colormap: Exclude<Colormap, "non
     ctx.putImageData(img, 0, 0);
   }, [cmap]);
 
-  // Tick labels depend on whether this is a diff view or raw values
   const ticks = isDiff
     ? [
-        { pos: 0, label: "+max" },
-        { pos: 50, label: "0" },
-        { pos: 100, label: "\u2212max" },
+        { pos: 0, label: "1.0" },
+        { pos: 25, label: "0.5" },
+        { pos: 50, label: "0.0" },
+        { pos: 75, label: "\u22120.5" },
+        { pos: 100, label: "\u22121.0" },
       ]
     : [
         { pos: 0, label: "255" },
@@ -327,18 +357,22 @@ function Colorbar({ colormap: cmap, isDiff }: { colormap: Exclude<Colormap, "non
       ];
 
   return (
-    <div className="absolute right-1 top-2 bottom-2 flex items-stretch w-8 pointer-events-none z-10">
+    <div className="flex shrink-0 pl-1 w-14 py-1" style={{ height: "100%" }}>
       <canvas
         ref={canvasRef}
-        className="h-full w-2.5 rounded-sm shrink-0"
-        style={{ imageRendering: "auto" }}
+        className="rounded-sm shrink-0"
+        style={{ imageRendering: "auto", width: 10, height: "100%" }}
       />
-      <div className="relative flex-1 ml-0.5">
-        {ticks.map((t) => (
+      <div className="relative flex-1 ml-0.5" style={{ height: "100%" }}>
+        {ticks.map((t, i) => (
           <span
             key={t.pos}
             className="mono absolute text-[7px] text-fg-muted leading-none whitespace-nowrap"
-            style={{ top: `${t.pos}%`, transform: "translateY(-50%)" }}
+            style={{
+              top: `${t.pos}%`,
+              // First and last ticks: align to edge instead of centering
+              transform: i === 0 ? "none" : i === ticks.length - 1 ? "translateY(-100%)" : "translateY(-50%)",
+            }}
           >
             {t.label}
           </span>
@@ -387,6 +421,7 @@ function ImagePane({
 }: ImagePaneProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const falseColorRef = useRef<HTMLCanvasElement | null>(null);
+  const imgWrapperRef = useRef<HTMLDivElement | null>(null);
   const [diffReady, setDiffReady] = useState(false);
   const [falseColorReady, setFalseColorReady] = useState(false);
   const [naturalDims, setNaturalDims] = useState<{ w: number; h: number } | null>(null);
@@ -531,7 +566,7 @@ function ImagePane({
 
       {/* Image / diff canvas */}
       <div className="flex-1 min-h-0 min-w-0 flex items-center justify-center overflow-hidden rounded cairn-checkerboard" style={{ padding: showAxes && naturalDims ? "16px 4px 4px 28px" : "4px" }}>
-        <div className="relative w-full h-full" style={{ transform: transformStr, transformOrigin: "center center" }}>
+        <div ref={imgWrapperRef} className="relative w-full h-full" style={{ transform: transformStr, transformOrigin: "center center" }}>
           {!artifactHash ? (
             <span className="text-xs text-fg-muted">no image</span>
           ) : showDiff ? (
@@ -575,7 +610,7 @@ function ImagePane({
             />
           )}
           {showAxes && naturalDims && (
-            <PixelAxes naturalWidth={naturalDims.w} naturalHeight={naturalDims.h} zoom={zoomLevel} />
+            <PixelAxes naturalWidth={naturalDims.w} naturalHeight={naturalDims.h} zoom={zoomLevel} containerRef={imgWrapperRef} />
           )}
         </div>
       </div>
@@ -1021,6 +1056,30 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
   // -----------------------------------------------------------------------
   const canPan = altDown;
   const modified = isModified(settings);
+
+  // Drop handler: accept a dragged chip as external baseline reference
+  const [refDropHighlight, setRefDropHighlight] = useState(false);
+  const onRefDragOver = useCallback((e: React.DragEvent) => {
+    if (e.dataTransfer.types.includes(CAIRN_SERIES_MIME)) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "link";
+      setRefDropHighlight(true);
+    }
+  }, []);
+  const onRefDragLeave = useCallback(() => setRefDropHighlight(false), []);
+  const onRefDrop = useCallback((e: React.DragEvent) => {
+    setRefDropHighlight(false);
+    const raw = e.dataTransfer.getData(CAIRN_SERIES_MIME);
+    if (!raw) return;
+    try {
+      const ref = JSON.parse(raw) as { runId: string; name: string; context_hash: string };
+      updateSettings({
+        externalBaseline: { runId: ref.runId, name: ref.name, context_hash: ref.context_hash },
+        baselineIndex: undefined,
+        diffMode: settings.diffMode === "none" ? "absolute" : settings.diffMode,
+      });
+    } catch { /* ignore */ }
+  }, [updateSettings, settings.diffMode]);
   const [singleNaturalDims, setSingleNaturalDims] = useState<{ w: number; h: number } | null>(null);
   const singleFCRef = useRef<HTMLCanvasElement | null>(null);
   const [singleFCReady, setSingleFCReady] = useState(false);
@@ -1228,20 +1287,22 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
         <>
           <div
             ref={setContainerRef}
-            className={`relative min-h-0 flex flex-col overflow-hidden${settings.height != null ? " flex-1" : ""}`}
+            className={`relative min-h-0 flex flex-col overflow-hidden${settings.height != null ? " flex-1" : ""}${refDropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
             style={{
               height: settings.height == null ? autoHeight : undefined,
               cursor: canPan ? "move" : "default",
               touchAction: canPan ? "none" : undefined,
             }}
+            onDragOver={onRefDragOver}
+            onDragLeave={onRefDragLeave}
+            onDrop={onRefDrop}
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}
             onPointerCancel={onPointerUp}
           >
-          {(settings.colormap ?? "none") !== "none" && (
-            <Colorbar colormap={settings.colormap as Exclude<Colormap, "none">} isDiff={settings.diffMode !== "none" && settings.baselineIndex != null} />
-          )}
+          <div className="flex flex-1 min-h-0">
+          <div className="flex-1 min-w-0 min-h-0 flex flex-col">
           {isMulti ? (
             /* ---------- Multi-pane layout ---------- */
             <SplitPane
@@ -1342,6 +1403,12 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
               </div>
             </div>
           )}
+          </div>
+          {/* Colorbar — flex sibling to image area */}
+          {(settings.colormap ?? "none") !== "none" && (
+            <Colorbar colormap={settings.colormap as Exclude<Colormap, "none">} isDiff={settings.diffMode !== "none" && (settings.baselineIndex != null || settings.externalBaseline != null)} />
+          )}
+          </div>
           </div>
 
           {/* Shared step slider */}
