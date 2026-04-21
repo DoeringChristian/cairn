@@ -701,6 +701,8 @@ export default function ScalarPlotCard({
   // handlers are React synthetic — pan uses pointer capture on the container.
   // -------------------------------------------------------------------------
   const chartBoxRef = useRef<HTMLDivElement | null>(null);
+  // Recharts' actual plot area offset, captured from <Customized>.
+  const plotOffsetRef = useRef<{ top: number; left: number; width: number; height: number } | null>(null);
 
   const effectiveRef = useRef({ x: effectiveX, y: effectiveY });
   effectiveRef.current = { x: effectiveX, y: effectiveY };
@@ -801,10 +803,12 @@ export default function ScalarPlotCard({
       const el = chartBoxRef.current;
       if (!el) return;
       const rect = el.getBoundingClientRect();
-      const plotLeft = rect.left + CHART_MARGIN.left + 46;
-      const plotRight = rect.right - dynamicMargin.right;
-      const plotTop = rect.top + CHART_MARGIN.top;
-      const plotBottom = rect.bottom - CHART_MARGIN.bottom - 20;
+      // Use Recharts' actual plot area if available (from <Customized> offset)
+      const po = plotOffsetRef.current;
+      const plotLeft = po ? rect.left + po.left : rect.left + CHART_MARGIN.left + 50;
+      const plotRight = po ? rect.left + po.left + po.width : rect.right - dynamicMargin.right;
+      const plotTop = po ? rect.top + po.top : rect.top + CHART_MARGIN.top;
+      const plotBottom = po ? rect.top + po.top + po.height : rect.bottom - CHART_MARGIN.bottom - 28;
       if (
         e.clientX < plotLeft ||
         e.clientX > plotRight ||
@@ -1491,6 +1495,8 @@ export default function ScalarPlotCard({
                 };
                 const o = p.offset;
                 if (!o || o.width == null || o.height == null) return null;
+                // Store for drag-zoom calculations
+                plotOffsetRef.current = { top: o.top ?? 0, left: o.left ?? 0, width: o.width, height: o.height };
                 if (promotedKeysOrdered.length === 0) return null;
                 const top = o.top ?? 0;
                 const height = o.height;

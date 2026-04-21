@@ -73,6 +73,7 @@ interface FigureSettings {
   hoverMode: HoverMode;
   dragMode: DragMode;
   showLegend: boolean;
+  viewportSize?: { w: number; h: number };
 }
 
 const DEFAULT_FIGURE_SETTINGS = (seed: {
@@ -534,24 +535,23 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
     return () => ro.disconnect();
   }, []);
 
-  // Auto-height for figure containers: 3:4 aspect (width:height = 4:3)
-  const figAutoHeight = useMemo(() => {
-    if (settings.height) return undefined;
-    if (cardWidth <= 0) return "320px";
+  // Auto-height for figure containers
+  const { figAutoHeight, figRowHeight } = useMemo(() => {
+    if (settings.height) return { figAutoHeight: undefined, figRowHeight: undefined };
+    if (cardWidth <= 0) return { figAutoHeight: "320px", figRowHeight: undefined };
     if (!isMulti) {
-      // Single figure: 4:3 ratio of card width, clamped
-      return `${Math.max(200, Math.min(500, Math.round(cardWidth * 0.75)))}px`;
+      const h = Math.max(200, Math.min(500, Math.round(cardWidth * 0.75)));
+      return { figAutoHeight: `${h}px`, figRowHeight: undefined };
     }
     const n = effectiveMetrics.length;
-    // Match SplitPane's grid breakpoint (minPaneWidth default = 200)
     const minPaneW = 200;
     const cols = Math.min(n, Math.max(1, Math.floor(cardWidth / minPaneW)));
     const rows = Math.ceil(n / cols);
     const paneW = cardWidth / cols;
-    // 4:3 landscape ratio per row, clamped 150-400px per row
+    // 4:3 landscape ratio per row
     const rowH = Math.max(150, Math.min(400, Math.round(paneW * 0.75)));
-    // Cap total at 800px — overflow will scroll
-    return `${Math.min(800, rows * rowH)}px`;
+    const total = Math.min(800, rows * rowH);
+    return { figAutoHeight: `${total}px`, figRowHeight: `${rowH}px` };
   }, [settings.height, cardWidth, effectiveMetrics.length, isMulti]);
 
   return (
@@ -617,20 +617,55 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
       {isMulti ? (
         <>
           <div ref={figContainerRef} className="flex-1 min-h-0 overflow-auto" style={{ height: settings.height ? undefined : figAutoHeight }}>
-          <SplitPane
-            widths={settings.paneWidths ?? Array(effectiveMetrics.length).fill(1 / effectiveMetrics.length)}
-            onWidthsChange={(w) => updateSettings({ paneWidths: w })}
+          <div
+            className="grid gap-1 h-full"
+            style={{
+              gridTemplateColumns: settings.viewportSize
+                ? `repeat(auto-fill, ${settings.viewportSize.w}px)`
+                : `repeat(auto-fill, minmax(200px, 1fr))`,
+              gridAutoRows: settings.viewportSize ? `${settings.viewportSize.h}px` : (figRowHeight ?? "1fr"),
+            }}
           >
-            {effectiveMetrics.map((m) => (
-              <FigurePane
-                key={seriesKey(m)}
-                runId={runId}
-                m={m}
-                stepIdx={safeIdx}
-                settings={settings}
-              />
+            {effectiveMetrics.map((m, idx) => (
+              <div key={seriesKey(m)} className="relative overflow-hidden" style={settings.viewportSize ? { width: settings.viewportSize.w, height: settings.viewportSize.h } : undefined}>
+                <FigurePane
+                  runId={runId}
+                  m={m}
+                  stepIdx={safeIdx}
+                  settings={settings}
+                />
+                {idx === 0 && (
+                  <div
+                    className="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize flex items-end justify-end text-fg-muted hover:text-fg z-10"
+                    style={{ touchAction: "none" }}
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+                      const startX = e.clientX;
+                      const startY = e.clientY;
+                      const pEl = e.currentTarget.parentElement!;
+                      const startW = settings.viewportSize?.w ?? pEl.getBoundingClientRect().width;
+                      const startH = settings.viewportSize?.h ?? pEl.getBoundingClientRect().height;
+                      const onMove = (ev: PointerEvent) => {
+                        const w = Math.max(80, Math.round(startW + (ev.clientX - startX)));
+                        const h = Math.max(80, Math.round(startH + (ev.clientY - startY)));
+                        updateSettings({ viewportSize: { w, h } });
+                      };
+                      const onUp = () => {
+                        window.removeEventListener("pointermove", onMove);
+                        window.removeEventListener("pointerup", onUp);
+                      };
+                      window.addEventListener("pointermove", onMove);
+                      window.addEventListener("pointerup", onUp);
+                    }}
+                  >
+                    <svg width="10" height="10" viewBox="0 0 10 10" className="pointer-events-none"><line x1="9" y1="1" x2="1" y2="9" stroke="currentColor" strokeWidth="1.5"/><line x1="9" y1="5" x2="5" y2="9" stroke="currentColor" strokeWidth="1.5"/></svg>
+                  </div>
+                )}
+              </div>
             ))}
-          </SplitPane>
+          </div>
           </div>
           {maxStepCount > 1 && (
             <input
