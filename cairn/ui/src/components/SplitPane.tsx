@@ -54,7 +54,11 @@ export default function SplitPane({
     widthsProp.length === n ? widthsProp : Array<number>(n).fill(1 / n);
 
   // Decide layout mode: flex (side-by-side with handles) vs grid (wrapping).
-  const useGrid = containerWidth > 0 && containerWidth / n < minPaneWidth;
+  // Default to grid when width unknown and there are many panes, to avoid
+  // rendering all side-by-side on first frame.
+  const useGrid = containerWidth > 0
+    ? containerWidth / n < minPaneWidth
+    : n > 3;
 
   const handlePointerDown = useCallback(
     (handleIndex: number, startX: number) => {
@@ -102,16 +106,23 @@ export default function SplitPane({
 
   // --- Grid mode: auto-fill wrapping grid ---
   if (useGrid) {
+    // Compute how many columns the grid will use, to set row heights
+    const gridCols = containerWidth > 0
+      ? Math.max(1, Math.floor(containerWidth / minPaneWidth))
+      : Math.min(n, 3);
+    const gridRows = Math.ceil(n / gridCols);
     return (
       <div
         ref={measureRef}
-        className="grid h-full min-h-0 gap-1"
+        className="grid min-h-0 gap-1"
         style={{
           gridTemplateColumns: `repeat(auto-fill, minmax(${minPaneWidth}px, 1fr))`,
+          gridTemplateRows: `repeat(${gridRows}, 1fr)`,
+          height: "100%",
         }}
       >
         {children.map((child, i) => (
-          <div key={i} className="min-w-0 min-h-0 h-full overflow-hidden">
+          <div key={i} className="min-w-0 min-h-0 overflow-hidden">
             {child}
           </div>
         ))}

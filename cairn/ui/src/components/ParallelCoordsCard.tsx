@@ -399,27 +399,31 @@ export default function ParallelCoordsCard({
           </g>
         )}
 
-        {/* Tooltip */}
-        {hoveredRun && tooltipPos && (() => {
-          const row = rowData.find((r) => r.runId === hoveredRun);
-          if (!row) return null;
-          const run = runs?.find((r) => r.id === hoveredRun);
-          const label = run?.display_name ?? shortRunId(hoveredRun);
-          return (
-            <foreignObject x={tooltipPos.x + 12} y={tooltipPos.y - 10} width={200} height={200} style={{ overflow: "visible", pointerEvents: "none" }}>
-              <div className="rounded border border-border bg-bg-elevated shadow-lg p-2 text-xs w-fit max-w-[200px]" style={{ pointerEvents: "none" }}>
-                <div className="font-semibold mono mb-1 truncate">{label}</div>
-                {cols.map((col, ci) => (
-                  <div key={ci} className="flex justify-between gap-2">
-                    <span className="text-fg-muted truncate">{col.key}</span>
-                    <span className="mono shrink-0">{row.raw[ci] ?? "—"}</span>
-                  </div>
-                ))}
-              </div>
-            </foreignObject>
-          );
-        })()}
       </svg>
+    );
+  };
+
+  // Tooltip rendered as a plain div overlay (avoids foreignObject browser issues)
+  const renderTooltip = () => {
+    if (!hoveredRun || !tooltipPos) return null;
+    const row = rowData.find((r) => r.runId === hoveredRun);
+    if (!row) return null;
+    const run = runs?.find((r) => r.id === hoveredRun);
+    const label = run?.display_name ?? shortRunId(hoveredRun);
+    const cols = settings.columns;
+    return (
+      <div
+        className="absolute z-20 rounded border border-border bg-bg-elevated shadow-lg p-2 text-xs w-fit max-w-[220px] pointer-events-none"
+        style={{ left: tooltipPos.x + 14, top: tooltipPos.y - 8 }}
+      >
+        <div className="font-semibold mono mb-1 truncate">{label}</div>
+        {cols.map((col, ci) => (
+          <div key={ci} className="flex justify-between gap-2">
+            <span className="text-fg-muted truncate">{col.key}</span>
+            <span className="mono shrink-0">{row.raw[ci] ?? "—"}</span>
+          </div>
+        ))}
+      </div>
     );
   };
 
@@ -562,9 +566,10 @@ export default function ParallelCoordsCard({
         <>
           <div
             ref={containerRef}
-            className={`flex-1 min-h-0 rounded bg-bg${settings.height ? "" : " h-64"}`}
+            className={`relative rounded bg-bg${settings.height ? " flex-1 min-h-0" : " h-64"}`}
           >
             {size.w > 0 && size.h > 0 && renderPlot(size.w, size.h)}
+            {renderTooltip()}
           </div>
 
           <CardDetailModal

@@ -120,12 +120,15 @@ export default function ProjectPage() {
   const [addCardOpen, setAddCardOpen] = useState(false);
 
   const prevExtraCardsLenRef = useRef(extraCards.length);
-  const newCardAddedRef = useRef(false);
+  const newCardIdxRef = useRef<number | null>(null);
 
   const handleAddCard = useCallback((sel: AddCardSelection) => {
-    setExtraCards((prev) => [...prev, sel]);
-    newCardAddedRef.current = true;
-  }, []);
+    setExtraCards((prev) => {
+      // The new card will be at allCards index = cards.length + prev.length
+      newCardIdxRef.current = cards.length + prev.length;
+      return [...prev, sel];
+    });
+  }, [cards.length]);
 
   // Merge auto + extra cards
   const allCards = useMemo(() => {
@@ -166,27 +169,32 @@ export default function ProjectPage() {
     return result;
   }, [allCards]);
 
-  // Scroll to newly added card
+  // Scroll to newly added card and auto-open its settings
   useEffect(() => {
-    if (!newCardAddedRef.current) return;
+    if (newCardIdxRef.current == null) return;
     if (extraCards.length <= prevExtraCardsLenRef.current) {
       prevExtraCardsLenRef.current = extraCards.length;
       return;
     }
     prevExtraCardsLenRef.current = extraCards.length;
-    newCardAddedRef.current = false;
+    const targetIdx = newCardIdxRef.current;
+    newCardIdxRef.current = null;
 
-    // The new card is the last one in allCards. Use requestAnimationFrame
-    // to wait for DOM to update, then scroll to it.
     requestAnimationFrame(() => {
-      const grids = document.querySelectorAll("[data-cairn-card-grid]");
-      const lastGrid = grids[grids.length - 1];
-      if (lastGrid) {
-        const cards = lastGrid.children;
-        const lastCard = cards[cards.length - 1] as HTMLElement | undefined;
-        if (lastCard) {
-          lastCard.scrollIntoView({ behavior: "smooth", block: "center" });
-        }
+      const wrapper = document.querySelector(`[data-cairn-card-idx="${targetIdx}"]`);
+      // The wrapper uses display:contents, so find the actual .card element inside
+      const cardEl = wrapper?.querySelector(".card") as HTMLElement | null;
+      if (cardEl) {
+        cardEl.scrollIntoView({ behavior: "smooth", block: "center" });
+        setTimeout(() => {
+          const buttons = cardEl.querySelectorAll("button");
+          for (let i = buttons.length - 1; i >= 0; i--) {
+            if (buttons[i]!.textContent?.includes("\u2699")) {
+              buttons[i]!.click();
+              break;
+            }
+          }
+        }, 400);
       }
     });
   }, [extraCards.length]);
@@ -335,10 +343,11 @@ export default function ProjectPage() {
                 const card = allCards[cardIdx]!;
                 if (card.runs.length === 0) return null;
 
+                let content: React.ReactNode;
+
                 if (card.object_type === "parallel") {
-                  return (
+                  content = (
                     <ParallelCoordsCard
-                      key={`parallel::${cardIdx}`}
                       runIds={visibleRunIds}
                       runs={visibleRuns}
                       settingsKey={{
@@ -348,12 +357,9 @@ export default function ProjectPage() {
                       }}
                     />
                   );
-                }
-
-                if (card.object_type === "scatter") {
-                  return (
+                } else if (card.object_type === "scatter") {
+                  content = (
                     <ScatterPlotCard
-                      key={`scatter::${cardIdx}`}
                       runIds={visibleRunIds}
                       runs={visibleRuns}
                       settingsKey={{
@@ -363,36 +369,41 @@ export default function ProjectPage() {
                       }}
                     />
                   );
+                } else {
+                  const primary = card.runs[0]!;
+                  const seedMetric: SequenceMeta = {
+                    name: card.name,
+                    object_type: card.object_type,
+                    context: null,
+                    context_hash: primary.context_hash,
+                    min_step: 0,
+                    max_step: 0,
+                    count: 0,
+                  };
+                  const extra = card.runs.slice(1).map((r) => ({
+                    runId: r.runId,
+                    name: card.name,
+                    context_hash: r.context_hash,
+                  }));
+                  content = (
+                    <CardRenderer
+                      runId={primary.runId}
+                      metric={seedMetric}
+                      extraSeries={extra.length > 0 ? extra : undefined}
+                      controlledSeries
+                      settingsKeyOverride={{
+                        runId: `workspace:${projectId}`,
+                        metricName: card.name,
+                        contextHash: `${card.object_type}::${cardIdx}`,
+                      }}
+                    />
+                  );
                 }
 
-                const primary = card.runs[0]!;
-                const seedMetric: SequenceMeta = {
-                  name: card.name,
-                  object_type: card.object_type,
-                  context: null,
-                  context_hash: primary.context_hash,
-                  min_step: 0,
-                  max_step: 0,
-                  count: 0,
-                };
-                const extra = card.runs.slice(1).map((r) => ({
-                  runId: r.runId,
-                  name: card.name,
-                  context_hash: r.context_hash,
-                }));
                 return (
-                  <CardRenderer
-                    key={`${card.name}::${card.object_type}::${cardIdx}`}
-                    runId={primary.runId}
-                    metric={seedMetric}
-                    extraSeries={extra.length > 0 ? extra : undefined}
-                    controlledSeries
-                    settingsKeyOverride={{
-                      runId: `workspace:${projectId}`,
-                      metricName: card.name,
-                      contextHash: `${card.object_type}::${cardIdx}`,
-                    }}
-                  />
+                  <div key={`${card.name}::${card.object_type}::${cardIdx}`} data-cairn-card-idx={cardIdx} style={{ display: "contents" }}>
+                    {content}
+                  </div>
                 );
               })}
             </div>

@@ -115,6 +115,29 @@ export default function ComparePage() {
         })),
       });
       refresh();
+      // Scroll to new card and auto-open its settings
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          const grids = document.querySelectorAll(".grid.grid-cols-1");
+          const lastGrid = grids[grids.length - 1];
+          if (lastGrid) {
+            const cards = lastGrid.children;
+            const lastCard = cards[cards.length - 1] as HTMLElement | undefined;
+            if (lastCard) {
+              lastCard.scrollIntoView({ behavior: "smooth", block: "center" });
+              setTimeout(() => {
+                const buttons = lastCard.querySelectorAll("button");
+                for (let i = buttons.length - 1; i >= 0; i--) {
+                  if (buttons[i]!.textContent?.includes("\u2699")) {
+                    buttons[i]!.click();
+                    break;
+                  }
+                }
+              }, 400);
+            }
+          }
+        }, 100);
+      });
     },
     [projectId, refresh],
   );

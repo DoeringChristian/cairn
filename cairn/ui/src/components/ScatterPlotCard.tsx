@@ -374,7 +374,7 @@ export default function ScatterPlotCard({
 
       {!settings.collapsed && (
         <>
-          <div ref={containerRef} className={`flex-1 min-h-0 rounded bg-bg${settings.height ? "" : " h-64"}`}>
+          <div ref={containerRef} className={`rounded bg-bg${settings.height ? " flex-1 min-h-0" : " h-64"}`}>
             {size.w > 0 && size.h > 0 && renderPlot(size.w, size.h)}
           </div>
 

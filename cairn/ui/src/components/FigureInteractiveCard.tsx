@@ -536,12 +536,20 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
   const figAutoHeight = useMemo(() => {
     if (settings.height) return undefined;
     if (cardWidth <= 0) return "320px";
-    // For multi-pane, use pane width not card width
+    if (!isMulti) {
+      // Single figure: 4:3 ratio of card width, clamped
+      return `${Math.max(200, Math.min(500, Math.round(cardWidth * 0.75)))}px`;
+    }
     const n = effectiveMetrics.length;
-    const paneW = isMulti ? cardWidth / Math.max(1, n) : cardWidth;
-    // 4:3 landscape ratio, clamped 200-500px
-    const h = Math.max(200, Math.min(500, Math.round(paneW * 0.75)));
-    return `${h}px`;
+    // Match SplitPane's grid breakpoint (minPaneWidth default = 200)
+    const minPaneW = 200;
+    const cols = Math.min(n, Math.max(1, Math.floor(cardWidth / minPaneW)));
+    const rows = Math.ceil(n / cols);
+    const paneW = cardWidth / cols;
+    // 4:3 landscape ratio per row, clamped 150-400px per row
+    const rowH = Math.max(150, Math.min(400, Math.round(paneW * 0.75)));
+    // Cap total at 800px — overflow will scroll
+    return `${Math.min(800, rows * rowH)}px`;
   }, [settings.height, cardWidth, effectiveMetrics.length, isMulti]);
 
   return (
@@ -613,7 +621,7 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
       {!settings.collapsed && (<>
       {isMulti ? (
         <>
-          <div className="flex-1 min-h-0" style={{ height: settings.height ? undefined : figAutoHeight }}>
+          <div className="flex-1 min-h-0 overflow-auto" style={{ height: settings.height ? undefined : figAutoHeight }}>
           <SplitPane
             widths={settings.paneWidths ?? Array(effectiveMetrics.length).fill(1 / effectiveMetrics.length)}
             onWidthsChange={(w) => updateSettings({ paneWidths: w })}
