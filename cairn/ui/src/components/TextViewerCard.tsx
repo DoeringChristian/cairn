@@ -19,6 +19,7 @@ import Toggle from "./settings/Toggle";
 interface Props {
   runId: string;
   metric: SequenceMeta;
+  onRemove?: () => void;
 }
 
 interface TextSettings {
@@ -43,7 +44,7 @@ const FONT_SIZE_CLASS: Record<TextSettings["fontSize"], string> = {
   base: "text-base",
 };
 
-export default function TextViewerCard({ runId, metric }: Props) {
+export default function TextViewerCard({ runId, metric, onRemove }: Props) {
   const q = useSequence(runId, metric.name, {
     context: metric.context_hash || undefined,
     maxPoints: 200,
@@ -181,6 +182,17 @@ export default function TextViewerCard({ runId, metric }: Props) {
             title="Add to comparison"
           >
             {"\u002B"}
+          </button>
+        )}
+        {onRemove && (
+          <button
+            type="button"
+            onClick={onRemove}
+            className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
+            aria-label="Remove card"
+            title="Remove card"
+          >
+            {"\u00D7"}
           </button>
         )}
         <button

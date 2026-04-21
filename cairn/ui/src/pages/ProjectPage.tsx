@@ -117,6 +117,31 @@ export default function ProjectPage() {
       // ignore quota errors
     }
   }, [extraCards, extraCardsKey]);
+  // Hidden auto-generated cards (persisted)
+  const hiddenCardsKey = `cairn:workspace-hidden-cards:${projectId}`;
+  const [hiddenCards, setHiddenCards] = useState<Set<string>>(() => {
+    try {
+      const stored = localStorage.getItem(hiddenCardsKey);
+      return stored ? new Set(JSON.parse(stored)) : new Set();
+    } catch { return new Set(); }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(hiddenCardsKey, JSON.stringify([...hiddenCards])); } catch {}
+  }, [hiddenCards, hiddenCardsKey]);
+
+  const handleRemoveCard = useCallback((cardIdx: number) => {
+    const autoCardCount = cards.length;
+    if (cardIdx >= autoCardCount) {
+      // Extra card — remove from extraCards
+      const extraIdx = cardIdx - autoCardCount;
+      setExtraCards((prev) => prev.filter((_, i) => i !== extraIdx));
+    } else {
+      // Auto-generated card — hide it
+      const card = cards[cardIdx];
+      if (card) setHiddenCards((prev) => new Set(prev).add(`${card.name}::${card.object_type}`));
+    }
+  }, [cards]);
+
   const [addCardOpen, setAddCardOpen] = useState(false);
 
   const prevExtraCardsLenRef = useRef(extraCards.length);
@@ -130,10 +155,11 @@ export default function ProjectPage() {
     });
   }, [cards.length]);
 
-  // Merge auto + extra cards
+  // Merge auto + extra cards, filtering out hidden ones
   const allCards = useMemo(() => {
-    return [...cards, ...extraCards];
-  }, [cards, extraCards]);
+    const visible = cards.filter((c) => !hiddenCards.has(`${c.name}::${c.object_type}`));
+    return [...visible, ...extraCards];
+  }, [cards, extraCards, hiddenCards]);
 
   // Group allCards into sections, preserving duplicates with indices.
   const allSections = useMemo(() => {
@@ -345,6 +371,8 @@ export default function ProjectPage() {
 
                 let content: React.ReactNode;
 
+                const removeThis = () => handleRemoveCard(cardIdx);
+
                 if (card.object_type === "parallel") {
                   content = (
                     <ParallelCoordsCard
@@ -355,6 +383,7 @@ export default function ProjectPage() {
                         metricName: "parallel",
                         contextHash: `${cardIdx}`,
                       }}
+                      onRemove={removeThis}
                     />
                   );
                 } else if (card.object_type === "scatter") {
@@ -367,6 +396,7 @@ export default function ProjectPage() {
                         metricName: "scatter",
                         contextHash: `${cardIdx}`,
                       }}
+                      onRemove={removeThis}
                     />
                   );
                 } else {
@@ -391,6 +421,7 @@ export default function ProjectPage() {
                       metric={seedMetric}
                       extraSeries={extra.length > 0 ? extra : undefined}
                       controlledSeries
+                      onRemove={removeThis}
                       settingsKeyOverride={{
                         runId: `workspace:${projectId}`,
                         metricName: card.name,

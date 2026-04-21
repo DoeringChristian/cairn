@@ -33,6 +33,7 @@ interface Props {
   extraContexts?: SequenceMeta[];
   extraSeries?: ComparisonSeriesRef[];
   controlledSeries?: boolean;
+  onRemove?: () => void;
 }
 
 interface FigureMetadata {
@@ -270,7 +271,7 @@ function FigurePane({
   );
 }
 
-export default function FigureInteractiveCard({ runId, metric, extraContexts = [], extraSeries, controlledSeries }: Props) {
+export default function FigureInteractiveCard({ runId, metric, extraContexts = [], extraSeries, controlledSeries, onRemove }: Props) {
   const seedMetric = useMemo(
     () => ({ name: metric.name, context_hash: metric.context_hash }),
     [metric.name, metric.context_hash],
@@ -605,6 +606,17 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
             title="Add to comparison"
           >
             {"\u002B"}
+          </button>
+        )}
+        {onRemove && (
+          <button
+            type="button"
+            onClick={onRemove}
+            className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
+            aria-label="Remove card"
+            title="Remove card"
+          >
+            {"\u00D7"}
           </button>
         )}
         <button

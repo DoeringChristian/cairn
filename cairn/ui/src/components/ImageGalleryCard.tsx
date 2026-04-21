@@ -40,6 +40,7 @@ interface Props {
   metric: SequenceMeta;
   extraSeries?: ComparisonSeriesRef[];
   controlledSeries?: boolean;
+  onRemove?: () => void;
 }
 
 type Interpolation = "auto" | "pixelated" | "crisp-edges";
@@ -704,7 +705,7 @@ function ExternalBaselinePicker({
   );
 }
 
-export default function ImageGalleryCard({ runId, metric, extraSeries, controlledSeries }: Props) {
+export default function ImageGalleryCard({ runId, metric, extraSeries, controlledSeries, onRemove }: Props) {
   const extraSeriesKey = useMemo(
     () => (extraSeries ?? []).map((s) => `${s.runId}::${s.name}::${s.context_hash}`).sort().join("|"),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1214,6 +1215,17 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
             title="Add to comparison"
           >
             {"\u002B"}
+          </button>
+        )}
+        {onRemove && (
+          <button
+            type="button"
+            onClick={onRemove}
+            className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
+            aria-label="Remove card"
+            title="Remove card"
+          >
+            {"\u00D7"}
           </button>
         )}
         <button

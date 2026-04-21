@@ -53,7 +53,7 @@ export default function CardRenderer({
         />
       );
     case "image":
-      return <ImageGalleryCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} />;
+      return <ImageGalleryCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} onRemove={onRemove} />;
     case "figure":
       return (
         <Suspense
@@ -67,17 +67,17 @@ export default function CardRenderer({
             </div>
           }
         >
-          <FigureInteractiveCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} />
+          <FigureInteractiveCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} onRemove={onRemove} />
         </Suspense>
       );
     case "audio":
-      return <AudioPlayerCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} />;
+      return <AudioPlayerCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} onRemove={onRemove} />;
     case "video":
-      return <VideoPlayerCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} />;
+      return <VideoPlayerCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} onRemove={onRemove} />;
     case "histogram":
-      return <HistogramCard {...baseProps} />;
+      return <HistogramCard {...baseProps} onRemove={onRemove} />;
     case "text":
-      return <TextViewerCard {...baseProps} />;
+      return <TextViewerCard {...baseProps} onRemove={onRemove} />;
     default:
       return (
         <div className="card p-4 text-sm text-fg-muted">
