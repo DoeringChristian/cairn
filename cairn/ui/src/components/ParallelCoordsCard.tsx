@@ -23,7 +23,7 @@ interface ParallelSettings {
   title?: string;
   collapsed?: boolean;
   height?: number;
-  fullWidth?: boolean;
+  colSpan?: number;
   /** Column definitions: each is either a param key or a scalar metric name. */
   columns: Array<{ key: string; source: "param" | "metric"; log?: boolean; invert?: boolean }>;
 }
@@ -530,7 +530,7 @@ export default function ParallelCoordsCard({
       style={{
         height: settings.collapsed ? undefined : (settings.height ?? undefined),
         position: "relative",
-        gridColumn: settings.fullWidth ? "1 / -1" : undefined,
+        gridColumn: (settings.colSpan ?? 1) > 1 ? `span ${settings.colSpan}` : undefined,
       }}
     >
       <CardHeader
@@ -570,8 +570,8 @@ export default function ParallelCoordsCard({
       <CardResizeHandle
         height={settings.height}
         onHeightChange={(h) => updateSettings({ height: h })}
-        fullWidth={settings.fullWidth ?? false}
-        onFullWidthToggle={() => updateSettings({ fullWidth: !settings.fullWidth })}
+        colSpan={settings.colSpan ?? 1}
+        onColSpanChange={(s) => updateSettings({ colSpan: s })}
       />
     </div>
   );

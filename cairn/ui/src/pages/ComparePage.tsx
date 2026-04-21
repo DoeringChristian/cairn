@@ -652,7 +652,7 @@ function ComparisonView({
           No cards yet. Click "Add card" to pick metrics from the comparison's runs.
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
           {comparison.cards.map((card) => (
               <ComparisonCardRenderer
                 key={card.id}

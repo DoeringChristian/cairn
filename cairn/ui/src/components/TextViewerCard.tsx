@@ -27,7 +27,7 @@ interface TextSettings {
   title?: string;
   collapsed?: boolean;
   height?: number;
-  fullWidth?: boolean;
+  colSpan?: number;
   fontSize: "xs" | "sm" | "base";
   wordWrap: boolean;
 }
@@ -162,7 +162,7 @@ export default function TextViewerCard({ runId, metric, onRemove }: Props) {
   );
 
   return (
-    <div className="card p-4 flex flex-col" style={{ height: settings.collapsed ? undefined : (settings.height ?? undefined), position: "relative", gridColumn: settings.fullWidth ? "1 / -1" : undefined }}>
+    <div className="card p-4 flex flex-col" style={{ height: settings.collapsed ? undefined : (settings.height ?? undefined), position: "relative", gridColumn: (settings.colSpan ?? 1) > 1 ? `span ${settings.colSpan}` : undefined }}>
       <CardHeader
         title={settings.title ?? metric.name}
         onTitleChange={(t) => updateSettings({ title: t || undefined })}
@@ -279,8 +279,8 @@ export default function TextViewerCard({ runId, metric, onRemove }: Props) {
       <CardResizeHandle
         height={settings.height}
         onHeightChange={(h) => updateSettings({ height: h })}
-        fullWidth={settings.fullWidth ?? false}
-        onFullWidthToggle={() => updateSettings({ fullWidth: !settings.fullWidth })}
+        colSpan={settings.colSpan ?? 1}
+        onColSpanChange={(s) => updateSettings({ colSpan: s })}
       />
     </div>
   );

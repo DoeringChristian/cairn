@@ -48,7 +48,7 @@ interface VideoSettings {
   collapsed?: boolean;
   sliderStep?: number;
   height?: number;
-  fullWidth?: boolean;
+  colSpan?: number;
   autoplay: boolean;
   loop: boolean;
   muted: boolean;
@@ -349,7 +349,7 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
       style={{
         height: settings.collapsed ? undefined : (settings.height ?? undefined),
         position: "relative",
-        gridColumn: settings.fullWidth ? "1 / -1" : undefined,
+        gridColumn: (settings.colSpan ?? 1) > 1 ? `span ${settings.colSpan}` : undefined,
       }}
       {...dropProps}
     >
@@ -735,8 +735,8 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
       <CardResizeHandle
         height={settings.height}
         onHeightChange={(h) => updateSettings({ height: h })}
-        fullWidth={settings.fullWidth ?? false}
-        onFullWidthToggle={() => updateSettings({ fullWidth: !settings.fullWidth })}
+        colSpan={settings.colSpan ?? 1}
+        onColSpanChange={(s) => updateSettings({ colSpan: s })}
       />
     </div>
   );

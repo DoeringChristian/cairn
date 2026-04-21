@@ -26,7 +26,7 @@ interface ScatterSettings {
   title?: string;
   collapsed?: boolean;
   height?: number;
-  fullWidth?: boolean;
+  colSpan?: number;
   xAxis: AxisDef | null;
   yAxis: AxisDef | null;
   colorAxis: AxisDef | null;
@@ -356,7 +356,7 @@ export default function ScatterPlotCard({
       style={{
         height: settings.collapsed ? undefined : (settings.height ?? undefined),
         position: "relative",
-        gridColumn: settings.fullWidth ? "1 / -1" : undefined,
+        gridColumn: (settings.colSpan ?? 1) > 1 ? `span ${settings.colSpan}` : undefined,
       }}
     >
       <CardHeader
@@ -392,8 +392,8 @@ export default function ScatterPlotCard({
       <CardResizeHandle
         height={settings.height}
         onHeightChange={(h) => updateSettings({ height: h })}
-        fullWidth={settings.fullWidth ?? false}
-        onFullWidthToggle={() => updateSettings({ fullWidth: !settings.fullWidth })}
+        colSpan={settings.colSpan ?? 1}
+        onColSpanChange={(s) => updateSettings({ colSpan: s })}
       />
     </div>
   );

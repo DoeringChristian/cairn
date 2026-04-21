@@ -1,33 +1,30 @@
 import { useCallback } from "react";
 
 interface Props {
-  /** Current persisted height; undefined = auto. */
+  /** Current persisted height in px; undefined = auto/default. */
   height: number | undefined;
-  /** Called with the new height, or undefined to reset to auto. */
   onHeightChange: (h: number | undefined) => void;
-  /** Whether the card currently spans all grid columns. */
-  fullWidth: boolean;
-  /** Toggle between single-column and full-width. */
-  onFullWidthToggle: () => void;
-  /** Minimum height in px (default 100). */
+  /** Column span (1 = single column, 2 = double, etc.). */
+  colSpan: number;
+  onColSpanChange: (span: number) => void;
+  /** Total grid columns available (default 2). */
+  gridCols?: number;
+  /** Minimum height in px (default 150). */
   minHeight?: number;
 }
 
 const MAX_HEIGHT = 2000;
 
 /**
- * Corner resize handle for cards. Drag vertically to resize height;
- * drag horizontally past a threshold to toggle full-width.
- *
- * **Parent requirements:** `position: relative` and `overflow: visible`
- * (or `hidden` if you don't want the grip to overflow).
+ * Corner resize handle for cards. Drag to resize both width (column span)
+ * and height simultaneously.
  */
 export default function CardResizeHandle({
-  height: _height,
   onHeightChange,
-  fullWidth,
-  onFullWidthToggle,
-  minHeight = 100,
+  colSpan,
+  onColSpanChange,
+  gridCols = 2,
+  minHeight = 150,
 }: Props) {
   const handlePointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
@@ -36,37 +33,32 @@ export default function CardResizeHandle({
       const target = e.currentTarget;
       target.setPointerCapture(e.pointerId);
 
-      const parent = target.closest(".card") as HTMLElement | null;
-      if (!parent) return;
+      const card = target.closest(".card") as HTMLElement | null;
+      if (!card) return;
 
-      const startX = e.clientX;
       const startY = e.clientY;
-      // Always measure from DOM for accurate starting height.
-      const startHeight = parent.getBoundingClientRect().height;
-      const startFullWidth = fullWidth;
-      let toggled = false;
+      const startX = e.clientX;
+      const startHeight = card.getBoundingClientRect().height;
+      const startWidth = card.getBoundingClientRect().width;
+      const startSpan = colSpan;
+
+      // Find the grid container to measure column width
+      const grid = card.parentElement?.closest(".grid") ?? card.parentElement;
+      const gridWidth = grid?.getBoundingClientRect().width ?? startWidth * gridCols;
+      const colWidth = gridWidth / gridCols;
 
       const onPointerMove = (ev: PointerEvent) => {
-        // Height resize (vertical drag)
+        // Height: continuous
         const newH = Math.round(
-          Math.min(
-            MAX_HEIGHT,
-            Math.max(minHeight, startHeight + (ev.clientY - startY)),
-          ),
+          Math.min(MAX_HEIGHT, Math.max(minHeight, startHeight + (ev.clientY - startY))),
         );
         onHeightChange(newH);
 
-        // Width toggle: if dragged >80px horizontally, toggle full-width once.
-        const dx = ev.clientX - startX;
-        if (!toggled && Math.abs(dx) > 80) {
-          // Dragging right when half-width → expand. Dragging left when full → collapse.
-          if (dx > 0 && !startFullWidth) {
-            onFullWidthToggle();
-            toggled = true;
-          } else if (dx < 0 && startFullWidth) {
-            onFullWidthToggle();
-            toggled = true;
-          }
+        // Width: snap to column spans based on drag distance
+        const targetWidth = startWidth + (ev.clientX - startX);
+        const newSpan = Math.max(1, Math.min(gridCols, Math.round(targetWidth / colWidth)));
+        if (newSpan !== startSpan) {
+          onColSpanChange(newSpan);
         }
       };
 
@@ -78,25 +70,11 @@ export default function CardResizeHandle({
       window.addEventListener("pointermove", onPointerMove);
       window.addEventListener("pointerup", onPointerUp);
     },
-    [minHeight, onHeightChange, fullWidth, onFullWidthToggle],
+    [minHeight, onHeightChange, colSpan, onColSpanChange, gridCols],
   );
 
   return (
-    <div className="absolute bottom-0 right-0 flex items-end gap-0.5 p-1">
-      <button
-        type="button"
-        onClick={(e) => { e.stopPropagation(); onFullWidthToggle(); }}
-        className={`flex h-5 w-5 items-center justify-center rounded text-xs leading-none hover:bg-bg-hover ${
-          fullWidth
-            ? "text-accent"
-            : "text-fg-subtle hover:text-fg-muted"
-        }`}
-        title={fullWidth ? "Half width" : "Full width"}
-        aria-label={fullWidth ? "Half width" : "Full width"}
-        aria-pressed={fullWidth}
-      >
-        {"\u2194"}
-      </button>
+    <div className="absolute bottom-0 right-0 p-1">
       <div
         onPointerDown={handlePointerDown}
         className="flex h-5 w-5 cursor-nwse-resize items-end justify-end text-fg-muted hover:text-fg"

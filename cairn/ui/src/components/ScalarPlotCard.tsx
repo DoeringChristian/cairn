@@ -62,7 +62,7 @@ interface ScalarSettings {
   title?: string;
   collapsed?: boolean;
   height?: number;
-  fullWidth?: boolean;
+  colSpan?: number;
   /**
    * Series to render. `runId` is optional; when absent, the card's top-level
    * `runId` prop is used as the fallback. Cross-run overlays (comparisons)
@@ -1558,11 +1558,9 @@ export default function ScalarPlotCard({
     <div
       className={`card p-4 flex flex-col${dropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
       style={{
-        height: settings.collapsed ? undefined : (settings.height ?? undefined),
-        // When no custom height, ensure chart stays usable with many series
-        minHeight: settings.collapsed || settings.height ? undefined : Math.max(250, 192 + effectiveMetrics.length * 24 + 60),
+        height: settings.collapsed ? undefined : (settings.height ?? 300),
         position: "relative",
-        gridColumn: settings.fullWidth ? "1 / -1" : undefined,
+        gridColumn: (settings.colSpan ?? 1) > 1 ? `span ${settings.colSpan}` : undefined,
       }}
       {...dropProps}
     >
@@ -1639,9 +1637,9 @@ export default function ScalarPlotCard({
 
       {!settings.collapsed && (<>
       {isLoading && data.length === 0 ? (
-        <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
+        <div className="flex-1 motion-safe:animate-pulse rounded bg-bg-hover" />
       ) : (
-        renderChart(settings.height ? "flex-1 min-h-0" : "h-48")
+        renderChart("flex-1 min-h-0")
       )}
 
       {/* Series chip strip */}
@@ -1797,8 +1795,8 @@ export default function ScalarPlotCard({
       <CardResizeHandle
         height={settings.height}
         onHeightChange={(h) => updateSettings({ height: h })}
-        fullWidth={settings.fullWidth ?? false}
-        onFullWidthToggle={() => updateSettings({ fullWidth: !settings.fullWidth })}
+        colSpan={settings.colSpan ?? 1}
+        onColSpanChange={(s) => updateSettings({ colSpan: s })}
       />
     </div>
   );

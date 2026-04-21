@@ -364,7 +364,7 @@ export default function ProjectPage() {
                 {section.name}
               </h2>
             </header>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2" data-cairn-card-grid>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4" data-cairn-card-grid>
               {section.cardIndices.map((cardIdx) => {
                 const card = allCards[cardIdx]!;
                 if (card.runs.length === 0) return null;
