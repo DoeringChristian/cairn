@@ -312,7 +312,7 @@ def ui_cmd(
             err=True,
         )
 
-    db = Database.open(dd.db_path)
+    db = Database.open(dd.db_path, read_only=not has_lock)
     blobs = BlobStore(dd.artifacts_dir)
     app = create_app(db=db, blobs=blobs, data_dir_obj=dd, mount_ui=True)
 

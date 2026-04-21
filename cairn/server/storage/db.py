@@ -28,18 +28,20 @@ from .migrations import apply_migrations
 class Database:
     """Owns a DuckDB connection for the server process."""
 
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, *, read_only: bool = False):
         self.path = Path(path)
         self._lock = threading.RLock()
-        self._conn = duckdb.connect(str(self.path))
+        self._read_only = read_only
+        self._conn = duckdb.connect(str(self.path), read_only=read_only)
         self._closed = False
 
     @classmethod
-    def open(cls, path: Path) -> Database:
+    def open(cls, path: Path, *, read_only: bool = False) -> "Database":
         """Open (or create) a database, run migrations, return it."""
-        db = cls(path)
-        with db._lock:
-            apply_migrations(db._conn)
+        db = cls(path, read_only=read_only)
+        if not read_only:
+            with db._lock:
+                apply_migrations(db._conn)
         return db
 
     def close(self) -> None:

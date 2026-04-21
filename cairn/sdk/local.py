@@ -4,15 +4,14 @@ When a ``Run`` is constructed with ``repo=`` pointing at a ``.cairn/``
 directory, it uses ``LocalTransport`` instead of the HTTP ``Transport``.
 Writes go straight to the DuckDB file and blob store in that directory.
 
-The repo-level write lock (``DataDir.acquire_lock("sdk")``) is held for the
-lifetime of this transport. A running ``cairn server`` on the same repo will
-refuse to start (and vice versa), preserving DuckDB's single-writer invariant.
+Multiple SDK processes can write to the same repo concurrently — DuckDB
+handles write serialization via its internal WAL. No exclusive repo lock
+is needed for SDK mode.
 
-If a ``cairn ui`` or ``cairn server`` is already serving the repo (holder
-mode is ``"ui"`` or ``"server"`` with ``host``/``port`` recorded),
-``LocalTransport.__init__`` raises :class:`_RepoServedByOtherError` instead
-of attempting to acquire the lock. The ``Run`` constructor catches that and
-swaps in an HTTP ``Transport`` pointing at the holder.
+If a ``cairn server`` is already serving the repo (holder mode is
+``"server"`` with ``host``/``port`` recorded), ``LocalTransport.__init__``
+raises :class:`_RepoServedByOtherError` so the ``Run`` constructor can
+switch to HTTP mode (better performance via batched network calls).
 """
 
 from __future__ import annotations
@@ -63,26 +62,20 @@ class LocalTransport:
     def __init__(self, repo: str | Path):
         self.data_dir = DataDir(Path(repo))
         holder = self.data_dir.read_lock()
-        # If a server/ui is serving this repo, don't try to acquire the lock
-        # locally — the caller (Run) is expected to switch to HTTP mode.
+        # If a server is serving this repo, switch to HTTP mode for better
+        # performance. UI-only holders are fine — we can write alongside them.
         if (
             _holder_is_live(holder)
             and holder is not None
-            and holder.get("mode") in {"ui", "server"}
+            and holder.get("mode") == "server"
             and holder.get("host")
             and holder.get("port")
         ):
             raise _RepoServedByOtherError(holder)
-        self.data_dir.acquire_lock("sdk")
-        try:
-            self.db = Database.open(self.data_dir.db_path)
-        except Exception:
-            # Never leak the lock if DB open fails.
-            self.data_dir.release_lock()
-            raise
+        # No exclusive lock needed — DuckDB handles write serialization via
+        # its internal WAL. Multiple SDK processes can write concurrently.
+        self.db = Database.open(self.data_dir.db_path)
         self.blobs = BlobStore(self.data_dir.artifacts_dir)
-        # ``Run.url`` references this; local runs use a ``file://`` scheme so
-        # printing it isn't misleading about the transport.
         self.server_url = f"file://{self.data_dir.root}"
         self._closed = False
 
@@ -92,10 +85,7 @@ class LocalTransport:
         if self._closed:
             return
         self._closed = True
-        try:
-            self.db.close()
-        finally:
-            self.data_dir.release_lock()
+        self.db.close()
 
     # ---- high-level ops (mirror Transport) --------------------------------
 
