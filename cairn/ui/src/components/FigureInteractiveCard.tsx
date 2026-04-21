@@ -518,6 +518,7 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
       : `${metric.count} pts`;
 
   const isMulti = effectiveMetrics.length > 1;
+  const figContainerRef = useRef<HTMLDivElement | null>(null);
 
   // Measure card width for auto-sizing figure height
   const [cardWidth, setCardWidth] = useState(0);
@@ -615,7 +616,7 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
       {!settings.collapsed && (<>
       {isMulti ? (
         <>
-          <div className="flex-1 min-h-0 overflow-auto" style={{ height: settings.height ? undefined : figAutoHeight }}>
+          <div ref={figContainerRef} className="flex-1 min-h-0 overflow-auto" style={{ height: settings.height ? undefined : figAutoHeight }}>
           <SplitPane
             widths={settings.paneWidths ?? Array(effectiveMetrics.length).fill(1 / effectiveMetrics.length)}
             onWidthsChange={(w) => updateSettings({ paneWidths: w })}

@@ -166,6 +166,8 @@ interface ImageSettings {
   showAxes: boolean;
   sliderStep?: number;
   height?: number;
+  /** Fixed viewport size per pane. When set, panes arrange in a grid. */
+  viewportSize?: { w: number; h: number };
   fullWidth?: boolean;
 }
 
@@ -580,7 +582,7 @@ function ImagePane({
 
       {/* Image / diff canvas */}
       <div className="flex-1 min-h-0 min-w-0 flex items-center justify-center overflow-hidden rounded cairn-checkerboard" style={{ padding: showAxes && naturalDims ? "16px 4px 4px 28px" : "4px" }}>
-        <div ref={imgWrapperRef} className="relative w-full h-full" style={{ transform: transformStr, transformOrigin: "center center" }}>
+        <div ref={imgWrapperRef} data-cairn-img-wrapper className="relative w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
           {!artifactHash ? (
             <span className="text-xs text-fg-muted">no image</span>
           ) : showDiff ? (
@@ -950,9 +952,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     `contrast(${1 + settings.contrast})`,
   ].join(" ");
 
-  // Only apply transform when zoomed/panned — at defaults, let object-contain handle fitting
-  const isDefaultView = settings.zoom === 1 && settings.pan.x === 0 && settings.pan.y === 0;
-  const transformStr = isDefaultView ? "none" : `translate(${settings.pan.x}px, ${settings.pan.y}px) scale(${settings.zoom})`;
+  const transformStr = `translate(${settings.pan.x}px, ${settings.pan.y}px) scale(${settings.zoom})`;
 
   // -----------------------------------------------------------------------
   // Single-image zoom/pan (disabled in multi-pane)
@@ -986,9 +986,27 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     e.preventDefault();
     e.stopPropagation();
     const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
-    const cur = settingsRef.current.zoom;
-    const nextZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, cur * factor));
-    updateSettings({ zoom: nextZoom });
+    const s = settingsRef.current;
+    const nextZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, s.zoom * factor));
+    if (s.zoom === nextZoom) return;
+    // Zoom toward cursor with transformOrigin "0 0":
+    // Use the wrapper's PARENT rect (untransformed) for cursor position.
+    const target = e.target as HTMLElement;
+    const wrapper = target.closest("[data-cairn-img-wrapper]") as HTMLElement | null;
+    const parent = wrapper?.parentElement;
+    if (parent) {
+      const parentRect = parent.getBoundingClientRect();
+      const cx = e.clientX - parentRect.left;
+      const cy = e.clientY - parentRect.top;
+      // With origin "0 0": screenPos = elemPos * zoom + pan
+      // Element point under cursor: (cx - pan) / zoom
+      // Keep that point at same screen position after zoom change:
+      const newPanX = cx - ((cx - s.pan.x) / s.zoom) * nextZoom;
+      const newPanY = cy - ((cy - s.pan.y) / s.zoom) * nextZoom;
+      updateSettings({ zoom: nextZoom, pan: { x: newPanX, y: newPanY } });
+    } else {
+      updateSettings({ zoom: nextZoom });
+    }
   };
 
   const roRef = useRef<ResizeObserver | null>(null);
@@ -1318,53 +1336,83 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
           <div className="flex flex-1 min-h-0">
           <div className="flex-1 min-w-0 min-h-0 flex flex-col">
           {isMulti ? (
-            /* ---------- Multi-pane layout ---------- */
-            <SplitPane
-              widths={
-                settings.paneWidths ??
-                Array(effectiveMetrics.length).fill(
-                  1 / effectiveMetrics.length,
-                )
-              }
-              onWidthsChange={(w) => updateSettings({ paneWidths: w })}
+            /* ---------- Multi-pane grid layout ---------- */
+            <div
+              className="grid gap-1 flex-1 min-h-0 overflow-auto"
+              style={{
+                gridTemplateColumns: settings.viewportSize
+                  ? `repeat(auto-fill, ${settings.viewportSize.w}px)`
+                  : `repeat(auto-fill, minmax(200px, 1fr))`,
+                gridAutoRows: settings.viewportSize ? `${settings.viewportSize.h}px` : undefined,
+              }}
             >
               {effectiveMetrics.map((m, paneIdx) => {
                 const pts = perSeriesPoints[paneIdx] ?? [];
                 const pCurrent = pts[safeIdx];
                 const hash = pCurrent?.artifact_hash ?? undefined;
                 return (
-                  <ImagePane
-                    key={seriesKey(m)}
-                    metricEntry={m}
-                    paneIndex={paneIdx}
-                    artifactHash={hash}
-                    baselineHash={baselineHash}
-                    isBaseline={baselineIdx === paneIdx}
-                    diffMode={settings.diffMode}
-                    interpolation={settings.interpolation ?? "auto"}
-                    colormap={settings.colormap ?? "none"}
-                    showAxes={settings.showAxes ?? false}
-                    zoom={settings.zoom}
-                    transformStr={transformStr}
-                    filterStr={filterStr}
-                    onNaturalSize={onImageNaturalSize}
-                    onSetBaseline={() => {
-                      const isUnsetting = settings.baselineIndex === paneIdx;
-                      updateSettings({
-                        baselineIndex: isUnsetting ? undefined : paneIdx,
-                        // Auto-enable diff when setting baseline for the first time.
-                        diffMode: isUnsetting
-                          ? "none"
-                          : settings.diffMode === "none"
-                            ? "absolute"
-                            : settings.diffMode,
-                      });
-                    }}
-                    label={seriesLabel(m, runId, multipleRuns)}
-                  />
+                  <div key={seriesKey(m)} className="relative overflow-hidden" style={settings.viewportSize ? { width: settings.viewportSize.w, height: settings.viewportSize.h } : undefined}>
+                    <ImagePane
+                      metricEntry={m}
+                      paneIndex={paneIdx}
+                      artifactHash={hash}
+                      baselineHash={baselineHash}
+                      isBaseline={baselineIdx === paneIdx}
+                      diffMode={settings.diffMode}
+                      interpolation={settings.interpolation ?? "auto"}
+                      colormap={settings.colormap ?? "none"}
+                      showAxes={settings.showAxes ?? false}
+                      zoom={settings.zoom}
+                      transformStr={transformStr}
+                      filterStr={filterStr}
+                      onNaturalSize={onImageNaturalSize}
+                      onSetBaseline={() => {
+                        const isUnsetting = settings.baselineIndex === paneIdx;
+                        updateSettings({
+                          baselineIndex: isUnsetting ? undefined : paneIdx,
+                          diffMode: isUnsetting
+                            ? "none"
+                            : settings.diffMode === "none"
+                              ? "absolute"
+                              : settings.diffMode,
+                        });
+                      }}
+                      label={seriesLabel(m, runId, multipleRuns)}
+                    />
+                    {/* Viewport resize handle on first pane */}
+                    {paneIdx === 0 && (
+                      <div
+                        className="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize flex items-end justify-end text-fg-muted hover:text-fg z-10"
+                        style={{ touchAction: "none" }}
+                        onPointerDown={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+                          const startX = e.clientX;
+                          const startY = e.clientY;
+                          const pEl = e.currentTarget.parentElement!;
+                          const startW = settings.viewportSize?.w ?? pEl.getBoundingClientRect().width;
+                          const startH = settings.viewportSize?.h ?? pEl.getBoundingClientRect().height;
+                          const onMove = (ev: PointerEvent) => {
+                            const w = Math.max(80, Math.round(startW + (ev.clientX - startX)));
+                            const h = Math.max(80, Math.round(startH + (ev.clientY - startY)));
+                            updateSettings({ viewportSize: { w, h } });
+                          };
+                          const onUp = () => {
+                            window.removeEventListener("pointermove", onMove);
+                            window.removeEventListener("pointerup", onUp);
+                          };
+                          window.addEventListener("pointermove", onMove);
+                          window.addEventListener("pointerup", onUp);
+                        }}
+                      >
+                        <svg width="10" height="10" viewBox="0 0 10 10" className="pointer-events-none"><line x1="9" y1="1" x2="1" y2="9" stroke="currentColor" strokeWidth="1.5"/><line x1="9" y1="5" x2="5" y2="9" stroke="currentColor" strokeWidth="1.5"/></svg>
+                      </div>
+                    )}
+                  </div>
                 );
               })}
-            </SplitPane>
+            </div>
           ) : (
             /* ---------- Single-image layout (original) ---------- */
             <div
@@ -1375,8 +1423,8 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
               }}
             >
               <div
-                className="relative w-full h-full"
-                style={{ transform: transformStr, transformOrigin: "center center" }}
+                data-cairn-img-wrapper className="relative w-full h-full"
+                style={{ transform: transformStr, transformOrigin: "0 0" }}
               >
               {firstCurrent?.artifact_hash ? (
                 singleUseFalseColor ? (
@@ -1799,7 +1847,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                 >
                   <div
                     className="relative w-full h-full"
-                    style={{ transform: transformStr, transformOrigin: "center center" }}
+                    style={{ transform: transformStr, transformOrigin: "0 0" }}
                   >
                     {firstCurrent?.artifact_hash ? (
                       <img

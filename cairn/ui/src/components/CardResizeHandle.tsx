@@ -82,7 +82,7 @@ export default function CardResizeHandle({
   );
 
   return (
-    <div className="absolute bottom-0 right-0 flex items-end gap-0.5">
+    <div className="absolute bottom-0 right-0 flex items-end gap-0.5 p-1">
       <button
         type="button"
         onClick={(e) => { e.stopPropagation(); onFullWidthToggle(); }}
@@ -99,7 +99,7 @@ export default function CardResizeHandle({
       </button>
       <div
         onPointerDown={handlePointerDown}
-        className="flex h-5 w-5 cursor-nwse-resize items-end justify-end text-fg-subtle hover:text-fg-muted"
+        className="flex h-5 w-5 cursor-nwse-resize items-end justify-end text-fg-muted hover:text-fg"
         title="Drag to resize"
         style={{ touchAction: "none" }}
       >
