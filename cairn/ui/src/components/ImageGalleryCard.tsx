@@ -111,21 +111,31 @@ function getColormapLUT(name: Exclude<Colormap, "none">): Uint8Array {
  * @param center — the pixel value that should map to the LUT midpoint (index 128).
  *   For signed diffs, center=128 (default). For absolute/squared, center=0.
  */
-function applyColormap(src: ImageData, cmap: Exclude<Colormap, "none">, center = 128): ImageData {
+/**
+ * Apply a colormap LUT to an ImageData.
+ *
+ * `mode` controls how pixel values map to the LUT:
+ * - "linear": 0→LUT[0], 255→LUT[255]. Use for raw images and non-signed diffs.
+ * - "signed": 0→LUT[0], 128→LUT[128], 255→LUT[255]. Same as linear, but
+ *   semantically the midpoint (128) represents zero diff. Use for signed diffs
+ *   where the diff computation already maps zero to 128.
+ * - "positive": 0→LUT[128], 255→LUT[255]. Use for absolute/squared diffs
+ *   where 0 = no diff (should map to colormap center/white in diverging maps).
+ */
+function applyColormap(src: ImageData, cmap: Exclude<Colormap, "none">, mode: "linear" | "signed" | "positive" = "linear"): ImageData {
   const lut = getColormapLUT(cmap);
   const out = new ImageData(src.width, src.height);
   const sd = src.data;
   const od = out.data;
   for (let i = 0; i < sd.length; i += 4) {
     const avg = (sd[i]! + sd[i + 1]! + sd[i + 2]!) / 3;
-    // Remap so that `center` → 128 in the LUT
     let idx: number;
-    if (center === 128) {
-      idx = Math.round(avg);
-    } else {
-      // Scale: center→128, 0→0 (if center>0) or center→128, 255→255
-      // For center=0: map [0,255] → [128,255] (only positive half of LUT)
+    if (mode === "positive") {
+      // Map [0,255] → [128,255] so 0 = LUT midpoint (white in diverging)
       idx = Math.round(128 + (avg / 255) * 127);
+    } else {
+      // Linear: direct mapping. For signed diffs, 128 is already the midpoint.
+      idx = Math.round(avg);
     }
     idx = Math.max(0, Math.min(255, idx));
     od[i] = lut[idx * 3]!;
@@ -433,7 +443,11 @@ function ImagePane({
     artifactHash != null;
 
   // Don't show false color when diff is active (colormap applied in diff pipeline)
-  const useFalseColor = colormap !== "none" && !showDiff && artifactHash != null;
+  // When diff is active, the baseline pane shows raw (no colormap) so the user
+  // sees the actual reference. Non-baseline panes show the diff with colormap
+  // (handled in showDiff path). When no diff, all panes get colormap.
+  const isDiffActive = diffMode !== "none" && baselineHash != null;
+  const useFalseColor = colormap !== "none" && !showDiff && !(isBaseline && isDiffActive) && artifactHash != null;
 
   // False color rendering
   useEffect(() => {
@@ -523,10 +537,10 @@ function ImagePane({
       );
       // Apply colormap to diff output if active
       if (colormap !== "none") {
-        // Signed modes center at 128 (midpoint), absolute/squared center at 0
+        // Signed modes already have 128 as zero-point; absolute/squared have 0 as zero-point
         const isSigned = (diffMode as string).includes("signed");
-        const cmapCenter = isSigned ? 128 : 0;
-        diffData = applyColormap(diffData, colormap as Exclude<Colormap, "none">, cmapCenter);
+        const cmapMode = isSigned ? "signed" : "positive";
+        diffData = applyColormap(diffData, colormap as Exclude<Colormap, "none">, cmapMode);
       }
       setCachedImageData(cacheKey, diffData);
       const canvas = canvasRef.current;
