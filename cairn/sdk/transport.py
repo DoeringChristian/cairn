@@ -1,7 +1,8 @@
-"""HTTP transport for the SDK — retries, backoff, dedup, spill-to-disk."""
+"""HTTP transport for the SDK — retries, backoff, dedup, WAL + spill-to-disk."""
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import logging
@@ -13,6 +14,8 @@ from typing import Any, Callable, TypeVar
 
 import httpx
 import platformdirs
+
+from .wal import WriteAheadLog
 
 log = logging.getLogger(__name__)
 
@@ -28,11 +31,14 @@ def default_spill_dir() -> Path:
 
 
 class Transport:
-    """HTTP client with retries, exponential backoff, artifact dedup, spill-to-disk.
+    """HTTP client with retries, exponential backoff, artifact dedup, WAL.
 
     The SDK uses one ``Transport`` per ``Run``. All methods are blocking;
     concurrency belongs to the caller (``MetricBuffer`` drives this from a
     daemon thread).
+
+    When a WAL is attached, every event is written to the WAL before being
+    sent. On failure, the event stays in the WAL and can be replayed later.
     """
 
     def __init__(
@@ -45,6 +51,7 @@ class Transport:
         backoff_base: float = DEFAULT_BACKOFF_BASE,
         backoff_cap: float = DEFAULT_BACKOFF_CAP,
         client: httpx.Client | None = None,
+        wal: WriteAheadLog | None = None,
     ):
         self.server_url = server_url.rstrip("/")
         self.timeout = timeout
@@ -52,10 +59,9 @@ class Transport:
         self.max_retries = max_retries
         self.backoff_base = backoff_base
         self.backoff_cap = backoff_cap
-        # Allow injection of a pre-configured client (used by tests with
-        # ASGITransport for in-process server access).
         self._client = client or httpx.Client(base_url=self.server_url, timeout=timeout)
         self._owns_client = client is None
+        self._wal = wal
 
     def close(self) -> None:
         if self._owns_client:
@@ -135,25 +141,35 @@ class Transport:
         return self.post_json("/api/runs", body).json()
 
     def post_batch(self, run_id: str, points: list[dict[str, Any]]) -> bool:
-        """Post a sequence batch. On final failure, spill to disk; return False."""
+        """Post a sequence batch. WAL ensures data is durable before sending."""
+        seq = self._wal.append("batch", {"run_id": run_id, "points": points}) if self._wal else None
         try:
             self.post_json(f"/api/runs/{run_id}/batch", {"points": points})
+            if seq is not None and self._wal:
+                self._wal.checkpoint(seq)
             return True
         except (httpx.HTTPError, OSError) as exc:
-            log.warning("batch POST failed for %s: %s", run_id, exc)
-            self._spill(run_id, f"/api/runs/{run_id}/batch", {"points": points})
+            log.warning("batch POST failed for %s (WAL seq %s): %s", run_id, seq, exc)
             return False
 
     def post_params(self, run_id: str, params: dict[str, Any]) -> None:
-        self.post_json(f"/api/runs/{run_id}/params", {"params": params})
+        seq = self._wal.append("params", {"run_id": run_id, "params": params}) if self._wal else None
+        try:
+            self.post_json(f"/api/runs/{run_id}/params", {"params": params})
+            if seq is not None and self._wal:
+                self._wal.checkpoint(seq)
+        except (httpx.HTTPError, OSError) as exc:
+            log.warning("params POST failed for %s (WAL seq %s): %s", run_id, seq, exc)
 
     def post_logs(self, run_id: str, lines: list[dict[str, Any]]) -> bool:
+        seq = self._wal.append("logs", {"run_id": run_id, "lines": lines}) if self._wal else None
         try:
             self.post_json(f"/api/runs/{run_id}/logs", {"lines": lines})
+            if seq is not None and self._wal:
+                self._wal.checkpoint(seq)
             return True
-        except httpx.HTTPError as exc:
-            log.warning("logs POST failed for %s: %s", run_id, exc)
-            self._spill(run_id, f"/api/runs/{run_id}/logs", {"lines": lines})
+        except (httpx.HTTPError, OSError) as exc:
+            log.warning("logs POST failed for %s (WAL seq %s): %s", run_id, seq, exc)
             return False
 
     def finish_run(
@@ -189,24 +205,90 @@ class Transport:
     ) -> str:
         """Hash, dedup-probe, upload if absent; return the sha256 digest."""
         digest = hashlib.sha256(data).hexdigest()
-        head_resp = self.head(f"/api/artifacts/{digest}")
-        if head_resp.status_code == 200:
-            return digest
-        self.post_multipart(
-            "/api/artifacts",
-            files={"file": ("blob", data, mime_type)},
-            data={"mime_type": mime_type, "metadata": json.dumps(metadata or {})},
-        )
+        # WAL the artifact before attempting upload
+        seq = self._wal.append_artifact(data, mime_type, metadata) if self._wal else None
+        try:
+            head_resp = self.head(f"/api/artifacts/{digest}")
+            if head_resp.status_code != 200:
+                self.post_multipart(
+                    "/api/artifacts",
+                    files={"file": ("blob", data, mime_type)},
+                    data={"mime_type": mime_type, "metadata": json.dumps(metadata or {})},
+                )
+            if seq is not None and self._wal:
+                self._wal.checkpoint(seq)
+        except (httpx.HTTPError, OSError) as exc:
+            log.warning("artifact upload failed (WAL seq %s): %s", seq, exc)
+            # Artifact is in WAL — will be replayed on drain
         return digest
 
-    def drain_spill(self, run_id: str | None = None) -> int:
-        """Replay any spilled JSON payloads. Return count of successfully replayed."""
-        if not self.spill_dir.exists():
+    def drain_wal(self) -> int:
+        """Replay pending WAL entries. Return count replayed."""
+        if not self._wal or not self._wal.has_pending:
             return 0
+        replayed = 0
+        for entry in self._wal.pending():
+            try:
+                self._replay_wal_entry(entry)
+                self._wal.checkpoint(entry.seq)
+                replayed += 1
+            except (httpx.HTTPError, OSError) as exc:
+                log.warning("WAL replay failed at seq %d: %s", entry.seq, exc)
+                break  # stop on first error to preserve order
+        return replayed
+
+    def _replay_wal_entry(self, entry: "WriteAheadLog | Any") -> None:
+        """Replay a single WAL entry by re-executing the operation."""
+        from .wal import WALEntry
+        e: WALEntry = entry
+        p = e.payload
+        if e.op == "batch":
+            self.post_json(f"/api/runs/{p['run_id']}/batch", {"points": p["points"]})
+        elif e.op == "params":
+            self.post_json(f"/api/runs/{p['run_id']}/params", {"params": p["params"]})
+        elif e.op == "logs":
+            self.post_json(f"/api/runs/{p['run_id']}/logs", {"lines": p["lines"]})
+        elif e.op == "artifact":
+            # Reconstruct artifact data from inline or file
+            if "data_b64" in p:
+                data = base64.b64decode(p["data_b64"])
+            elif "data_file" in p:
+                data = Path(p["data_file"]).read_bytes()
+            else:
+                log.warning("WAL artifact entry has no data at seq %d", e.seq)
+                return
+            mime_type = p.get("mime_type", "application/octet-stream")
+            metadata = p.get("metadata", {})
+            digest = hashlib.sha256(data).hexdigest()
+            head_resp = self.head(f"/api/artifacts/{digest}")
+            if head_resp.status_code != 200:
+                self.post_multipart(
+                    "/api/artifacts",
+                    files={"file": ("blob", data, mime_type)},
+                    data={"mime_type": mime_type, "metadata": json.dumps(metadata)},
+                )
+        elif e.op == "finish":
+            self.post_json(
+                f"/api/runs/{p['run_id']}/finish",
+                {"status": p.get("status", "completed"), "exit_code": p.get("exit_code")},
+            )
+        else:
+            log.warning("unknown WAL op %r at seq %d", e.op, e.seq)
+
+    def drain_spill(self, run_id: str | None = None) -> int:
+        """Replay WAL + any legacy spilled JSON payloads."""
+        total = 0
+        # Drain WAL first (ordered)
+        try:
+            total += self.drain_wal()
+        except Exception:  # noqa: BLE001
+            log.warning("WAL drain failed", exc_info=True)
+        # Then drain legacy spill dir
+        if not self.spill_dir.exists():
+            return total
         targets = (
             [self.spill_dir / run_id] if run_id else list(self.spill_dir.iterdir())
         )
-        replayed = 0
         for run_dir in targets:
             if not run_dir.is_dir():
                 continue
@@ -215,14 +297,13 @@ class Transport:
                     payload = json.loads(spill_file.read_text())
                     self.post_json(payload["path"], payload["body"])
                     spill_file.unlink()
-                    replayed += 1
+                    total += 1
                 except (httpx.HTTPError, OSError, json.JSONDecodeError) as exc:
                     log.warning("spill replay failed for %s: %s", spill_file, exc)
-                    break  # stop replaying on first error for this run
-            # Cleanup empty run dir
+                    break
             try:
                 if not any(run_dir.iterdir()):
                     run_dir.rmdir()
             except OSError:
                 pass
-        return replayed
+        return total

@@ -30,6 +30,7 @@ from ..sdk.wrappers import _TypeWrapper
 from .buffer import MetricBuffer
 from .local import LocalTransport, _RepoServedByOtherError
 from .transport import Transport
+from .wal import WriteAheadLog
 from ..server.storage.datadir import DataDir, RepoLockedError
 
 log = logging.getLogger(__name__)
@@ -115,11 +116,10 @@ class Run:
         transport: Transport | LocalTransport | None = None,
     ):
         self._registry = registry or default_registry
+        self._wal: WriteAheadLog | None = None
         if transport is not None:
             self._transport = transport
             self._owns_transport = False
-            # Caller-supplied transport picks the mode; expose its location
-            # via ``self._server`` so ``run.url`` works for both kinds.
             self._server = getattr(transport, "server_url", "")
         else:
             target = config.resolve_target(repo=repo, server=server)
@@ -128,15 +128,16 @@ class Run:
                     self._transport = LocalTransport(target.location)
                     self._server = self._transport.server_url
                 except _RepoServedByOtherError as exc:
-                    # A `cairn ui` / `cairn server` is already serving the
-                    # repo. Transparently switch to HTTP mode against it.
                     url = _url_from_holder(exc.holder)
                     if url is None:
                         raise
                     _verify_reachable(url, Path(target.location))
+                    # HTTP mode against a running server — use WAL for resilience.
+                    # WAL run_id isn't known yet; created after create_run below.
                     self._transport = Transport(url, timeout=timeout)
                     self._server = url
             else:
+                # Pure HTTP mode — use WAL for resilience.
                 self._transport = Transport(target.location, timeout=timeout)
                 self._server = target.location
             self._owns_transport = True
@@ -179,6 +180,14 @@ class Run:
         resp = self._transport.create_run(create_body)
         self._run_id: str = resp["run_id"]
         self._url_path: str = resp.get("url", f"/p/{resp['project_id']}/r/{self._run_id}")
+
+        # Attach WAL for HTTP transports (not local — DuckDB is its own WAL).
+        if isinstance(self._transport, Transport):
+            try:
+                self._wal = WriteAheadLog(self._run_id)
+                self._transport._wal = self._wal
+            except OSError:
+                log.warning("failed to create WAL for run %s", self._run_id, exc_info=True)
 
         # Guard against nested runs.
         stdout_capture.set_active_run(self._run_id)
@@ -373,6 +382,16 @@ class Run:
             except Exception:  # noqa: BLE001
                 log.warning("drain_spill failed during finish", exc_info=True)
             self._transport.finish_run(self._run_id, status, exit_code)
+            # Clean up WAL after successful finish
+            if self._wal is not None:
+                try:
+                    if not self._wal.has_pending:
+                        self._wal.cleanup()
+                    else:
+                        log.warning("WAL has %d pending entries after finish", self._wal._seq - self._wal.read_checkpoint())
+                        self._wal.close()
+                except Exception:  # noqa: BLE001
+                    log.warning("WAL cleanup failed", exc_info=True)
         finally:
             self._finished = True
             stdout_capture.clear_active_run(self._run_id)
