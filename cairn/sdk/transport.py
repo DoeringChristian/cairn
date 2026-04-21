@@ -150,6 +150,9 @@ class Transport:
             return True
         except (httpx.HTTPError, OSError) as exc:
             log.warning("batch POST failed for %s (WAL seq %s): %s", run_id, seq, exc)
+            if self._wal is None:
+                # No WAL — fall back to legacy spill
+                self._spill(run_id, f"/api/runs/{run_id}/batch", {"points": points})
             return False
 
     def post_params(self, run_id: str, params: dict[str, Any]) -> None:
@@ -170,6 +173,8 @@ class Transport:
             return True
         except (httpx.HTTPError, OSError) as exc:
             log.warning("logs POST failed for %s (WAL seq %s): %s", run_id, seq, exc)
+            if self._wal is None:
+                self._spill(run_id, f"/api/runs/{run_id}/logs", {"lines": lines})
             return False
 
     def finish_run(
