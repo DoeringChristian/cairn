@@ -400,6 +400,8 @@ export default function AudioPlayerCard({ runId, metric, extraContexts = [], ext
         subtitle={subtitle}
         collapsed={settings.collapsed}
         onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
+        onSettings={() => setExpanded(true)}
+        onRemove={onRemove}
       >
         {projectId && (
           <button
@@ -415,17 +417,6 @@ export default function AudioPlayerCard({ runId, metric, extraContexts = [], ext
             {"\u002B"}
           </button>
         )}
-        {onRemove && (
-          <button type="button" onClick={onRemove} className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg" aria-label="Remove card" title="Remove card">{"\u00D7"}</button>
-        )}
-        <button
-          type="button"
-          aria-label="Card settings"
-          onClick={() => setExpanded(true)}
-          className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
-        >
-          {"\u2699"}
-        </button>
       </CardHeader>
 
       {!settings.collapsed && (<>

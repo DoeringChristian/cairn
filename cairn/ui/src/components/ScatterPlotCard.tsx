@@ -365,11 +365,9 @@ export default function ScatterPlotCard({
         subtitle={`${scatterPoints.length} points`}
         collapsed={settings.collapsed}
         onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
+        onSettings={() => setExpanded(true)}
+        onRemove={onRemove}
       >
-        {onRemove && (
-          <button type="button" onClick={onRemove} className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg" aria-label="Remove" title="Remove">{"\u2212"}</button>
-        )}
-        <button type="button" onClick={() => setExpanded(true)} className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg" aria-label="Settings" title="Settings">{"\u2699"}</button>
       </CardHeader>
 
       {!settings.collapsed && (

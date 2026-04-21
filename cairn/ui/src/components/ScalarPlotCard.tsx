@@ -1566,6 +1566,8 @@ export default function ScalarPlotCard({
         subtitle={subtitle}
         collapsed={settings.collapsed}
         onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
+        onSettings={() => setExpanded(true)}
+        onRemove={onRemove}
       >
         {settings.smoothing > 0 && (
           <button
@@ -1627,26 +1629,6 @@ export default function ScalarPlotCard({
             {"\u002B"}
           </button>
         )}
-        {onRemove && (
-          <button
-            type="button"
-            onClick={onRemove}
-            className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
-            aria-label="Remove from comparison"
-            title="Remove from comparison"
-          >
-            {"\u2212"}
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={() => setExpanded(true)}
-          className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
-          aria-label="Plot settings"
-          title="Plot settings"
-        >
-          {"\u2699"}
-        </button>
       </CardHeader>
 
       {!settings.collapsed && (<>

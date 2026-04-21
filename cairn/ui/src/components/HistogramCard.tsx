@@ -128,6 +128,8 @@ export default function HistogramCard({ runId, metric, onRemove }: Props) {
         subtitle={subtitle}
         collapsed={settings.collapsed}
         onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
+        onSettings={() => setExpanded(true)}
+        onRemove={onRemove}
       >
         {projectId && (
           <button
@@ -143,26 +145,6 @@ export default function HistogramCard({ runId, metric, onRemove }: Props) {
             {"\u002B"}
           </button>
         )}
-        {onRemove && (
-          <button
-            type="button"
-            onClick={onRemove}
-            className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
-            aria-label="Remove card"
-            title="Remove card"
-          >
-            {"\u00D7"}
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={() => setExpanded(true)}
-          className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
-          aria-label="Histogram settings"
-          title="Histogram settings"
-        >
-          {"\u2699"}
-        </button>
       </CardHeader>
       {!settings.collapsed && (<>
       {q.isLoading ? (

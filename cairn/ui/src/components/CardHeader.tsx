@@ -6,7 +6,11 @@ interface Props {
   title: string;
   /** Right-side subtle text, e.g. "step 15 of 50" or a count. */
   subtitle?: ReactNode;
-  /** Action cluster on the right: quick-toggle buttons + ⚙️ settings button. */
+  /**
+   * Card-specific action buttons rendered to the LEFT of the standard
+   * buttons (settings, add-to-comparison, remove). Use this for quick
+   * toggles like smoothing badge, y-scale, zoom reset, etc.
+   */
   children?: ReactNode;
   /** If provided, the title becomes editable. */
   onTitleChange?: (newTitle: string) => void;
@@ -14,21 +18,12 @@ interface Props {
   collapsed?: boolean;
   /** Toggle collapse state. When provided, a chevron is rendered. */
   onToggleCollapse?: () => void;
+  /** Opens the card settings modal / popover. Renders ⚙ button. */
+  onSettings?: () => void;
+  /** Remove the card. Renders × button in upper-right. */
+  onRemove?: () => void;
 }
 
-/**
- * Standardized card header.
- *
- * A grip icon (≡) is rendered to the left of the title. When the card is
- * wrapped in a ``DraggableCard``, the grip becomes the **sole** drag handle
- * (``draggable`` on the grip ``<span>``, not on the outer card wrapper) so
- * that pointer gestures elsewhere on the card (plot zoom, slider drag, etc.)
- * are never intercepted by the browser's HTML5 drag system.
- *
- * When ``onTitleChange`` is provided the title becomes editable: a pencil icon
- * appears on hover, and clicking it (or double-clicking the title) switches to
- * an inline input. Blur or Enter commits; Escape cancels.
- */
 export default function CardHeader({
   title,
   subtitle,
@@ -36,13 +31,14 @@ export default function CardHeader({
   onTitleChange,
   collapsed,
   onToggleCollapse,
+  onSettings,
+  onRemove,
 }: Props) {
   const drag = useDraggableCard();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(title);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Keep draft in sync when title prop changes while not editing.
   useEffect(() => {
     if (!editing) setDraft(title);
   }, [title, editing]);
@@ -100,8 +96,6 @@ export default function CardHeader({
           className={[
             "cairn-drag-grip select-none text-fg-subtle transition-opacity",
             drag ? "cursor-grab active:cursor-grabbing" : "",
-            // Visible on hover when inside a DraggableCard (via CSS in index.css);
-            // always opacity-0 otherwise.
             "opacity-0",
           ].join(" ")}
           title="Drag to reorder"
@@ -141,9 +135,33 @@ export default function CardHeader({
           </>
         )}
       </div>
-      <div className="flex items-center gap-1 text-xs text-fg-subtle">
+      <div className="flex items-center gap-1 text-xs text-fg-subtle shrink-0">
         {subtitle}
+        {/* Card-specific buttons (passed as children) */}
         {children}
+        {/* Standard buttons: settings, remove */}
+        {onSettings && (
+          <button
+            type="button"
+            onClick={onSettings}
+            className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
+            aria-label="Settings"
+            title="Settings"
+          >
+            {"\u2699"}
+          </button>
+        )}
+        {onRemove && (
+          <button
+            type="button"
+            onClick={onRemove}
+            className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
+            aria-label="Remove card"
+            title="Remove card"
+          >
+            {"\u00D7"}
+          </button>
+        )}
       </div>
     </div>
   );
