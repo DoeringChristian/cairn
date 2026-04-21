@@ -1,25 +1,21 @@
-"""DuckDB schema + idempotent migration runner.
+"""SQLite schema + idempotent migration runner.
 
 Spec deviation: the CAIRN_SPEC puts a JSON ``context`` column in the primary
-key of ``sequences``. DuckDB doesn't allow JSON in a PK, so we derive a
-``context_hash`` VARCHAR column (md5 of sorted-key JSON, empty string for NULL
-context) and key on that. The original ``context`` JSON is still stored and
-queryable.
+key of ``sequences``. SQLite doesn't allow complex types in PKs either, so we
+derive a ``context_hash`` TEXT column (md5 of sorted-key JSON, empty string for
+NULL context) and key on that. The original ``context`` JSON is still stored
+and queryable.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 from typing import Any
 
-import duckdb
+SCHEMA_VERSION = 2  # Bumped from 1 (DuckDB) to 2 (SQLite). Breaking change.
 
-SCHEMA_VERSION = 1
-
-# Each statement is executed independently so migration is robust to DuckDB's
-# per-statement parser restrictions (e.g., CREATE INDEX can't be in the same
-# batch as CREATE TABLE in some versions).
 SCHEMA_SQL: list[str] = [
     """
     CREATE TABLE IF NOT EXISTS schema_version (
@@ -28,97 +24,93 @@ SCHEMA_SQL: list[str] = [
     """,
     """
     CREATE TABLE IF NOT EXISTS projects (
-        id            VARCHAR PRIMARY KEY,
-        name          VARCHAR NOT NULL,
-        created_at    TIMESTAMP NOT NULL,
-        description   VARCHAR,
-        tags          JSON
+        id            TEXT PRIMARY KEY,
+        name          TEXT NOT NULL,
+        created_at    TEXT NOT NULL,
+        description   TEXT,
+        tags          TEXT
     )
     """,
     """
     CREATE TABLE IF NOT EXISTS tasks (
-        id            VARCHAR PRIMARY KEY,
-        project_id    VARCHAR NOT NULL REFERENCES projects(id),
-        name          VARCHAR NOT NULL,
-        created_at    TIMESTAMP NOT NULL,
-        description   VARCHAR,
-        tags          JSON
+        id            TEXT PRIMARY KEY,
+        project_id    TEXT NOT NULL REFERENCES projects(id),
+        name          TEXT NOT NULL,
+        created_at    TEXT NOT NULL,
+        description   TEXT,
+        tags          TEXT
     )
     """,
     """
     CREATE TABLE IF NOT EXISTS runs (
-        id            VARCHAR PRIMARY KEY,
-        project_id    VARCHAR NOT NULL REFERENCES projects(id),
-        task_id       VARCHAR NOT NULL REFERENCES tasks(id),
-        display_name  VARCHAR,
-        created_at    TIMESTAMP NOT NULL,
-        ended_at      TIMESTAMP,
-        status        VARCHAR NOT NULL,
+        id            TEXT PRIMARY KEY,
+        project_id    TEXT NOT NULL REFERENCES projects(id),
+        task_id       TEXT NOT NULL REFERENCES tasks(id),
+        display_name  TEXT,
+        created_at    TEXT NOT NULL,
+        ended_at      TEXT,
+        status        TEXT NOT NULL,
         exit_code     INTEGER,
-        git_sha       VARCHAR,
-        git_dirty     BOOLEAN,
-        git_branch    VARCHAR,
-        cli_args      JSON,
-        env_snapshot  JSON,
-        hostname      VARCHAR,
-        "user"        VARCHAR,
-        tags          JSON,
-        notes         VARCHAR
+        git_sha       TEXT,
+        git_dirty     INTEGER,
+        git_branch    TEXT,
+        cli_args      TEXT,
+        env_snapshot  TEXT,
+        hostname      TEXT,
+        "user"        TEXT,
+        tags          TEXT,
+        notes         TEXT
     )
     """,
     """
     CREATE TABLE IF NOT EXISTS params (
-        run_id        VARCHAR NOT NULL REFERENCES runs(id),
-        key           VARCHAR NOT NULL,
-        value         JSON NOT NULL,
-        value_type    VARCHAR NOT NULL,
+        run_id        TEXT NOT NULL REFERENCES runs(id),
+        key           TEXT NOT NULL,
+        value         TEXT NOT NULL,
+        value_type    TEXT NOT NULL,
         PRIMARY KEY (run_id, key)
     )
     """,
-    # Deviation from spec: context_hash derived column added to PK.
     """
     CREATE TABLE IF NOT EXISTS sequences (
-        run_id        VARCHAR NOT NULL REFERENCES runs(id),
-        name          VARCHAR NOT NULL,
-        step          BIGINT NOT NULL,
-        wall_time     TIMESTAMP NOT NULL,
-        context       JSON,
-        context_hash  VARCHAR NOT NULL DEFAULT '',
-        object_type   VARCHAR NOT NULL,
-        scalar_value  DOUBLE,
-        artifact_hash VARCHAR,
+        run_id        TEXT NOT NULL REFERENCES runs(id),
+        name          TEXT NOT NULL,
+        step          INTEGER NOT NULL,
+        wall_time     TEXT NOT NULL,
+        context       TEXT,
+        context_hash  TEXT NOT NULL DEFAULT '',
+        object_type   TEXT NOT NULL,
+        scalar_value  REAL,
+        artifact_hash TEXT,
         PRIMARY KEY (run_id, name, step, context_hash)
     )
     """,
     """
     CREATE TABLE IF NOT EXISTS artifacts (
-        hash          VARCHAR PRIMARY KEY,
-        mime_type     VARCHAR NOT NULL,
-        size_bytes    BIGINT NOT NULL,
-        metadata      JSON,
-        created_at    TIMESTAMP NOT NULL
+        hash          TEXT PRIMARY KEY,
+        mime_type     TEXT NOT NULL,
+        size_bytes    INTEGER NOT NULL,
+        metadata      TEXT,
+        created_at    TEXT NOT NULL
     )
     """,
-    # Deviation: spec says step is nullable, but DuckDB enforces NOT NULL on
-    # PK columns. We store a sentinel ``-1`` for "no step" and surface it as
-    # ``None`` in the API layer.
     """
     CREATE TABLE IF NOT EXISTS run_artifacts (
-        run_id        VARCHAR NOT NULL REFERENCES runs(id),
-        name          VARCHAR NOT NULL,
-        hash          VARCHAR NOT NULL REFERENCES artifacts(hash),
-        step          BIGINT NOT NULL DEFAULT -1,
-        created_at    TIMESTAMP NOT NULL,
+        run_id        TEXT NOT NULL REFERENCES runs(id),
+        name          TEXT NOT NULL,
+        hash          TEXT NOT NULL REFERENCES artifacts(hash),
+        step          INTEGER NOT NULL DEFAULT -1,
+        created_at    TEXT NOT NULL,
         PRIMARY KEY (run_id, name, step)
     )
     """,
     """
     CREATE TABLE IF NOT EXISTS log_lines (
-        run_id        VARCHAR NOT NULL REFERENCES runs(id),
-        stream        VARCHAR NOT NULL,
-        wall_time     TIMESTAMP NOT NULL,
-        line_no       BIGINT NOT NULL,
-        content       VARCHAR NOT NULL
+        run_id        TEXT NOT NULL REFERENCES runs(id),
+        stream        TEXT NOT NULL,
+        wall_time     TEXT NOT NULL,
+        line_no       INTEGER NOT NULL,
+        content       TEXT NOT NULL
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_sequences_run_name ON sequences(run_id, name)",
@@ -135,7 +127,6 @@ def hash_context(context: Any) -> str:
     if context is None or context == {} or context == "":
         return ""
     if isinstance(context, str):
-        # already a JSON string
         try:
             parsed = json.loads(context)
         except json.JSONDecodeError:
@@ -145,7 +136,7 @@ def hash_context(context: Any) -> str:
     return hashlib.md5(canonical.encode("utf-8")).hexdigest()
 
 
-def apply_migrations(con: duckdb.DuckDBPyConnection) -> int:
+def apply_migrations(con: sqlite3.Connection) -> int:
     """Run schema DDL idempotently; return current schema version."""
     for stmt in SCHEMA_SQL:
         con.execute(stmt)
@@ -153,7 +144,7 @@ def apply_migrations(con: duckdb.DuckDBPyConnection) -> int:
     if not existing:
         con.execute("INSERT INTO schema_version(version) VALUES (?)", [SCHEMA_VERSION])
     elif existing[0][0] != SCHEMA_VERSION:
-        # v1-only: no migration paths yet. Future versions would branch here.
         con.execute("DELETE FROM schema_version")
         con.execute("INSERT INTO schema_version(version) VALUES (?)", [SCHEMA_VERSION])
+    con.commit()
     return SCHEMA_VERSION

@@ -24,7 +24,8 @@ def list_projects(request: Request) -> dict[str, Any]:
                (SELECT MAX(COALESCE(r.ended_at, r.created_at)) FROM runs r
                   WHERE r.project_id = p.id) AS last_run_at
         FROM projects p
-        ORDER BY last_run_at DESC NULLS LAST, p.created_at DESC
+        ORDER BY CASE WHEN last_run_at IS NULL THEN 1 ELSE 0 END,
+                 last_run_at DESC, p.created_at DESC
         """
     )
     return {"projects": rows}

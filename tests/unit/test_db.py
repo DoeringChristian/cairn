@@ -18,7 +18,7 @@ def db(tmp_path):
 
 def _insert_project(db: Database, pid: str) -> None:
     db.write(
-        "INSERT INTO projects VALUES (?, ?, TIMESTAMP '2025-01-01', NULL, NULL)",
+        "INSERT INTO projects VALUES (?, ?, '2025-01-01T00:00:00', NULL, NULL)",
         [pid, pid.upper()],
     )
 
@@ -37,7 +37,7 @@ def test_read_columns_returns_dicts(db):
 
 def test_executemany(db):
     db.executemany(
-        "INSERT INTO projects VALUES (?, ?, TIMESTAMP '2025-01-01', NULL, NULL)",
+        "INSERT INTO projects VALUES (?, ?, '2025-01-01T00:00:00', NULL, NULL)",
         [("a", "A"), ("b", "B"), ("c", "C")],
     )
     rows = sorted(r[0] for r in db.read("SELECT id FROM projects"))
@@ -47,7 +47,7 @@ def test_executemany(db):
 def test_transaction_commits(db):
     with db.transaction() as con:
         con.execute(
-            "INSERT INTO projects VALUES ('p1', 'P1', TIMESTAMP '2025-01-01', NULL, NULL)"
+            "INSERT INTO projects VALUES ('p1', 'P1', '2025-01-01T00:00:00', NULL, NULL)"
         )
     assert db.read("SELECT id FROM projects") == [("p1",)]
 
@@ -56,7 +56,7 @@ def test_transaction_rolls_back_on_error(db):
     with pytest.raises(RuntimeError):
         with db.transaction() as con:
             con.execute(
-                "INSERT INTO projects VALUES ('p1', 'P1', TIMESTAMP '2025-01-01', NULL, NULL)"
+                "INSERT INTO projects VALUES ('p1', 'P1', '2025-01-01T00:00:00', NULL, NULL)"
             )
             raise RuntimeError("boom")
     assert db.read("SELECT id FROM projects") == []
@@ -65,7 +65,6 @@ def test_transaction_rolls_back_on_error(db):
 def test_concurrent_writes_all_land(db):
     """Spawn 10 threads each inserting 20 rows; expect 200 rows total."""
     _insert_project(db, "proj")
-    _insert_project(db, "task")  # extra project to satisfy FK on tasks insert below
 
     errors: list[BaseException] = []
 
@@ -73,7 +72,7 @@ def test_concurrent_writes_all_land(db):
         try:
             for i in range(20):
                 db.write(
-                    "INSERT INTO tasks VALUES (?, ?, ?, TIMESTAMP '2025-01-01', NULL, NULL)",
+                    "INSERT INTO tasks VALUES (?, ?, ?, '2025-01-01T00:00:00', NULL, NULL)",
                     [f"proj/t{idx:02d}-{i:02d}", "proj", f"task{idx}-{i}"],
                 )
         except BaseException as exc:  # noqa: BLE001
@@ -92,7 +91,6 @@ def test_concurrent_writes_all_land(db):
 
 def test_reader_sees_writes_after_commit(db):
     _insert_project(db, "x")
-    # Read on the read connection should reflect committed writes.
     assert db.read("SELECT id FROM projects WHERE id='x'") == [("x",)]
 
 

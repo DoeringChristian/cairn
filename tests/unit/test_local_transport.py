@@ -7,7 +7,6 @@ import hashlib
 import pytest
 
 from cairn.sdk.local import LocalTransport
-from cairn.server.storage.datadir import RepoLockedError
 
 
 def _iso(i: int = 0) -> str:
@@ -129,23 +128,30 @@ def test_drain_spill_is_noop(transport):
     assert transport.drain_spill() == 0
 
 
-def test_lock_held_during_lifetime(tmp_path):
+def test_concurrent_transports_on_same_repo(tmp_path):
+    """SQLite WAL allows multiple concurrent connections."""
     t1 = LocalTransport(tmp_path / ".cairn")
+    t2 = LocalTransport(tmp_path / ".cairn")
     try:
-        # Second LocalTransport on the same repo must refuse.
-        with pytest.raises(RepoLockedError):
-            LocalTransport(tmp_path / ".cairn")
+        # Both can create runs
+        r1 = t1.create_run({"project": "p", "task": "t1"})
+        r2 = t2.create_run({"project": "p", "task": "t2"})
+        assert r1["run_id"] != r2["run_id"]
+        # Both can write batches
+        t1.post_batch(r1["run_id"], [{"name": "loss", "step": 0, "scalar_value": 1.0,
+                                       "wall_time": "2025-01-01T00:00:00", "object_type": "scalar",
+                                       "context": None, "context_hash": ""}])
+        t2.post_batch(r2["run_id"], [{"name": "loss", "step": 0, "scalar_value": 2.0,
+                                       "wall_time": "2025-01-01T00:00:00", "object_type": "scalar",
+                                       "context": None, "context_hash": ""}])
     finally:
         t1.close()
-    # After close, the lock is released.
-    t2 = LocalTransport(tmp_path / ".cairn")
-    t2.close()
+        t2.close()
 
 
-def test_raises_served_by_other_when_ui_holds_lock(tmp_path):
-    """A UI (or server) holding the lock with host+port should trigger
-    _RepoServedByOtherError instead of RepoLockedError — so the Run
-    constructor can auto-switch to HTTP.
+def test_raises_served_by_server_holder(tmp_path):
+    """A server holding the lock triggers _RepoServedByOtherError so SDK
+    can auto-switch to HTTP mode.
     """
     import json
     import os
@@ -154,12 +160,11 @@ def test_raises_served_by_other_when_ui_holds_lock(tmp_path):
     from cairn.server.storage.datadir import DataDir
 
     dd = DataDir(tmp_path / ".cairn")
-    # Hand-craft a lock as if `cairn ui` were running on port 9999.
     dd.lock_path.write_text(
         json.dumps(
             {
-                "pid": os.getpid(),  # live PID (our own, close enough)
-                "mode": "ui",
+                "pid": os.getpid(),
+                "mode": "server",
                 "host": "127.0.0.1",
                 "port": 9999,
                 "started_at": "2026-01-01T00:00:00Z",
@@ -168,20 +173,31 @@ def test_raises_served_by_other_when_ui_holds_lock(tmp_path):
     )
     with pytest.raises(_RepoServedByOtherError) as exc:
         LocalTransport(tmp_path / ".cairn")
-    assert exc.value.holder["mode"] == "ui"
-    assert exc.value.holder["port"] == 9999
+    assert exc.value.holder["mode"] == "server"
 
 
-def test_still_raises_repo_locked_for_sdk_holder(tmp_path):
-    """Two SDKs on the same repo is still wrong: should raise RepoLockedError,
-    not _RepoServedByOtherError (we don't have an HTTP endpoint to fall back to).
-    """
-    t1 = LocalTransport(tmp_path / ".cairn")
-    try:
-        with pytest.raises(RepoLockedError):
-            LocalTransport(tmp_path / ".cairn")
-    finally:
-        t1.close()
+def test_ui_holder_does_not_block_sdk(tmp_path):
+    """A UI holding the lock should NOT block SDK — SQLite handles concurrency."""
+    import json
+    import os
+
+    from cairn.server.storage.datadir import DataDir
+
+    dd = DataDir(tmp_path / ".cairn")
+    dd.lock_path.write_text(
+        json.dumps(
+            {
+                "pid": os.getpid(),
+                "mode": "ui",
+                "host": "127.0.0.1",
+                "port": 9999,
+                "started_at": "2026-01-01T00:00:00Z",
+            }
+        )
+    )
+    # Should NOT raise — UI and SDK can coexist with SQLite
+    t = LocalTransport(tmp_path / ".cairn")
+    t.close()
 
 
 def test_lock_released_if_db_open_fails(tmp_path, monkeypatch):

@@ -292,8 +292,6 @@ def ui_cmd(
     dd = DataDir(repo)
     has_lock = False
     try:
-        # Try to record the UI port in the lock so an SDK Run(repo=...) on the same
-        # repo can auto-switch to HTTP mode instead of erroring on the lock.
         dd.acquire_lock("ui", host="127.0.0.1", port=port)
         has_lock = True
     except RepoLockedError as exc:
@@ -305,14 +303,14 @@ def ui_cmd(
                 err=True,
             )
             sys.exit(1)
-        # For SDK or other locks, run in read-only mode alongside.
+        # SQLite WAL allows concurrent access — no need to block.
         click.echo(
-            f"  Note: repo is locked by {holder.get('mode', '?')} (pid={holder.get('pid', '?')}). "
-            f"Running UI in read-only mode.\n",
+            f"  Note: repo is also in use by {holder.get('mode', '?')} "
+            f"(pid={holder.get('pid', '?')}). Running concurrently.\n",
             err=True,
         )
 
-    db = Database.open(dd.db_path, read_only=not has_lock)
+    db = Database.open(dd.db_path)
     blobs = BlobStore(dd.artifacts_dir)
     app = create_app(db=db, blobs=blobs, data_dir_obj=dd, mount_ui=True)
 
@@ -465,29 +463,21 @@ def export_cmd(run_id: str, fmt: str, out: Path) -> None:
         if fmt == "json":
             out.write_text(json.dumps(payload, default=str, indent=2))
         else:
-            import duckdb
+            import csv
 
             rows = []
             for name, pts in seqs.items():
                 for p in pts:
-                    rows.append(
-                        {
-                            "run_id": run_id,
-                            "name": name,
-                            "step": p.get("step"),
-                            "value": p.get("scalar_value"),
-                        }
-                    )
-            con = duckdb.connect(":memory:")
-            con.execute(
-                "CREATE TABLE r (run_id VARCHAR, name VARCHAR, step BIGINT, value DOUBLE)"
-            )
-            con.executemany(
-                "INSERT INTO r VALUES (?, ?, ?, ?)",
-                [(r["run_id"], r["name"], r["step"], r["value"]) for r in rows],
-            )
-            con.execute(f"COPY r TO '{out}' (FORMAT PARQUET)")
-            con.close()
+                    rows.append({
+                        "run_id": run_id,
+                        "name": name,
+                        "step": p.get("step"),
+                        "value": p.get("scalar_value"),
+                    })
+            with open(out, "w", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=["run_id", "name", "step", "value"])
+                writer.writeheader()
+                writer.writerows(rows)
         click.echo(f"exported to {out}")
     finally:
         t.close()

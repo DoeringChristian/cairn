@@ -1,12 +1,11 @@
-"""Direct-to-DuckDB transport for server-less SDK use.
+"""Direct-to-SQLite transport for server-less SDK use.
 
 When a ``Run`` is constructed with ``repo=`` pointing at a ``.cairn/``
 directory, it uses ``LocalTransport`` instead of the HTTP ``Transport``.
-Writes go straight to the DuckDB file and blob store in that directory.
+Writes go straight to the SQLite database and blob store in that directory.
 
-Multiple SDK processes can write to the same repo concurrently — DuckDB
-handles write serialization via its internal WAL. No exclusive repo lock
-is needed for SDK mode.
+Multiple SDK processes can write to the same repo concurrently — SQLite
+in WAL mode handles write serialization with sub-millisecond contention.
 
 If a ``cairn server`` is already serving the repo (holder mode is
 ``"server"`` with ``host``/``port`` recorded), ``LocalTransport.__init__``
@@ -31,11 +30,10 @@ log = logging.getLogger(__name__)
 
 
 class _RepoServedByOtherError(Exception):
-    """Internal signal: a server/ui is already serving this repo.
+    """Internal signal: a server is already serving this repo.
 
     Carries the lock-file ``holder`` dict so the Run constructor can
-    extract ``host``/``port`` and connect over HTTP. Not part of the public
-    API; treat like an InternalError.
+    extract ``host``/``port`` and connect over HTTP.
     """
 
     def __init__(self, holder: dict[str, Any]):
@@ -62,8 +60,7 @@ class LocalTransport:
     def __init__(self, repo: str | Path):
         self.data_dir = DataDir(Path(repo))
         holder = self.data_dir.read_lock()
-        # If a server is serving this repo, switch to HTTP mode for better
-        # performance. UI-only holders are fine — we can write alongside them.
+        # If a server is serving this repo, switch to HTTP mode.
         if (
             _holder_is_live(holder)
             and holder is not None
@@ -72,8 +69,7 @@ class LocalTransport:
             and holder.get("port")
         ):
             raise _RepoServedByOtherError(holder)
-        # No exclusive lock needed — DuckDB handles write serialization via
-        # its internal WAL. Multiple SDK processes can write concurrently.
+        # SQLite WAL mode handles concurrent access — no exclusive lock needed.
         self.db = Database.open(self.data_dir.db_path)
         self.blobs = BlobStore(self.data_dir.artifacts_dir)
         self.server_url = f"file://{self.data_dir.root}"
@@ -150,10 +146,6 @@ class LocalTransport:
         mime_type: str,
         metadata: dict[str, Any] | None = None,
     ) -> str:
-        """Put the blob; return its sha256 digest. Local writes are always
-        successful (or raise), so no HEAD probe is needed — blobs.put is
-        already idempotent on duplicate bytes.
-        """
         result = ingest_ops.put_artifact(self.db, self.blobs, data, mime_type, metadata)
         return result["hash"]
 
