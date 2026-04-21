@@ -230,7 +230,7 @@ function FigurePane({
       displayModeBar: settings.displayModeBar,
       scrollZoom: altDown && settings.scrollZoom,
       responsive: true,
-      staticPlot: !altDown,
+      staticPlot: !altDown && !settings.displayModeBar,
     }),
     [settings.displayModeBar, settings.scrollZoom, altDown],
   );
@@ -497,7 +497,7 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
       displayModeBar: settings.displayModeBar,
       scrollZoom: altDown && settings.scrollZoom,
       responsive: true,
-      staticPlot: !altDown,
+      staticPlot: !altDown && !settings.displayModeBar,
     }),
     [settings.displayModeBar, settings.scrollZoom, altDown],
   );

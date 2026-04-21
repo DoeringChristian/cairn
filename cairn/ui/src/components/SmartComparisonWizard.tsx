@@ -13,6 +13,10 @@ import type { Run } from "../api/types";
 import {
   createComparison,
   addCardToComparison,
+  loadComparisons,
+  saveComparisons,
+  type SmartFilters,
+  type SmartFilterEntry,
 } from "../lib/comparisons";
 
 // ---------------------------------------------------------------------------
@@ -23,8 +27,11 @@ type Strategy = "latest" | "all";
 
 interface ParamFilter {
   key: string;
+  mode: "values" | "regex";
   /** Selected allowed values (empty = all). */
   values: Set<string>;
+  /** Regex pattern when mode is "regex". */
+  regex: string;
 }
 
 interface Props {
@@ -143,6 +150,14 @@ export default function SmartComparisonWizard({
       return filters.every((f) => {
         const val = pmap.get(f.key);
         if (val == null) return false;
+        if (f.mode === "regex") {
+          if (!f.regex) return true; // empty regex = match all
+          try {
+            return new RegExp(f.regex).test(val);
+          } catch {
+            return false; // invalid regex matches nothing
+          }
+        }
         if (f.values.size === 0) return true; // no filter = all values
         return f.values.has(val);
       });
@@ -173,7 +188,7 @@ export default function SmartComparisonWizard({
   // Param filter management
   const addFilter = (key: string) => {
     if (filters.some((f) => f.key === key)) return;
-    setFilters((prev) => [...prev, { key, values: new Set() }]);
+    setFilters((prev) => [...prev, { key, mode: "values", values: new Set(), regex: "" }]);
   };
 
   const removeFilter = (key: string) => {
@@ -192,6 +207,21 @@ export default function SmartComparisonWizard({
     );
   };
 
+  const toggleFilterMode = (key: string) => {
+    setFilters((prev) =>
+      prev.map((f) => {
+        if (f.key !== key) return f;
+        return { ...f, mode: f.mode === "values" ? "regex" : "values" };
+      }),
+    );
+  };
+
+  const setFilterRegex = (key: string, regex: string) => {
+    setFilters((prev) =>
+      prev.map((f) => (f.key === key ? { ...f, regex } : f)),
+    );
+  };
+
   // Create comparison
   const handleCreate = async () => {
     if (matchedRuns.length === 0) return;
@@ -199,6 +229,23 @@ export default function SmartComparisonWizard({
 
     const name = compName.trim() || `Smart comparison (${matchedRuns.length} runs)`;
     const cmp = createComparison(projectId, name);
+
+    // Persist smart filters so the comparison can be refreshed later.
+    const smartFilters: SmartFilters = {
+      projectId,
+      strategy,
+      filters: filters.map((f): SmartFilterEntry => ({
+        key: f.key,
+        mode: f.mode,
+        values: Array.from(f.values),
+        regex: f.regex,
+      })),
+    };
+    const allComps = loadComparisons(projectId);
+    const updated = allComps.map((c) =>
+      c.id === cmp.id ? { ...c, smartFilters } : c,
+    );
+    saveComparisons(projectId, updated);
 
     if (autoCards) {
       // Fetch sequences for matched runs, build cards
@@ -314,7 +361,17 @@ export default function SmartComparisonWizard({
                         return (
                           <div key={f.key} className="rounded border border-border p-3">
                             <div className="flex items-center justify-between mb-2">
-                              <span className="mono text-xs font-semibold">{f.key}</span>
+                              <div className="flex items-center gap-2">
+                                <span className="mono text-xs font-semibold">{f.key}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => toggleFilterMode(f.key)}
+                                  className="rounded border border-border-subtle px-1.5 py-0.5 text-[10px] text-fg-muted hover:border-accent hover:text-fg transition-colors"
+                                  title={f.mode === "values" ? "Switch to regex" : "Switch to pick values"}
+                                >
+                                  {f.mode === "values" ? "regex" : "values"}
+                                </button>
+                              </div>
                               <button
                                 type="button"
                                 onClick={() => removeFilter(f.key)}
@@ -323,27 +380,42 @@ export default function SmartComparisonWizard({
                                 {"\u00D7"} Remove
                               </button>
                             </div>
-                            <div className="flex flex-wrap gap-1.5">
-                              {allValues.map((val) => {
-                                const selected = f.values.size === 0 || f.values.has(val);
-                                return (
-                                  <button
-                                    key={val}
-                                    type="button"
-                                    onClick={() => toggleFilterValue(f.key, val)}
-                                    className={`mono rounded border px-2 py-0.5 text-xs transition-colors ${
-                                      selected
-                                        ? "border-accent bg-accent/10 text-accent"
-                                        : "border-border-subtle text-fg-subtle hover:border-border hover:text-fg-muted"
-                                    }`}
-                                  >
-                                    {val}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                            {f.values.size === 0 && (
-                              <p className="text-[10px] text-fg-subtle mt-1">All values selected. Click to filter.</p>
+                            {f.mode === "values" ? (
+                              <>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {allValues.map((val) => {
+                                    const selected = f.values.size === 0 || f.values.has(val);
+                                    return (
+                                      <button
+                                        key={val}
+                                        type="button"
+                                        onClick={() => toggleFilterValue(f.key, val)}
+                                        className={`mono rounded border px-2 py-0.5 text-xs transition-colors ${
+                                          selected
+                                            ? "border-accent bg-accent/10 text-accent"
+                                            : "border-border-subtle text-fg-subtle hover:border-border hover:text-fg-muted"
+                                        }`}
+                                      >
+                                        {val}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                                {f.values.size === 0 && (
+                                  <p className="text-[10px] text-fg-subtle mt-1">All values selected. Click to filter.</p>
+                                )}
+                              </>
+                            ) : (
+                              <div>
+                                <input
+                                  type="text"
+                                  value={f.regex}
+                                  onChange={(e) => setFilterRegex(f.key, e.target.value)}
+                                  placeholder="e.g. ^adam|sgd$"
+                                  className="input w-full text-xs mono"
+                                />
+                                {f.regex && (() => { try { new RegExp(f.regex); return null; } catch { return <p className="text-[10px] text-status-failed mt-1">Invalid regex</p>; } })()}
+                              </div>
                             )}
                           </div>
                         );

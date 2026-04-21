@@ -25,7 +25,7 @@ interface ParallelSettings {
   height?: number;
   fullWidth?: boolean;
   /** Column definitions: each is either a param key or a scalar metric name. */
-  columns: Array<{ key: string; source: "param" | "metric" }>;
+  columns: Array<{ key: string; source: "param" | "metric"; log?: boolean; invert?: boolean }>;
 }
 
 const DEFAULT_SETTINGS: ParallelSettings = {
@@ -247,6 +247,19 @@ export default function ParallelCoordsCard({
     [settings.columns, updateSettings],
   );
 
+  // Drag-to-reorder state
+  const [dragIdx, setDragIdx] = useState<number | null>(null);
+
+  const toggleColumnFlag = useCallback(
+    (idx: number, flag: "log" | "invert") => {
+      const cols = settings.columns.map((c, i) =>
+        i === idx ? { ...c, [flag]: !c[flag] } : c,
+      );
+      updateSettings({ columns: cols });
+    },
+    [settings.columns, updateSettings],
+  );
+
   // Hover state for tooltip
   const [hoveredRun, setHoveredRun] = useState<string | null>(null);
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
@@ -272,11 +285,24 @@ export default function ParallelCoordsCard({
 
     const colX = cols.map((_, i) => pad.left + (cols.length === 1 ? plotW / 2 : (i / (cols.length - 1)) * plotW));
 
-    // Normalize value to [0,1] within column domain
+    // Normalize value to [0,1] within column domain, applying log/invert
     const normalize = (ci: number, v: number | null): number | null => {
       if (v == null) return null;
+      const col = cols[ci]!;
       const d = columnDomains[ci]!;
-      return (v - d.min) / (d.max - d.min);
+      let val = v;
+      let min = d.min;
+      let max = d.max;
+      if (col.log) {
+        // Shift to positive range before log if needed
+        const offset = min > 0 ? 0 : 1 - min;
+        val = Math.log10(val + offset);
+        min = Math.log10(min + offset);
+        max = Math.log10(max + offset);
+      }
+      let t = (max - min) === 0 ? 0.5 : (val - min) / (max - min);
+      if (col.invert) t = 1 - t;
+      return t;
     };
 
     // Color by rightmost column
@@ -409,9 +435,27 @@ export default function ParallelCoordsCard({
         {settings.columns.map((col, i) => (
           <div
             key={`${col.source}:${col.key}:${i}`}
-            className="mono flex items-center justify-between gap-1 rounded border border-border-subtle bg-bg px-2 py-1 text-xs text-fg-muted"
+            draggable
+            onDragStart={(e) => {
+              setDragIdx(i);
+              e.dataTransfer.effectAllowed = "move";
+            }}
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "move";
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              if (dragIdx != null && dragIdx !== i) {
+                moveColumn(dragIdx, i);
+              }
+              setDragIdx(null);
+            }}
+            onDragEnd={() => setDragIdx(null)}
+            className={`mono flex items-center justify-between gap-1 rounded border border-border-subtle bg-bg px-2 py-1 text-xs text-fg-muted cursor-grab${dragIdx === i ? " opacity-50" : ""}`}
           >
             <span className="flex items-center gap-1.5 truncate">
+              <span className="text-fg-subtle select-none">{"\u2261"}</span>
               <span className={`shrink-0 rounded px-1 py-0.5 text-[9px] ${col.source === "param" ? "bg-accent/10 text-accent" : "bg-green-100 text-green-700"}`}>
                 {col.source === "param" ? "P" : "M"}
               </span>
@@ -421,12 +465,22 @@ export default function ParallelCoordsCard({
               )}
             </span>
             <div className="flex items-center gap-0.5 shrink-0">
-              {i > 0 && (
-                <button type="button" onClick={() => moveColumn(i, i - 1)} className="text-fg-subtle hover:text-fg" title="Move left">{"\u2190"}</button>
-              )}
-              {i < settings.columns.length - 1 && (
-                <button type="button" onClick={() => moveColumn(i, i + 1)} className="text-fg-subtle hover:text-fg" title="Move right">{"\u2192"}</button>
-              )}
+              <button
+                type="button"
+                onClick={() => toggleColumnFlag(i, "log")}
+                className={`rounded px-1 py-0.5 text-[9px] ${col.log ? "bg-accent/20 text-accent" : "text-fg-subtle hover:text-fg"}`}
+                title="Toggle log scale"
+              >
+                log
+              </button>
+              <button
+                type="button"
+                onClick={() => toggleColumnFlag(i, "invert")}
+                className={`rounded px-1 py-0.5 text-[9px] ${col.invert ? "bg-accent/20 text-accent" : "text-fg-subtle hover:text-fg"}`}
+                title="Invert axis"
+              >
+                {"\u2195"}
+              </button>
               <button type="button" onClick={() => removeColumn(i)} className="text-fg-subtle hover:text-fg" title="Remove">{"\u00D7"}</button>
             </div>
           </div>

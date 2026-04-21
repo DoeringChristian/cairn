@@ -24,11 +24,28 @@ export interface ComparisonCard {
   series: ComparisonSeriesRef[];
 }
 
+export interface SmartFilterEntry {
+  key: string;
+  mode: "values" | "regex";
+  /** Selected values when mode is "values". */
+  values: string[];
+  /** Regex pattern when mode is "regex". */
+  regex: string;
+}
+
+export interface SmartFilters {
+  projectId: string;
+  strategy: "latest" | "all";
+  filters: SmartFilterEntry[];
+}
+
 export interface Comparison {
   id: string;
   name: string;
   createdAt: string; // ISO
   cards: ComparisonCard[];
+  /** When present, the comparison was created by the Smart Wizard and can be refreshed. */
+  smartFilters?: SmartFilters;
 }
 
 function storageKey(projectId: string): string {

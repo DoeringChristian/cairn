@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQueries } from "@tanstack/react-query";
 import { api } from "../api/client";
@@ -97,14 +97,34 @@ export default function ProjectPage() {
 
 
 
-  // Manually added cards
+  // Manually added cards (persisted to localStorage)
+  const extraCardsKey = `cairn:workspace-extra-cards:${projectId}`;
   const [extraCards, setExtraCards] = useState<
     Array<{ name: string; object_type: string; runs: Array<{ runId: string; context_hash: string }> }>
-  >([]);
+  >(() => {
+    try {
+      const stored = localStorage.getItem(extraCardsKey);
+      return stored ? JSON.parse(stored) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(extraCardsKey, JSON.stringify(extraCards));
+    } catch {
+      // ignore quota errors
+    }
+  }, [extraCards, extraCardsKey]);
   const [addCardOpen, setAddCardOpen] = useState(false);
+
+  const prevExtraCardsLenRef = useRef(extraCards.length);
+  const newCardAddedRef = useRef(false);
 
   const handleAddCard = useCallback((sel: AddCardSelection) => {
     setExtraCards((prev) => [...prev, sel]);
+    newCardAddedRef.current = true;
   }, []);
 
   // Merge auto + extra cards
@@ -145,6 +165,31 @@ export default function ProjectPage() {
     }
     return result;
   }, [allCards]);
+
+  // Scroll to newly added card
+  useEffect(() => {
+    if (!newCardAddedRef.current) return;
+    if (extraCards.length <= prevExtraCardsLenRef.current) {
+      prevExtraCardsLenRef.current = extraCards.length;
+      return;
+    }
+    prevExtraCardsLenRef.current = extraCards.length;
+    newCardAddedRef.current = false;
+
+    // The new card is the last one in allCards. Use requestAnimationFrame
+    // to wait for DOM to update, then scroll to it.
+    requestAnimationFrame(() => {
+      const grids = document.querySelectorAll("[data-cairn-card-grid]");
+      const lastGrid = grids[grids.length - 1];
+      if (lastGrid) {
+        const cards = lastGrid.children;
+        const lastCard = cards[cards.length - 1] as HTMLElement | undefined;
+        if (lastCard) {
+          lastCard.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+      }
+    });
+  }, [extraCards.length]);
 
   // Mobile runs list collapsible
   const [mobileRunsOpen, setMobileRunsOpen] = useState(false);
@@ -285,7 +330,7 @@ export default function ProjectPage() {
                 {section.name}
               </h2>
             </header>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2" data-cairn-card-grid>
               {section.cardIndices.map((cardIdx) => {
                 const card = allCards[cardIdx]!;
                 if (card.runs.length === 0) return null;

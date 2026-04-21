@@ -46,6 +46,26 @@ type Interpolation = "auto" | "pixelated" | "crisp-edges";
 type Colormap = "none" | "viridis" | "red-green" | "red-blue";
 
 // ---------------------------------------------------------------------------
+// In-memory ImageData cache (diff + false-color computations)
+// ---------------------------------------------------------------------------
+
+const IMAGE_DATA_CACHE_MAX = 50;
+const imageDataCache = new Map<string, ImageData>();
+
+function getCachedImageData(key: string): ImageData | undefined {
+  return imageDataCache.get(key);
+}
+
+function setCachedImageData(key: string, data: ImageData): void {
+  if (imageDataCache.size >= IMAGE_DATA_CACHE_MAX) {
+    // Evict oldest entry (first key in insertion order)
+    const firstKey = imageDataCache.keys().next().value;
+    if (firstKey !== undefined) imageDataCache.delete(firstKey);
+  }
+  imageDataCache.set(key, data);
+}
+
+// ---------------------------------------------------------------------------
 // Colormap LUT generation
 // ---------------------------------------------------------------------------
 
@@ -384,6 +404,23 @@ function ImagePane({
     if (!useFalseColor || !artifactHash) { setFalseColorReady(false); return; }
     let cancelled = false;
     setFalseColorReady(false);
+
+    const cacheKey = `${artifactHash}::${colormap}`;
+    const cached = getCachedImageData(cacheKey);
+    if (cached) {
+      const fc = falseColorRef.current;
+      if (fc) {
+        fc.width = cached.width;
+        fc.height = cached.height;
+        const fctx = fc.getContext("2d");
+        if (fctx) fctx.putImageData(cached, 0, 0);
+        setNaturalDims({ w: cached.width, h: cached.height });
+        onNaturalSize?.(cached.width, cached.height);
+        setFalseColorReady(true);
+      }
+      return;
+    }
+
     const img = new Image();
     img.onload = () => {
       if (cancelled) return;
@@ -395,6 +432,7 @@ function ImagePane({
       ctx.drawImage(img, 0, 0);
       const src = ctx.getImageData(0, 0, c.width, c.height);
       const mapped = applyColormap(src, colormap as Exclude<Colormap, "none">);
+      setCachedImageData(cacheKey, mapped);
       const fc = falseColorRef.current;
       if (!fc || cancelled) return;
       fc.width = mapped.width;
@@ -419,6 +457,22 @@ function ImagePane({
     let cancelled = false;
     setDiffReady(false);
 
+    const cacheKey = `${baselineHash}::${artifactHash}::${diffMode}::${colormap}`;
+    const cached = getCachedImageData(cacheKey);
+    if (cached) {
+      const canvas = canvasRef.current;
+      if (canvas) {
+        canvas.width = cached.width;
+        canvas.height = cached.height;
+        const ctx = canvas.getContext("2d");
+        if (ctx) ctx.putImageData(cached, 0, 0);
+        setNaturalDims({ w: cached.width, h: cached.height });
+        onNaturalSize?.(cached.width, cached.height);
+        setDiffReady(true);
+      }
+      return;
+    }
+
     (async () => {
       const [baseData, otherData] = await Promise.all([
         loadImageData(api.artifactUrl(baselineHash!)),
@@ -438,6 +492,7 @@ function ImagePane({
         const cmapCenter = isSigned ? 128 : 0;
         diffData = applyColormap(diffData, colormap as Exclude<Colormap, "none">, cmapCenter);
       }
+      setCachedImageData(cacheKey, diffData);
       const canvas = canvasRef.current;
       if (!canvas || cancelled) return;
       canvas.width = diffData.width;
@@ -540,13 +595,23 @@ function ExternalBaselinePicker({
   currentMetricName,
   selected,
   onSelect,
+  availableRunIds,
+  runDisplayNames,
 }: {
   runId: string;
   currentMetricName: string;
   selected?: string;
-  onSelect: (name: string, contextHash: string) => void;
+  onSelect: (name: string, contextHash: string, selectedRunId: string) => void;
+  /** All distinct run IDs from the card's effective metrics. */
+  availableRunIds: string[];
+  /** Optional map from runId to display name. */
+  runDisplayNames?: Map<string, string>;
 }) {
-  const { data } = useSequences(runId);
+  const multiRun = availableRunIds.length > 1;
+  const [pickedRunId, setPickedRunId] = useState<string>(runId);
+  const activeRunId = multiRun ? pickedRunId : runId;
+
+  const { data } = useSequences(activeRunId);
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState("");
   const btnRef = useRef<HTMLButtonElement | null>(null);
@@ -577,8 +642,24 @@ function ExternalBaselinePicker({
     return () => { document.removeEventListener("pointerdown", onDown); document.removeEventListener("keydown", onKey); };
   }, [open]);
 
+  const runLabel = (id: string) => runDisplayNames?.get(id) ?? shortRunId(id);
+
   return (
     <div className="relative mt-1">
+      {multiRun && (
+        <div className="mb-1">
+          <label className="block text-[10px] uppercase tracking-wide text-fg-muted mb-0.5">Run</label>
+          <select
+            value={pickedRunId}
+            onChange={(e) => setPickedRunId(e.target.value)}
+            className="input w-full text-xs"
+          >
+            {availableRunIds.map((rid) => (
+              <option key={rid} value={rid}>{runLabel(rid)}</option>
+            ))}
+          </select>
+        </div>
+      )}
       <button
         ref={btnRef}
         type="button"
@@ -607,7 +688,7 @@ function ExternalBaselinePicker({
                 <button
                   key={`${m.name}::${m.context_hash}`}
                   type="button"
-                  onClick={() => { onSelect(m.name, m.context_hash); setOpen(false); }}
+                  onClick={() => { onSelect(m.name, m.context_hash, activeRunId); setOpen(false); }}
                   className={`mono block w-full truncate px-3 py-1.5 text-left text-xs hover:bg-bg-hover ${
                     selected === m.name ? "text-accent" : "text-fg-muted hover:text-fg"
                   }`}
@@ -732,6 +813,12 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     const seen = new Set<string>();
     for (const m of effectiveMetrics) seen.add(m.runId ?? runId);
     return seen.size > 1;
+  }, [effectiveMetrics, runId]);
+
+  const availableRunIds = useMemo(() => {
+    const seen = new Set<string>();
+    for (const m of effectiveMetrics) seen.add(m.runId ?? runId);
+    return Array.from(seen);
   }, [effectiveMetrics, runId]);
 
   // -----------------------------------------------------------------------
@@ -947,6 +1034,22 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     if (!singleUseFalseColor || !singleArtifactHash) { setSingleFCReady(false); return; }
     let cancelled = false;
     setSingleFCReady(false);
+
+    const cacheKey = `${singleArtifactHash}::${settings.colormap}`;
+    const cached = getCachedImageData(cacheKey);
+    if (cached) {
+      const fc = singleFCRef.current;
+      if (fc) {
+        fc.width = cached.width;
+        fc.height = cached.height;
+        const fctx = fc.getContext("2d");
+        if (fctx) fctx.putImageData(cached, 0, 0);
+        setSingleNaturalDims({ w: cached.width, h: cached.height });
+        setSingleFCReady(true);
+      }
+      return;
+    }
+
     const img = new Image();
     img.onload = () => {
       if (cancelled) return;
@@ -958,6 +1061,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
       ctx.drawImage(img, 0, 0);
       const src = ctx.getImageData(0, 0, c.width, c.height);
       const mapped = applyColormap(src, (settings.colormap ?? "viridis") as Exclude<Colormap, "none">);
+      setCachedImageData(cacheKey, mapped);
       const fc = singleFCRef.current;
       if (!fc || cancelled) return;
       fc.width = mapped.width;
@@ -1502,7 +1606,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
               </label>
               {settings.externalBaseline ? (
                 <div className="flex items-center gap-1 rounded border border-accent/40 bg-accent/5 px-2 py-1 text-xs text-fg-muted">
-                  <span className="mono truncate flex-1">{settings.externalBaseline.name}</span>
+                  <span className="mono truncate flex-1">{settings.externalBaseline.name}{settings.externalBaseline.runId && settings.externalBaseline.runId !== runId ? ` · ${shortRunId(settings.externalBaseline.runId)}` : ""}</span>
                   <button
                     type="button"
                     onClick={() => updateSettings({ externalBaseline: undefined, baselineIndex: undefined, diffMode: settings.diffMode === "none" ? "none" : settings.diffMode })}
@@ -1519,9 +1623,10 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                 runId={runId}
                 currentMetricName={metric.name}
                 selected={settings.externalBaseline?.name}
-                onSelect={(name, ctx) => {
+                availableRunIds={availableRunIds}
+                onSelect={(name, ctx, selectedRunId) => {
                   updateSettings({
-                    externalBaseline: { name, context_hash: ctx },
+                    externalBaseline: { runId: selectedRunId, name, context_hash: ctx },
                     baselineIndex: undefined,
                     diffMode: settings.diffMode === "none" ? "absolute" : settings.diffMode,
                   });

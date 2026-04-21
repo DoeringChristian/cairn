@@ -9,14 +9,18 @@ import {
   addCardToComparison,
   createComparison,
   deleteComparison,
+  loadComparisons,
   removeCardFromComparison,
   renameComparison,
+  saveComparisons,
   useComparisons,
   type Comparison,
   type ComparisonCard,
+  type SmartFilters,
 } from "../lib/comparisons";
 import { formatRelative } from "../lib/format";
 import { useRuns } from "../api/hooks";
+import { api } from "../api/client";
 import SettingsPopover from "../components/SettingsPopover";
 import type { SequenceMeta } from "../api/types";
 
@@ -115,6 +119,103 @@ export default function ComparePage() {
     [projectId, refresh],
   );
 
+  const handleRefreshSmartFilters = useCallback(
+    async (comparisonId: string, smartFilters: SmartFilters) => {
+      if (!projectId) return;
+      // We need to re-run the filter. Fetch all runs + their params.
+      const runsRes = await api.runs({ project: projectId, limit: 500 });
+      const allRuns = runsRes.runs;
+      const runDetails = await Promise.all(allRuns.map((r) => api.run(r.id)));
+
+      // Build param map
+      const runParamMap = new Map<string, Map<string, string>>();
+      runDetails.forEach((detail, idx) => {
+        const run = allRuns[idx]!;
+        const pmap = new Map<string, string>();
+        for (const p of detail.params ?? []) {
+          pmap.set(p.key, p.value);
+        }
+        runParamMap.set(run.id, pmap);
+      });
+
+      // Apply filters
+      let matched = allRuns.filter((run) => {
+        const pmap = runParamMap.get(run.id);
+        if (!pmap) return false;
+        return smartFilters.filters.every((f) => {
+          const val = pmap.get(f.key);
+          if (val == null) return false;
+          if (f.mode === "regex") {
+            if (!f.regex) return true;
+            try { return new RegExp(f.regex).test(val); } catch { return false; }
+          }
+          if (f.values.length === 0) return true;
+          return f.values.includes(val);
+        });
+      });
+
+      if (smartFilters.strategy === "latest") {
+        const groups = new Map<string, typeof matched>();
+        for (const run of matched) {
+          const pmap = runParamMap.get(run.id);
+          const comboKey = smartFilters.filters.map((f) => pmap?.get(f.key) ?? "").join("||");
+          const arr = groups.get(comboKey) ?? [];
+          arr.push(run);
+          groups.set(comboKey, arr);
+        }
+        matched = [];
+        for (const arr of groups.values()) {
+          arr.sort((a, b) => b.created_at.localeCompare(a.created_at));
+          matched.push(arr[0]!);
+        }
+      }
+
+      matched.sort((a, b) => b.created_at.localeCompare(a.created_at));
+
+      // Rebuild cards from matched runs
+      const selectedIds = matched.map((r) => r.id);
+      const seqResults = await Promise.all(selectedIds.map((rid) => api.sequences(rid)));
+
+      const cardMap = new Map<
+        string,
+        { name: string; object_type: string; series: Array<{ runId: string; name: string; context_hash: string }> }
+      >();
+      seqResults.forEach((result, idx) => {
+        const runId = selectedIds[idx]!;
+        for (const seq of result.sequences) {
+          const key = `${seq.name}::${seq.object_type}`;
+          const existing = cardMap.get(key);
+          if (existing) {
+            if (!existing.series.some((s) => s.runId === runId && s.name === seq.name)) {
+              existing.series.push({ runId, name: seq.name, context_hash: seq.context_hash });
+            }
+          } else {
+            cardMap.set(key, {
+              name: seq.name,
+              object_type: seq.object_type,
+              series: [{ runId, name: seq.name, context_hash: seq.context_hash }],
+            });
+          }
+        }
+      });
+
+      // Replace all cards on the comparison
+      const allComps = loadComparisons(projectId);
+      const updatedComps = allComps.map((c) => {
+        if (c.id !== comparisonId) return c;
+        const newCards = Array.from(cardMap.values()).map((card) => ({
+          id: crypto.randomUUID(),
+          type: card.object_type as "scalar",
+          series: card.series,
+        }));
+        return { ...c, cards: newCards };
+      });
+      saveComparisons(projectId, updatedComps);
+      refresh();
+    },
+    [projectId, refresh],
+  );
+
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [wizardOpen, setWizardOpen] = useState(false);
 
@@ -169,6 +270,7 @@ export default function ComparePage() {
                 onDelete={() => handleDelete(selected.id)}
                 onRemoveCard={(cardId) => handleRemoveCard(selected.id, cardId)}
                 onAddCard={(sel) => handleAddCard(selected.id, sel)}
+                onRefreshSmartFilters={handleRefreshSmartFilters}
               />
             ) : (
               <EmptyMainPane
@@ -405,6 +507,7 @@ interface ComparisonViewProps {
   onDelete: () => void;
   onRemoveCard: (cardId: string) => void;
   onAddCard: (sel: AddCardSelection) => void;
+  onRefreshSmartFilters: (comparisonId: string, smartFilters: SmartFilters) => Promise<void>;
 }
 
 function ComparisonView({
@@ -414,10 +517,22 @@ function ComparisonView({
   onDelete,
   onRemoveCard,
   onAddCard,
+  onRefreshSmartFilters,
 }: ComparisonViewProps) {
   const [editingName, setEditingName] = useState(false);
   const [draft, setDraft] = useState(comparison.name);
   const [addCardOpen, setAddCardOpen] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const handleRefresh = useCallback(async () => {
+    if (!comparison.smartFilters) return;
+    setRefreshing(true);
+    try {
+      await onRefreshSmartFilters(comparison.id, comparison.smartFilters);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [comparison.id, comparison.smartFilters, onRefreshSmartFilters]);
 
   // Collect all unique run IDs from the comparison's series
   const compRunIds = useMemo(() => {
@@ -471,6 +586,17 @@ function ComparisonView({
           </h2>
         )}
         <div className="flex items-center gap-2">
+          {comparison.smartFilters && (
+            <button
+              type="button"
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className="inline-flex items-center gap-1.5 rounded border border-border px-3 py-1.5 text-xs font-medium text-fg-muted hover:border-accent hover:text-fg transition-colors disabled:opacity-50"
+              title="Re-run smart filters to include new runs"
+            >
+              {refreshing ? "Refreshing..." : "Refresh"}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setAddCardOpen(true)}
