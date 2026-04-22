@@ -601,14 +601,12 @@ export default function ScalarPlotCard({
     [series, settings.promotedSeries],
   );
 
-  const promotedCount = Object.keys(settings.promotedSeries).length;
-  const promotedAxisWidth = 30; // px per promoted right YAxis
+  const promotedAxisWidth = 35; // px per promoted right YAxis component
+  // Recharts automatically allocates space for right YAxis components,
+  // so we only need a small base margin — no extra per-axis padding.
   const dynamicMargin = useMemo(
-    () => ({
-      ...CHART_MARGIN,
-      right: CHART_MARGIN.right + promotedCount * promotedAxisWidth,
-    }),
-    [promotedCount],
+    () => ({ ...CHART_MARGIN }),
+    [],
   );
 
   type RightAxisDragMode = "pan" | "scale";
@@ -1403,21 +1401,27 @@ export default function ScalarPlotCard({
           margin={dynamicMargin}
           onMouseMove={(state: any) => {
             if (state?.activePayload?.length) {
-              const payload = state.activePayload as Array<{ dataKey: string; value: number; payload: Record<string, number | null> }>;
-              // Convert cursor screen Y to data Y using the plot offset
+              const payload = state.activePayload as Array<{ dataKey: string; value: number }>;
               const po = plotOffsetRef.current;
               if (po && state.chartY != null) {
                 const fracFromTop = Math.max(0, Math.min(1, (state.chartY - po.top) / Math.max(1, po.height)));
-                // Y axis: top = yMax, bottom = yMin (for left axis)
-                const yRange = effectiveRef.current.y;
-                const cursorDataY = yRange[1] - fracFromTop * (yRange[1] - yRange[0]);
+                // Find closest series by comparing screen-space distances.
+                // Each series may use a different Y axis (left or promoted).
                 let closestKey: string | null = null;
-                let closestDist = Infinity;
+                let closestScreenDist = Infinity;
                 for (const p of payload) {
                   if (p.value == null) continue;
-                  const dist = Math.abs(p.value - cursorDataY);
-                  if (dist < closestDist) {
-                    closestDist = dist;
+                  // Determine which Y axis this series uses
+                  const promoted = settingsRef.current.promotedSeries[p.dataKey];
+                  const [yMin, yMax] = promoted
+                    ? [promoted.min, promoted.max]
+                    : effectiveRef.current.y;
+                  // Convert series value to screen fraction (0=top, 1=bottom)
+                  const valueFrac = 1 - (p.value - yMin) / Math.max(1e-10, yMax - yMin);
+                  // Distance in screen-fraction space
+                  const dist = Math.abs(valueFrac - fracFromTop);
+                  if (dist < closestScreenDist) {
+                    closestScreenDist = dist;
                     closestKey = p.dataKey;
                   }
                 }
@@ -1463,9 +1467,8 @@ export default function ScalarPlotCard({
                 allowDataOverflow
                 stroke={color}
                 tick={{ fill: color }}
-                fontSize={9}
+                fontSize={11}
                 width={promotedAxisWidth}
-                tickFormatter={(v: number) => v >= 1000 || v <= -1000 ? v.toExponential(0) : v >= 100 ? Math.round(v).toString() : v.toPrecision(2)}
               />
             );
           })}
