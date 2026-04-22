@@ -860,7 +860,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
   };
   const safeIdx = Math.min(Math.max(0, idx), Math.max(0, maxLen - 1));
 
-  const isMulti = effectiveMetrics.length > 1;
+  const isMulti = effectiveMetrics.length > 1 || settings.externalBaseline != null;
 
   const multipleRuns = useMemo(() => {
     const seen = new Set<string>();
@@ -1104,6 +1104,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     setRefDropHighlight(false);
     const raw = e.dataTransfer.getData(CAIRN_SERIES_MIME);
     if (!raw) return;
+    e.stopPropagation(); // Prevent useSeriesDrop on outer card from also adding the metric
     try {
       const ref = JSON.parse(raw) as { runId: string; name: string; context_hash: string };
       updateSettings({
