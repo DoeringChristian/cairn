@@ -21,6 +21,7 @@ import {
 import { useProjectId } from "../lib/project-context";
 import { formatRelative } from "../lib/format";
 import { computeDiff, loadImageData, type DiffMode } from "../lib/image-diff";
+import { gpuComputeDiff } from "../lib/gpu-diff";
 import CardDetailModal from "./CardDetailModal";
 import CardHeader from "./CardHeader";
 import CardResizeHandle from "./CardResizeHandle";
@@ -533,18 +534,31 @@ function ImagePane({
       ]);
       if (cancelled) return;
       if (!baseData || !otherData) return;
-      let diffData = computeDiff(
-        baseData,
-        otherData,
-        diffMode as DiffMode,
-      );
-      // Apply colormap to diff output if active
-      if (colormap !== "none") {
-        // Signed modes already have 128 as zero-point; absolute/squared have 0 as zero-point
-        const isSigned = (diffMode as string).includes("signed");
-        const cmapMode = isSigned ? "signed" : "positive";
-        diffData = applyColormap(diffData, colormap as Exclude<Colormap, "none">, cmapMode);
+
+      let diffData: ImageData | null = null;
+      const isSigned = (diffMode as string).includes("signed");
+      const cmapMode: "linear" | "signed" | "positive" = isSigned ? "signed" : "positive";
+
+      // Try GPU path first (diff + colormap in one dispatch)
+      const gpuLut = colormap !== "none" ? getColormapLUT(colormap as Exclude<Colormap, "none">) : null;
+      try {
+        diffData = await gpuComputeDiff(baseData, otherData, {
+          diffMode: diffMode as DiffMode,
+          colormap: gpuLut,
+          cmapMode,
+        });
+      } catch {
+        // GPU failed — fall back to CPU
       }
+
+      // CPU fallback
+      if (!diffData) {
+        diffData = computeDiff(baseData, otherData, diffMode as DiffMode);
+        if (colormap !== "none") {
+          diffData = applyColormap(diffData, colormap as Exclude<Colormap, "none">, cmapMode);
+        }
+      }
+
       setCachedImageData(cacheKey, diffData);
       const canvas = canvasRef.current;
       if (!canvas || cancelled) return;
