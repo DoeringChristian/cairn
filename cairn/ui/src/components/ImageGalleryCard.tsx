@@ -1349,6 +1349,8 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
               }}
             >
               {effectiveMetrics.map((m, paneIdx) => {
+                // Skip metrics that match the external baseline — shown as separate ref pane
+                if (settings.externalBaseline && m.name === settings.externalBaseline.name && (m.runId ?? runId) === (settings.externalBaseline.runId ?? runId)) return null;
                 const pts = perSeriesPoints[paneIdx] ?? [];
                 const pCurrent = pts[safeIdx];
                 const hash = pCurrent?.artifact_hash ?? undefined;
