@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { DragEvent } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import CardRenderer from "./CardRenderer";
+import ReorderableCardGrid from "./ReorderableCardGrid";
 import type { SequenceMeta } from "../api/types";
 import { groupIntoSections } from "../lib/sections";
 import {
@@ -14,7 +14,6 @@ import {
   saveRunLayout,
 } from "../lib/run-layout";
 import type { RunLayout } from "../lib/run-layout";
-import DraggableCard, { CAIRN_CARD_MIME } from "./DraggableCard";
 
 interface Props {
   runId: string;
@@ -78,20 +77,6 @@ export default function CardGrid({ runId, sequences }: Props) {
     [runId],
   );
 
-  // Track which section is currently being dragged over (for ring highlight).
-  const [dragOverSection, setDragOverSection] = useState<string | null>(null);
-  // Source section of the card currently being dragged. Used so drops onto
-  // the same card are a no-op.
-  const draggedRef = useRef<{ cardKey: string; section: string } | null>(null);
-
-  const handleDragStart = useCallback((cardKey: string, section: string) => {
-    draggedRef.current = { cardKey, section };
-  }, []);
-
-  const handleDragEnd = useCallback(() => {
-    draggedRef.current = null;
-    setDragOverSection(null);
-  }, []);
 
   const commitMove = useCallback(
     (
@@ -144,7 +129,6 @@ export default function CardGrid({ runId, sequences }: Props) {
         // cardKey per rendered entry. Use the same convention `run-layout`
         // uses so drag payloads and layout lookups stay in sync.
         const entryKeys = entries.map((e) => cardKeyOf(e.primary));
-        const isOver = dragOverSection === section.name;
         return (
           <SectionBlock
             key={section.name}
@@ -152,58 +136,18 @@ export default function CardGrid({ runId, sequences }: Props) {
             itemCount={entries.length}
             collapsed={collapsedSections.has(section.name)}
             onToggleCollapse={() => toggleSectionCollapse(section.name)}
-            isOver={isOver}
-            onSectionDragEnter={() => setDragOverSection(section.name)}
-            onSectionDragLeave={() => {
-              // Only clear if we're leaving the section wrapper entirely.
-              setDragOverSection((cur) => (cur === section.name ? null : cur));
-            }}
-            onHeaderDrop={(e) => {
-              const cardKey = e.dataTransfer.getData(CAIRN_CARD_MIME);
-              if (!cardKey) return;
-              const src = draggedRef.current;
-              if (!src) return;
-              e.preventDefault();
-              // Drop on the header appends to the end of this section.
-              commitMove(cardKey, src.section, section.name, null);
-              setDragOverSection(null);
-              draggedRef.current = null;
-            }}
-            onGridDrop={(e, gridEl) => {
-              const cardKey = e.dataTransfer.getData(CAIRN_CARD_MIME);
-              if (!cardKey) return;
-              const src = draggedRef.current;
-              if (!src) return;
-              e.preventDefault();
-              const index = computeDropIndex(gridEl, e.clientY, cardKey);
-              // No-op if dropping on self at same spot in same section.
-              if (
-                src.section === section.name &&
-                isNoopSelfDrop(entryKeys, cardKey, index)
-              ) {
-                setDragOverSection(null);
-                draggedRef.current = null;
-                return;
-              }
-              commitMove(cardKey, src.section, section.name, index);
-              setDragOverSection(null);
-              draggedRef.current = null;
-            }}
           >
-            {entries.map((entry) => {
-              const key = cardKeyOf(entry.primary);
-              return (
-                <DraggableCard
-                  key={key}
-                  cardKey={key}
-                  section={section.name}
-                  onDragStart={handleDragStart}
-                  onDragEnd={handleDragEnd}
-                >
-                  <CardFor runId={runId} entry={entry} />
-                </DraggableCard>
-              );
-            })}
+            <ReorderableCardGrid
+              cards={entries.map((entry) => ({
+                key: cardKeyOf(entry.primary),
+                content: <CardFor runId={runId} entry={entry} />,
+              }))}
+              onReorder={(fromKey, toKey) => {
+                const src = { cardKey: fromKey, section: section.name };
+                const toIdx = entryKeys.indexOf(toKey);
+                commitMove(fromKey, src.section, section.name, toIdx >= 0 ? toIdx : null);
+              }}
+            />
           </SectionBlock>
         );
       })}
@@ -220,11 +164,6 @@ interface SectionBlockProps {
   itemCount: number;
   collapsed: boolean;
   onToggleCollapse: () => void;
-  isOver: boolean;
-  onSectionDragEnter: () => void;
-  onSectionDragLeave: () => void;
-  onHeaderDrop: (e: DragEvent<HTMLElement>) => void;
-  onGridDrop: (e: DragEvent<HTMLDivElement>, gridEl: HTMLDivElement) => void;
   children: React.ReactNode;
 }
 
@@ -233,50 +172,12 @@ function SectionBlock({
   itemCount,
   collapsed,
   onToggleCollapse,
-  isOver,
-  onSectionDragEnter,
-  onSectionDragLeave,
-  onHeaderDrop,
-  onGridDrop,
   children,
 }: SectionBlockProps) {
-  const gridRef = useRef<HTMLDivElement | null>(null);
-
-  const allowDrop = (e: DragEvent) => {
-    if (!e.dataTransfer.types.includes(CAIRN_CARD_MIME)) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    // Highlight the card under the cursor
-    gridRef.current?.querySelectorAll(".cairn-drop-target").forEach((el) => el.classList.remove("cairn-drop-target"));
-    if (gridRef.current) {
-      const cardEls = Array.from(gridRef.current.querySelectorAll(".card")) as HTMLElement[];
-      for (const cardEl of cardEls) {
-        const rect = cardEl.getBoundingClientRect();
-        if (e.clientY >= rect.top && e.clientY <= rect.bottom && e.clientX >= rect.left && e.clientX <= rect.right) {
-          cardEl.classList.add("cairn-drop-target");
-          break;
-        }
-      }
-    }
-  };
-
   return (
-    <section
-      onDragEnter={(e) => {
-        if (!e.dataTransfer.types.includes(CAIRN_CARD_MIME)) return;
-        onSectionDragEnter();
-      }}
-      onDragLeave={(e) => {
-        // Ignore leaves that cross into nested children.
-        const related = e.relatedTarget as Node | null;
-        if (related && e.currentTarget.contains(related)) return;
-        onSectionDragLeave();
-      }}
-    >
+    <section>
       <header
         className="mb-3 flex items-baseline justify-between border-b border-border pb-1 cursor-pointer select-none"
-        onDragOver={allowDrop}
-        onDrop={onHeaderDrop}
         onClick={onToggleCollapse}
       >
         <div className="flex items-baseline gap-1.5">
@@ -295,27 +196,7 @@ function SectionBlock({
           {collapsed ? `${itemCount} card(s) hidden` : `${itemCount} card(s)`}
         </span>
       </header>
-      {!collapsed && (
-        <div
-          ref={gridRef}
-          className={`grid grid-cols-1 gap-4 md:grid-cols-2 rounded transition-shadow ${
-            isOver ? "outline outline-2 outline-accent -outline-offset-2" : ""
-          }`}
-          onDragOver={allowDrop}
-          onDragLeave={(e) => {
-            if (!e.currentTarget.contains(e.relatedTarget as Node)) {
-              e.currentTarget.querySelectorAll(".cairn-drop-target").forEach((el) => el.classList.remove("cairn-drop-target"));
-            }
-          }}
-          onDrop={(e) => {
-            gridRef.current?.querySelectorAll(".cairn-drop-target").forEach((el) => el.classList.remove("cairn-drop-target"));
-            if (!gridRef.current) return;
-            onGridDrop(e, gridRef.current);
-          }}
-        >
-          {children}
-        </div>
-      )}
+      {!collapsed && children}
     </section>
   );
 }
@@ -323,60 +204,6 @@ function SectionBlock({
 // -----------------------------------------------------------------------------
 // Drop-index math.
 // -----------------------------------------------------------------------------
-
-/**
- * Find where in the grid a drop should land, given the mouse Y coordinate.
- *
- * We iterate through each child's bounding rect and compare `clientY` to the
- * vertical midpoint. The first child whose midpoint is below the cursor is
- * the insertion index. If no child matches (cursor below all rows), we
- * append (return null to signal "end").
- *
- * When the dragged card itself is present in the grid, we ignore it so the
- * reported index is stable (the child about to be removed shouldn't shift
- * the count under the cursor).
- */
-function computeDropIndex(
-  gridEl: HTMLDivElement,
-  clientY: number,
-  draggedCardKey: string,
-): number | null {
-  const children = Array.from(gridEl.children) as HTMLElement[];
-  // Map from child element to its "logical" index (skipping the dragged one).
-  let logicalIdx = 0;
-  for (const child of children) {
-    const key = child.getAttribute("data-card-key");
-    if (key === draggedCardKey) continue;
-    const rect = child.getBoundingClientRect();
-    const mid = rect.top + rect.height / 2;
-    if (clientY < mid) return logicalIdx;
-    logicalIdx++;
-  }
-  return null; // append
-}
-
-/**
- * Returns true if dragging a card within its own section to the same
- * position. In that case no layout change is needed.
- */
-function isNoopSelfDrop(
-  entryKeys: string[],
-  cardKey: string,
-  dropIndex: number | null,
-): boolean {
-  const curIdx = entryKeys.indexOf(cardKey);
-  if (curIdx < 0) return false;
-  if (dropIndex === null) {
-    // Append — no-op if already last.
-    return curIdx === entryKeys.length - 1;
-  }
-  // dropIndex is in "logical" coords (ignoring the dragged card itself).
-  // In the current order with the dragged card removed, that card's
-  // neighboring positions are curIdx and curIdx (since removing it collapses
-  // the slot). So dropping at `curIdx` (before the next card) or `curIdx`
-  // without it still produces the same ordering.
-  return dropIndex === curIdx;
-}
 
 // -----------------------------------------------------------------------------
 // Scalar collapsing + dispatch (unchanged behavior).
