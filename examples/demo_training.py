@@ -39,36 +39,41 @@ import cairn
 
 
 def make_sample_image(step: int) -> Image.Image:
-    """A 64×64 RGB image whose contents change each step (prediction)."""
+    """A 1024×1024 RGB image whose contents change each step (prediction)."""
     step += 1
-    img = Image.new("RGB", (64, 64), (20, 20, 40))
+    sz = 1024
+    img = Image.new("RGB", (sz, sz), (20, 20, 40))
     draw = ImageDraw.Draw(img)
     # Moving circle — "prediction" with some noise
-    cx = 32 + int(20 * math.cos(step / 5.0))
-    cy = 32 + int(20 * math.sin(step / 5.0))
-    r = 8 + (step % 4)
+    cx = sz // 2 + int(sz * 0.3 * math.cos(step / 5.0))
+    cy = sz // 2 + int(sz * 0.3 * math.sin(step / 5.0))
+    r = sz // 8 + (step % 4) * 4
     color = (
         (50 + step * 7) % 256,
         (100 + step * 3) % 256,
         (150 + step * 5) % 256,
     )
     draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=color)
+    # Add some gradient noise for diff testing
+    for i in range(0, sz, 64):
+        v = (i + step * 10) % 256
+        draw.rectangle((i, 0, i + 32, 32), fill=(v, v // 2, 0))
     return img
 
 
 def make_reference_image(step: int) -> Image.Image:
-    """A 64×64 RGB ground-truth image — similar to prediction but no noise.
+    """A 1024×1024 RGB ground-truth image — similar to prediction but no noise.
 
     Use this as a diff reference to test the image comparison features.
     The circle follows the same path but with a fixed size and color.
     """
     step += 1
-    img = Image.new("RGB", (64, 64), (20, 20, 40))
+    sz = 1024
+    img = Image.new("RGB", (sz, sz), (20, 20, 40))
     draw = ImageDraw.Draw(img)
-    # Same trajectory as prediction, but fixed radius and pure blue color
-    cx = 32 + int(20 * math.cos(step / 5.0))
-    cy = 32 + int(20 * math.sin(step / 5.0))
-    r = 10  # fixed radius (prediction varies)
+    cx = sz // 2 + int(sz * 0.3 * math.cos(step / 5.0))
+    cy = sz // 2 + int(sz * 0.3 * math.sin(step / 5.0))
+    r = sz // 8  # fixed radius
     draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=(60, 120, 220))
     return img
 
