@@ -22,7 +22,7 @@ import { useProjectId } from "../lib/project-context";
 import { formatRelative } from "../lib/format";
 import { computeDiff, loadImageData, type DiffMode } from "../lib/image-diff";
 import { gpuComputeDiff } from "../lib/gpu-diff";
-import { webglComputeDiff } from "../lib/webgl-diff";
+import { webglComputeDiff, webglRenderDiffToCanvas } from "../lib/webgl-diff";
 import { getRenderMode } from "../lib/render-mode";
 import CardDetailModal from "./CardDetailModal";
 import CardHeader from "./CardHeader";
@@ -558,11 +558,24 @@ function ImagePane({
         } catch (err) {
           console.warn("[cairn] WebGPU diff error:", err);
         }
-        // 2. Try WebGL 2 (fragment shader)
+        // 2. Try WebGL 2 (fragment shader → direct canvas render, no readback)
         if (!diffData) {
           try {
+            const canvas = canvasRef.current;
+            if (canvas) {
+              const dims = webglRenderDiffToCanvas(baseData, otherData, gpuOpts, canvas);
+              if (dims) {
+                // Rendered directly — skip the putImageData path below
+                if (cancelled) return;
+                setNaturalDims({ w: dims.width, h: dims.height });
+                onNaturalSize?.(dims.width, dims.height);
+                setDiffReady(true);
+                return;
+              }
+            }
+            // Fallback: readback path
             diffData = webglComputeDiff(baseData, otherData, gpuOpts);
-            if (diffData) console.debug("[cairn] diff computed via WebGL 2");
+            if (diffData) console.debug("[cairn] diff computed via WebGL 2 (readback)");
           } catch (err) {
             console.warn("[cairn] WebGL 2 diff error:", err);
           }

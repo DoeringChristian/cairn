@@ -241,7 +241,7 @@ export function webglComputeDiff(
   g.drawArrays(g.TRIANGLE_STRIP, 0, 4);
   g.bindVertexArray(null);
 
-  // Read back
+  // Read back (slow path — avoid if possible, use webglRenderDiffToCanvas instead)
   const pixels = new Uint8Array(w * h * 4);
   g.readPixels(0, 0, w, h, g.RGBA, g.UNSIGNED_BYTE, pixels);
 
@@ -259,6 +259,71 @@ export function webglComputeDiff(
   g.deleteTexture(lutTex);
 
   return result;
+}
+
+/**
+ * Render diff directly to a visible canvas — no readback, no ImageData.
+ * The GL canvas is drawn to the target canvas via drawImage (GPU→GPU copy).
+ * Returns {width, height} on success, null on failure.
+ */
+export function webglRenderDiffToCanvas(
+  baseline: ImageData,
+  other: ImageData,
+  opts: WebGLDiffOptions,
+  targetCanvas: HTMLCanvasElement,
+): { width: number; height: number } | null {
+  const g = getGL();
+  if (!g || !program || !vao || !glCanvas) return null;
+
+  const w = Math.min(baseline.width, other.width);
+  const h = Math.min(baseline.height, other.height);
+
+  glCanvas.width = w;
+  glCanvas.height = h;
+  g.viewport(0, 0, w, h);
+
+  const baseTex = uploadTexture(g, baseline, 0);
+  const otherTex = uploadTexture(g, other, 1);
+
+  let lutTex: WebGLTexture | null = null;
+  if (opts.colormap) {
+    lutTex = uploadLUT(g, opts.colormap, 2);
+  } else {
+    lutTex = g.createTexture()!;
+    g.activeTexture(g.TEXTURE2);
+    g.bindTexture(g.TEXTURE_2D, lutTex);
+    g.texImage2D(g.TEXTURE_2D, 0, g.RGBA8, 1, 1, 0, g.RGBA, g.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]));
+  }
+
+  g.useProgram(program);
+  g.uniform1i(g.getUniformLocation(program, "u_baseline"), 0);
+  g.uniform1i(g.getUniformLocation(program, "u_other"), 1);
+  g.uniform1i(g.getUniformLocation(program, "u_lut"), 2);
+  g.uniform1i(g.getUniformLocation(program, "u_diff_mode"), DIFF_MODE_MAP[opts.diffMode]);
+  g.uniform1i(g.getUniformLocation(program, "u_cmap_mode"), CMAP_MODE_MAP[opts.cmapMode] ?? 0);
+  g.uniform1i(g.getUniformLocation(program, "u_use_colormap"), opts.colormap ? 1 : 0);
+
+  g.bindVertexArray(vao);
+  g.drawArrays(g.TRIANGLE_STRIP, 0, 4);
+  g.bindVertexArray(null);
+
+  // Copy GL canvas → target canvas (GPU→GPU, no CPU readback)
+  targetCanvas.width = w;
+  targetCanvas.height = h;
+  const ctx = targetCanvas.getContext("2d");
+  if (ctx) {
+    // WebGL is bottom-up; flip when drawing
+    ctx.save();
+    ctx.scale(1, -1);
+    ctx.drawImage(glCanvas as any, 0, 0, w, h, 0, -h, w, h);
+    ctx.restore();
+  }
+
+  g.deleteTexture(baseTex);
+  g.deleteTexture(otherTex);
+  g.deleteTexture(lutTex);
+
+  return { width: w, height: h };
 }
 
 export function isWebGL2Available(): boolean {
