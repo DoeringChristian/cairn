@@ -27,8 +27,18 @@ export default function App() {
               Projects
             </Link>
           </nav>
-          <div className="hidden md:block">
+          <div className="hidden md:flex items-center gap-2">
             <ServerStatus health={health.data} loading={health.isLoading} />
+            <select
+              value={getRenderMode()}
+              onChange={(e) => { setRenderMode(e.target.value as RenderMode); window.location.reload(); }}
+              className="rounded border border-border bg-bg px-1.5 py-0.5 text-[10px] text-fg-muted"
+              title="Image diff render mode"
+            >
+              <option value="auto">Auto</option>
+              <option value="gpu">GPU</option>
+              <option value="cpu">CPU</option>
+            </select>
           </div>
           <button
             type="button"
@@ -51,16 +61,6 @@ export default function App() {
                 Projects
               </Link>
               <ServerStatus health={health.data} loading={health.isLoading} />
-              <select
-                value={getRenderMode()}
-                onChange={(e) => { setRenderMode(e.target.value as RenderMode); window.location.reload(); }}
-                className="ml-2 rounded border border-border bg-bg px-1.5 py-0.5 text-[10px] text-fg-muted"
-                title="Image diff render mode"
-              >
-                <option value="auto">Auto (GPU/CPU)</option>
-                <option value="gpu">GPU only</option>
-                <option value="cpu">CPU only</option>
-              </select>
             </div>
           </div>
         )}
