@@ -602,7 +602,7 @@ export default function ScalarPlotCard({
   );
 
   const promotedCount = Object.keys(settings.promotedSeries).length;
-  const promotedAxisWidth = 40; // px per promoted right YAxis
+  const promotedAxisWidth = 30; // px per promoted right YAxis
   const dynamicMargin = useMemo(
     () => ({
       ...CHART_MARGIN,
@@ -1403,17 +1403,19 @@ export default function ScalarPlotCard({
           margin={dynamicMargin}
           onMouseMove={(state: any) => {
             if (state?.activePayload?.length) {
-              // Find the series with the value closest to the cursor's chart Y
-              const payload = state.activePayload as Array<{ dataKey: string; value: number }>;
-              const chartY = state.chartY as number | undefined;
-              if (chartY != null && payload.length > 1) {
-                // Use activeCoordinate.y to find closest value
+              const payload = state.activePayload as Array<{ dataKey: string; value: number; payload: Record<string, number | null> }>;
+              // Convert cursor screen Y to data Y using the plot offset
+              const po = plotOffsetRef.current;
+              if (po && state.chartY != null) {
+                const fracFromTop = Math.max(0, Math.min(1, (state.chartY - po.top) / Math.max(1, po.height)));
+                // Y axis: top = yMax, bottom = yMin (for left axis)
+                const yRange = effectiveRef.current.y;
+                const cursorDataY = yRange[1] - fracFromTop * (yRange[1] - yRange[0]);
                 let closestKey: string | null = null;
                 let closestDist = Infinity;
                 for (const p of payload) {
                   if (p.value == null) continue;
-                  // Simple heuristic: closest by value to the average
-                  const dist = Math.abs(p.value - (state.activeCoordinate?.y ?? 0));
+                  const dist = Math.abs(p.value - cursorDataY);
                   if (dist < closestDist) {
                     closestDist = dist;
                     closestKey = p.dataKey;
@@ -1461,8 +1463,9 @@ export default function ScalarPlotCard({
                 allowDataOverflow
                 stroke={color}
                 tick={{ fill: color }}
-                fontSize={10}
+                fontSize={9}
                 width={promotedAxisWidth}
+                tickFormatter={(v: number) => v >= 1000 || v <= -1000 ? v.toExponential(0) : v >= 100 ? Math.round(v).toString() : v.toPrecision(2)}
               />
             );
           })}
@@ -1538,18 +1541,15 @@ export default function ScalarPlotCard({
                 return (
                   <g>
                     {promotedKeysOrdered.map((key, i) => {
-                      const s = series.find((x) => x.key === key);
-                      const color = s?.color ?? "#656d76";
                       const x = plotRight + i * promotedAxisWidth;
                       return (
                         <rect
                           key={key}
                           x={x}
-                          y={top}
+                          y={top - 5}
                           width={promotedAxisWidth}
-                          height={height}
-                          fill={color}
-                          opacity={0.001}
+                          height={height + 10}
+                          fill="transparent"
                           style={{
                             cursor: "ns-resize",
                             touchAction: "none",
