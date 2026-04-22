@@ -21,8 +21,7 @@ import {
 import { useProjectId } from "../lib/project-context";
 import { formatRelative } from "../lib/format";
 import { computeDiff, loadImageData, type DiffMode } from "../lib/image-diff";
-import { gpuComputeDiff } from "../lib/gpu-diff";
-import { webglComputeDiff, webglRenderDiffToCanvas } from "../lib/webgl-diff";
+import { webglRenderDiffToCanvas } from "../lib/webgl-diff";
 import { getRenderMode } from "../lib/render-mode";
 import CardDetailModal from "./CardDetailModal";
 import CardHeader from "./CardHeader";
@@ -548,44 +547,31 @@ function ImagePane({
       const isSigned = (diffMode as string).includes("signed");
       const cmapMode: "linear" | "signed" | "positive" = isSigned ? "signed" : "positive";
 
-      // GPU path: try WebGPU first, then WebGL 2
+      // GPU path: WebGL 2 direct render (no readback)
       if (useGPU) {
         const gpuLut = colormap !== "none" ? getColormapLUT(colormap as Exclude<Colormap, "none">) : null;
         const gpuOpts = { diffMode: diffMode as DiffMode, colormap: gpuLut, cmapMode };
-        // 1. Try WebGPU (compute shader)
         try {
-          diffData = await gpuComputeDiff(baseData, otherData, gpuOpts);
-        } catch (err) {
-          console.warn("[cairn] WebGPU diff error:", err);
-        }
-        // 2. Try WebGL 2 (fragment shader → direct canvas render, no readback)
-        if (!diffData) {
-          try {
-            const canvas = canvasRef.current;
-            if (canvas) {
-              const dims = webglRenderDiffToCanvas(baseData, otherData, gpuOpts, canvas);
-              if (dims) {
-                // Rendered directly — skip the putImageData path below
-                if (cancelled) return;
-                setNaturalDims({ w: dims.width, h: dims.height });
-                onNaturalSize?.(dims.width, dims.height);
-                setDiffReady(true);
-                return;
-              }
+          const canvas = canvasRef.current;
+          if (canvas) {
+            const dims = webglRenderDiffToCanvas(baseData, otherData, gpuOpts, canvas);
+            if (dims) {
+              if (cancelled) return;
+              setNaturalDims({ w: dims.width, h: dims.height });
+              onNaturalSize?.(dims.width, dims.height);
+              setDiffReady(true);
+              return;
             }
-            // Fallback: readback path
-            diffData = webglComputeDiff(baseData, otherData, gpuOpts);
-            if (diffData) console.debug("[cairn] diff computed via WebGL 2 (readback)");
-          } catch (err) {
-            console.warn("[cairn] WebGL 2 diff error:", err);
           }
+        } catch (err) {
+          console.warn("[cairn] WebGL 2 diff error:", err);
         }
       }
 
       // CPU fallback
       if (!diffData) {
         if (renderMode === "gpu") {
-          console.error("[cairn] Neither WebGPU nor WebGL 2 available — set render mode to 'Auto' or 'CPU'");
+          console.error("[cairn] WebGL 2 unavailable — set render mode to 'Auto' or 'CPU'");
           return;
         }
         diffData = computeDiff(baseData, otherData, diffMode as DiffMode);

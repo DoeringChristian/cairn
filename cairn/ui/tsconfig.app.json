@@ -16,8 +16,7 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "allowSyntheticDefaultImports": true,
-    "resolveJsonModule": true,
-    "types": ["@webgpu/types"]
+    "resolveJsonModule": true
   },
   "include": ["src"]
 }
