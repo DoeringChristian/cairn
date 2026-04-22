@@ -170,6 +170,26 @@ export function addCardToComparison(
   saveComparisons(projectId, next);
 }
 
+export function reorderComparisonCards(
+  projectId: string,
+  comparisonId: string,
+  fromId: string,
+  toId: string,
+): void {
+  const list = loadComparisons(projectId);
+  const next = list.map((c) => {
+    if (c.id !== comparisonId) return c;
+    const cards = [...c.cards];
+    const fromIdx = cards.findIndex((k) => k.id === fromId);
+    const toIdx = cards.findIndex((k) => k.id === toId);
+    if (fromIdx < 0 || toIdx < 0) return c;
+    const [moved] = cards.splice(fromIdx, 1);
+    cards.splice(toIdx, 0, moved!);
+    return { ...c, cards };
+  });
+  saveComparisons(projectId, next);
+}
+
 export function removeCardFromComparison(
   projectId: string,
   comparisonId: string,

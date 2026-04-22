@@ -441,7 +441,19 @@ export default function ProjectPage() {
                     onDragStart={() => {}}
                     onDragEnd={() => {}}
                   >
-                    <div data-cairn-card-idx={cardIdx} style={{ display: "contents" }}>
+                    <div
+                      data-cairn-card-idx={cardIdx}
+                      style={{ display: "contents" }}
+                      onDragOver={(e) => {
+                        if (e.dataTransfer.types.includes("application/x-cairn-card")) {
+                          e.preventDefault();
+                          e.dataTransfer.dropEffect = "move";
+                        }
+                      }}
+                      onDrop={() => {
+                        // Workspace reorder is visual only (no persistence yet)
+                      }}
+                    >
                       {content}
                     </div>
                   </DraggableCard>

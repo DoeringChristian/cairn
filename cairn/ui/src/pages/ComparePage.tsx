@@ -9,6 +9,7 @@ import ScatterPlotCard from "../components/ScatterPlotCard";
 import {
   addCardToComparison,
   createComparison,
+  reorderComparisonCards,
   deleteComparison,
   loadComparisons,
   removeCardFromComparison,
@@ -295,6 +296,12 @@ export default function ComparePage() {
                 onRemoveCard={(cardId) => handleRemoveCard(selected.id, cardId)}
                 onAddCard={(sel) => handleAddCard(selected.id, sel)}
                 onRefreshSmartFilters={handleRefreshSmartFilters}
+                onReorderCards={(fromId, toId) => {
+                  if (projectId) {
+                    reorderComparisonCards(projectId, selected.id, fromId, toId);
+                    refresh();
+                  }
+                }}
               />
             ) : (
               <EmptyMainPane
@@ -532,6 +539,7 @@ interface ComparisonViewProps {
   onRemoveCard: (cardId: string) => void;
   onAddCard: (sel: AddCardSelection) => void;
   onRefreshSmartFilters: (comparisonId: string, smartFilters: SmartFilters) => Promise<void>;
+  onReorderCards: (fromId: string, toId: string) => void;
 }
 
 function ComparisonView({
@@ -542,6 +550,7 @@ function ComparisonView({
   onRemoveCard,
   onAddCard,
   onRefreshSmartFilters,
+  onReorderCards,
 }: ComparisonViewProps) {
   const [editingName, setEditingName] = useState(false);
   const [draft, setDraft] = useState(comparison.name);
@@ -662,11 +671,27 @@ function ComparisonView({
                 onDragStart={() => {}}
                 onDragEnd={() => {}}
               >
-                <ComparisonCardRenderer
-                  card={card}
-                  comparisonId={comparison.id}
-                  onRemove={() => onRemoveCard(card.id)}
-                />
+                <div
+                  onDragOver={(e) => {
+                    if (e.dataTransfer.types.includes("application/x-cairn-card")) {
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = "move";
+                    }
+                  }}
+                  onDrop={(e) => {
+                    const fromId = e.dataTransfer.getData("application/x-cairn-card");
+                    if (fromId && fromId !== card.id) {
+                      onReorderCards(fromId, card.id);
+                    }
+                  }}
+                  style={{ display: "contents" }}
+                >
+                  <ComparisonCardRenderer
+                    card={card}
+                    comparisonId={comparison.id}
+                    onRemove={() => onRemoveCard(card.id)}
+                  />
+                </div>
               </DraggableCard>
           ))}
         </div>
