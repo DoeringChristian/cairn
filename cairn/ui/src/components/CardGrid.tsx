@@ -288,7 +288,7 @@ function SectionBlock({
       {!collapsed && (
         <div
           ref={gridRef}
-          className={`grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 rounded transition-shadow ${
+          className={`grid grid-cols-1 gap-4 md:grid-cols-2 rounded transition-shadow ${
             isOver ? "outline outline-2 outline-accent -outline-offset-2" : ""
           }`}
           onDragOver={allowDrop}
