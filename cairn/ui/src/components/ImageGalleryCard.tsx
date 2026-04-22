@@ -22,6 +22,7 @@ import { useProjectId } from "../lib/project-context";
 import { formatRelative } from "../lib/format";
 import { computeDiff, loadImageData, type DiffMode } from "../lib/image-diff";
 import { gpuComputeDiff } from "../lib/gpu-diff";
+import { getRenderMode } from "../lib/render-mode";
 import CardDetailModal from "./CardDetailModal";
 import CardHeader from "./CardHeader";
 import CardResizeHandle from "./CardResizeHandle";
@@ -511,20 +512,27 @@ function ImagePane({
     let cancelled = false;
     setDiffReady(false);
 
+    const renderMode = getRenderMode();
+    const useGPU = renderMode === "gpu" || renderMode === "auto";
+    const useCPU = renderMode === "cpu" || renderMode === "auto";
+
+    // CPU cache: only check in CPU or auto mode
     const cacheKey = `${baselineHash}::${artifactHash}::${diffMode}::${colormap}`;
-    const cached = getCachedImageData(cacheKey);
-    if (cached) {
-      const canvas = canvasRef.current;
-      if (canvas) {
-        canvas.width = cached.width;
-        canvas.height = cached.height;
-        const ctx = canvas.getContext("2d");
-        if (ctx) ctx.putImageData(cached, 0, 0);
-        setNaturalDims({ w: cached.width, h: cached.height });
-        onNaturalSize?.(cached.width, cached.height);
-        setDiffReady(true);
+    if (useCPU) {
+      const cached = getCachedImageData(cacheKey);
+      if (cached) {
+        const canvas = canvasRef.current;
+        if (canvas) {
+          canvas.width = cached.width;
+          canvas.height = cached.height;
+          const ctx = canvas.getContext("2d");
+          if (ctx) ctx.putImageData(cached, 0, 0);
+          setNaturalDims({ w: cached.width, h: cached.height });
+          onNaturalSize?.(cached.width, cached.height);
+          setDiffReady(true);
+        }
+        return;
       }
-      return;
     }
 
     (async () => {
@@ -539,27 +547,35 @@ function ImagePane({
       const isSigned = (diffMode as string).includes("signed");
       const cmapMode: "linear" | "signed" | "positive" = isSigned ? "signed" : "positive";
 
-      // Try GPU path first (diff + colormap in one dispatch)
-      const gpuLut = colormap !== "none" ? getColormapLUT(colormap as Exclude<Colormap, "none">) : null;
-      try {
-        diffData = await gpuComputeDiff(baseData, otherData, {
-          diffMode: diffMode as DiffMode,
-          colormap: gpuLut,
-          cmapMode,
-        });
-      } catch {
-        // GPU failed — fall back to CPU
+      // GPU path: fast, no need to cache result (GPU recomputes quickly)
+      if (useGPU) {
+        const gpuLut = colormap !== "none" ? getColormapLUT(colormap as Exclude<Colormap, "none">) : null;
+        try {
+          diffData = await gpuComputeDiff(baseData, otherData, {
+            diffMode: diffMode as DiffMode,
+            colormap: gpuLut,
+            cmapMode,
+          });
+        } catch {
+          // GPU failed — fall through to CPU if auto mode
+        }
       }
 
-      // CPU fallback
+      // CPU fallback (or forced CPU mode)
       if (!diffData) {
+        if (!useCPU && renderMode === "gpu") {
+          // GPU was forced but failed
+          console.warn("WebGPU diff failed and render mode is 'gpu' — no fallback");
+          return;
+        }
         diffData = computeDiff(baseData, otherData, diffMode as DiffMode);
         if (colormap !== "none") {
           diffData = applyColormap(diffData, colormap as Exclude<Colormap, "none">, cmapMode);
         }
       }
 
-      setCachedImageData(cacheKey, diffData);
+      // Only cache CPU results (GPU recomputes fast, no need to waste memory)
+      if (renderMode !== "gpu") setCachedImageData(cacheKey, diffData);
       const canvas = canvasRef.current;
       if (!canvas || cancelled) return;
       canvas.width = diffData.width;
