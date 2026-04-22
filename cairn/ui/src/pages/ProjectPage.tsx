@@ -130,18 +130,18 @@ export default function ProjectPage() {
     try { localStorage.setItem(hiddenCardsKey, JSON.stringify([...hiddenCards])); } catch {}
   }, [hiddenCards, hiddenCardsKey]);
 
-  const handleRemoveCard = useCallback((cardIdx: number) => {
-    const autoCardCount = cards.length;
-    if (cardIdx >= autoCardCount) {
-      // Extra card — remove from extraCards
-      const extraIdx = cardIdx - autoCardCount;
-      setExtraCards((prev) => prev.filter((_, i) => i !== extraIdx));
+  const handleRemoveCard = useCallback((name: string, objectType: string, isExtra: boolean) => {
+    if (isExtra) {
+      setExtraCards((prev) => {
+        // Remove the first matching extra card
+        const idx = prev.findIndex((c) => c.name === name && c.object_type === objectType);
+        if (idx < 0) return prev;
+        return prev.filter((_, i) => i !== idx);
+      });
     } else {
-      // Auto-generated card — hide it
-      const card = cards[cardIdx];
-      if (card) setHiddenCards((prev) => new Set(prev).add(`${card.name}::${card.object_type}`));
+      setHiddenCards((prev) => new Set(prev).add(`${name}::${objectType}`));
     }
-  }, [cards]);
+  }, []);
 
   const [addCardOpen, setAddCardOpen] = useState(false);
 
@@ -180,23 +180,29 @@ export default function ProjectPage() {
     });
   }, [cards, extraCards, hiddenCards]);
 
-  // Merge auto + extra cards, filtering out hidden ones, sorted by persisted order
-  const allCards = useMemo(() => {
+  // Merge auto + extra cards, filter hidden, filter runs to visible, sort by order
+  type TaggedCard = { name: string; object_type: string; runs: Array<{ runId: string; context_hash: string }>; isExtra: boolean };
+  const allCards: TaggedCard[] = useMemo(() => {
     const visible = cards.filter((c) => !hiddenCards.has(`${c.name}::${c.object_type}`));
-    const merged = [...visible, ...extraCards];
+    const auto: TaggedCard[] = visible.map((c) => ({ ...c, isExtra: false }));
+    const extra: TaggedCard[] = extraCards.map((c) => ({ ...c, isExtra: true }));
+    const merged = [...auto, ...extra];
+    // Filter runs to only visible ones (parallel/scatter use visibleRunIds prop directly)
+    const visibleSet = new Set(visibleRunIds);
+    for (const card of merged) {
+      if (card.object_type === "parallel" || card.object_type === "scatter") continue;
+      card.runs = card.runs.filter((r) => visibleSet.has(r.runId));
+    }
     if (cardOrder.length === 0) return merged;
-    // Sort by cardOrder position; unknown cards go to end
     const orderMap = new Map(cardOrder.map((k, i) => [k, i]));
     return merged.map((c, i) => ({ card: c, origIdx: i }))
       .sort((a, b) => {
         const ka = `${a.card.name}::${a.card.object_type}::${a.origIdx}`;
         const kb = `${b.card.name}::${b.card.object_type}::${b.origIdx}`;
-        const oa = orderMap.get(ka) ?? 9999;
-        const ob = orderMap.get(kb) ?? 9999;
-        return oa - ob;
+        return (orderMap.get(ka) ?? 9999) - (orderMap.get(kb) ?? 9999);
       })
       .map((x) => x.card);
-  }, [cards, extraCards, hiddenCards, cardOrder]);
+  }, [cards, extraCards, hiddenCards, cardOrder, visibleRunIds]);
 
   // Group allCards into sections, preserving duplicates with indices.
   const allSections = useMemo(() => {
@@ -404,9 +410,12 @@ export default function ProjectPage() {
             <ReorderableCardGrid
               dataAttributes={{ "data-cairn-card-grid": "" }}
               onReorder={handleReorderCards}
-              cards={section.cardIndices.filter((i) => allCards[i]!.runs.length > 0).map((cardIdx) => {
+              cards={section.cardIndices.filter((i) => {
+                const c = allCards[i]!;
+                return c.object_type === "parallel" || c.object_type === "scatter" || c.runs.length > 0;
+              }).map((cardIdx) => {
                 const card = allCards[cardIdx]!;
-                const removeThis = () => handleRemoveCard(cardIdx);
+                const removeThis = () => handleRemoveCard(card.name, card.object_type, card.isExtra);
                 const cardKey = `${card.name}::${card.object_type}::${cardIdx}`;
                 let content: React.ReactNode;
 
