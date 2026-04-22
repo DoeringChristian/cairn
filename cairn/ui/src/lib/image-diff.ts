@@ -81,15 +81,21 @@ export function computeDiff(
   return result;
 }
 
+// Cache loaded ImageData by URL to avoid re-fetching + re-decoding.
+const imageDataLoadCache = new Map<string, ImageData>();
+const IMAGE_LOAD_CACHE_MAX = 100;
+
 /**
  * Load an image URL into an ImageData by drawing to an offscreen canvas.
+ * Results are cached by URL — subsequent calls with the same URL return instantly.
  * Returns null if the image fails to load or the canvas is tainted.
  */
 export async function loadImageData(url: string): Promise<ImageData | null> {
+  const cached = imageDataLoadCache.get(url);
+  if (cached) return cached;
+
   return new Promise((resolve) => {
     const img = new Image();
-    // Same-origin: don't set crossOrigin — it would force a CORS preflight
-    // which can fail on proxy setups and taint the canvas.
     img.onload = () => {
       try {
         const canvas = document.createElement("canvas");
@@ -101,9 +107,15 @@ export async function loadImageData(url: string): Promise<ImageData | null> {
           return;
         }
         ctx.drawImage(img, 0, 0);
-        resolve(ctx.getImageData(0, 0, canvas.width, canvas.height));
+        const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        // Cache the result
+        if (imageDataLoadCache.size >= IMAGE_LOAD_CACHE_MAX) {
+          const firstKey = imageDataLoadCache.keys().next().value;
+          if (firstKey !== undefined) imageDataLoadCache.delete(firstKey);
+        }
+        imageDataLoadCache.set(url, data);
+        resolve(data);
       } catch (err) {
-        // SecurityError if canvas is tainted (cross-origin without CORS).
         console.warn("[cairn] loadImageData failed:", err);
         resolve(null);
       }
