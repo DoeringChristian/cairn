@@ -10,6 +10,7 @@ import { useQueries } from "@tanstack/react-query";
 import { api } from "../api/client";
 import type { Run } from "../api/types";
 import { useCardSettings } from "../lib/card-settings";
+import { shortRunLabel } from "../lib/run-label";
 import CardHeader from "./CardHeader";
 import CardDetailModal from "./CardDetailModal";
 import CardResizeHandle from "./CardResizeHandle";
@@ -46,9 +47,6 @@ function viridis(t: number): string {
   return `rgb(${r},${g},${b})`;
 }
 
-function shortRunId(id: string): string {
-  return id.length > 8 ? id.slice(0, 8) : id;
-}
 
 // ---------------------------------------------------------------------------
 // Component
@@ -409,7 +407,7 @@ export default function ParallelCoordsCard({
     const row = rowData.find((r) => r.runId === hoveredRun);
     if (!row) return null;
     const run = runs?.find((r) => r.id === hoveredRun);
-    const label = run?.display_name ?? shortRunId(hoveredRun);
+    const label = run?.display_name ?? shortRunLabel(hoveredRun);
     const cols = settings.columns;
     return (
       <div
@@ -540,6 +538,8 @@ export default function ParallelCoordsCard({
         collapsed={settings.collapsed}
         onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
         onSettings={() => setExpanded(true)}
+        onToggleFullWidth={() => updateSettings({ colSpan: (settings.colSpan ?? 1) > 1 ? 1 : 2 })}
+        isFullWidth={(settings.colSpan ?? 1) > 1}
         onRemove={onRemove}
       >
       </CardHeader>

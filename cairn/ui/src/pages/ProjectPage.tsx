@@ -7,6 +7,7 @@ import type { SequenceMeta } from "../api/types";
 import { formatDuration, formatRelative } from "../lib/format";
 import { groupIntoSections } from "../lib/sections";
 import { useWorkspaceVisibility } from "../lib/workspace-visibility";
+import { setRunMetadata } from "../lib/run-label";
 import AddCardModal, { type AddCardSelection } from "../components/AddCardModal";
 import CardRenderer from "../components/CardRenderer";
 import ReorderableCardGrid from "../components/ReorderableCardGrid";
@@ -19,6 +20,9 @@ export default function ProjectPage() {
   const { projectId } = useParams<{ projectId: string }>();
   const runsQ = useRuns({ project: projectId, limit: 200 });
   const runs = runsQ.data?.runs ?? [];
+
+  // Populate run label cache so shortRunLabel/formatRunLabel work everywhere
+  useEffect(() => { if (runs.length > 0) setRunMetadata(runs); }, [runs]);
 
   // Stable color assignment: sort runs by created_at, assign colors by index.
   const runColors = useMemo(() => {

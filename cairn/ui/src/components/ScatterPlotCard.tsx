@@ -8,6 +8,7 @@ import { useQueries } from "@tanstack/react-query";
 import { api } from "../api/client";
 import type { Run } from "../api/types";
 import { useCardSettings } from "../lib/card-settings";
+import { shortRunLabel } from "../lib/run-label";
 import CardHeader from "./CardHeader";
 import CardDetailModal from "./CardDetailModal";
 import CardResizeHandle from "./CardResizeHandle";
@@ -47,9 +48,6 @@ function viridis(t: number): string {
   return `rgb(${r},${g},${b})`;
 }
 
-function shortRunId(id: string): string {
-  return id.length > 8 ? id.slice(0, 8) : id;
-}
 
 // ---------------------------------------------------------------------------
 // Component
@@ -277,7 +275,7 @@ export default function ScatterPlotCard({
           const pt = scatterPoints.find((p) => p.runId === hoveredPt);
           if (!pt) return null;
           const run = runs?.find((r) => r.id === pt.runId);
-          const label = run?.display_name ?? shortRunId(pt.runId);
+          const label = run?.display_name ?? shortRunLabel(pt.runId);
           return (
             <foreignObject x={tooltipPos.x + 12} y={tooltipPos.y - 10} width={220} height={200} style={{ overflow: "visible", pointerEvents: "none" }}>
               <div className="rounded border border-border bg-bg-elevated shadow-lg p-2 text-xs w-fit max-w-[220px]" style={{ pointerEvents: "none" }}>
@@ -366,6 +364,8 @@ export default function ScatterPlotCard({
         collapsed={settings.collapsed}
         onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
         onSettings={() => setExpanded(true)}
+        onToggleFullWidth={() => updateSettings({ colSpan: (settings.colSpan ?? 1) > 1 ? 1 : 2 })}
+        isFullWidth={(settings.colSpan ?? 1) > 1}
         onRemove={onRemove}
       >
       </CardHeader>

@@ -23,6 +23,7 @@ import { formatRelative } from "../lib/format";
 import { computeDiff, loadImageData, type DiffMode } from "../lib/image-diff";
 import { webglRenderDiffToCanvas } from "../lib/webgl-diff";
 import { getRenderMode } from "../lib/render-mode";
+import { shortRunLabel } from "../lib/run-label";
 import CardDetailModal from "./CardDetailModal";
 import CardHeader from "./CardHeader";
 import CardResizeHandle from "./CardResizeHandle";
@@ -222,10 +223,6 @@ const SERIES_COLORS = [
   "#56d4dd",
 ];
 
-function shortRunId(id: string): string {
-  return id.length > 6 ? id.slice(0, 6) : id;
-}
-
 function seriesLabel(
   m: { runId?: string; name: string; context_hash: string },
   fallbackRunId: string,
@@ -233,7 +230,7 @@ function seriesLabel(
 ): string {
   const parts: string[] = [m.name];
   if (multiRun && (m.runId ?? fallbackRunId))
-    parts.push(shortRunId(m.runId ?? fallbackRunId));
+    parts.push(shortRunLabel(m.runId ?? fallbackRunId));
   if (m.context_hash) parts.push(m.context_hash.slice(0, 6));
   return parts.join(" \u00b7 ");
 }
@@ -734,7 +731,7 @@ function ExternalBaselinePicker({
     return () => { document.removeEventListener("pointerdown", onDown); document.removeEventListener("keydown", onKey); };
   }, [open]);
 
-  const runLabel = (id: string) => runDisplayNames?.get(id) ?? shortRunId(id);
+  const runLabel = (id: string) => runDisplayNames?.get(id) ?? shortRunLabel(id);
 
   return (
     <div className="relative mt-1">
@@ -1313,6 +1310,8 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
         collapsed={settings.collapsed}
         onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
         onSettings={() => setExpanded(true)}
+        onToggleFullWidth={() => updateSettings({ colSpan: (settings.colSpan ?? 1) > 1 ? 1 : 2 })}
+        isFullWidth={(settings.colSpan ?? 1) > 1}
         onRemove={onRemove}
       >
         {(settings.zoom !== 1 || settings.pan.x !== 0 || settings.pan.y !== 0) && (
@@ -1797,7 +1796,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
               </label>
               {settings.externalBaseline ? (
                 <div className="flex items-center gap-1 rounded border border-accent/40 bg-accent/5 px-2 py-1 text-xs text-fg-muted">
-                  <span className="mono truncate flex-1">{settings.externalBaseline.name}{settings.externalBaseline.runId && settings.externalBaseline.runId !== runId ? ` · ${shortRunId(settings.externalBaseline.runId)}` : ""}</span>
+                  <span className="mono truncate flex-1">{settings.externalBaseline.name}{settings.externalBaseline.runId && settings.externalBaseline.runId !== runId ? ` · ${shortRunLabel(settings.externalBaseline.runId)}` : ""}</span>
                   <button
                     type="button"
                     onClick={() => updateSettings({ externalBaseline: undefined, baselineIndex: undefined, diffMode: settings.diffMode === "none" ? "none" : settings.diffMode })}

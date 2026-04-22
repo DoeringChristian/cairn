@@ -12,6 +12,7 @@ import {
   type ComparisonSeriesRef,
 } from "../lib/comparisons";
 import { useProjectId } from "../lib/project-context";
+import { shortRunLabel } from "../lib/run-label";
 import type { SequenceMeta, SequenceResponse, SequencePoint } from "../api/types";
 import CardHeader from "./CardHeader";
 import CardResizeHandle from "./CardResizeHandle";
@@ -73,10 +74,6 @@ function seriesKey(m: { runId?: string; name: string; context_hash: string }): s
   return `${m.runId ?? ""}::${m.name}::${m.context_hash}`;
 }
 
-function shortRunId(id: string): string {
-  return id.length > 6 ? id.slice(0, 6) : id;
-}
-
 function seriesLabel(
   name: string,
   contextHash: string,
@@ -84,7 +81,7 @@ function seriesLabel(
   includeRun: boolean,
 ): string {
   const parts: string[] = [name];
-  if (includeRun && runId) parts.push(shortRunId(runId));
+  if (includeRun && runId) parts.push(shortRunLabel(runId));
   if (contextHash) parts.push(contextHash.slice(0, 6));
   return parts.join(" \u00B7 ");
 }
@@ -402,6 +399,8 @@ export default function AudioPlayerCard({ runId, metric, extraContexts = [], ext
         collapsed={settings.collapsed}
         onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
         onSettings={() => setExpanded(true)}
+        onToggleFullWidth={() => updateSettings({ colSpan: (settings.colSpan ?? 1) > 1 ? 1 : 2 })}
+        isFullWidth={(settings.colSpan ?? 1) > 1}
         onRemove={onRemove}
       >
         {projectId && (

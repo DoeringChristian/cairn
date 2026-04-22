@@ -44,6 +44,7 @@ import Select from "./settings/Select";
 import Slider from "./settings/Slider";
 import Toggle from "./settings/Toggle";
 import { formatRelative } from "../lib/format";
+import { shortRunLabel } from "../lib/run-label";
 
 // -----------------------------------------------------------------------------
 // Settings shape
@@ -129,10 +130,6 @@ function seriesKey(m: {
   return `${m.runId ?? ""}::${m.name}::${m.context_hash}`;
 }
 
-function shortRunId(id: string): string {
-  return id.length > 6 ? id.slice(0, 6) : id;
-}
-
 function seriesLabel(
   name: string,
   contextHash: string,
@@ -140,7 +137,7 @@ function seriesLabel(
   includeRun: boolean,
 ): string {
   const parts: string[] = [name];
-  if (includeRun && runId) parts.push(shortRunId(runId));
+  if (includeRun && runId) parts.push(shortRunLabel(runId));
   if (contextHash) parts.push(contextHash.slice(0, 6));
   return parts.join(" · ");
 }
@@ -1174,7 +1171,7 @@ export default function ScalarPlotCard({
                 <span className="truncate">
                   {m.name}
                   {m.context_hash ? ` · ${m.context_hash.slice(0, 6)}` : ""}
-                  {` · ${shortRunId(rid)}`}
+                  {` · ${shortRunLabel(rid)}`}
                 </span>
                 <button
                   type="button"
@@ -1608,6 +1605,8 @@ export default function ScalarPlotCard({
         collapsed={settings.collapsed}
         onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
         onSettings={() => setExpanded(true)}
+        onToggleFullWidth={() => updateSettings({ colSpan: (settings.colSpan ?? 1) > 1 ? 1 : 2 })}
+        isFullWidth={(settings.colSpan ?? 1) > 1}
         onRemove={onRemove}
       >
         {settings.smoothing > 0 && (

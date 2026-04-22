@@ -20,6 +20,10 @@ interface Props {
   onToggleCollapse?: () => void;
   /** Opens the card settings modal / popover. Renders ⚙ button. */
   onSettings?: () => void;
+  /** Toggle full-width. Renders ↔ button. */
+  onToggleFullWidth?: () => void;
+  /** Whether the card is currently full width. */
+  isFullWidth?: boolean;
   /** Remove the card. Renders × button in upper-right. */
   onRemove?: () => void;
 }
@@ -32,6 +36,8 @@ export default function CardHeader({
   collapsed,
   onToggleCollapse,
   onSettings,
+  onToggleFullWidth,
+  isFullWidth,
   onRemove,
 }: Props) {
   const drag = useDraggableCard();
@@ -139,7 +145,18 @@ export default function CardHeader({
         {subtitle}
         {/* Card-specific buttons (passed as children) */}
         {children}
-        {/* Standard buttons: settings, remove */}
+        {/* Standard buttons: full-width, settings, remove */}
+        {onToggleFullWidth && (
+          <button
+            type="button"
+            onClick={onToggleFullWidth}
+            className={`h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover ${isFullWidth ? "text-accent" : "text-fg-muted hover:text-fg"}`}
+            aria-label={isFullWidth ? "Half width" : "Full width"}
+            title={isFullWidth ? "Half width" : "Full width"}
+          >
+            {"\u2194"}
+          </button>
+        )}
         {onSettings && (
           <button
             type="button"
