@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import AddCardModal, { type AddCardSelection } from "../components/AddCardModal";
 import CardRenderer from "../components/CardRenderer";
+import DraggableCard from "../components/DraggableCard";
 import SmartComparisonWizard from "../components/SmartComparisonWizard";
 import ParallelCoordsCard from "../components/ParallelCoordsCard";
 import ScatterPlotCard from "../components/ScatterPlotCard";
@@ -654,12 +655,19 @@ function ComparisonView({
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           {comparison.cards.map((card) => (
-              <ComparisonCardRenderer
+              <DraggableCard
                 key={card.id}
-                card={card}
-                comparisonId={comparison.id}
-                onRemove={() => onRemoveCard(card.id)}
-              />
+                cardKey={card.id}
+                section="comparison"
+                onDragStart={() => {}}
+                onDragEnd={() => {}}
+              >
+                <ComparisonCardRenderer
+                  card={card}
+                  comparisonId={comparison.id}
+                  onRemove={() => onRemoveCard(card.id)}
+                />
+              </DraggableCard>
           ))}
         </div>
       )}

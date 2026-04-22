@@ -9,6 +9,7 @@ import { groupIntoSections } from "../lib/sections";
 import { useWorkspaceVisibility } from "../lib/workspace-visibility";
 import AddCardModal, { type AddCardSelection } from "../components/AddCardModal";
 import CardRenderer from "../components/CardRenderer";
+import DraggableCard from "../components/DraggableCard";
 import ParallelCoordsCard from "../components/ParallelCoordsCard";
 import ScatterPlotCard from "../components/ScatterPlotCard";
 import RunRail from "../components/RunRail";
@@ -431,10 +432,19 @@ export default function ProjectPage() {
                   );
                 }
 
+                const cardKey = `${card.name}::${card.object_type}::${cardIdx}`;
                 return (
-                  <div key={`${card.name}::${card.object_type}::${cardIdx}`} data-cairn-card-idx={cardIdx} style={{ display: "contents" }}>
-                    {content}
-                  </div>
+                  <DraggableCard
+                    key={cardKey}
+                    cardKey={cardKey}
+                    section="workspace"
+                    onDragStart={() => {}}
+                    onDragEnd={() => {}}
+                  >
+                    <div data-cairn-card-idx={cardIdx} style={{ display: "contents" }}>
+                      {content}
+                    </div>
+                  </DraggableCard>
                 );
               })}
             </div>
