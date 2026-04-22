@@ -9,7 +9,7 @@ import { groupIntoSections } from "../lib/sections";
 import { useWorkspaceVisibility } from "../lib/workspace-visibility";
 import AddCardModal, { type AddCardSelection } from "../components/AddCardModal";
 import CardRenderer from "../components/CardRenderer";
-import DraggableCard, { CAIRN_CARD_MIME } from "../components/DraggableCard";
+import ReorderableCardGrid from "../components/ReorderableCardGrid";
 import ParallelCoordsCard from "../components/ParallelCoordsCard";
 import ScatterPlotCard from "../components/ScatterPlotCard";
 import RunRail from "../components/RunRail";
@@ -401,57 +401,21 @@ export default function ProjectPage() {
                 {section.name}
               </h2>
             </header>
-            <div
-              className="grid grid-cols-1 gap-4 md:grid-cols-2"
-              data-cairn-card-grid
-              onDragOver={(e) => {
-                if (e.dataTransfer.types.includes(CAIRN_CARD_MIME)) {
-                  e.preventDefault();
-                  e.dataTransfer.dropEffect = "move";
-                }
-              }}
-              onDrop={(e) => {
-                const fromKey = e.dataTransfer.getData(CAIRN_CARD_MIME);
-                if (!fromKey) return;
-                e.preventDefault();
-                const gridEl = e.currentTarget;
-                const cardEls = Array.from(gridEl.querySelectorAll(".card"));
-                let targetKey: string | null = null;
-                for (const el of cardEls) {
-                  const rect = el.getBoundingClientRect();
-                  if (e.clientY < rect.top + rect.height / 2) {
-                    const wrapper = el.closest("[data-card-key]");
-                    targetKey = wrapper?.getAttribute("data-card-key") ?? null;
-                    break;
-                  }
-                }
-                if (!targetKey) {
-                  const last = cardEls[cardEls.length - 1]?.closest("[data-card-key]");
-                  targetKey = last?.getAttribute("data-card-key") ?? null;
-                }
-                if (targetKey && targetKey !== fromKey) {
-                  handleReorderCards(fromKey, targetKey);
-                }
-              }}
-            >
-              {section.cardIndices.map((cardIdx) => {
+            <ReorderableCardGrid
+              dataAttributes={{ "data-cairn-card-grid": "" }}
+              onReorder={handleReorderCards}
+              cards={section.cardIndices.filter((i) => allCards[i]!.runs.length > 0).map((cardIdx) => {
                 const card = allCards[cardIdx]!;
-                if (card.runs.length === 0) return null;
-
-                let content: React.ReactNode;
-
                 const removeThis = () => handleRemoveCard(cardIdx);
+                const cardKey = `${card.name}::${card.object_type}::${cardIdx}`;
+                let content: React.ReactNode;
 
                 if (card.object_type === "parallel") {
                   content = (
                     <ParallelCoordsCard
                       runIds={visibleRunIds}
                       runs={visibleRuns}
-                      settingsKey={{
-                        runId: `workspace:${projectId}`,
-                        metricName: "parallel",
-                        contextHash: `${cardIdx}`,
-                      }}
+                      settingsKey={{ runId: `workspace:${projectId}`, metricName: "parallel", contextHash: `${cardIdx}` }}
                       onRemove={removeThis}
                     />
                   );
@@ -460,29 +424,19 @@ export default function ProjectPage() {
                     <ScatterPlotCard
                       runIds={visibleRunIds}
                       runs={visibleRuns}
-                      settingsKey={{
-                        runId: `workspace:${projectId}`,
-                        metricName: "scatter",
-                        contextHash: `${cardIdx}`,
-                      }}
+                      settingsKey={{ runId: `workspace:${projectId}`, metricName: "scatter", contextHash: `${cardIdx}` }}
                       onRemove={removeThis}
                     />
                   );
                 } else {
                   const primary = card.runs[0]!;
                   const seedMetric: SequenceMeta = {
-                    name: card.name,
-                    object_type: card.object_type,
-                    context: null,
-                    context_hash: primary.context_hash,
-                    min_step: 0,
-                    max_step: 0,
-                    count: 0,
+                    name: card.name, object_type: card.object_type,
+                    context: null, context_hash: primary.context_hash,
+                    min_step: 0, max_step: 0, count: 0,
                   };
                   const extra = card.runs.slice(1).map((r) => ({
-                    runId: r.runId,
-                    name: card.name,
-                    context_hash: r.context_hash,
+                    runId: r.runId, name: card.name, context_hash: r.context_hash,
                   }));
                   content = (
                     <CardRenderer
@@ -491,34 +445,13 @@ export default function ProjectPage() {
                       extraSeries={extra.length > 0 ? extra : undefined}
                       controlledSeries
                       onRemove={removeThis}
-                      settingsKeyOverride={{
-                        runId: `workspace:${projectId}`,
-                        metricName: card.name,
-                        contextHash: `${card.object_type}::${cardIdx}`,
-                      }}
+                      settingsKeyOverride={{ runId: `workspace:${projectId}`, metricName: card.name, contextHash: `${card.object_type}::${cardIdx}` }}
                     />
                   );
                 }
-
-                const cardKey = `${card.name}::${card.object_type}::${cardIdx}`;
-                return (
-                  <DraggableCard
-                    key={cardKey}
-                    cardKey={cardKey}
-                    section="workspace"
-                    onDragStart={() => {}}
-                    onDragEnd={() => {}}
-                  >
-                    <div
-                      data-cairn-card-idx={cardIdx}
-                      style={{ display: "contents" }}
-                    >
-                      {content}
-                    </div>
-                  </DraggableCard>
-                );
+                return { key: cardKey, content };
               })}
-            </div>
+            />
           </section>
         ))}
 

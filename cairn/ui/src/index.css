@@ -72,3 +72,9 @@
     cursor: grabbing;
   }
 }
+
+/* Drop target highlight during card reorder drag */
+.cairn-drop-target {
+  outline: 2px solid var(--color-accent, #0969da) !important;
+  outline-offset: -2px;
+}
