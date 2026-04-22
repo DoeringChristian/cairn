@@ -243,11 +243,21 @@ function SectionBlock({
   const gridRef = useRef<HTMLDivElement | null>(null);
 
   const allowDrop = (e: DragEvent) => {
-    // Only treat drags that carry our custom payload as reorder drags.
-    // (DataTransfer.types is available during dragover; reading getData is not.)
     if (!e.dataTransfer.types.includes(CAIRN_CARD_MIME)) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
+    // Highlight the card under the cursor
+    gridRef.current?.querySelectorAll(".cairn-drop-target").forEach((el) => el.classList.remove("cairn-drop-target"));
+    if (gridRef.current) {
+      const cardEls = Array.from(gridRef.current.querySelectorAll(".card")) as HTMLElement[];
+      for (const cardEl of cardEls) {
+        const rect = cardEl.getBoundingClientRect();
+        if (e.clientY >= rect.top && e.clientY <= rect.bottom && e.clientX >= rect.left && e.clientX <= rect.right) {
+          cardEl.classList.add("cairn-drop-target");
+          break;
+        }
+      }
+    }
   };
 
   return (
@@ -292,7 +302,13 @@ function SectionBlock({
             isOver ? "outline outline-2 outline-accent -outline-offset-2" : ""
           }`}
           onDragOver={allowDrop}
+          onDragLeave={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+              e.currentTarget.querySelectorAll(".cairn-drop-target").forEach((el) => el.classList.remove("cairn-drop-target"));
+            }
+          }}
           onDrop={(e) => {
+            gridRef.current?.querySelectorAll(".cairn-drop-target").forEach((el) => el.classList.remove("cairn-drop-target"));
             if (!gridRef.current) return;
             onGridDrop(e, gridRef.current);
           }}
