@@ -10,7 +10,7 @@ import { useQueries } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { useSequence, useSequences } from "../api/hooks";
 import type { SequenceMeta, SequencePoint } from "../api/types";
-import { useCardSettings } from "../lib/card-settings";
+import { useCardSettings, type CardSettingsKey } from "../lib/card-settings";
 import { useSeriesDrop } from "../lib/use-series-drop";
 import {
   addCardToComparison,
@@ -40,6 +40,7 @@ interface Props {
   metric: SequenceMeta;
   extraSeries?: ComparisonSeriesRef[];
   controlledSeries?: boolean;
+  settingsKeyOverride?: CardSettingsKey;
   onRemove?: () => void;
 }
 
@@ -756,7 +757,7 @@ function ExternalBaselinePicker({
   );
 }
 
-export default function ImageGalleryCard({ runId, metric, extraSeries, controlledSeries, onRemove }: Props) {
+export default function ImageGalleryCard({ runId, metric, extraSeries, controlledSeries, settingsKeyOverride, onRemove }: Props) {
   const extraSeriesKey = useMemo(
     () => (extraSeries ?? []).map((s) => `${s.runId}::${s.name}::${s.context_hash}`).sort().join("|"),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -791,12 +792,12 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
   );
 
   const settingsKey = useMemo(
-    () => ({
+    () => settingsKeyOverride ?? {
       runId,
       metricName: metric.name,
       contextHash: metric.context_hash,
-    }),
-    [runId, metric.name, metric.context_hash],
+    },
+    [settingsKeyOverride, runId, metric.name, metric.context_hash],
   );
   const [settings, updateSettings, resetSettings] = useCardSettings(
     settingsKey,
@@ -1412,6 +1413,31 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                   </div>
                 );
               })}
+              {/* External baseline reference pane */}
+              {settings.externalBaseline && extBasePoints.length > 0 && (() => {
+                const refPt = extBasePoints[Math.min(safeIdx, extBasePoints.length - 1)];
+                const refHash = refPt?.artifact_hash ?? undefined;
+                return (
+                  <div className="relative overflow-hidden" style={settings.viewportSize ? { width: settings.viewportSize.w, height: settings.viewportSize.h } : undefined}>
+                    <ImagePane
+                      metricEntry={{ runId: settings.externalBaseline!.runId, name: settings.externalBaseline!.name, context_hash: settings.externalBaseline!.context_hash }}
+                      paneIndex={-1}
+                      artifactHash={refHash}
+                      baselineHash={undefined}
+                      isBaseline={true}
+                      diffMode="none"
+                      interpolation={settings.interpolation ?? "auto"}
+                      colormap={"none"}
+                      showAxes={settings.showAxes ?? false}
+                      zoom={settings.zoom}
+                      transformStr={transformStr}
+                      filterStr={filterStr}
+                      onSetBaseline={() => updateSettings({ externalBaseline: undefined })}
+                      label={`ref: ${settings.externalBaseline!.name}`}
+                    />
+                  </div>
+                );
+              })()}
             </div>
           ) : (
             /* ---------- Single-image layout (original) ---------- */

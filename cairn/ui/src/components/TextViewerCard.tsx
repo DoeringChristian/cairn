@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, useMemo, useRef } from "react";
 import { useSequence } from "../api/hooks";
-import { useCardSettings } from "../lib/card-settings";
+import { useCardSettings, type CardSettingsKey } from "../lib/card-settings";
 import {
   addCardToComparison,
   createComparison,
@@ -19,6 +19,7 @@ import Toggle from "./settings/Toggle";
 interface Props {
   runId: string;
   metric: SequenceMeta;
+  settingsKeyOverride?: CardSettingsKey;
   onRemove?: () => void;
 }
 
@@ -44,7 +45,7 @@ const FONT_SIZE_CLASS: Record<TextSettings["fontSize"], string> = {
   base: "text-base",
 };
 
-export default function TextViewerCard({ runId, metric, onRemove }: Props) {
+export default function TextViewerCard({ runId, metric, settingsKeyOverride, onRemove }: Props) {
   const q = useSequence(runId, metric.name, {
     context: metric.context_hash || undefined,
     maxPoints: 200,
@@ -68,12 +69,12 @@ export default function TextViewerCard({ runId, metric, onRemove }: Props) {
   }, [current?.artifact_hash]);
 
   const settingsKey = useMemo(
-    () => ({
+    () => settingsKeyOverride ?? {
       runId,
       metricName: metric.name,
       contextHash: metric.context_hash,
-    }),
-    [runId, metric.name, metric.context_hash],
+    },
+    [settingsKeyOverride, runId, metric.name, metric.context_hash],
   );
   const [settings, updateSettings, resetSettings] = useCardSettings(
     settingsKey,

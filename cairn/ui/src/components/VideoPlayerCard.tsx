@@ -3,7 +3,7 @@ import { useQueries } from "@tanstack/react-query";
 import { useSequence } from "../api/hooks";
 import { api } from "../api/client";
 import { safeJsonParse, formatRelative } from "../lib/format";
-import { useCardSettings } from "../lib/card-settings";
+import { useCardSettings, type CardSettingsKey } from "../lib/card-settings";
 import { useSeriesDrop } from "../lib/use-series-drop";
 import {
   addCardToComparison,
@@ -37,6 +37,7 @@ interface Props {
   extraContexts?: SequenceMeta[];
   extraSeries?: ComparisonSeriesRef[];
   controlledSeries?: boolean;
+  settingsKeyOverride?: CardSettingsKey;
   onRemove?: () => void;
 }
 
@@ -153,7 +154,7 @@ function VideoPane({
   );
 }
 
-export default function VideoPlayerCard({ runId, metric, extraContexts = [], extraSeries, controlledSeries, onRemove }: Props) {
+export default function VideoPlayerCard({ runId, metric, extraContexts = [], extraSeries, controlledSeries, settingsKeyOverride, onRemove }: Props) {
   const seedMetric = useMemo(
     () => ({ name: metric.name, context_hash: metric.context_hash }),
     [metric.name, metric.context_hash],
@@ -190,7 +191,7 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
   }, [seedMetric, extraContexts, extraSeriesKey]);
 
   const [settings, updateSettings, resetSettings] = useCardSettings<VideoSettings>(
-    {
+    settingsKeyOverride ?? {
       runId,
       metricName: metric.name,
       contextHash: metric.context_hash,

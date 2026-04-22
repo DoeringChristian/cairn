@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSequence } from "../api/hooks";
 import { safeJsonParse, formatRelative } from "../lib/format";
-import { useCardSettings } from "../lib/card-settings";
+import { useCardSettings, type CardSettingsKey } from "../lib/card-settings";
 import {
   addCardToComparison,
   createComparison,
@@ -17,6 +17,7 @@ import SettingsPopover from "./SettingsPopover";
 interface Props {
   runId: string;
   metric: SequenceMeta;
+  settingsKeyOverride?: CardSettingsKey;
   onRemove?: () => void;
 }
 
@@ -44,7 +45,7 @@ function fmtSig(n: number, sig = 4): string {
   return Number(n.toPrecision(sig)).toString();
 }
 
-export default function HistogramCard({ runId, metric, onRemove }: Props) {
+export default function HistogramCard({ runId, metric, settingsKeyOverride, onRemove }: Props) {
   const q = useSequence(runId, metric.name, {
     context: metric.context_hash || undefined,
     maxPoints: 200,
@@ -62,12 +63,12 @@ export default function HistogramCard({ runId, metric, onRemove }: Props) {
   );
 
   const settingsKey = useMemo(
-    () => ({
+    () => settingsKeyOverride ?? {
       runId,
       metricName: metric.name,
       contextHash: metric.context_hash,
-    }),
-    [runId, metric.name, metric.context_hash],
+    },
+    [settingsKeyOverride, runId, metric.name, metric.context_hash],
   );
   const [settings, updateSettings] = useCardSettings(settingsKey, DEFAULT_HISTOGRAM_SETTINGS);
 

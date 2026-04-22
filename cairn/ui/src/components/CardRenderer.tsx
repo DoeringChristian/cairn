@@ -53,7 +53,7 @@ export default function CardRenderer({
         />
       );
     case "image":
-      return <ImageGalleryCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} onRemove={onRemove} />;
+      return <ImageGalleryCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />;
     case "figure":
       return (
         <Suspense
@@ -67,17 +67,17 @@ export default function CardRenderer({
             </div>
           }
         >
-          <FigureInteractiveCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} onRemove={onRemove} />
+          <FigureInteractiveCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />
         </Suspense>
       );
     case "audio":
-      return <AudioPlayerCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} onRemove={onRemove} />;
+      return <AudioPlayerCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />;
     case "video":
-      return <VideoPlayerCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} onRemove={onRemove} />;
+      return <VideoPlayerCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />;
     case "histogram":
-      return <HistogramCard {...baseProps} onRemove={onRemove} />;
+      return <HistogramCard {...baseProps} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />;
     case "text":
-      return <TextViewerCard {...baseProps} onRemove={onRemove} />;
+      return <TextViewerCard {...baseProps} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />;
     default:
       return (
         <div className="card p-4 text-sm text-fg-muted">
