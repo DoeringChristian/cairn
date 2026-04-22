@@ -121,7 +121,7 @@ export default function HistogramCard({ runId, metric, onRemove }: Props) {
       : `${metric.count} pts`;
 
   return (
-    <div className="card p-4 flex flex-col" style={{ height: settings.collapsed ? undefined : (settings.height ?? undefined), position: "relative", gridColumn: (settings.colSpan ?? 1) > 1 ? `span ${settings.colSpan}` : undefined }}>
+    <div className="card p-4 flex flex-col" style={{ height: settings.collapsed ? undefined : (settings.height ?? 250), position: "relative", gridColumn: (settings.colSpan ?? 1) > 1 ? `span ${settings.colSpan}` : undefined }}>
       <CardHeader
         title={settings.title ?? metric.name}
         onTitleChange={(t) => updateSettings({ title: t || undefined })}
@@ -151,21 +151,23 @@ export default function HistogramCard({ runId, metric, onRemove }: Props) {
         <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
       ) : current?.artifact_hash && meta ? (
         <>
-          <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-fg-muted">
-            <span>min</span>
-            <span className="mono num">{fmtSig(meta.min)}</span>
-            <span>max</span>
-            <span className="mono num">{fmtSig(meta.max)}</span>
-            <span>mean</span>
-            <span className="mono num">{fmtSig(meta.mean)}</span>
-            <span>count</span>
-            <span className="mono num">{meta.count}</span>
-            <span>num_bins</span>
-            <span className="mono num">{meta.num_bins}</span>
+          <div className="flex-1 min-h-0 overflow-auto">
+            <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-fg-muted">
+              <span>min</span>
+              <span className="mono num">{fmtSig(meta.min)}</span>
+              <span>max</span>
+              <span className="mono num">{fmtSig(meta.max)}</span>
+              <span>mean</span>
+              <span className="mono num">{fmtSig(meta.mean)}</span>
+              <span>count</span>
+              <span className="mono num">{meta.count}</span>
+              <span>num_bins</span>
+              <span className="mono num">{meta.num_bins}</span>
+            </div>
+            <p className="text-xs text-fg-subtle mt-2">
+              Bin counts available in the raw artifact blob.
+            </p>
           </div>
-          <p className="text-xs text-fg-subtle mt-2">
-            Bin counts available in the raw artifact blob.
-          </p>
           {points.length > 1 && (
             <input
               type="range"

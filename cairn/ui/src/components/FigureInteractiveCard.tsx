@@ -559,7 +559,7 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
       ref={cardRef}
       className={`card p-4 flex flex-col${dropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
       style={{
-        height: settings.collapsed ? undefined : (settings.height ?? undefined),
+        height: settings.collapsed ? undefined : (settings.height ?? 350),
         position: "relative",
         gridColumn: (settings.colSpan ?? 1) > 1 ? `span ${settings.colSpan}` : undefined,
       }}
@@ -746,7 +746,7 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
       ) : current?.artifact_hash ? (
         <>
           {showPlotly ? (
-            <div className={`rounded${settings.height ? " flex-1 min-h-0" : ""}`} style={{ height: settings.height ? undefined : figAutoHeight }}>
+            <div className="rounded flex-1 min-h-0" style={{ height: settings.height ? undefined : figAutoHeight }}>
               <Plot
                 data={(sourceQ.data?.data ?? []) as Plotly.Data[]}
                 layout={mergedLayout as Partial<Plotly.Layout>}
@@ -758,7 +758,7 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
           ) : sourceHash && sourceQ.isLoading ? (
             <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
           ) : (
-            <div className={`flex justify-center items-center rounded bg-bg p-2${settings.height ? " flex-1 min-h-0" : ""}`}>
+            <div className="flex justify-center items-center rounded bg-bg p-2 flex-1 min-h-0">
               <img
                 src={api.artifactUrl(current.artifact_hash)}
                 alt={`${metric.name} @ step ${current.step}`}

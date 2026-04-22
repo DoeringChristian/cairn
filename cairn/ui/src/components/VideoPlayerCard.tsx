@@ -347,7 +347,7 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
     <div
       className={`card p-4 flex flex-col${dropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
       style={{
-        height: settings.collapsed ? undefined : (settings.height ?? undefined),
+        height: settings.collapsed ? undefined : (settings.height ?? 350),
         position: "relative",
         gridColumn: (settings.colSpan ?? 1) > 1 ? `span ${settings.colSpan}` : undefined,
       }}
@@ -381,6 +381,7 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
       {!settings.collapsed && (<>
       {isMulti ? (
         <>
+          <div className="flex-1 min-h-0">
           <SplitPane
             widths={settings.paneWidths ?? Array(effectiveMetrics.length).fill(1 / effectiveMetrics.length)}
             onWidthsChange={(w) => updateSettings({ paneWidths: w })}
@@ -395,6 +396,7 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
               />
             ))}
           </SplitPane>
+          </div>
           {maxStepCount > 1 && (
             <input
               type="range"
@@ -473,7 +475,7 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
         <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
       ) : current?.artifact_hash ? (
         <>
-          <div className="flex justify-center rounded bg-bg p-2">
+          <div className="flex justify-center rounded bg-bg p-2 flex-1 min-h-0">
             <video
               key={current.artifact_hash}
               controls

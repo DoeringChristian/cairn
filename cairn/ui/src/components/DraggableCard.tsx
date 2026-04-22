@@ -80,6 +80,7 @@ export default function DraggableCard({
       <div
         data-card-key={cardKey}
         className={`cairn-draggable-card ${dragging ? "opacity-50" : ""}`}
+        style={{ display: "contents" }}
       >
         {children}
       </div>

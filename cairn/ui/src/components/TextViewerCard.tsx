@@ -162,7 +162,7 @@ export default function TextViewerCard({ runId, metric, onRemove }: Props) {
   );
 
   return (
-    <div className="card p-4 flex flex-col" style={{ height: settings.collapsed ? undefined : (settings.height ?? undefined), position: "relative", gridColumn: (settings.colSpan ?? 1) > 1 ? `span ${settings.colSpan}` : undefined }}>
+    <div className="card p-4 flex flex-col" style={{ height: settings.collapsed ? undefined : (settings.height ?? 250), position: "relative", gridColumn: (settings.colSpan ?? 1) > 1 ? `span ${settings.colSpan}` : undefined }}>
       <CardHeader
         title={settings.title ?? metric.name}
         onTitleChange={(t) => updateSettings({ title: t || undefined })}
@@ -190,7 +190,7 @@ export default function TextViewerCard({ runId, metric, onRemove }: Props) {
       {!settings.collapsed && (<>
       <pre
         className={`mono flex-1 min-h-0 overflow-auto ${wrapClass} rounded bg-bg p-3 ${FONT_SIZE_CLASS[settings.fontSize]} text-fg-muted`}
-        style={{ maxHeight: settings.height ? undefined : "12rem" }}
+        style={{ maxHeight: undefined }}
       >
         {content}
       </pre>

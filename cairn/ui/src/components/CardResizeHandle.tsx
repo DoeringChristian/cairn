@@ -40,12 +40,24 @@ export default function CardResizeHandle({
       const startX = e.clientX;
       const startHeight = card.getBoundingClientRect().height;
       const startWidth = card.getBoundingClientRect().width;
-      const startSpan = colSpan;
 
-      // Find the grid container to measure column width
-      const grid = card.parentElement?.closest(".grid") ?? card.parentElement;
-      const gridWidth = grid?.getBoundingClientRect().width ?? startWidth * gridCols;
-      const colWidth = gridWidth / gridCols;
+      // Find the grid container and detect actual column count from CSS
+      let grid = card.parentElement;
+      // Walk up past display:contents wrappers
+      while (grid && getComputedStyle(grid).display === "contents") {
+        grid = grid.parentElement;
+      }
+      if (!grid || !grid.closest(".grid")) {
+        grid = card.closest(".grid")?.parentElement ?? card.parentElement;
+      }
+      const gridEl = grid?.closest(".grid") ?? grid;
+      const gridWidth = gridEl?.getBoundingClientRect().width ?? startWidth * 2;
+      // Detect actual column count from computed grid style
+      const gridStyle = gridEl ? getComputedStyle(gridEl) : null;
+      const actualCols = gridStyle?.gridTemplateColumns
+        ? gridStyle.gridTemplateColumns.split(/\s+/).length
+        : gridCols;
+      const colWidth = gridWidth / actualCols;
 
       const onPointerMove = (ev: PointerEvent) => {
         // Height: continuous
@@ -56,10 +68,8 @@ export default function CardResizeHandle({
 
         // Width: snap to column spans based on drag distance
         const targetWidth = startWidth + (ev.clientX - startX);
-        const newSpan = Math.max(1, Math.min(gridCols, Math.round(targetWidth / colWidth)));
-        if (newSpan !== startSpan) {
-          onColSpanChange(newSpan);
-        }
+        const newSpan = Math.max(1, Math.min(actualCols, Math.round(targetWidth / colWidth)));
+        onColSpanChange(newSpan);
       };
 
       const onPointerUp = () => {

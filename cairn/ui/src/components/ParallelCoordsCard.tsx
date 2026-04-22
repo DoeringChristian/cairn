@@ -528,7 +528,7 @@ export default function ParallelCoordsCard({
     <div
       className="card p-4 flex flex-col"
       style={{
-        height: settings.collapsed ? undefined : (settings.height ?? undefined),
+        height: settings.collapsed ? undefined : (settings.height ?? 350),
         position: "relative",
         gridColumn: (settings.colSpan ?? 1) > 1 ? `span ${settings.colSpan}` : undefined,
       }}
@@ -548,7 +548,7 @@ export default function ParallelCoordsCard({
         <>
           <div
             ref={containerRef}
-            className={`relative rounded bg-bg${settings.height ? " flex-1 min-h-0" : " h-64"}`}
+            className="relative rounded bg-bg flex-1 min-h-0"
           >
             {size.w > 0 && size.h > 0 && renderPlot(size.w, size.h)}
             {renderTooltip()}
