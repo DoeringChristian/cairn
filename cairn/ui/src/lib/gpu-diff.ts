@@ -16,7 +16,11 @@ let gpuInitPromise: Promise<GPUDevice | null> | null = null;
 
 async function initGPU(): Promise<GPUDevice | null> {
   if (!navigator.gpu) {
-    console.warn("[cairn] WebGPU not available: navigator.gpu is undefined");
+    const isSecure = window.isSecureContext;
+    console.warn(
+      `[cairn] WebGPU not available: navigator.gpu is undefined.` +
+      (isSecure ? "" : ` This page is NOT a secure context (${window.location.protocol}//${window.location.host}). WebGPU requires HTTPS or localhost. Try accessing via http://localhost:${window.location.port}`)
+    );
     return null;
   }
   try {
