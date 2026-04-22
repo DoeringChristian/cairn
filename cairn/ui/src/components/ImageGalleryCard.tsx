@@ -688,7 +688,6 @@ function ExternalBaselinePicker({
   selected,
   onSelect,
   availableRunIds,
-  runDisplayNames,
 }: {
   runId: string;
   currentMetricName: string;
@@ -696,8 +695,6 @@ function ExternalBaselinePicker({
   onSelect: (name: string, contextHash: string, selectedRunId: string) => void;
   /** All distinct run IDs from the card's effective metrics. */
   availableRunIds: string[];
-  /** Optional map from runId to display name. */
-  runDisplayNames?: Map<string, string>;
 }) {
   const multiRun = availableRunIds.length > 1;
   const [pickedRunId, setPickedRunId] = useState<string>(runId);

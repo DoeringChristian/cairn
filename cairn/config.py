@@ -1,20 +1,14 @@
 """Configuration: server URL / local repo resolution and config file I/O.
 
 A ``Run`` is bound to *one* destination — either a server URL or a local
-``.cairn/`` repo path. Resolution order:
+repo path. Resolution order:
 
-    1. explicit ``repo=`` kwarg       (local mode)
-    2. explicit ``server=`` kwarg     (server mode)
-    3. module-level ``configure(repo=...)`` or ``configure(server=...)``
-    4. ``CAIRN_REPO`` env var
-    5. ``CAIRN_SERVER`` env var
-    6. config file ``repo`` or ``server`` key
-    7. ``./.cairn/`` if present (auto-discover local mode in CWD)
-    8. ``DEFAULT_SERVER`` (http://localhost:4300)
+    1. explicit ``repo=`` or ``server=`` kwarg
+    2. module-level ``configure(repo=...)`` or ``configure(server=...)``
+    3. ``CAIRN_REPO`` or ``CAIRN_SERVER`` env var
+    4. config file ``repo`` or ``server`` key
 
-If any *local repo* source resolves, that wins over any server source lower
-in the chain. This keeps the priority intuitive: if the user explicitly
-typed ``repo=``, we honour it even if ``CAIRN_SERVER`` is also set.
+If none of these are set, defaults to ``./.cairn`` in CWD (local mode).
 """
 
 from __future__ import annotations
@@ -35,10 +29,7 @@ else:  # pragma: no cover - only exercised on 3.10
 import tomli_w
 
 DEFAULT_SERVER = "http://localhost:4300"
-"""Fallback URL when nothing else is configured."""
-
-LOCAL_REPO_DIRNAME = ".cairn"
-"""Directory name Cairn looks for when auto-discovering a local repo in CWD."""
+"""Fallback URL used by ``resolve_server`` for CLI commands only."""
 
 _configured: dict[str, Any] = {}
 """Module-level state populated by ``configure()``."""
@@ -123,7 +114,7 @@ def resolve_target(
     """Resolve where a ``Run`` should send its data.
 
     Returns a :class:`RunTarget` tagged ``local`` (with a filesystem path) or
-    ``server`` (with a URL). See module docstring for priority rules.
+    ``server`` (with a URL). Raises ``ValueError`` if no target is configured.
     """
     if repo is not None:
         return RunTarget("local", str(Path(repo).expanduser()))
@@ -144,8 +135,5 @@ def resolve_target(
         return RunTarget("local", str(Path(str(cfg["repo"])).expanduser()))
     if "server" in cfg:
         return RunTarget("server", str(cfg["server"]))
-    # Auto-discover local repo in CWD.
-    cwd_repo = Path.cwd() / LOCAL_REPO_DIRNAME
-    if cwd_repo.is_dir():
-        return RunTarget("local", str(cwd_repo))
-    return RunTarget("server", DEFAULT_SERVER)
+    # Default: ./.cairn in CWD
+    return RunTarget("local", str(Path.cwd() / ".cairn"))

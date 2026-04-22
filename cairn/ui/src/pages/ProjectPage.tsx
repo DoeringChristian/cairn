@@ -21,8 +21,10 @@ export default function ProjectPage() {
   const runsQ = useRuns({ project: projectId, limit: 200 });
   const runs = runsQ.data?.runs ?? [];
 
-  // Populate run label cache so shortRunLabel/formatRunLabel work everywhere
-  useEffect(() => { if (runs.length > 0) setRunMetadata(runs); }, [runs]);
+  // Populate run label cache so shortRunLabel/formatRunLabel work everywhere.
+  // Called during render (not useEffect) so the cache is ready before
+  // child cards compute their labels on the same render pass.
+  useMemo(() => { if (runs.length > 0) setRunMetadata(runs); }, [runs]);
 
   // Stable color assignment: sort runs by created_at, assign colors by index.
   const runColors = useMemo(() => {

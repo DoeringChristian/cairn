@@ -48,12 +48,8 @@ def _lan_ip() -> str:
 
 
 def _default_repo() -> Path:
-    """CWD/.cairn if present, else home fallback."""
-    cwd_repo = Path.cwd() / ".cairn"
-    if cwd_repo.exists():
-        return cwd_repo
-    # If nothing is in CWD yet, default to CWD/.cairn too (will be created).
-    return cwd_repo
+    """Default repo: ./.cairn in CWD."""
+    return Path.cwd() / ".cairn"
 
 
 @click.group()
@@ -74,9 +70,8 @@ def main() -> None:
 def init_cmd(path: Path) -> None:
     """Create a local Cairn repo at PATH/.cairn (default: CWD).
 
-    After ``cairn init`` you can log directly to the repo with
-    ``cairn.Run(repo="./.cairn", ...)`` or start the viewer with
-    ``cairn server`` / ``cairn ui``.
+    After ``cairn init`` you can log runs with ``cairn.Run(project=...)``
+    or start the viewer with ``cairn ui``.
     """
     repo = (path / ".cairn").resolve()
     already = repo.exists() and (repo / "cairn.db").exists()

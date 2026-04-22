@@ -156,7 +156,9 @@ def main() -> None:
         # Image every 5 steps — moving-circle animation
         if step % 5 == 0:
             run.track(make_sample_image(step), name="predictions.sample", step=step)
-            run.track(make_reference_image(step), name="predictions.reference", step=step)
+            run.track(
+                make_reference_image(step), name="predictions.reference", step=step
+            )
 
         # Figure every 10 steps — matplotlib (the registry picks the figure
         # handler by default; use cairn.Image(fig) if you want a flat PNG).

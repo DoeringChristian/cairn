@@ -34,7 +34,9 @@ export default function ComparePage() {
   const allProjectRunIds = useMemo(() => runs.map((r) => r.id), [runs]);
 
   // Populate run metadata cache for label formatting.
-  useEffect(() => {
+  // Called during render (not useEffect) so the cache is ready before
+  // child cards compute their labels on the same render pass.
+  useMemo(() => {
     if (runs.length > 0) setRunMetadata(runs);
   }, [runs]);
   const [searchParams, setSearchParams] = useSearchParams();

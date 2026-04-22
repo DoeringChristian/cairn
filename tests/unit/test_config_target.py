@@ -22,10 +22,10 @@ def _reset(monkeypatch, tmp_path):
     config.reset_configured()
 
 
-def test_default_fallback_to_server():
+def test_default_fallback_to_cwd_cairn():
     target = config.resolve_target()
-    assert target.kind == "server"
-    assert target.location == config.DEFAULT_SERVER
+    assert target.kind == "local"
+    assert target.location == str(Path.cwd() / ".cairn")
 
 
 def test_explicit_repo_wins_over_server_kwarg(tmp_path):
@@ -69,24 +69,6 @@ def test_config_file_repo_used(tmp_path):
     assert target.is_local
 
 
-def test_cwd_discovery_triggers_local(monkeypatch, tmp_path):
-    workdir = tmp_path / "project"
-    (workdir / ".cairn").mkdir(parents=True)
-    monkeypatch.chdir(workdir)
-    target = config.resolve_target()
-    assert target.is_local
-    assert target.location == str(workdir / ".cairn")
-
-
-def test_cwd_discovery_not_triggered_when_no_dot_cairn(monkeypatch, tmp_path):
-    monkeypatch.chdir(tmp_path)
-    target = config.resolve_target()
-    assert target.kind == "server"
-
-
-def test_cwd_discovery_loses_to_explicit_kwarg(monkeypatch, tmp_path):
-    workdir = tmp_path / "project"
-    (workdir / ".cairn").mkdir(parents=True)
-    monkeypatch.chdir(workdir)
+def test_explicit_kwarg_overrides_default(tmp_path):
     target = config.resolve_target(server="http://explicit")
     assert target.kind == "server"
