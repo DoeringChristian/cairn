@@ -202,7 +202,6 @@ interface Props {
 
 // Chart margins; used both by Recharts and by our wheel/drag px→data math.
 const CHART_MARGIN = { top: 4, right: 8, left: 0, bottom: 4 } as const;
-const promotedAxisStripWidth = 14; // px clickable gutter per promoted axis
 
 export default function ScalarPlotCard({
   runId,
@@ -603,7 +602,7 @@ export default function ScalarPlotCard({
   );
 
   const promotedCount = Object.keys(settings.promotedSeries).length;
-  const promotedAxisWidth = 50; // px per promoted right axis (ticks + labels)
+  const promotedAxisWidth = 40; // px per promoted right YAxis
   const dynamicMargin = useMemo(
     () => ({
       ...CHART_MARGIN,
@@ -1399,7 +1398,35 @@ export default function ScalarPlotCard({
       }}
     >
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data} margin={dynamicMargin}>
+        <LineChart
+          data={data}
+          margin={dynamicMargin}
+          onMouseMove={(state: any) => {
+            if (state?.activePayload?.length) {
+              // Find the series with the value closest to the cursor's chart Y
+              const payload = state.activePayload as Array<{ dataKey: string; value: number }>;
+              const chartY = state.chartY as number | undefined;
+              if (chartY != null && payload.length > 1) {
+                // Use activeCoordinate.y to find closest value
+                let closestKey: string | null = null;
+                let closestDist = Infinity;
+                for (const p of payload) {
+                  if (p.value == null) continue;
+                  // Simple heuristic: closest by value to the average
+                  const dist = Math.abs(p.value - (state.activeCoordinate?.y ?? 0));
+                  if (dist < closestDist) {
+                    closestDist = dist;
+                    closestKey = p.dataKey;
+                  }
+                }
+                setHoveredSeries(closestKey);
+              } else if (payload.length === 1) {
+                setHoveredSeries(payload[0]!.dataKey);
+              }
+            }
+          }}
+          onMouseLeave={() => setHoveredSeries(null)}
+        >
           <CartesianGrid stroke="#d0d7de" strokeDasharray="2 4" />
           <XAxis
             dataKey="x"
@@ -1434,8 +1461,8 @@ export default function ScalarPlotCard({
                 allowDataOverflow
                 stroke={color}
                 tick={{ fill: color }}
-                fontSize={11}
-                width={45}
+                fontSize={10}
+                width={promotedAxisWidth}
               />
             );
           })}
@@ -1484,8 +1511,6 @@ export default function ScalarPlotCard({
                 isAnimationActive={false}
                 connectNulls
                 yAxisId={settings.promotedSeries[s.key] ? s.key : "__left__"}
-                onMouseEnter={() => setHoveredSeries(s.key)}
-                onMouseLeave={() => setHoveredSeries(null)}
               />
             );
           })}
@@ -1515,13 +1540,13 @@ export default function ScalarPlotCard({
                     {promotedKeysOrdered.map((key, i) => {
                       const s = series.find((x) => x.key === key);
                       const color = s?.color ?? "#656d76";
-                      const x = plotRight + i * promotedAxisStripWidth;
+                      const x = plotRight + i * promotedAxisWidth;
                       return (
                         <rect
                           key={key}
                           x={x}
                           y={top}
-                          width={promotedAxisStripWidth}
+                          width={promotedAxisWidth}
                           height={height}
                           fill={color}
                           opacity={0.001}
