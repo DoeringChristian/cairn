@@ -15,13 +15,21 @@ let gpuDevice: GPUDevice | null = null;
 let gpuInitPromise: Promise<GPUDevice | null> | null = null;
 
 async function initGPU(): Promise<GPUDevice | null> {
-  if (!navigator.gpu) return null;
+  if (!navigator.gpu) {
+    console.warn("[cairn] WebGPU not available: navigator.gpu is undefined");
+    return null;
+  }
   try {
     const adapter = await navigator.gpu.requestAdapter();
-    if (!adapter) return null;
+    if (!adapter) {
+      console.warn("[cairn] WebGPU: requestAdapter returned null");
+      return null;
+    }
     const device = await adapter.requestDevice();
+    console.info("[cairn] WebGPU device initialized:", adapter.info);
     return device;
-  } catch {
+  } catch (err) {
+    console.warn("[cairn] WebGPU init failed:", err);
     return null;
   }
 }

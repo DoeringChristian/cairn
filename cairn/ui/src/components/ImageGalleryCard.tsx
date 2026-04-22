@@ -556,17 +556,16 @@ function ImagePane({
             colormap: gpuLut,
             cmapMode,
           });
-        } catch {
+        } catch (err) {
+          console.error("WebGPU diff error:", err);
           // GPU failed — fall through to CPU if auto mode
         }
       }
 
-      // CPU fallback (or forced CPU mode)
+      // CPU fallback — always fall back rather than showing nothing
       if (!diffData) {
-        if (!useCPU && renderMode === "gpu") {
-          // GPU was forced but failed
-          console.warn("WebGPU diff failed and render mode is 'gpu' — no fallback");
-          return;
+        if (renderMode === "gpu") {
+          console.warn("WebGPU diff failed — falling back to CPU despite 'gpu' mode");
         }
         diffData = computeDiff(baseData, otherData, diffMode as DiffMode);
         if (colormap !== "none") {
