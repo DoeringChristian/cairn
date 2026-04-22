@@ -56,7 +56,7 @@ export default function ProjectLayout() {
     <ProjectProvider value={projectId}>
       <div className="flex min-h-0">
         {/* Left icon+label nav — desktop */}
-        <nav className="hidden md:flex flex-col items-center gap-2 w-16 shrink-0 border-r border-border py-3 sticky top-0 h-screen overflow-y-auto">
+        <nav className="hidden md:flex flex-col items-center gap-2 w-16 shrink-0 border-r border-border py-3 sticky top-[41px] h-[calc(100vh-41px)] overflow-y-auto z-10">
           {NAV_ITEMS.map((item) => (
             <NavLink
               key={item.path}
