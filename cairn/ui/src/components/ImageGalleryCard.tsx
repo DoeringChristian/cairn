@@ -504,31 +504,39 @@ function ImagePane({
   }, [useFalseColor, artifactHash, colormap]);
 
 
+  // Helper: update dims only if changed (avoids layout thrash)
+  const updateDims = useCallback((w: number, h: number) => {
+    setNaturalDims((prev) => (prev && prev.w === w && prev.h === h) ? prev : { w, h });
+    onNaturalSize?.(w, h);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     if (!showDiff) {
       setDiffReady(false);
       return;
     }
     let cancelled = false;
-    setDiffReady(false);
+    // Don't reset diffReady — keep showing the old frame while computing new one.
+    // Only reset when diff mode itself changes (not just the step).
 
     const renderMode = getRenderMode();
     const useGPU = renderMode === "gpu" || renderMode === "auto";
-    const useCPU = renderMode === "cpu" || renderMode === "auto";
 
-    // CPU cache: only check in CPU or auto mode
+    // CPU cache: check first (instant)
     const cacheKey = `${baselineHash}::${artifactHash}::${diffMode}::${colormap}`;
-    if (useCPU) {
+    if (renderMode !== "gpu") {
       const cached = getCachedImageData(cacheKey);
       if (cached) {
         const canvas = canvasRef.current;
         if (canvas) {
-          canvas.width = cached.width;
-          canvas.height = cached.height;
+          if (canvas.width !== cached.width || canvas.height !== cached.height) {
+            canvas.width = cached.width;
+            canvas.height = cached.height;
+          }
           const ctx = canvas.getContext("2d");
           if (ctx) ctx.putImageData(cached, 0, 0);
-          setNaturalDims({ w: cached.width, h: cached.height });
-          onNaturalSize?.(cached.width, cached.height);
+          updateDims(cached.width, cached.height);
           setDiffReady(true);
         }
         return;
@@ -543,22 +551,20 @@ function ImagePane({
       if (cancelled) return;
       if (!baseData || !otherData) return;
 
-      let diffData: ImageData | null = null;
       const isSigned = (diffMode as string).includes("signed");
       const cmapMode: "linear" | "signed" | "positive" = isSigned ? "signed" : "positive";
+      const gpuLut = colormap !== "none" ? getColormapLUT(colormap as Exclude<Colormap, "none">) : null;
+      const gpuOpts = { diffMode: diffMode as DiffMode, colormap: gpuLut, cmapMode };
 
-      // GPU path: WebGL 2 direct render (no readback)
+      // GPU path: WebGL 2 direct render (synchronous after image load)
       if (useGPU) {
-        const gpuLut = colormap !== "none" ? getColormapLUT(colormap as Exclude<Colormap, "none">) : null;
-        const gpuOpts = { diffMode: diffMode as DiffMode, colormap: gpuLut, cmapMode };
         try {
           const canvas = canvasRef.current;
           if (canvas) {
             const dims = webglRenderDiffToCanvas(baseData, otherData, gpuOpts, canvas);
             if (dims) {
               if (cancelled) return;
-              setNaturalDims({ w: dims.width, h: dims.height });
-              onNaturalSize?.(dims.width, dims.height);
+              updateDims(dims.width, dims.height);
               setDiffReady(true);
               return;
             }
@@ -569,27 +575,24 @@ function ImagePane({
       }
 
       // CPU fallback
-      if (!diffData) {
-        if (renderMode === "gpu") {
-          console.error("[cairn] WebGL 2 unavailable — set render mode to 'Auto' or 'CPU'");
-          return;
-        }
-        diffData = computeDiff(baseData, otherData, diffMode as DiffMode);
-        if (colormap !== "none") {
-          diffData = applyColormap(diffData, colormap as Exclude<Colormap, "none">, cmapMode);
-        }
+      if (renderMode === "gpu") {
+        console.error("[cairn] WebGL 2 unavailable — set render mode to 'Auto' or 'CPU'");
+        return;
       }
-
-      // Only cache CPU results (GPU recomputes fast, no need to waste memory)
-      if (renderMode !== "gpu") setCachedImageData(cacheKey, diffData);
+      let diffData = computeDiff(baseData, otherData, diffMode as DiffMode);
+      if (colormap !== "none") {
+        diffData = applyColormap(diffData, colormap as Exclude<Colormap, "none">, cmapMode);
+      }
+      setCachedImageData(cacheKey, diffData);
       const canvas = canvasRef.current;
       if (!canvas || cancelled) return;
-      canvas.width = diffData.width;
-      canvas.height = diffData.height;
+      if (canvas.width !== diffData.width || canvas.height !== diffData.height) {
+        canvas.width = diffData.width;
+        canvas.height = diffData.height;
+      }
       const ctx = canvas.getContext("2d");
       if (ctx) ctx.putImageData(diffData, 0, 0);
-      setNaturalDims({ w: diffData.width, h: diffData.height });
-      onNaturalSize?.(diffData.width, diffData.height);
+      updateDims(diffData.width, diffData.height);
       setDiffReady(true);
     })();
 
