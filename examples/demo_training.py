@@ -39,11 +39,11 @@ import cairn
 
 
 def make_sample_image(step: int) -> Image.Image:
-    """A 64×64 RGB image whose contents change each step."""
+    """A 64×64 RGB image whose contents change each step (prediction)."""
     step += 1
     img = Image.new("RGB", (64, 64), (20, 20, 40))
     draw = ImageDraw.Draw(img)
-    # Moving circle
+    # Moving circle — "prediction" with some noise
     cx = 32 + int(20 * math.cos(step / 5.0))
     cy = 32 + int(20 * math.sin(step / 5.0))
     r = 8 + (step % 4)
@@ -53,6 +53,23 @@ def make_sample_image(step: int) -> Image.Image:
         (150 + step * 5) % 256,
     )
     draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=color)
+    return img
+
+
+def make_reference_image(step: int) -> Image.Image:
+    """A 64×64 RGB ground-truth image — similar to prediction but no noise.
+
+    Use this as a diff reference to test the image comparison features.
+    The circle follows the same path but with a fixed size and color.
+    """
+    step += 1
+    img = Image.new("RGB", (64, 64), (20, 20, 40))
+    draw = ImageDraw.Draw(img)
+    # Same trajectory as prediction, but fixed radius and pure blue color
+    cx = 32 + int(20 * math.cos(step / 5.0))
+    cy = 32 + int(20 * math.sin(step / 5.0))
+    r = 10  # fixed radius (prediction varies)
+    draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=(60, 120, 220))
     return img
 
 
@@ -135,6 +152,7 @@ def main() -> None:
         # Image every 5 steps — moving-circle animation
         if step % 5 == 0:
             run.track(make_sample_image(step), name="predictions.sample", step=step)
+            run.track(make_reference_image(step), name="predictions.reference", step=step)
 
         # Figure every 10 steps — matplotlib (the registry picks the figure
         # handler by default; use cairn.Image(fig) if you want a flat PNG).
