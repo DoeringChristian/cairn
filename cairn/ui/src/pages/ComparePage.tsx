@@ -662,7 +662,41 @@ function ComparisonView({
           No cards yet. Click "Add card" to pick metrics from the comparison's runs.
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <div
+          className="grid grid-cols-1 gap-4 md:grid-cols-2"
+          onDragOver={(e) => {
+            if (e.dataTransfer.types.includes("application/x-cairn-card")) {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "move";
+            }
+          }}
+          onDrop={(e) => {
+            const fromId = e.dataTransfer.getData("application/x-cairn-card");
+            if (!fromId) return;
+            e.preventDefault();
+            // Find the card element closest to the drop position
+            const gridEl = e.currentTarget;
+            const cards = Array.from(gridEl.querySelectorAll(".card"));
+            let targetId: string | null = null;
+            for (const cardEl of cards) {
+              const rect = cardEl.getBoundingClientRect();
+              if (e.clientY < rect.top + rect.height / 2) {
+                // Find the comparison card ID from the DraggableCard wrapper
+                const wrapper = cardEl.closest("[data-card-key]");
+                targetId = wrapper?.getAttribute("data-card-key") ?? null;
+                break;
+              }
+            }
+            if (!targetId) {
+              // Dropped after last card — move to end
+              const lastWrapper = cards[cards.length - 1]?.closest("[data-card-key]");
+              targetId = lastWrapper?.getAttribute("data-card-key") ?? null;
+            }
+            if (targetId && targetId !== fromId) {
+              onReorderCards(fromId, targetId);
+            }
+          }}
+        >
           {comparison.cards.map((card) => (
               <DraggableCard
                 key={card.id}
@@ -671,27 +705,11 @@ function ComparisonView({
                 onDragStart={() => {}}
                 onDragEnd={() => {}}
               >
-                <div
-                  onDragOver={(e) => {
-                    if (e.dataTransfer.types.includes("application/x-cairn-card")) {
-                      e.preventDefault();
-                      e.dataTransfer.dropEffect = "move";
-                    }
-                  }}
-                  onDrop={(e) => {
-                    const fromId = e.dataTransfer.getData("application/x-cairn-card");
-                    if (fromId && fromId !== card.id) {
-                      onReorderCards(fromId, card.id);
-                    }
-                  }}
-                  style={{ display: "contents" }}
-                >
-                  <ComparisonCardRenderer
-                    card={card}
-                    comparisonId={comparison.id}
-                    onRemove={() => onRemoveCard(card.id)}
-                  />
-                </div>
+                <ComparisonCardRenderer
+                  card={card}
+                  comparisonId={comparison.id}
+                  onRemove={() => onRemoveCard(card.id)}
+                />
               </DraggableCard>
           ))}
         </div>

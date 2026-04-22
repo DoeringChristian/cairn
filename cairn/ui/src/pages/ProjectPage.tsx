@@ -9,7 +9,7 @@ import { groupIntoSections } from "../lib/sections";
 import { useWorkspaceVisibility } from "../lib/workspace-visibility";
 import AddCardModal, { type AddCardSelection } from "../components/AddCardModal";
 import CardRenderer from "../components/CardRenderer";
-import DraggableCard from "../components/DraggableCard";
+import DraggableCard, { CAIRN_CARD_MIME } from "../components/DraggableCard";
 import ParallelCoordsCard from "../components/ParallelCoordsCard";
 import ScatterPlotCard from "../components/ScatterPlotCard";
 import RunRail from "../components/RunRail";
@@ -156,11 +156,47 @@ export default function ProjectPage() {
     });
   }, [cards.length]);
 
-  // Merge auto + extra cards, filtering out hidden ones
+  // Card order for workspace (persisted)
+  const cardOrderKey = `cairn:workspace-card-order:${projectId}`;
+  const [cardOrder, setCardOrder] = useState<string[]>(() => {
+    try { const s = localStorage.getItem(cardOrderKey); return s ? JSON.parse(s) : []; } catch { return []; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(cardOrderKey, JSON.stringify(cardOrder)); } catch {}
+  }, [cardOrder, cardOrderKey]);
+
+  const handleReorderCards = useCallback((fromKey: string, toKey: string) => {
+    setCardOrder((prev) => {
+      // Build order from current allCards keys if empty
+      const currentKeys = [...cards.filter((c) => !hiddenCards.has(`${c.name}::${c.object_type}`)), ...extraCards]
+        .map((c, i) => `${c.name}::${c.object_type}::${i}`);
+      const order = prev.length > 0 ? [...prev] : currentKeys;
+      const fromIdx = order.indexOf(fromKey);
+      const toIdx = order.indexOf(toKey);
+      if (fromIdx < 0 || toIdx < 0) return prev;
+      const [moved] = order.splice(fromIdx, 1);
+      order.splice(toIdx, 0, moved!);
+      return order;
+    });
+  }, [cards, extraCards, hiddenCards]);
+
+  // Merge auto + extra cards, filtering out hidden ones, sorted by persisted order
   const allCards = useMemo(() => {
     const visible = cards.filter((c) => !hiddenCards.has(`${c.name}::${c.object_type}`));
-    return [...visible, ...extraCards];
-  }, [cards, extraCards, hiddenCards]);
+    const merged = [...visible, ...extraCards];
+    if (cardOrder.length === 0) return merged;
+    // Sort by cardOrder position; unknown cards go to end
+    const orderMap = new Map(cardOrder.map((k, i) => [k, i]));
+    return merged.map((c, i) => ({ card: c, origIdx: i }))
+      .sort((a, b) => {
+        const ka = `${a.card.name}::${a.card.object_type}::${a.origIdx}`;
+        const kb = `${b.card.name}::${b.card.object_type}::${b.origIdx}`;
+        const oa = orderMap.get(ka) ?? 9999;
+        const ob = orderMap.get(kb) ?? 9999;
+        return oa - ob;
+      })
+      .map((x) => x.card);
+  }, [cards, extraCards, hiddenCards, cardOrder]);
 
   // Group allCards into sections, preserving duplicates with indices.
   const allSections = useMemo(() => {
@@ -365,7 +401,39 @@ export default function ProjectPage() {
                 {section.name}
               </h2>
             </header>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2" data-cairn-card-grid>
+            <div
+              className="grid grid-cols-1 gap-4 md:grid-cols-2"
+              data-cairn-card-grid
+              onDragOver={(e) => {
+                if (e.dataTransfer.types.includes(CAIRN_CARD_MIME)) {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "move";
+                }
+              }}
+              onDrop={(e) => {
+                const fromKey = e.dataTransfer.getData(CAIRN_CARD_MIME);
+                if (!fromKey) return;
+                e.preventDefault();
+                const gridEl = e.currentTarget;
+                const cardEls = Array.from(gridEl.querySelectorAll(".card"));
+                let targetKey: string | null = null;
+                for (const el of cardEls) {
+                  const rect = el.getBoundingClientRect();
+                  if (e.clientY < rect.top + rect.height / 2) {
+                    const wrapper = el.closest("[data-card-key]");
+                    targetKey = wrapper?.getAttribute("data-card-key") ?? null;
+                    break;
+                  }
+                }
+                if (!targetKey) {
+                  const last = cardEls[cardEls.length - 1]?.closest("[data-card-key]");
+                  targetKey = last?.getAttribute("data-card-key") ?? null;
+                }
+                if (targetKey && targetKey !== fromKey) {
+                  handleReorderCards(fromKey, targetKey);
+                }
+              }}
+            >
               {section.cardIndices.map((cardIdx) => {
                 const card = allCards[cardIdx]!;
                 if (card.runs.length === 0) return null;
@@ -444,15 +512,6 @@ export default function ProjectPage() {
                     <div
                       data-cairn-card-idx={cardIdx}
                       style={{ display: "contents" }}
-                      onDragOver={(e) => {
-                        if (e.dataTransfer.types.includes("application/x-cairn-card")) {
-                          e.preventDefault();
-                          e.dataTransfer.dropEffect = "move";
-                        }
-                      }}
-                      onDrop={() => {
-                        // Workspace reorder is visual only (no persistence yet)
-                      }}
                     >
                       {content}
                     </div>
