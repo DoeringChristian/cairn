@@ -22,6 +22,7 @@ import { useProjectId } from "../lib/project-context";
 import { formatRelative } from "../lib/format";
 import { computeDiff, loadImageData, type DiffMode } from "../lib/image-diff";
 import { gpuComputeDiff } from "../lib/gpu-diff";
+import { webglComputeDiff } from "../lib/webgl-diff";
 import { getRenderMode } from "../lib/render-mode";
 import CardDetailModal from "./CardDetailModal";
 import CardHeader from "./CardHeader";
@@ -547,25 +548,31 @@ function ImagePane({
       const isSigned = (diffMode as string).includes("signed");
       const cmapMode: "linear" | "signed" | "positive" = isSigned ? "signed" : "positive";
 
-      // GPU path: fast, no need to cache result (GPU recomputes quickly)
+      // GPU path: try WebGPU first, then WebGL 2
       if (useGPU) {
         const gpuLut = colormap !== "none" ? getColormapLUT(colormap as Exclude<Colormap, "none">) : null;
+        const gpuOpts = { diffMode: diffMode as DiffMode, colormap: gpuLut, cmapMode };
+        // 1. Try WebGPU (compute shader)
         try {
-          diffData = await gpuComputeDiff(baseData, otherData, {
-            diffMode: diffMode as DiffMode,
-            colormap: gpuLut,
-            cmapMode,
-          });
+          diffData = await gpuComputeDiff(baseData, otherData, gpuOpts);
         } catch (err) {
-          console.error("WebGPU diff error:", err);
-          // GPU failed — fall through to CPU if auto mode
+          console.warn("[cairn] WebGPU diff error:", err);
+        }
+        // 2. Try WebGL 2 (fragment shader)
+        if (!diffData) {
+          try {
+            diffData = webglComputeDiff(baseData, otherData, gpuOpts);
+            if (diffData) console.debug("[cairn] diff computed via WebGL 2");
+          } catch (err) {
+            console.warn("[cairn] WebGL 2 diff error:", err);
+          }
         }
       }
 
       // CPU fallback
       if (!diffData) {
         if (renderMode === "gpu") {
-          console.error("[cairn] WebGPU unavailable — set render mode to 'Auto' or 'CPU'");
+          console.error("[cairn] Neither WebGPU nor WebGL 2 available — set render mode to 'Auto' or 'CPU'");
           return;
         }
         diffData = computeDiff(baseData, otherData, diffMode as DiffMode);
