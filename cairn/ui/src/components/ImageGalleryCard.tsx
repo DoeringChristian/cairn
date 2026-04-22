@@ -562,10 +562,11 @@ function ImagePane({
         }
       }
 
-      // CPU fallback — always fall back rather than showing nothing
+      // CPU fallback
       if (!diffData) {
         if (renderMode === "gpu") {
-          console.warn("WebGPU diff failed — falling back to CPU despite 'gpu' mode");
+          console.error("[cairn] WebGPU unavailable — set render mode to 'Auto' or 'CPU'");
+          return;
         }
         diffData = computeDiff(baseData, otherData, diffMode as DiffMode);
         if (colormap !== "none") {
