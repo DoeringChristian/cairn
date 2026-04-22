@@ -76,13 +76,19 @@ export default function RunRail({
                 <Link
                   to={`/p/${r.project_id}/r/${r.id}`}
                   className="mono block truncate text-xs text-accent hover:underline"
+                  title={r.id}
                 >
                   {r.display_name ?? r.id}
                 </Link>
                 <div className="mt-0.5 flex items-center gap-1.5">
                   <RunStatusBadge status={r.status} />
-                  <span className="text-[10px] text-fg-subtle">
-                    {formatRelative(r.created_at)}
+                  <span className="text-[10px] text-fg-subtle" title={r.created_at}>
+                    {(() => {
+                      try {
+                        const d = new Date(r.created_at);
+                        return `${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })} ${d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
+                      } catch { return formatRelative(r.created_at); }
+                    })()}
                   </span>
                 </div>
               </div>

@@ -10,7 +10,7 @@ import { useQueries } from "@tanstack/react-query";
 import { api } from "../api/client";
 import type { Run } from "../api/types";
 import { useCardSettings } from "../lib/card-settings";
-import { shortRunLabel } from "../lib/run-label";
+import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import CardHeader from "./CardHeader";
 import CardDetailModal from "./CardDetailModal";
 import CardResizeHandle from "./CardResizeHandle";
@@ -69,6 +69,8 @@ export default function ParallelCoordsCard({
   settingsKey,
   onRemove,
 }: Props) {
+  useRunMetadataVersion();
+
   const [settings, updateSettings] = useCardSettings(
     settingsKey,
     DEFAULT_SETTINGS,

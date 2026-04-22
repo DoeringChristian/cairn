@@ -33,7 +33,6 @@ def test_fresh_schema_creates_all_tables(conn):
     expected = {
         "schema_version",
         "projects",
-        "tasks",
         "runs",
         "params",
         "sequences",

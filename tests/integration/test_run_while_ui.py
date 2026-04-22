@@ -105,7 +105,6 @@ def test_run_joins_via_http_when_ui_is_serving(ui_subprocess):
     # must pick up the UI's HTTP endpoint.
     with cairn.Run(
         project="coexist",
-        task="demo",
         repo=repo,
         capture_source=False,
         capture_stdout=False,
@@ -137,7 +136,6 @@ def test_run_without_ui_uses_local_transport(tmp_path):
     repo = tmp_path / ".cairn"
     with cairn.Run(
         project="solo",
-        task="local",
         repo=repo,
         capture_source=False,
         capture_stdout=False,
@@ -173,7 +171,6 @@ def test_hung_holder_produces_clear_error(tmp_path):
     with pytest.raises(RepoLockedError) as exc:
         cairn.Run(
             project="x",
-            task="y",
             repo=tmp_path / ".cairn",
             capture_source=False,
             capture_stdout=False,

@@ -64,16 +64,14 @@ def test_transaction_rolls_back_on_error(db):
 
 def test_concurrent_writes_all_land(db):
     """Spawn 10 threads each inserting 20 rows; expect 200 rows total."""
-    _insert_project(db, "proj")
-
     errors: list[BaseException] = []
 
     def worker(idx: int) -> None:
         try:
             for i in range(20):
                 db.write(
-                    "INSERT INTO tasks VALUES (?, ?, ?, '2025-01-01T00:00:00', NULL, NULL)",
-                    [f"proj/t{idx:02d}-{i:02d}", "proj", f"task{idx}-{i}"],
+                    "INSERT INTO projects VALUES (?, ?, '2025-01-01T00:00:00', NULL, NULL)",
+                    [f"p{idx:02d}-{i:02d}", f"project{idx}-{i}"],
                 )
         except BaseException as exc:  # noqa: BLE001
             errors.append(exc)
@@ -85,7 +83,7 @@ def test_concurrent_writes_all_land(db):
         t.join()
 
     assert not errors, errors
-    (count,) = db.read_one("SELECT COUNT(*) FROM tasks") or (0,)
+    (count,) = db.read_one("SELECT COUNT(*) FROM projects") or (0,)
     assert count == 200
 
 

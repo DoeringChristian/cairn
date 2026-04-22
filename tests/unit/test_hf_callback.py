@@ -69,7 +69,7 @@ def test_on_train_end_finishes_when_owned(monkeypatch):
         return mock_run
 
     monkeypatch.setattr(huggingface, "Run", mock_run_ctor)
-    cb = huggingface.CairnCallback(project="p", task="t")
+    cb = huggingface.CairnCallback(project="p")
     args = MagicMock()
     args.output_dir = "/tmp/out"
     state = MagicMock()

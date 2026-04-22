@@ -17,7 +17,7 @@ def test_failed_batch_spills_and_drains(live_server, tmp_path):
         backoff_cap=0.001,
     )
     # Create a run first.
-    rid = transport.create_run({"project": "p", "task": "t"})["run_id"]
+    rid = transport.create_run({"project": "p"})["run_id"]
 
     # Swap the client for a dead one to force spill.
     dead = httpx.Client(

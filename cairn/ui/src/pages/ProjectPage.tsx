@@ -364,9 +364,6 @@ export default function ProjectPage() {
                             <RunStatusBadge status={r.status} />
                           </div>
                           <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-fg-muted">
-                            <span className="mono">
-                              task: {r.task_id.split("/")[1]}
-                            </span>
                             <span>
                               started: {formatRelative(r.created_at)}
                             </span>

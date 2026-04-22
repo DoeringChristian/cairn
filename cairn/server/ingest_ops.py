@@ -35,7 +35,6 @@ def create_run(
     db: Database,
     *,
     project: str,
-    task: str,
     name: str | None = None,
     tags: list[str] | None = None,
     notes: str | None = None,
@@ -45,10 +44,8 @@ def create_run(
     hostname: str | None = None,
     user: str | None = None,
 ) -> dict[str, Any]:
-    """Create a run (and its project + task if needed). Returns metadata dict."""
+    """Create a run (and its project if needed). Returns metadata dict."""
     project_id = slugify(project)
-    task_slug = slugify(task)
-    task_id = f"{project_id}/{task_slug}"
     run_id = secrets.token_hex(6)
     now = utc_now()
 
@@ -63,24 +60,15 @@ def create_run(
         )
         con.execute(
             """
-            INSERT INTO tasks (id, project_id, name, created_at, description, tags)
-            VALUES (?, ?, ?, ?, NULL, NULL)
-            ON CONFLICT (id) DO NOTHING
-            """,
-            [task_id, project_id, task, now],
-        )
-        con.execute(
-            """
             INSERT INTO runs (
-                id, project_id, task_id, display_name, created_at, ended_at,
+                id, project_id, display_name, created_at, ended_at,
                 status, exit_code, git_sha, git_dirty, git_branch,
                 cli_args, env_snapshot, hostname, "user", tags, notes
-            ) VALUES (?, ?, ?, ?, ?, NULL, 'running', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, NULL, 'running', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 run_id,
                 project_id,
-                task_id,
                 name,
                 now,
                 git.get("sha") if git else None,
@@ -98,7 +86,6 @@ def create_run(
     return {
         "run_id": run_id,
         "project_id": project_id,
-        "task_id": task_id,
         "url": f"/p/{project_id}/r/{run_id}",
     }
 

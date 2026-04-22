@@ -1,4 +1,4 @@
-"""Projects + tasks read endpoints."""
+"""Projects read endpoints."""
 
 from __future__ import annotations
 
@@ -39,32 +39,4 @@ def get_project(project_id: str, request: Request) -> dict[str, Any]:
     )
     if not rows:
         raise HTTPException(status_code=404, detail="project not found")
-    return rows[0]
-
-
-@router.get("/projects/{project_id}/tasks")
-def list_tasks(project_id: str, request: Request) -> dict[str, Any]:
-    db = get_db(request)
-    rows = db.read_columns(
-        """
-        SELECT t.*,
-               (SELECT COUNT(*) FROM runs r WHERE r.task_id = t.id) AS run_count
-        FROM tasks t
-        WHERE t.project_id = ?
-        ORDER BY t.created_at DESC
-        """,
-        [project_id],
-    )
-    return {"tasks": rows}
-
-
-@router.get("/projects/{project_id}/tasks/{task_slug}")
-def get_task(
-    project_id: str, task_slug: str, request: Request
-) -> dict[str, Any]:
-    db = get_db(request)
-    task_id = f"{project_id}/{task_slug}"
-    rows = db.read_columns("SELECT * FROM tasks WHERE id = ?", [task_id])
-    if not rows:
-        raise HTTPException(status_code=404, detail="task not found")
     return rows[0]

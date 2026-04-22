@@ -89,7 +89,6 @@ class LocalTransport:
         return ingest_ops.create_run(
             self.db,
             project=body["project"],
-            task=body["task"],
             name=body.get("name"),
             tags=body.get("tags"),
             notes=body.get("notes"),

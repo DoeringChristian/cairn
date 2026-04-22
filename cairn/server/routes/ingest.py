@@ -34,7 +34,6 @@ class GitInfo(BaseModel):
 
 class CreateRunRequest(BaseModel):
     project: str
-    task: str
     name: str | None = None
     tags: list[str] | None = None
     notes: str | None = None
@@ -111,7 +110,6 @@ def create_run(body: CreateRunRequest, request: Request) -> dict[str, Any]:
         return ingest_ops.create_run(
             db,
             project=body.project,
-            task=body.task,
             name=body.name,
             tags=body.tags,
             notes=body.notes,

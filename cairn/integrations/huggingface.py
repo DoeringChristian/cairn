@@ -7,7 +7,7 @@ Usage::
 
     trainer = Trainer(
         ...,
-        callbacks=[CairnCallback(project="ft", task="roberta-imdb")],
+        callbacks=[CairnCallback(project="ft")],
     )
 """
 
@@ -54,10 +54,9 @@ class CairnCallback(TrainerCallback):
         **kwargs: Any,
     ) -> None:
         if self._run is None:
-            # Sensible defaults if the user didn't pass project/task.
+            # Sensible defaults if the user didn't pass project.
             kw = dict(self._run_kwargs)
             kw.setdefault("project", args.output_dir.split("/")[-1] if args.output_dir else "hf")
-            kw.setdefault("task", kw.get("task", "training"))
             self._run = Run(**kw)
         # Log the TrainingArguments as params (flat dict).
         try:

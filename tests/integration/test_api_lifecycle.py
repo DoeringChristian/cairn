@@ -14,23 +14,18 @@ def iso_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def test_create_run_creates_project_and_task(client):
+def test_create_run_creates_project(client):
     resp = client.post(
         "/api/runs",
-        json={"project": "Image Class", "task": "baseline-cnn", "name": "r1"},
+        json={"project": "Image Class", "name": "r1"},
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert len(body["run_id"]) == 12
     assert body["project_id"] == "image-class"
-    assert body["task_id"] == "image-class/baseline-cnn"
 
-    # Project + task are now visible via read API.
+    # Project is now visible via read API.
     assert client.get("/api/projects").json()["projects"][0]["id"] == "image-class"
-    assert (
-        client.get("/api/projects/image-class/tasks").json()["tasks"][0]["id"]
-        == "image-class/baseline-cnn"
-    )
 
 
 def test_full_lifecycle(client):
@@ -39,7 +34,6 @@ def test_full_lifecycle(client):
         "/api/runs",
         json={
             "project": "p",
-            "task": "t",
             "env": {"python": "3.11"},
             "git": {"sha": "abc", "branch": "main", "dirty": False},
             "cli_args": ["train.py", "--lr", "0.01"],
@@ -171,7 +165,7 @@ def test_full_lifecycle(client):
 
 
 def test_create_run_with_bad_project_name(client):
-    r = client.post("/api/runs", json={"project": "   ", "task": "t"})
+    r = client.post("/api/runs", json={"project": "   "})
     assert r.status_code == 400
 
 
@@ -181,7 +175,7 @@ def test_params_for_unknown_run_404s(client):
 
 
 def test_run_attach_artifact(client):
-    rid = client.post("/api/runs", json={"project": "p", "task": "t"}).json()["run_id"]
+    rid = client.post("/api/runs", json={"project": "p"}).json()["run_id"]
     payload = b"archive-bytes"
     digest = hashlib.sha256(payload).hexdigest()
     # Upload first
@@ -201,7 +195,7 @@ def test_run_attach_artifact(client):
 
 
 def test_run_tags_and_notes(client):
-    rid = client.post("/api/runs", json={"project": "p", "task": "t"}).json()["run_id"]
+    rid = client.post("/api/runs", json={"project": "p"}).json()["run_id"]
     client.post(f"/api/runs/{rid}/tags", json={"tags": ["ablation", "v2"]})
     client.post(f"/api/runs/{rid}/notes", json={"notes": "hi"})
     run = client.get(f"/api/runs/{rid}").json()["run"]
@@ -210,7 +204,7 @@ def test_run_tags_and_notes(client):
 
 
 def test_delete_run(client):
-    rid = client.post("/api/runs", json={"project": "p", "task": "t"}).json()["run_id"]
+    rid = client.post("/api/runs", json={"project": "p"}).json()["run_id"]
     client.post(
         f"/api/runs/{rid}/batch",
         json={
@@ -231,7 +225,7 @@ def test_delete_run(client):
 
 
 def test_finish_with_failed_status(client):
-    rid = client.post("/api/runs", json={"project": "p", "task": "t"}).json()["run_id"]
+    rid = client.post("/api/runs", json={"project": "p"}).json()["run_id"]
     client.post(f"/api/runs/{rid}/finish", json={"status": "failed", "exit_code": 2})
     run = client.get(f"/api/runs/{rid}").json()["run"]
     assert run["status"] == "failed"

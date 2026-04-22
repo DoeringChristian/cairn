@@ -9,7 +9,6 @@ import { api } from "../api/client";
 
 type SortColumn =
   | "name"
-  | "task"
   | "status"
   | "created_at"
   | "duration"
@@ -29,11 +28,6 @@ const STATUS_OPTIONS: Array<{ value: "all" | RunStatus; label: string }> = [
   { value: "killed", label: "killed" },
 ];
 
-function taskSlug(taskId: string): string {
-  const parts = taskId.split("/");
-  return parts.length > 1 ? parts.slice(1).join("/") : taskId;
-}
-
 function durationSeconds(run: Run): number {
   const start = new Date(run.created_at).getTime();
   const end = run.ended_at ? new Date(run.ended_at).getTime() : Date.now();
@@ -47,8 +41,6 @@ function compareRuns(a: Run, b: Run, col: SortColumn): number {
       const bn = (b.display_name ?? b.id).toLowerCase();
       return an.localeCompare(bn);
     }
-    case "task":
-      return taskSlug(a.task_id).localeCompare(taskSlug(b.task_id));
     case "status":
       return a.status.localeCompare(b.status);
     case "created_at":
@@ -71,7 +63,6 @@ export default function RunsTablePage() {
   const q = useRuns({ project: projectId, limit: 200 });
 
   const [statusFilter, setStatusFilter] = useState<"all" | RunStatus>("all");
-  const [taskFilter, setTaskFilter] = useState<string>("all");
   const [search, setSearch] = useState<string>("");
   const [sort, setSort] = useState<SortState>({
     column: "created_at",
@@ -81,24 +72,17 @@ export default function RunsTablePage() {
 
   const runs = useMemo(() => q.data?.runs ?? [], [q.data]);
 
-  const taskOptions = useMemo(() => {
-    const set = new Set<string>();
-    for (const r of runs) set.add(r.task_id);
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [runs]);
-
   const filtered = useMemo(() => {
     const needle = search.trim().toLowerCase();
     return runs.filter((r) => {
       if (statusFilter !== "all" && r.status !== statusFilter) return false;
-      if (taskFilter !== "all" && r.task_id !== taskFilter) return false;
       if (needle) {
         const hay = `${r.display_name ?? ""} ${r.id}`.toLowerCase();
         if (!hay.includes(needle)) return false;
       }
       return true;
     });
-  }, [runs, statusFilter, taskFilter, search]);
+  }, [runs, statusFilter, search]);
 
   const sorted = useMemo(() => {
     const arr = [...filtered];
@@ -236,21 +220,6 @@ export default function RunsTablePage() {
           </select>
         </label>
         <label className="flex items-center gap-1 text-xs text-fg-muted">
-          Task
-          <select
-            className="input py-1 text-xs"
-            value={taskFilter}
-            onChange={(e) => setTaskFilter(e.target.value)}
-          >
-            <option value="all">All</option>
-            {taskOptions.map((t) => (
-              <option key={t} value={t}>
-                {taskSlug(t)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex items-center gap-1 text-xs text-fg-muted">
           Search
           <input
             className="input py-1 text-xs"
@@ -336,7 +305,6 @@ export default function RunsTablePage() {
                     <RunStatusBadge status={r.status} />
                   </div>
                   <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-fg-muted">
-                    <span className="mono">task: {taskSlug(r.task_id)}</span>
                     <span>created: {formatRelative(r.created_at)}</span>
                     <span className="mono num">
                       dur: {formatDuration(r.created_at, r.ended_at)}
@@ -378,12 +346,6 @@ export default function RunsTablePage() {
                 <SortableTh
                   label="Name"
                   column="name"
-                  sort={sort}
-                  onClick={toggleSort}
-                />
-                <SortableTh
-                  label="Task"
-                  column="task"
                   sort={sort}
                   onClick={toggleSort}
                 />
@@ -445,9 +407,6 @@ export default function RunsTablePage() {
                           {r.id}
                         </span>
                       ) : null}
-                    </td>
-                    <td className="mono px-3 py-2 text-fg-muted">
-                      {taskSlug(r.task_id)}
                     </td>
                     <td className="px-3 py-2">
                       <RunStatusBadge status={r.status} />

@@ -24,15 +24,19 @@ import { formatRelative } from "../lib/format";
 import { useRuns } from "../api/hooks";
 import { api } from "../api/client";
 import SettingsPopover from "../components/SettingsPopover";
+import { setRunMetadata } from "../lib/run-label";
 import type { SequenceMeta } from "../api/types";
 
 export default function ComparePage() {
   const { projectId } = useParams<{ projectId: string }>();
   const runsQ = useRuns({ project: projectId, limit: 200 });
-  const allProjectRunIds = useMemo(
-    () => (runsQ.data?.runs ?? []).map((r) => r.id),
-    [runsQ.data],
-  );
+  const runs = runsQ.data?.runs ?? [];
+  const allProjectRunIds = useMemo(() => runs.map((r) => r.id), [runs]);
+
+  // Populate run metadata cache for label formatting.
+  useEffect(() => {
+    if (runs.length > 0) setRunMetadata(runs);
+  }, [runs]);
   const [searchParams, setSearchParams] = useSearchParams();
   const { comparisons, refresh } = useComparisons(projectId ?? "");
 

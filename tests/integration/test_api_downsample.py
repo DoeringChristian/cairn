@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 
 def test_many_scalars_get_downsampled(client):
-    rid = client.post("/api/runs", json={"project": "p", "task": "t"}).json()["run_id"]
+    rid = client.post("/api/runs", json={"project": "p"}).json()["run_id"]
     now = datetime.now(timezone.utc).isoformat()
     points = [
         {
@@ -31,7 +31,7 @@ def test_many_scalars_get_downsampled(client):
 
 
 def test_max_points_greater_than_series_returns_all(client):
-    rid = client.post("/api/runs", json={"project": "p", "task": "t"}).json()["run_id"]
+    rid = client.post("/api/runs", json={"project": "p"}).json()["run_id"]
     now = datetime.now(timezone.utc).isoformat()
     client.post(
         f"/api/runs/{rid}/batch",
@@ -53,7 +53,7 @@ def test_max_points_greater_than_series_returns_all(client):
 
 
 def test_step_range_filter(client):
-    rid = client.post("/api/runs", json={"project": "p", "task": "t"}).json()["run_id"]
+    rid = client.post("/api/runs", json={"project": "p"}).json()["run_id"]
     now = datetime.now(timezone.utc).isoformat()
     client.post(
         f"/api/runs/{rid}/batch",

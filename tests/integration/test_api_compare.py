@@ -10,8 +10,8 @@ def _now():
 
 
 def test_compare_two_runs(client):
-    rid1 = client.post("/api/runs", json={"project": "p", "task": "t"}).json()["run_id"]
-    rid2 = client.post("/api/runs", json={"project": "p", "task": "t"}).json()["run_id"]
+    rid1 = client.post("/api/runs", json={"project": "p"}).json()["run_id"]
+    rid2 = client.post("/api/runs", json={"project": "p"}).json()["run_id"]
     for rid, scale in [(rid1, 1.0), (rid2, 2.0)]:
         client.post(
             f"/api/runs/{rid}/batch",

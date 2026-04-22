@@ -20,20 +20,9 @@ export interface Project {
   last_run_at: string | null;
 }
 
-export interface Task {
-  id: string;
-  project_id: string;
-  name: string;
-  created_at: string;
-  description: string | null;
-  tags: string | null;
-  run_count?: number;
-}
-
 export interface Run {
   id: string;
   project_id: string;
-  task_id: string;
   display_name: string | null;
   created_at: string;
   ended_at: string | null;

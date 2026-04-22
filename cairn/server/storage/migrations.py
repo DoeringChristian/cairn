@@ -32,20 +32,9 @@ SCHEMA_SQL: list[str] = [
     )
     """,
     """
-    CREATE TABLE IF NOT EXISTS tasks (
-        id            TEXT PRIMARY KEY,
-        project_id    TEXT NOT NULL REFERENCES projects(id),
-        name          TEXT NOT NULL,
-        created_at    TEXT NOT NULL,
-        description   TEXT,
-        tags          TEXT
-    )
-    """,
-    """
     CREATE TABLE IF NOT EXISTS runs (
         id            TEXT PRIMARY KEY,
         project_id    TEXT NOT NULL REFERENCES projects(id),
-        task_id       TEXT NOT NULL REFERENCES tasks(id),
         display_name  TEXT,
         created_at    TEXT NOT NULL,
         ended_at      TEXT,

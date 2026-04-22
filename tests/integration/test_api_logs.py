@@ -10,7 +10,7 @@ def _now():
 
 
 def test_logs_round_trip_and_disk_files(client, tmp_path):
-    rid = client.post("/api/runs", json={"project": "p", "task": "t"}).json()["run_id"]
+    rid = client.post("/api/runs", json={"project": "p"}).json()["run_id"]
     client.post(
         f"/api/runs/{rid}/logs",
         json={
@@ -29,7 +29,7 @@ def test_logs_round_trip_and_disk_files(client, tmp_path):
 
 
 def test_logs_search_substring(client):
-    rid = client.post("/api/runs", json={"project": "p", "task": "t"}).json()["run_id"]
+    rid = client.post("/api/runs", json={"project": "p"}).json()["run_id"]
     client.post(
         f"/api/runs/{rid}/logs",
         json={
@@ -45,7 +45,7 @@ def test_logs_search_substring(client):
 
 
 def test_logs_paginated(client):
-    rid = client.post("/api/runs", json={"project": "p", "task": "t"}).json()["run_id"]
+    rid = client.post("/api/runs", json={"project": "p"}).json()["run_id"]
     client.post(
         f"/api/runs/{rid}/logs",
         json={

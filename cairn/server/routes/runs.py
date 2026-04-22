@@ -15,7 +15,6 @@ router = APIRouter(prefix="/api", tags=["runs"])
 def list_runs(
     request: Request,
     project: str | None = Query(default=None),
-    task: str | None = Query(default=None),
     status: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
@@ -26,11 +25,6 @@ def list_runs(
     if project:
         clauses.append("project_id = ?")
         params.append(project)
-    if task:
-        # task may be the full id (project/slug) or just the slug. Be permissive.
-        clauses.append("(task_id = ? OR task_id LIKE ?)")
-        params.append(task)
-        params.append(f"%/{task}")
     if status:
         clauses.append("status = ?")
         params.append(status)

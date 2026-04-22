@@ -21,7 +21,7 @@ def test_info(client):
 
 
 def test_workspace_default_layout(client):
-    rid = client.post("/api/runs", json={"project": "p", "task": "t"}).json()["run_id"]
+    rid = client.post("/api/runs", json={"project": "p"}).json()["run_id"]
     # Log a scalar and an image
     import hashlib
     import io

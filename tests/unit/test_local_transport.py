@@ -21,7 +21,7 @@ def transport(tmp_path):
 
 
 def test_create_run_writes_to_duckdb(transport):
-    resp = transport.create_run({"project": "p", "task": "t", "name": "r1"})
+    resp = transport.create_run({"project": "p", "name": "r1"})
     assert len(resp["run_id"]) == 12
     rows = transport.db.read_columns("SELECT * FROM runs WHERE id = ?", [resp["run_id"]])
     assert rows[0]["status"] == "running"
@@ -29,7 +29,7 @@ def test_create_run_writes_to_duckdb(transport):
 
 
 def test_params_flattened_and_stored(transport):
-    rid = transport.create_run({"project": "p", "task": "t"})["run_id"]
+    rid = transport.create_run({"project": "p"})["run_id"]
     transport.post_params(rid, {"hparams": {"lr": 0.01}, "flat": 1})
     rows = transport.db.read_columns(
         "SELECT key FROM params WHERE run_id = ? ORDER BY key", [rid]
@@ -38,7 +38,7 @@ def test_params_flattened_and_stored(transport):
 
 
 def test_batch_and_sequence_readback(transport):
-    rid = transport.create_run({"project": "p", "task": "t"})["run_id"]
+    rid = transport.create_run({"project": "p"})["run_id"]
     ok = transport.post_batch(
         rid,
         [
@@ -73,7 +73,7 @@ def test_upload_artifact_is_idempotent(transport):
 
 
 def test_attach_artifact_to_run(transport):
-    rid = transport.create_run({"project": "p", "task": "t"})["run_id"]
+    rid = transport.create_run({"project": "p"})["run_id"]
     digest = transport.upload_artifact(b"hello", "text/plain")
     transport.attach_artifact(rid, "readme", digest)
     rows = transport.db.read_columns(
@@ -84,7 +84,7 @@ def test_attach_artifact_to_run(transport):
 
 
 def test_logs_inserted_and_written_to_disk(transport, tmp_path):
-    rid = transport.create_run({"project": "p", "task": "t"})["run_id"]
+    rid = transport.create_run({"project": "p"})["run_id"]
     ok = transport.post_logs(
         rid,
         [
@@ -105,7 +105,7 @@ def test_logs_inserted_and_written_to_disk(transport, tmp_path):
 
 
 def test_finish_and_status_update(transport):
-    rid = transport.create_run({"project": "p", "task": "t"})["run_id"]
+    rid = transport.create_run({"project": "p"})["run_id"]
     transport.finish_run(rid, "completed", exit_code=0)
     status = transport.db.read_one(
         "SELECT status FROM runs WHERE id = ?", [rid]
@@ -116,7 +116,7 @@ def test_finish_and_status_update(transport):
 def test_tags_and_notes(transport):
     import json
 
-    rid = transport.create_run({"project": "p", "task": "t"})["run_id"]
+    rid = transport.create_run({"project": "p"})["run_id"]
     transport.set_tags(rid, ["ablation"])
     transport.set_notes(rid, "testing")
     row = transport.db.read_columns("SELECT * FROM runs WHERE id = ?", [rid])[0]
@@ -134,8 +134,8 @@ def test_concurrent_transports_on_same_repo(tmp_path):
     t2 = LocalTransport(tmp_path / ".cairn")
     try:
         # Both can create runs
-        r1 = t1.create_run({"project": "p", "task": "t1"})
-        r2 = t2.create_run({"project": "p", "task": "t2"})
+        r1 = t1.create_run({"project": "p"})
+        r2 = t2.create_run({"project": "p"})
         assert r1["run_id"] != r2["run_id"]
         # Both can write batches
         t1.post_batch(r1["run_id"], [{"name": "loss", "step": 0, "scalar_value": 1.0,

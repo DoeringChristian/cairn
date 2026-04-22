@@ -44,7 +44,7 @@ import Select from "./settings/Select";
 import Slider from "./settings/Slider";
 import Toggle from "./settings/Toggle";
 import { formatRelative } from "../lib/format";
-import { shortRunLabel } from "../lib/run-label";
+import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 
 // -----------------------------------------------------------------------------
 // Settings shape
@@ -135,9 +135,16 @@ function seriesLabel(
   contextHash: string,
   runId: string | undefined,
   includeRun: boolean,
+  siblingRunIds?: string[],
 ): string {
+  if (includeRun && runId) {
+    // Multi-run: show run name (+ timestamp if ambiguous). Tag is in card title.
+    const parts: string[] = [shortRunLabel(runId, siblingRunIds)];
+    if (contextHash) parts.push(contextHash.slice(0, 6));
+    return parts.join(" · ");
+  }
+  // Single-run: show metric name
   const parts: string[] = [name];
-  if (includeRun && runId) parts.push(shortRunLabel(runId));
   if (contextHash) parts.push(contextHash.slice(0, 6));
   return parts.join(" · ");
 }
@@ -389,11 +396,14 @@ export default function ScalarPlotCard({
     points: Array<{ x: number; y: number; wall_time: string; context: string | null }>;
   };
 
-  const multipleRuns = useMemo(() => {
+  const allRunIds = useMemo(() => {
     const seen = new Set<string>();
     for (const m of effectiveMetrics) seen.add(m.runId ?? runId);
-    return seen.size > 1;
+    return Array.from(seen);
   }, [effectiveMetrics, runId]);
+  const multipleRuns = allRunIds.length > 1;
+
+  const runMetaVersion = useRunMetadataVersion();
 
   const { series, data, isLoading } = useMemo(() => {
     const anyLoading = queries.some((q) => q.isLoading);
@@ -462,7 +472,7 @@ export default function ScalarPlotCard({
 
       return {
         key,
-        label: seriesLabel(m.name, m.context_hash, rid, multipleRuns),
+        label: seriesLabel(m.name, m.context_hash, rid, multipleRuns, allRunIds),
         color: SERIES_COLORS[idx % SERIES_COLORS.length]!,
         points: filtered,
       };
@@ -496,6 +506,7 @@ export default function ScalarPlotCard({
     multipleRuns,
     runId,
     runCreatedAtByRunId,
+    runMetaVersion,
     // react-query data identity changes on refetch which is what we want:
     queries.map((q) => q.dataUpdatedAt).join("|"),
   ]);

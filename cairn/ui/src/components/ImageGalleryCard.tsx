@@ -23,7 +23,7 @@ import { formatRelative } from "../lib/format";
 import { computeDiff, loadImageData, type DiffMode } from "../lib/image-diff";
 import { webglRenderDiffToCanvas } from "../lib/webgl-diff";
 import { getRenderMode } from "../lib/render-mode";
-import { shortRunLabel } from "../lib/run-label";
+import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import CardDetailModal from "./CardDetailModal";
 import CardHeader from "./CardHeader";
 import CardResizeHandle from "./CardResizeHandle";
@@ -228,9 +228,12 @@ function seriesLabel(
   fallbackRunId: string,
   multiRun: boolean,
 ): string {
+  if (multiRun) {
+    // Multi-run: show only run name+timestamp (tag shown once in card header)
+    return shortRunLabel(m.runId ?? fallbackRunId);
+  }
+  // Single-run: show metric name
   const parts: string[] = [m.name];
-  if (multiRun && (m.runId ?? fallbackRunId))
-    parts.push(shortRunLabel(m.runId ?? fallbackRunId));
   if (m.context_hash) parts.push(m.context_hash.slice(0, 6));
   return parts.join(" \u00b7 ");
 }
@@ -731,7 +734,7 @@ function ExternalBaselinePicker({
     return () => { document.removeEventListener("pointerdown", onDown); document.removeEventListener("keydown", onKey); };
   }, [open]);
 
-  const runLabel = (id: string) => runDisplayNames?.get(id) ?? shortRunLabel(id);
+  const runLabel = (id: string) => shortRunLabel(id);
 
   return (
     <div className="relative mt-1">
@@ -794,6 +797,8 @@ function ExternalBaselinePicker({
 }
 
 export default function ImageGalleryCard({ runId, metric, extraSeries, controlledSeries, settingsKeyOverride, onRemove }: Props) {
+  useRunMetadataVersion();
+
   const extraSeriesKey = useMemo(
     () => (extraSeries ?? []).map((s) => `${s.runId}::${s.name}::${s.context_hash}`).sort().join("|"),
     // eslint-disable-next-line react-hooks/exhaustive-deps

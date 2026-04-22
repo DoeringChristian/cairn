@@ -25,12 +25,9 @@ export const api = {
   projects: () =>
     get<{ projects: import("./types").Project[] }>("/api/projects"),
   project: (id: string) => get<import("./types").Project>(`/api/projects/${id}`),
-  tasks: (projectId: string) =>
-    get<{ tasks: import("./types").Task[] }>(`/api/projects/${projectId}/tasks`),
-  runs: (params: { project?: string; task?: string; status?: string; limit?: number } = {}) => {
+  runs: (params: { project?: string; status?: string; limit?: number } = {}) => {
     const q = new URLSearchParams();
     if (params.project) q.set("project", params.project);
-    if (params.task) q.set("task", params.task);
     if (params.status) q.set("status", params.status);
     if (params.limit != null) q.set("limit", String(params.limit));
     const qs = q.toString();

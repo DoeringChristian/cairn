@@ -109,7 +109,6 @@ def main() -> None:
     # finish at a specific point mid-script.
     run = cairn.Run(
         project="demo",
-        task="viewer-smoke",
         name="full-demo",
         tags=["demo", "smoke"],
         notes="Exercises every built-in handler for manual UI testing.",

@@ -36,7 +36,6 @@ def reader(live_server):
 def test_basic_run_lifecycle(transport, reader):
     run = cairn.Run(
         project="test-proj",
-        task="test-task",
         name="r1",
         capture_source=False,
         capture_stdout=False,
@@ -70,7 +69,6 @@ def test_basic_run_lifecycle(transport, reader):
 def test_track_image_uploads_artifact(transport, reader):
     run = cairn.Run(
         project="p",
-        task="t",
         capture_source=False,
         capture_stdout=False,
         capture_env=False,
@@ -90,7 +88,6 @@ def test_context_manager_records_failed_on_exception(transport, reader):
     with pytest.raises(RuntimeError):
         with cairn.Run(
             project="p",
-            task="t",
             capture_source=False,
             capture_stdout=False,
             capture_env=False,
@@ -107,7 +104,6 @@ def test_context_manager_records_failed_on_exception(transport, reader):
 def test_nested_run_raises(transport):
     run = cairn.Run(
         project="p",
-        task="t",
         capture_source=False,
         capture_stdout=False,
         capture_env=False,
@@ -118,7 +114,6 @@ def test_nested_run_raises(transport):
         with pytest.raises(RuntimeError, match="Nested"):
             cairn.Run(
                 project="p",
-                task="t2",
                 capture_source=False,
                 capture_stdout=False,
                 capture_env=False,
@@ -132,7 +127,6 @@ def test_nested_run_raises(transport):
 def test_log_artifact(transport, reader):
     run = cairn.Run(
         project="p",
-        task="t",
         capture_source=False,
         capture_stdout=False,
         capture_env=False,
@@ -154,7 +148,6 @@ def test_log_artifact(transport, reader):
 def test_tags_and_notes(transport, reader):
     run = cairn.Run(
         project="p",
-        task="t",
         capture_source=False,
         capture_stdout=False,
         capture_env=False,
@@ -176,7 +169,6 @@ def test_tags_and_notes(transport, reader):
 def test_context_separates_series(transport, reader):
     run = cairn.Run(
         project="p",
-        task="t",
         capture_source=False,
         capture_stdout=False,
         capture_env=False,

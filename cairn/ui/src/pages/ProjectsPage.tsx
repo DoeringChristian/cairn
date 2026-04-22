@@ -93,7 +93,7 @@ function EmptyState() {
       <p className="text-fg-muted">No runs yet.</p>
       <pre className="mono mt-4 overflow-auto rounded bg-bg p-3 text-left text-xs text-fg-subtle">
         {`import cairn
-with cairn.Run(project="demo", task="smoke", repo="./.cairn") as run:
+with cairn.Run(project="demo", repo="./.cairn") as run:
     run.track(0.5, name="loss", step=0)`}
       </pre>
     </div>

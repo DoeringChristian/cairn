@@ -7,6 +7,7 @@
 
 import { Link, NavLink, Outlet, useParams } from "react-router-dom";
 import { ProjectProvider } from "../lib/project-context";
+import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 
 
 const NAV_ITEMS = [
@@ -50,6 +51,7 @@ const NAV_ITEMS = [
 
 export default function ProjectLayout() {
   const { projectId, runId } = useParams<{ projectId: string; runId?: string }>();
+  useRunMetadataVersion();
   if (!projectId) return null;
 
   return (
@@ -90,7 +92,7 @@ export default function ProjectLayout() {
             {runId && (
               <>
                 <span>›</span>
-                <span className="mono text-fg">{runId.slice(0, 8)}</span>
+                <span className="mono text-fg">{shortRunLabel(runId)}</span>
               </>
             )}
           </nav>

@@ -119,7 +119,7 @@ def test_cairn_ui_standalone(fresh_repo: Path):
         with httpx.Client(timeout=2.0) as c:
             r = c.post(
                 f"http://127.0.0.1:{ui_port}/api/runs",
-                json={"project": "p", "task": "t"},
+                json={"project": "p"},
             )
             assert r.status_code == 200
     finally:

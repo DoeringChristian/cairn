@@ -21,7 +21,6 @@ export default function RunOverviewTab() {
         <DefinitionList
           rows={[
             ["Project", run.project_id],
-            ["Task", run.task_id],
             ["Status", run.status],
             ["Exit code", run.exit_code ?? "—"],
             ["Host", run.hostname ?? "—"],

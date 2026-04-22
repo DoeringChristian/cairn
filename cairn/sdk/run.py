@@ -3,7 +3,7 @@
 Ties transport + buffer + handlers + capture modules together. One ``Run``
 instance per experimental execution; lifecycle:
 
-    with cairn.Run(project="...", task="...") as run:
+    with cairn.Run(project="...") as run:
         run["hparams"] = {"lr": 3e-4}
         for step, loss in ...:
             run.track(loss, name="loss", step=step)
@@ -94,7 +94,6 @@ class Run:
     def __init__(
         self,
         project: str,
-        task: str,
         *,
         name: str | None = None,
         tags: list[str] | None = None,
@@ -142,7 +141,6 @@ class Run:
                 self._server = target.location
             self._owns_transport = True
         self._project = project
-        self._task = task
         self._name = name
         self._timeout = timeout
 
@@ -159,7 +157,6 @@ class Run:
 
         create_body: dict[str, Any] = {
             "project": project,
-            "task": task,
             "name": name,
             "tags": tags,
             "notes": notes,

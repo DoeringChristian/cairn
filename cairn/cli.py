@@ -366,11 +366,10 @@ def ping_cmd() -> None:
 
 @main.command("list")
 @click.option("--project", default=None)
-@click.option("--task", default=None)
 @click.option("--status", default=None)
 @click.option("--limit", default=50, type=int)
 def list_cmd(
-    project: str | None, task: str | None, status: str | None, limit: int
+    project: str | None, status: str | None, limit: int
 ) -> None:
     """List recent runs on the configured server."""
     t = _client()
@@ -378,8 +377,6 @@ def list_cmd(
         params: dict[str, Any] = {"limit": limit}
         if project:
             params["project"] = project
-        if task:
-            params["task"] = task
         if status:
             params["status"] = status
         resp = t.get("/api/runs", params=params)
@@ -388,12 +385,12 @@ def list_cmd(
             click.echo("(no runs)")
             return
         click.echo(
-            f"{'RUN_ID':<14} {'STATUS':<10} {'PROJECT':<20} {'TASK':<24} NAME"
+            f"{'RUN_ID':<14} {'STATUS':<10} {'PROJECT':<20} NAME"
         )
         for r in runs:
             click.echo(
                 f"{r['id']:<14} {r['status']:<10} {r['project_id']:<20} "
-                f"{r['task_id']:<24} {r.get('display_name') or ''}"
+                f"{r.get('display_name') or ''}"
             )
     finally:
         t.close()

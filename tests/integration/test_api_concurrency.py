@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 
 def test_concurrent_batch_posts(client):
-    rid = client.post("/api/runs", json={"project": "p", "task": "t"}).json()["run_id"]
+    rid = client.post("/api/runs", json={"project": "p"}).json()["run_id"]
     now = datetime.now(timezone.utc).isoformat()
     errors: list[Exception] = []
 

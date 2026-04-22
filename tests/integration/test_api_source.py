@@ -29,7 +29,7 @@ def _build_archive(files: dict[str, bytes]) -> tuple[bytes, dict]:
 
 
 def test_upload_and_read_tree(client):
-    rid = client.post("/api/runs", json={"project": "p", "task": "t"}).json()["run_id"]
+    rid = client.post("/api/runs", json={"project": "p"}).json()["run_id"]
     archive, manifest = _build_archive(
         {"train.py": b"print('hi')\n", "config/a.yaml": b"x: 1\n"}
     )
@@ -50,7 +50,7 @@ def test_upload_and_read_tree(client):
 
 
 def test_path_traversal_rejected(client):
-    rid = client.post("/api/runs", json={"project": "p", "task": "t"}).json()["run_id"]
+    rid = client.post("/api/runs", json={"project": "p"}).json()["run_id"]
     archive, manifest = _build_archive({"train.py": b"x\n"})
     client.post(
         f"/api/runs/{rid}/source",
@@ -63,7 +63,7 @@ def test_path_traversal_rejected(client):
 
 
 def test_missing_source_404s(client):
-    rid = client.post("/api/runs", json={"project": "p", "task": "t"}).json()["run_id"]
+    rid = client.post("/api/runs", json={"project": "p"}).json()["run_id"]
     r = client.get(f"/api/runs/{rid}/source/tree")
     assert r.status_code == 404
 
@@ -73,7 +73,7 @@ def test_large_manifest_accepted(client):
     source manifest JSON for repos with lots of files. We override
     ``max_part_size`` on the /source and /artifacts handlers.
     """
-    rid = client.post("/api/runs", json={"project": "p", "task": "t"}).json()["run_id"]
+    rid = client.post("/api/runs", json={"project": "p"}).json()["run_id"]
     # Build a manifest with enough entries to exceed 1 MiB when JSON-encoded.
     # Each entry is ~160 bytes; 10k entries → ~1.6 MB of form data.
     files = {f"pkg/file_{i:05d}.py": b"print(1)\n" for i in range(10_000)}
@@ -110,7 +110,7 @@ def test_large_artifact_accepted(client):
 
 
 def test_binary_file_returned_as_base64(client):
-    rid = client.post("/api/runs", json={"project": "p", "task": "t"}).json()["run_id"]
+    rid = client.post("/api/runs", json={"project": "p"}).json()["run_id"]
     archive, manifest = _build_archive({"bin.dat": b"\x00\x01\xff\xfe"})
     client.post(
         f"/api/runs/{rid}/source",

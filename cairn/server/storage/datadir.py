@@ -18,9 +18,9 @@ from typing import Any
 
 import psutil
 
-VERSION_MARKER = "2"
+VERSION_MARKER = "3"
 """Schema/layout version string written to the ``version`` file.
-Bumped from 1 (DuckDB) to 2 (SQLite). Breaking change."""
+Bumped from 2 (removed tasks table). Breaking change."""
 
 
 def default_data_dir() -> Path:

@@ -37,7 +37,6 @@ def test_local_run_full_lifecycle(tmp_path):
     repo = tmp_path / ".cairn"
     with cairn.Run(
         project="local-demo",
-        task="smoke",
         name="local-r1",
         repo=repo,
         capture_source=False,
@@ -97,14 +96,14 @@ def test_local_run_full_lifecycle(tmp_path):
 def test_local_run_releases_lock_on_finish(tmp_path):
     repo = tmp_path / ".cairn"
     with cairn.Run(
-        project="x", task="y", repo=repo,
+        project="x", repo=repo,
         capture_source=False, capture_stdout=False,
         capture_env=False, capture_system_metrics=False,
     ):
         pass
     # Lock file should be gone, and a fresh run can be started.
     with cairn.Run(
-        project="x", task="y", repo=repo,
+        project="x", repo=repo,
         capture_source=False, capture_stdout=False,
         capture_env=False, capture_system_metrics=False,
     ):
@@ -114,7 +113,7 @@ def test_local_run_releases_lock_on_finish(tmp_path):
 def test_second_run_while_first_active_raises(tmp_path):
     repo = tmp_path / ".cairn"
     run1 = cairn.Run(
-        project="x", task="y", repo=repo,
+        project="x", repo=repo,
         capture_source=False, capture_stdout=False,
         capture_env=False, capture_system_metrics=False,
     )
@@ -123,7 +122,7 @@ def test_second_run_while_first_active_raises(tmp_path):
         # lock contention would. Either error is acceptable for the user.
         with pytest.raises((RepoLockedError, RuntimeError)):
             cairn.Run(
-                project="x", task="y", repo=repo,
+                project="x", repo=repo,
                 capture_source=False, capture_stdout=False,
                 capture_env=False, capture_system_metrics=False,
             )
@@ -146,7 +145,7 @@ def test_auto_finish_on_interpreter_exit(tmp_path):
         f"""
         import cairn
         run = cairn.Run(
-            project="auto", task="finish",
+            project="auto",
             repo=r"{repo}",
             capture_source=False, capture_stdout=False,
             capture_env=False, capture_system_metrics=False,
@@ -180,7 +179,7 @@ def test_local_mode_uses_env_var(tmp_path, monkeypatch):
     monkeypatch.setenv("CAIRN_REPO", str(repo))
     monkeypatch.delenv("CAIRN_SERVER", raising=False)
     with cairn.Run(
-        project="x", task="y",
+        project="x",
         capture_source=False, capture_stdout=False,
         capture_env=False, capture_system_metrics=False,
     ) as run:

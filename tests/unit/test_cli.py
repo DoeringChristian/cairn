@@ -43,7 +43,7 @@ def test_list_after_creating_a_run(live_server, monkeypatch):
 
     monkeypatch.setenv("CAIRN_SERVER", live_server)
     with httpx.Client(base_url=live_server) as c:
-        c.post("/api/runs", json={"project": "p", "task": "t", "name": "r1"})
+        c.post("/api/runs", json={"project": "p", "name": "r1"})
     runner = CliRunner()
     result = runner.invoke(cli.main, ["list"])
     assert result.exit_code == 0
@@ -67,7 +67,7 @@ def test_rm_deletes_run(live_server, monkeypatch):
 
     monkeypatch.setenv("CAIRN_SERVER", live_server)
     with httpx.Client(base_url=live_server) as c:
-        rid = c.post("/api/runs", json={"project": "p", "task": "t"}).json()["run_id"]
+        rid = c.post("/api/runs", json={"project": "p"}).json()["run_id"]
     runner = CliRunner()
     result = runner.invoke(cli.main, ["rm", rid])
     assert result.exit_code == 0
@@ -81,7 +81,7 @@ def test_open_prints_url(live_server, monkeypatch):
 
     monkeypatch.setenv("CAIRN_SERVER", live_server)
     with httpx.Client(base_url=live_server) as c:
-        rid = c.post("/api/runs", json={"project": "p", "task": "t"}).json()["run_id"]
+        rid = c.post("/api/runs", json={"project": "p"}).json()["run_id"]
     # monkeypatch webbrowser to avoid actually opening one
     monkeypatch.setattr("webbrowser.open", lambda _url: False)
     runner = CliRunner()
@@ -95,7 +95,7 @@ def test_export_json(live_server, monkeypatch, tmp_path):
 
     monkeypatch.setenv("CAIRN_SERVER", live_server)
     with httpx.Client(base_url=live_server) as c:
-        rid = c.post("/api/runs", json={"project": "p", "task": "t"}).json()["run_id"]
+        rid = c.post("/api/runs", json={"project": "p"}).json()["run_id"]
         c.post(
             f"/api/runs/{rid}/batch",
             json={

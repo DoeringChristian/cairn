@@ -12,7 +12,7 @@ import {
   type ComparisonSeriesRef,
 } from "../lib/comparisons";
 import { useProjectId } from "../lib/project-context";
-import { shortRunLabel } from "../lib/run-label";
+import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import type { SequenceMeta, SequenceResponse, SequencePoint } from "../api/types";
 import CardHeader from "./CardHeader";
 import CardResizeHandle from "./CardResizeHandle";
@@ -79,9 +79,14 @@ function seriesLabel(
   contextHash: string,
   runId: string | undefined,
   includeRun: boolean,
+  siblingRunIds?: string[],
 ): string {
+  if (includeRun && runId) {
+    const parts: string[] = [shortRunLabel(runId, siblingRunIds)];
+    if (contextHash) parts.push(contextHash.slice(0, 6));
+    return parts.join(" \u00B7 ");
+  }
   const parts: string[] = [name];
-  if (includeRun && runId) parts.push(shortRunLabel(runId));
   if (contextHash) parts.push(contextHash.slice(0, 6));
   return parts.join(" \u00B7 ");
 }
@@ -369,11 +374,15 @@ export default function AudioPlayerCard({ runId, metric, extraContexts = [], ext
     };
   }, []);
 
-  const multipleRuns = useMemo(() => {
-    const seen = new Set<string>();
-    for (const m of effectiveMetrics) seen.add(m.runId ?? runId);
-    return seen.size > 1;
+  const allRunIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const m of effectiveMetrics) ids.add(m.runId ?? runId);
+    return [...ids];
   }, [effectiveMetrics, runId]);
+
+  const multipleRuns = allRunIds.length > 1;
+
+  useRunMetadataVersion();
 
   const subtitle =
     maxStepCount > 0
@@ -494,7 +503,7 @@ export default function AudioPlayerCard({ runId, metric, extraContexts = [], ext
                     key={seriesKey(m)}
                     series={ref}
                     color={SERIES_COLORS[i % SERIES_COLORS.length]!}
-                    label={seriesLabel(m.name, m.context_hash, m.runId, multipleRuns)}
+                    label={seriesLabel(m.name, m.context_hash, m.runId, multipleRuns, allRunIds)}
                     runId={runId}
                     onRemove={
                       effectiveMetrics.length > 1
@@ -647,7 +656,7 @@ export default function AudioPlayerCard({ runId, metric, extraContexts = [], ext
                         key={seriesKey(m)}
                         series={ref}
                         color={SERIES_COLORS[i % SERIES_COLORS.length]!}
-                        label={seriesLabel(m.name, m.context_hash, m.runId, multipleRuns)}
+                        label={seriesLabel(m.name, m.context_hash, m.runId, multipleRuns, allRunIds)}
                         runId={runId}
                         onRemove={
                           effectiveMetrics.length > 1

@@ -25,7 +25,6 @@ def test_10k_scalars_fast(live_server):
     transport = Transport(live_server, max_retries=1, timeout=60.0)
     run = cairn.Run(
         project="perf",
-        task="scalars",
         capture_source=False,
         capture_stdout=False,
         capture_env=False,
