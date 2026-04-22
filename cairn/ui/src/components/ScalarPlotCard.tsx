@@ -603,10 +603,11 @@ export default function ScalarPlotCard({
   );
 
   const promotedCount = Object.keys(settings.promotedSeries).length;
+  const promotedAxisWidth = 50; // px per promoted right axis (ticks + labels)
   const dynamicMargin = useMemo(
     () => ({
       ...CHART_MARGIN,
-      right: CHART_MARGIN.right + promotedCount * promotedAxisStripWidth,
+      right: CHART_MARGIN.right + promotedCount * promotedAxisWidth,
     }),
     [promotedCount],
   );
@@ -1033,6 +1034,7 @@ export default function ScalarPlotCard({
   // Header quick-toggle buttons + settings anchor.
   // -------------------------------------------------------------------------
   const [expanded, setExpanded] = useState(false);
+  const [hoveredSeries, setHoveredSeries] = useState<string | null>(null);
 
   // "Add to comparison" popover state.
   const addBtnRef = useRef<HTMLButtonElement | null>(null);
@@ -1418,7 +1420,7 @@ export default function ScalarPlotCard({
             fontSize={11}
             width={46}
           />
-          {promotedKeysOrdered.map((key, i) => {
+          {promotedKeysOrdered.map((key) => {
             const s = series.find((x) => x.key === key);
             const color = s?.color ?? "#656d76";
             const cfg = settings.promotedSeries[key]!;
@@ -1433,12 +1435,12 @@ export default function ScalarPlotCard({
                 stroke={color}
                 tick={{ fill: color }}
                 fontSize={11}
-                width={40}
-                mirror={i > 0 ? true : false}
+                width={45}
               />
             );
           })}
           <Tooltip
+            isAnimationActive={false}
             content={
               <CustomTooltip
                 seriesByKey={Object.fromEntries(series.map((s) => [s.key, s]))}
@@ -1466,20 +1468,27 @@ export default function ScalarPlotCard({
               }
             />
           )}
-          {series.map((s) => (
-            <Line
-              key={s.key}
-              type={settings.lineType ?? "linear"}
-              name={s.label}
-              dataKey={s.key}
-              stroke={s.color}
-              strokeWidth={1.5}
-              dot={false}
-              isAnimationActive={false}
-              connectNulls
-              yAxisId={settings.promotedSeries[s.key] ? s.key : "__left__"}
-            />
-          ))}
+          {series.map((s) => {
+            const isHovered = hoveredSeries === s.key;
+            const isDimmed = hoveredSeries != null && !isHovered;
+            return (
+              <Line
+                key={s.key}
+                type={settings.lineType ?? "linear"}
+                name={s.label}
+                dataKey={s.key}
+                stroke={s.color}
+                strokeWidth={isHovered ? 2.5 : 1.5}
+                strokeOpacity={isDimmed ? 0.15 : 1}
+                dot={false}
+                isAnimationActive={false}
+                connectNulls
+                yAxisId={settings.promotedSeries[s.key] ? s.key : "__left__"}
+                onMouseEnter={() => setHoveredSeries(s.key)}
+                onMouseLeave={() => setHoveredSeries(null)}
+              />
+            );
+          })}
           {/* Transparent overlay strips for drag-to-pan on promoted axes. */}
           <Customized
             component={
