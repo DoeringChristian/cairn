@@ -305,7 +305,12 @@ export default function RunsTablePage() {
                     <RunStatusBadge status={r.status} />
                   </div>
                   <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-fg-muted">
-                    <span>created: {formatRelative(r.created_at)}</span>
+                    <span>{(() => {
+                      try {
+                        const d = new Date(r.created_at);
+                        return `${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })} ${d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
+                      } catch { return formatRelative(r.created_at); }
+                    })()}</span>
                     <span className="mono num">
                       dur: {formatDuration(r.created_at, r.ended_at)}
                     </span>
@@ -412,7 +417,12 @@ export default function RunsTablePage() {
                       <RunStatusBadge status={r.status} />
                     </td>
                     <td className="px-3 py-2 text-fg-muted">
-                      {formatRelative(r.created_at)}
+                      {(() => {
+                        try {
+                          const d = new Date(r.created_at);
+                          return `${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })} ${d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
+                        } catch { return formatRelative(r.created_at); }
+                      })()}
                     </td>
                     <td className="mono num px-3 py-2 text-fg-muted">
                       {formatDuration(r.created_at, r.ended_at)}

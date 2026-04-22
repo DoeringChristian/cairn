@@ -644,6 +644,11 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
                   stepIdx={safeIdx}
                   settings={settings}
                 />
+                {multipleRuns && (
+                  <span className="absolute top-1 left-1 z-10 rounded bg-bg/80 px-1.5 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm">
+                    {seriesLabel(m.name, m.context_hash, m.runId ?? runId, true, allRunIds)}
+                  </span>
+                )}
                 {idx === 0 && (
                   <div
                     className="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize flex items-end justify-end text-fg-muted hover:text-fg z-10"

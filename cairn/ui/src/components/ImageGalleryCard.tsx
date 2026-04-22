@@ -227,10 +227,11 @@ function seriesLabel(
   m: { runId?: string; name: string; context_hash: string },
   fallbackRunId: string,
   multiRun: boolean,
+  siblingRunIds?: string[],
 ): string {
   if (multiRun) {
     // Multi-run: show only run name+timestamp (tag shown once in card header)
-    return shortRunLabel(m.runId ?? fallbackRunId);
+    return shortRunLabel(m.runId ?? fallbackRunId, siblingRunIds);
   }
   // Single-run: show metric name
   const parts: string[] = [m.name];
@@ -731,7 +732,7 @@ function ExternalBaselinePicker({
     return () => { document.removeEventListener("pointerdown", onDown); document.removeEventListener("keydown", onKey); };
   }, [open]);
 
-  const runLabel = (id: string) => shortRunLabel(id);
+  const runLabel = (id: string) => shortRunLabel(id, availableRunIds);
 
   return (
     <div className="relative mt-1">
@@ -1421,7 +1422,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                               : settings.diffMode,
                         });
                       }}
-                      label={seriesLabel(m, runId, multipleRuns)}
+                      label={seriesLabel(m, runId, multipleRuns, availableRunIds)}
                     />
                     {/* Viewport resize handle on first pane */}
                     {paneIdx === 0 && (
@@ -1605,7 +1606,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                 key={seriesKey(m)}
                 series={ref}
                 color={SERIES_COLORS[i % SERIES_COLORS.length]!}
-                label={seriesLabel(m, runId, multipleRuns)}
+                label={seriesLabel(m, runId, multipleRuns, availableRunIds)}
                 runId={runId}
                 onRemove={
                   effectiveMetrics.length > 1
@@ -1901,7 +1902,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                                 : settings.diffMode,
                           });
                         }}
-                        label={seriesLabel(m, runId, multipleRuns)}
+                        label={seriesLabel(m, runId, multipleRuns, availableRunIds)}
                       />
                     );
                   })}

@@ -80,29 +80,22 @@ export function formatRunLabel(runId: string): string {
  */
 export function shortRunLabel(runId: string, siblingRunIds?: string[]): string {
   const run = runMetadataCache.get(runId);
-  if (!run) {
-    console.debug("[run-label] cache miss for", runId, "cache size:", runMetadataCache.size);
-    return runId.length > 6 ? runId.slice(0, 6) : runId;
-  }
+  if (!run) return runId.length > 6 ? runId.slice(0, 6) : runId;
 
   const name = run.display_name ?? runId.slice(0, 6);
 
   // Check if disambiguation is needed
   let needsTimestamp = false;
   if (siblingRunIds && siblingRunIds.length > 1) {
-    const myName = name;
     for (const sid of siblingRunIds) {
       if (sid === runId) continue;
       const other = runMetadataCache.get(sid);
       const otherName = other?.display_name ?? sid.slice(0, 6);
-      console.debug("[run-label] compare", JSON.stringify(myName), "vs", JSON.stringify(otherName), "for", sid);
-      if (otherName === myName) {
+      if (otherName === name) {
         needsTimestamp = true;
         break;
       }
     }
-  } else {
-    console.debug("[run-label] no siblings or <=1 sibling for", runId, "siblings:", siblingRunIds);
   }
 
   if (needsTimestamp) {
