@@ -248,19 +248,26 @@ function seriesKey(m: {
   return `${m.runId ?? ""}::${m.name}::${m.context_hash}`;
 }
 
-/** Resolve the artifact hash for a given step index, with fallback to last available. */
+/**
+ * Resolve the artifact hash for a given global step number.
+ * Uses a step→point map for O(1) lookup, with optional fallback to the
+ * closest prior step that has an image.
+ */
 function resolveArtifact(
-  points: Array<{ step: number; artifact_hash: string | null }>,
-  idx: number,
+  stepMap: Map<number, SequencePoint>,
+  targetStep: number,
+  sortedSteps: number[],
   mode?: "nothing" | "last_available",
 ): { hash: string | undefined; fallbackStep: number | null } {
-  const current = points[idx];
-  if (current?.artifact_hash) return { hash: current.artifact_hash, fallbackStep: null };
-  if (mode !== "last_available") return { hash: undefined, fallbackStep: null };
-  // Walk backward to find the nearest prior step with an image.
-  for (let i = idx - 1; i >= 0; i--) {
-    if (points[i]?.artifact_hash) {
-      return { hash: points[i]!.artifact_hash!, fallbackStep: points[i]!.step };
+  const exact = stepMap.get(targetStep);
+  if (exact?.artifact_hash) return { hash: exact.artifact_hash, fallbackStep: null };
+  if (mode === "nothing") return { hash: undefined, fallbackStep: null };
+  // Default ("last_available"): find closest step ≤ targetStep with an image.
+  for (let i = sortedSteps.length - 1; i >= 0; i--) {
+    if (sortedSteps[i]! > targetStep) continue;
+    const pt = stepMap.get(sortedSteps[i]!);
+    if (pt?.artifact_hash) {
+      return { hash: pt.artifact_hash, fallbackStep: pt.step };
     }
   }
   return { hash: undefined, fallbackStep: null };
@@ -897,26 +904,32 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     })),
   });
 
-  // Per-series points that have artifacts.
-  const perSeriesPoints = useMemo(
-    () =>
-      queries.map((q) =>
-        (q.data?.points ?? []).filter(
-          (p: SequencePoint) => p.artifact_hash,
-        ),
-      ),
+  // Per-series points that have artifacts + step→point maps.
+  const { perSeriesPoints, perSeriesStepMap, globalSteps } = useMemo(() => {
+    const psp = queries.map((q) =>
+      (q.data?.points ?? []).filter((p: SequencePoint) => p.artifact_hash),
+    );
+    const maps = psp.map((pts) => {
+      const m = new Map<number, SequencePoint>();
+      for (const p of pts) m.set(p.step, p);
+      return m;
+    });
+    // Union of all step numbers across all series, sorted.
+    const stepSet = new Set<number>();
+    for (const pts of psp) for (const p of pts) stepSet.add(p.step);
+    const steps = Array.from(stepSet).sort((a, b) => a - b);
+    return { perSeriesPoints: psp, perSeriesStepMap: maps, globalSteps: steps };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [queries.map((q) => q.dataUpdatedAt).join("|")],
-  );
+  }, [queries.map((q) => q.dataUpdatedAt).join("|")]);
 
-  // Shared step slider
-  const maxLen = Math.max(...perSeriesPoints.map((pts) => pts.length), 0);
+  // Shared step slider — indexes into globalSteps
   const [idx, setIdx] = useState(settings.sliderStep ?? 0);
   const handleSliderChange = (newIdx: number) => {
     setIdx(newIdx);
     updateSettings({ sliderStep: newIdx });
   };
-  const safeIdx = Math.min(Math.max(0, idx), Math.max(0, maxLen - 1));
+  const safeIdx = Math.min(Math.max(0, idx), Math.max(0, globalSteps.length - 1));
+  const currentStep = globalSteps[safeIdx] ?? 0;
 
   const isMulti = effectiveMetrics.length > 1 || settings.externalBaseline != null;
 
@@ -1173,13 +1186,18 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     } catch { /* ignore */ }
   }, [updateSettings, settings.diffMode]);
   const [singleNaturalDims, setSingleNaturalDims] = useState<{ w: number; h: number } | null>(null);
+  // Single-image: resolve for the first series at current global step
+  const firstResolved = useMemo(() => {
+    const stepMap = perSeriesStepMap[0] ?? new Map();
+    const steps = perSeriesPoints[0]?.map((p) => p.step) ?? [];
+    return resolveArtifact(stepMap, currentStep, steps, settings.missingImageMode);
+  }, [perSeriesStepMap, perSeriesPoints, currentStep, settings.missingImageMode]);
+
   const singleFCRef = useRef<HTMLCanvasElement | null>(null);
   const [singleFCReady, setSingleFCReady] = useState(false);
   const singleArtifactHash = useMemo(() => {
-    const pts = perSeriesPoints[0] ?? [];
-    const safeI = Math.min(Math.max(0, idx), Math.max(0, pts.length - 1));
-    return pts[safeI]?.artifact_hash ?? null;
-  }, [perSeriesPoints, idx]);
+    return firstResolved.hash ?? null;
+  }, [firstResolved]);
   const singleUseFalseColor = (settings.colormap ?? "none") !== "none" && !isMulti && singleArtifactHash != null;
 
   useEffect(() => {
@@ -1253,13 +1271,9 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     return `${Math.round(rows * clampedRow)}px`;
   }, [settings.height, imageAspect, containerWidth, effectiveMetrics.length]);
 
-  // First series' points for subtitle
-  const firstPoints = perSeriesPoints[0] ?? [];
-  const firstCurrent = firstPoints[safeIdx];
-
   const subtitle =
-    maxLen > 0
-      ? `step ${firstCurrent?.step ?? "\u2014"} of ${maxLen}`
+    globalSteps.length > 0
+      ? `step ${currentStep} (${safeIdx + 1}/${globalSteps.length})`
       : `${metric.count} pts`;
 
   const anyLoading = queries.some((q) => q.isLoading);
@@ -1283,7 +1297,12 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
   const baselineHash = extBase
     ? extBasePoints[Math.min(safeIdx, Math.max(0, extBasePoints.length - 1))]?.artifact_hash ?? undefined
     : baselineIdx != null
-      ? perSeriesPoints[baselineIdx]?.[safeIdx]?.artifact_hash ?? undefined
+      ? resolveArtifact(
+          perSeriesStepMap[baselineIdx] ?? new Map(),
+          currentStep,
+          perSeriesPoints[baselineIdx]?.map((p) => p.step) ?? [],
+          settings.missingImageMode,
+        ).hash
       : undefined;
 
   return (
@@ -1375,9 +1394,9 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
       </CardHeader>
 
       {!settings.collapsed && (<>
-      {anyLoading && maxLen === 0 ? (
+      {anyLoading && globalSteps.length === 0 ? (
         <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
-      ) : maxLen > 0 ? (
+      ) : globalSteps.length > 0 ? (
         <>
           <div
             ref={setContainerRef}
@@ -1411,8 +1430,9 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
               {effectiveMetrics.map((m, paneIdx) => {
                 // Skip metrics that match the external baseline — shown as separate ref pane
                 if (settings.externalBaseline && m.name === settings.externalBaseline.name && (m.runId ?? runId) === (settings.externalBaseline.runId ?? runId)) return null;
-                const pts = perSeriesPoints[paneIdx] ?? [];
-                const { hash, fallbackStep } = resolveArtifact(pts, safeIdx, settings.missingImageMode);
+                const stepMap = perSeriesStepMap[paneIdx] ?? new Map();
+                const seriesSteps = perSeriesPoints[paneIdx]?.map((p) => p.step) ?? [];
+                const { hash, fallbackStep } = resolveArtifact(stepMap, currentStep, seriesSteps, settings.missingImageMode);
                 const label = seriesLabel(m, runId, multipleRuns, availableRunIds)
                   + (fallbackStep != null ? ` (step ${fallbackStep})` : "");
                 return (
@@ -1516,7 +1536,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                 data-cairn-img-wrapper className="relative w-full h-full"
                 style={{ transform: transformStr, transformOrigin: "0 0" }}
               >
-              {firstCurrent?.artifact_hash ? (
+              {firstResolved.hash ? (
                 singleUseFalseColor ? (
                   <>
                     {!singleFCReady && <span className="text-xs text-fg-muted motion-safe:animate-pulse">applying colormap...</span>}
@@ -1531,8 +1551,8 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                   </>
                 ) : (
                   <img
-                    src={api.artifactUrl(firstCurrent.artifact_hash)}
-                    alt={`${metric.name} @ step ${firstCurrent.step}`}
+                    src={api.artifactUrl(firstResolved.hash!)}
+                    alt={`${metric.name} @ step ${currentStep}`}
                     className="w-full h-full object-contain block"
                     draggable={false}
                     style={{
@@ -1564,11 +1584,11 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
           </div>
 
           {/* Shared step slider */}
-          {maxLen > 1 && (
+          {globalSteps.length > 1 && (
             <input
               type="range"
               min={0}
-              max={maxLen - 1}
+              max={globalSteps.length - 1}
               value={safeIdx}
               onChange={(e) => handleSliderChange(Number(e.target.value))}
               className="mt-3 w-full accent-accent"
@@ -1792,7 +1812,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
             />
             <Select<"nothing" | "last_available">
               label="Missing image"
-              value={settings.missingImageMode ?? "nothing"}
+              value={settings.missingImageMode ?? "last_available"}
               onChange={(v) => updateSettings({ missingImageMode: v })}
               options={[
                 { value: "nothing", label: "Show nothing" },
@@ -1902,8 +1922,9 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                 >
                   {effectiveMetrics.map((m, paneIdx) => {
                     if (settings.externalBaseline && m.name === settings.externalBaseline.name && (m.runId ?? runId) === (settings.externalBaseline.runId ?? runId)) return null;
-                    const pts = perSeriesPoints[paneIdx] ?? [];
-                    const { hash: mHash, fallbackStep: mFallback } = resolveArtifact(pts, safeIdx, settings.missingImageMode);
+                    const mStepMap = perSeriesStepMap[paneIdx] ?? new Map();
+                    const mSeriesSteps = perSeriesPoints[paneIdx]?.map((p) => p.step) ?? [];
+                    const { hash: mHash, fallbackStep: mFallback } = resolveArtifact(mStepMap, currentStep, mSeriesSteps, settings.missingImageMode);
                     const mLabel = seriesLabel(m, runId, multipleRuns, availableRunIds)
                       + (mFallback != null ? ` (step ${mFallback})` : "");
                     return (
@@ -2004,10 +2025,10 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                     className="relative w-full h-full"
                     style={{ transform: transformStr, transformOrigin: "0 0" }}
                   >
-                    {firstCurrent?.artifact_hash ? (
+                    {firstResolved.hash ? (
                       <img
-                        src={api.artifactUrl(firstCurrent.artifact_hash)}
-                        alt={`${metric.name} @ step ${firstCurrent.step}`}
+                        src={api.artifactUrl(firstResolved.hash!)}
+                        alt={`${metric.name} @ step ${currentStep}`}
                         className="w-full h-full object-contain block"
                         draggable={false}
                         style={{
@@ -2024,11 +2045,11 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                   </div>
                 </div>
               )}
-              {maxLen > 1 && (
+              {globalSteps.length > 1 && (
                 <input
                   type="range"
                   min={0}
-                  max={maxLen - 1}
+                  max={globalSteps.length - 1}
                   value={safeIdx}
                   onChange={(e) => handleSliderChange(Number(e.target.value))}
                   className="mt-3 w-full accent-accent"

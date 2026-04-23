@@ -13,7 +13,7 @@ import {
 } from "../lib/comparisons";
 import { useProjectId } from "../lib/project-context";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
-import type { SequenceMeta, SequenceResponse, SequencePoint } from "../api/types";
+import type { SequenceMeta, SequenceResponse } from "../api/types";
 import CardHeader from "./CardHeader";
 import CardResizeHandle from "./CardResizeHandle";
 import CardDetailModal from "./CardDetailModal";
@@ -134,12 +134,12 @@ function Waveform({ peaks }: { peaks: number[] }) {
 function AudioPane({
   runId,
   m,
-  stepIdx,
+  targetStep,
   autoplay,
 }: {
   runId: string;
   m: { runId?: string; name: string; context_hash: string };
-  stepIdx: number;
+  targetStep: number;
   autoplay: boolean;
 }) {
   const rid = m.runId ?? runId;
@@ -151,7 +151,15 @@ function AudioPane({
     () => (q.data?.points ?? []).filter((p) => p.artifact_hash),
     [q.data],
   );
-  const safeIdx = Math.min(Math.max(0, stepIdx), Math.max(0, points.length - 1));
+  // Find point at or closest below target step.
+  const safeIdx = useMemo(() => {
+    let best = 0;
+    for (let i = 0; i < points.length; i++) {
+      if (points[i]!.step <= targetStep) best = i;
+      else break;
+    }
+    return best;
+  }, [points, targetStep]);
   const current = points[safeIdx];
   const meta = useMemo(
     () => safeJsonParse<AudioMeta>(current?.artifact_metadata),
@@ -305,25 +313,32 @@ export default function AudioPlayerCard({ runId, metric, extraContexts = [], ext
       : [],
   });
 
-  const maxStepCount = useMemo(() => {
-    if (effectiveMetrics.length <= 1) return points.length;
-    let max = 0;
-    for (const mq of multiQueries) {
-      const pts = (mq.data as SequenceResponse | undefined)?.points?.filter(
-        (p: SequencePoint) => p.artifact_hash,
-      );
-      if (pts && pts.length > max) max = pts.length;
+  const globalSteps = useMemo(() => {
+    const stepSet = new Set<number>();
+    for (const p of points) if (p.artifact_hash) stepSet.add(p.step);
+    if (effectiveMetrics.length > 1) {
+      for (const mq of multiQueries) {
+        const pts = (mq.data as SequenceResponse | undefined)?.points ?? [];
+        for (const p of pts) if (p.artifact_hash) stepSet.add(p.step);
+      }
     }
-    return max;
-  }, [effectiveMetrics.length, points.length, multiQueries]);
+    return Array.from(stepSet).sort((a, b) => a - b);
+  }, [effectiveMetrics.length, points, multiQueries]);
 
   const [idx, setIdx] = useState(settings.sliderStep ?? 0);
   const handleSliderChange = (newIdx: number) => {
     setIdx(newIdx);
     updateSettings({ sliderStep: newIdx });
   };
-  const safeIdx = Math.min(Math.max(0, idx), Math.max(0, maxStepCount - 1));
-  const current = points[safeIdx];
+  const safeIdx = Math.min(Math.max(0, idx), Math.max(0, globalSteps.length - 1));
+  const currentStep = globalSteps[safeIdx] ?? 0;
+  const current = useMemo(() => {
+    const exact = points.find((p) => p.step === currentStep && p.artifact_hash);
+    if (exact) return exact;
+    let best: (typeof points)[number] | undefined;
+    for (const p of points) { if (p.step <= currentStep && p.artifact_hash) best = p; else if (p.step > currentStep) break; }
+    return best;
+  }, [points, currentStep]);
 
   const meta = useMemo(
     () => safeJsonParse<AudioMeta>(current?.artifact_metadata),
@@ -385,8 +400,8 @@ export default function AudioPlayerCard({ runId, metric, extraContexts = [], ext
   useRunMetadataVersion();
 
   const subtitle =
-    maxStepCount > 0
-      ? `step ${current?.step ?? safeIdx} of ${maxStepCount}`
+    globalSteps.length > 0
+      ? `step ${currentStep} (${safeIdx + 1}/${globalSteps.length})`
       : `${metric.count} pts`;
 
   const isMulti = effectiveMetrics.length > 1;
@@ -440,16 +455,16 @@ export default function AudioPlayerCard({ runId, metric, extraContexts = [], ext
                 key={seriesKey(m)}
                 runId={runId}
                 m={m}
-                stepIdx={safeIdx}
+                targetStep={currentStep}
                 autoplay={settings.autoplay}
               />
             ))}
           </SplitPane>
-          {maxStepCount > 1 && (
+          {globalSteps.length > 1 && (
             <input
               type="range"
               min={0}
-              max={maxStepCount - 1}
+              max={globalSteps.length - 1}
               value={safeIdx}
               onChange={(e) => handleSliderChange(Number(e.target.value))}
               className="mt-3 w-full accent-accent"
@@ -596,16 +611,16 @@ export default function AudioPlayerCard({ runId, metric, extraContexts = [], ext
                     key={seriesKey(m)}
                     runId={runId}
                     m={m}
-                    stepIdx={safeIdx}
+                    targetStep={currentStep}
                     autoplay={settings.autoplay}
                   />
                 ))}
               </SplitPane>
-              {maxStepCount > 1 && (
+              {globalSteps.length > 1 && (
                 <input
                   type="range"
                   min={0}
-                  max={maxStepCount - 1}
+                  max={globalSteps.length - 1}
                   value={safeIdx}
                   onChange={(e) => handleSliderChange(Number(e.target.value))}
                   className="mt-3 w-full accent-accent"

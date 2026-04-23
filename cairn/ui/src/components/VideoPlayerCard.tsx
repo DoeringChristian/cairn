@@ -13,7 +13,7 @@ import {
 } from "../lib/comparisons";
 import { useProjectId } from "../lib/project-context";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
-import type { SequenceMeta, SequenceResponse, SequencePoint } from "../api/types";
+import type { SequenceMeta, SequenceResponse } from "../api/types";
 import CardHeader from "./CardHeader";
 import CardResizeHandle from "./CardResizeHandle";
 import CardDetailModal from "./CardDetailModal";
@@ -105,12 +105,12 @@ function seriesLabel(
 function VideoPane({
   runId,
   m,
-  stepIdx,
+  targetStep,
   settings,
 }: {
   runId: string;
   m: { runId?: string; name: string; context_hash: string };
-  stepIdx: number;
+  targetStep: number;
   settings: VideoSettings;
 }) {
   const rid = m.runId ?? runId;
@@ -122,8 +122,13 @@ function VideoPane({
     () => (q.data?.points ?? []).filter((p) => p.artifact_hash),
     [q.data],
   );
-  const safeIdx = Math.min(Math.max(0, stepIdx), Math.max(0, points.length - 1));
-  const current = points[safeIdx];
+  const current = useMemo(() => {
+    const exact = points.find((p) => p.step === targetStep);
+    if (exact) return exact;
+    let best: (typeof points)[number] | undefined;
+    for (const p of points) { if (p.step <= targetStep) best = p; else break; }
+    return best;
+  }, [points, targetStep]);
   const meta = safeJsonParse<VideoMetadata>(current?.artifact_metadata);
 
   if (q.isLoading) {
@@ -268,25 +273,32 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
       : [],
   });
 
-  const maxStepCount = useMemo(() => {
-    if (effectiveMetrics.length <= 1) return points.length;
-    let max = 0;
-    for (const mq of multiQueries) {
-      const pts = (mq.data as SequenceResponse | undefined)?.points?.filter(
-        (p: SequencePoint) => p.artifact_hash,
-      );
-      if (pts && pts.length > max) max = pts.length;
+  const globalSteps = useMemo(() => {
+    const stepSet = new Set<number>();
+    for (const p of points) if (p.artifact_hash) stepSet.add(p.step);
+    if (effectiveMetrics.length > 1) {
+      for (const mq of multiQueries) {
+        const pts = (mq.data as SequenceResponse | undefined)?.points ?? [];
+        for (const p of pts) if (p.artifact_hash) stepSet.add(p.step);
+      }
     }
-    return max;
-  }, [effectiveMetrics.length, points.length, multiQueries]);
+    return Array.from(stepSet).sort((a, b) => a - b);
+  }, [effectiveMetrics.length, points, multiQueries]);
 
   const [idx, setIdx] = useState(settings.sliderStep ?? 0);
   const handleSliderChange = (newIdx: number) => {
     setIdx(newIdx);
     updateSettings({ sliderStep: newIdx });
   };
-  const safeIdx = Math.min(Math.max(0, idx), Math.max(0, maxStepCount - 1));
-  const current = points[safeIdx];
+  const safeIdx = Math.min(Math.max(0, idx), Math.max(0, globalSteps.length - 1));
+  const currentStep = globalSteps[safeIdx] ?? 0;
+  const current = useMemo(() => {
+    const exact = points.find((p) => p.step === currentStep && p.artifact_hash);
+    if (exact) return exact;
+    let best: (typeof points)[number] | undefined;
+    for (const p of points) { if (p.step <= currentStep && p.artifact_hash) best = p; else if (p.step > currentStep) break; }
+    return best;
+  }, [points, currentStep]);
   const meta = safeJsonParse<VideoMetadata>(current?.artifact_metadata);
 
   const [expanded, setExpanded] = useState(false);
@@ -344,8 +356,8 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
   useRunMetadataVersion();
 
   const subtitle =
-    maxStepCount > 0
-      ? `step ${current?.step ?? safeIdx} of ${maxStepCount}`
+    globalSteps.length > 0
+      ? `step ${currentStep} (${safeIdx + 1}/${globalSteps.length})`
       : `${metric.count} pts`;
 
   const isMulti = effectiveMetrics.length > 1;
@@ -400,17 +412,17 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
                 key={seriesKey(m)}
                 runId={runId}
                 m={m}
-                stepIdx={safeIdx}
+                targetStep={currentStep}
                 settings={settings}
               />
             ))}
           </SplitPane>
           </div>
-          {maxStepCount > 1 && (
+          {globalSteps.length > 1 && (
             <input
               type="range"
               min={0}
-              max={maxStepCount - 1}
+              max={globalSteps.length - 1}
               value={safeIdx}
               onChange={(e) => handleSliderChange(Number(e.target.value))}
               className="mt-3 w-full accent-accent"
@@ -570,16 +582,16 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
                     key={seriesKey(m)}
                     runId={runId}
                     m={m}
-                    stepIdx={safeIdx}
+                    targetStep={currentStep}
                     settings={settings}
                   />
                 ))}
               </SplitPane>
-              {maxStepCount > 1 && (
+              {globalSteps.length > 1 && (
                 <input
                   type="range"
                   min={0}
-                  max={maxStepCount - 1}
+                  max={globalSteps.length - 1}
                   value={safeIdx}
                   onChange={(e) => handleSliderChange(Number(e.target.value))}
                   className="mt-3 w-full accent-accent"
