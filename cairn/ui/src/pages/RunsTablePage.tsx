@@ -351,6 +351,18 @@ export default function RunsTablePage() {
           >
             Compare {selectedCount} run{selectedCount === 1 ? "" : "s"}
           </button>
+          <button
+            type="button"
+            className="btn px-2 py-1 text-xs"
+            onClick={() => {
+              if (!projectId) return;
+              const cmp = createComparison(projectId, "New comparison", Array.from(selected));
+              navigate(`/p/${projectId}/compare?c=${cmp.id}`);
+            }}
+            disabled={selectedCount === 0}
+          >
+            Empty comparison
+          </button>
           {templates.length > 0 && (
             <button
               ref={templateBtnRef}

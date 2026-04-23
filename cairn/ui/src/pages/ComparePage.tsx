@@ -591,11 +591,12 @@ function ComparisonView({
   // Collect all unique run IDs from the comparison's series
   const compRunIds = useMemo(() => {
     const ids = new Set<string>();
+    if (comparison.runIds) for (const id of comparison.runIds) ids.add(id);
     for (const card of comparison.cards) {
       for (const s of card.series) ids.add(s.runId);
     }
     return Array.from(ids);
-  }, [comparison.cards]);
+  }, [comparison.cards, comparison.runIds]);
 
 
   useEffect(() => {

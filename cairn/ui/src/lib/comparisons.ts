@@ -44,6 +44,8 @@ export interface Comparison {
   name: string;
   createdAt: string; // ISO
   cards: ComparisonCard[];
+  /** Explicit run IDs for this comparison (used by AddCardModal when no cards exist yet). */
+  runIds?: string[];
   /** When present, the comparison was created by the Smart Wizard and can be refreshed. */
   smartFilters?: SmartFilters;
 }
@@ -122,6 +124,7 @@ function newId(): string {
 export function createComparison(
   projectId: string,
   name: string,
+  runIds?: string[],
 ): Comparison {
   const list = loadComparisons(projectId);
   const cmp: Comparison = {
@@ -129,6 +132,7 @@ export function createComparison(
     name: name || "Untitled comparison",
     createdAt: new Date().toISOString(),
     cards: [],
+    runIds,
   };
   list.push(cmp);
   saveComparisons(projectId, list);
