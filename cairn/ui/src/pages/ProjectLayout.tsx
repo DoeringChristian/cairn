@@ -58,7 +58,7 @@ export default function ProjectLayout() {
     <ProjectProvider value={projectId}>
       <div className="flex min-h-0">
         {/* Left icon+label nav — desktop */}
-        <nav className="hidden md:flex flex-col items-center gap-2 w-16 shrink-0 border-r border-border py-3 sticky top-[41px] h-[calc(100vh-41px)] overflow-y-auto z-10">
+        <nav className="hidden md:flex flex-col items-center gap-2 w-16 shrink-0 border-r border-border py-3 fixed top-[41px] left-0 h-[calc(100vh-41px)] overflow-y-auto z-10">
           {NAV_ITEMS.map((item) => (
             <NavLink
               key={item.path}
@@ -80,7 +80,7 @@ export default function ProjectLayout() {
         </nav>
 
         {/* Main content */}
-        <div className="flex-1 min-w-0 px-4">
+        <div className="flex-1 min-w-0 px-4 md:ml-16">
           <nav className="mb-3 flex flex-wrap items-center gap-x-1 text-sm text-fg-muted">
             <Link to="/" className="hover:text-fg">
               Projects

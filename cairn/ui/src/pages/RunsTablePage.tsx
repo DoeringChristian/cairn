@@ -1,11 +1,13 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useRuns } from "../api/hooks";
 import type { Run, RunStatus } from "../api/types";
 import RunStatusBadge from "../components/RunStatusBadge";
 import { formatDuration, formatRelative, safeJsonParse } from "../lib/format";
-import { addCardToComparison, createComparison } from "../lib/comparisons";
+import { addCardToComparison, createComparison, useTemplates, type ComparisonTemplate } from "../lib/comparisons";
+import { saveCardSettings } from "../lib/card-settings";
 import { api } from "../api/client";
+import SettingsPopover from "../components/SettingsPopover";
 
 type SortColumn =
   | "name"
@@ -69,20 +71,33 @@ export default function RunsTablePage() {
     direction: "desc",
   });
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [templatePopoverOpen, setTemplatePopoverOpen] = useState(false);
+  const templateBtnRef = useRef<HTMLButtonElement | null>(null);
+  const { templates } = useTemplates(projectId ?? "");
 
   const runs = useMemo(() => q.data?.runs ?? [], [q.data]);
 
+  const { regex: searchRegex, error: searchError } = useMemo(() => {
+    const raw = search.trim();
+    if (!raw) return { regex: null, error: null };
+    try {
+      return { regex: new RegExp(raw, "i"), error: null };
+    } catch {
+      return { regex: null, error: "invalid regex" };
+    }
+  }, [search]);
+
   const filtered = useMemo(() => {
-    const needle = search.trim().toLowerCase();
     return runs.filter((r) => {
       if (statusFilter !== "all" && r.status !== statusFilter) return false;
-      if (needle) {
-        const hay = `${r.display_name ?? ""} ${r.id}`.toLowerCase();
-        if (!hay.includes(needle)) return false;
+      if (searchRegex) {
+        const tags = (safeJsonParse<string[]>(r.tags) ?? []).join(" ");
+        const hay = `${r.display_name ?? ""} ${r.id} ${r.status} ${tags}`;
+        if (!searchRegex.test(hay)) return false;
       }
       return true;
     });
-  }, [runs, statusFilter, search]);
+  }, [runs, statusFilter, searchRegex]);
 
   const sorted = useMemo(() => {
     const arr = [...filtered];
@@ -193,6 +208,59 @@ export default function RunsTablePage() {
     navigate(`/p/${projectId}/compare?c=${encodeURIComponent(cmp.id)}`);
   };
 
+  const onApplyTemplate = useCallback(async (template: ComparisonTemplate) => {
+    if (!projectId) return;
+    setTemplatePopoverOpen(false);
+    const selectedIds = Array.from(selected);
+    const cmp = createComparison(projectId, template.name);
+
+    // Fetch sequences for selected runs.
+    const seqResults = await Promise.all(
+      selectedIds.map((rid) => api.sequences(rid)),
+    );
+
+    // Build a map of metric name → available sequences across runs.
+    const seqMap = new Map<string, Array<{ runId: string; name: string; context_hash: string }>>();
+    seqResults.forEach((result, idx) => {
+      const runId = selectedIds[idx]!;
+      for (const seq of result.sequences) {
+        const existing = seqMap.get(seq.name);
+        if (existing) {
+          if (!existing.some((s) => s.runId === runId)) {
+            existing.push({ runId, name: seq.name, context_hash: seq.context_hash });
+          }
+        } else {
+          seqMap.set(seq.name, [{ runId, name: seq.name, context_hash: seq.context_hash }]);
+        }
+      }
+    });
+
+    // For each template card, match against available sequences.
+    for (const tc of template.cards) {
+      const matching = seqMap.get(tc.metricName);
+      if (!matching || matching.length === 0) continue;
+      addCardToComparison(projectId, cmp.id, {
+        type: tc.type,
+        series: matching,
+      });
+      // Restore saved settings from template.
+      if (tc.settings) {
+        // Re-read the comparison to get the card's new ID.
+        const { loadComparisons } = await import("../lib/comparisons");
+        const updated = loadComparisons(projectId).find((c) => c.id === cmp.id);
+        const newCard = updated?.cards[updated.cards.length - 1];
+        if (newCard) {
+          saveCardSettings(
+            { runId: `compare:${cmp.id}`, metricName: newCard.id, contextHash: "" },
+            tc.settings,
+          );
+        }
+      }
+    }
+
+    navigate(`/p/${projectId}/compare?c=${encodeURIComponent(cmp.id)}`);
+  }, [projectId, selected, navigate]);
+
   return (
     <div>
       <div className="mb-6 flex items-baseline justify-between gap-4">
@@ -222,10 +290,11 @@ export default function RunsTablePage() {
         <label className="flex items-center gap-1 text-xs text-fg-muted">
           Search
           <input
-            className="input py-1 text-xs"
+            className={`input py-1 text-xs${searchError ? " border-status-failed" : ""}`}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="name or id"
+            placeholder="regex"
+            title={searchError ?? "Search by name, id, status, or tags (regex)"}
           />
         </label>
         <div className="ml-auto flex gap-2">
@@ -245,32 +314,76 @@ export default function RunsTablePage() {
           >
             Select none
           </button>
+          <button
+            type="button"
+            className="btn px-2 py-1 text-xs"
+            onClick={() => {
+              if (!projectId) return;
+              const cmp = createComparison(projectId, "New comparison");
+              navigate(`/p/${projectId}/compare?c=${cmp.id}`);
+            }}
+          >
+            New comparison
+          </button>
         </div>
       </div>
 
-      {selectedCount > 0 && (
-        <div className="fixed inset-x-4 bottom-4 z-20 mb-3 flex items-center justify-between gap-3 rounded-lg border border-accent/40 bg-accent/10 px-3 py-2 text-sm shadow-lg md:static md:inset-auto md:z-auto md:shadow-none">
-          <span className="text-fg">
-            {selectedCount} run{selectedCount === 1 ? "" : "s"} selected
-          </span>
-          <div className="flex items-center gap-2">
+      <div
+        className={`mb-3 flex items-center justify-between gap-3 rounded-lg border border-accent/40 bg-accent/10 px-3 py-2 text-sm transition-opacity ${selectedCount > 0 ? "opacity-100" : "opacity-0 pointer-events-none"}`}
+        aria-hidden={selectedCount === 0}
+      >
+        <span className="text-fg">
+          {selectedCount} run{selectedCount === 1 ? "" : "s"} selected
+        </span>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className="btn px-2 py-1 text-xs"
+            onClick={selectNone}
+          >
+            Clear
+          </button>
+          <button
+            type="button"
+            className="btn px-2 py-1 text-xs"
+            onClick={onCompare}
+            disabled={selectedCount === 0}
+          >
+            Compare {selectedCount} run{selectedCount === 1 ? "" : "s"}
+          </button>
+          {templates.length > 0 && (
             <button
+              ref={templateBtnRef}
               type="button"
               className="btn px-2 py-1 text-xs"
-              onClick={selectNone}
+              onClick={() => setTemplatePopoverOpen((v) => !v)}
+              disabled={selectedCount === 0}
             >
-              Clear
+              From template
             </button>
-            <button
-              type="button"
-              className="btn px-2 py-1 text-xs"
-              onClick={onCompare}
-            >
-              Compare {selectedCount} run{selectedCount === 1 ? "" : "s"}
-            </button>
-          </div>
+          )}
         </div>
-      )}
+      </div>
+      <SettingsPopover
+        open={templatePopoverOpen}
+        onClose={() => setTemplatePopoverOpen(false)}
+        anchorRef={templateBtnRef}
+        title="Apply template"
+      >
+        <div className="flex flex-col gap-1 max-h-48 overflow-y-auto">
+          {templates.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => onApplyTemplate(t)}
+              className="text-left text-xs text-fg-muted hover:bg-bg-hover rounded px-2 py-1.5 border border-border-subtle"
+            >
+              <div className="truncate">{t.name}</div>
+              <div className="text-[10px] text-fg-subtle">{t.cards.length} card(s)</div>
+            </button>
+          ))}
+        </div>
+      </SettingsPopover>
 
       {sorted.length === 0 ? (
         <p className="text-fg-muted">No runs match the filters.</p>

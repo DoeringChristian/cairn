@@ -9,6 +9,8 @@ import ScatterPlotCard from "../components/ScatterPlotCard";
 import {
   addCardToComparison,
   createComparison,
+  createTemplate,
+  deleteTemplate,
   reorderComparisonCards,
   deleteComparison,
   loadComparisons,
@@ -16,10 +18,13 @@ import {
   renameComparison,
   saveComparisons,
   useComparisons,
+  useTemplates,
   type Comparison,
   type ComparisonCard,
+  type ComparisonTemplateCard,
   type SmartFilters,
 } from "../lib/comparisons";
+import { loadCardSettings } from "../lib/card-settings";
 import { formatRelative } from "../lib/format";
 import { useRuns } from "../api/hooks";
 import { api } from "../api/client";
@@ -44,13 +49,18 @@ export default function ComparePage() {
 
   const selectedId = searchParams.get("c") ?? "";
 
-  // Auto-select the first comparison when the URL param is missing.
+  // Auto-select: restore last-viewed comparison, or fall back to first.
   useEffect(() => {
     if (!projectId) return;
     if (selectedId) return;
     if (comparisons.length === 0) return;
+    const lastKey = `cairn:last-comparison:${projectId}`;
+    const lastId = sessionStorage.getItem(lastKey);
+    const target = (lastId && comparisons.find((c) => c.id === lastId))
+      ? lastId
+      : comparisons[0]!.id;
     const params = new URLSearchParams(searchParams);
-    params.set("c", comparisons[0]!.id);
+    params.set("c", target);
     setSearchParams(params, { replace: true });
   }, [projectId, selectedId, comparisons, searchParams, setSearchParams]);
 
@@ -61,11 +71,12 @@ export default function ComparePage() {
 
   const selectComparison = useCallback(
     (id: string) => {
+      if (projectId) sessionStorage.setItem(`cairn:last-comparison:${projectId}`, id);
       const params = new URLSearchParams(searchParams);
       params.set("c", id);
       setSearchParams(params, { replace: true });
     },
-    [searchParams, setSearchParams],
+    [projectId, searchParams, setSearchParams],
   );
 
   const clearSelection = useCallback(() => {
@@ -94,8 +105,8 @@ export default function ComparePage() {
     (id: string) => {
       if (!projectId) return;
       deleteComparison(projectId, id);
-      // If we just deleted the currently-selected comparison, drop the URL
-      // param so auto-select kicks in on the next render.
+      const lastKey = `cairn:last-comparison:${projectId}`;
+      if (sessionStorage.getItem(lastKey) === id) sessionStorage.removeItem(lastKey);
       if (id === selectedId) clearSelection();
       refresh();
     },
@@ -280,7 +291,7 @@ export default function ComparePage() {
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-[320px_1fr]">
           <aside
-            className={`card h-fit p-3 ${sidebarOpen ? "" : "hidden md:block"}`}
+            className={`card p-3 md:sticky md:top-[41px] md:max-h-[calc(100vh-41px)] md:overflow-y-auto ${sidebarOpen ? "" : "hidden md:block"}`}
           >
             <Sidebar
               comparisons={comparisons}
@@ -291,12 +302,14 @@ export default function ComparePage() {
               onRename={handleRename}
               onDelete={handleDelete}
             />
+            <TemplateSidebar projectId={projectId} />
           </aside>
           <main>
             {selected ? (
               <ComparisonView
                 comparison={selected}
                 allProjectRunIds={allProjectRunIds}
+                projectId={projectId}
                 onRename={(name) => handleRename(selected.id, name)}
                 onDelete={() => handleDelete(selected.id)}
                 onRemoveCard={(cardId) => handleRemoveCard(selected.id, cardId)}
@@ -540,6 +553,7 @@ function SidebarRow({
 interface ComparisonViewProps {
   comparison: Comparison;
   allProjectRunIds: string[];
+  projectId: string;
   onRename: (name: string) => void;
   onDelete: () => void;
   onRemoveCard: (cardId: string) => void;
@@ -551,6 +565,7 @@ interface ComparisonViewProps {
 function ComparisonView({
   comparison,
   allProjectRunIds,
+  projectId,
   onRename,
   onDelete,
   onRemoveCard,
@@ -651,6 +666,31 @@ function ComparisonView({
             className="btn text-xs"
           >
             Delete
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const name = prompt("Template name:", comparison.name);
+              if (!name) return;
+              const templateCards: ComparisonTemplateCard[] = comparison.cards.map((card) => {
+                const settingsKey = {
+                  runId: `compare:${comparison.id}`,
+                  metricName: card.id,
+                  contextHash: "",
+                };
+                const cardSettings = loadCardSettings<Record<string, unknown>>(settingsKey);
+                return {
+                  type: card.type,
+                  metricName: card.series[0]?.name ?? card.id,
+                  settings: cardSettings ?? undefined,
+                };
+              });
+              createTemplate(projectId, name, templateCards);
+            }}
+            className="btn text-xs"
+            title="Save card layout as a reusable template"
+          >
+            Save template
           </button>
         </div>
       </div>
@@ -798,6 +838,43 @@ function EmptyMainPane({
           </p>
         </>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Template sidebar section
+// ---------------------------------------------------------------------------
+
+function TemplateSidebar({ projectId }: { projectId: string }) {
+  const { templates } = useTemplates(projectId);
+  if (templates.length === 0) return null;
+  return (
+    <div className="mt-4 border-t border-border-subtle pt-3">
+      <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-fg-muted">
+        Templates
+      </h2>
+      <ul className="flex flex-col gap-1">
+        {templates.map((t) => (
+          <li
+            key={t.id}
+            className="flex items-center justify-between rounded px-2 py-1.5 text-xs text-fg-muted hover:bg-bg-hover"
+          >
+            <div className="min-w-0">
+              <div className="truncate">{t.name}</div>
+              <div className="text-[10px] text-fg-subtle">{t.cards.length} card(s)</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => deleteTemplate(projectId, t.id)}
+              className="ml-2 shrink-0 text-[10px] text-fg-subtle hover:text-status-failed"
+              title="Delete template"
+            >
+              {"\u00D7"}
+            </button>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

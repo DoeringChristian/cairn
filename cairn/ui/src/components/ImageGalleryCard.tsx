@@ -29,7 +29,6 @@ import CardHeader from "./CardHeader";
 import CardResizeHandle from "./CardResizeHandle";
 import SeriesChip , { CAIRN_SERIES_MIME, type SeriesRef } from "./SeriesChip";
 import SettingsPopover from "./SettingsPopover";
-import SplitPane from "./SplitPane";
 import Select from "./settings/Select";
 import Slider from "./settings/Slider";
 import Toggle from "./settings/Toggle";
@@ -173,6 +172,8 @@ interface ImageSettings {
   /** Fixed viewport size per pane. When set, panes arrange in a grid. */
   viewportSize?: { w: number; h: number };
   colSpan?: number;
+  /** What to show when a run has no image at the current step. */
+  missingImageMode?: "nothing" | "last_available";
 }
 
 const MIN_ZOOM = 0.25;
@@ -245,6 +246,24 @@ function seriesKey(m: {
   context_hash: string;
 }): string {
   return `${m.runId ?? ""}::${m.name}::${m.context_hash}`;
+}
+
+/** Resolve the artifact hash for a given step index, with fallback to last available. */
+function resolveArtifact(
+  points: Array<{ step: number; artifact_hash: string | null }>,
+  idx: number,
+  mode?: "nothing" | "last_available",
+): { hash: string | undefined; fallbackStep: number | null } {
+  const current = points[idx];
+  if (current?.artifact_hash) return { hash: current.artifact_hash, fallbackStep: null };
+  if (mode !== "last_available") return { hash: undefined, fallbackStep: null };
+  // Walk backward to find the nearest prior step with an image.
+  for (let i = idx - 1; i >= 0; i--) {
+    if (points[i]?.artifact_hash) {
+      return { hash: points[i]!.artifact_hash!, fallbackStep: points[i]!.step };
+    }
+  }
+  return { hash: undefined, fallbackStep: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -1393,8 +1412,9 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                 // Skip metrics that match the external baseline — shown as separate ref pane
                 if (settings.externalBaseline && m.name === settings.externalBaseline.name && (m.runId ?? runId) === (settings.externalBaseline.runId ?? runId)) return null;
                 const pts = perSeriesPoints[paneIdx] ?? [];
-                const pCurrent = pts[safeIdx];
-                const hash = pCurrent?.artifact_hash ?? undefined;
+                const { hash, fallbackStep } = resolveArtifact(pts, safeIdx, settings.missingImageMode);
+                const label = seriesLabel(m, runId, multipleRuns, availableRunIds)
+                  + (fallbackStep != null ? ` (step ${fallbackStep})` : "");
                 return (
                   <div key={seriesKey(m)} className="relative overflow-hidden" style={settings.viewportSize ? { width: settings.viewportSize.w, height: settings.viewportSize.h } : undefined}>
                     <ImagePane
@@ -1422,7 +1442,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                               : settings.diffMode,
                         });
                       }}
-                      label={seriesLabel(m, runId, multipleRuns, availableRunIds)}
+                      label={label}
                     />
                     {/* Viewport resize handle on first pane */}
                     {paneIdx === 0 && (
@@ -1770,6 +1790,15 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                 { value: "red-blue", label: "Red \u2013 Blue (\u00B1)" },
               ]}
             />
+            <Select<"nothing" | "last_available">
+              label="Missing image"
+              value={settings.missingImageMode ?? "nothing"}
+              onChange={(v) => updateSettings({ missingImageMode: v })}
+              options={[
+                { value: "nothing", label: "Show nothing" },
+                { value: "last_available", label: "Show last available" },
+              ]}
+            />
             <Toggle
               label="Pixel axes"
               checked={settings.showAxes ?? false}
@@ -1862,51 +1891,107 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
               onPointerCancel={onPointerUp}
             >
               {isMulti ? (
-                <SplitPane
-                  widths={
-                    settings.paneWidths ??
-                    Array(effectiveMetrics.length).fill(
-                      1 / effectiveMetrics.length,
-                    )
-                  }
-                  onWidthsChange={(w) => updateSettings({ paneWidths: w })}
+                <div
+                  className="grid gap-1 flex-1 min-h-0 overflow-auto"
+                  style={{
+                    gridTemplateColumns: settings.viewportSize
+                      ? `repeat(auto-fill, ${settings.viewportSize.w}px)`
+                      : `repeat(auto-fill, minmax(200px, 1fr))`,
+                    gridAutoRows: settings.viewportSize ? `${settings.viewportSize.h}px` : undefined,
+                  }}
                 >
                   {effectiveMetrics.map((m, paneIdx) => {
+                    if (settings.externalBaseline && m.name === settings.externalBaseline.name && (m.runId ?? runId) === (settings.externalBaseline.runId ?? runId)) return null;
                     const pts = perSeriesPoints[paneIdx] ?? [];
-                    const pCurrent = pts[safeIdx];
-                    const hash = pCurrent?.artifact_hash ?? undefined;
+                    const { hash: mHash, fallbackStep: mFallback } = resolveArtifact(pts, safeIdx, settings.missingImageMode);
+                    const mLabel = seriesLabel(m, runId, multipleRuns, availableRunIds)
+                      + (mFallback != null ? ` (step ${mFallback})` : "");
                     return (
-                      <ImagePane
-                        key={seriesKey(m)}
-                        metricEntry={m}
-                        paneIndex={paneIdx}
-                        artifactHash={hash}
-                        baselineHash={baselineHash}
-                        isBaseline={baselineIdx === paneIdx}
-                        diffMode={settings.diffMode}
-                        interpolation={settings.interpolation ?? "auto"}
-                        colormap={settings.colormap ?? "none"}
-                        showAxes={settings.showAxes ?? false}
-                        zoom={settings.zoom}
-                        transformStr={transformStr}
-                        filterStr={filterStr}
-                        onNaturalSize={onImageNaturalSize}
-                        onSetBaseline={() => {
-                          const isUnsetting = settings.baselineIndex === paneIdx;
-                          updateSettings({
-                            baselineIndex: isUnsetting ? undefined : paneIdx,
-                            diffMode: isUnsetting
-                              ? "none"
-                              : settings.diffMode === "none"
-                                ? "absolute"
-                                : settings.diffMode,
-                          });
-                        }}
-                        label={seriesLabel(m, runId, multipleRuns, availableRunIds)}
-                      />
+                      <div key={seriesKey(m)} className="relative overflow-hidden" style={settings.viewportSize ? { width: settings.viewportSize.w, height: settings.viewportSize.h } : undefined}>
+                        <ImagePane
+                          metricEntry={m}
+                          paneIndex={paneIdx}
+                          artifactHash={mHash}
+                          baselineHash={baselineHash}
+                          isBaseline={baselineIdx === paneIdx}
+                          diffMode={settings.diffMode}
+                          interpolation={settings.interpolation ?? "auto"}
+                          colormap={settings.colormap ?? "none"}
+                          showAxes={settings.showAxes ?? false}
+                          zoom={settings.zoom}
+                          transformStr={transformStr}
+                          filterStr={filterStr}
+                          onNaturalSize={onImageNaturalSize}
+                          onSetBaseline={() => {
+                            const isUnsetting = settings.baselineIndex === paneIdx;
+                            updateSettings({
+                              baselineIndex: isUnsetting ? undefined : paneIdx,
+                              diffMode: isUnsetting
+                                ? "none"
+                                : settings.diffMode === "none"
+                                  ? "absolute"
+                                  : settings.diffMode,
+                            });
+                          }}
+                          label={mLabel}
+                        />
+                        {paneIdx === 0 && (
+                          <div
+                            className="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize flex items-end justify-end text-fg-muted hover:text-fg z-10"
+                            style={{ touchAction: "none" }}
+                            onPointerDown={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+                              const startX = e.clientX;
+                              const startY = e.clientY;
+                              const pEl = e.currentTarget.parentElement!;
+                              const startW = settings.viewportSize?.w ?? pEl.getBoundingClientRect().width;
+                              const startH = settings.viewportSize?.h ?? pEl.getBoundingClientRect().height;
+                              const onMove = (ev: PointerEvent) => {
+                                const w = Math.max(80, Math.round(startW + (ev.clientX - startX)));
+                                const h = Math.max(80, Math.round(startH + (ev.clientY - startY)));
+                                updateSettings({ viewportSize: { w, h } });
+                              };
+                              const onUp = () => {
+                                window.removeEventListener("pointermove", onMove);
+                                window.removeEventListener("pointerup", onUp);
+                              };
+                              window.addEventListener("pointermove", onMove);
+                              window.addEventListener("pointerup", onUp);
+                            }}
+                          >
+                            <svg width="10" height="10" viewBox="0 0 10 10" className="pointer-events-none"><line x1="9" y1="1" x2="1" y2="9" stroke="currentColor" strokeWidth="1.5"/><line x1="9" y1="5" x2="5" y2="9" stroke="currentColor" strokeWidth="1.5"/></svg>
+                          </div>
+                        )}
+                      </div>
                     );
                   })}
-                </SplitPane>
+                  {settings.externalBaseline && extBasePoints.length > 0 && (() => {
+                    const refPt = extBasePoints[Math.min(safeIdx, extBasePoints.length - 1)];
+                    const refHash = refPt?.artifact_hash ?? undefined;
+                    return (
+                      <div className="relative overflow-hidden" style={settings.viewportSize ? { width: settings.viewportSize.w, height: settings.viewportSize.h } : undefined}>
+                        <ImagePane
+                          metricEntry={{ runId: settings.externalBaseline!.runId, name: settings.externalBaseline!.name, context_hash: settings.externalBaseline!.context_hash }}
+                          paneIndex={-1}
+                          artifactHash={refHash}
+                          baselineHash={undefined}
+                          isBaseline={true}
+                          diffMode="none"
+                          interpolation={settings.interpolation ?? "auto"}
+                          colormap={"none"}
+                          showAxes={settings.showAxes ?? false}
+                          zoom={settings.zoom}
+                          transformStr={transformStr}
+                          filterStr={filterStr}
+                          onSetBaseline={() => updateSettings({ externalBaseline: undefined })}
+                          label={`ref: ${settings.externalBaseline!.name}`}
+                        />
+                      </div>
+                    );
+                  })()}
+                </div>
               ) : (
                 <div
                   className="relative flex flex-1 min-h-0 justify-center items-center rounded cairn-checkerboard"

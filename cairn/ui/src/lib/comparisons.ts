@@ -262,3 +262,107 @@ export function useComparisons(projectId: string): {
 
   return { comparisons, refresh };
 }
+
+// ---------------------------------------------------------------------------
+// Comparison Templates
+// ---------------------------------------------------------------------------
+
+export interface ComparisonTemplateCard {
+  type: ComparisonCard["type"];
+  metricName: string;
+  settings?: Record<string, unknown>;
+}
+
+export interface ComparisonTemplate {
+  id: string;
+  name: string;
+  createdAt: string;
+  cards: ComparisonTemplateCard[];
+}
+
+function templateStorageKey(projectId: string): string {
+  return `cairn:comparison-templates:${projectId}`;
+}
+
+export function loadTemplates(projectId: string): ComparisonTemplate[] {
+  try {
+    const raw = localStorage.getItem(templateStorageKey(projectId));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (t): t is ComparisonTemplate =>
+        !!t &&
+        typeof t === "object" &&
+        typeof t.id === "string" &&
+        typeof t.name === "string" &&
+        Array.isArray(t.cards),
+    );
+  } catch {
+    return [];
+  }
+}
+
+export function saveTemplates(
+  projectId: string,
+  list: ComparisonTemplate[],
+): void {
+  try {
+    localStorage.setItem(templateStorageKey(projectId), JSON.stringify(list));
+  } catch {
+    /* quota exceeded */
+  }
+  templatesChanged.dispatchEvent(new CustomEvent("change", { detail: projectId }));
+}
+
+export function createTemplate(
+  projectId: string,
+  name: string,
+  cards: ComparisonTemplateCard[],
+): ComparisonTemplate {
+  const list = loadTemplates(projectId);
+  const tmpl: ComparisonTemplate = {
+    id: newId(),
+    name: name || "Untitled template",
+    createdAt: new Date().toISOString(),
+    cards,
+  };
+  list.push(tmpl);
+  saveTemplates(projectId, list);
+  return tmpl;
+}
+
+export function deleteTemplate(
+  projectId: string,
+  templateId: string,
+): void {
+  const list = loadTemplates(projectId);
+  saveTemplates(projectId, list.filter((t) => t.id !== templateId));
+}
+
+const templatesChanged = new EventTarget();
+
+export function useTemplates(projectId: string): {
+  templates: ComparisonTemplate[];
+  refresh: () => void;
+} {
+  const [templates, setTemplates] = useState<ComparisonTemplate[]>(() =>
+    loadTemplates(projectId),
+  );
+
+  const refresh = useCallback(() => {
+    setTemplates(loadTemplates(projectId));
+  }, [projectId]);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      if ((e as CustomEvent).detail === projectId) setTemplates(loadTemplates(projectId));
+    };
+    templatesChanged.addEventListener("change", handler);
+    return () => templatesChanged.removeEventListener("change", handler);
+  }, [projectId]);
+
+  return { templates, refresh };
+}
