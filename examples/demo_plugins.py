@@ -110,6 +110,7 @@ def main():
 
     # Register all plugins.
     run.register_plugin("heatmap", PLUGINS_DIR / "heatmap.js")
+    run.register_plugin("test_interactive", PLUGINS_DIR / "test_interactive.js")
     run.register_plugin("histogram", PLUGINS_DIR / "histogram.py")
     run.register_plugin("confusion", PLUGINS_DIR / "confusion_matrix.py")
     run.register_plugin("surface3d", PLUGINS_DIR / "surface3d.py")
@@ -120,6 +121,9 @@ def main():
         # JS heatmap — 8x8 activation map.
         blob, meta = make_heatmap(8, 8, step)
         run.track(cairn.Plugin(blob, plugin="heatmap", **meta), name="activations", step=step)
+
+        # JS interactive test — button + draggable box.
+        run.track(cairn.Plugin(b"test", plugin="test_interactive"), name="interactive_test", step=step)
 
         # Python histogram — weight distribution.
         blob, meta = make_histogram(500, step)
