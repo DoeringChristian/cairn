@@ -1,8 +1,9 @@
 /**
- * Plugin card — renders custom JS or Python viewer plugins in a sandboxed iframe.
+ * Plugin card — renders custom JS or Python viewer plugins in sandboxed iframes.
  *
  * JS plugins run directly in a sandboxed iframe with access to WebGL/WebGPU.
- * Python plugins run in a Pyodide Web Worker and return HTML/SVG.
+ * Python plugins load Pyodide inside the iframe so matplotlib's wasm_backend
+ * has DOM access for interactive figures (pan, zoom, resize).
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -10,7 +11,6 @@ import { useSequence } from "../api/hooks";
 import { api } from "../api/client";
 import { safeJsonParse } from "../lib/format";
 import { useCardSettings, type CardSettingsKey } from "../lib/card-settings";
-import { renderPython } from "../lib/pyodide-worker";
 import type { SequenceMeta } from "../api/types";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
 import CardHeader from "./CardHeader";
@@ -43,6 +43,8 @@ interface PluginSettings {
 
 const DEFAULT_SETTINGS: PluginSettings = { version: 1 };
 
+const PYODIDE_CDN = "https://cdn.jsdelivr.net/pyodide/v0.27.0/full/";
+
 // Module-level cache for fetched plugin sources (keyed by artifact hash).
 const sourceCache = new Map<string, string>();
 
@@ -62,7 +64,10 @@ async function fetchArtifactData(hash: string): Promise<ArrayBuffer> {
   return resp.arrayBuffer();
 }
 
-function buildIframeSrcdoc(pluginSource: string): string {
+// ---------------------------------------------------------------------------
+// JS iframe shell — plugin source runs directly, data via postMessage.
+// ---------------------------------------------------------------------------
+function buildJsIframeSrcdoc(pluginSource: string): string {
   return `<!DOCTYPE html>
 <html><head>
 <style>
@@ -78,12 +83,102 @@ window.addEventListener("message", function(e) {
     catch(err) { document.body.innerHTML = '<pre style="color:#f85149;padding:8px">Plugin error: ' + err.message + '</pre>'; }
   }
 });
-// Notify parent when content resizes.
 new ResizeObserver(function() {
-  var h = document.documentElement.scrollHeight;
-  parent.postMessage({ type: "cairn:resize", height: h }, "*");
+  parent.postMessage({ type: "cairn:resize", height: document.documentElement.scrollHeight }, "*");
 }).observe(document.body);
 ${pluginSource}
+</script>
+</body></html>`;
+}
+
+// ---------------------------------------------------------------------------
+// Python iframe shell — loads Pyodide in-iframe for full DOM access
+// (matplotlib wasm_backend works natively with interactive figures).
+// ---------------------------------------------------------------------------
+function buildPyIframeSrcdoc(pluginSource: string): string {
+  // Escape backticks and backslashes in plugin source for embedding in template literal.
+  const escaped = pluginSource.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$/g, "\\$");
+  return `<!DOCTYPE html>
+<html><head>
+<style>
+  body { margin: 0; background: transparent; color: #c9d1d9; font-family: system-ui; }
+  #status { padding: 12px; font-size: 12px; color: #8b949e; }
+  .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid #0969da;
+    border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head><body>
+<div id="status"><span class="spinner"></span> Loading Pyodide...</div>
+<div id="output"></div>
+<script src="${PYODIDE_CDN}pyodide.js"></script>
+<script>
+const PLUGIN_SOURCE = \`${escaped}\`;
+
+// Parse cairn-requires comment.
+function parseRequires(src) {
+  const m = src.match(/^#\\s*cairn-requires:\\s*(.+)$/m);
+  return m ? m[1].split(",").map(s => s.trim()).filter(Boolean) : [];
+}
+
+let pyodide = null;
+let pendingMsg = null;
+
+async function initPyodide() {
+  const status = document.getElementById("status");
+  try {
+    pyodide = await loadPyodide({ indexURL: "${PYODIDE_CDN}" });
+    status.textContent = "Installing packages...";
+    await pyodide.loadPackage("micropip");
+    const micropip = pyodide.pyimport("micropip");
+    const reqs = parseRequires(PLUGIN_SOURCE);
+    for (const pkg of reqs) {
+      await micropip.install(pkg);
+    }
+    status.textContent = "Running plugin...";
+    pyodide.runPython(PLUGIN_SOURCE);
+    status.style.display = "none";
+    // Process any message that arrived while loading.
+    if (pendingMsg) { handleRender(pendingMsg); pendingMsg = null; }
+  } catch(err) {
+    status.innerHTML = '<pre style="color:#f85149">Pyodide error: ' + err.message + '</pre>';
+  }
+}
+
+function handleRender(msg) {
+  if (!pyodide) { pendingMsg = msg; return; }
+  try {
+    const renderFn = pyodide.globals.get("render");
+    if (!renderFn) {
+      document.getElementById("output").innerHTML = '<pre style="color:#f85149">Plugin has no render() function</pre>';
+      return;
+    }
+    const dataBytes = new Uint8Array(msg.data);
+    const result = renderFn(
+      pyodide.toPy(dataBytes),
+      pyodide.toPy(msg.metadata),
+      msg.step,
+      msg.runId,
+      msg.metricName,
+    );
+    // If render() returns a string, inject as HTML. Otherwise matplotlib
+    // renders directly to the DOM via the wasm_backend (no return needed).
+    const html = (typeof result === "string") ? result :
+                 (result && result.toString && result.toString() !== "None") ? result.toString() : null;
+    if (html) {
+      document.getElementById("output").innerHTML = html;
+    }
+    // Notify parent of new size.
+    parent.postMessage({ type: "cairn:resize", height: document.documentElement.scrollHeight }, "*");
+  } catch(err) {
+    document.getElementById("output").innerHTML = '<pre style="color:#f85149">Render error: ' + err.message + '</pre>';
+  }
+}
+
+window.addEventListener("message", function(e) {
+  if (e.data && e.data.type === "cairn:render") handleRender(e.data);
+});
+
+initPyodide();
 </script>
 </body></html>`;
 }
@@ -135,7 +230,9 @@ export default function PluginCard({
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [iframeHeight, setIframeHeight] = useState(300);
   const [error, setError] = useState<string | null>(null);
-  const [pyHtml, setPyHtml] = useState<string | null>(null);
+  const [iframeReady, setIframeReady] = useState(false);
+  // Track the current srcdoc to avoid rebuilding the iframe on every step.
+  const activeSrcdocHash = useRef<string>("");
 
   // Listen for resize messages from the iframe.
   useEffect(() => {
@@ -148,72 +245,67 @@ export default function PluginCard({
     return () => window.removeEventListener("message", handler);
   }, []);
 
-  // Render on step change.
-  const renderPlugin = useCallback(async () => {
-    if (!current?.artifact_hash || !pluginMeta.plugin_hash) return;
+  const lang = pluginMeta.plugin_lang ?? "js";
+
+  // Build or update the iframe when plugin source changes.
+  const setupIframe = useCallback(async () => {
+    if (!pluginMeta.plugin_hash) return;
     setError(null);
 
     try {
-      const [source, data] = await Promise.all([
-        fetchPluginSource(pluginMeta.plugin_hash),
-        fetchArtifactData(current.artifact_hash),
-      ]);
+      const source = await fetchPluginSource(pluginMeta.plugin_hash);
+      const iframe = iframeRef.current;
+      if (!iframe) return;
 
-      const lang = pluginMeta.plugin_lang ?? "js";
-
-      if (lang === "js") {
-        // JS: update iframe srcdoc then post data.
-        const iframe = iframeRef.current;
-        if (!iframe) return;
-        const srcdoc = buildIframeSrcdoc(source);
-        if (iframe.srcdoc !== srcdoc) {
-          iframe.srcdoc = srcdoc;
-          // Wait for iframe to load before posting.
-          await new Promise<void>((resolve) => {
-            iframe.onload = () => resolve();
-          });
-        }
-        // Clone data so we can reuse on next step.
-        const clone = data.slice(0);
-        iframe.contentWindow?.postMessage(
-          {
-            type: "cairn:render",
-            data: clone,
-            metadata: pluginMeta,
-            step: currentStep,
-            runId,
-            metricName: metric.name,
-          },
-          "*",
-          [clone],
-        );
-        setPyHtml(null);
-      } else {
-        // Python: render via Pyodide worker.
-        const html = await renderPython({
-          source,
-          data,
-          metadata: pluginMeta,
-          step: currentStep,
-          runId,
-          metricName: metric.name,
-        });
-        setPyHtml(html);
+      // Only rebuild srcdoc when plugin hash changes (not on every step).
+      const hashKey = `${pluginMeta.plugin_hash}:${lang}`;
+      if (activeSrcdocHash.current !== hashKey) {
+        activeSrcdocHash.current = hashKey;
+        setIframeReady(false);
+        iframe.srcdoc = lang === "js"
+          ? buildJsIframeSrcdoc(source)
+          : buildPyIframeSrcdoc(source);
+        await new Promise<void>((resolve) => { iframe.onload = () => resolve(); });
+        setIframeReady(true);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, [current, pluginMeta, currentStep, runId, metric.name]);
+  }, [pluginMeta.plugin_hash, lang]);
 
+  useEffect(() => { setupIframe(); }, [setupIframe]);
+
+  // Post data to iframe on step change (once iframe is ready).
   useEffect(() => {
-    renderPlugin();
-  }, [renderPlugin]);
+    if (!iframeReady || !current?.artifact_hash) return;
+    const iframe = iframeRef.current;
+    if (!iframe?.contentWindow) return;
+
+    let cancelled = false;
+    fetchArtifactData(current.artifact_hash).then((data) => {
+      if (cancelled) return;
+      const clone = data.slice(0);
+      iframe.contentWindow?.postMessage(
+        {
+          type: "cairn:render",
+          data: clone,
+          metadata: pluginMeta,
+          step: currentStep,
+          runId,
+          metricName: metric.name,
+        },
+        "*",
+        [clone],
+      );
+    }).catch((err) => {
+      if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+    });
+    return () => { cancelled = true; };
+  }, [iframeReady, current, pluginMeta, currentStep, runId, metric.name]);
 
   const subtitle = globalSteps.length > 0
     ? `step ${currentStep} (${safeIdx + 1}/${globalSteps.length})`
     : pluginMeta.plugin_name ?? "plugin";
-
-  const lang = pluginMeta.plugin_lang ?? "js";
 
   return (
     <div
@@ -249,7 +341,7 @@ export default function PluginCard({
             <div className="flex-1 flex items-center justify-center text-sm text-fg-muted">
               No plugin metadata found
             </div>
-          ) : lang === "js" ? (
+          ) : (
             <iframe
               ref={iframeRef}
               sandbox="allow-scripts"
@@ -257,19 +349,6 @@ export default function PluginCard({
               style={{ height: settings.height ? undefined : iframeHeight, minHeight: 100 }}
               title={`Plugin: ${pluginMeta.plugin_name ?? metric.name}`}
             />
-          ) : pyHtml ? (
-            <iframe
-              sandbox="allow-scripts"
-              srcDoc={`<!DOCTYPE html><html><head><style>body{margin:0;background:transparent;color:#c9d1d9;font-family:system-ui}</style></head><body>${pyHtml}</body></html>`}
-              className="flex-1 w-full rounded border-0"
-              style={{ height: settings.height ? undefined : iframeHeight, minHeight: 100 }}
-              title={`Plugin: ${pluginMeta.plugin_name ?? metric.name}`}
-            />
-          ) : (
-            <div className="flex-1 flex items-center justify-center">
-              <div className="h-8 w-8 motion-safe:animate-spin rounded-full border-2 border-accent border-t-transparent" />
-              <span className="ml-2 text-xs text-fg-muted">Loading Pyodide...</span>
-            </div>
           )}
 
           {globalSteps.length > 1 && (

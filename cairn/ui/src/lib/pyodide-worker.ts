@@ -50,9 +50,14 @@ self.onmessage = async (e) => {
           installedPackages.add(pkg);
         }
       }
-      // Force Agg backend for matplotlib (no DOM in Web Worker).
+      // Force Agg backend for matplotlib (no DOM in Web Worker)
+      // and auto-install mpld3 for interactive output.
       if (reqs.some(r => r === "matplotlib")) {
         py.runPython("import matplotlib; matplotlib.use('agg')");
+        if (!installedPackages.has("mpld3")) {
+          await micropip.install("mpld3");
+          installedPackages.add("mpld3");
+        }
       }
       // Load the plugin source
       py.runPython(msg.source);
