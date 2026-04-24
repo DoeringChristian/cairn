@@ -167,8 +167,11 @@ function handleRender(msg) {
     if (html) {
       document.getElementById("output").innerHTML = html;
     }
-    // Notify parent of new size.
-    parent.postMessage({ type: "cairn:resize", height: document.documentElement.scrollHeight }, "*");
+    // Notify parent of new size after a short delay (matplotlib canvas may
+    // need a frame to render).
+    setTimeout(function() {
+      parent.postMessage({ type: "cairn:resize", height: document.documentElement.scrollHeight }, "*");
+    }, 100);
   } catch(err) {
     document.getElementById("output").innerHTML = '<pre style="color:#f85149">Render error: ' + err.message + '</pre>';
   }
@@ -312,7 +315,7 @@ export default function PluginCard({
       className="card p-4 flex flex-col"
       style={{
         position: "relative",
-        height: settings.collapsed ? undefined : (settings.height ?? undefined),
+        height: settings.collapsed ? undefined : (settings.height ?? 400),
         gridColumn: (settings.colSpan ?? 1) > 1 ? `span ${settings.colSpan}` : undefined,
       }}
     >
@@ -346,7 +349,7 @@ export default function PluginCard({
               ref={iframeRef}
               sandbox={lang === "py" ? "allow-scripts allow-same-origin" : "allow-scripts"}
               className="flex-1 w-full rounded border-0"
-              style={{ height: settings.height ? undefined : iframeHeight, minHeight: 100 }}
+              style={{ height: iframeHeight, minHeight: 200 }}
               title={`Plugin: ${pluginMeta.plugin_name ?? metric.name}`}
             />
           )}
