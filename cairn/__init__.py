@@ -14,6 +14,7 @@ from .sdk.wrappers import (  # noqa: E402
     Figure,
     Histogram,
     Image,
+    Plugin,
     Tensor,
     Text,
     Video,
@@ -31,4 +32,5 @@ __all__ = [
     "Histogram",
     "Tensor",
     "Text",
+    "Plugin",
 ]

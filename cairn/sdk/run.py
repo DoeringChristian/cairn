@@ -146,6 +146,7 @@ class Run:
 
         # Bookkeeping
         self._finished = False
+        self._plugins: dict[str, dict[str, str]] = {}
         self._step_counters: dict[tuple, int] = {}
         self._step_lock = threading.Lock()
         self._line_counter = 0
@@ -291,6 +292,23 @@ class Run:
         effective_step = self._next_step(name, context, step)
         merged_kwargs = {**wrapper_kwargs, **kwargs}
 
+        # Inject plugin metadata when plugin= is specified.
+        plugin_name = merged_kwargs.pop("plugin", None)
+        if plugin_name is not None:
+            if plugin_name not in self._plugins:
+                raise ValueError(
+                    f"Plugin '{plugin_name}' not registered. "
+                    "Call run.register_plugin() first."
+                )
+            pinfo = self._plugins[plugin_name]
+            merged_kwargs["plugin_hash"] = pinfo["hash"]
+            merged_kwargs["plugin_lang"] = pinfo["lang"]
+            merged_kwargs["plugin_name"] = plugin_name
+            # Force plugin object_type if not already set by wrapper.
+            if object_type != "plugin":
+                object_type = "plugin"
+                handler = self._registry.find_by_type("plugin")
+
         point: dict[str, Any] = {
             "name": name,
             "step": effective_step,
@@ -314,6 +332,44 @@ class Run:
             point["artifact_hash"] = digest
 
         self._metric_buffer.append(point)
+
+    def register_plugin(
+        self,
+        name: str,
+        source: str | Path,
+        lang: str | None = None,
+    ) -> str:
+        """Register a viewer plugin. Returns the artifact hash of the source.
+
+        ``source`` is a path to a ``.js`` or ``.py`` file, or an inline
+        source string. ``lang`` is auto-detected from the file extension
+        if not provided.
+        """
+        path = Path(source) if not isinstance(source, Path) else source
+        if path.is_file():
+            source_bytes = path.read_bytes()
+            if lang is None:
+                ext = path.suffix.lower()
+                if ext == ".js":
+                    lang = "js"
+                elif ext == ".py":
+                    lang = "py"
+        else:
+            # Treat as inline source string.
+            source_bytes = str(source).encode("utf-8")
+
+        if lang is None:
+            raise ValueError(
+                "Cannot detect plugin language. Pass lang='js' or lang='py', "
+                "or use a file path ending in .js or .py."
+            )
+
+        mime = "application/javascript" if lang == "js" else "text/x-python"
+        digest = self._transport.upload_artifact(
+            source_bytes, mime, {"plugin_name": name, "plugin_lang": lang},
+        )
+        self._plugins[name] = {"hash": digest, "lang": lang}
+        return digest
 
     def log_artifact(self, value: Any, name: str, step: int | None = None) -> str:
         """Log a one-off artifact attached to the run (not a sequence point)."""

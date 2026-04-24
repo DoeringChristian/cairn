@@ -18,6 +18,8 @@ const FigureInteractiveCard = lazy(
   () => import("./FigureInteractiveCard"),
 );
 
+const PluginCard = lazy(() => import("./PluginCard"));
+
 export interface CardRendererProps {
   runId: string;
   metric: SequenceMeta;
@@ -78,6 +80,22 @@ export default function CardRenderer({
       return <HistogramCard {...baseProps} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />;
     case "text":
       return <TextViewerCard {...baseProps} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />;
+    case "plugin":
+      return (
+        <Suspense
+          fallback={
+            <div className="card p-4">
+              <div className="mb-2 flex items-baseline justify-between gap-2">
+                <h3 className="mono text-sm font-semibold">{metric.name}</h3>
+                <span className="text-xs text-fg-subtle">loading plugin…</span>
+              </div>
+              <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
+            </div>
+          }
+        >
+          <PluginCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />
+        </Suspense>
+      );
     default:
       return (
         <div className="card p-4 text-sm text-fg-muted">

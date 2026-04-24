@@ -8,6 +8,7 @@ from .audio import AudioHandler
 from .figure import FigureHandler
 from .histogram import HistogramHandler
 from .image import ImageHandler
+from .plugin import PluginHandler
 from .registry import (
     HandlerRegistry,
     TypeHandler,
@@ -36,6 +37,7 @@ if not _already_registered:
     # themselves doesn't matter.
     default_registry.register(HistogramHandler())
     default_registry.register(TensorHandler())
+    default_registry.register(PluginHandler())
     _already_registered = True
 
 
@@ -52,4 +54,5 @@ __all__ = [
     "FigureHandler",
     "HistogramHandler",
     "TensorHandler",
+    "PluginHandler",
 ]

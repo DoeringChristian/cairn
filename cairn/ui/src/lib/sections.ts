@@ -16,6 +16,7 @@ const MEDIA_TYPES = new Set([
   "video",
   "figure",
   "histogram",
+  "plugin",
 ]);
 
 export function groupIntoSections(meta: SequenceMeta[]): Section[] {
