@@ -138,10 +138,10 @@ async function initPyodide() {
     if (reqs.some(r => r === "matplotlib")) {
       try { await micropip.install("matplotlib-pyodide"); } catch(e) { console.warn("matplotlib-pyodide install:", e); }
     }
-    // Ensure matplotlib uses the interactive wasm backend (not Agg).
+    // Use the interactive HTML5 canvas backend for matplotlib.
     if (reqs.some(r => r === "matplotlib")) {
-      try { pyodide.runPython("import matplotlib; matplotlib.use('module://matplotlib_pyodide.wasm_backend')"); }
-      catch(e) { console.warn("wasm_backend not available, matplotlib will use default:", e); }
+      try { pyodide.runPython("import matplotlib; matplotlib.use('module://matplotlib_pyodide.html5_canvas_backend')"); }
+      catch(e) { console.warn("html5_canvas_backend not available:", e); }
     }
     status.textContent = "Running plugin...";
     pyodide.runPython(PLUGIN_SOURCE);
@@ -156,6 +156,10 @@ async function initPyodide() {
 function handleRender(msg) {
   if (!pyodide) { pendingMsg = msg; return; }
   try {
+    // Clear previous output and set matplotlib render target.
+    var outEl = document.getElementById("output");
+    outEl.innerHTML = "";
+    document.pyodideMplTarget = outEl;
     const renderFn = pyodide.globals.get("render");
     if (!renderFn) {
       document.getElementById("output").innerHTML = '<pre style="color:#f85149">Plugin has no render() function</pre>';
