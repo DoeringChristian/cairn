@@ -110,6 +110,7 @@ function buildPyIframeSrcdoc(pluginSource: string): string {
 </head><body>
 <div id="status"><span class="spinner"></span> Loading Pyodide...</div>
 <div id="output"></div>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
 <script src="${PYODIDE_CDN}pyodide.js"></script>
 <script>
 const PLUGIN_SOURCE = \`${escaped}\`;
@@ -133,10 +134,6 @@ async function initPyodide() {
     const reqs = parseRequires(PLUGIN_SOURCE);
     for (const pkg of reqs) {
       await micropip.install(pkg);
-    }
-    // Auto-install plotly for interactive plots (matplotlib in Pyodide is static).
-    if (reqs.some(r => r === "plotly") && !reqs.includes("plotly")) {
-      await micropip.install("plotly");
     }
     status.textContent = "Running plugin...";
     pyodide.runPython(PLUGIN_SOURCE);

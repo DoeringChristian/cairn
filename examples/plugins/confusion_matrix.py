@@ -51,4 +51,4 @@ def render(data, metadata, step, run_id, metric_name):
         annotations=annotations,
         margin=dict(l=60, r=20, t=40, b=50),
     )
-    return fig.to_html(include_plotlyjs="cdn", full_html=False)
+    return fig.to_html(include_plotlyjs=False, full_html=False)

@@ -37,4 +37,4 @@ def render(data, metadata, step, run_id, metric_name):
         font=dict(color="#8b949e", size=10),
         margin=dict(l=0, r=0, t=40, b=0),
     )
-    return fig.to_html(include_plotlyjs="cdn", full_html=False)
+    return fig.to_html(include_plotlyjs=False, full_html=False)
