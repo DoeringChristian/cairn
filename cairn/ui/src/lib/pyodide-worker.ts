@@ -5,7 +5,7 @@
  * The worker persists across renders so subsequent calls are fast.
  */
 
-const PYODIDE_CDN = "https://cdn.jsdelivr.net/pyodide/v0.27.0/full/";
+const PYODIDE_CDN = "https://cdn.jsdelivr.net/pyodide/v0.28.0/full/";
 
 // Inline worker source — runs Pyodide in a dedicated thread.
 const WORKER_SOURCE = `

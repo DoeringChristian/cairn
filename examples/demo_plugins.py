@@ -114,6 +114,7 @@ def main():
     run.register_plugin("histogram", PLUGINS_DIR / "histogram.py")
     run.register_plugin("confusion", PLUGINS_DIR / "confusion_matrix.py")
     run.register_plugin("surface3d", PLUGINS_DIR / "surface3d.py")
+    run.register_plugin("surface3d_mpl", PLUGINS_DIR / "surface3d_mpl.py")
 
     print("Logging 20 steps with 4 plugin viewers...")
 
@@ -133,9 +134,12 @@ def main():
         blob, meta = make_confusion_matrix(5, step)
         run.track(cairn.Plugin(blob, plugin="confusion", **meta), name="eval.confusion", step=step)
 
-        # Python 3D surface — 20x20 loss landscape.
+        # Python 3D surface (Plotly) — 20x20 loss landscape.
         blob, meta = make_surface(20, 20, step)
         run.track(cairn.Plugin(blob, plugin="surface3d", **meta), name="landscape.loss_surface", step=step)
+
+        # Python 3D surface (matplotlib with patched interactivity).
+        run.track(cairn.Plugin(blob, plugin="surface3d_mpl", **meta), name="landscape.loss_surface_mpl", step=step)
 
         # Also log a regular scalar so the run has charts too.
         loss = 2.0 * math.exp(-step * 0.15) + 0.1

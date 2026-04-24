@@ -43,7 +43,7 @@ interface PluginSettings {
 
 const DEFAULT_SETTINGS: PluginSettings = { version: 1 };
 
-const PYODIDE_CDN = "https://cdn.jsdelivr.net/pyodide/v0.27.0/full/";
+const PYODIDE_CDN = "https://cdn.jsdelivr.net/pyodide/v0.28.0/full/";
 
 // Module-level cache for fetched plugin sources (keyed by artifact hash).
 const sourceCache = new Map<string, string>();
