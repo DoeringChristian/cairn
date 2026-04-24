@@ -134,6 +134,15 @@ async function initPyodide() {
     for (const pkg of reqs) {
       await micropip.install(pkg);
     }
+    // Install the interactive wasm backend for matplotlib.
+    if (reqs.some(r => r === "matplotlib")) {
+      try { await micropip.install("matplotlib-pyodide"); } catch(e) { console.warn("matplotlib-pyodide install:", e); }
+    }
+    // Ensure matplotlib uses the interactive wasm backend (not Agg).
+    if (reqs.some(r => r === "matplotlib")) {
+      try { pyodide.runPython("import matplotlib; matplotlib.use('module://matplotlib_pyodide.wasm_backend')"); }
+      catch(e) { console.warn("wasm_backend not available, matplotlib will use default:", e); }
+    }
     status.textContent = "Running plugin...";
     pyodide.runPython(PLUGIN_SOURCE);
     status.style.display = "none";
