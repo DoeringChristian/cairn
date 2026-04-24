@@ -56,44 +56,76 @@ def render(data, metadata, step, run_id, metric_name):
     fig.tight_layout()
     plt.show()
 
-    # Monkey-patch: re-attach mouse event listeners that matplotlib-pyodide
-    # disabled in browser_backend.py v0.2.3.
+    # Monkey-patch: re-attach mouse event listeners using the correct
+    # matplotlib 3.8+ event API (callbacks.process instead of removed methods).
     _patch_matplotlib_events(fig)
 
 
 def _patch_matplotlib_events(fig):
-    """Re-attach mouse event listeners to the matplotlib canvas."""
+    """Re-attach mouse event listeners to the matplotlib canvas using the 3.8+ API."""
     try:
         from js import document
+        from matplotlib.backend_bases import MouseEvent
         from pyodide.ffi import create_proxy
 
         canvas = fig.canvas
 
-        # Find the rubberband canvas element (matplotlib creates two canvases:
-        # one for rendering, one transparent overlay for events).
+        # Find the last canvas element (matplotlib's rubberband overlay).
         canvas_el = None
         for el in document.querySelectorAll("canvas"):
-            # The rubberband canvas is the one on top (higher z-index or later in DOM).
             canvas_el = el
-
         if canvas_el is None:
             return
 
-        def add_event(el, event_name, handler):
-            proxy = create_proxy(handler)
-            el.addEventListener(event_name, proxy)
+        def _convert(event):
+            """Convert a JS mouse event to matplotlib coordinates."""
+            rect = canvas_el.getBoundingClientRect()
+            x = event.clientX - rect.left
+            # Flip y — matplotlib uses bottom-left origin.
+            y = (rect.bottom - rect.top) - (event.clientY - rect.top)
+            # Map to figure coordinates.
+            x = x * canvas.figure.dpi / 96
+            y = y * canvas.figure.dpi / 96
+            return x, y
 
-        if hasattr(canvas, "onmousemove"):
-            add_event(canvas_el, "mousemove", canvas.onmousemove)
-        if hasattr(canvas, "onmousedown"):
-            add_event(canvas_el, "mousedown", canvas.onmousedown)
-        if hasattr(canvas, "onmouseup"):
-            add_event(canvas_el, "mouseup", canvas.onmouseup)
-        if hasattr(canvas, "onscroll"):
-            add_event(canvas_el, "wheel", canvas.onscroll)
-        if hasattr(canvas, "onmouseenter"):
-            add_event(canvas_el, "mouseenter", canvas.onmouseenter)
-        if hasattr(canvas, "onmouseleave"):
-            add_event(canvas_el, "mouseleave", canvas.onmouseleave)
+        def _button(event):
+            b = event.button
+            if b == 0: return 1  # left
+            if b == 1: return 2  # middle
+            if b == 2: return 3  # right
+            return 1
+
+        def on_move(event):
+            x, y = _convert(event)
+            me = MouseEvent("motion_notify_event", canvas, x, y, guiEvent=None)
+            canvas.callbacks.process("motion_notify_event", me)
+            canvas.draw_idle()
+
+        def on_down(event):
+            x, y = _convert(event)
+            me = MouseEvent("button_press_event", canvas, x, y, button=_button(event), guiEvent=None)
+            canvas.callbacks.process("button_press_event", me)
+            canvas.draw_idle()
+
+        def on_up(event):
+            x, y = _convert(event)
+            me = MouseEvent("button_release_event", canvas, x, y, button=_button(event), guiEvent=None)
+            canvas.callbacks.process("button_release_event", me)
+            canvas.draw_idle()
+
+        def on_scroll(event):
+            x, y = _convert(event)
+            # Matplotlib expects step: positive = scroll up, negative = scroll down.
+            step = -1 if event.deltaY > 0 else 1
+            me = MouseEvent("scroll_event", canvas, x, y, step=step, guiEvent=None)
+            canvas.callbacks.process("scroll_event", me)
+            canvas.draw_idle()
+            event.preventDefault()
+
+        canvas_el.addEventListener("mousemove", create_proxy(on_move))
+        canvas_el.addEventListener("mousedown", create_proxy(on_down))
+        canvas_el.addEventListener("mouseup", create_proxy(on_up))
+        canvas_el.addEventListener("wheel", create_proxy(on_scroll))
+
     except Exception as e:
         print(f"[cairn] Could not patch matplotlib events: {e}")
