@@ -134,14 +134,9 @@ async function initPyodide() {
     for (const pkg of reqs) {
       await micropip.install(pkg);
     }
-    // Install the interactive wasm backend for matplotlib.
-    if (reqs.some(r => r === "matplotlib")) {
-      try { await micropip.install("matplotlib-pyodide"); } catch(e) { console.warn("matplotlib-pyodide install:", e); }
-    }
-    // Use the interactive HTML5 canvas backend for matplotlib.
-    if (reqs.some(r => r === "matplotlib")) {
-      try { pyodide.runPython("import matplotlib; matplotlib.use('module://matplotlib_pyodide.html5_canvas_backend')"); }
-      catch(e) { console.warn("html5_canvas_backend not available:", e); }
+    // Auto-install plotly for interactive plots (matplotlib in Pyodide is static).
+    if (reqs.some(r => r === "plotly") && !reqs.includes("plotly")) {
+      await micropip.install("plotly");
     }
     status.textContent = "Running plugin...";
     pyodide.runPython(PLUGIN_SOURCE);
@@ -156,10 +151,7 @@ async function initPyodide() {
 function handleRender(msg) {
   if (!pyodide) { pendingMsg = msg; return; }
   try {
-    // Clear previous output and set matplotlib render target.
-    var outEl = document.getElementById("output");
-    outEl.innerHTML = "";
-    document.pyodideMplTarget = outEl;
+    document.getElementById("output").innerHTML = "";
     const renderFn = pyodide.globals.get("render");
     if (!renderFn) {
       document.getElementById("output").innerHTML = '<pre style="color:#f85149">Plugin has no render() function</pre>';
@@ -173,12 +165,16 @@ function handleRender(msg) {
       msg.runId,
       msg.metricName,
     );
-    // If render() returns a string, inject as HTML. Otherwise matplotlib
-    // renders directly to the DOM via the wasm_backend (no return needed).
+    // If render() returns a string, inject as HTML with script execution.
     const html = (typeof result === "string") ? result :
                  (result && result.toString && result.toString() !== "None") ? result.toString() : null;
     if (html) {
-      document.getElementById("output").innerHTML = html;
+      var outEl = document.getElementById("output");
+      outEl.innerHTML = "";
+      // Use Range.createContextualFragment to execute inline/CDN scripts.
+      var range = document.createRange();
+      range.selectNode(outEl);
+      outEl.appendChild(range.createContextualFragment(html));
     }
     // Notify parent of new size after a short delay (matplotlib canvas may
     // need a frame to render).
