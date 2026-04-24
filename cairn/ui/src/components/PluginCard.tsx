@@ -71,7 +71,7 @@ function buildJsIframeSrcdoc(pluginSource: string): string {
   return `<!DOCTYPE html>
 <html><head>
 <style>
-  body { margin: 0; overflow: hidden; background: transparent; color: #c9d1d9; font-family: system-ui; }
+  body { margin: 0; background: transparent; color: #c9d1d9; font-family: system-ui; }
   canvas { display: block; }
 </style>
 </head><body>
@@ -344,7 +344,7 @@ export default function PluginCard({
           ) : (
             <iframe
               ref={iframeRef}
-              sandbox="allow-scripts"
+              sandbox={lang === "py" ? "allow-scripts allow-same-origin" : "allow-scripts"}
               className="flex-1 w-full rounded border-0"
               style={{ height: settings.height ? undefined : iframeHeight, minHeight: 100 }}
               title={`Plugin: ${pluginMeta.plugin_name ?? metric.name}`}
