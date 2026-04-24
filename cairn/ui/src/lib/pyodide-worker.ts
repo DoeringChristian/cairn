@@ -50,6 +50,10 @@ self.onmessage = async (e) => {
           installedPackages.add(pkg);
         }
       }
+      // Force Agg backend for matplotlib (no DOM in Web Worker).
+      if (reqs.some(r => r === "matplotlib")) {
+        py.runPython("import matplotlib; matplotlib.use('agg')");
+      }
       // Load the plugin source
       py.runPython(msg.source);
       // Call render() with the data
