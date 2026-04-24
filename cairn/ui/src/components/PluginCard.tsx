@@ -243,6 +243,11 @@ export default function PluginCard({
   // Track the current srcdoc to avoid rebuilding the iframe on every step.
   const activeSrcdocHash = useRef<string>("");
 
+  // Cleanup blob URLs on unmount.
+  useEffect(() => {
+    return () => { if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current); };
+  }, []);
+
   // Listen for resize messages from the iframe.
   useEffect(() => {
     const handler = (e: MessageEvent) => {
@@ -256,6 +261,9 @@ export default function PluginCard({
 
   const lang = pluginMeta.plugin_lang ?? "js";
 
+  // Track blob URLs so we can revoke them on cleanup.
+  const blobUrlRef = useRef<string>("");
+
   // Build or update the iframe when plugin source changes.
   const setupIframe = useCallback(async () => {
     if (!pluginMeta.plugin_hash) return;
@@ -266,14 +274,26 @@ export default function PluginCard({
       const iframe = iframeRef.current;
       if (!iframe) return;
 
-      // Only rebuild srcdoc when plugin hash changes (not on every step).
+      // Only rebuild when plugin hash changes (not on every step).
       const hashKey = `${pluginMeta.plugin_hash}:${lang}`;
       if (activeSrcdocHash.current !== hashKey) {
         activeSrcdocHash.current = hashKey;
         setIframeReady(false);
-        iframe.srcdoc = lang === "js"
-          ? buildJsIframeSrcdoc(source)
-          : buildPyIframeSrcdoc(source);
+
+        if (lang === "js") {
+          iframe.removeAttribute("src");
+          iframe.srcdoc = buildJsIframeSrcdoc(source);
+        } else {
+          // Python: use a blob URL (not srcdoc) so the iframe can fetch
+          // CDN scripts (Pyodide, Plotly) without allow-same-origin.
+          iframe.removeAttribute("srcdoc");
+          if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
+          const html = buildPyIframeSrcdoc(source);
+          const blob = new Blob([html], { type: "text/html" });
+          const url = URL.createObjectURL(blob);
+          blobUrlRef.current = url;
+          iframe.src = url;
+        }
         await new Promise<void>((resolve) => { iframe.onload = () => resolve(); });
         setIframeReady(true);
       }
@@ -353,7 +373,7 @@ export default function PluginCard({
           ) : (
             <iframe
               ref={iframeRef}
-              sandbox={lang === "py" ? "allow-scripts allow-same-origin" : "allow-scripts"}
+              {...(lang === "js" ? { sandbox: "allow-scripts" } : {})}
               className="flex-1 w-full rounded border-0"
               style={{ height: iframeHeight, minHeight: 200 }}
               title={`Plugin: ${pluginMeta.plugin_name ?? metric.name}`}
