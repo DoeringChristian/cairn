@@ -23,6 +23,8 @@ def render(data, metadata, step, run_id, metric_name):
     Y = np.arange(rows)
     X, Y = np.meshgrid(X, Y)
 
+    import matplotlib
+    matplotlib.use("webagg")
     import matplotlib.pyplot as plt
 
     plt.close("all")
