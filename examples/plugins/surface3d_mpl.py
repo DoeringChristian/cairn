@@ -2,14 +2,14 @@
 """
 Cairn Python plugin: Interactive 3D surface using matplotlib + webagg.
 
-Pyodide v0.28+ ships a patched webagg backend that renders interactive
-matplotlib figures directly in the browser (orbit, zoom, pan).
-No matplotlib_pyodide needed — just use the default backend.
+The Cairn plugin iframe automatically sets matplotlib.use('webagg')
+before running the plugin, so plt.show() renders an interactive figure.
 """
 
 
 def render(data, metadata, step, run_id, metric_name):
     import numpy as np
+    import matplotlib.pyplot as plt
 
     rows = metadata.get("rows", 1) if isinstance(metadata, dict) else 1
     cols = metadata.get("cols", 1) if isinstance(metadata, dict) else 1
@@ -22,10 +22,6 @@ def render(data, metadata, step, run_id, metric_name):
     X = np.arange(cols)
     Y = np.arange(rows)
     X, Y = np.meshgrid(X, Y)
-
-    import matplotlib
-    matplotlib.use("webagg")
-    import matplotlib.pyplot as plt
 
     plt.close("all")
     fig = plt.figure(figsize=(6, 4))

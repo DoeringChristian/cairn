@@ -43,7 +43,7 @@ interface PluginSettings {
 
 const DEFAULT_SETTINGS: PluginSettings = { version: 1 };
 
-const PYODIDE_CDN = "https://cdn.jsdelivr.net/pyodide/v0.28.0/full/";
+const PYODIDE_CDN = "https://cdn.jsdelivr.net/pyodide/v0.27.0/full/";
 
 // Module-level cache for fetched plugin sources (keyed by artifact hash).
 const sourceCache = new Map<string, string>();
@@ -134,6 +134,11 @@ async function initPyodide() {
     const reqs = parseRequires(PLUGIN_SOURCE);
     for (const pkg of reqs) {
       await micropip.install(pkg);
+    }
+    // Force webagg backend for matplotlib (the default in Pyodide v0.27+
+    // still tries matplotlib_pyodide which may fail to import).
+    if (reqs.some(r => r === "matplotlib")) {
+      pyodide.runPython("import matplotlib; matplotlib.use('webagg')");
     }
     status.textContent = "Running plugin...";
     pyodide.runPython(PLUGIN_SOURCE);
