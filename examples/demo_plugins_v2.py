@@ -25,6 +25,9 @@ sys.path.insert(0, str(Path(__file__).parent / "plugins"))
 from heatmap_cls import Heatmap
 from histogram_cls import Histogram
 from surface3d_cls import Surface3D
+from server_heatmap_cls import ServerHeatmap
+from server_3d_cls import Server3DScene
+from webgl_demo_cls import WebGLDemo
 
 
 def make_heatmap(rows: int, cols: int, step: int) -> tuple[bytes, dict]:
@@ -75,6 +78,16 @@ def main():
         # Python 3D surface
         blob, meta = make_surface(20, 20, step)
         run.track(Surface3D(blob, **meta), name="landscape.loss_surface", step=step)
+
+        # Python WebGL — rotating triangle from Python
+        run.track(WebGLDemo(b"", step=step), name="webgl.triangle", step=step)
+
+        # Server-side heatmap (rendered with PIL on the server)
+        blob, meta = make_heatmap(6, 6, step)
+        run.track(ServerHeatmap(blob, **meta), name="server.heatmap", step=step)
+
+        # Server-side interactive 3D scene (drag to rotate)
+        run.track(Server3DScene(b""), name="server.3d_scene", step=step)
 
         # Regular scalar
         loss = 2.0 * math.exp(-step * 0.15) + 0.1

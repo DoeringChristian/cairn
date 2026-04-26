@@ -50,7 +50,3 @@ class Tensor(_TypeWrapper):
 
 class Text(_TypeWrapper):
     object_type = "text"
-
-
-class Plugin(_TypeWrapper):
-    object_type = "plugin"

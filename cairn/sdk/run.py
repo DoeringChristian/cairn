@@ -304,20 +304,6 @@ class Run:
             merged_kwargs["plugin_hash"] = pinfo["hash"]
             merged_kwargs["plugin_lang"] = pinfo["lang"]
             merged_kwargs["plugin_name"] = plugin_name
-        # Legacy: plugin= kwarg for backward compat with old API.
-        elif "plugin" in merged_kwargs:
-            plugin_name = merged_kwargs.pop("plugin")
-            if plugin_name not in self._plugins:
-                raise ValueError(
-                    f"Plugin '{plugin_name}' not registered."
-                )
-            pinfo = self._plugins[plugin_name]
-            merged_kwargs["plugin_hash"] = pinfo["hash"]
-            merged_kwargs["plugin_lang"] = pinfo["lang"]
-            merged_kwargs["plugin_name"] = plugin_name
-            if object_type != "plugin":
-                object_type = "plugin"
-                handler = self._registry.find_by_type("plugin")
 
         point: dict[str, Any] = {
             "name": name,
@@ -370,42 +356,6 @@ class Run:
             source_bytes, mime, {"plugin_name": cls.name, "plugin_lang": lang},
         )
         self._plugins[cls.name] = {"hash": digest, "lang": lang}
-
-    def register_plugin(
-        self,
-        name: str,
-        source: str | Path,
-        lang: str | None = None,
-    ) -> str:
-        """Register a viewer plugin (legacy file-based API).
-
-        Prefer using plugin classes (``JSPlugin``, ``PythonPlugin``,
-        ``ServerPlugin``) which auto-register on first ``track()`` call.
-        """
-        path = Path(source) if not isinstance(source, Path) else source
-        if path.is_file():
-            source_bytes = path.read_bytes()
-            if lang is None:
-                ext = path.suffix.lower()
-                if ext == ".js":
-                    lang = "js"
-                elif ext == ".py":
-                    lang = "py"
-        else:
-            source_bytes = str(source).encode("utf-8")
-
-        if lang is None:
-            raise ValueError(
-                "Cannot detect plugin language. Pass lang='js' or lang='py', "
-                "or use a file path ending in .js or .py."
-            )
-
-        mime = "application/javascript" if lang == "js" else "text/x-python"
-        digest = self._transport.upload_artifact(
-            source_bytes, mime, {"plugin_name": name, "plugin_lang": lang},
-        )
-        self._plugins[name] = {"hash": digest, "lang": lang}
-        return digest
 
     def log_artifact(self, value: Any, name: str, step: int | None = None) -> str:
         """Log a one-off artifact attached to the run (not a sequence point)."""

@@ -27,7 +27,7 @@ interface Props {
 
 interface PluginMeta {
   plugin_hash?: string;
-  plugin_lang?: "js" | "py";
+  plugin_lang?: "js" | "py" | "server";
   plugin_name?: string;
   [key: string]: unknown;
 }
@@ -325,11 +325,76 @@ export default function PluginCard({
 
   const lang = pluginMeta.plugin_lang ?? "js";
 
+  // --- Server plugin state ---
+  const wsRef = useRef<WebSocket | null>(null);
+  const [serverFrameUrl, setServerFrameUrl] = useState<string | null>(null);
+
+  // Server plugin: WebSocket connection + render.
+  useEffect(() => {
+    if (lang !== "server" || !current?.artifact_hash || !pluginMeta.plugin_hash) return;
+
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const wsUrl = `${protocol}//${window.location.host}/ws/plugin/${runId}/${encodeURIComponent(metric.name)}`;
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
+
+    ws.onopen = () => {
+      ws.send(JSON.stringify({
+        type: "render",
+        artifact_hash: current.artifact_hash,
+        metadata: pluginMeta,
+        step: currentStep,
+      }));
+    };
+
+    let pendingMime = "";
+    ws.onmessage = (e) => {
+      if (typeof e.data === "string") {
+        const msg = JSON.parse(e.data);
+        if (msg.type === "frame") {
+          pendingMime = msg.mime || "image/png";
+        } else if (msg.type === "error") {
+          setError(msg.message);
+        }
+      } else if (e.data instanceof Blob) {
+        // Binary frame data.
+        const blob = new Blob([e.data], { type: pendingMime });
+        const url = URL.createObjectURL(blob);
+        setServerFrameUrl((prev) => {
+          if (prev) URL.revokeObjectURL(prev);
+          return url;
+        });
+      }
+    };
+
+    ws.onerror = () => setError("WebSocket connection failed");
+
+    return () => {
+      ws.close();
+      wsRef.current = null;
+    };
+  }, [lang, current, pluginMeta, currentStep, runId, metric.name]);
+
+  // Forward mouse events to server plugin.
+  const sendMouseEvent = useCallback((action: string, e: React.MouseEvent) => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const rect = (e.target as HTMLElement).getBoundingClientRect();
+    ws.send(JSON.stringify({
+      type: "mouse",
+      x: Math.round(e.clientX - rect.left),
+      y: Math.round(e.clientY - rect.top),
+      button: e.button,
+      action,
+    }));
+  }, []);
+
   // Track blob URLs so we can revoke them on cleanup.
   const blobUrlRef = useRef<string>("");
 
-  // Build or update the iframe when plugin source changes.
+  // Build or update the iframe when plugin source changes (JS/Python only).
   const setupIframe = useCallback(async () => {
+    if (lang === "server") return;  // server plugins use WebSocket, not iframe
     if (!pluginMeta.plugin_hash) return;
     setError(null);
 
@@ -420,7 +485,7 @@ export default function PluginCard({
         onRemove={onRemove}
       >
         <span className="inline-flex items-center rounded bg-bg-hover px-1.5 py-0.5 text-[10px] text-fg-muted">
-          {lang === "py" ? "Python" : "JS"}
+          {lang === "server" ? "Server" : lang === "py" ? "Python" : "JS"}
         </span>
       </CardHeader>
 
@@ -434,6 +499,25 @@ export default function PluginCard({
             <div className="flex-1 flex items-center justify-center text-sm text-fg-muted">
               No plugin metadata found
             </div>
+          ) : lang === "server" ? (
+            serverFrameUrl ? (
+              <img
+                src={serverFrameUrl}
+                alt={`Server plugin: ${pluginMeta.plugin_name ?? metric.name}`}
+                className="flex-1 w-full rounded object-contain cursor-grab active:cursor-grabbing"
+                style={{ minHeight: 200, userSelect: "none" }}
+                draggable={false}
+                onMouseDown={(e) => { e.preventDefault(); sendMouseEvent("down", e); }}
+                onMouseMove={(e) => sendMouseEvent("move", e)}
+                onMouseUp={(e) => sendMouseEvent("up", e)}
+                onMouseLeave={(e) => sendMouseEvent("up", e)}
+              />
+            ) : (
+              <div className="flex-1 flex items-center justify-center">
+                <div className="h-8 w-8 motion-safe:animate-spin rounded-full border-2 border-accent border-t-transparent" />
+                <span className="ml-2 text-xs text-fg-muted">Connecting to server...</span>
+              </div>
+            )
           ) : (
             <iframe
               ref={iframeRef}

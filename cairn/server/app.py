@@ -27,6 +27,7 @@ from .routes import (
     health,
     ingest,
     logs,
+    plugin_ws,
     projects,
     runs,
     sequences,
@@ -113,6 +114,7 @@ def create_app(
         logs.router,
         source.router,
         compare.router,
+        plugin_ws.router,
     ):
         app.include_router(router)
 

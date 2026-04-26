@@ -136,14 +136,24 @@ class ServerPlugin(_PluginBase):
             f"ServerPlugin '{self.name}' must implement render()."
         )
 
+    def request_rerender(self) -> None:
+        """Call from ``on_mouse()`` / ``on_key()`` to trigger a re-render.
+
+        After the event handler returns, the server will call ``render()``
+        again with the last data/metadata/step and stream the new frame.
+        """
+        self._needs_rerender = True
+
     def on_mouse(self, event: dict[str, Any]) -> None:
         """Handle a mouse event from the client.
 
         ``event`` keys: ``x``, ``y``, ``button``, ``action`` (move/down/up).
+        Call ``self.request_rerender()`` to trigger a new frame.
         """
 
     def on_key(self, event: dict[str, Any]) -> None:
         """Handle a keyboard event from the client.
 
         ``event`` keys: ``key``, ``action`` (down/up).
+        Call ``self.request_rerender()`` to trigger a new frame.
         """
