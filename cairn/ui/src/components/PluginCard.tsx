@@ -140,6 +140,37 @@ async function initPyodide() {
     if (reqs.some(r => r === "matplotlib")) {
       pyodide.runPython("import matplotlib; matplotlib.use('webagg')");
     }
+    // Define stub base classes so plugin source that imports from cairn works.
+    pyodide.runPython(\`
+class _TypeWrapper:
+    object_type = ""
+    def __init__(self, obj=None, **kwargs):
+        self.obj = obj
+        self.kwargs = kwargs
+
+class _PluginBase(_TypeWrapper):
+    object_type = "plugin"
+    name = ""
+
+class JSPlugin(_PluginBase): pass
+class PythonPlugin(_PluginBase):
+    requires = []
+    def render(self, data, metadata, step): raise NotImplementedError
+class ServerPlugin(_PluginBase):
+    def render(self, data, metadata, step): raise NotImplementedError
+    def on_mouse(self, event): pass
+    def on_key(self, event): pass
+
+# Make stubs importable as if from cairn
+import types as _t
+cairn = _t.ModuleType("cairn")
+cairn.JSPlugin = JSPlugin
+cairn.PythonPlugin = PythonPlugin
+cairn.ServerPlugin = ServerPlugin
+cairn._PluginBase = _PluginBase
+import sys as _sys
+_sys.modules["cairn"] = cairn
+\`);
     status.textContent = "Running plugin...";
     pyodide.runPython(PLUGIN_SOURCE);
     status.style.display = "none";
@@ -154,19 +185,47 @@ function handleRender(msg) {
   if (!pyodide) { pendingMsg = msg; return; }
   try {
     document.getElementById("output").innerHTML = "";
-    const renderFn = pyodide.globals.get("render");
-    if (!renderFn) {
-      document.getElementById("output").innerHTML = '<pre style="color:#f85149">Plugin has no render() function</pre>';
-      return;
-    }
     const dataBytes = new Uint8Array(msg.data);
-    const result = renderFn(
-      pyodide.toPy(dataBytes),
-      pyodide.toPy(msg.metadata),
-      msg.step,
-      msg.runId,
-      msg.metricName,
-    );
+    var result;
+
+    // Try class-based plugin first (look for a class with a render method).
+    // Find plugin class: look for a PythonPlugin subclass in globals.
+    var cls = null;
+    try {
+      cls = pyodide.runPython(\`
+_found = None
+for _name, _obj in list(globals().items()):
+    if isinstance(_obj, type) and issubclass(_obj, PythonPlugin) and _obj is not PythonPlugin:
+        _found = _obj
+        break
+_found
+\`);
+    } catch(e) { /* ignore */ }
+
+    // Class-based: instantiate and call render().
+    if (cls) {
+      try {
+        var instance = cls.__call__();
+        result = instance.render(pyodide.toPy(dataBytes), pyodide.toPy(msg.metadata), msg.step);
+      } catch(e) {
+        cls = null;
+      }
+    }
+    // Legacy: bare render() function.
+    if (!cls) {
+      var renderFn = pyodide.globals.get("render");
+      if (!renderFn) {
+        document.getElementById("output").innerHTML = '<pre style="color:#f85149">Plugin has no render() function or class</pre>';
+        return;
+      }
+      result = renderFn(
+        pyodide.toPy(dataBytes),
+        pyodide.toPy(msg.metadata),
+        msg.step,
+        msg.runId,
+        msg.metricName,
+      );
+    }
     // If render() returns a string, inject as HTML with script execution.
     const html = (typeof result === "string") ? result :
                  (result && result.toString && result.toString() !== "None") ? result.toString() : null;

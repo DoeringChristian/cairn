@@ -9,6 +9,11 @@ from .config import configure  # noqa: E402
 from .sdk import handlers  # noqa: E402, F401  - registers built-in handlers
 from .sdk.handlers.registry import register_handler  # noqa: E402
 from .sdk.run import Run  # noqa: E402
+from .sdk.plugins import (  # noqa: E402
+    JSPlugin,
+    PythonPlugin,
+    ServerPlugin,
+)
 from .sdk.wrappers import (  # noqa: E402
     Audio,
     Figure,
@@ -33,4 +38,7 @@ __all__ = [
     "Tensor",
     "Text",
     "Plugin",
+    "JSPlugin",
+    "PythonPlugin",
+    "ServerPlugin",
 ]

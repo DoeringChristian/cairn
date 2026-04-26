@@ -12,6 +12,7 @@ instance per experimental execution; lifecycle:
 from __future__ import annotations
 
 import atexit
+import inspect
 import logging
 import threading
 from datetime import datetime, timezone
@@ -26,6 +27,7 @@ from ..sdk.capture.git import capture_git
 from ..sdk.capture.source import build_source_archive, find_project_root
 from ..sdk.capture.system import SystemMetricsCollector
 from ..sdk.handlers.registry import HandlerRegistry, default_registry
+from ..sdk.plugins import JSPlugin, PythonPlugin, ServerPlugin, _PluginBase
 from ..sdk.wrappers import _TypeWrapper
 from .buffer import MetricBuffer
 from .local import LocalTransport, _RepoServedByOtherError
@@ -292,19 +294,27 @@ class Run:
         effective_step = self._next_step(name, context, step)
         merged_kwargs = {**wrapper_kwargs, **kwargs}
 
-        # Inject plugin metadata when plugin= is specified.
-        plugin_name = merged_kwargs.pop("plugin", None)
-        if plugin_name is not None:
+        # Auto-register and inject metadata for plugin classes.
+        if isinstance(value, _PluginBase):
+            plugin_cls = type(value)
+            plugin_name = plugin_cls.name
+            if plugin_name not in self._plugins:
+                self._auto_register_plugin(plugin_cls)
+            pinfo = self._plugins[plugin_name]
+            merged_kwargs["plugin_hash"] = pinfo["hash"]
+            merged_kwargs["plugin_lang"] = pinfo["lang"]
+            merged_kwargs["plugin_name"] = plugin_name
+        # Legacy: plugin= kwarg for backward compat with old API.
+        elif "plugin" in merged_kwargs:
+            plugin_name = merged_kwargs.pop("plugin")
             if plugin_name not in self._plugins:
                 raise ValueError(
-                    f"Plugin '{plugin_name}' not registered. "
-                    "Call run.register_plugin() first."
+                    f"Plugin '{plugin_name}' not registered."
                 )
             pinfo = self._plugins[plugin_name]
             merged_kwargs["plugin_hash"] = pinfo["hash"]
             merged_kwargs["plugin_lang"] = pinfo["lang"]
             merged_kwargs["plugin_name"] = plugin_name
-            # Force plugin object_type if not already set by wrapper.
             if object_type != "plugin":
                 object_type = "plugin"
                 handler = self._registry.find_by_type("plugin")
@@ -333,17 +343,44 @@ class Run:
 
         self._metric_buffer.append(point)
 
+    def _auto_register_plugin(self, cls: type[_PluginBase]) -> None:
+        """Upload plugin source and cache its hash. Called on first track()."""
+        if issubclass(cls, JSPlugin):
+            # JS plugins: use the js class attribute or js_file.
+            instance = cls.__new__(cls)
+            source = instance.get_source()
+            lang, mime = "js", "application/javascript"
+        elif issubclass(cls, ServerPlugin):
+            source = inspect.getsource(cls)
+            lang, mime = "server", "text/x-python"
+        elif issubclass(cls, PythonPlugin):
+            source = inspect.getsource(cls)
+            # Prepend a # cairn-requires comment for the iframe to parse.
+            reqs = getattr(cls, "requires", [])
+            if reqs:
+                req_line = f"# cairn-requires: {', '.join(reqs)}\n"
+                if "cairn-requires" not in source:
+                    source = req_line + source
+            lang, mime = "py", "text/x-python"
+        else:
+            raise TypeError(f"Unknown plugin type: {cls}")
+
+        source_bytes = source.encode("utf-8")
+        digest = self._transport.upload_artifact(
+            source_bytes, mime, {"plugin_name": cls.name, "plugin_lang": lang},
+        )
+        self._plugins[cls.name] = {"hash": digest, "lang": lang}
+
     def register_plugin(
         self,
         name: str,
         source: str | Path,
         lang: str | None = None,
     ) -> str:
-        """Register a viewer plugin. Returns the artifact hash of the source.
+        """Register a viewer plugin (legacy file-based API).
 
-        ``source`` is a path to a ``.js`` or ``.py`` file, or an inline
-        source string. ``lang`` is auto-detected from the file extension
-        if not provided.
+        Prefer using plugin classes (``JSPlugin``, ``PythonPlugin``,
+        ``ServerPlugin``) which auto-register on first ``track()`` call.
         """
         path = Path(source) if not isinstance(source, Path) else source
         if path.is_file():
@@ -355,7 +392,6 @@ class Run:
                 elif ext == ".py":
                     lang = "py"
         else:
-            # Treat as inline source string.
             source_bytes = str(source).encode("utf-8")
 
         if lang is None:
