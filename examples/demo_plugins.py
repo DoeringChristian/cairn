@@ -13,6 +13,7 @@ Auto-registers on first track() call.
 from __future__ import annotations
 
 import math
+import shutil
 import struct
 from pathlib import Path
 
@@ -28,6 +29,11 @@ from surface3d_cls import Surface3D
 from server_heatmap_cls import ServerHeatmap
 from server_3d_cls import Server3DScene
 from webgl_demo_cls import WebGLDemo
+
+# WindowPlugin: only available if Xvfb + glxgears are installed.
+HAS_GLXGEARS = shutil.which("glxgears") is not None and shutil.which("Xvfb") is not None
+if HAS_GLXGEARS:
+    from window_glxgears_cls import GlxgearsViewer
 
 
 def make_heatmap(rows: int, cols: int, step: int) -> tuple[bytes, dict]:
@@ -88,6 +94,10 @@ def main():
 
         # Server-side interactive 3D scene (drag to rotate)
         run.track(Server3DScene(b""), name="server.3d_scene", step=step)
+
+        # Window plugin: stream glxgears from Xvfb (if available)
+        if HAS_GLXGEARS and step == 0:  # only track once — it's a live window
+            run.track(GlxgearsViewer(b""), name="window.glxgears", step=0)
 
         # Regular scalar
         loss = 2.0 * math.exp(-step * 0.15) + 0.1

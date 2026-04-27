@@ -13,6 +13,7 @@ from .sdk.plugins import (  # noqa: E402
     JSPlugin,
     PythonPlugin,
     ServerPlugin,
+    WindowPlugin,
 )
 from .sdk.wrappers import (  # noqa: E402
     Audio,
@@ -39,4 +40,5 @@ __all__ = [
     "JSPlugin",
     "PythonPlugin",
     "ServerPlugin",
+    "WindowPlugin",
 ]

@@ -27,7 +27,7 @@ interface Props {
 
 interface PluginMeta {
   plugin_hash?: string;
-  plugin_lang?: "js" | "py" | "server";
+  plugin_lang?: "js" | "py" | "server" | "window";
   plugin_name?: string;
   [key: string]: unknown;
 }
@@ -331,7 +331,7 @@ export default function PluginCard({
 
   // Server plugin: WebSocket connection + render.
   useEffect(() => {
-    if (lang !== "server" || !current?.artifact_hash || !pluginMeta.plugin_hash) return;
+    if ((lang !== "server" && lang !== "window") || !current?.artifact_hash || !pluginMeta.plugin_hash) return;
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.host}/ws/plugin/${runId}/${encodeURIComponent(metric.name)}`;
@@ -394,7 +394,7 @@ export default function PluginCard({
 
   // Build or update the iframe when plugin source changes (JS/Python only).
   const setupIframe = useCallback(async () => {
-    if (lang === "server") return;  // server plugins use WebSocket, not iframe
+    if (lang === "server" || lang === "window") return;  // server/window plugins use WebSocket, not iframe
     if (!pluginMeta.plugin_hash) return;
     setError(null);
 
@@ -485,7 +485,7 @@ export default function PluginCard({
         onRemove={onRemove}
       >
         <span className="inline-flex items-center rounded bg-bg-hover px-1.5 py-0.5 text-[10px] text-fg-muted">
-          {lang === "server" ? "Server" : lang === "py" ? "Python" : "JS"}
+          {lang === "window" ? "Window" : lang === "server" ? "Server" : lang === "py" ? "Python" : "JS"}
         </span>
       </CardHeader>
 
@@ -499,7 +499,7 @@ export default function PluginCard({
             <div className="flex-1 flex items-center justify-center text-sm text-fg-muted">
               No plugin metadata found
             </div>
-          ) : lang === "server" ? (
+          ) : (lang === "server" || lang === "window") ? (
             serverFrameUrl ? (
               <img
                 src={serverFrameUrl}

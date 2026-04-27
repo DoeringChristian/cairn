@@ -1,6 +1,6 @@
 """Plugin base classes for custom viewer plugins.
 
-Three plugin types are supported:
+Four plugin types are supported:
 
 - **JSPlugin** — JavaScript code runs in a sandboxed iframe in the browser.
   The user sets the ``js`` class attribute with inline source code.
@@ -13,7 +13,12 @@ Three plugin types are supported:
   returns PNG/JPEG bytes which are streamed to the client via WebSocket.
   ``on_mouse()`` / ``on_key()`` handle input from the client.
 
-All three inherit from ``_TypeWrapper`` so they work like ``cairn.Image``::
+- **WindowPlugin** — Launches a GUI application on the server inside a
+  virtual display (Xvfb). The window is captured and streamed to the
+  client. Works on both X11 and Wayland hosts. Mouse/keyboard events
+  are forwarded to the virtual display via xdotool.
+
+All four inherit from ``_TypeWrapper`` so they work like ``cairn.Image``::
 
     class MyVis(JSPlugin):
         name = "my_vis"
@@ -48,6 +53,7 @@ class _PluginBase(_TypeWrapper):
             "JSPlugin",
             "PythonPlugin",
             "ServerPlugin",
+            "WindowPlugin",
         ):
             raise TypeError(
                 f"Plugin class {cls.__name__} must set a 'name' class attribute."
@@ -157,3 +163,57 @@ class ServerPlugin(_PluginBase):
         ``event`` keys: ``key``, ``action`` (down/up).
         Call ``self.request_rerender()`` to trigger a new frame.
         """
+
+
+class WindowPlugin(_PluginBase):
+    """Captures a GUI application running in a virtual display.
+
+    Override ``launch()`` to start your application. It runs inside Xvfb
+    (a virtual X server), so it works on both X11 and Wayland hosts —
+    no physical display required.
+
+    The window is screenshotted and streamed to the client. Mouse and
+    keyboard events from the browser are forwarded to the virtual display
+    via ``xdotool``.
+
+    Requires system packages: ``xvfb``, ``xdotool``, and optionally
+    ``x11-utils`` (for ``xdpyinfo``).
+
+    Example::
+
+        class PolyscopeViewer(WindowPlugin):
+            name = "polyscope"
+            width = 800
+            height = 600
+
+            def launch(self, data, metadata, step):
+                import subprocess
+                # Launch your app — DISPLAY is already set to the virtual display.
+                return subprocess.Popen(["python", "my_polyscope_script.py"])
+    """
+
+    width: int = 800
+    height: int = 600
+    depth: int = 24
+    fps: int = 15
+
+    def launch(
+        self, data: bytes, metadata: dict[str, Any], step: int,
+    ) -> Any:
+        """Start the GUI application. Return a ``subprocess.Popen`` object.
+
+        The ``DISPLAY`` environment variable is already set to the virtual
+        Xvfb display. Just launch your process normally.
+
+        Args:
+            data: Raw bytes of the tracked artifact.
+            metadata: Dict of custom metadata.
+            step: The current step number.
+
+        Returns:
+            A ``subprocess.Popen`` instance (or any object with a ``kill()``
+            method for cleanup).
+        """
+        raise NotImplementedError(
+            f"WindowPlugin '{self.name}' must implement launch()."
+        )

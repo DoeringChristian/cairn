@@ -27,7 +27,7 @@ from ..sdk.capture.git import capture_git
 from ..sdk.capture.source import build_source_archive, find_project_root
 from ..sdk.capture.system import SystemMetricsCollector
 from ..sdk.handlers.registry import HandlerRegistry, default_registry
-from ..sdk.plugins import JSPlugin, PythonPlugin, ServerPlugin, _PluginBase
+from ..sdk.plugins import JSPlugin, PythonPlugin, ServerPlugin, WindowPlugin, _PluginBase
 from ..sdk.wrappers import _TypeWrapper
 from .buffer import MetricBuffer
 from .local import LocalTransport, _RepoServedByOtherError
@@ -336,6 +336,9 @@ class Run:
             instance = cls.__new__(cls)
             source = instance.get_source()
             lang, mime = "js", "application/javascript"
+        elif issubclass(cls, WindowPlugin):
+            source = inspect.getsource(cls)
+            lang, mime = "window", "text/x-python"
         elif issubclass(cls, ServerPlugin):
             source = inspect.getsource(cls)
             lang, mime = "server", "text/x-python"
