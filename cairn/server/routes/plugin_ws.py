@@ -80,9 +80,17 @@ def _reconstruct_plugin_class(source: str) -> Any:
 
     import sys
     old_cairn = sys.modules.get("cairn")
+    old_sdk_plugins = sys.modules.get("cairn.sdk.plugins")
     sys.modules["cairn"] = stub_mod
+    sys.modules["cairn.sdk.plugins"] = stub_mod
     try:
         mod = types.ModuleType("_plugin_mod")
+        # Inject stub names directly so `from cairn import X` works
+        # even if the import system has caching issues.
+        mod.__dict__.update({
+            k: v for k, v in stub_mod.__dict__.items()
+            if not k.startswith("_") or k in ("_PluginBase", "_TypeWrapper")
+        })
         exec(source, mod.__dict__)  # noqa: S102
         # Find a ServerPlugin or WindowPlugin subclass.
         base_classes = (stub_mod.ServerPlugin, stub_mod.WindowPlugin)  # type: ignore[attr-defined]
@@ -99,6 +107,10 @@ def _reconstruct_plugin_class(source: str) -> Any:
             sys.modules["cairn"] = old_cairn
         else:
             sys.modules.pop("cairn", None)
+        if old_sdk_plugins is not None:
+            sys.modules["cairn.sdk.plugins"] = old_sdk_plugins
+        else:
+            sys.modules.pop("cairn.sdk.plugins", None)
     return None
 
 
