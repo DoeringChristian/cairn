@@ -2,7 +2,7 @@
 
 Demonstrates accessing WebGL2 directly from Python code running in the
 browser. The render() method creates a canvas, gets a WebGL2 context,
-and draws a rotating colored triangle.
+and draws a rotating colored triangle using GLSL shaders.
 """
 
 from cairn import PythonPlugin
@@ -15,9 +15,9 @@ class WebGLDemo(PythonPlugin):
     requires = ["numpy"]
 
     def render(self, data, metadata, step):
-        from js import document
+        from js import document, Uint8Array
+        from pyodide.ffi import to_js
         import numpy as np
-        import struct
 
         # Clear previous content.
         output = document.getElementById("output")
@@ -60,44 +60,52 @@ class WebGLDemo(PythonPlugin):
         """
 
         # Compile shaders.
-        def compile_shader(gl, src, shader_type):
+        def compile_shader(src, shader_type):
             shader = gl.createShader(shader_type)
             gl.shaderSource(shader, src)
             gl.compileShader(shader)
+            if not gl.getShaderParameter(shader, gl.COMPILE_STATUS):
+                err = gl.getShaderInfoLog(shader)
+                raise RuntimeError(f"Shader compile error: {err}")
             return shader
 
-        vs = compile_shader(gl, vs_src, gl.VERTEX_SHADER)
-        fs = compile_shader(gl, fs_src, gl.FRAGMENT_SHADER)
+        vs = compile_shader(vs_src, gl.VERTEX_SHADER)
+        fs = compile_shader(fs_src, gl.FRAGMENT_SHADER)
 
         prog = gl.createProgram()
         gl.attachShader(prog, vs)
         gl.attachShader(prog, fs)
         gl.linkProgram(prog)
+        if not gl.getProgramParameter(prog, gl.LINK_STATUS):
+            err = gl.getProgramInfoLog(prog)
+            raise RuntimeError(f"Program link error: {err}")
         gl.useProgram(prog)
 
         # Triangle vertices: position (x,y) + color (r,g,b).
-        # Use step to vary the colors.
         t = step * 0.1
         verts = np.array([
-            0.0,  0.6,  0.0 + t % 1, 0.6, 0.85,  # top
-           -0.5, -0.4,  0.85, 0.0 + t % 1, 0.6,   # bottom-left
-            0.5, -0.4,  0.6, 0.85, 0.0 + t % 1,    # bottom-right
+            0.0,  0.6,  (t % 1), 0.6, 0.85,      # top
+           -0.5, -0.4,  0.85, (t % 1), 0.6,       # bottom-left
+            0.5, -0.4,  0.6, 0.85, (t % 1),        # bottom-right
         ], dtype=np.float32)
 
-        from js import Float32Array
-        js_verts = Float32Array.new(verts.tobytes())
+        # Convert numpy array to JS Float32Array via bytes.
+        verts_bytes = verts.tobytes()
+        js_array = to_js(verts_bytes)
 
         buf = gl.createBuffer()
         gl.bindBuffer(gl.ARRAY_BUFFER, buf)
-        gl.bufferData(gl.ARRAY_BUFFER, js_verts, gl.STATIC_DRAW)
+        gl.bufferData(gl.ARRAY_BUFFER, js_array, gl.STATIC_DRAW)
+
+        stride = 5 * 4  # 5 floats * 4 bytes
 
         a_pos = gl.getAttribLocation(prog, "a_pos")
         gl.enableVertexAttribArray(a_pos)
-        gl.vertexAttribPointer(a_pos, 2, gl.FLOAT, False, 20, 0)
+        gl.vertexAttribPointer(a_pos, 2, gl.FLOAT, False, stride, 0)
 
         a_color = gl.getAttribLocation(prog, "a_color")
         gl.enableVertexAttribArray(a_color)
-        gl.vertexAttribPointer(a_color, 3, gl.FLOAT, False, 20, 8)
+        gl.vertexAttribPointer(a_color, 3, gl.FLOAT, False, stride, 2 * 4)
 
         # Rotation angle from step.
         angle = step * 0.3
@@ -106,12 +114,12 @@ class WebGLDemo(PythonPlugin):
 
         # Draw.
         gl.viewport(0, 0, 400, 400)
-        gl.clearColor(0.086, 0.106, 0.133, 1.0)  # #161b22
+        gl.clearColor(0.086, 0.106, 0.133, 1.0)
         gl.clear(gl.COLOR_BUFFER_BIT)
         gl.drawArrays(gl.TRIANGLES, 0, 3)
 
         # Add label.
         label = document.createElement("div")
         label.style.cssText = "color:#8b949e;font-size:11px;text-align:center;margin-top:4px;"
-        label.textContent = f"WebGL2 from Python — step {step}, angle={angle:.1f}rad"
+        label.textContent = f"WebGL2 from Python \u2014 step {step}, angle={angle:.1f}rad"
         target.appendChild(label)
