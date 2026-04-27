@@ -151,7 +151,11 @@ class Server3DScene(ServerPlugin):
         import struct as _struct
 
         self._moderngl = moderngl
-        self._ctx = moderngl.create_standalone_context(backend="egl")
+        # Try EGL first (Linux GPU), fall back to default (osmesa/auto).
+        try:
+            self._ctx = moderngl.create_standalone_context(backend="egl")
+        except Exception:
+            self._ctx = moderngl.create_standalone_context()
         self._fbo = self._ctx.simple_framebuffer((width, height))
         self._prog = self._ctx.program(
             vertex_shader=VERTEX_SHADER,
