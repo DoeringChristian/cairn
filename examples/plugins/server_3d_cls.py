@@ -147,9 +147,10 @@ class Server3DScene(ServerPlugin):
         """Lazily create the OpenGL context and resources."""
         if self._ctx is not None:
             return
-        import moderngl
+        import moderngl  # noqa: F811
         import struct as _struct
 
+        self._moderngl = moderngl
         self._ctx = moderngl.create_standalone_context(backend="egl")
         self._fbo = self._ctx.simple_framebuffer((width, height))
         self._prog = self._ctx.program(
@@ -177,7 +178,7 @@ class Server3DScene(ServerPlugin):
 
         fbo.use()
         ctx.clear(0.086, 0.106, 0.133, 1.0)  # #161b22
-        ctx.enable(moderngl.DEPTH_TEST)
+        ctx.enable(self._moderngl.DEPTH_TEST)
 
         # Animate rotation based on step + interactive angles.
         ax = self.angle_x + step * 0.05
@@ -229,10 +230,3 @@ class Server3DScene(ServerPlugin):
             self.angle_x += dy * 0.01
             self._last_mouse = (x, y)
             self.request_rerender()
-
-
-# Need moderngl imported at module level for the DEPTH_TEST constant.
-try:
-    import moderngl
-except ImportError:
-    pass

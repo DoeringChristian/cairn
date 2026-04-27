@@ -15,8 +15,7 @@ class WebGLDemo(PythonPlugin):
     requires = ["numpy"]
 
     def render(self, data, metadata, step):
-        from js import document, Uint8Array
-        from pyodide.ffi import to_js
+        from js import document, Float32Array, ArrayBuffer
         import numpy as np
 
         # Clear previous content.
@@ -89,9 +88,12 @@ class WebGLDemo(PythonPlugin):
             0.5, -0.4,  0.6, 0.85, (t % 1),        # bottom-right
         ], dtype=np.float32)
 
-        # Convert numpy array to JS Float32Array via bytes.
-        verts_bytes = verts.tobytes()
-        js_array = to_js(verts_bytes)
+        # Convert numpy array to JS Float32Array.
+        # Create an ArrayBuffer from Python bytes, then wrap as Float32Array.
+        from pyodide.ffi import to_js
+        raw_bytes = verts.tobytes()
+        js_buffer = to_js(raw_bytes).buffer  # Uint8Array → ArrayBuffer
+        js_array = Float32Array.new(js_buffer)
 
         buf = gl.createBuffer()
         gl.bindBuffer(gl.ARRAY_BUFFER, buf)
