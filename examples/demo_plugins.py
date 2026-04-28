@@ -96,8 +96,11 @@ def main():
         run.track(Server3DScene(b""), name="server.3d_scene", step=step)
 
         # Window plugin: stream glxgears from Xvfb (if available)
-        if HAS_GLXGEARS and step == 0:  # only track once — it's a live window
+        if HAS_GLXGEARS and step == 0:
+            print("  [window] Tracking glxgears WindowPlugin")
             run.track(GlxgearsViewer(b""), name="window.glxgears", step=0)
+        elif step == 0 and not HAS_GLXGEARS:
+            print("  [window] Skipped glxgears (install: apt install xvfb mesa-utils xdotool imagemagick)")
 
         # Regular scalar
         loss = 2.0 * math.exp(-step * 0.15) + 0.1
