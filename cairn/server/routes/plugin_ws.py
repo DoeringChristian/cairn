@@ -367,6 +367,11 @@ async def plugin_ws(
                     plugin_data, _ = blobs.get(plugin_hash)
                     plugin_source = plugin_data.decode("utf-8")
                     data_bytes, _ = blobs.get(artifact_hash)
+                    # Strip the "cairn-plugin:...\n" dedup header.
+                    if data_bytes.startswith(b"cairn-plugin:"):
+                        nl = data_bytes.find(b"\n")
+                        if nl > 0:
+                            data_bytes = data_bytes[nl + 1:]
 
                     plugin_cls = _reconstruct_plugin_class(plugin_source)
                     if plugin_cls is None:

@@ -61,7 +61,21 @@ async function fetchPluginSource(hash: string): Promise<string> {
 async function fetchArtifactData(hash: string): Promise<ArrayBuffer> {
   const resp = await fetch(api.artifactUrl(hash));
   if (!resp.ok) throw new Error(`Failed to fetch artifact: ${resp.status}`);
-  return resp.arrayBuffer();
+  const buf = await resp.arrayBuffer();
+  // Strip the "cairn-plugin:...\n" header prepended by PluginHandler.
+  const bytes = new Uint8Array(buf);
+  const PREFIX = new TextEncoder().encode("cairn-plugin:");
+  if (bytes.length >= PREFIX.length) {
+    let match = true;
+    for (let i = 0; i < PREFIX.length; i++) {
+      if (bytes[i] !== PREFIX[i]) { match = false; break; }
+    }
+    if (match) {
+      const nl = bytes.indexOf(10); // newline
+      if (nl > 0) return buf.slice(nl + 1);
+    }
+  }
+  return buf;
 }
 
 // ---------------------------------------------------------------------------

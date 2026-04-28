@@ -10,9 +10,13 @@ class PluginHandler:
     """Handler for plugin-typed artifacts.
 
     Does not auto-dispatch (``can_handle`` always returns False). Only
-    triggered via the ``cairn.Plugin`` wrapper. The tracked value is
-    serialized as raw bytes; plugin metadata (hash, lang, name) is
-    injected by ``Run.track()`` and passed through ``kwargs``.
+    triggered via the ``cairn.Plugin`` wrapper or plugin class instances.
+    The tracked value is serialized as raw bytes; plugin metadata (hash,
+    lang, name) is injected by ``Run.track()`` and passed through kwargs.
+
+    A unique prefix is prepended to the blob so that different plugins
+    sharing the same data (e.g. ``b""``) get distinct artifact hashes
+    (avoiding content-addressed dedup collisions on metadata).
     """
 
     object_type = "plugin"
@@ -32,9 +36,16 @@ class PluginHandler:
             blob = json.dumps(obj).encode("utf-8")
 
         # Extract plugin-specific metadata; pass through everything else.
-        plugin_keys = {"plugin_hash", "plugin_lang", "plugin_name"}
         meta: dict[str, Any] = {}
         for k, v in kwargs.items():
-            if k in plugin_keys or k not in ("plugin",):
+            if k != "plugin":
                 meta[k] = v
+
+        # Prepend a header with plugin identity so different plugins
+        # sharing the same data bytes get unique artifact hashes.
+        plugin_name = meta.get("plugin_name", "")
+        plugin_hash = meta.get("plugin_hash", "")
+        header = f"cairn-plugin:{plugin_name}:{plugin_hash}\n".encode("utf-8")
+        blob = header + blob
+
         return blob, meta
