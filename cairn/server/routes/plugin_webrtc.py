@@ -69,10 +69,21 @@ class XvfbVideoTrack(VideoStreamTrack):
             rgb, w, h = self._xvfb.screenshot_raw()
             if rgb and w > 0 and h > 0:
                 arr = np.frombuffer(rgb, dtype=np.uint8).reshape(h, w, 3).copy()
-                if self._frame_count < 5:
-                    nonzero = np.count_nonzero(arr)
-                    print(f"[webrtc] mss capture: {w}x{h}, nonzero={nonzero}/{arr.size}", flush=True)
-                return arr
+                nonzero = np.count_nonzero(arr)
+            if self._frame_count < 5:
+                print(f"[webrtc] mss capture: {w}x{h}, nonzero={nonzero}/{arr.size}", flush=True)
+            if nonzero == 0 and self._frame_count > 10:
+                # Persistent black frames — app can't render on Xvfb.
+                try:
+                    from PIL import Image as _Img, ImageDraw as _Draw
+                    img = _Img.fromarray(arr)
+                    draw = _Draw.Draw(img)
+                    draw.text((10, 10), "App window is black - may need VirtualGL", fill=(255, 80, 80))
+                    draw.text((10, 30), "Install: apt install virtualgl", fill=(180, 180, 180))
+                    return np.array(img, dtype=np.uint8)
+                except Exception:
+                    pass
+            return arr
         except Exception as e:
             print(f"[webrtc] mss capture failed: {e}", flush=True)
 
