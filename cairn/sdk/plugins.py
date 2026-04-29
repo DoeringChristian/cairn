@@ -172,12 +172,15 @@ class WindowPlugin(_PluginBase):
     (a virtual X server), so it works on both X11 and Wayland hosts —
     no physical display required.
 
-    The window is screenshotted and streamed to the client. Mouse and
-    keyboard events from the browser are forwarded to the virtual display
-    via ``xdotool``.
+    Set ``gpu = True`` to use VirtualGL (``vglrun``) for hardware-
+    accelerated OpenGL rendering. Without it, OpenGL apps run with
+    software rendering (Mesa llvmpipe) which is slow and CPU-heavy.
 
-    Requires system packages: ``xvfb``, ``xdotool``, and optionally
-    ``x11-utils`` (for ``xdpyinfo``).
+    The window is screenshotted and streamed to the client. Mouse and
+    keyboard events from the browser are forwarded to the virtual display.
+
+    Requires system packages: ``xvfb``, and optionally ``virtualgl``
+    for GPU acceleration.
 
     Example::
 
@@ -185,16 +188,17 @@ class WindowPlugin(_PluginBase):
             name = "polyscope"
             width = 800
             height = 600
+            gpu = True  # use VirtualGL for GPU-accelerated OpenGL
 
             def launch(self, data, metadata, step):
                 import subprocess
-                # Launch your app — DISPLAY is already set to the virtual display.
                 return subprocess.Popen(["python", "my_polyscope_script.py"])
     """
 
     width: int = 800
     height: int = 600
     depth: int = 24
+    gpu: bool = False
     fps: int = 15
 
     def launch(

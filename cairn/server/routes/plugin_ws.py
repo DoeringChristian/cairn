@@ -420,9 +420,14 @@ async def plugin_ws(
                         xvfb_session = _XvfbSession(width, height, depth)
                         plugin_instance = plugin_cls()
 
-                        # Set DISPLAY in os.environ for the launch() call.
+                        # Set DISPLAY for the launch() call.
+                        # If gpu=True, also set VGL_DISPLAY for VirtualGL.
                         old_display = os.environ.get("DISPLAY")
                         os.environ["DISPLAY"] = xvfb_session.display
+                        use_gpu = getattr(plugin_cls, "gpu", False)
+                        if use_gpu and shutil.which("vglrun"):
+                            os.environ["VGL_DISPLAY"] = ":0"
+                            print(f"[plugin_ws] VirtualGL enabled (vglrun)", flush=True)
                         try:
                             xvfb_session.app_proc = plugin_instance.launch(
                                 data_bytes, metadata, step,
@@ -432,6 +437,7 @@ async def plugin_ws(
                                 os.environ["DISPLAY"] = old_display
                             else:
                                 os.environ.pop("DISPLAY", None)
+                            os.environ.pop("VGL_DISPLAY", None)
 
                         # Wait for app to start, then send first frame.
                         print(f"[plugin_ws] Xvfb on display {xvfb_session.display}, waiting for app...", flush=True)

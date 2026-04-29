@@ -1,36 +1,36 @@
 """WindowPlugin example: stream glxgears (OpenGL demo) to the browser.
 
-Launches glxgears inside a virtual X display (Xvfb) and streams
-the window to the browser. Mouse and keyboard events are forwarded.
-
-This demonstrates the WindowPlugin pattern for running ANY GUI
-application (Polyscope, PyVista, Blender, etc.) on the server
-and viewing it in the browser.
+Uses VirtualGL (vglrun) for GPU-accelerated rendering when available.
+Without VirtualGL, glxgears falls back to software rendering (CPU-heavy).
 
 Requirements (server-side):
-    apt install xvfb xdotool x11-utils mesa-utils imagemagick
-
-Usage in demo script:
-    run.track(GlxgearsViewer(b""), name="window.glxgears", step=0)
+    apt install xvfb mesa-utils
+    # Optional for GPU acceleration:
+    apt install virtualgl
 """
 
+import shutil
 import subprocess
 from cairn import WindowPlugin
 
 
 class GlxgearsViewer(WindowPlugin):
-    """Stream glxgears (or any OpenGL app) from the server to the browser."""
+    """Stream glxgears with GPU acceleration via VirtualGL."""
 
     name = "glxgears"
     width = 640
     height = 480
-    fps = 10
+    fps = 30
+    gpu = True  # Use VirtualGL for GPU-accelerated OpenGL
 
     def launch(self, data, metadata, step):
-        # DISPLAY is already set to the Xvfb virtual display by the framework.
-        # Just launch the application normally.
+        # If VirtualGL is available and gpu=True, wrap with vglrun.
+        # The framework sets VGL_DISPLAY=:0 when gpu=True.
+        cmd = ["glxgears", "-geometry", f"{self.width}x{self.height}"]
+        if shutil.which("vglrun"):
+            cmd = ["vglrun"] + cmd
         return subprocess.Popen(
-            ["glxgears", "-geometry", f"{self.width}x{self.height}"],
+            cmd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
