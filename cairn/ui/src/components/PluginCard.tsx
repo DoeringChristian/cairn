@@ -339,9 +339,13 @@ export default function PluginCard({
 
   const lang = pluginMeta.plugin_lang ?? "js";
 
-  // --- Server plugin state ---
+  // --- Server/Window plugin state ---
   const wsRef = useRef<WebSocket | null>(null);
   const [serverFrameUrl, setServerFrameUrl] = useState<string | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const pcRef = useRef<RTCPeerConnection | null>(null);
+  const [useWebRTC, setUseWebRTC] = useState(false);
+  const lastMouseSent = useRef(0);
 
   // Server plugin: WebSocket connection + render.
   useEffect(() => {
@@ -360,6 +364,26 @@ export default function PluginCard({
         metadata: pluginMeta,
         step: currentStep,
       }));
+
+      // For window plugins, attempt WebRTC upgrade for better streaming.
+      if (lang === "window") {
+        const pc = new RTCPeerConnection();
+        pcRef.current = pc;
+        pc.addTransceiver("video", { direction: "recvonly" });
+        pc.ontrack = (ev) => {
+          if (videoRef.current) {
+            videoRef.current.srcObject = ev.streams[0] ?? new MediaStream([ev.track]);
+          }
+          setUseWebRTC(true);
+        };
+        pc.createOffer().then((offer) => {
+          pc.setLocalDescription(offer);
+          ws.send(JSON.stringify({ type: "webrtc_offer", sdp: offer.sdp }));
+        }).catch(() => {
+          // WebRTC not available — fall back to JPEG streaming.
+          console.warn("[PluginCard] WebRTC offer failed, using JPEG fallback");
+        });
+      }
     };
 
     let pendingMime = "";
@@ -367,18 +391,24 @@ export default function PluginCard({
       if (typeof e.data === "string") {
         const msg = JSON.parse(e.data);
         if (msg.type === "frame") {
-          pendingMime = msg.mime || "image/png";
+          pendingMime = msg.mime || "image/jpeg";
         } else if (msg.type === "error") {
           setError(msg.message);
+        } else if (msg.type === "webrtc_answer" && pcRef.current) {
+          pcRef.current.setRemoteDescription({ type: "answer", sdp: msg.sdp });
+        } else if (msg.type === "webrtc_failed") {
+          console.warn("[PluginCard] WebRTC failed:", msg.message, "— using JPEG fallback");
         }
       } else if (e.data instanceof Blob) {
-        // Binary frame data.
-        const blob = new Blob([e.data], { type: pendingMime });
-        const url = URL.createObjectURL(blob);
-        setServerFrameUrl((prev) => {
-          if (prev) URL.revokeObjectURL(prev);
-          return url;
-        });
+        // Binary frame data (JPEG fallback).
+        if (!useWebRTC) {
+          const blob = new Blob([e.data], { type: pendingMime });
+          const url = URL.createObjectURL(blob);
+          setServerFrameUrl((prev) => {
+            if (prev) URL.revokeObjectURL(prev);
+            return url;
+          });
+        }
       }
     };
 
@@ -387,21 +417,34 @@ export default function PluginCard({
     return () => {
       ws.close();
       wsRef.current = null;
+      if (pcRef.current) {
+        pcRef.current.close();
+        pcRef.current = null;
+      }
+      setUseWebRTC(false);
     };
   }, [lang, current, pluginMeta, currentStep, runId, metric.name]);
 
   // Forward mouse events to server plugin, mapping coordinates from
-  // the displayed <img> viewport to the plugin's native resolution.
-  // Accounts for object-contain letterboxing/pillarboxing.
+  // the displayed viewport to the plugin's native resolution.
+  // Throttled to 60 events/sec for move events.
   const sendMouseEvent = useCallback((action: string, e: React.MouseEvent) => {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    const img = e.currentTarget as HTMLImageElement;
-    if (!img.naturalWidth || !img.naturalHeight) return;
+
+    // Throttle move events to max 60/sec.
+    if (action === "move") {
+      const now = performance.now();
+      if (now - lastMouseSent.current < 16) return;
+      lastMouseSent.current = now;
+    }
+
+    const img = e.currentTarget as HTMLImageElement | HTMLVideoElement;
+    const natW = (img as HTMLImageElement).naturalWidth || (img as HTMLVideoElement).videoWidth || 0;
+    const natH = (img as HTMLImageElement).naturalHeight || (img as HTMLVideoElement).videoHeight || 0;
+    if (!natW || !natH) return;
 
     const rect = img.getBoundingClientRect();
-    const natW = img.naturalWidth;
-    const natH = img.naturalHeight;
 
     // Compute the actual rendered image area within the <img> element.
     // object-contain scales to fit while preserving aspect ratio.
@@ -548,7 +591,20 @@ export default function PluginCard({
               No plugin metadata found
             </div>
           ) : (lang === "server" || lang === "window") ? (
-            serverFrameUrl ? (
+            useWebRTC ? (
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                className="flex-1 w-full rounded object-contain cursor-grab active:cursor-grabbing"
+                style={{ minHeight: 200, userSelect: "none", background: "#161b22" }}
+                onMouseDown={(e) => { e.preventDefault(); sendMouseEvent("down", e); }}
+                onMouseMove={(e) => sendMouseEvent("move", e)}
+                onMouseUp={(e) => sendMouseEvent("up", e)}
+                onMouseLeave={(e) => sendMouseEvent("up", e)}
+              />
+            ) : serverFrameUrl ? (
               <img
                 src={serverFrameUrl}
                 alt={`Server plugin: ${pluginMeta.plugin_name ?? metric.name}`}

@@ -160,17 +160,47 @@ class _XvfbSession:
         e["DISPLAY"] = self.display
         return e
 
+    def screenshot_raw(self) -> tuple[bytes, int, int]:
+        """Fast screen capture as raw RGB bytes via mss (SHM). ~1-5ms."""
+        if not hasattr(self, "_sct") or self._sct is None:
+            try:
+                import mss
+                self._sct = mss.mss(display=self.display)
+            except Exception:
+                self._sct = None
+        if self._sct is not None:
+            try:
+                mon = self._sct.monitors[0]
+                raw = self._sct.grab(mon)
+                return bytes(raw.rgb), raw.width, raw.height
+            except Exception:
+                pass
+        return b"", 0, 0
+
     def screenshot(self) -> bytes:
-        """Capture the virtual display as PNG bytes."""
+        """Capture the virtual display as JPEG bytes. Uses mss (fast) with
+        subprocess fallback (slow)."""
+        # Fast path: mss + JPEG in-process.
+        rgb, w, h = self.screenshot_raw()
+        if rgb and w > 0 and h > 0:
+            try:
+                from PIL import Image
+                img = Image.frombytes("RGB", (w, h), rgb)
+                buf = io.BytesIO()
+                img.save(buf, format="JPEG", quality=80)
+                return buf.getvalue()
+            except Exception:
+                pass
+
+        # Slow fallback: subprocess pipeline.
         try:
-            # Try xwd + convert (ImageMagick) first — most reliable.
             xwd = subprocess.run(
                 ["xwd", "-root", "-display", self.display, "-silent"],
                 capture_output=True, timeout=5,
             )
             if xwd.returncode == 0 and xwd.stdout:
                 convert = subprocess.run(
-                    ["convert", "xwd:-", "png:-"],
+                    ["convert", "xwd:-", "jpeg:-"],
                     input=xwd.stdout, capture_output=True, timeout=5,
                 )
                 if convert.returncode == 0 and convert.stdout:
@@ -178,32 +208,7 @@ class _XvfbSession:
         except (FileNotFoundError, subprocess.TimeoutExpired):
             pass
 
-        # Fallback: import (ImageMagick).
-        try:
-            result = subprocess.run(
-                ["import", "-display", self.display, "-window", "root", "png:-"],
-                capture_output=True, timeout=5,
-            )
-            if result.returncode == 0 and result.stdout:
-                return result.stdout
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
-
-        # Fallback: scrot.
-        try:
-            import tempfile
-            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
-                tmp = f.name
-            env = self.env()
-            subprocess.run(["scrot", tmp], env=env, timeout=5, check=True)
-            with open(tmp, "rb") as f:
-                data = f.read()
-            os.unlink(tmp)
-            return data
-        except (FileNotFoundError, subprocess.TimeoutExpired, subprocess.CalledProcessError):
-            pass
-
-        raise RuntimeError("Cannot capture screenshot — install xwd+imagemagick or scrot")
+        raise RuntimeError("Cannot capture screenshot — install python-mss or xwd+imagemagick")
 
     def _get_xdisplay(self):
         """Get or create a python-xlib Display connection."""
@@ -288,7 +293,7 @@ class _XvfbSession:
                 pass
 
 
-async def _send_frame(websocket: WebSocket, frame_bytes: bytes, mime: str = "image/png") -> None:
+async def _send_frame(websocket: WebSocket, frame_bytes: bytes, mime: str = "image/jpeg") -> None:
     """Send a frame to the client."""
     await websocket.send_json({"type": "frame", "mime": mime})
     await websocket.send_bytes(frame_bytes)
@@ -333,25 +338,12 @@ async def _handle_window_plugin(
 
     if msg_type == "mouse":
         x, y, action = msg.get("x", 0), msg.get("y", 0), msg.get("action", "move")
-        if action == "move":
-            print(f"[plugin_ws] Window mouse: ({x},{y}) {action}", flush=True)
         xvfb.send_mouse(x, y, action, msg.get("button", 0))
-        # Capture and send a new frame after the interaction.
-        await asyncio.sleep(0.05)  # Let the app respond to the input.
-        try:
-            frame = xvfb.screenshot()
-            await _send_frame(websocket, frame)
-        except Exception as exc:
-            log.debug("Window screenshot error: %s", exc)
+        # No per-event screenshot — the periodic frame stream handles updates.
 
     elif msg_type == "key":
         xvfb.send_key(msg.get("key", ""), msg.get("action", "down"))
-        await asyncio.sleep(0.05)
-        try:
-            frame = xvfb.screenshot()
-            await _send_frame(websocket, frame)
-        except Exception as exc:
-            log.debug("Window screenshot error: %s", exc)
+        # No per-event screenshot — periodic stream handles updates.
 
 
 @router.websocket("/ws/plugin/{run_id}/{metric_name}")
@@ -368,6 +360,8 @@ async def plugin_ws(
     xvfb_session: _XvfbSession | None = None
     plugin_lang: str = "server"
     frame_task: asyncio.Task | None = None
+    rtc_pc: Any = None  # RTCPeerConnection for WebRTC streaming
+    use_webrtc: bool = False
 
     try:
         while True:
@@ -496,6 +490,33 @@ async def plugin_ws(
                 except Exception as exc:
                     log.debug("Event handler error: %s", exc)
 
+            elif msg_type == "webrtc_offer" and xvfb_session:
+                # WebRTC signaling: client sends offer, we reply with answer.
+                try:
+                    from .plugin_webrtc import setup_webrtc, handle_webrtc_offer, cleanup_webrtc
+                    if rtc_pc is not None:
+                        await cleanup_webrtc(rtc_pc)
+                    # Cancel the JPEG frame stream — WebRTC takes over.
+                    if frame_task:
+                        frame_task.cancel()
+                        frame_task = None
+                    fps = getattr(plugin_instance, "fps", 30) if plugin_instance else 30
+                    rtc_pc, _track = await setup_webrtc(xvfb_session, fps=fps)
+                    answer_sdp = await handle_webrtc_offer(rtc_pc, msg["sdp"])
+                    await websocket.send_json({"type": "webrtc_answer", "sdp": answer_sdp})
+                    use_webrtc = True
+                    print(f"[plugin_ws] WebRTC established for {metric_name}", flush=True)
+                except Exception as exc:
+                    log.exception("WebRTC setup failed")
+                    await websocket.send_json({
+                        "type": "webrtc_failed",
+                        "message": str(exc),
+                    })
+
+            elif msg_type == "ice_candidate" and rtc_pc is not None:
+                # ICE candidate from client (usually not needed with aiortc).
+                pass
+
     except WebSocketDisconnect:
         pass
     except Exception:
@@ -503,5 +524,11 @@ async def plugin_ws(
     finally:
         if frame_task:
             frame_task.cancel()
+        if rtc_pc is not None:
+            try:
+                from .plugin_webrtc import cleanup_webrtc
+                asyncio.get_event_loop().run_until_complete(cleanup_webrtc(rtc_pc))
+            except Exception:
+                pass
         if xvfb_session:
             xvfb_session.kill()
