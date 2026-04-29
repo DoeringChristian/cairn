@@ -38,6 +38,7 @@ class BlenderViewer(WindowPlugin):
 
         return subprocess.Popen(
             cmd,
+            env=self._cairn_env,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )

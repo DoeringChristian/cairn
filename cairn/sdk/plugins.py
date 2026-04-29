@@ -206,8 +206,9 @@ class WindowPlugin(_PluginBase):
     ) -> Any:
         """Start the GUI application. Return a ``subprocess.Popen`` object.
 
-        The ``DISPLAY`` environment variable is already set to the virtual
-        Xvfb display. Just launch your process normally.
+        Use ``self._cairn_env`` as the ``env`` argument to ``subprocess.Popen``
+        — it contains ``DISPLAY`` pointing to the virtual Xvfb display (and
+        ``VGL_DISPLAY`` if GPU acceleration is enabled).
 
         Args:
             data: Raw bytes of the tracked artifact.

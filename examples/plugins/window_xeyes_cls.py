@@ -22,6 +22,7 @@ class XEyesViewer(WindowPlugin):
     def launch(self, data, metadata, step):
         return subprocess.Popen(
             ["xeyes", "-geometry", f"{self.width}x{self.height}+0+0"],
+            env=self._cairn_env,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
