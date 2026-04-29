@@ -2,10 +2,6 @@
 
 Provides an `XvfbVideoTrack` that captures frames from an Xvfb virtual
 display via mss and streams them as a WebRTC video track using aiortc.
-
-The WebSocket connection handles:
-- WebRTC signaling (offer/answer/ICE candidates)
-- Mouse/keyboard input events
 """
 
 from __future__ import annotations
@@ -28,6 +24,13 @@ except ImportError:
 
 log = logging.getLogger(__name__)
 
+# Increase VP8 default bitrate from 900kbps to 8Mbps for local streaming.
+try:
+    from aiortc.codecs import vpx
+    vpx.DEFAULT_BITRATE = 8_000_000  # 8 Mbps
+except (ImportError, AttributeError):
+    pass
+
 
 class XvfbVideoTrack(VideoStreamTrack):
     """VideoStreamTrack that captures from an Xvfb session via mss."""
@@ -38,12 +41,10 @@ class XvfbVideoTrack(VideoStreamTrack):
         super().__init__()
         self._xvfb = xvfb_session
         self._fps = fps
+        self._frame_count = 0
 
     async def recv(self):
         try:
-            # Pace to target FPS first, then capture.
-            await asyncio.sleep(1.0 / self._fps)
-
             pts, time_base = await self.next_timestamp()
 
             # Capture frame in a thread to avoid blocking the event loop.
@@ -53,9 +54,9 @@ class XvfbVideoTrack(VideoStreamTrack):
             frame = VideoFrame.from_ndarray(arr, format="rgb24")
             frame.pts = pts
             frame.time_base = time_base
-            self._frame_count = getattr(self, "_frame_count", 0) + 1
-            if self._frame_count <= 3 or self._frame_count % 100 == 0:
-                print(f"[webrtc] Frame #{self._frame_count}: {arr.shape}, pts={pts}", flush=True)
+            self._frame_count += 1
+            if self._frame_count <= 3 or self._frame_count % 300 == 0:
+                print(f"[webrtc] Frame #{self._frame_count}: {arr.shape}", flush=True)
             return frame
         except Exception as e:
             print(f"[webrtc] recv() error: {e}", flush=True)
@@ -65,7 +66,6 @@ class XvfbVideoTrack(VideoStreamTrack):
     def _capture_frame(self) -> np.ndarray:
         """Capture a frame synchronously (runs in thread executor)."""
         try:
-            # Fast path: mss shared memory.
             rgb, w, h = self._xvfb.screenshot_raw()
             if rgb and w > 0 and h > 0:
                 return np.frombuffer(rgb, dtype=np.uint8).reshape(h, w, 3).copy()
@@ -73,7 +73,6 @@ class XvfbVideoTrack(VideoStreamTrack):
             log.debug("mss capture failed: %s", e)
 
         try:
-            # Slow fallback: subprocess screenshot → decode.
             jpeg_bytes = self._xvfb.screenshot()
             from PIL import Image as _Img
             import io as _io
