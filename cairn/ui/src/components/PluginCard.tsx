@@ -627,12 +627,18 @@ export default function PluginCard({
                 playsInline
                 muted
                 className="flex-1 w-full rounded object-contain cursor-grab active:cursor-grabbing"
-                style={{ minHeight: 200, userSelect: "none", background: "#161b22" }}
+                style={{ minHeight: 200, userSelect: "none" }}
                 onMouseDown={(e) => { e.preventDefault(); sendMouseEvent("down", e); }}
                 onMouseMove={(e) => sendMouseEvent("move", e)}
                 onMouseUp={(e) => sendMouseEvent("up", e)}
                 onMouseLeave={(e) => sendMouseEvent("up", e)}
               />
+            ) : (getStreamMode() !== "jpeg" && lang === "window") ? (
+              /* WebRTC mode: show spinner while waiting for stream, skip JPEG */
+              <div className="flex-1 flex items-center justify-center">
+                <div className="h-8 w-8 motion-safe:animate-spin rounded-full border-2 border-accent border-t-transparent" />
+                <span className="ml-2 text-xs text-fg-muted">Starting WebRTC stream...</span>
+              </div>
             ) : serverFrameUrl ? (
               <img
                 src={serverFrameUrl}
