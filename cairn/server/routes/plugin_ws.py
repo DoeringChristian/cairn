@@ -205,48 +205,35 @@ class _XvfbSession:
 
         raise RuntimeError("Cannot capture screenshot — install xwd+imagemagick or scrot")
 
-    def send_mouse(self, x: int, y: int, action: str, button: int = 1) -> None:
-        """Forward a mouse event to the virtual display via xdotool."""
+    def _xdo(self, *args: str) -> None:
+        """Run an xdotool command on this virtual display."""
+        cmd = ["xdotool", *args]
         env = self.env()
         try:
-            if action == "move":
-                subprocess.run(
-                    ["xdotool", "mousemove", str(x), str(y)],
-                    env=env, timeout=2, capture_output=True,
-                )
-            elif action == "down":
-                subprocess.run(
-                    ["xdotool", "mousemove", str(x), str(y)],
-                    env=env, timeout=2, capture_output=True,
-                )
-                subprocess.run(
-                    ["xdotool", "mousedown", str(button + 1)],
-                    env=env, timeout=2, capture_output=True,
-                )
-            elif action == "up":
-                subprocess.run(
-                    ["xdotool", "mouseup", str(button + 1)],
-                    env=env, timeout=2, capture_output=True,
-                )
-        except (FileNotFoundError, subprocess.TimeoutExpired):
+            result = subprocess.run(cmd, env=env, timeout=2, capture_output=True)
+            if result.returncode != 0:
+                print(f"[plugin_ws] xdotool failed ({result.returncode}): {result.stderr.decode()[:200]}", flush=True)
+        except FileNotFoundError:
+            print("[plugin_ws] xdotool not found!", flush=True)
+        except subprocess.TimeoutExpired:
             pass
+
+    def send_mouse(self, x: int, y: int, action: str, button: int = 1) -> None:
+        """Forward a mouse event to the virtual display via xdotool."""
+        if action == "move":
+            self._xdo("mousemove", str(x), str(y))
+        elif action == "down":
+            self._xdo("mousemove", str(x), str(y))
+            self._xdo("mousedown", str(button + 1))
+        elif action == "up":
+            self._xdo("mouseup", str(button + 1))
 
     def send_key(self, key: str, action: str) -> None:
         """Forward a key event via xdotool."""
-        env = self.env()
-        try:
-            if action == "down":
-                subprocess.run(
-                    ["xdotool", "keydown", key],
-                    env=env, timeout=2, capture_output=True,
-                )
-            elif action == "up":
-                subprocess.run(
-                    ["xdotool", "keyup", key],
-                    env=env, timeout=2, capture_output=True,
-                )
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
+        if action == "down":
+            self._xdo("keydown", key)
+        elif action == "up":
+            self._xdo("keyup", key)
 
     def kill(self) -> None:
         """Shut down the app and Xvfb."""
