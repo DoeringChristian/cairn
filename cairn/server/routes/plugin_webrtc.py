@@ -15,10 +15,16 @@ import logging
 from typing import Any
 
 import numpy as np
-from aiortc import RTCPeerConnection, RTCSessionDescription
-from aiortc.contrib.media import MediaRelay
-from av import VideoFrame
-from aiortc.mediastreams import VideoStreamTrack
+
+try:
+    from aiortc import RTCPeerConnection, RTCSessionDescription
+    from aiortc.mediastreams import VideoStreamTrack
+    from av import VideoFrame
+    HAS_AIORTC = True
+except ImportError:
+    HAS_AIORTC = False
+    RTCPeerConnection = None  # type: ignore
+    VideoStreamTrack = object  # type: ignore
 
 log = logging.getLogger(__name__)
 
@@ -57,8 +63,13 @@ class XvfbVideoTrack(VideoStreamTrack):
 async def setup_webrtc(
     xvfb_session: Any,
     fps: int = 30,
-) -> tuple[RTCPeerConnection, XvfbVideoTrack]:
+) -> tuple:
     """Create an RTCPeerConnection with an Xvfb video track."""
+    if not HAS_AIORTC:
+        raise ImportError(
+            "aiortc is required for WebRTC streaming. "
+            "Install with: pip install cairn-track[plugins]"
+        )
     pc = RTCPeerConnection()
     track = XvfbVideoTrack(xvfb_session, fps=fps)
     pc.addTrack(track)
