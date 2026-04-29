@@ -350,6 +350,7 @@ export default function PluginCard({
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.host}/ws/plugin/${runId}/${encodeURIComponent(metric.name)}`;
     const ws = new WebSocket(wsUrl);
+    ws.binaryType = "blob";
     wsRef.current = ws;
 
     ws.onopen = () => {
