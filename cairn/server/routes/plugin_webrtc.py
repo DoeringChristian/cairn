@@ -40,32 +40,36 @@ class XvfbVideoTrack(VideoStreamTrack):
         self._fps = fps
 
     async def recv(self):
+        # Pace to target FPS first, then capture.
+        await asyncio.sleep(1.0 / self._fps)
+
         pts, time_base = await self.next_timestamp()
 
-        # Capture frame from Xvfb via mss (fast).
-        rgb, w, h = self._xvfb.screenshot_raw()
-        if not rgb or w <= 0 or h <= 0:
-            # Fallback: use the JPEG screenshot and decode it.
-            try:
-                jpeg_bytes = self._xvfb.screenshot()
-                from PIL import Image as _Img
-                import io as _io
-                img = _Img.open(_io.BytesIO(jpeg_bytes)).convert("RGB")
-                w, h = img.size
-                arr = np.array(img, dtype=np.uint8)
-            except Exception:
-                w, h = self._xvfb.width, self._xvfb.height
-                arr = np.zeros((h, w, 3), dtype=np.uint8)
-        else:
-            arr = np.frombuffer(rgb, dtype=np.uint8).reshape(h, w, 3)
+        # Capture frame in a thread to avoid blocking the event loop.
+        loop = asyncio.get_event_loop()
+        arr = await loop.run_in_executor(None, self._capture_frame)
 
         frame = VideoFrame.from_ndarray(arr, format="rgb24")
         frame.pts = pts
         frame.time_base = time_base
-
-        # Pace to target FPS.
-        await asyncio.sleep(1.0 / self._fps)
         return frame
+
+    def _capture_frame(self) -> np.ndarray:
+        """Capture a frame synchronously (runs in thread executor)."""
+        # Fast path: mss shared memory.
+        rgb, w, h = self._xvfb.screenshot_raw()
+        if rgb and w > 0 and h > 0:
+            return np.frombuffer(rgb, dtype=np.uint8).reshape(h, w, 3).copy()
+
+        # Slow fallback: subprocess screenshot → decode.
+        try:
+            jpeg_bytes = self._xvfb.screenshot()
+            from PIL import Image as _Img
+            import io as _io
+            img = _Img.open(_io.BytesIO(jpeg_bytes)).convert("RGB")
+            return np.array(img, dtype=np.uint8)
+        except Exception:
+            return np.zeros((self._xvfb.height, self._xvfb.width, 3), dtype=np.uint8)
 
 
 async def setup_webrtc(
