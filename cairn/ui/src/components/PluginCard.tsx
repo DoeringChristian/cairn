@@ -390,15 +390,24 @@ export default function PluginCard({
     };
   }, [lang, current, pluginMeta, currentStep, runId, metric.name]);
 
-  // Forward mouse events to server plugin.
+  // Forward mouse events to server plugin, mapping coordinates to
+  // the plugin's native resolution (for WindowPlugin Xvfb displays).
   const sendMouseEvent = useCallback((action: string, e: React.MouseEvent) => {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    const rect = (e.target as HTMLElement).getBoundingClientRect();
+    const el = e.target as HTMLElement;
+    const rect = el.getBoundingClientRect();
+    // Map from displayed size to native resolution.
+    // For <img> with object-contain, the image may be letter/pillarboxed.
+    const img = el as HTMLImageElement;
+    const natW = img.naturalWidth || rect.width;
+    const natH = img.naturalHeight || rect.height;
+    const scaleX = natW / rect.width;
+    const scaleY = natH / rect.height;
     ws.send(JSON.stringify({
       type: "mouse",
-      x: Math.round(e.clientX - rect.left),
-      y: Math.round(e.clientY - rect.top),
+      x: Math.round((e.clientX - rect.left) * scaleX),
+      y: Math.round((e.clientY - rect.top) * scaleY),
       button: e.button,
       action,
     }));

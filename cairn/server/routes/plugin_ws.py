@@ -308,10 +308,10 @@ async def _handle_window_plugin(
     msg_type = msg.get("type")
 
     if msg_type == "mouse":
-        xvfb.send_mouse(
-            msg.get("x", 0), msg.get("y", 0),
-            msg.get("action", "move"), msg.get("button", 0),
-        )
+        x, y, action = msg.get("x", 0), msg.get("y", 0), msg.get("action", "move")
+        if action == "move":
+            print(f"[plugin_ws] Window mouse: ({x},{y}) {action}", flush=True)
+        xvfb.send_mouse(x, y, action, msg.get("button", 0))
         # Capture and send a new frame after the interaction.
         await asyncio.sleep(0.05)  # Let the app respond to the input.
         try:
