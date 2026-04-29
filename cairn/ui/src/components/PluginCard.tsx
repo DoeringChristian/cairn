@@ -390,27 +390,51 @@ export default function PluginCard({
     };
   }, [lang, current, pluginMeta, currentStep, runId, metric.name]);
 
-  // Forward mouse events to server plugin, mapping coordinates to
-  // the plugin's native resolution (for WindowPlugin Xvfb displays).
+  // Forward mouse events to server plugin, mapping coordinates from
+  // the displayed <img> viewport to the plugin's native resolution.
+  // Accounts for object-contain letterboxing/pillarboxing.
   const sendMouseEvent = useCallback((action: string, e: React.MouseEvent) => {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    const el = e.target as HTMLElement;
-    const rect = el.getBoundingClientRect();
-    // Map from displayed size to native resolution.
-    // For <img> with object-contain, the image may be letter/pillarboxed.
-    const img = el as HTMLImageElement;
-    const natW = img.naturalWidth || rect.width;
-    const natH = img.naturalHeight || rect.height;
-    const scaleX = natW / rect.width;
-    const scaleY = natH / rect.height;
-    ws.send(JSON.stringify({
-      type: "mouse",
-      x: Math.round((e.clientX - rect.left) * scaleX),
-      y: Math.round((e.clientY - rect.top) * scaleY),
-      button: e.button,
-      action,
-    }));
+    const img = e.currentTarget as HTMLImageElement;
+    if (!img.naturalWidth || !img.naturalHeight) return;
+
+    const rect = img.getBoundingClientRect();
+    const natW = img.naturalWidth;
+    const natH = img.naturalHeight;
+
+    // Compute the actual rendered image area within the <img> element.
+    // object-contain scales to fit while preserving aspect ratio.
+    const elemAspect = rect.width / rect.height;
+    const imgAspect = natW / natH;
+
+    let renderW: number, renderH: number, offsetX: number, offsetY: number;
+    if (imgAspect > elemAspect) {
+      // Image is wider than element → pillarboxed (empty space top/bottom)
+      renderW = rect.width;
+      renderH = rect.width / imgAspect;
+      offsetX = 0;
+      offsetY = (rect.height - renderH) / 2;
+    } else {
+      // Image is taller than element → letterboxed (empty space left/right)
+      renderH = rect.height;
+      renderW = rect.height * imgAspect;
+      offsetX = (rect.width - renderW) / 2;
+      offsetY = 0;
+    }
+
+    // Mouse position relative to the rendered image area.
+    const imgX = e.clientX - rect.left - offsetX;
+    const imgY = e.clientY - rect.top - offsetY;
+
+    // Ignore events outside the actual image area.
+    if (imgX < 0 || imgY < 0 || imgX > renderW || imgY > renderH) return;
+
+    // Map to native resolution.
+    const x = Math.round((imgX / renderW) * natW);
+    const y = Math.round((imgY / renderH) * natH);
+
+    ws.send(JSON.stringify({ type: "mouse", x, y, button: e.button, action }));
   }, []);
 
   // Track blob URLs so we can revoke them on cleanup.

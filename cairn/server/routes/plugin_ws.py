@@ -225,17 +225,17 @@ class _XvfbSession:
         if d is not None:
             try:
                 from Xlib import X
-                root = d.screen().root
+                from Xlib.ext import xtest
+                # Use XTest fake_input for MotionNotify — this generates
+                # real X events that applications (like xeyes) respond to,
+                # unlike warp_pointer which may not on Xvfb.
                 if action in ("move", "down"):
-                    root.warp_pointer(x, y)
+                    xtest.fake_input(d, X.MotionNotify, x=x, y=y)
                     d.sync()
                 if action == "down":
-                    from Xlib import ext
-                    from Xlib.ext import xtest
                     xtest.fake_input(d, X.ButtonPress, button + 1)
                     d.sync()
                 elif action == "up":
-                    from Xlib.ext import xtest
                     xtest.fake_input(d, X.ButtonRelease, button + 1)
                     d.sync()
                 return
