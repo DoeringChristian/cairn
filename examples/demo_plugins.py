@@ -34,7 +34,7 @@ from webgl_demo_cls import WebGLDemo
 HAS_XVFB = shutil.which("Xvfb") is not None
 HAS_GLXGEARS = HAS_XVFB and shutil.which("glxgears") is not None
 HAS_XEYES = HAS_XVFB and shutil.which("xeyes") is not None
-HAS_BLENDER = HAS_XVFB and shutil.which("blender") is not None
+HAS_BLENDER = shutil.which("blender") is not None
 if HAS_GLXGEARS:
     from window_glxgears_cls import GlxgearsViewer
 if HAS_XEYES:
