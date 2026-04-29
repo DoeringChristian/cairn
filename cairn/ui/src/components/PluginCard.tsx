@@ -344,8 +344,18 @@ export default function PluginCard({
   const [serverFrameUrl, setServerFrameUrl] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
+  const webrtcStreamRef = useRef<MediaStream | null>(null);
   const [useWebRTC, setUseWebRTC] = useState(false);
   const lastMouseSent = useRef(0);
+
+  // Assign WebRTC stream to <video> element via ref callback.
+  const videoRefCallback = useCallback((el: HTMLVideoElement | null) => {
+    videoRef.current = el;
+    if (el && webrtcStreamRef.current) {
+      console.log("[PluginCard] Assigning WebRTC stream to <video>");
+      el.srcObject = webrtcStreamRef.current;
+    }
+  }, []);
 
   // Server plugin: WebSocket connection + render.
   useEffect(() => {
@@ -372,9 +382,8 @@ export default function PluginCard({
         pcRef.current = pc;
         pc.addTransceiver("video", { direction: "recvonly" });
         pc.ontrack = (ev) => {
-          if (videoRef.current) {
-            videoRef.current.srcObject = ev.streams[0] ?? new MediaStream([ev.track]);
-          }
+          console.log("[PluginCard] WebRTC ontrack fired, track:", ev.track.kind, ev.track.readyState);
+          webrtcStreamRef.current = ev.streams[0] ?? new MediaStream([ev.track]);
           setUseWebRTC(true);
         };
         // Wait for ICE gathering to complete before sending offer.
@@ -611,7 +620,7 @@ export default function PluginCard({
           ) : (lang === "server" || lang === "window") ? (
             useWebRTC ? (
               <video
-                ref={videoRef}
+                ref={videoRefCallback}
                 autoPlay
                 playsInline
                 muted
