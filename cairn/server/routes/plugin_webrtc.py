@@ -39,15 +39,23 @@ class XvfbVideoTrack(VideoStreamTrack):
         self._xvfb = xvfb_session
         self._fps = fps
 
-    async def recv(self) -> VideoFrame:
+    async def recv(self):
         pts, time_base = await self.next_timestamp()
 
-        # Capture frame from Xvfb.
+        # Capture frame from Xvfb via mss (fast).
         rgb, w, h = self._xvfb.screenshot_raw()
         if not rgb or w <= 0 or h <= 0:
-            # Return a black frame if capture fails.
-            w, h = self._xvfb.width, self._xvfb.height
-            arr = np.zeros((h, w, 3), dtype=np.uint8)
+            # Fallback: use the JPEG screenshot and decode it.
+            try:
+                jpeg_bytes = self._xvfb.screenshot()
+                from PIL import Image as _Img
+                import io as _io
+                img = _Img.open(_io.BytesIO(jpeg_bytes)).convert("RGB")
+                w, h = img.size
+                arr = np.array(img, dtype=np.uint8)
+            except Exception:
+                w, h = self._xvfb.width, self._xvfb.height
+                arr = np.zeros((h, w, 3), dtype=np.uint8)
         else:
             arr = np.frombuffer(rgb, dtype=np.uint8).reshape(h, w, 3)
 
