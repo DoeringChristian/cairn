@@ -92,11 +92,26 @@ async def handle_webrtc_offer(
     pc: RTCPeerConnection,
     offer_sdp: str,
 ) -> str:
-    """Process a WebRTC offer and return the answer SDP."""
+    """Process a WebRTC offer and return the answer SDP with ICE candidates."""
     offer = RTCSessionDescription(sdp=offer_sdp, type="offer")
     await pc.setRemoteDescription(offer)
     answer = await pc.createAnswer()
     await pc.setLocalDescription(answer)
+
+    # Wait for ICE gathering to complete so candidates are in the SDP.
+    if pc.iceGatheringState != "complete":
+        gathering_done = asyncio.Event()
+
+        @pc.on("icegatheringstatechange")
+        def on_ice_gathering():
+            if pc.iceGatheringState == "complete":
+                gathering_done.set()
+
+        try:
+            await asyncio.wait_for(gathering_done.wait(), timeout=5.0)
+        except asyncio.TimeoutError:
+            log.warning("ICE gathering timed out, sending partial SDP")
+
     return pc.localDescription.sdp
 
 

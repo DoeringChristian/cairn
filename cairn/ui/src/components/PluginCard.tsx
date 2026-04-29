@@ -365,9 +365,10 @@ export default function PluginCard({
         step: currentStep,
       }));
 
-      // For window plugins, attempt WebRTC upgrade for better streaming.
+      // For window plugins, attempt WebRTC upgrade for smooth video streaming.
       if (lang === "window") {
-        const pc = new RTCPeerConnection();
+        // No STUN — localhost/LAN only needs host candidates.
+        const pc = new RTCPeerConnection({ iceServers: [] });
         pcRef.current = pc;
         pc.addTransceiver("video", { direction: "recvonly" });
         pc.ontrack = (ev) => {
@@ -376,12 +377,27 @@ export default function PluginCard({
           }
           setUseWebRTC(true);
         };
-        pc.createOffer().then((offer) => {
-          pc.setLocalDescription(offer);
-          ws.send(JSON.stringify({ type: "webrtc_offer", sdp: offer.sdp }));
-        }).catch(() => {
-          // WebRTC not available — fall back to JPEG streaming.
-          console.warn("[PluginCard] WebRTC offer failed, using JPEG fallback");
+        // Wait for ICE gathering to complete before sending offer.
+        pc.createOffer().then(async (offer) => {
+          await pc.setLocalDescription(offer);
+          // Wait for ICE candidates to be gathered.
+          await new Promise<void>((resolve) => {
+            if (pc.iceGatheringState === "complete") { resolve(); return; }
+            pc.onicegatheringstatechange = () => {
+              if (pc.iceGatheringState === "complete") resolve();
+            };
+            // Timeout after 2s — send what we have.
+            setTimeout(resolve, 2000);
+          });
+          // Send the complete offer (with ICE candidates embedded in SDP).
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+              type: "webrtc_offer",
+              sdp: pc.localDescription?.sdp,
+            }));
+          }
+        }).catch((err) => {
+          console.warn("[PluginCard] WebRTC offer failed:", err);
         });
       }
     };
@@ -395,12 +411,14 @@ export default function PluginCard({
         } else if (msg.type === "error") {
           setError(msg.message);
         } else if (msg.type === "webrtc_answer" && pcRef.current) {
-          pcRef.current.setRemoteDescription({ type: "answer", sdp: msg.sdp });
+          pcRef.current.setRemoteDescription(
+            new RTCSessionDescription({ type: "answer", sdp: msg.sdp })
+          );
         } else if (msg.type === "webrtc_failed") {
           console.warn("[PluginCard] WebRTC failed:", msg.message, "— using JPEG fallback");
         }
       } else if (e.data instanceof Blob) {
-        // Binary frame data (JPEG fallback).
+        // Binary frame data (JPEG fallback — only used if WebRTC not active).
         if (!useWebRTC) {
           const blob = new Blob([e.data], { type: pendingMime });
           const url = URL.createObjectURL(blob);
