@@ -211,12 +211,12 @@ class _XvfbSession:
         try:
             if action == "move":
                 subprocess.run(
-                    ["xdotool", "mousemove", "--screen", "0", str(x), str(y)],
+                    ["xdotool", "mousemove", str(x), str(y)],
                     env=env, timeout=2, capture_output=True,
                 )
             elif action == "down":
                 subprocess.run(
-                    ["xdotool", "mousemove", "--screen", "0", str(x), str(y)],
+                    ["xdotool", "mousemove", str(x), str(y)],
                     env=env, timeout=2, capture_output=True,
                 )
                 subprocess.run(
