@@ -434,10 +434,12 @@ async def plugin_ws(
                             print(f"[plugin_ws] VirtualGL enabled (vglrun)", flush=True)
                         # Store env on the instance so launch() can use it.
                         plugin_instance._cairn_env = launch_env
-                        print(f"[plugin_ws] Launching with DISPLAY={launch_env.get('DISPLAY')}", flush=True)
+                        print(f"[plugin_ws] Launching with DISPLAY={launch_env.get('DISPLAY')}, has _cairn_env={hasattr(plugin_instance, '_cairn_env')}", flush=True)
+                        print(f"[plugin_ws] WAYLAND_DISPLAY in env: {'WAYLAND_DISPLAY' in launch_env}", flush=True)
                         xvfb_session.app_proc = plugin_instance.launch(
                             data_bytes, metadata, step,
                         )
+                        print(f"[plugin_ws] App PID: {xvfb_session.app_proc.pid if xvfb_session.app_proc else 'None'}", flush=True)
 
                         # Wait for app to start, then send first frame.
                         print(f"[plugin_ws] Xvfb on display {xvfb_session.display}, waiting for app...", flush=True)
