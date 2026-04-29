@@ -337,7 +337,7 @@ async def plugin_ws(
     metric_name: str,
 ) -> None:
     await websocket.accept()
-    print(f"[plugin_ws] Connected: {run_id}/{metric_name}")
+    print(f"[plugin_ws] Connected: {run_id}/{metric_name}", flush=True)
     blobs = get_blobs(websocket)
 
     plugin_instance: Any = None
@@ -347,9 +347,13 @@ async def plugin_ws(
 
     try:
         while True:
-            msg = await websocket.receive_json()
+            try:
+                msg = await websocket.receive_json()
+            except Exception as recv_err:
+                print(f"[plugin_ws] receive error: {recv_err}", flush=True)
+                break
             msg_type = msg.get("type")
-            print(f"[plugin_ws] Received: type={msg_type}")
+            print(f"[plugin_ws] {run_id}/{metric_name} Received: type={msg_type}", flush=True)
 
             if msg_type == "render":
                 artifact_hash = msg.get("artifact_hash")
@@ -357,7 +361,7 @@ async def plugin_ws(
                 step = msg.get("step", 0)
                 plugin_hash = metadata.get("plugin_hash")
                 plugin_lang = metadata.get("plugin_lang", "server")
-                print(f"[plugin_ws] Render: lang={plugin_lang}, hash={artifact_hash[:12] if artifact_hash else 'None'}...")
+                print(f"[plugin_ws] Render: lang={plugin_lang}, hash={artifact_hash[:12] if artifact_hash else 'None'}...", flush=True)
 
                 if not artifact_hash or not plugin_hash:
                     await websocket.send_json({
@@ -386,7 +390,7 @@ async def plugin_ws(
 
                     if plugin_lang == "window":
                         # --- WindowPlugin: launch Xvfb + app ---
-                        print(f"[plugin_ws] Starting WindowPlugin: {plugin_cls.__name__}")
+                        print(f"[plugin_ws] Starting WindowPlugin: {plugin_cls.__name__}", flush=True)
                         if xvfb_session:
                             xvfb_session.kill()
 
@@ -412,11 +416,11 @@ async def plugin_ws(
                                 os.environ.pop("DISPLAY", None)
 
                         # Wait for app to start, then send first frame.
-                        print(f"[plugin_ws] Xvfb on display {xvfb_session.display}, waiting for app...")
+                        print(f"[plugin_ws] Xvfb on display {xvfb_session.display}, waiting for app...", flush=True)
                         await asyncio.sleep(1.0)
                         try:
                             frame = xvfb_session.screenshot()
-                            print(f"[plugin_ws] First frame: {len(frame)} bytes")
+                            print(f"[plugin_ws] First frame: {len(frame)} bytes", flush=True)
                             await _send_frame(websocket, frame)
                         except Exception as exc:
                             await websocket.send_json({
