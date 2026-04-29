@@ -496,10 +496,7 @@ async def plugin_ws(
                     from .plugin_webrtc import setup_webrtc, handle_webrtc_offer, cleanup_webrtc
                     if rtc_pc is not None:
                         await cleanup_webrtc(rtc_pc)
-                    # Cancel the JPEG frame stream — WebRTC takes over.
-                    if frame_task:
-                        frame_task.cancel()
-                        frame_task = None
+                    # Keep the JPEG frame stream running as fallback.
                     fps = getattr(plugin_instance, "fps", 30) if plugin_instance else 30
                     rtc_pc, _track = await setup_webrtc(xvfb_session, fps=fps)
                     answer_sdp = await handle_webrtc_offer(rtc_pc, msg["sdp"])

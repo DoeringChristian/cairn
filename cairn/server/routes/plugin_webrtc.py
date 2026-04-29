@@ -56,20 +56,25 @@ class XvfbVideoTrack(VideoStreamTrack):
 
     def _capture_frame(self) -> np.ndarray:
         """Capture a frame synchronously (runs in thread executor)."""
-        # Fast path: mss shared memory.
-        rgb, w, h = self._xvfb.screenshot_raw()
-        if rgb and w > 0 and h > 0:
-            return np.frombuffer(rgb, dtype=np.uint8).reshape(h, w, 3).copy()
-
-        # Slow fallback: subprocess screenshot → decode.
         try:
+            # Fast path: mss shared memory.
+            rgb, w, h = self._xvfb.screenshot_raw()
+            if rgb and w > 0 and h > 0:
+                return np.frombuffer(rgb, dtype=np.uint8).reshape(h, w, 3).copy()
+        except Exception as e:
+            log.debug("mss capture failed: %s", e)
+
+        try:
+            # Slow fallback: subprocess screenshot → decode.
             jpeg_bytes = self._xvfb.screenshot()
             from PIL import Image as _Img
             import io as _io
             img = _Img.open(_io.BytesIO(jpeg_bytes)).convert("RGB")
             return np.array(img, dtype=np.uint8)
-        except Exception:
-            return np.zeros((self._xvfb.height, self._xvfb.width, 3), dtype=np.uint8)
+        except Exception as e:
+            log.debug("JPEG capture failed: %s", e)
+
+        return np.zeros((self._xvfb.height, self._xvfb.width, 3), dtype=np.uint8)
 
 
 async def setup_webrtc(
