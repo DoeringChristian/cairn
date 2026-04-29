@@ -337,7 +337,7 @@ async def plugin_ws(
     metric_name: str,
 ) -> None:
     await websocket.accept()
-    log.info("Plugin WebSocket connected: %s/%s", run_id, metric_name)
+    print(f"[plugin_ws] Connected: {run_id}/{metric_name}")
     blobs = get_blobs(websocket)
 
     plugin_instance: Any = None
@@ -349,6 +349,7 @@ async def plugin_ws(
         while True:
             msg = await websocket.receive_json()
             msg_type = msg.get("type")
+            print(f"[plugin_ws] Received: type={msg_type}")
 
             if msg_type == "render":
                 artifact_hash = msg.get("artifact_hash")
@@ -356,6 +357,7 @@ async def plugin_ws(
                 step = msg.get("step", 0)
                 plugin_hash = metadata.get("plugin_hash")
                 plugin_lang = metadata.get("plugin_lang", "server")
+                print(f"[plugin_ws] Render: lang={plugin_lang}, hash={artifact_hash[:12] if artifact_hash else 'None'}...")
 
                 if not artifact_hash or not plugin_hash:
                     await websocket.send_json({
@@ -384,7 +386,7 @@ async def plugin_ws(
 
                     if plugin_lang == "window":
                         # --- WindowPlugin: launch Xvfb + app ---
-                        log.info("Starting WindowPlugin: %s", plugin_cls.__name__)
+                        print(f"[plugin_ws] Starting WindowPlugin: {plugin_cls.__name__}")
                         if xvfb_session:
                             xvfb_session.kill()
 
@@ -410,11 +412,11 @@ async def plugin_ws(
                                 os.environ.pop("DISPLAY", None)
 
                         # Wait for app to start, then send first frame.
-                        log.info("Xvfb on display %s, waiting for app to start...", xvfb_session.display)
+                        print(f"[plugin_ws] Xvfb on display {xvfb_session.display}, waiting for app...")
                         await asyncio.sleep(1.0)
                         try:
                             frame = xvfb_session.screenshot()
-                            log.info("First frame captured: %d bytes", len(frame))
+                            print(f"[plugin_ws] First frame: {len(frame)} bytes")
                             await _send_frame(websocket, frame)
                         except Exception as exc:
                             await websocket.send_json({
