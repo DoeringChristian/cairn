@@ -34,10 +34,13 @@ from webgl_demo_cls import WebGLDemo
 HAS_XVFB = shutil.which("Xvfb") is not None
 HAS_GLXGEARS = HAS_XVFB and shutil.which("glxgears") is not None
 HAS_XEYES = HAS_XVFB and shutil.which("xeyes") is not None
+HAS_BLENDER = HAS_XVFB and shutil.which("blender") is not None
 if HAS_GLXGEARS:
     from window_glxgears_cls import GlxgearsViewer
 if HAS_XEYES:
     from window_xeyes_cls import XEyesViewer
+if HAS_BLENDER:
+    from window_blender_cls import BlenderViewer
 
 
 def make_heatmap(rows: int, cols: int, step: int) -> tuple[bytes, dict]:
@@ -107,6 +110,9 @@ def main():
             if HAS_XEYES:
                 print("  [window] Tracking xeyes (move mouse over it to test interaction)")
                 run.track(XEyesViewer(b""), name="window.xeyes", step=0)
+            if HAS_BLENDER:
+                print("  [window] Tracking Blender viewport")
+                run.track(BlenderViewer(b""), name="window.blender", step=0)
             if not HAS_XVFB:
                 print("  [window] Skipped window plugins (install: apt install xvfb mesa-utils x11-apps xdotool imagemagick)")
 
