@@ -40,19 +40,27 @@ class XvfbVideoTrack(VideoStreamTrack):
         self._fps = fps
 
     async def recv(self):
-        # Pace to target FPS first, then capture.
-        await asyncio.sleep(1.0 / self._fps)
+        try:
+            # Pace to target FPS first, then capture.
+            await asyncio.sleep(1.0 / self._fps)
 
-        pts, time_base = await self.next_timestamp()
+            pts, time_base = await self.next_timestamp()
 
-        # Capture frame in a thread to avoid blocking the event loop.
-        loop = asyncio.get_event_loop()
-        arr = await loop.run_in_executor(None, self._capture_frame)
+            # Capture frame in a thread to avoid blocking the event loop.
+            loop = asyncio.get_event_loop()
+            arr = await loop.run_in_executor(None, self._capture_frame)
 
-        frame = VideoFrame.from_ndarray(arr, format="rgb24")
-        frame.pts = pts
-        frame.time_base = time_base
-        return frame
+            frame = VideoFrame.from_ndarray(arr, format="rgb24")
+            frame.pts = pts
+            frame.time_base = time_base
+            self._frame_count = getattr(self, "_frame_count", 0) + 1
+            if self._frame_count <= 3 or self._frame_count % 100 == 0:
+                print(f"[webrtc] Frame #{self._frame_count}: {arr.shape}, pts={pts}", flush=True)
+            return frame
+        except Exception as e:
+            print(f"[webrtc] recv() error: {e}", flush=True)
+            import traceback; traceback.print_exc()
+            raise
 
     def _capture_frame(self) -> np.ndarray:
         """Capture a frame synchronously (runs in thread executor)."""
