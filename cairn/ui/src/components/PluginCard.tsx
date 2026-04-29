@@ -13,6 +13,7 @@ import { safeJsonParse } from "../lib/format";
 import { useCardSettings, type CardSettingsKey } from "../lib/card-settings";
 import type { SequenceMeta } from "../api/types";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
+import { getStreamMode } from "../lib/stream-mode";
 import CardHeader from "./CardHeader";
 import CardResizeHandle from "./CardResizeHandle";
 
@@ -376,7 +377,8 @@ export default function PluginCard({
       }));
 
       // For window plugins, attempt WebRTC upgrade for smooth video streaming.
-      if (lang === "window") {
+      const streamMode = getStreamMode();
+      if (lang === "window" && streamMode !== "jpeg") {
         // No STUN — localhost/LAN only needs host candidates.
         const pc = new RTCPeerConnection({ iceServers: [] });
         pcRef.current = pc;

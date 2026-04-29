@@ -3,6 +3,7 @@ import { Link, Outlet } from "react-router-dom";
 import { useHealth } from "./api/hooks";
 import ServerStatus from "./components/ServerStatus";
 import { getRenderMode, setRenderMode, type RenderMode } from "./lib/render-mode";
+import { getStreamMode, setStreamMode, type StreamMode } from "./lib/stream-mode";
 
 export default function App() {
   const health = useHealth();
@@ -38,6 +39,16 @@ export default function App() {
               <option value="auto">Auto</option>
               <option value="gpu">GPU</option>
               <option value="cpu">CPU</option>
+            </select>
+            <select
+              value={getStreamMode()}
+              onChange={(e) => { setStreamMode(e.target.value as StreamMode); window.location.reload(); }}
+              className="rounded border border-border bg-bg px-1.5 py-0.5 text-[10px] text-fg-muted"
+              title="Server plugin streaming mode"
+            >
+              <option value="auto">Stream: Auto</option>
+              <option value="webrtc">Stream: WebRTC</option>
+              <option value="jpeg">Stream: JPEG</option>
             </select>
           </div>
           <button
