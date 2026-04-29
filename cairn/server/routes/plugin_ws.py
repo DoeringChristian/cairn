@@ -155,9 +155,15 @@ class _XvfbSession:
             time.sleep(0.1)
 
     def env(self) -> dict[str, str]:
-        """Return env dict with DISPLAY set."""
+        """Return env dict forcing X11 on the virtual display."""
         e = os.environ.copy()
         e["DISPLAY"] = self.display
+        # Force X11 — remove Wayland vars so apps don't try to
+        # connect to a Wayland compositor instead of our Xvfb.
+        e.pop("WAYLAND_DISPLAY", None)
+        e.pop("XDG_SESSION_TYPE", None)
+        e["GDK_BACKEND"] = "x11"
+        e["QT_QPA_PLATFORM"] = "xcb"
         return e
 
     def screenshot_raw(self) -> tuple[bytes, int, int]:
