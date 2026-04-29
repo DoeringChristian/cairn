@@ -30,10 +30,14 @@ from server_heatmap_cls import ServerHeatmap
 from server_3d_cls import Server3DScene
 from webgl_demo_cls import WebGLDemo
 
-# WindowPlugin: only available if Xvfb + glxgears are installed.
-HAS_GLXGEARS = shutil.which("glxgears") is not None and shutil.which("Xvfb") is not None
+# WindowPlugin: only available if Xvfb + tools are installed.
+HAS_XVFB = shutil.which("Xvfb") is not None
+HAS_GLXGEARS = HAS_XVFB and shutil.which("glxgears") is not None
+HAS_XEYES = HAS_XVFB and shutil.which("xeyes") is not None
 if HAS_GLXGEARS:
     from window_glxgears_cls import GlxgearsViewer
+if HAS_XEYES:
+    from window_xeyes_cls import XEyesViewer
 
 
 def make_heatmap(rows: int, cols: int, step: int) -> tuple[bytes, dict]:
@@ -95,12 +99,16 @@ def main():
         # Server-side interactive 3D scene (drag to rotate)
         run.track(Server3DScene(b""), name="server.3d_scene", step=step)
 
-        # Window plugin: stream glxgears from Xvfb (if available)
-        if HAS_GLXGEARS and step == 0:
-            print("  [window] Tracking glxgears WindowPlugin")
-            run.track(GlxgearsViewer(b""), name="window.glxgears", step=0)
-        elif step == 0 and not HAS_GLXGEARS:
-            print("  [window] Skipped glxgears (install: apt install xvfb mesa-utils xdotool imagemagick)")
+        # Window plugins: stream GUI apps from Xvfb (if available)
+        if step == 0:
+            if HAS_GLXGEARS:
+                print("  [window] Tracking glxgears")
+                run.track(GlxgearsViewer(b""), name="window.glxgears", step=0)
+            if HAS_XEYES:
+                print("  [window] Tracking xeyes (move mouse over it to test interaction)")
+                run.track(XEyesViewer(b""), name="window.xeyes", step=0)
+            if not HAS_XVFB:
+                print("  [window] Skipped window plugins (install: apt install xvfb mesa-utils x11-apps xdotool imagemagick)")
 
         # Regular scalar
         loss = 2.0 * math.exp(-step * 0.15) + 0.1
