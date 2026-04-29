@@ -68,19 +68,27 @@ class XvfbVideoTrack(VideoStreamTrack):
         try:
             rgb, w, h = self._xvfb.screenshot_raw()
             if rgb and w > 0 and h > 0:
-                return np.frombuffer(rgb, dtype=np.uint8).reshape(h, w, 3).copy()
+                arr = np.frombuffer(rgb, dtype=np.uint8).reshape(h, w, 3).copy()
+                if self._frame_count < 5:
+                    nonzero = np.count_nonzero(arr)
+                    print(f"[webrtc] mss capture: {w}x{h}, nonzero={nonzero}/{arr.size}", flush=True)
+                return arr
         except Exception as e:
-            log.debug("mss capture failed: %s", e)
+            print(f"[webrtc] mss capture failed: {e}", flush=True)
 
         try:
             jpeg_bytes = self._xvfb.screenshot()
             from PIL import Image as _Img
             import io as _io
             img = _Img.open(_io.BytesIO(jpeg_bytes)).convert("RGB")
-            return np.array(img, dtype=np.uint8)
+            arr = np.array(img, dtype=np.uint8)
+            if self._frame_count < 5:
+                print(f"[webrtc] JPEG fallback: {arr.shape}, size={len(jpeg_bytes)}", flush=True)
+            return arr
         except Exception as e:
-            log.debug("JPEG capture failed: %s", e)
+            print(f"[webrtc] JPEG capture also failed: {e}", flush=True)
 
+        print(f"[webrtc] Returning black frame", flush=True)
         return np.zeros((self._xvfb.height, self._xvfb.width, 3), dtype=np.uint8)
 
 

@@ -441,9 +441,9 @@ async def plugin_ws(
                         )
                         print(f"[plugin_ws] App PID: {xvfb_session.app_proc.pid if xvfb_session.app_proc else 'None'}", flush=True)
 
-                        # Wait for app to start, then send first frame.
+                        # Wait for app to start (Blender etc. can take several seconds).
                         print(f"[plugin_ws] Xvfb on display {xvfb_session.display}, waiting for app...", flush=True)
-                        await asyncio.sleep(1.0)
+                        await asyncio.sleep(3.0)
                         try:
                             frame = xvfb_session.screenshot()
                             print(f"[plugin_ws] First frame: {len(frame)} bytes", flush=True)
