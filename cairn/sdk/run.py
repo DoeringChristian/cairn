@@ -336,21 +336,30 @@ class Run:
             instance = cls.__new__(cls)
             source = instance.get_source()
             lang, mime = "js", "application/javascript"
-        elif issubclass(cls, WindowPlugin):
-            source = inspect.getsource(cls)
-            lang, mime = "window", "text/x-python"
-        elif issubclass(cls, ServerPlugin):
-            source = inspect.getsource(cls)
-            lang, mime = "server", "text/x-python"
-        elif issubclass(cls, PythonPlugin):
-            source = inspect.getsource(cls)
-            # Prepend a # cairn-requires comment for the iframe to parse.
-            reqs = getattr(cls, "requires", [])
-            if reqs:
-                req_line = f"# cairn-requires: {', '.join(reqs)}\n"
-                if "cairn-requires" not in source:
-                    source = req_line + source
-            lang, mime = "py", "text/x-python"
+        elif issubclass(cls, (WindowPlugin, ServerPlugin, PythonPlugin)):
+            # Capture the ENTIRE module source (not just the class) so that
+            # module-level imports and helper functions are preserved.
+            mod = inspect.getmodule(cls)
+            if mod is not None:
+                try:
+                    source = inspect.getsource(mod)
+                except OSError:
+                    source = inspect.getsource(cls)
+            else:
+                source = inspect.getsource(cls)
+
+            if issubclass(cls, WindowPlugin):
+                lang, mime = "window", "text/x-python"
+            elif issubclass(cls, ServerPlugin):
+                lang, mime = "server", "text/x-python"
+            else:
+                lang, mime = "py", "text/x-python"
+                # Prepend a # cairn-requires comment for the Pyodide iframe.
+                reqs = getattr(cls, "requires", [])
+                if reqs:
+                    req_line = f"# cairn-requires: {', '.join(reqs)}\n"
+                    if "cairn-requires" not in source:
+                        source = req_line + source
         else:
             raise TypeError(f"Unknown plugin type: {cls}")
 
