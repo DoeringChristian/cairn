@@ -581,6 +581,24 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
 
   const sourceQ = usePlotlySource(sourceHash);
 
+  // Shared view state for syncing zoom/pan/camera across comparison panes.
+  // Also used in single-pane mode to track whether zoom has been modified.
+  const [sharedView, setSharedView] = useState<SharedView>({});
+  const viewModified = Object.keys(sharedView).length > 0;
+  const updatingRef = useRef(false);
+  const handlePaneRelayout = useCallback((view: SharedView) => {
+    if (updatingRef.current) return;
+    updatingRef.current = true;
+    setSharedView((prev) => ({ ...prev, ...view }));
+    // Allow next update after React has flushed.
+    requestAnimationFrame(() => { updatingRef.current = false; });
+  }, []);
+  const resetView = useCallback(() => {
+    setSharedView({ "xaxis.autorange": true, "yaxis.autorange": true });
+    // Clear after Plotly applies the autorange so future interactions are tracked fresh.
+    requestAnimationFrame(() => setSharedView({}));
+  }, []);
+
   const mainBaseLayout = useMemo(() => {
     const base = (sourceQ.data?.layout ?? {}) as Record<string, unknown>;
     const layout: Record<string, unknown> = {
@@ -666,24 +684,6 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
     const total = Math.min(800, rows * rowH);
     return { figAutoHeight: `${total}px`, figRowHeight: `${rowH}px` };
   }, [settings.height, settings.height1, settings.height2, settings.colSpan, cardWidth, effectiveMetrics.length, isMulti]);
-
-  // Shared view state for syncing zoom/pan/camera across comparison panes.
-  // Also used in single-pane mode to track whether zoom has been modified.
-  const [sharedView, setSharedView] = useState<SharedView>({});
-  const viewModified = Object.keys(sharedView).length > 0;
-  const updatingRef = useRef(false);
-  const handlePaneRelayout = useCallback((view: SharedView) => {
-    if (updatingRef.current) return;
-    updatingRef.current = true;
-    setSharedView((prev) => ({ ...prev, ...view }));
-    // Allow next update after React has flushed.
-    requestAnimationFrame(() => { updatingRef.current = false; });
-  }, []);
-  const resetView = useCallback(() => {
-    setSharedView({ "xaxis.autorange": true, "yaxis.autorange": true });
-    // Clear after Plotly applies the autorange so future interactions are tracked fresh.
-    requestAnimationFrame(() => setSharedView({}));
-  }, []);
 
   return (
     <div
