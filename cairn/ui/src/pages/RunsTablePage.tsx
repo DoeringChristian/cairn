@@ -7,6 +7,7 @@ import { formatDuration, formatRelative, safeJsonParse } from "../lib/format";
 import { addCardToComparison, createComparison, useTemplates, type ComparisonTemplate } from "../lib/comparisons";
 import { saveCardSettings } from "../lib/card-settings";
 import { api } from "../api/client";
+import { setRunMetadata } from "../lib/run-label";
 import SettingsPopover from "../components/SettingsPopover";
 
 type SortColumn =
@@ -76,6 +77,9 @@ export default function RunsTablePage() {
   const { templates } = useTemplates(projectId ?? "");
 
   const runs = useMemo(() => q.data?.runs ?? [], [q.data]);
+
+  // Populate run label cache for formatting across the app.
+  useMemo(() => { if (runs.length > 0) setRunMetadata(runs); }, [runs]);
 
   const { regex: searchRegex, error: searchError } = useMemo(() => {
     const raw = search.trim();

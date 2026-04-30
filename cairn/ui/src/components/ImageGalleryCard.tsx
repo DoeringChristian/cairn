@@ -169,8 +169,8 @@ interface ImageSettings {
   showAxes: boolean;
   sliderStep?: number;
   height?: number;
-  /** Fixed viewport size per pane. When set, panes arrange in a grid. */
-  viewportSize?: { w: number; h: number };
+  /** Number of columns for multi-image layout (1 or 2). */
+  imageColumns?: 1 | 2;
   colSpan?: number;
   /** What to show when a run has no image at the current step. */
   missingImageMode?: "nothing" | "last_available";
@@ -1421,10 +1421,8 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
             <div
               className="grid gap-1 flex-1 min-h-0 overflow-auto"
               style={{
-                gridTemplateColumns: settings.viewportSize
-                  ? `repeat(auto-fill, ${settings.viewportSize.w}px)`
-                  : `repeat(auto-fill, minmax(200px, 1fr))`,
-                gridAutoRows: settings.viewportSize ? `${settings.viewportSize.h}px` : undefined,
+                gridTemplateColumns: `repeat(${settings.imageColumns ?? 2}, 1fr)`,
+                /* rows auto-size to content */
               }}
             >
               {effectiveMetrics.map((m, paneIdx) => {
@@ -1436,7 +1434,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                 const label = seriesLabel(m, runId, multipleRuns, availableRunIds)
                   + (fallbackStep != null ? ` (step ${fallbackStep})` : "");
                 return (
-                  <div key={seriesKey(m)} className="relative overflow-hidden" style={settings.viewportSize ? { width: settings.viewportSize.w, height: settings.viewportSize.h } : undefined}>
+                  <div key={seriesKey(m)} className="relative overflow-hidden" style={undefined}>
                     <ImagePane
                       metricEntry={m}
                       paneIndex={paneIdx}
@@ -1464,36 +1462,6 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                       }}
                       label={label}
                     />
-                    {/* Viewport resize handle on first pane */}
-                    {paneIdx === 0 && (
-                      <div
-                        className="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize flex items-end justify-end text-fg-muted hover:text-fg z-10"
-                        style={{ touchAction: "none" }}
-                        onPointerDown={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-                          const startX = e.clientX;
-                          const startY = e.clientY;
-                          const pEl = e.currentTarget.parentElement!;
-                          const startW = settings.viewportSize?.w ?? pEl.getBoundingClientRect().width;
-                          const startH = settings.viewportSize?.h ?? pEl.getBoundingClientRect().height;
-                          const onMove = (ev: PointerEvent) => {
-                            const w = Math.max(80, Math.round(startW + (ev.clientX - startX)));
-                            const h = Math.max(80, Math.round(startH + (ev.clientY - startY)));
-                            updateSettings({ viewportSize: { w, h } });
-                          };
-                          const onUp = () => {
-                            window.removeEventListener("pointermove", onMove);
-                            window.removeEventListener("pointerup", onUp);
-                          };
-                          window.addEventListener("pointermove", onMove);
-                          window.addEventListener("pointerup", onUp);
-                        }}
-                      >
-                        <svg width="10" height="10" viewBox="0 0 10 10" className="pointer-events-none"><line x1="9" y1="1" x2="1" y2="9" stroke="currentColor" strokeWidth="1.5"/><line x1="9" y1="5" x2="5" y2="9" stroke="currentColor" strokeWidth="1.5"/></svg>
-                      </div>
-                    )}
                   </div>
                 );
               })}
@@ -1502,7 +1470,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                 const refPt = extBasePoints[Math.min(safeIdx, extBasePoints.length - 1)];
                 const refHash = refPt?.artifact_hash ?? undefined;
                 return (
-                  <div className="relative overflow-hidden" style={settings.viewportSize ? { width: settings.viewportSize.w, height: settings.viewportSize.h } : undefined}>
+                  <div className="relative overflow-hidden" style={undefined}>
                     <ImagePane
                       metricEntry={{ runId: settings.externalBaseline!.runId, name: settings.externalBaseline!.name, context_hash: settings.externalBaseline!.context_hash }}
                       paneIndex={-1}
@@ -1914,10 +1882,8 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                 <div
                   className="grid gap-1 flex-1 min-h-0 overflow-auto"
                   style={{
-                    gridTemplateColumns: settings.viewportSize
-                      ? `repeat(auto-fill, ${settings.viewportSize.w}px)`
-                      : `repeat(auto-fill, minmax(200px, 1fr))`,
-                    gridAutoRows: settings.viewportSize ? `${settings.viewportSize.h}px` : undefined,
+                    gridTemplateColumns: `repeat(${settings.imageColumns ?? 2}, 1fr)`,
+                    /* rows auto-size to content */
                   }}
                 >
                   {effectiveMetrics.map((m, paneIdx) => {
@@ -1928,7 +1894,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                     const mLabel = seriesLabel(m, runId, multipleRuns, availableRunIds)
                       + (mFallback != null ? ` (step ${mFallback})` : "");
                     return (
-                      <div key={seriesKey(m)} className="relative overflow-hidden" style={settings.viewportSize ? { width: settings.viewportSize.w, height: settings.viewportSize.h } : undefined}>
+                      <div key={seriesKey(m)} className="relative overflow-hidden" style={undefined}>
                         <ImagePane
                           metricEntry={m}
                           paneIndex={paneIdx}
@@ -1956,35 +1922,6 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                           }}
                           label={mLabel}
                         />
-                        {paneIdx === 0 && (
-                          <div
-                            className="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize flex items-end justify-end text-fg-muted hover:text-fg z-10"
-                            style={{ touchAction: "none" }}
-                            onPointerDown={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-                              const startX = e.clientX;
-                              const startY = e.clientY;
-                              const pEl = e.currentTarget.parentElement!;
-                              const startW = settings.viewportSize?.w ?? pEl.getBoundingClientRect().width;
-                              const startH = settings.viewportSize?.h ?? pEl.getBoundingClientRect().height;
-                              const onMove = (ev: PointerEvent) => {
-                                const w = Math.max(80, Math.round(startW + (ev.clientX - startX)));
-                                const h = Math.max(80, Math.round(startH + (ev.clientY - startY)));
-                                updateSettings({ viewportSize: { w, h } });
-                              };
-                              const onUp = () => {
-                                window.removeEventListener("pointermove", onMove);
-                                window.removeEventListener("pointerup", onUp);
-                              };
-                              window.addEventListener("pointermove", onMove);
-                              window.addEventListener("pointerup", onUp);
-                            }}
-                          >
-                            <svg width="10" height="10" viewBox="0 0 10 10" className="pointer-events-none"><line x1="9" y1="1" x2="1" y2="9" stroke="currentColor" strokeWidth="1.5"/><line x1="9" y1="5" x2="5" y2="9" stroke="currentColor" strokeWidth="1.5"/></svg>
-                          </div>
-                        )}
                       </div>
                     );
                   })}
@@ -1992,7 +1929,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                     const refPt = extBasePoints[Math.min(safeIdx, extBasePoints.length - 1)];
                     const refHash = refPt?.artifact_hash ?? undefined;
                     return (
-                      <div className="relative overflow-hidden" style={settings.viewportSize ? { width: settings.viewportSize.w, height: settings.viewportSize.h } : undefined}>
+                      <div className="relative overflow-hidden" style={undefined}>
                         <ImagePane
                           metricEntry={{ runId: settings.externalBaseline!.runId, name: settings.externalBaseline!.name, context_hash: settings.externalBaseline!.context_hash }}
                           paneIndex={-1}

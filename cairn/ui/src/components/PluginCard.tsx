@@ -274,9 +274,33 @@ initPyodide();
 export default function PluginCard({
   runId,
   metric,
+  extraSeries,
+  controlledSeries,
   settingsKeyOverride,
   onRemove,
 }: Props) {
+  // Build effective metrics list: primary + extra series.
+  const effectiveMetrics = useMemo(() => {
+    const all: Array<{ runId?: string; name: string; context_hash: string }> = [
+      { name: metric.name, context_hash: metric.context_hash },
+      ...(extraSeries ?? []).map((s) => ({
+        runId: s.runId,
+        name: s.name,
+        context_hash: s.context_hash,
+      })),
+    ];
+    const seen = new Set<string>();
+    return all.filter((m) => {
+      const k = `${m.runId ?? ""}::${m.name}::${m.context_hash}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+  }, [metric.name, metric.context_hash, extraSeries]);
+
+  const _isMultiRun = effectiveMetrics.length > 1;
+  void _isMultiRun; // TODO: render multiple panes for comparison views
+  void controlledSeries;
   const [settings, updateSettings] = useCardSettings(
     settingsKeyOverride ?? {
       runId,
