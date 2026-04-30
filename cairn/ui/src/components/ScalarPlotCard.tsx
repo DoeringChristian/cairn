@@ -19,7 +19,7 @@ import {
   YAxis,
 } from "recharts";
 import { api } from "../api/client";
-import { useCardSettings, type CardSettingsKey } from "../lib/card-settings";
+import { useCardSettings, resolveCardHeight, toggleColSpanPatch, type CardSettingsKey } from "../lib/card-settings";
 import {
   addCardToComparison,
   createComparison,
@@ -63,6 +63,8 @@ interface ScalarSettings {
   title?: string;
   collapsed?: boolean;
   height?: number;
+  height1?: number;
+  height2?: number;
   colSpan?: number;
   /**
    * Series to render. `runId` is optional; when absent, the card's top-level
@@ -1599,11 +1601,13 @@ export default function ScalarPlotCard({
   // -------------------------------------------------------------------------
   // Render
   // -------------------------------------------------------------------------
+  const cardRef = useRef<HTMLDivElement>(null);
   return (
     <div
+      ref={cardRef}
       className={`card p-4 flex flex-col${dropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
       style={{
-        height: settings.collapsed ? undefined : (settings.height ?? 300),
+        height: settings.collapsed ? undefined : resolveCardHeight(settings, 300),
         position: "relative",
         gridColumn: (settings.colSpan ?? 1) > 1 ? `span ${settings.colSpan}` : undefined,
       }}
@@ -1616,7 +1620,7 @@ export default function ScalarPlotCard({
         collapsed={settings.collapsed}
         onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
         onSettings={() => setExpanded(true)}
-        onToggleFullWidth={() => updateSettings({ colSpan: (settings.colSpan ?? 1) > 1 ? 1 : 2 })}
+        onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<typeof settings>)}
         isFullWidth={(settings.colSpan ?? 1) > 1}
         onRemove={onRemove}
       >
@@ -1844,6 +1848,7 @@ export default function ScalarPlotCard({
         onHeightChange={(h) => updateSettings({ height: h })}
         colSpan={settings.colSpan ?? 1}
         onColSpanChange={(s) => updateSettings({ colSpan: s })}
+        onPerColHeightChange={(p) => updateSettings(p as Partial<typeof settings>)}
       />
     </div>
   );

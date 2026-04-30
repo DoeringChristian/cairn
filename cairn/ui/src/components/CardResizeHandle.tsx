@@ -11,6 +11,8 @@ interface Props {
   gridCols?: number;
   /** Minimum height in px (default 150). */
   minHeight?: number;
+  /** Called with per-colSpan height when dragging. Saves to height1/height2. */
+  onPerColHeightChange?: (patch: Record<string, unknown>) => void;
 }
 
 const MAX_HEIGHT = 2000;
@@ -25,6 +27,7 @@ export default function CardResizeHandle({
   onColSpanChange,
   gridCols = 2,
   minHeight = 150,
+  onPerColHeightChange,
 }: Props) {
   const handlePointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
@@ -59,6 +62,7 @@ export default function CardResizeHandle({
         : gridCols;
       const colWidth = gridWidth / actualCols;
 
+      let currentSpan = colSpan;
       const onPointerMove = (ev: PointerEvent) => {
         // Height: continuous
         const newH = Math.round(
@@ -66,9 +70,16 @@ export default function CardResizeHandle({
         );
         onHeightChange(newH);
 
+        // Also save to per-colSpan slot
+        if (onPerColHeightChange) {
+          const key = currentSpan > 1 ? "height2" : "height1";
+          onPerColHeightChange({ [key]: newH, height: newH });
+        }
+
         // Width: snap to column spans based on drag distance
         const targetWidth = startWidth + (ev.clientX - startX);
         const newSpan = Math.max(1, Math.min(actualCols, Math.round(targetWidth / colWidth)));
+        if (newSpan !== currentSpan) currentSpan = newSpan;
         onColSpanChange(newSpan);
       };
 
@@ -80,7 +91,7 @@ export default function CardResizeHandle({
       window.addEventListener("pointermove", onPointerMove);
       window.addEventListener("pointerup", onPointerUp);
     },
-    [minHeight, onHeightChange, colSpan, onColSpanChange, gridCols],
+    [minHeight, onHeightChange, colSpan, onColSpanChange, gridCols, onPerColHeightChange],
   );
 
   return (

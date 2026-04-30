@@ -7,7 +7,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { api } from "../api/client";
 import type { Run } from "../api/types";
-import { useCardSettings } from "../lib/card-settings";
+import { useCardSettings, resolveCardHeight, toggleColSpanPatch } from "../lib/card-settings";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import CardHeader from "./CardHeader";
 import CardDetailModal from "./CardDetailModal";
@@ -27,6 +27,8 @@ interface ScatterSettings {
   title?: string;
   collapsed?: boolean;
   height?: number;
+  height1?: number;
+  height2?: number;
   colSpan?: number;
   xAxis: AxisDef | null;
   yAxis: AxisDef | null;
@@ -350,11 +352,14 @@ export default function ScatterPlotCard({
     return () => ro.disconnect();
   }, []);
 
+  const cardRef = useRef<HTMLDivElement>(null);
+
   return (
     <div
+      ref={cardRef}
       className="card p-4 flex flex-col"
       style={{
-        height: settings.collapsed ? undefined : (settings.height ?? 350),
+        height: resolveCardHeight(settings, 350),
         position: "relative",
         gridColumn: (settings.colSpan ?? 1) > 1 ? `span ${settings.colSpan}` : undefined,
       }}
@@ -366,7 +371,7 @@ export default function ScatterPlotCard({
         collapsed={settings.collapsed}
         onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
         onSettings={() => setExpanded(true)}
-        onToggleFullWidth={() => updateSettings({ colSpan: (settings.colSpan ?? 1) > 1 ? 1 : 2 })}
+        onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<ScatterSettings>)}
         isFullWidth={(settings.colSpan ?? 1) > 1}
         onRemove={onRemove}
       >
@@ -396,6 +401,7 @@ export default function ScatterPlotCard({
         onHeightChange={(h) => updateSettings({ height: h })}
         colSpan={settings.colSpan ?? 1}
         onColSpanChange={(s) => updateSettings({ colSpan: s })}
+        onPerColHeightChange={(p) => updateSettings(p as Partial<ScatterSettings>)}
       />
     </div>
   );

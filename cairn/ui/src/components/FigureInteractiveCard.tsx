@@ -6,7 +6,7 @@ import Plotly from "plotly.js-dist-min";
 import { useSequence } from "../api/hooks";
 import { api } from "../api/client";
 import { safeJsonParse, formatRelative } from "../lib/format";
-import { useCardSettings, type CardSettingsKey } from "../lib/card-settings";
+import { useCardSettings, resolveCardHeight, toggleColSpanPatch, type CardSettingsKey } from "../lib/card-settings";
 import { useSeriesDrop } from "../lib/use-series-drop";
 import {
   addCardToComparison,
@@ -69,13 +69,14 @@ interface FigureSettings {
   collapsed?: boolean;
   sliderStep?: number;
   height?: number;
+  height1?: number;
+  height2?: number;
   colSpan?: number;
   displayModeBar: boolean;
   scrollZoom: boolean;
   hoverMode: HoverMode;
   dragMode: DragMode;
   showLegend: boolean;
-  viewportSize?: { w: number; h: number };
 }
 
 const DEFAULT_FIGURE_SETTINGS = (seed: {
@@ -560,7 +561,7 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
 
   // Auto-height for figure containers
   const { figAutoHeight, figRowHeight } = useMemo(() => {
-    if (settings.height) return { figAutoHeight: undefined, figRowHeight: undefined };
+    if (resolveCardHeight(settings, undefined) != null) return { figAutoHeight: undefined, figRowHeight: undefined };
     if (cardWidth <= 0) return { figAutoHeight: "320px", figRowHeight: undefined };
     if (!isMulti) {
       const h = Math.max(200, Math.min(500, Math.round(cardWidth * 0.75)));
@@ -575,14 +576,14 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
     const rowH = Math.max(150, Math.min(400, Math.round(paneW * 0.75)));
     const total = Math.min(800, rows * rowH);
     return { figAutoHeight: `${total}px`, figRowHeight: `${rowH}px` };
-  }, [settings.height, cardWidth, effectiveMetrics.length, isMulti]);
+  }, [settings.height, settings.height1, settings.height2, settings.colSpan, cardWidth, effectiveMetrics.length, isMulti]);
 
   return (
     <div
       ref={cardRef}
       className={`card p-4 flex flex-col${dropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
       style={{
-        height: settings.collapsed ? undefined : (settings.height ?? 350),
+        height: settings.collapsed ? undefined : resolveCardHeight(settings, 350),
         position: "relative",
         gridColumn: (settings.colSpan ?? 1) > 1 ? `span ${settings.colSpan}` : undefined,
       }}
@@ -595,7 +596,7 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
         collapsed={settings.collapsed}
         onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
         onSettings={() => setExpanded(true)}
-        onToggleFullWidth={() => updateSettings({ colSpan: (settings.colSpan ?? 1) > 1 ? 1 : 2 })}
+        onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<typeof settings>)}
         isFullWidth={(settings.colSpan ?? 1) > 1}
         onRemove={onRemove}
       >
@@ -641,18 +642,15 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
       {!settings.collapsed && (<>
       {isMulti ? (
         <>
-          <div ref={figContainerRef} className="flex-1 min-h-0 overflow-auto" style={{ height: settings.height ? undefined : figAutoHeight }}>
+          <div ref={figContainerRef} className="flex-1 min-h-0 overflow-auto" style={{ height: resolveCardHeight(settings, undefined) != null ? undefined : figAutoHeight }}>
           <div
-            className="grid gap-1 h-full"
+            className="grid gap-1 flex-1 min-h-0 overflow-auto"
             style={{
-              gridTemplateColumns: settings.viewportSize
-                ? `repeat(auto-fill, ${settings.viewportSize.w}px)`
-                : `repeat(auto-fill, minmax(200px, 1fr))`,
-              gridAutoRows: settings.viewportSize ? `${settings.viewportSize.h}px` : (figRowHeight ?? "1fr"),
+              gridTemplateColumns: `repeat(${Math.min(effectiveMetrics.length, 2)}, 1fr)`,
             }}
           >
-            {effectiveMetrics.map((m, idx) => (
-              <div key={seriesKey(m)} className="relative overflow-hidden" style={settings.viewportSize ? { width: settings.viewportSize.w, height: settings.viewportSize.h } : undefined}>
+            {effectiveMetrics.map((m) => (
+              <div key={seriesKey(m)} className="relative overflow-hidden">
                 <FigurePane
                   runId={runId}
                   m={m}
@@ -663,35 +661,6 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
                   <span className="absolute top-1 left-1 z-10 rounded bg-bg/80 px-1.5 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm">
                     {seriesLabel(m.name, m.context_hash, m.runId ?? runId, true, allRunIds)}
                   </span>
-                )}
-                {idx === 0 && (
-                  <div
-                    className="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize flex items-end justify-end text-fg-muted hover:text-fg z-10"
-                    style={{ touchAction: "none" }}
-                    onPointerDown={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-                      const startX = e.clientX;
-                      const startY = e.clientY;
-                      const pEl = e.currentTarget.parentElement!;
-                      const startW = settings.viewportSize?.w ?? pEl.getBoundingClientRect().width;
-                      const startH = settings.viewportSize?.h ?? pEl.getBoundingClientRect().height;
-                      const onMove = (ev: PointerEvent) => {
-                        const w = Math.max(80, Math.round(startW + (ev.clientX - startX)));
-                        const h = Math.max(80, Math.round(startH + (ev.clientY - startY)));
-                        updateSettings({ viewportSize: { w, h } });
-                      };
-                      const onUp = () => {
-                        window.removeEventListener("pointermove", onMove);
-                        window.removeEventListener("pointerup", onUp);
-                      };
-                      window.addEventListener("pointermove", onMove);
-                      window.addEventListener("pointerup", onUp);
-                    }}
-                  >
-                    <svg width="10" height="10" viewBox="0 0 10 10" className="pointer-events-none"><line x1="9" y1="1" x2="1" y2="9" stroke="currentColor" strokeWidth="1.5"/><line x1="9" y1="5" x2="5" y2="9" stroke="currentColor" strokeWidth="1.5"/></svg>
-                  </div>
                 )}
               </div>
             ))}
@@ -776,7 +745,7 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
       ) : current?.artifact_hash ? (
         <>
           {showPlotly ? (
-            <div className="rounded flex-1 min-h-0" style={{ height: settings.height ? undefined : figAutoHeight }}>
+            <div className="rounded flex-1 min-h-0" style={{ height: resolveCardHeight(settings, undefined) != null ? undefined : figAutoHeight }}>
               <Plot
                 data={(sourceQ.data?.data ?? []) as Plotly.Data[]}
                 layout={mergedLayout as Partial<Plotly.Layout>}
@@ -793,7 +762,7 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
                 src={api.artifactUrl(current.artifact_hash)}
                 alt={`${metric.name} @ step ${current.step}`}
                 className="max-w-full max-h-full object-contain"
-                style={{ maxHeight: settings.height ? undefined : "320px" }}
+                style={{ maxHeight: resolveCardHeight(settings, undefined) != null ? undefined : "320px" }}
               />
             </div>
           )}
@@ -961,6 +930,7 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
         onHeightChange={(h) => updateSettings({ height: h })}
         colSpan={settings.colSpan ?? 1}
         onColSpanChange={(s) => updateSettings({ colSpan: s })}
+        onPerColHeightChange={(p) => updateSettings(p as Partial<typeof settings>)}
       />
     </div>
   );

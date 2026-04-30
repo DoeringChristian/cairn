@@ -3,7 +3,7 @@ import { useQueries } from "@tanstack/react-query";
 import { useSequence } from "../api/hooks";
 import { api } from "../api/client";
 import { safeJsonParse, formatRelative } from "../lib/format";
-import { useCardSettings, type CardSettingsKey } from "../lib/card-settings";
+import { useCardSettings, resolveCardHeight, toggleColSpanPatch, type CardSettingsKey } from "../lib/card-settings";
 import { useSeriesDrop } from "../lib/use-series-drop";
 import {
   addCardToComparison,
@@ -50,6 +50,8 @@ interface VideoSettings {
   collapsed?: boolean;
   sliderStep?: number;
   height?: number;
+  height1?: number;
+  height2?: number;
   colSpan?: number;
   autoplay: boolean;
   loop: boolean;
@@ -361,12 +363,14 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
       : `${metric.count} pts`;
 
   const isMulti = effectiveMetrics.length > 1;
+  const cardRef = useRef<HTMLDivElement>(null);
 
   return (
     <div
+      ref={cardRef}
       className={`card p-4 flex flex-col${dropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
       style={{
-        height: settings.collapsed ? undefined : (settings.height ?? 350),
+        height: resolveCardHeight(settings, 350),
         position: "relative",
         gridColumn: (settings.colSpan ?? 1) > 1 ? `span ${settings.colSpan}` : undefined,
       }}
@@ -379,7 +383,7 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
         collapsed={settings.collapsed}
         onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
         onSettings={() => setExpanded(true)}
-        onToggleFullWidth={() => updateSettings({ colSpan: (settings.colSpan ?? 1) > 1 ? 1 : 2 })}
+        onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<VideoSettings>)}
         isFullWidth={(settings.colSpan ?? 1) > 1}
         onRemove={onRemove}
       >
@@ -402,21 +406,25 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
       {!settings.collapsed && (<>
       {isMulti ? (
         <>
-          <div className="flex-1 min-h-0">
-          <SplitPane
-            widths={settings.paneWidths ?? Array(effectiveMetrics.length).fill(1 / effectiveMetrics.length)}
-            onWidthsChange={(w) => updateSettings({ paneWidths: w })}
+          <div
+            className="grid gap-1 flex-1 min-h-0 overflow-auto"
+            style={{ gridTemplateColumns: `repeat(${Math.min(effectiveMetrics.length, 2)}, 1fr)` }}
           >
             {effectiveMetrics.map((m) => (
-              <VideoPane
-                key={seriesKey(m)}
-                runId={runId}
-                m={m}
-                targetStep={currentStep}
-                settings={settings}
-              />
+              <div key={seriesKey(m)} className="relative overflow-hidden">
+                <VideoPane
+                  runId={runId}
+                  m={m}
+                  targetStep={currentStep}
+                  settings={settings}
+                />
+                {multipleRuns && (
+                  <span className="absolute top-1 left-1 z-10 rounded bg-bg/80 px-1.5 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm">
+                    {shortRunLabel(m.runId ?? runId, allRunIds)}
+                  </span>
+                )}
+              </div>
             ))}
-          </SplitPane>
           </div>
           {globalSteps.length > 1 && (
             <input
@@ -760,6 +768,7 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
         onHeightChange={(h) => updateSettings({ height: h })}
         colSpan={settings.colSpan ?? 1}
         onColSpanChange={(s) => updateSettings({ colSpan: s })}
+        onPerColHeightChange={(p) => updateSettings(p as Partial<VideoSettings>)}
       />
     </div>
   );

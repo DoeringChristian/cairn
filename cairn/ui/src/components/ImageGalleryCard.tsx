@@ -10,7 +10,7 @@ import { useQueries } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { useSequence, useSequences } from "../api/hooks";
 import type { SequenceMeta, SequencePoint } from "../api/types";
-import { useCardSettings, type CardSettingsKey } from "../lib/card-settings";
+import { useCardSettings, resolveCardHeight, toggleColSpanPatch, type CardSettingsKey } from "../lib/card-settings";
 import { useSeriesDrop } from "../lib/use-series-drop";
 import {
   addCardToComparison,
@@ -169,6 +169,8 @@ interface ImageSettings {
   showAxes: boolean;
   sliderStep?: number;
   height?: number;
+  height1?: number;
+  height2?: number;
   /** Number of columns for multi-image layout (1 or 2). */
   imageColumns?: 1 | 2;
   colSpan?: number;
@@ -1257,7 +1259,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
   // Compute viewport height from container width + image aspect ratio
   // so the viewport matches the image proportions
   const autoHeight = useMemo((): string | undefined => {
-    if (settings.height != null) return undefined; // user-set height
+    if (resolveCardHeight(settings, undefined) != null) return undefined; // user-set height
     if (!imageAspect || containerWidth <= 0) return "20rem"; // before image loads
     const n = effectiveMetrics.length;
     // How many columns will SplitPane use? It wraps at minPaneWidth=200
@@ -1269,7 +1271,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     // Clamp: at least 120px, at most 500px per row
     const clampedRow = Math.max(120, Math.min(500, rowHeight));
     return `${Math.round(rows * clampedRow)}px`;
-  }, [settings.height, imageAspect, containerWidth, effectiveMetrics.length]);
+  }, [settings.height, settings.height1, settings.height2, settings.colSpan, imageAspect, containerWidth, effectiveMetrics.length]);
 
   const subtitle =
     globalSteps.length > 0
@@ -1305,12 +1307,15 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
         ).hash
       : undefined;
 
+  const cardRef = useRef<HTMLDivElement>(null);
+
   return (
     <div
+      ref={cardRef}
       className={`card p-4 flex flex-col${dropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
       style={{
         position: "relative",
-        height: settings.collapsed ? undefined : (settings.height ?? undefined),
+        height: settings.collapsed ? undefined : resolveCardHeight(settings, undefined),
         gridColumn: (settings.colSpan ?? 1) > 1 ? `span ${settings.colSpan}` : undefined,
       }}
       {...dropProps}
@@ -1351,7 +1356,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
         collapsed={settings.collapsed}
         onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
         onSettings={() => setExpanded(true)}
-        onToggleFullWidth={() => updateSettings({ colSpan: (settings.colSpan ?? 1) > 1 ? 1 : 2 })}
+        onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<typeof settings>)}
         isFullWidth={(settings.colSpan ?? 1) > 1}
         onRemove={onRemove}
       >
@@ -1400,9 +1405,9 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
         <>
           <div
             ref={setContainerRef}
-            className={`relative min-h-0 flex flex-col overflow-hidden${settings.height != null ? " flex-1" : ""}${refDropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
+            className={`relative min-h-0 flex flex-col overflow-hidden${resolveCardHeight(settings, undefined) != null ? " flex-1" : ""}${refDropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
             style={{
-              height: settings.height == null ? autoHeight : undefined,
+              height: resolveCardHeight(settings, undefined) == null ? autoHeight : undefined,
               cursor: canPan ? "move" : "default",
               touchAction: canPan ? "none" : undefined,
             }}
@@ -2002,6 +2007,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
         onHeightChange={(h) => updateSettings({ height: h })}
         colSpan={settings.colSpan ?? 1}
         onColSpanChange={(s) => updateSettings({ colSpan: s })}
+        onPerColHeightChange={(p) => updateSettings(p as Partial<typeof settings>)}
       />
     </div>
   );

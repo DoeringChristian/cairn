@@ -8,7 +8,7 @@ import { useQueries } from "@tanstack/react-query";
 import { useSequence } from "../api/hooks";
 import { api } from "../api/client";
 import { safeJsonParse } from "../lib/format";
-import { useCardSettings, type CardSettingsKey } from "../lib/card-settings";
+import { useCardSettings, resolveCardHeight, toggleColSpanPatch, type CardSettingsKey } from "../lib/card-settings";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import type { SequenceMeta, SequenceResponse, SequencePoint } from "../api/types";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
@@ -37,6 +37,8 @@ interface PluginSettings {
   collapsed?: boolean;
   sliderStep?: number;
   height?: number;
+  height1?: number;
+  height2?: number;
   colSpan?: number;
 }
 
@@ -241,16 +243,16 @@ function PluginPane({
   }, [lang, current, pluginMeta, targetStep, rid, m.name]);
 
   if (error) {
-    return <div className="rounded bg-bg p-2 text-xs text-status-failed overflow-auto"><pre>{error}</pre></div>;
+    return <div className="flex-1 rounded bg-bg p-2 text-xs text-status-failed overflow-auto"><pre>{error}</pre></div>;
   }
   if (!pluginMeta.plugin_hash) {
-    return <div className="flex items-center justify-center text-xs text-fg-muted p-4">No plugin metadata</div>;
+    return <div className="flex-1 flex items-center justify-center text-xs text-fg-muted p-4">No plugin metadata</div>;
   }
   if (lang === "server" || lang === "window") {
     return serverFrameUrl ? (
-      <img src={serverFrameUrl} className="w-full rounded object-contain" style={{ minHeight: 100 }} alt="" draggable={false} />
+      <img src={serverFrameUrl} className="flex-1 w-full rounded object-contain" style={{ minHeight: 100 }} alt="" draggable={false} />
     ) : (
-      <div className="flex items-center justify-center p-4">
+      <div className="flex-1 flex items-center justify-center p-4">
         <div className="h-6 w-6 motion-safe:animate-spin rounded-full border-2 border-accent border-t-transparent" />
       </div>
     );
@@ -259,8 +261,8 @@ function PluginPane({
     <iframe
       ref={iframeRef}
       {...(lang === "js" ? { sandbox: "allow-scripts" } : {})}
-      className="w-full rounded border-0"
-      style={{ height: 250, minHeight: 100 }}
+      className="flex-1 w-full rounded border-0"
+      style={{ minHeight: 100 }}
       title={`Plugin: ${pluginMeta.plugin_name ?? m.name}`}
     />
   );
@@ -359,12 +361,15 @@ export default function PluginCard({
     ? `step ${currentStep} (${safeIdx + 1}/${globalSteps.length})`
     : pluginMeta.plugin_name ?? "plugin";
 
+  const cardRef = useRef<HTMLDivElement>(null);
+
   return (
     <div
+      ref={cardRef}
       className="card p-4 flex flex-col"
       style={{
         position: "relative",
-        height: settings.collapsed ? undefined : (settings.height ?? 400),
+        height: resolveCardHeight(settings, 400),
         gridColumn: (settings.colSpan ?? 1) > 1 ? `span ${settings.colSpan}` : undefined,
       }}
     >
@@ -374,7 +379,7 @@ export default function PluginCard({
         subtitle={subtitle}
         collapsed={settings.collapsed}
         onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
-        onToggleFullWidth={() => updateSettings({ colSpan: (settings.colSpan ?? 1) > 1 ? 1 : 2 })}
+        onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<PluginSettings>)}
         isFullWidth={(settings.colSpan ?? 1) > 1}
         onRemove={onRemove}
       >
@@ -427,6 +432,7 @@ export default function PluginCard({
         onHeightChange={(h) => updateSettings({ height: h })}
         colSpan={settings.colSpan ?? 1}
         onColSpanChange={(s) => updateSettings({ colSpan: s })}
+        onPerColHeightChange={(p) => updateSettings(p as Partial<PluginSettings>)}
       />
     </div>
   );

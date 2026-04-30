@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSequence } from "../api/hooks";
 import { safeJsonParse, formatRelative } from "../lib/format";
-import { useCardSettings, type CardSettingsKey } from "../lib/card-settings";
+import { useCardSettings, resolveCardHeight, toggleColSpanPatch, type CardSettingsKey } from "../lib/card-settings";
 import {
   addCardToComparison,
   createComparison,
@@ -34,6 +34,8 @@ interface HistogramSettings {
   title?: string;
   collapsed?: boolean;
   height?: number;
+  height1?: number;
+  height2?: number;
   colSpan?: number;
 }
 
@@ -121,8 +123,10 @@ export default function HistogramCard({ runId, metric, settingsKeyOverride, onRe
       ? `step ${current?.step ?? "\u2014"} of ${points.length}`
       : `${metric.count} pts`;
 
+  const cardRef = useRef<HTMLDivElement>(null);
+
   return (
-    <div className="card p-4 flex flex-col" style={{ height: settings.collapsed ? undefined : (settings.height ?? 250), position: "relative", gridColumn: (settings.colSpan ?? 1) > 1 ? `span ${settings.colSpan}` : undefined }}>
+    <div ref={cardRef} className="card p-4 flex flex-col" style={{ height: resolveCardHeight(settings, 250), position: "relative", gridColumn: (settings.colSpan ?? 1) > 1 ? `span ${settings.colSpan}` : undefined }}>
       <CardHeader
         title={settings.title ?? metric.name}
         onTitleChange={(t) => updateSettings({ title: t || undefined })}
@@ -130,7 +134,7 @@ export default function HistogramCard({ runId, metric, settingsKeyOverride, onRe
         collapsed={settings.collapsed}
         onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
         onSettings={() => setExpanded(true)}
-        onToggleFullWidth={() => updateSettings({ colSpan: (settings.colSpan ?? 1) > 1 ? 1 : 2 })}
+        onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<HistogramSettings>)}
         isFullWidth={(settings.colSpan ?? 1) > 1}
         onRemove={onRemove}
       >
@@ -295,6 +299,7 @@ export default function HistogramCard({ runId, metric, settingsKeyOverride, onRe
         onHeightChange={(h) => updateSettings({ height: h })}
         colSpan={settings.colSpan ?? 1}
         onColSpanChange={(s) => updateSettings({ colSpan: s })}
+        onPerColHeightChange={(p) => updateSettings(p as Partial<HistogramSettings>)}
       />
     </div>
   );

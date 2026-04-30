@@ -9,7 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { api } from "../api/client";
 import type { Run } from "../api/types";
-import { useCardSettings } from "../lib/card-settings";
+import { useCardSettings, resolveCardHeight, toggleColSpanPatch } from "../lib/card-settings";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import CardHeader from "./CardHeader";
 import CardDetailModal from "./CardDetailModal";
@@ -24,6 +24,8 @@ interface ParallelSettings {
   title?: string;
   collapsed?: boolean;
   height?: number;
+  height1?: number;
+  height2?: number;
   colSpan?: number;
   /** Column definitions: each is either a param key or a scalar metric name. */
   columns: Array<{ key: string; source: "param" | "metric"; log?: boolean; invert?: boolean }>;
@@ -524,11 +526,14 @@ export default function ParallelCoordsCard({
     return () => ro.disconnect();
   }, []);
 
+  const cardRef = useRef<HTMLDivElement>(null);
+
   return (
     <div
+      ref={cardRef}
       className="card p-4 flex flex-col"
       style={{
-        height: settings.collapsed ? undefined : (settings.height ?? 350),
+        height: resolveCardHeight(settings, 350),
         position: "relative",
         gridColumn: (settings.colSpan ?? 1) > 1 ? `span ${settings.colSpan}` : undefined,
       }}
@@ -540,7 +545,7 @@ export default function ParallelCoordsCard({
         collapsed={settings.collapsed}
         onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
         onSettings={() => setExpanded(true)}
-        onToggleFullWidth={() => updateSettings({ colSpan: (settings.colSpan ?? 1) > 1 ? 1 : 2 })}
+        onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<ParallelSettings>)}
         isFullWidth={(settings.colSpan ?? 1) > 1}
         onRemove={onRemove}
       >
@@ -574,6 +579,7 @@ export default function ParallelCoordsCard({
         onHeightChange={(h) => updateSettings({ height: h })}
         colSpan={settings.colSpan ?? 1}
         onColSpanChange={(s) => updateSettings({ colSpan: s })}
+        onPerColHeightChange={(p) => updateSettings(p as Partial<ParallelSettings>)}
       />
     </div>
   );
