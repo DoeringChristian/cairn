@@ -162,6 +162,98 @@ function settingsDifferFromDefaults(s: FigureSettings, d: FigureSettings): boole
 }
 
 // ---------------------------------------------------------------------------
+// Shared view state synced across comparison panes.
+// Captures axis ranges (2D) and camera (3D) from Plotly relayout events.
+// ---------------------------------------------------------------------------
+
+type SharedView = Record<string, unknown>;
+
+/** Extract axis ranges + scene camera from a Plotly relayout event object. */
+function extractViewState(relayoutData: Record<string, unknown>): SharedView | null {
+  const view: SharedView = {};
+  let any = false;
+  for (const [k, v] of Object.entries(relayoutData)) {
+    // 2D axis ranges: xaxis.range[0], yaxis.range[1], xaxis.autorange, etc.
+    if (/^[xy]axis\d*\./.test(k)) {
+      view[k] = v;
+      any = true;
+    }
+    // 3D scene camera: both dot-path (scene.camera.eye.x) and nested object (scene)
+    if (/^scene\d*\.camera/.test(k)) {
+      view[k] = v;
+      any = true;
+    }
+    // 3D scene as a nested object (Plotly sometimes sends {scene: {camera: {...}}})
+    if (/^scene\d*$/.test(k) && v && typeof v === "object") {
+      view[k] = v;
+      any = true;
+    }
+    // Mapbox/geo: mapbox.center, mapbox.zoom, geo.projection, etc.
+    if (/^(mapbox|geo)\d*\./.test(k)) {
+      view[k] = v;
+      any = true;
+    }
+  }
+  return any ? view : null;
+}
+
+/** Deep merge b into a (returns new object). */
+function deepMerge(a: Record<string, unknown>, b: Record<string, unknown>): Record<string, unknown> {
+  const result = { ...a };
+  for (const [k, v] of Object.entries(b)) {
+    if (v && typeof v === "object" && !Array.isArray(v) && a[k] && typeof a[k] === "object" && !Array.isArray(a[k])) {
+      result[k] = deepMerge(a[k] as Record<string, unknown>, v as Record<string, unknown>);
+    } else {
+      result[k] = v;
+    }
+  }
+  return result;
+}
+
+/** Merge shared view overrides into a Plotly layout object. */
+function applyViewOverrides(
+  layout: Record<string, unknown>,
+  overrides: SharedView,
+): Record<string, unknown> {
+  const result = { ...layout };
+  for (const [k, v] of Object.entries(overrides)) {
+    // If the value is an object and key has no dots (e.g. "scene" with nested camera),
+    // deep-merge it into the layout.
+    if (!k.includes(".") && !k.includes("[") && v && typeof v === "object" && !Array.isArray(v)) {
+      result[k] = deepMerge((result[k] as Record<string, unknown>) ?? {}, v as Record<string, unknown>);
+      continue;
+    }
+    // Plotly relayout keys are dot-separated paths like "xaxis.range[0]"
+    const bracketMatch = k.match(/^(.+)\[(\d+)]$/);
+    if (bracketMatch) {
+      const [, path, idx] = bracketMatch;
+      const parts = path!.split(".");
+      let obj: Record<string, unknown> = result;
+      for (let i = 0; i < parts.length; i++) {
+        const p = parts[i]!;
+        if (i === parts.length - 1) {
+          if (!Array.isArray(obj[p])) obj[p] = [];
+          (obj[p] as unknown[])[Number(idx)] = v;
+        } else {
+          if (obj[p] == null || typeof obj[p] !== "object") obj[p] = {};
+          obj = obj[p] as Record<string, unknown>;
+        }
+      }
+    } else {
+      const parts = k.split(".");
+      let obj: Record<string, unknown> = result;
+      for (let i = 0; i < parts.length - 1; i++) {
+        const p = parts[i]!;
+        if (obj[p] == null || typeof obj[p] !== "object") obj[p] = {};
+        obj = obj[p] as Record<string, unknown>;
+      }
+      obj[parts[parts.length - 1]!] = v;
+    }
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // Single pane: renders one figure at the given global step number.
 // ---------------------------------------------------------------------------
 function FigurePane({
@@ -169,11 +261,15 @@ function FigurePane({
   m,
   targetStep,
   settings,
+  viewOverrides,
+  onRelayout,
 }: {
   runId: string;
   m: { runId?: string; name: string; context_hash: string };
   targetStep: number;
   settings: FigureSettings;
+  viewOverrides?: SharedView;
+  onRelayout?: (view: SharedView) => void;
 }) {
   const rid = m.runId ?? runId;
   const q = useSequence(rid, m.name, {
@@ -208,7 +304,7 @@ function FigurePane({
 
   const sourceQ = usePlotlySource(sourceHash);
 
-  const mergedLayout = useMemo(() => {
+  const baseLayout = useMemo(() => {
     const base = (sourceQ.data?.layout ?? {}) as Record<string, unknown>;
     const layout: Record<string, unknown> = {
       ...base,
@@ -223,6 +319,37 @@ function FigurePane({
     delete layout.height;
     return layout;
   }, [sourceQ.data, settings.hoverMode, settings.dragMode, settings.showLegend]);
+
+  // Apply shared view overrides (synced zoom/pan/camera from other panes).
+  const mergedLayout = useMemo(
+    () => viewOverrides && Object.keys(viewOverrides).length > 0
+      ? applyViewOverrides(baseLayout, viewOverrides)
+      : baseLayout,
+    [baseLayout, viewOverrides],
+  );
+
+  const handleRelayout = useCallback(
+    (e: Readonly<Plotly.PlotRelayoutEvent>) => {
+      if (!onRelayout) return;
+      const view = extractViewState(e as unknown as Record<string, unknown>);
+      if (view) onRelayout(view);
+    },
+    [onRelayout],
+  );
+
+  // Attach plotly_relayouting for real-time sync during 3D drag rotation.
+  const plotContainerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!onRelayout) return;
+    const el = plotContainerRef.current?.querySelector(".js-plotly-plot") as Plotly.PlotlyHTMLElement | null;
+    if (!el?.on) return;
+    const handler = (e: Plotly.PlotRelayoutEvent) => {
+      const view = extractViewState(e as unknown as Record<string, unknown>);
+      if (view) onRelayout(view);
+    };
+    el.on("plotly_relayouting", handler);
+    return () => el.removeAllListeners?.("plotly_relayouting");
+  });
 
   const plotlyConfig = useMemo(
     () => ({
@@ -243,13 +370,14 @@ function FigurePane({
   }
   if (showPlotly) {
     return (
-      <div className="rounded bg-bg h-full">
+      <div ref={plotContainerRef} className="rounded bg-bg h-full">
         <Plot
           data={(sourceQ.data?.data ?? []) as Plotly.Data[]}
           layout={mergedLayout as Partial<Plotly.Layout>}
           config={plotlyConfig}
           useResizeHandler
           style={{ width: "100%", height: "100%" }}
+          onRelayout={handleRelayout}
         />
       </div>
     );
@@ -542,6 +670,17 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
     return { figAutoHeight: `${total}px`, figRowHeight: `${rowH}px` };
   }, [settings.height, settings.height1, settings.height2, settings.colSpan, cardWidth, effectiveMetrics.length, isMulti]);
 
+  // Shared view state for syncing zoom/pan/camera across comparison panes.
+  const [sharedView, setSharedView] = useState<SharedView>({});
+  const updatingRef = useRef(false);
+  const handlePaneRelayout = useCallback((view: SharedView) => {
+    if (updatingRef.current) return;
+    updatingRef.current = true;
+    setSharedView((prev) => ({ ...prev, ...view }));
+    // Allow next update after React has flushed.
+    requestAnimationFrame(() => { updatingRef.current = false; });
+  }, []);
+
   return (
     <div
       ref={cardRef}
@@ -620,6 +759,8 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
                   m={m}
                   targetStep={currentStep}
                   settings={settings}
+                  viewOverrides={isMulti ? sharedView : undefined}
+                  onRelayout={isMulti ? handlePaneRelayout : undefined}
                 />
                 {multipleRuns && (
                   <span className="absolute top-1 left-1 z-10 rounded bg-bg/80 px-1.5 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm">
@@ -803,6 +944,8 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
                     m={m}
                     targetStep={currentStep}
                     settings={settings}
+                    viewOverrides={isMulti ? sharedView : undefined}
+                    onRelayout={isMulti ? handlePaneRelayout : undefined}
                   />
                 ))}
               </SplitPane>
