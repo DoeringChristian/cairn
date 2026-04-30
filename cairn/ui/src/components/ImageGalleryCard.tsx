@@ -200,21 +200,7 @@ function defaultImageSettings(seed: {
   };
 }
 
-function isModified(s: ImageSettings): boolean {
-  return (
-    s.brightness !== 0 ||
-    s.contrast !== 0 ||
-    s.gamma !== 1 ||
-    s.zoom !== 1 ||
-    s.pan.x !== 0 ||
-    s.pan.y !== 0 ||
-    s.diffMode !== "none" ||
-    (s.interpolation ?? "auto") !== "auto" ||
-    s.baselineIndex != null ||
-    s.title != null ||
-    s.height != null
-  );
-}
+
 
 // Palette (same as ScalarPlotCard)
 const SERIES_COLORS = [
@@ -1161,7 +1147,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
   // Derived
   // -----------------------------------------------------------------------
   const canPan = altDown;
-  const modified = isModified(settings);
+
 
   // Drop handler: accept a dragged chip as external baseline reference
   const [refDropHighlight, setRefDropHighlight] = useState(false);
@@ -1369,17 +1355,6 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
             title="Reset zoom and pan"
           >
             {"\u2302"}
-          </button>
-        )}
-        {modified && (
-          <button
-            type="button"
-            onClick={() => resetSettings()}
-            className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
-            aria-label="Reset all image settings"
-            title="Reset all image settings"
-          >
-            {"\u21BA"}
           </button>
         )}
         {projectId && (

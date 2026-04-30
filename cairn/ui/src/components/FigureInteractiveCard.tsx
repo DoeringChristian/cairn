@@ -151,15 +151,6 @@ function seriesLabel(
   return parts.join(" \u00B7 ");
 }
 
-function settingsDifferFromDefaults(s: FigureSettings, d: FigureSettings): boolean {
-  return (
-    s.displayModeBar !== d.displayModeBar ||
-    s.scrollZoom !== d.scrollZoom ||
-    s.hoverMode !== d.hoverMode ||
-    s.dragMode !== d.dragMode ||
-    s.showLegend !== d.showLegend
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Shared view state synced across comparison panes.
@@ -590,7 +581,7 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
 
   const sourceQ = usePlotlySource(sourceHash);
 
-  const mergedLayout = useMemo(() => {
+  const mainBaseLayout = useMemo(() => {
     const base = (sourceQ.data?.layout ?? {}) as Record<string, unknown>;
     const layout: Record<string, unknown> = {
       ...base,
@@ -606,6 +597,14 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
     return layout;
   }, [sourceQ.data, settings.hoverMode, settings.dragMode, settings.showLegend]);
 
+  // Apply shared view (for home button reset in single-pane mode too).
+  const mergedLayout = useMemo(
+    () => Object.keys(sharedView).length > 0
+      ? applyViewOverrides(mainBaseLayout, sharedView)
+      : mainBaseLayout,
+    [mainBaseLayout, sharedView],
+  );
+
   const plotlyConfig = useMemo(
     () => ({
       displayModeBar: settings.displayModeBar,
@@ -616,8 +615,6 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
   );
 
   const showPlotly = !!sourceHash && sourceQ.isSuccess && !!sourceQ.data?.data;
-  const isDirty = settingsDifferFromDefaults(settings, defaults);
-
   const allRunIds = useMemo(() => {
     const ids = new Set<string>();
     for (const m of effectiveMetrics) ids.add(m.runId ?? runId);
@@ -671,7 +668,9 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
   }, [settings.height, settings.height1, settings.height2, settings.colSpan, cardWidth, effectiveMetrics.length, isMulti]);
 
   // Shared view state for syncing zoom/pan/camera across comparison panes.
+  // Also used in single-pane mode to track whether zoom has been modified.
   const [sharedView, setSharedView] = useState<SharedView>({});
+  const viewModified = Object.keys(sharedView).length > 0;
   const updatingRef = useRef(false);
   const handlePaneRelayout = useCallback((view: SharedView) => {
     if (updatingRef.current) return;
@@ -679,6 +678,11 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
     setSharedView((prev) => ({ ...prev, ...view }));
     // Allow next update after React has flushed.
     requestAnimationFrame(() => { updatingRef.current = false; });
+  }, []);
+  const resetView = useCallback(() => {
+    setSharedView({ "xaxis.autorange": true, "yaxis.autorange": true });
+    // Clear after Plotly applies the autorange so future interactions are tracked fresh.
+    requestAnimationFrame(() => setSharedView({}));
   }, []);
 
   return (
@@ -703,6 +707,17 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
         isFullWidth={(settings.colSpan ?? 1) > 1}
         onRemove={onRemove}
       >
+        {viewModified && (
+          <button
+            type="button"
+            onClick={resetView}
+            className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
+            aria-label="Reset zoom and pan"
+            title="Reset zoom and pan"
+          >
+            {"\u2302"}
+          </button>
+        )}
         <button
           type="button"
           onClick={() => updateSettings({ displayModeBar: !settings.displayModeBar })}
@@ -715,17 +730,6 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
         >
           bar
         </button>
-        {isDirty && (
-          <button
-            type="button"
-            onClick={() => resetSettings()}
-            aria-label="Reset settings"
-            title="Reset settings"
-            className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
-          >
-            {"\u21BA"}
-          </button>
-        )}
         {projectId && (
           <button
             ref={addCompBtnRef}
@@ -759,8 +763,8 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
                   m={m}
                   targetStep={currentStep}
                   settings={settings}
-                  viewOverrides={isMulti ? sharedView : undefined}
-                  onRelayout={isMulti ? handlePaneRelayout : undefined}
+                  viewOverrides={sharedView}
+                  onRelayout={handlePaneRelayout}
                 />
                 {multipleRuns && (
                   <span className="absolute top-1 left-1 z-10 rounded bg-bg/80 px-1.5 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm">
@@ -857,6 +861,10 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
                 config={plotlyConfig}
                 useResizeHandler
                 style={{ width: "100%", height: "100%" }}
+                onRelayout={(e) => {
+                  const view = extractViewState(e as unknown as Record<string, unknown>);
+                  if (view) handlePaneRelayout(view);
+                }}
               />
             </div>
           ) : sourceHash && sourceQ.isLoading ? (
@@ -944,8 +952,8 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
                     m={m}
                     targetStep={currentStep}
                     settings={settings}
-                    viewOverrides={isMulti ? sharedView : undefined}
-                    onRelayout={isMulti ? handlePaneRelayout : undefined}
+                    viewOverrides={sharedView}
+                    onRelayout={handlePaneRelayout}
                   />
                 ))}
               </SplitPane>
