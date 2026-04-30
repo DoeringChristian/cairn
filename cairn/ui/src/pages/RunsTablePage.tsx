@@ -112,11 +112,6 @@ export default function RunsTablePage() {
     return arr;
   }, [filtered, sort]);
 
-  if (!projectId) return null;
-  if (q.isLoading) return <p className="text-fg-muted">Loading…</p>;
-  if (q.isError)
-    return <p className="text-status-failed">Error: {String(q.error)}</p>;
-
   const toggleSort = (column: SortColumn) => {
     setSort((prev) =>
       prev.column === column
@@ -159,7 +154,7 @@ export default function RunsTablePage() {
     const selectedIds = Array.from(selected);
     const now = new Date();
     const label = `${now.toLocaleDateString()} ${now.toLocaleTimeString()}`;
-    const cmp = createComparison(projectId, `Comparison ${label}`);
+    const cmp = createComparison(projectId!, `Comparison ${label}`);
 
     // Fetch sequences for each selected run.
     const seqResults = await Promise.all(
@@ -203,7 +198,7 @@ export default function RunsTablePage() {
 
     // Add each card to the comparison.
     for (const card of cardMap.values()) {
-      addCardToComparison(projectId, cmp.id, {
+      addCardToComparison(projectId!, cmp.id, {
         type: card.object_type as "scalar",
         series: card.series,
       });
@@ -216,7 +211,7 @@ export default function RunsTablePage() {
     if (!projectId) return;
     setTemplatePopoverOpen(false);
     const selectedIds = Array.from(selected);
-    const cmp = createComparison(projectId, template.name);
+    const cmp = createComparison(projectId!, template.name);
 
     // Fetch sequences for selected runs.
     const seqResults = await Promise.all(
@@ -243,7 +238,7 @@ export default function RunsTablePage() {
     for (const tc of template.cards) {
       const matching = seqMap.get(tc.metricName);
       if (!matching || matching.length === 0) continue;
-      addCardToComparison(projectId, cmp.id, {
+      addCardToComparison(projectId!, cmp.id, {
         type: tc.type,
         series: matching,
       });
@@ -264,6 +259,11 @@ export default function RunsTablePage() {
 
     navigate(`/p/${projectId}/compare?c=${encodeURIComponent(cmp.id)}`);
   }, [projectId, selected, navigate]);
+
+  if (!projectId) return null;
+  if (q.isLoading) return <p className="text-fg-muted">Loading…</p>;
+  if (q.isError)
+    return <p className="text-status-failed">Error: {String(q.error)}</p>;
 
   return (
     <div>
@@ -323,7 +323,7 @@ export default function RunsTablePage() {
             className="btn px-2 py-1 text-xs"
             onClick={() => {
               if (!projectId) return;
-              const cmp = createComparison(projectId, "New comparison");
+              const cmp = createComparison(projectId!, "New comparison");
               navigate(`/p/${projectId}/compare?c=${cmp.id}`);
             }}
           >
@@ -360,7 +360,7 @@ export default function RunsTablePage() {
             className="btn px-2 py-1 text-xs"
             onClick={() => {
               if (!projectId) return;
-              const cmp = createComparison(projectId, "New comparison", Array.from(selected));
+              const cmp = createComparison(projectId!, "New comparison", Array.from(selected));
               navigate(`/p/${projectId}/compare?c=${cmp.id}`);
             }}
             disabled={selectedCount === 0}
