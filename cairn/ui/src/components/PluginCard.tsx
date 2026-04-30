@@ -275,10 +275,11 @@ export default function PluginCard({
   runId,
   metric,
   extraSeries,
-  controlledSeries,
+  controlledSeries: _controlledSeries,
   settingsKeyOverride,
   onRemove,
 }: Props) {
+  void _controlledSeries;
   // Build effective metrics list: primary + extra series.
   const effectiveMetrics = useMemo(() => {
     const all: Array<{ runId?: string; name: string; context_hash: string }> = [
@@ -298,9 +299,7 @@ export default function PluginCard({
     });
   }, [metric.name, metric.context_hash, extraSeries]);
 
-  const _isMultiRun = effectiveMetrics.length > 1;
-  void _isMultiRun; // TODO: render multiple panes for comparison views
-  void controlledSeries;
+  void effectiveMetrics; // TODO: render multi-pane for comparison views
   const [settings, updateSettings] = useCardSettings(
     settingsKeyOverride ?? {
       runId,
