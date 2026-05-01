@@ -45,6 +45,7 @@ class _PluginBase(_TypeWrapper):
 
     object_type = "plugin"
     name: str = ""
+    settings: list[dict[str, Any]] = []
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
@@ -102,13 +103,17 @@ class PythonPlugin(_PluginBase):
 
     requires: list[str] = []
 
-    def render(self, data: bytes, metadata: dict[str, Any], step: int) -> str | None:
+    def render(
+        self, data: bytes, metadata: dict[str, Any], step: int,
+        settings: dict[str, Any] | None = None,
+    ) -> str | None:
         """Process data and return HTML, or manipulate the DOM directly.
 
         Args:
             data: Raw bytes of the tracked artifact.
             metadata: Dict of custom metadata passed via kwargs.
             step: The current step number.
+            settings: User-chosen values for plugin-declared settings.
 
         Returns:
             An HTML string to inject, or None if the plugin rendered
@@ -127,13 +132,17 @@ class ServerPlugin(_PluginBase):
     Override ``on_mouse()`` / ``on_key()`` to handle client input.
     """
 
-    def render(self, data: bytes, metadata: dict[str, Any], step: int) -> bytes:
+    def render(
+        self, data: bytes, metadata: dict[str, Any], step: int,
+        settings: dict[str, Any] | None = None,
+    ) -> bytes:
         """Produce a rendered frame.
 
         Args:
             data: Raw bytes of the tracked artifact.
             metadata: Dict of custom metadata.
             step: The current step number.
+            settings: User-chosen values for plugin-declared settings.
 
         Returns:
             PNG or JPEG bytes for the frame.

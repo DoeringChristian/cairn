@@ -304,6 +304,9 @@ class Run:
             merged_kwargs["plugin_hash"] = pinfo["hash"]
             merged_kwargs["plugin_lang"] = pinfo["lang"]
             merged_kwargs["plugin_name"] = plugin_name
+            # Include settings schema if the plugin declares one.
+            if hasattr(plugin_cls, "settings") and plugin_cls.settings:
+                merged_kwargs["plugin_settings"] = plugin_cls.settings
 
         point: dict[str, Any] = {
             "name": name,

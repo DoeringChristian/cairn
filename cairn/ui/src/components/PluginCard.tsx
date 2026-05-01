@@ -3,7 +3,7 @@
  * Supports multiple viewports in comparison views (one per run).
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { useSequence } from "../api/hooks";
 import { api } from "../api/client";
@@ -14,6 +14,10 @@ import type { SequenceMeta, SequenceResponse, SequencePoint } from "../api/types
 import type { ComparisonSeriesRef } from "../lib/comparisons";
 import CardHeader from "./CardHeader";
 import CardResizeHandle from "./CardResizeHandle";
+import SettingsPopover from "./SettingsPopover";
+import Slider from "./settings/Slider";
+import Select from "./settings/Select";
+import Toggle from "./settings/Toggle";
 
 interface Props {
   runId: string;
@@ -24,10 +28,22 @@ interface Props {
   onRemove?: () => void;
 }
 
+interface PluginSettingDef {
+  key: string;
+  type: "slider" | "select" | "toggle";
+  label: string;
+  default?: unknown;
+  min?: number;
+  max?: number;
+  step?: number;
+  options?: string[];
+}
+
 interface PluginMeta {
   plugin_hash?: string;
   plugin_lang?: "js" | "py" | "server" | "window";
   plugin_name?: string;
+  plugin_settings?: PluginSettingDef[];
   [key: string]: unknown;
 }
 
@@ -40,6 +56,7 @@ interface PluginSettings {
   height1?: number;
   height2?: number;
   colSpan?: number;
+  pluginValues?: Record<string, unknown>;
 }
 
 const DEFAULT_SETTINGS: PluginSettings = { version: 1 };
@@ -78,8 +95,8 @@ async function fetchArtifactData(hash: string): Promise<ArrayBuffer> {
 
 function buildJsIframeSrcdoc(pluginSource: string): string {
   return `<!DOCTYPE html><html><head><style>body{margin:0;background:transparent;color:#c9d1d9;font-family:system-ui}canvas{display:block}</style></head><body><script>
-window.cairn={};
-window.addEventListener("message",function(e){if(e.data&&e.data.type==="cairn:render"&&window.cairn.render){try{window.cairn.render(e.data)}catch(err){document.body.innerHTML='<pre style="color:#f85149;padding:8px">'+err.message+'</pre>'}}});
+window.cairn={settings:{}};
+window.addEventListener("message",function(e){if(e.data&&e.data.type==="cairn:render"){window.cairn.settings=e.data.settings||{};if(window.cairn.render){try{window.cairn.render(e.data)}catch(err){document.body.innerHTML='<pre style="color:#f85149;padding:8px">'+err.message+'</pre>'}}}});
 new ResizeObserver(function(){parent.postMessage({type:"cairn:resize",height:document.documentElement.scrollHeight},"*")}).observe(document.body);
 ${pluginSource}
 </script></body></html>`;
@@ -104,18 +121,18 @@ class _PluginBase(_TypeWrapper):
 class JSPlugin(_PluginBase):pass
 class PythonPlugin(_PluginBase):
  requires=[]
- def render(self,data,metadata,step):raise NotImplementedError
+ def render(self,data,metadata,step,settings=None):raise NotImplementedError
 class ServerPlugin(_PluginBase):
  def render(self,data,metadata,step):raise NotImplementedError
  def on_mouse(self,event):pass
  def on_key(self,event):pass
 import types as _t;cairn=_t.ModuleType("cairn");cairn.JSPlugin=JSPlugin;cairn.PythonPlugin=PythonPlugin;cairn.ServerPlugin=ServerPlugin;cairn._PluginBase=_PluginBase;import sys as _sys;_sys.modules["cairn"]=cairn
 \`);status.textContent="Running plugin...";pyodide.runPython(PLUGIN_SOURCE);status.style.display="none";if(pendingMsg){handleRender(pendingMsg);pendingMsg=null;}}catch(err){status.innerHTML='<pre style="color:#f85149">Pyodide error: '+err.message+'</pre>';}}
-function handleRender(msg){if(!pyodide){pendingMsg=msg;return;}try{document.getElementById("output").innerHTML="";const dataBytes=new Uint8Array(msg.data);var result,cls=null;try{cls=pyodide.runPython(\`
+function handleRender(msg){if(!pyodide){pendingMsg=msg;return;}try{document.getElementById("output").innerHTML="";const dataBytes=new Uint8Array(msg.data);const pySettings=pyodide.toPy(msg.settings||{});var result,cls=null;try{cls=pyodide.runPython(\`
 _found=None
 for _name,_obj in list(globals().items()):
  if isinstance(_obj,type) and issubclass(_obj,PythonPlugin) and _obj is not PythonPlugin:_found=_obj;break
-_found\`);}catch(e){}if(cls){try{var instance=cls.__call__();result=instance.render(pyodide.toPy(dataBytes),pyodide.toPy(msg.metadata),msg.step);}catch(e){cls=null;}}if(!cls){var renderFn=pyodide.globals.get("render");if(!renderFn){document.getElementById("output").innerHTML='<pre style="color:#f85149">No render()</pre>';return;}result=renderFn(pyodide.toPy(dataBytes),pyodide.toPy(msg.metadata),msg.step,msg.runId,msg.metricName);}const html=(typeof result==="string")?result:(result&&result.toString&&result.toString()!=="None")?result.toString():null;if(html){var outEl=document.getElementById("output");outEl.innerHTML="";var range=document.createRange();range.selectNode(outEl);outEl.appendChild(range.createContextualFragment(html));}setTimeout(function(){parent.postMessage({type:"cairn:resize",height:document.documentElement.scrollHeight},"*");},100);}catch(err){document.getElementById("output").innerHTML='<pre style="color:#f85149">Render error: '+err.message+'</pre>';}}
+_found\`);}catch(e){}if(cls){try{var instance=cls.__call__();result=instance.render(pyodide.toPy(dataBytes),pyodide.toPy(msg.metadata),msg.step,pySettings);}catch(e){cls=null;}}if(!cls){var renderFn=pyodide.globals.get("render");if(!renderFn){document.getElementById("output").innerHTML='<pre style="color:#f85149">No render()</pre>';return;}result=renderFn(pyodide.toPy(dataBytes),pyodide.toPy(msg.metadata),msg.step,msg.runId,msg.metricName,pySettings);}const html=(typeof result==="string")?result:(result&&result.toString&&result.toString()!=="None")?result.toString():null;if(html){var outEl=document.getElementById("output");outEl.innerHTML="";var range=document.createRange();range.selectNode(outEl);outEl.appendChild(range.createContextualFragment(html));}setTimeout(function(){parent.postMessage({type:"cairn:resize",height:document.documentElement.scrollHeight},"*");},100);}catch(err){document.getElementById("output").innerHTML='<pre style="color:#f85149">Render error: '+err.message+'</pre>';}}
 window.addEventListener("message",function(e){if(e.data&&e.data.type==="cairn:render")handleRender(e.data);});
 initPyodide();
 </script></body></html>`;
@@ -130,10 +147,12 @@ function PluginPane({
   runId,
   m,
   targetStep,
+  pluginValues,
 }: {
   runId: string;
   m: { runId?: string; name: string; context_hash: string };
   targetStep: number;
+  pluginValues?: Record<string, unknown>;
 }) {
   const rid = m.runId ?? runId;
   const q = useSequence(rid, m.name, {
@@ -209,12 +228,12 @@ function PluginPane({
       if (cancelled) return;
       const clone = data.slice(0);
       iframe.contentWindow?.postMessage(
-        { type: "cairn:render", data: clone, metadata: pluginMeta, step: targetStep, runId: rid, metricName: m.name },
+        { type: "cairn:render", data: clone, metadata: pluginMeta, step: targetStep, runId: rid, metricName: m.name, settings: pluginValues ?? {} },
         "*", [clone],
       );
     }).catch((err) => { if (!cancelled) setError(String(err)); });
     return () => { cancelled = true; };
-  }, [iframeReady, current, pluginMeta, targetStep, rid, m.name]);
+  }, [iframeReady, current, pluginMeta, targetStep, rid, m.name, pluginValues]);
 
   // Server/Window plugin: WebSocket.
   useEffect(() => {
@@ -224,7 +243,7 @@ function PluginPane({
     ws.binaryType = "blob";
     wsRef.current = ws;
     ws.onopen = () => {
-      ws.send(JSON.stringify({ type: "render", artifact_hash: current.artifact_hash, metadata: pluginMeta, step: targetStep }));
+      ws.send(JSON.stringify({ type: "render", artifact_hash: current.artifact_hash, metadata: pluginMeta, step: targetStep, settings: pluginValues ?? {} }));
     };
     let pendingMime = "";
     ws.onmessage = (e) => {
@@ -362,6 +381,28 @@ export default function PluginCard({
     : pluginMeta.plugin_name ?? "plugin";
 
   const cardRef = useRef<HTMLDivElement>(null);
+  const settingsBtnRef = useRef<HTMLButtonElement>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Plugin-declared settings schema.
+  const settingsDefs = pluginMeta.plugin_settings ?? [];
+  const hasPluginSettings = settingsDefs.length > 0;
+
+  // Resolve current values (user overrides or defaults from schema).
+  const pluginValues = useMemo(() => {
+    const vals: Record<string, unknown> = {};
+    for (const def of settingsDefs) {
+      vals[def.key] = settings.pluginValues?.[def.key] ?? def.default;
+    }
+    return vals;
+  }, [settingsDefs, settings.pluginValues]);
+
+  const setPluginValue = useCallback(
+    (key: string, value: unknown) => {
+      updateSettings({ pluginValues: { ...settings.pluginValues, [key]: value } });
+    },
+    [settings.pluginValues, updateSettings],
+  );
 
   return (
     <div
@@ -387,6 +428,18 @@ export default function PluginCard({
         <span className="inline-flex items-center rounded bg-bg-hover px-1.5 py-0.5 text-[10px] text-fg-muted">
           {lang === "window" ? "Window" : lang === "server" ? "Server" : lang === "py" ? "Python" : "JS"}
         </span>
+        {hasPluginSettings && (
+          <button
+            ref={settingsBtnRef}
+            type="button"
+            className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
+            aria-label="Plugin settings"
+            title="Plugin settings"
+            onClick={() => setSettingsOpen((v) => !v)}
+          >
+            {"\u2699"}
+          </button>
+        )}
       </CardHeader>
 
       {!settings.collapsed && (
@@ -400,14 +453,14 @@ export default function PluginCard({
                     <span className="text-[10px] text-fg-muted mb-1 truncate">
                       {shortRunLabel(rid, allRunIds)}
                     </span>
-                    <PluginPane runId={runId} m={m} targetStep={currentStep} />
+                    <PluginPane runId={runId} m={m} targetStep={currentStep} pluginValues={pluginValues} />
                   </div>
                 );
               })}
             </div>
           ) : (
             <div className="flex-1 min-h-0">
-              <PluginPane runId={runId} m={effectiveMetrics[0]!} targetStep={currentStep} />
+              <PluginPane runId={runId} m={effectiveMetrics[0]!} targetStep={currentStep} pluginValues={pluginValues} />
             </div>
           )}
 
@@ -427,6 +480,52 @@ export default function PluginCard({
           )}
         </>
       )}
+
+      <SettingsPopover
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        anchorRef={settingsBtnRef}
+        title="Plugin settings"
+      >
+        {settingsDefs.map((def) => {
+          const val = pluginValues[def.key];
+          if (def.type === "toggle") {
+            return (
+              <Toggle
+                key={def.key}
+                label={def.label}
+                checked={val as boolean ?? false}
+                onChange={(v) => setPluginValue(def.key, v)}
+              />
+            );
+          }
+          if (def.type === "slider") {
+            return (
+              <Slider
+                key={def.key}
+                label={def.label}
+                value={val as number ?? def.min ?? 0}
+                min={def.min ?? 0}
+                max={def.max ?? 1}
+                step={def.step}
+                onChange={(v) => setPluginValue(def.key, v)}
+              />
+            );
+          }
+          if (def.type === "select" && def.options) {
+            return (
+              <Select
+                key={def.key}
+                label={def.label}
+                value={val as string ?? def.options[0] ?? ""}
+                options={def.options.map((o) => ({ value: o, label: o }))}
+                onChange={(v) => setPluginValue(def.key, v)}
+              />
+            );
+          }
+          return null;
+        })}
+      </SettingsPopover>
 
       <CardResizeHandle
         height={settings.height}
