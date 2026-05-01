@@ -29,7 +29,7 @@ import { loadCardSettings } from "../lib/card-settings";
 import { formatRelative } from "../lib/format";
 import { useRuns } from "../api/hooks";
 import { api } from "../api/client";
-import SettingsPopover from "../components/SettingsPopover";
+
 import { setRunMetadata } from "../lib/run-label";
 import type { SequenceMeta } from "../api/types";
 
@@ -375,6 +375,18 @@ function Sidebar({
   onRename,
   onDelete,
 }: SidebarProps) {
+  const [checked, setChecked] = useState<Set<string>>(new Set());
+  const toggleCheck = (id: string) => setChecked((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const bulkDelete = () => {
+    if (!confirm(`Delete ${checked.size} comparison(s)?`)) return;
+    for (const id of checked) onDelete(id);
+    setChecked(new Set());
+  };
+
   return (
     <div>
       <div className="mb-2 flex items-center justify-between">
@@ -382,6 +394,16 @@ function Sidebar({
           Comparisons
         </h2>
         <div className="flex items-center gap-1">
+          {checked.size > 0 && (
+            <button
+              type="button"
+              onClick={bulkDelete}
+              className="inline-flex h-6 items-center justify-center rounded border border-status-failed/40 bg-status-failed/10 px-1.5 text-[10px] text-status-failed hover:bg-status-failed/20"
+              title={`Delete ${checked.size} selected`}
+            >
+              Delete {checked.size}
+            </button>
+          )}
           <button
             type="button"
             onClick={onSmartCreate}
@@ -413,6 +435,8 @@ function Sidebar({
               key={c.id}
               comparison={c}
               selected={c.id === selectedId}
+              checked={checked.has(c.id)}
+              onToggleCheck={() => toggleCheck(c.id)}
               onSelect={() => onSelect(c.id)}
               onRename={(name) => onRename(c.id, name)}
               onDelete={() => onDelete(c.id)}
@@ -427,6 +451,8 @@ function Sidebar({
 interface SidebarRowProps {
   comparison: Comparison;
   selected: boolean;
+  checked: boolean;
+  onToggleCheck: () => void;
   onSelect: () => void;
   onRename: (name: string) => void;
   onDelete: () => void;
@@ -435,14 +461,14 @@ interface SidebarRowProps {
 function SidebarRow({
   comparison,
   selected,
+  checked,
+  onToggleCheck,
   onSelect,
   onRename,
   onDelete,
 }: SidebarRowProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(comparison.name);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuBtnRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     if (!editing) setDraft(comparison.name);
@@ -462,6 +488,13 @@ function SidebarRow({
           : "border-border-subtle bg-bg hover:border-border"
       }`}
     >
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={onToggleCheck}
+        className="shrink-0"
+        onClick={(e) => e.stopPropagation()}
+      />
       {editing ? (
         <input
           autoFocus
@@ -487,7 +520,7 @@ function SidebarRow({
           onClick={onSelect}
           onDoubleClick={() => setEditing(true)}
           className="min-w-0 flex-1 text-left"
-          title={comparison.name}
+          title="Double-click to rename"
         >
           <div
             className={`truncate ${
@@ -504,51 +537,17 @@ function SidebarRow({
         </button>
       )}
       <button
-        ref={menuBtnRef}
         type="button"
-        aria-label="Comparison menu"
-        aria-haspopup="menu"
-        aria-expanded={menuOpen}
+        aria-label={`Delete "${comparison.name}"`}
         onClick={(e) => {
           e.stopPropagation();
-          setMenuOpen((v) => !v);
+          onDelete();
         }}
-        className="inline-flex h-6 w-6 items-center justify-center rounded text-fg-subtle hover:bg-bg-hover hover:text-fg"
-        title="More"
+        className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-fg-subtle opacity-0 group-hover:opacity-100 hover:text-status-failed transition-opacity"
+        title="Delete"
       >
-        {"\u22EF"}
+        {"\uD83D\uDDD1"}
       </button>
-      <SettingsPopover
-        open={menuOpen}
-        onClose={() => setMenuOpen(false)}
-        anchorRef={menuBtnRef}
-        title={comparison.name}
-      >
-        <div className="flex flex-col gap-1">
-          <button
-            type="button"
-            onClick={() => {
-              setMenuOpen(false);
-              setEditing(true);
-            }}
-            className="btn text-xs text-left"
-          >
-            Rename
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              if (confirm(`Delete "${comparison.name}"?`)) {
-                setMenuOpen(false);
-                onDelete();
-              }
-            }}
-            className="btn text-xs text-left text-status-failed"
-          >
-            Delete
-          </button>
-        </div>
-      </SettingsPopover>
     </li>
   );
 }
