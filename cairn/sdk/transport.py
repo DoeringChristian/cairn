@@ -190,6 +190,9 @@ class Transport:
     def set_notes(self, run_id: str, notes: str) -> None:
         self.post_json(f"/api/runs/{run_id}/notes", {"notes": notes})
 
+    def heartbeat(self, run_id: str) -> None:
+        self.post_json(f"/api/runs/{run_id}/heartbeat", {})
+
     def attach_artifact(
         self, run_id: str, name: str, digest: str, step: int | None = None
     ) -> None:

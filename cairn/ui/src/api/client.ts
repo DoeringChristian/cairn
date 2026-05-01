@@ -97,6 +97,12 @@ export const api = {
     post<{ run_id: string; tags: string[] }>(`/api/runs/${runId}/tags`, { tags }),
   setNotes: (runId: string, notes: string) =>
     post<{ run_id: string; notes: string }>(`/api/runs/${runId}/notes`, { notes }),
+  deleteRun: (runId: string) =>
+    del_<{ deleted: string }>(`/api/runs/${runId}`),
+  archiveRun: (runId: string) =>
+    post<{ run_id: string; status: string }>(`/api/runs/${runId}/archive`, {}),
+  unarchiveRun: (runId: string) =>
+    post<{ run_id: string; status: string }>(`/api/runs/${runId}/unarchive`, {}),
   exportRuns: async (runIds: string[]): Promise<Blob> => {
     const resp = await fetch("/api/export", {
       method: "POST",

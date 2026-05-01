@@ -32,6 +32,7 @@ const STATUS_OPTIONS: Array<{ value: "all" | RunStatus; label: string }> = [
   { value: "completed", label: "completed" },
   { value: "failed", label: "failed" },
   { value: "killed", label: "killed" },
+  { value: "archived", label: "archived" },
 ];
 
 function durationSeconds(run: Run): number {
@@ -106,6 +107,25 @@ export default function RunsTablePage() {
     qc.invalidateQueries({ queryKey: ["runs"] });
   }, [runs, qc]);
 
+  const onBulkDelete = useCallback(async () => {
+    if (!confirm(`Delete ${selected.size} run(s)? This cannot be undone.`)) return;
+    await Promise.all([...selected].map((id) => api.deleteRun(id)));
+    setSelected(new Set());
+    qc.invalidateQueries({ queryKey: ["runs"] });
+  }, [selected, qc]);
+
+  const onBulkArchive = useCallback(async () => {
+    await Promise.all([...selected].map((id) => api.archiveRun(id)));
+    setSelected(new Set());
+    qc.invalidateQueries({ queryKey: ["runs"] });
+  }, [selected, qc]);
+
+  const onBulkUnarchive = useCallback(async () => {
+    await Promise.all([...selected].map((id) => api.unarchiveRun(id)));
+    setSelected(new Set());
+    qc.invalidateQueries({ queryKey: ["runs"] });
+  }, [selected, qc]);
+
   // Populate run label cache for formatting across the app.
   useMemo(() => { if (runs.length > 0) setRunMetadata(runs); }, [runs]);
 
@@ -121,6 +141,8 @@ export default function RunsTablePage() {
 
   const filtered = useMemo(() => {
     return runs.filter((r) => {
+      // Hide archived runs by default; only show when explicitly filtered.
+      if (statusFilter === "all" && r.status === "archived") return false;
       if (statusFilter !== "all" && r.status !== statusFilter) return false;
       if (searchRegex) {
         const tags = (safeJsonParse<string[]>(r.tags) ?? []).join(" ");
@@ -436,6 +458,30 @@ export default function RunsTablePage() {
             disabled={selectedCount === 0 || exporting}
           >
             {exporting ? "Exporting..." : "Export"}
+          </button>
+          <button
+            type="button"
+            className="btn px-2 py-1 text-xs"
+            onClick={onBulkArchive}
+            disabled={selectedCount === 0}
+          >
+            Archive
+          </button>
+          <button
+            type="button"
+            className="btn px-2 py-1 text-xs"
+            onClick={onBulkUnarchive}
+            disabled={selectedCount === 0}
+          >
+            Unarchive
+          </button>
+          <button
+            type="button"
+            className="btn px-2 py-1 text-xs text-status-failed"
+            onClick={onBulkDelete}
+            disabled={selectedCount === 0}
+          >
+            Delete
           </button>
           {templates.length > 0 && (
             <button

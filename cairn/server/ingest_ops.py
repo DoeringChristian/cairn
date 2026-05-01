@@ -63,8 +63,9 @@ def create_run(
             INSERT INTO runs (
                 id, project_id, display_name, created_at, ended_at,
                 status, exit_code, git_sha, git_dirty, git_branch,
-                cli_args, env_snapshot, hostname, "user", tags, notes
-            ) VALUES (?, ?, ?, ?, NULL, 'running', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                cli_args, env_snapshot, hostname, "user", tags, notes,
+                last_heartbeat
+            ) VALUES (?, ?, ?, ?, NULL, 'running', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 run_id,
@@ -80,6 +81,7 @@ def create_run(
                 user,
                 json.dumps(tags) if tags is not None else None,
                 notes,
+                now,  # last_heartbeat
             ],
         )
 
@@ -252,6 +254,14 @@ def set_tags(db: Database, run_id: str, tags: list[str]) -> None:
 def set_notes(db: Database, run_id: str, notes: str) -> None:
     _require_run(db, run_id)
     db.write("UPDATE runs SET notes = ? WHERE id = ?", [notes, run_id])
+
+
+def heartbeat(db: Database, run_id: str) -> None:
+    """Update the heartbeat timestamp for a running run."""
+    db.write(
+        "UPDATE runs SET last_heartbeat = ? WHERE id = ? AND status = 'running'",
+        [utc_now().isoformat(), run_id],
+    )
 
 
 def delete_run(db: Database, data_dir: DataDir, run_id: str) -> None:

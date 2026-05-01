@@ -48,7 +48,8 @@ SCHEMA_SQL: list[str] = [
         hostname      TEXT,
         "user"        TEXT,
         tags          TEXT,
-        notes         TEXT
+        notes         TEXT,
+        last_heartbeat TEXT
     )
     """,
     """

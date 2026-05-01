@@ -14,6 +14,7 @@ from __future__ import annotations
 import atexit
 import inspect
 import logging
+import signal
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -246,6 +247,42 @@ class Run:
         # double-clean.
         atexit.register(self._atexit_finish)
 
+        # Heartbeat — periodically update last_heartbeat so the server can
+        # detect crashed runs. Runs on a daemon thread, stops on finish().
+        self._heartbeat_stop = threading.Event()
+        self._heartbeat_thread = threading.Thread(
+            target=self._heartbeat_loop,
+            daemon=True,
+            name="cairn-heartbeat",
+        )
+        self._heartbeat_thread.start()
+
+        # Signal handlers — finish run as "killed" on SIGTERM/SIGINT.
+        self._prev_sigterm = signal.getsignal(signal.SIGTERM)
+        self._prev_sigint = signal.getsignal(signal.SIGINT)
+
+        def _on_signal(signum: int, frame: Any) -> None:
+            if not self._finished:
+                try:
+                    self.finish(status="killed")
+                except Exception:  # noqa: BLE001
+                    pass
+            # Re-raise to previous handler.
+            prev = self._prev_sigterm if signum == signal.SIGTERM else self._prev_sigint
+            if callable(prev):
+                prev(signum, frame)
+            elif prev == signal.SIG_DFL:
+                signal.signal(signum, signal.SIG_DFL)
+                signal.raise_signal(signum)
+
+        # Only install from the main thread (signal module requirement).
+        if threading.current_thread() is threading.main_thread():
+            try:
+                signal.signal(signal.SIGTERM, _on_signal)
+                signal.signal(signal.SIGINT, _on_signal)
+            except (OSError, ValueError):
+                pass  # Not all environments allow signal registration.
+
     # ---- properties -------------------------------------------------------
 
     @property
@@ -426,6 +463,7 @@ class Run:
             if self._stdout_capture is not None:
                 self._stdout_capture.stop()
             # Drain both buffers before posting finish.
+            self._heartbeat_stop.set()
             self._metric_buffer.stop(timeout=self._timeout)
             self._log_buffer.stop(timeout=self._timeout)
             # Wait for source upload thread, short timeout to avoid hanging.
@@ -449,6 +487,13 @@ class Run:
         finally:
             self._finished = True
             stdout_capture.clear_active_run(self._run_id)
+            # Restore original signal handlers.
+            if threading.current_thread() is threading.main_thread():
+                try:
+                    signal.signal(signal.SIGTERM, self._prev_sigterm)
+                    signal.signal(signal.SIGINT, self._prev_sigint)
+                except (OSError, ValueError):
+                    pass
             if self._owns_transport:
                 self._transport.close()
             # Don't fire the atexit hook now that we've finished explicitly.
@@ -456,6 +501,16 @@ class Run:
                 atexit.unregister(self._atexit_finish)
             except Exception:  # noqa: BLE001 - defensive; unregister is cheap
                 pass
+
+    def _heartbeat_loop(self) -> None:
+        """Periodically send heartbeat to the server/DB."""
+        while not self._heartbeat_stop.wait(30):
+            if self._finished:
+                return
+            try:
+                self._transport.heartbeat(self._run_id)
+            except Exception:  # noqa: BLE001
+                pass  # Best effort — don't crash the heartbeat thread.
 
     def _atexit_finish(self) -> None:
         """Fallback cleanup if ``finish()`` was never called explicitly.

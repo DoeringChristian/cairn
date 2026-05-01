@@ -148,6 +148,9 @@ class LocalTransport:
         result = ingest_ops.put_artifact(self.db, self.blobs, data, mime_type, metadata)
         return result["hash"]
 
+    def heartbeat(self, run_id: str) -> None:
+        ingest_ops.heartbeat(self.db, run_id)
+
     def drain_spill(self, run_id: str | None = None) -> int:
         """Local mode never spills; nothing to drain."""
         return 0

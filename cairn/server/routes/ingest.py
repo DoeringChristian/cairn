@@ -270,6 +270,35 @@ def set_notes(run_id: str, body: NotesRequest, request: Request) -> dict[str, An
     return {"run_id": run_id, "notes": body.notes}
 
 
+@router.post("/runs/{run_id}/heartbeat")
+def run_heartbeat(run_id: str, request: Request) -> dict[str, Any]:
+    db = get_db(request)
+    ingest_ops.heartbeat(db, run_id)
+    return {"run_id": run_id}
+
+
+@router.post("/runs/{run_id}/archive")
+def archive_run(run_id: str, request: Request) -> dict[str, Any]:
+    db = get_db(request)
+    try:
+        ingest_ops._require_run(db, run_id)
+    except ingest_ops.RunNotFound as exc:
+        raise _run_not_found(exc) from None
+    db.write("UPDATE runs SET status = 'archived' WHERE id = ?", [run_id])
+    return {"run_id": run_id, "status": "archived"}
+
+
+@router.post("/runs/{run_id}/unarchive")
+def unarchive_run(run_id: str, request: Request) -> dict[str, Any]:
+    db = get_db(request)
+    try:
+        ingest_ops._require_run(db, run_id)
+    except ingest_ops.RunNotFound as exc:
+        raise _run_not_found(exc) from None
+    db.write("UPDATE runs SET status = 'completed' WHERE id = ?", [run_id])
+    return {"run_id": run_id, "status": "completed"}
+
+
 @router.delete("/runs/{run_id}")
 def delete_run(run_id: str, request: Request) -> dict[str, Any]:
     """Delete a run. Shared artifact blobs are not reference-counted."""
