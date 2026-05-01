@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useRuns } from "../api/hooks";
 import type { Run, RunStatus } from "../api/types";
@@ -65,6 +66,7 @@ function compareRuns(a: Run, b: Run, col: SortColumn): number {
 export default function RunsTablePage() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const q = useRuns({ project: projectId, limit: 200 });
 
   const [statusFilter, setStatusFilter] = useState<"all" | RunStatus>("all");
@@ -81,8 +83,28 @@ export default function RunsTablePage() {
   const [importOpen, setImportOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
   const { templates } = useTemplates(projectId ?? "");
+  const [addingTagFor, setAddingTagFor] = useState<string | null>(null);
+  const [newTagValue, setNewTagValue] = useState("");
 
   const runs = useMemo(() => q.data?.runs ?? [], [q.data]);
+
+  const removeTagFromRun = useCallback(async (runId: string, tag: string) => {
+    const run = runs.find((r) => r.id === runId);
+    const prev = safeJsonParse<string[]>(run?.tags ?? null) ?? [];
+    await api.setTags(runId, prev.filter((t) => t !== tag));
+    qc.invalidateQueries({ queryKey: ["runs"] });
+  }, [runs, qc]);
+
+  const addTagToRun = useCallback(async (runId: string, tag: string) => {
+    if (!tag.trim()) return;
+    const run = runs.find((r) => r.id === runId);
+    const prev = safeJsonParse<string[]>(run?.tags ?? null) ?? [];
+    if (prev.includes(tag.trim())) return;
+    await api.setTags(runId, [...prev, tag.trim()]);
+    setAddingTagFor(null);
+    setNewTagValue("");
+    qc.invalidateQueries({ queryKey: ["runs"] });
+  }, [runs, qc]);
 
   // Populate run label cache for formatting across the app.
   useMemo(() => { if (runs.length > 0) setRunMetadata(runs); }, [runs]);
@@ -499,18 +521,46 @@ export default function RunsTablePage() {
                       dur: {formatDuration(r.created_at, r.ended_at)}
                     </span>
                   </div>
-                  {tags.length > 0 && (
-                    <div className="mt-1 flex flex-wrap gap-1">
-                      {tags.map((t) => (
-                        <span
-                          key={t}
-                          className="mono inline-flex items-center rounded border border-border bg-bg px-1.5 py-0.5 text-xs text-fg-muted"
+                  <div className="mt-1 flex flex-wrap items-center gap-1">
+                    {tags.map((t) => (
+                      <span
+                        key={t}
+                        className="group/tag mono inline-flex items-center gap-0.5 rounded border border-border bg-bg px-1.5 py-0.5 text-xs text-fg-muted"
+                      >
+                        {t}
+                        <button
+                          type="button"
+                          className="text-fg-subtle hover:text-status-failed -mr-0.5"
+                          onClick={() => removeTagFromRun(r.id, t)}
                         >
-                          {t}
-                        </span>
-                      ))}
-                    </div>
-                  )}
+                          {"\u00D7"}
+                        </button>
+                      </span>
+                    ))}
+                    {addingTagFor === r.id ? (
+                      <input
+                        className="input py-0 px-1 text-xs w-20"
+                        value={newTagValue}
+                        onChange={(e) => setNewTagValue(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") { e.preventDefault(); addTagToRun(r.id, newTagValue); }
+                          if (e.key === "Escape") { setAddingTagFor(null); setNewTagValue(""); }
+                        }}
+                        onBlur={() => { setAddingTagFor(null); setNewTagValue(""); }}
+                        autoFocus
+                        placeholder="tag..."
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        className="inline-flex items-center justify-center rounded border border-dashed border-border-subtle px-1 py-0.5 text-xs text-fg-subtle hover:text-fg hover:border-border"
+                        onClick={() => { setAddingTagFor(r.id); setNewTagValue(""); }}
+                        title="Add tag"
+                      >
+                        +
+                      </button>
+                    )}
+                  </div>
                 </li>
               );
             })}
@@ -612,20 +662,47 @@ export default function RunsTablePage() {
                       {formatDuration(r.created_at, r.ended_at)}
                     </td>
                     <td className="px-3 py-2">
-                      {tags.length === 0 ? (
-                        <span className="text-xs text-fg-subtle">—</span>
-                      ) : (
-                        <span className="flex flex-wrap gap-1">
-                          {tags.map((t) => (
-                            <span
-                              key={t}
-                              className="mono inline-flex items-center rounded border border-border bg-bg px-1.5 py-0.5 text-xs text-fg-muted"
+                      <span className="flex flex-wrap items-center gap-1">
+                        {tags.map((t) => (
+                          <span
+                            key={t}
+                            className="group/tag mono inline-flex items-center gap-0.5 rounded border border-border bg-bg px-1.5 py-0.5 text-xs text-fg-muted"
+                          >
+                            {t}
+                            <button
+                              type="button"
+                              className="text-fg-subtle hover:text-status-failed opacity-0 group-hover/tag:opacity-100 transition-opacity -mr-0.5"
+                              onClick={(e) => { e.stopPropagation(); removeTagFromRun(r.id, t); }}
+                              title={`Remove tag "${t}"`}
                             >
-                              {t}
-                            </span>
-                          ))}
-                        </span>
-                      )}
+                              {"\u00D7"}
+                            </button>
+                          </span>
+                        ))}
+                        {addingTagFor === r.id ? (
+                          <input
+                            className="input py-0 px-1 text-xs w-20"
+                            value={newTagValue}
+                            onChange={(e) => setNewTagValue(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") { e.preventDefault(); addTagToRun(r.id, newTagValue); }
+                              if (e.key === "Escape") { setAddingTagFor(null); setNewTagValue(""); }
+                            }}
+                            onBlur={() => { setAddingTagFor(null); setNewTagValue(""); }}
+                            autoFocus
+                            placeholder="tag..."
+                          />
+                        ) : (
+                          <button
+                            type="button"
+                            className="inline-flex items-center justify-center rounded border border-dashed border-border-subtle px-1 py-0.5 text-xs text-fg-subtle hover:text-fg hover:border-border"
+                            onClick={(e) => { e.stopPropagation(); setAddingTagFor(r.id); setNewTagValue(""); }}
+                            title="Add tag"
+                          >
+                            +
+                          </button>
+                        )}
+                      </span>
                     </td>
                   </tr>
                 );
