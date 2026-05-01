@@ -17,6 +17,7 @@ import {
   removeCardFromComparison,
   renameComparison,
   saveComparisons,
+  syncComparisonsFromServer,
   useComparisons,
   useTemplates,
   type Comparison,
@@ -46,6 +47,12 @@ export default function ComparePage() {
   }, [runs]);
   const [searchParams, setSearchParams] = useSearchParams();
   const { comparisons, refresh } = useComparisons(projectId ?? "");
+
+  // Sync with server on mount.
+  useEffect(() => {
+    if (!projectId) return;
+    syncComparisonsFromServer(projectId).then(refresh);
+  }, [projectId, refresh]);
 
   const selectedId = searchParams.get("c") ?? "";
 

@@ -24,7 +24,9 @@ from fastapi.staticfiles import StaticFiles
 from .routes import (
     artifacts,
     compare,
+    comparisons,
     health,
+    import_export,
     ingest,
     logs,
     plugin_ws,
@@ -114,6 +116,8 @@ def create_app(
         logs.router,
         source.router,
         compare.router,
+        comparisons.router,
+        import_export.router,
         plugin_ws.router,
     ):
         app.include_router(router)

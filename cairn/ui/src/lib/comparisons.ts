@@ -1,13 +1,14 @@
 /**
  * Named, persisted multi-comparison storage.
  *
- * A comparison is a user-curated bag of cards (scalar-only in C1). Each card
- * references one or more (run, metric, context) series. Comparisons live in
- * localStorage under `cairn:comparisons:{projectId}` so they're durable across
- * page loads and sharable across tabs via the `storage` event.
+ * Comparisons are stored in both localStorage (for instant UI) and on the
+ * server (for cross-browser persistence). The localStorage copy acts as the
+ * working copy; server sync happens in the background.
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { api } from "../api/client";
+import { loadCardSettings, type CardSettingsKey } from "./card-settings";
 
 export interface ComparisonSeriesRef {
   runId: string;
@@ -48,6 +49,8 @@ export interface Comparison {
   runIds?: string[];
   /** When present, the comparison was created by the Smart Wizard and can be refreshed. */
   smartFilters?: SmartFilters;
+  /** Server-side ID (set after first save to server). */
+  serverId?: string;
 }
 
 function storageKey(projectId: string): string {
@@ -149,6 +152,8 @@ export function renameComparison(
     c.id === comparisonId ? { ...c, name } : c,
   );
   saveComparisons(projectId, next);
+  const cmp = next.find((c) => c.id === comparisonId);
+  if (cmp) syncComparisonToServer(projectId, cmp);
 }
 
 export function deleteComparison(
@@ -156,6 +161,8 @@ export function deleteComparison(
   comparisonId: string,
 ): void {
   const list = loadComparisons(projectId);
+  const cmp = list.find((c) => c.id === comparisonId);
+  if (cmp?.serverId) deleteComparisonFromServer(projectId, cmp.serverId);
   const next = list.filter((c) => c.id !== comparisonId);
   saveComparisons(projectId, next);
 }
@@ -172,6 +179,8 @@ export function addCardToComparison(
     return { ...c, cards: [...c.cards, newCard] };
   });
   saveComparisons(projectId, next);
+  const cmp = next.find((c) => c.id === comparisonId);
+  if (cmp) syncComparisonToServer(projectId, cmp);
 }
 
 export function reorderComparisonCards(
@@ -192,6 +201,8 @@ export function reorderComparisonCards(
     return { ...c, cards };
   });
   saveComparisons(projectId, next);
+  const cmp = next.find((c) => c.id === comparisonId);
+  if (cmp) syncComparisonToServer(projectId, cmp);
 }
 
 export function removeCardFromComparison(
@@ -206,6 +217,8 @@ export function removeCardFromComparison(
       : c,
   );
   saveComparisons(projectId, next);
+  const cmp = next.find((c) => c.id === comparisonId);
+  if (cmp) syncComparisonToServer(projectId, cmp);
 }
 
 /**
@@ -369,4 +382,120 @@ export function useTemplates(projectId: string): {
   }, [projectId]);
 
   return { templates, refresh };
+}
+
+// ---------------------------------------------------------------------------
+// Server sync — persist comparisons to the Cairn server
+// ---------------------------------------------------------------------------
+
+/** Build the payload for server storage, including card settings. */
+function buildPayload(projectId: string, cmp: Comparison): Record<string, unknown> {
+  // Gather card settings from localStorage.
+  const cardSettings: Record<string, unknown> = {};
+  for (const card of cmp.cards) {
+    const key: CardSettingsKey = {
+      runId: `compare:${cmp.id}`,
+      metricName: card.id,
+      contextHash: "",
+    };
+    const settings = loadCardSettings(key);
+    if (settings) cardSettings[card.id] = settings;
+  }
+  return {
+    cards: cmp.cards,
+    runIds: cmp.runIds,
+    smartFilters: cmp.smartFilters,
+    cardSettings,
+  };
+}
+
+/** Save a single comparison to the server (fire-and-forget). */
+export function syncComparisonToServer(projectId: string, cmp: Comparison): void {
+  const payload = buildPayload(projectId, cmp);
+  if (cmp.serverId) {
+    api.updateServerComparison(projectId, cmp.serverId, { name: cmp.name, payload }).catch(() => {});
+  } else {
+    api.createServerComparison(projectId, cmp.name, payload)
+      .then((res) => {
+        // Store the server ID back into localStorage.
+        const list = loadComparisons(projectId);
+        const updated = list.map((c) =>
+          c.id === cmp.id ? { ...c, serverId: res.id } : c,
+        );
+        try {
+          localStorage.setItem(storageKey(projectId), JSON.stringify(updated));
+        } catch { /* ignore */ }
+      })
+      .catch(() => {});
+  }
+}
+
+/** Delete a comparison from the server. */
+export function deleteComparisonFromServer(projectId: string, serverId: string): void {
+  api.deleteServerComparison(projectId, serverId).catch(() => {});
+}
+
+/** Pull all comparisons from the server and merge with localStorage.
+ *  Server comparisons that don't exist locally are added.
+ *  Local comparisons without a serverId are pushed to the server. */
+export async function syncComparisonsFromServer(projectId: string): Promise<void> {
+  try {
+    const { comparisons: serverList } = await api.comparisons(projectId);
+    const local = loadComparisons(projectId);
+    const localServerIds = new Set(local.map((c) => c.serverId).filter(Boolean));
+    let changed = false;
+
+    // Add server-only comparisons to local.
+    for (const sc of serverList) {
+      if (localServerIds.has(sc.id)) continue;
+      // Fetch full payload.
+      try {
+        const full = await api.comparison(projectId, sc.id);
+        const payload = full.payload as Record<string, unknown>;
+        const cards = (payload.cards ?? []) as ComparisonCard[];
+        const cmp: Comparison = {
+          id: newId(),
+          serverId: sc.id,
+          name: sc.name,
+          createdAt: sc.created_at,
+          cards,
+          runIds: payload.runIds as string[] | undefined,
+          smartFilters: payload.smartFilters as SmartFilters | undefined,
+        };
+        local.push(cmp);
+        changed = true;
+
+        // Restore card settings from payload.
+        const cardSettings = (payload.cardSettings ?? {}) as Record<string, unknown>;
+        for (const [cardId, settings] of Object.entries(cardSettings)) {
+          if (settings && typeof settings === "object") {
+            const key: CardSettingsKey = {
+              runId: `compare:${cmp.id}`,
+              metricName: cardId,
+              contextHash: "",
+            };
+            try {
+              localStorage.setItem(
+                `cairn:card-settings:${key.runId}:${key.metricName}:${key.contextHash}`,
+                JSON.stringify(settings),
+              );
+            } catch { /* ignore */ }
+          }
+        }
+      } catch { /* skip failed fetches */ }
+    }
+
+    // Push local-only comparisons to server.
+    for (const c of local) {
+      if (!c.serverId) {
+        syncComparisonToServer(projectId, c);
+      }
+    }
+
+    if (changed) {
+      saveComparisons(projectId, local);
+    }
+  } catch {
+    // Server unavailable — work offline from localStorage.
+  }
 }

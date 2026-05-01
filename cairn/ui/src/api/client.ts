@@ -20,6 +20,22 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return (await res.json()) as T;
 }
 
+async function put<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(path, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${path}`);
+  return (await res.json()) as T;
+}
+
+async function del_<T>(path: string): Promise<T> {
+  const res = await fetch(path, { method: "DELETE" });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${path}`);
+  return (await res.json()) as T;
+}
+
 export const api = {
   health: () => get<import("./types").Health>("/api/health"),
   projects: () =>
@@ -81,4 +97,42 @@ export const api = {
     post<{ run_id: string; tags: string[] }>(`/api/runs/${runId}/tags`, { tags }),
   setNotes: (runId: string, notes: string) =>
     post<{ run_id: string; notes: string }>(`/api/runs/${runId}/notes`, { notes }),
+  exportRuns: async (runIds: string[]): Promise<Blob> => {
+    const resp = await fetch("/api/export", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ run_ids: runIds }),
+    });
+    if (!resp.ok) throw new Error(`Export failed: ${resp.status}`);
+    return resp.blob();
+  },
+  importRuns: async (file: File): Promise<{ imported: Array<{ original_id: string; new_id: string; name: string }> }> => {
+    const form = new FormData();
+    form.append("file", file);
+    const resp = await fetch("/api/import", { method: "POST", body: form });
+    if (!resp.ok) throw new Error(`Import failed: ${resp.status}`);
+    return resp.json();
+  },
+
+  // Comparisons (server-persisted)
+  comparisons: (projectId: string) =>
+    get<{ comparisons: Array<{ id: string; name: string; created_at: string; updated_at: string; card_count: number }> }>(
+      `/api/projects/${projectId}/comparisons`,
+    ),
+  comparison: (projectId: string, id: string) =>
+    get<{ id: string; project_id: string; name: string; created_at: string; updated_at: string; payload: Record<string, unknown> }>(
+      `/api/projects/${projectId}/comparisons/${id}`,
+    ),
+  createServerComparison: (projectId: string, name: string, payload: Record<string, unknown>) =>
+    post<{ id: string; name: string; created_at: string }>(
+      `/api/projects/${projectId}/comparisons`,
+      { name, payload },
+    ),
+  updateServerComparison: (projectId: string, id: string, body: { name?: string; payload?: Record<string, unknown> }) =>
+    put<{ id: string; updated_at: string }>(
+      `/api/projects/${projectId}/comparisons/${id}`,
+      body,
+    ),
+  deleteServerComparison: (projectId: string, id: string) =>
+    del_<{ deleted: string }>(`/api/projects/${projectId}/comparisons/${id}`),
 };

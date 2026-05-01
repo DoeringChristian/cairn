@@ -9,6 +9,8 @@ import { saveCardSettings } from "../lib/card-settings";
 import { api } from "../api/client";
 import { setRunMetadata } from "../lib/run-label";
 import SettingsPopover from "../components/SettingsPopover";
+import BulkTagEditor from "../components/BulkTagEditor";
+import ImportRunsDialog from "../components/ImportRunsDialog";
 
 type SortColumn =
   | "name"
@@ -74,6 +76,10 @@ export default function RunsTablePage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [templatePopoverOpen, setTemplatePopoverOpen] = useState(false);
   const templateBtnRef = useRef<HTMLButtonElement | null>(null);
+  const [tagPopoverOpen, setTagPopoverOpen] = useState(false);
+  const tagBtnRef = useRef<HTMLButtonElement | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const { templates } = useTemplates(projectId ?? "");
 
   const runs = useMemo(() => q.data?.runs ?? [], [q.data]);
@@ -147,6 +153,24 @@ export default function RunsTablePage() {
   };
 
   const selectedCount = selected.size;
+
+  const onExport = useCallback(async () => {
+    if (selected.size === 0) return;
+    setExporting(true);
+    try {
+      const blob = await api.exportRuns(Array.from(selected));
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `cairn_export_${new Date().toISOString().slice(0, 10)}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert(`Export failed: ${err}`);
+    } finally {
+      setExporting(false);
+    }
+  }, [selected]);
 
   const onCompare = async () => {
     // Create a comparison pre-populated with cards: one card per unique
@@ -329,6 +353,13 @@ export default function RunsTablePage() {
           >
             New comparison
           </button>
+          <button
+            type="button"
+            className="btn px-2 py-1 text-xs"
+            onClick={() => setImportOpen(true)}
+          >
+            Import
+          </button>
         </div>
       </div>
 
@@ -346,6 +377,15 @@ export default function RunsTablePage() {
             onClick={selectNone}
           >
             Clear
+          </button>
+          <button
+            ref={tagBtnRef}
+            type="button"
+            className="btn px-2 py-1 text-xs"
+            onClick={() => setTagPopoverOpen((v) => !v)}
+            disabled={selectedCount === 0}
+          >
+            Tag
           </button>
           <button
             type="button"
@@ -366,6 +406,14 @@ export default function RunsTablePage() {
             disabled={selectedCount === 0}
           >
             Empty comparison
+          </button>
+          <button
+            type="button"
+            className="btn px-2 py-1 text-xs"
+            onClick={onExport}
+            disabled={selectedCount === 0 || exporting}
+          >
+            {exporting ? "Exporting..." : "Export"}
           </button>
           {templates.length > 0 && (
             <button
@@ -400,6 +448,13 @@ export default function RunsTablePage() {
           ))}
         </div>
       </SettingsPopover>
+      <BulkTagEditor
+        open={tagPopoverOpen}
+        onClose={() => setTagPopoverOpen(false)}
+        anchorRef={tagBtnRef}
+        selectedRunIds={selected}
+        runs={runs}
+      />
 
       {sorted.length === 0 ? (
         <p className="text-fg-muted">No runs match the filters.</p>
@@ -580,6 +635,7 @@ export default function RunsTablePage() {
           </div>
         </>
       )}
+      <ImportRunsDialog open={importOpen} onClose={() => setImportOpen(false)} />
     </div>
   );
 }

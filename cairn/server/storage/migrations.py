@@ -105,6 +105,16 @@ SCHEMA_SQL: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_sequences_run_name ON sequences(run_id, name)",
     "CREATE INDEX IF NOT EXISTS idx_sequences_step ON sequences(step)",
     "CREATE INDEX IF NOT EXISTS idx_log_lines_run ON log_lines(run_id, line_no)",
+    """
+    CREATE TABLE IF NOT EXISTS comparisons (
+        id            TEXT PRIMARY KEY,
+        project_id    TEXT NOT NULL REFERENCES projects(id),
+        name          TEXT NOT NULL,
+        created_at    TEXT NOT NULL,
+        updated_at    TEXT NOT NULL,
+        payload       TEXT NOT NULL
+    )
+    """,
 ]
 
 
