@@ -254,6 +254,7 @@ function FigurePane({
   settings,
   viewOverrides,
   onRelayout,
+  revision,
 }: {
   runId: string;
   m: { runId?: string; name: string; context_hash: string };
@@ -261,6 +262,7 @@ function FigurePane({
   settings: FigureSettings;
   viewOverrides?: SharedView;
   onRelayout?: (view: SharedView) => void;
+  revision?: number;
 }) {
   const rid = m.runId ?? runId;
   const q = useSequence(rid, m.name, {
@@ -369,6 +371,7 @@ function FigurePane({
           useResizeHandler
           style={{ width: "100%", height: "100%" }}
           onRelayout={handleRelayout}
+          revision={revision}
         />
       </div>
     );
@@ -584,19 +587,19 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
   // Shared view state for syncing zoom/pan/camera across comparison panes.
   // Also used in single-pane mode to track whether zoom has been modified.
   const [sharedView, setSharedView] = useState<SharedView>({});
+  const [plotRevision, setPlotRevision] = useState(0);
   const viewModified = Object.keys(sharedView).length > 0;
   const updatingRef = useRef(false);
   const handlePaneRelayout = useCallback((view: SharedView) => {
     if (updatingRef.current) return;
     updatingRef.current = true;
     setSharedView((prev) => ({ ...prev, ...view }));
-    // Allow next update after React has flushed.
     requestAnimationFrame(() => { updatingRef.current = false; });
   }, []);
   const resetView = useCallback(() => {
-    setSharedView({ "xaxis.autorange": true, "yaxis.autorange": true });
-    // Clear after Plotly applies the autorange so future interactions are tracked fresh.
-    requestAnimationFrame(() => setSharedView({}));
+    setSharedView({});
+    // Bump revision to force Plotly to re-apply the base layout (with autorange).
+    setPlotRevision((r) => r + 1);
   }, []);
 
   const mainBaseLayout = useMemo(() => {
@@ -765,6 +768,7 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
                   settings={settings}
                   viewOverrides={sharedView}
                   onRelayout={handlePaneRelayout}
+                  revision={plotRevision}
                 />
                 {multipleRuns && (
                   <span className="absolute top-1 left-1 z-10 rounded bg-bg/80 px-1.5 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm">
@@ -865,6 +869,7 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
                   const view = extractViewState(e as unknown as Record<string, unknown>);
                   if (view) handlePaneRelayout(view);
                 }}
+                revision={plotRevision}
               />
             </div>
           ) : sourceHash && sourceQ.isLoading ? (
@@ -954,6 +959,7 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
                     settings={settings}
                     viewOverrides={sharedView}
                     onRelayout={handlePaneRelayout}
+                    revision={plotRevision}
                   />
                 ))}
               </SplitPane>
