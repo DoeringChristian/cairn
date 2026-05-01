@@ -165,3 +165,24 @@ export function toggleColSpanPatch(
 
   return patch;
 }
+
+/**
+ * Build a settings patch that fits the card height to its content.
+ * Measures the card element's scrollHeight and saves to the current colSpan slot.
+ */
+export function fitHeightPatch(
+  settings: { colSpan?: number },
+  cardEl: HTMLElement | null,
+): Record<string, unknown> | null {
+  if (!cardEl) return null;
+  // Temporarily remove fixed height to measure natural content height.
+  const prev = cardEl.style.height;
+  cardEl.style.height = "auto";
+  const h = Math.round(cardEl.scrollHeight);
+  cardEl.style.height = prev;
+  const span = settings.colSpan ?? 1;
+  return {
+    height: h,
+    [span > 1 ? "height2" : "height1"]: h,
+  };
+}

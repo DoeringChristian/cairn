@@ -9,7 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { api } from "../api/client";
 import type { Run } from "../api/types";
-import { useCardSettings, resolveCardHeight, toggleColSpanPatch } from "../lib/card-settings";
+import { useCardSettings, resolveCardHeight, toggleColSpanPatch, fitHeightPatch } from "../lib/card-settings";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import CardHeader from "./CardHeader";
 import CardDetailModal from "./CardDetailModal";
@@ -547,6 +547,7 @@ export default function ParallelCoordsCard({
         onSettings={() => setExpanded(true)}
         onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<ParallelSettings>)}
         isFullWidth={(settings.colSpan ?? 1) > 1}
+        onFitHeight={() => { const p = fitHeightPatch(settings, cardRef.current); if (p) updateSettings(p as Partial<ParallelSettings>); }}
         onRemove={onRemove}
       >
       </CardHeader>

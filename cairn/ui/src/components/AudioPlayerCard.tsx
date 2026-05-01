@@ -3,7 +3,7 @@ import { useQueries } from "@tanstack/react-query";
 import { useSequence } from "../api/hooks";
 import { api } from "../api/client";
 import { safeJsonParse, formatRelative } from "../lib/format";
-import { useCardSettings, resolveCardHeight, toggleColSpanPatch, type CardSettingsKey } from "../lib/card-settings";
+import { useCardSettings, resolveCardHeight, toggleColSpanPatch, fitHeightPatch, type CardSettingsKey } from "../lib/card-settings";
 import { useSeriesDrop } from "../lib/use-series-drop";
 import {
   addCardToComparison,
@@ -429,6 +429,7 @@ export default function AudioPlayerCard({ runId, metric, extraContexts = [], ext
         onSettings={() => setExpanded(true)}
         onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<AudioSettings>)}
         isFullWidth={(settings.colSpan ?? 1) > 1}
+        onFitHeight={() => { const p = fitHeightPatch(settings, cardRef.current); if (p) updateSettings(p as Partial<AudioSettings>); }}
         onRemove={onRemove}
       >
         {projectId && (

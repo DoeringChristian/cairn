@@ -8,7 +8,7 @@ import { useQueries } from "@tanstack/react-query";
 import { useSequence } from "../api/hooks";
 import { api } from "../api/client";
 import { safeJsonParse } from "../lib/format";
-import { useCardSettings, resolveCardHeight, toggleColSpanPatch, type CardSettingsKey } from "../lib/card-settings";
+import { useCardSettings, resolveCardHeight, toggleColSpanPatch, fitHeightPatch, type CardSettingsKey } from "../lib/card-settings";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import type { SequenceMeta, SequenceResponse, SequencePoint } from "../api/types";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
@@ -381,6 +381,7 @@ export default function PluginCard({
         onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
         onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<PluginSettings>)}
         isFullWidth={(settings.colSpan ?? 1) > 1}
+        onFitHeight={() => { const p = fitHeightPatch(settings, cardRef.current); if (p) updateSettings(p as Partial<PluginSettings>); }}
         onRemove={onRemove}
       >
         <span className="inline-flex items-center rounded bg-bg-hover px-1.5 py-0.5 text-[10px] text-fg-muted">
