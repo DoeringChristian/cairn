@@ -136,10 +136,23 @@ def hash_context(context: Any) -> str:
     return hashlib.md5(canonical.encode("utf-8")).hexdigest()
 
 
+def _add_column_if_missing(
+    con: sqlite3.Connection, table: str, column: str, col_type: str,
+) -> None:
+    """ALTER TABLE ADD COLUMN, ignoring if it already exists."""
+    cols = {row[1] for row in con.execute(f"PRAGMA table_info({table})").fetchall()}
+    if column not in cols:
+        con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+
+
 def apply_migrations(con: sqlite3.Connection) -> int:
     """Run schema DDL idempotently; return current schema version."""
     for stmt in SCHEMA_SQL:
         con.execute(stmt)
+
+    # Incremental column migrations for existing databases.
+    _add_column_if_missing(con, "runs", "last_heartbeat", "TEXT")
+
     existing = con.execute("SELECT version FROM schema_version").fetchall()
     if not existing:
         con.execute("INSERT INTO schema_version(version) VALUES (?)", [SCHEMA_VERSION])
