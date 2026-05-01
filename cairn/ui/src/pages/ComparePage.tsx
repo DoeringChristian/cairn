@@ -546,7 +546,7 @@ function SidebarRow({
         className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-fg-subtle opacity-0 group-hover:opacity-100 hover:text-status-failed transition-opacity"
         title="Delete"
       >
-        {"\uD83D\uDDD1"}
+        {"\u00D7"}
       </button>
     </li>
   );
