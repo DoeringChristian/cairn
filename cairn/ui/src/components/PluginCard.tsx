@@ -56,6 +56,8 @@ interface PluginSettings {
   height1?: number;
   height2?: number;
   colSpan?: number;
+  fitted?: boolean;
+  preFitHeight?: number;
   pluginValues?: Record<string, unknown>;
 }
 
@@ -423,6 +425,7 @@ export default function PluginCard({
         onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<PluginSettings>)}
         isFullWidth={(settings.colSpan ?? 1) > 1}
         onFitHeight={() => { const p = fitHeightPatch(settings, cardRef.current); if (p) updateSettings(p as Partial<PluginSettings>); }}
+        isFitted={!!settings.fitted}
         onRemove={onRemove}
       >
         <span className="inline-flex items-center rounded bg-bg-hover px-1.5 py-0.5 text-[10px] text-fg-muted">

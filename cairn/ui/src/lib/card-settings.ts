@@ -167,22 +167,40 @@ export function toggleColSpanPatch(
 }
 
 /**
- * Build a settings patch that fits the card height to its content.
- * Measures the card element's scrollHeight and saves to the current colSpan slot.
+ * Build a settings patch that toggles fit-to-content height.
+ *
+ * First call: saves the current height into `preFitHeight`, measures
+ * scrollHeight, and sets `fitted: true`.
+ * Second call: restores `preFitHeight` and sets `fitted: false`.
  */
 export function fitHeightPatch(
-  settings: { colSpan?: number },
+  settings: { colSpan?: number; height?: number; fitted?: boolean; preFitHeight?: number },
   cardEl: HTMLElement | null,
 ): Record<string, unknown> | null {
   if (!cardEl) return null;
-  // Temporarily remove fixed height to measure natural content height.
+  const span = settings.colSpan ?? 1;
+  const hKey = span > 1 ? "height2" : "height1";
+
+  if (settings.fitted) {
+    // Restore previous height.
+    const h = settings.preFitHeight;
+    return {
+      height: h,
+      [hKey]: h,
+      fitted: false,
+    };
+  }
+
+  // Save current height, measure content, fit.
+  const currentH = Math.round(cardEl.getBoundingClientRect().height);
   const prev = cardEl.style.height;
   cardEl.style.height = "auto";
-  const h = Math.round(cardEl.scrollHeight);
+  const fitH = Math.round(cardEl.scrollHeight);
   cardEl.style.height = prev;
-  const span = settings.colSpan ?? 1;
   return {
-    height: h,
-    [span > 1 ? "height2" : "height1"]: h,
+    height: fitH,
+    [hKey]: fitH,
+    fitted: true,
+    preFitHeight: currentH,
   };
 }

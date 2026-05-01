@@ -30,6 +30,8 @@ interface ScatterSettings {
   height1?: number;
   height2?: number;
   colSpan?: number;
+  fitted?: boolean;
+  preFitHeight?: number;
   xAxis: AxisDef | null;
   yAxis: AxisDef | null;
   colorAxis: AxisDef | null;
@@ -374,6 +376,7 @@ export default function ScatterPlotCard({
         onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<ScatterSettings>)}
         isFullWidth={(settings.colSpan ?? 1) > 1}
         onFitHeight={() => { const p = fitHeightPatch(settings, cardRef.current); if (p) updateSettings(p as Partial<ScatterSettings>); }}
+        isFitted={!!settings.fitted}
         onRemove={onRemove}
       >
       </CardHeader>

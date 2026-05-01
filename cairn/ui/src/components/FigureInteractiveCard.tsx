@@ -72,6 +72,8 @@ interface FigureSettings {
   height1?: number;
   height2?: number;
   colSpan?: number;
+  fitted?: boolean;
+  preFitHeight?: number;
   displayModeBar: boolean;
   scrollZoom: boolean;
   hoverMode: HoverMode;
@@ -709,6 +711,7 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
         onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<typeof settings>)}
         isFullWidth={(settings.colSpan ?? 1) > 1}
         onFitHeight={() => { const p = fitHeightPatch(settings, cardRef.current); if (p) updateSettings(p as Partial<typeof settings>); }}
+        isFitted={!!settings.fitted}
         onRemove={onRemove}
       >
         {viewModified && (

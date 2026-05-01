@@ -53,6 +53,8 @@ interface VideoSettings {
   height1?: number;
   height2?: number;
   colSpan?: number;
+  fitted?: boolean;
+  preFitHeight?: number;
   autoplay: boolean;
   loop: boolean;
   muted: boolean;
@@ -386,6 +388,7 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
         onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<VideoSettings>)}
         isFullWidth={(settings.colSpan ?? 1) > 1}
         onFitHeight={() => { const p = fitHeightPatch(settings, cardRef.current); if (p) updateSettings(p as Partial<VideoSettings>); }}
+        isFitted={!!settings.fitted}
         onRemove={onRemove}
       >
         {projectId && (

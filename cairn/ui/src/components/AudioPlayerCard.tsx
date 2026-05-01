@@ -51,6 +51,8 @@ interface AudioSettings {
   height1?: number;
   height2?: number;
   colSpan?: number;
+  fitted?: boolean;
+  preFitHeight?: number;
   autoplay: boolean;
 }
 
@@ -430,6 +432,7 @@ export default function AudioPlayerCard({ runId, metric, extraContexts = [], ext
         onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<AudioSettings>)}
         isFullWidth={(settings.colSpan ?? 1) > 1}
         onFitHeight={() => { const p = fitHeightPatch(settings, cardRef.current); if (p) updateSettings(p as Partial<AudioSettings>); }}
+        isFitted={!!settings.fitted}
         onRemove={onRemove}
       >
         {projectId && (

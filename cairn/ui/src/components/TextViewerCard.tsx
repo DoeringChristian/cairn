@@ -31,6 +31,8 @@ interface TextSettings {
   height1?: number;
   height2?: number;
   colSpan?: number;
+  fitted?: boolean;
+  preFitHeight?: number;
   fontSize: "xs" | "sm" | "base";
   wordWrap: boolean;
 }
@@ -178,6 +180,7 @@ export default function TextViewerCard({ runId, metric, settingsKeyOverride, onR
         onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<TextSettings>)}
         isFullWidth={(settings.colSpan ?? 1) > 1}
         onFitHeight={() => { const p = fitHeightPatch(settings, cardRef.current); if (p) updateSettings(p as Partial<TextSettings>); }}
+        isFitted={!!settings.fitted}
         onRemove={onRemove}
       >
         {projectId && (

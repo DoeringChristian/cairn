@@ -174,6 +174,8 @@ interface ImageSettings {
   /** Number of columns for multi-image layout (1 or 2). */
   imageColumns?: 1 | 2;
   colSpan?: number;
+  fitted?: boolean;
+  preFitHeight?: number;
   /** What to show when a run has no image at the current step. */
   missingImageMode?: "nothing" | "last_available";
 }
@@ -1345,6 +1347,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
         onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<typeof settings>)}
         isFullWidth={(settings.colSpan ?? 1) > 1}
         onFitHeight={() => { const p = fitHeightPatch(settings, cardRef.current); if (p) updateSettings(p as Partial<typeof settings>); }}
+        isFitted={!!settings.fitted}
         onRemove={onRemove}
       >
         {(settings.zoom !== 1 || settings.pan.x !== 0 || settings.pan.y !== 0) && (

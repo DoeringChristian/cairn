@@ -37,6 +37,8 @@ interface HistogramSettings {
   height1?: number;
   height2?: number;
   colSpan?: number;
+  fitted?: boolean;
+  preFitHeight?: number;
 }
 
 const DEFAULT_HISTOGRAM_SETTINGS: HistogramSettings = { version: 1 };
@@ -137,6 +139,7 @@ export default function HistogramCard({ runId, metric, settingsKeyOverride, onRe
         onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<HistogramSettings>)}
         isFullWidth={(settings.colSpan ?? 1) > 1}
         onFitHeight={() => { const p = fitHeightPatch(settings, cardRef.current); if (p) updateSettings(p as Partial<HistogramSettings>); }}
+        isFitted={!!settings.fitted}
         onRemove={onRemove}
       >
         {projectId && (

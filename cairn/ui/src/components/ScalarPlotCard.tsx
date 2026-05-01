@@ -66,6 +66,8 @@ interface ScalarSettings {
   height1?: number;
   height2?: number;
   colSpan?: number;
+  fitted?: boolean;
+  preFitHeight?: number;
   /**
    * Series to render. `runId` is optional; when absent, the card's top-level
    * `runId` prop is used as the fallback. Cross-run overlays (comparisons)
@@ -1623,6 +1625,7 @@ export default function ScalarPlotCard({
         onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<typeof settings>)}
         isFullWidth={(settings.colSpan ?? 1) > 1}
         onFitHeight={() => { const p = fitHeightPatch(settings, cardRef.current); if (p) updateSettings(p as Partial<typeof settings>); }}
+        isFitted={!!settings.fitted}
         onRemove={onRemove}
       >
         {settings.smoothing > 0 && (
