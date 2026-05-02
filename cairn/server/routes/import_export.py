@@ -185,7 +185,7 @@ async def import_runs(request: Request, file: UploadFile = File(...)) -> dict[st
                     pass
             digest, size = blobs.put(data, mime, metadata)
             # Insert into artifacts table.
-            db.execute(
+            db.write(
                 """INSERT OR IGNORE INTO artifacts (hash, mime_type, size_bytes, metadata, created_at)
                    VALUES (?, ?, ?, ?, ?)""",
                 [digest, mime, size, json.dumps(metadata) if metadata else "{}", utc_now().isoformat()],
@@ -208,13 +208,13 @@ async def import_runs(request: Request, file: UploadFile = File(...)) -> dict[st
         project_id = run.get("project_id", "imported")
         existing = db.read_columns("SELECT id FROM projects WHERE id = ?", [project_id])
         if not existing:
-            db.execute(
+            db.write(
                 "INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)",
                 [project_id, project_id, utc_now().isoformat()],
             )
 
         # Insert run.
-        db.execute(
+        db.write(
             """INSERT INTO runs (id, project_id, display_name, created_at, ended_at,
                                  status, exit_code, git_sha, git_dirty, git_branch,
                                  cli_args, env_snapshot, hostname, "user", tags, notes)
@@ -241,7 +241,7 @@ async def import_runs(request: Request, file: UploadFile = File(...)) -> dict[st
 
         # Insert params.
         for p in params:
-            db.execute(
+            db.write(
                 "INSERT OR IGNORE INTO params (run_id, key, value, value_type) VALUES (?, ?, ?, ?)",
                 [new_id, p["key"], p["value"], p.get("value_type", "str")],
             )
@@ -251,7 +251,7 @@ async def import_runs(request: Request, file: UploadFile = File(...)) -> dict[st
         if seq_json_name in zf.namelist():
             seq_rows = json.loads(zf.read(seq_json_name))
             for row in seq_rows:
-                db.execute(
+                db.write(
                     """INSERT OR IGNORE INTO sequences
                        (run_id, name, step, wall_time, context, context_hash,
                         object_type, scalar_value, artifact_hash)
@@ -275,7 +275,7 @@ async def import_runs(request: Request, file: UploadFile = File(...)) -> dict[st
             try:
                 named_arts = json.loads(zf.read(ra_name))
                 for ra in named_arts:
-                    db.execute(
+                    db.write(
                         "INSERT OR IGNORE INTO run_artifacts (run_id, name, hash, step) VALUES (?, ?, ?, ?)",
                         [new_id, ra["name"], ra["hash"], ra.get("step", -1)],
                     )
