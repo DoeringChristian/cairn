@@ -89,6 +89,21 @@ def init_cmd(path: Path) -> None:
 # ---------- server (ingest + UI, two ports in one process) -----------------
 
 
+def _find_free_port(host: str, start: int, max_attempts: int = 20) -> int:
+    """Return ``start`` if available, otherwise scan upward for a free port."""
+    for offset in range(max_attempts):
+        port = start + offset
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind((host, port))
+                return port
+            except OSError:
+                continue
+    raise click.ClickException(
+        f"Could not find a free port in range {start}–{start + max_attempts - 1}"
+    )
+
+
 def _ensure_repo(repo: Path) -> Path:
     """Resolve + create the repo tree on demand.
 
@@ -139,7 +154,8 @@ def server_cmd(
     import uvicorn
 
     repo = _ensure_repo(repo or _default_repo())
-    ui_port = ui_port or port + 1
+    port = _find_free_port(host, port)
+    ui_port = _find_free_port(host, ui_port or port + 1)
 
     dd = DataDir(repo)
     # Record the UI port (if present, else the ingest port) in the lock
@@ -284,6 +300,7 @@ def ui_cmd(
     import uvicorn
 
     repo = _ensure_repo(repo or _default_repo())
+    port = _find_free_port(host, port)
     dd = DataDir(repo)
     has_lock = False
     try:
