@@ -1,19 +1,81 @@
-import { Link } from "react-router-dom";
+import { useCallback, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { useProjects } from "../api/hooks";
+import { api } from "../api/client";
 import { formatRelative } from "../lib/format";
+import ImportRunsDialog from "../components/ImportRunsDialog";
 
 export default function ProjectsPage() {
   const q = useProjects();
+  const qc = useQueryClient();
+  const navigate = useNavigate();
+  const [importOpen, setImportOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState("");
+
+  const handleCreate = useCallback(async () => {
+    const name = newName.trim();
+    if (!name) return;
+    try {
+      const res = await api.createProject(name);
+      setCreating(false);
+      setNewName("");
+      qc.invalidateQueries({ queryKey: ["projects"] });
+      navigate(`/p/${res.id}`);
+    } catch (err) {
+      alert(String(err));
+    }
+  }, [newName, qc, navigate]);
+
   if (q.isLoading) return <p className="text-fg-muted">Loading…</p>;
   if (q.isError) return <p className="text-status-failed">Failed to load projects: {String(q.error)}</p>;
   const projects = q.data?.projects ?? [];
   return (
     <div>
-      <div className="mb-6 flex items-baseline justify-between">
+      <div className="mb-6 flex items-baseline justify-between gap-4">
         <h1 className="text-xl font-semibold">Projects</h1>
-        <p className="text-sm text-fg-muted">
-          {projects.length} {projects.length === 1 ? "project" : "projects"}
-        </p>
+        <div className="flex items-center gap-2">
+          <p className="text-sm text-fg-muted">
+            {projects.length} {projects.length === 1 ? "project" : "projects"}
+          </p>
+          <button
+            type="button"
+            className="btn px-2 py-1 text-xs"
+            onClick={() => setImportOpen(true)}
+          >
+            Import runs
+          </button>
+          {creating ? (
+            <div className="flex items-center gap-1">
+              <input
+                autoFocus
+                className="input py-1 text-xs w-32"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleCreate();
+                  if (e.key === "Escape") { setCreating(false); setNewName(""); }
+                }}
+                placeholder="project name"
+              />
+              <button type="button" className="btn px-2 py-1 text-xs" onClick={handleCreate} disabled={!newName.trim()}>
+                Create
+              </button>
+              <button type="button" className="btn px-2 py-1 text-xs" onClick={() => { setCreating(false); setNewName(""); }}>
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="btn px-2 py-1 text-xs"
+              onClick={() => setCreating(true)}
+            >
+              New project
+            </button>
+          )}
+        </div>
       </div>
       {projects.length === 0 ? (
         <EmptyState />
@@ -83,6 +145,7 @@ export default function ProjectsPage() {
           </div>
         </>
       )}
+      <ImportRunsDialog open={importOpen} onClose={() => { setImportOpen(false); qc.invalidateQueries({ queryKey: ["projects"] }); }} />
     </div>
   );
 }
