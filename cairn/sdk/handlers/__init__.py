@@ -4,6 +4,7 @@ default registry in LIFO order matching the spec's dispatch table.
 
 from __future__ import annotations
 
+from .artifact import ArtifactHandler
 from .audio import AudioHandler
 from .figure import FigureHandler
 from .histogram import HistogramHandler
@@ -38,6 +39,7 @@ if not _already_registered:
     default_registry.register(HistogramHandler())
     default_registry.register(TensorHandler())
     default_registry.register(PluginHandler())
+    default_registry.register(ArtifactHandler())
     _already_registered = True
 
 
@@ -55,4 +57,5 @@ __all__ = [
     "HistogramHandler",
     "TensorHandler",
     "PluginHandler",
+    "ArtifactHandler",
 ]

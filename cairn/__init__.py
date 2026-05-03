@@ -16,6 +16,7 @@ from .sdk.plugins import (  # noqa: E402
     WindowPlugin,
 )
 from .sdk.wrappers import (  # noqa: E402
+    Artifact,
     Audio,
     Figure,
     Histogram,
@@ -30,6 +31,7 @@ __all__ = [
     "Run",
     "configure",
     "register_handler",
+    "Artifact",
     "Image",
     "Figure",
     "Audio",

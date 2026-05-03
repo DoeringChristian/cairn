@@ -50,3 +50,18 @@ class Tensor(_TypeWrapper):
 
 class Text(_TypeWrapper):
     object_type = "text"
+
+
+class Artifact(_TypeWrapper):
+    """Generic artifact — any file or bytes blob.
+
+    Tracks arbitrary files (checkpoints, models, configs, etc.) with
+    metadata. Accepts bytes, file paths, or file-like objects.
+
+    Usage::
+
+        run.track(cairn.Artifact(b"raw bytes"), name="config", step=0)
+        run.track(cairn.Artifact("/path/to/model.pt"), name="checkpoint", step=100)
+        run.track(cairn.Artifact(open("data.csv", "rb")), name="data", step=0)
+    """
+    object_type = "artifact"

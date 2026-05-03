@@ -13,6 +13,7 @@ import AudioPlayerCard from "./AudioPlayerCard";
 import VideoPlayerCard from "./VideoPlayerCard";
 import HistogramCard from "./HistogramCard";
 import TextViewerCard from "./TextViewerCard";
+import ArtifactCard from "./ArtifactCard";
 
 const FigureInteractiveCard = lazy(
   () => import("./FigureInteractiveCard"),
@@ -80,6 +81,8 @@ export default function CardRenderer({
       return <HistogramCard {...baseProps} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />;
     case "text":
       return <TextViewerCard {...baseProps} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />;
+    case "artifact":
+      return <ArtifactCard {...baseProps} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />;
     case "plugin":
       return (
         <Suspense
