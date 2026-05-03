@@ -15,6 +15,8 @@ from .sdk.plugins import (  # noqa: E402
     ServerPlugin,
     WindowPlugin,
 )
+from .sdk.reader import Reader  # noqa: E402
+
 from .sdk.wrappers import (  # noqa: E402
     Artifact,
     Audio,
@@ -31,6 +33,7 @@ __all__ = [
     "Run",
     "configure",
     "register_handler",
+    "Reader",
     "Artifact",
     "Image",
     "Figure",
