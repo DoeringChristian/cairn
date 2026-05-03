@@ -1171,10 +1171,9 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
       updateSettings({
         externalBaseline: { runId: ref.runId, name: ref.name, context_hash: ref.context_hash },
         baselineIndex: undefined,
-        diffMode: settings.diffMode === "none" ? "absolute" : settings.diffMode,
       });
     } catch { /* ignore */ }
-  }, [updateSettings, settings.diffMode]);
+  }, [updateSettings]);
   const [singleNaturalDims, setSingleNaturalDims] = useState<{ w: number; h: number } | null>(null);
   // Single-image: resolve for the first series at current global step
   const firstResolved = useMemo(() => {
