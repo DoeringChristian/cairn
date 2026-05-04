@@ -466,9 +466,10 @@ class Run:
             self._heartbeat_stop.set()
             self._metric_buffer.stop(timeout=self._timeout)
             self._log_buffer.stop(timeout=self._timeout)
-            # Wait for source upload thread, short timeout to avoid hanging.
+            # Wait for source upload to finish before closing the transport/DB.
+            # Large projects can take a while to archive + upload.
             if self._source_thread is not None and self._source_thread.is_alive():
-                self._source_thread.join(timeout=5)
+                self._source_thread.join(timeout=120)
             try:
                 self._transport.drain_spill(self._run_id)
             except Exception:  # noqa: BLE001
@@ -495,6 +496,10 @@ class Run:
                 except (OSError, ValueError):
                     pass
             if self._owns_transport:
+                # Ensure source thread is done before closing the DB.
+                if self._source_thread is not None and self._source_thread.is_alive():
+                    log.warning("source upload still running after timeout; waiting before closing DB")
+                    self._source_thread.join(timeout=30)
                 self._transport.close()
             # Don't fire the atexit hook now that we've finished explicitly.
             try:
