@@ -27,7 +27,46 @@ class VideoHandler:
         torch = try_import("torch")
         if torch is not None and isinstance(obj, torch.Tensor) and obj.ndim == 4:
             return True
+        # List/tuple of images (numpy HxWxC, PIL Image, or torch 3D tensor)
+        if isinstance(obj, (list, tuple)) and len(obj) > 0:
+            first = obj[0]
+            if isinstance(first, PILImage.Image):
+                return True
+            if isinstance(first, np.ndarray) and first.ndim == 3:
+                return True
+            if torch is not None and isinstance(first, torch.Tensor) and first.ndim == 3:
+                return True
         return False
+
+    @staticmethod
+    def _to_frames(obj: Any) -> np.ndarray:
+        """Convert various input formats to a TxHxWxC uint8 numpy array."""
+        torch = try_import("torch")
+
+        # Already a 4D array
+        if torch is not None and isinstance(obj, torch.Tensor) and obj.ndim == 4:
+            return obj.detach().cpu().numpy()
+        if isinstance(obj, np.ndarray) and obj.ndim == 4:
+            return obj
+
+        # List/tuple of frames
+        if isinstance(obj, (list, tuple)):
+            frames: list[np.ndarray] = []
+            for item in obj:
+                if isinstance(item, PILImage.Image):
+                    frames.append(np.array(item))
+                elif isinstance(item, np.ndarray) and item.ndim == 3:
+                    frames.append(item)
+                elif torch is not None and isinstance(item, torch.Tensor):
+                    frames.append(item.detach().cpu().numpy())
+                else:
+                    raise TypeError(
+                        f"Cannot convert {type(item).__name__} to video frame; "
+                        "expected PIL Image, numpy HxWxC, or torch tensor"
+                    )
+            return np.stack(frames)
+
+        return np.asarray(obj)
 
     def serialize(
         self, obj: Any, fps: int = 30, **kwargs: Any
@@ -37,11 +76,7 @@ class VideoHandler:
             raise ImportError(
                 "video tracking requires `cairn-track[media]` (imageio + imageio-ffmpeg)"
             )
-        torch = try_import("torch")
-        if torch is not None and isinstance(obj, torch.Tensor):
-            arr = obj.detach().cpu().numpy()
-        else:
-            arr = np.asarray(obj)
+        arr = self._to_frames(obj)
         if arr.dtype != np.uint8:
             arr = arr.clip(0, 255).astype(np.uint8)
 

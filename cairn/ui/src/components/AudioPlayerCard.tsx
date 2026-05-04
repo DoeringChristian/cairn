@@ -3,7 +3,7 @@ import { useQueries } from "@tanstack/react-query";
 import { useSequence } from "../api/hooks";
 import { api } from "../api/client";
 import { safeJsonParse, formatRelative } from "../lib/format";
-import { useCardSettings, resolveCardHeight, toggleColSpanPatch, fitHeightPatch, type CardSettingsKey } from "../lib/card-settings";
+import { useCardSettings, resolveCardHeight, toggleColSpanPatch, type CardSettingsKey } from "../lib/card-settings";
 import { useSeriesDrop } from "../lib/use-series-drop";
 import {
   addCardToComparison,
@@ -21,6 +21,7 @@ import SplitPane from "./SplitPane";
 import SeriesChip , { type SeriesRef } from "./SeriesChip";
 import SettingsPopover from "./SettingsPopover";
 import Toggle from "./settings/Toggle";
+import StepSlider, { type XAxisMode } from "./StepSlider";
 
 interface Props {
   runId: string;
@@ -51,9 +52,8 @@ interface AudioSettings {
   height1?: number;
   height2?: number;
   colSpan?: number;
-  fitted?: boolean;
-  preFitHeight?: number;
   autoplay: boolean;
+  xAxis?: "step" | "relative_time" | "wall_time";
 }
 
 const SERIES_COLORS = [
@@ -431,8 +431,6 @@ export default function AudioPlayerCard({ runId, metric, extraContexts = [], ext
         onSettings={() => setExpanded(true)}
         onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<AudioSettings>)}
         isFullWidth={(settings.colSpan ?? 1) > 1}
-        onFitHeight={() => { const p = fitHeightPatch(settings, cardRef.current); if (p) updateSettings(p as Partial<AudioSettings>); }}
-        isFitted={!!settings.fitted}
         onRemove={onRemove}
       >
         {projectId && (
@@ -474,16 +472,14 @@ export default function AudioPlayerCard({ runId, metric, extraContexts = [], ext
               </div>
             ))}
           </div>
-          {globalSteps.length > 1 && (
-            <input
-              type="range"
-              min={0}
-              max={globalSteps.length - 1}
-              value={safeIdx}
-              onChange={(e) => handleSliderChange(Number(e.target.value))}
-              className="mt-3 w-full accent-accent"
-            />
-          )}
+          <StepSlider
+            points={points}
+            currentIndex={safeIdx}
+            onChange={handleSliderChange}
+            xAxis={settings.xAxis}
+            onXAxisChange={(m) => updateSettings({ xAxis: m })}
+            className="mt-3"
+          />
           {/* Series chip strip */}
           <div className="mt-2 flex flex-wrap gap-1.5">
             {controlledSeries ? (
@@ -577,16 +573,14 @@ export default function AudioPlayerCard({ runId, metric, extraContexts = [], ext
               </div>
             )}
           </div>
-          {points.length > 1 && (
-            <input
-              type="range"
-              min={0}
-              max={points.length - 1}
-              value={safeIdx}
-              onChange={(e) => handleSliderChange(Number(e.target.value))}
-              className="mt-3 w-full accent-accent"
-            />
-          )}
+          <StepSlider
+            points={points}
+            currentIndex={safeIdx}
+            onChange={handleSliderChange}
+            xAxis={settings.xAxis}
+            onXAxisChange={(m) => updateSettings({ xAxis: m })}
+            className="mt-3"
+          />
         </>
       ) : (
         <div className="text-sm text-fg-muted">no audio logged yet</div>
@@ -603,13 +597,6 @@ export default function AudioPlayerCard({ runId, metric, extraContexts = [], ext
               onChange={(v) => updateSettings({ autoplay: v })}
               description="Play the clip automatically when the card loads"
             />
-            <button
-              type="button"
-              onClick={() => resetSettings()}
-              className="btn w-full mt-2"
-            >
-              Reset to defaults
-            </button>
           </>
         }
       >
@@ -630,16 +617,14 @@ export default function AudioPlayerCard({ runId, metric, extraContexts = [], ext
                   />
                 ))}
               </SplitPane>
-              {globalSteps.length > 1 && (
-                <input
-                  type="range"
-                  min={0}
-                  max={globalSteps.length - 1}
-                  value={safeIdx}
-                  onChange={(e) => handleSliderChange(Number(e.target.value))}
-                  className="mt-3 w-full accent-accent"
-                />
-              )}
+              <StepSlider
+                points={points}
+                currentIndex={safeIdx}
+                onChange={handleSliderChange}
+                xAxis={settings.xAxis}
+                onXAxisChange={(m) => updateSettings({ xAxis: m })}
+                className="mt-3"
+              />
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {controlledSeries ? (
                   (() => {
@@ -730,16 +715,14 @@ export default function AudioPlayerCard({ runId, metric, extraContexts = [], ext
                   </div>
                 )}
               </div>
-              {points.length > 1 && (
-                <input
-                  type="range"
-                  min={0}
-                  max={points.length - 1}
-                  value={safeIdx}
-                  onChange={(e) => handleSliderChange(Number(e.target.value))}
-                  className="mt-3 w-full accent-accent"
-                />
-              )}
+              <StepSlider
+                points={points}
+                currentIndex={safeIdx}
+                onChange={handleSliderChange}
+                xAxis={settings.xAxis}
+                onXAxisChange={(m) => updateSettings({ xAxis: m })}
+                className="mt-3"
+              />
             </>
           ) : (
             <div className="text-sm text-fg-muted">no audio logged yet</div>

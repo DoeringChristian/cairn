@@ -7,7 +7,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { api } from "../api/client";
 import type { Run } from "../api/types";
-import { useCardSettings, resolveCardHeight, toggleColSpanPatch, fitHeightPatch } from "../lib/card-settings";
+import { useCardSettings, resolveCardHeight, toggleColSpanPatch } from "../lib/card-settings";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import CardHeader from "./CardHeader";
 import CardDetailModal from "./CardDetailModal";
@@ -30,8 +30,6 @@ interface ScatterSettings {
   height1?: number;
   height2?: number;
   colSpan?: number;
-  fitted?: boolean;
-  preFitHeight?: number;
   xAxis: AxisDef | null;
   yAxis: AxisDef | null;
   colorAxis: AxisDef | null;
@@ -375,8 +373,6 @@ export default function ScatterPlotCard({
         onSettings={() => setExpanded(true)}
         onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<ScatterSettings>)}
         isFullWidth={(settings.colSpan ?? 1) > 1}
-        onFitHeight={() => { const p = fitHeightPatch(settings, cardRef.current); if (p) updateSettings(p as Partial<ScatterSettings>); }}
-        isFitted={!!settings.fitted}
         onRemove={onRemove}
       >
       </CardHeader>

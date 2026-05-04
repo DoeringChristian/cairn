@@ -19,7 +19,7 @@ import {
   YAxis,
 } from "recharts";
 import { api } from "../api/client";
-import { useCardSettings, resolveCardHeight, toggleColSpanPatch, fitHeightPatch, type CardSettingsKey } from "../lib/card-settings";
+import { useCardSettings, resolveCardHeight, toggleColSpanPatch, type CardSettingsKey } from "../lib/card-settings";
 import {
   addCardToComparison,
   createComparison,
@@ -66,8 +66,6 @@ interface ScalarSettings {
   height1?: number;
   height2?: number;
   colSpan?: number;
-  fitted?: boolean;
-  preFitHeight?: number;
   /**
    * Series to render. `runId` is optional; when absent, the card's top-level
    * `runId` prop is used as the fallback. Cross-run overlays (comparisons)
@@ -723,8 +721,7 @@ export default function ScalarPlotCard({
     const el = chartBoxRef.current;
     if (!el) return;
     const handler = (e: WheelEvent) => {
-      // Only alt+wheel triggers zoom; otherwise let the page scroll.
-      if (!e.altKey) return;
+      if (!e.altKey && !e.ctrlKey && !e.metaKey) return;
       const rect = el.getBoundingClientRect();
       const plotLeft = rect.left + CHART_MARGIN.left + 46; // YAxis width ≈ 46
       const plotRight = rect.right - dynamicMargin.right;
@@ -763,8 +760,6 @@ export default function ScalarPlotCard({
     return () => el.removeEventListener("wheel", handler);
   }, [updateSettings, dynamicMargin.right]);
 
-  // Plot-body gesture: either "pan" (Alt held at pointerdown) or "select"
-  // (rubber-band zoom, no modifier). Mode is latched at pointerdown.
   type PlotDragMode = "pan" | "select";
 
   const plotDragRef = useRef<{
@@ -786,17 +781,11 @@ export default function ScalarPlotCard({
     { x0: number; y0: number; x1: number; y1: number } | null
   >(null);
 
-  // Track alt-key state so we can flip the cursor between crosshair (select)
-  // and move (pan). Listeners are on window so modifier changes reach us even
-  // when focus is elsewhere.
+  // Track modifier key state for cursor styling (Alt, Ctrl, or Meta triggers pan mode).
   const [altDown, setAltDown] = useState(false);
   useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Alt") setAltDown(true);
-    };
-    const onKeyUp = (e: KeyboardEvent) => {
-      if (e.key === "Alt") setAltDown(false);
-    };
+    const onKeyDown = (e: KeyboardEvent) => { if (e.key === "Alt" || e.key === "Control" || e.key === "Meta") setAltDown(true); };
+    const onKeyUp = (e: KeyboardEvent) => { if (e.key === "Alt" || e.key === "Control" || e.key === "Meta") setAltDown(false); };
     const onBlur = () => setAltDown(false);
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
@@ -832,7 +821,7 @@ export default function ScalarPlotCard({
       // Prevent text selection while dragging (axis labels, legend text, etc.).
       e.preventDefault();
       (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
-      const mode: PlotDragMode = e.altKey ? "pan" : "select";
+      const mode: PlotDragMode = (e.altKey || e.ctrlKey || e.metaKey) ? "pan" : "select";
       plotDragRef.current = {
         pointerId: e.pointerId,
         mode,
@@ -846,7 +835,6 @@ export default function ScalarPlotCard({
         startYDomain: effectiveRef.current.y,
       };
       if (mode === "select") {
-        // Local-rect coords (relative to chartBoxRef) for the overlay div.
         const localX = e.clientX - rect.left;
         const localY = e.clientY - rect.top;
         setSelection({ x0: localX, y0: localY, x1: localX, y1: localY });
@@ -902,7 +890,6 @@ export default function ScalarPlotCard({
           viewport: {
             xMin: x0 - dxData,
             xMax: x1 - dxData,
-            // pixel y grows downward; axis y grows upward → add dyData to shift up
             yMin: y0 + dyData,
             yMax: y1 + dyData,
           },
@@ -910,11 +897,11 @@ export default function ScalarPlotCard({
         return;
       }
       // select: update rubber-band rect.
-      const el = chartBoxRef.current;
-      if (!el) return;
-      const rect = el.getBoundingClientRect();
-      const localX = e.clientX - rect.left;
-      const localY = e.clientY - rect.top;
+      const el2 = chartBoxRef.current;
+      if (!el2) return;
+      const rect2 = el2.getBoundingClientRect();
+      const localX = e.clientX - rect2.left;
+      const localY = e.clientY - rect2.top;
       setSelection((prev) =>
         prev === null ? prev : { ...prev, x1: localX, y1: localY },
       );
@@ -947,15 +934,12 @@ export default function ScalarPlotCard({
         const wPx = Math.abs(e.clientX - s.startClientX);
         const hPx = Math.abs(e.clientY - s.startClientY);
         if (wPx >= 6 && hPx >= 6) {
-          // Convert the two client-space corners to data coords using the same
-          // linear map the wheel handler uses.
           const x0c = Math.min(s.startClientX, e.clientX);
           const x1c = Math.max(s.startClientX, e.clientX);
           const y0c = Math.min(s.startClientY, e.clientY);
           const y1c = Math.max(s.startClientY, e.clientY);
           const fxLo = (x0c - s.plotLeft) / s.plotW;
           const fxHi = (x1c - s.plotLeft) / s.plotW;
-          // Pixel Y grows downward; plot bottom = low data, top = high data.
           const plotBottom = s.plotTop + s.plotH;
           const fyLo = (plotBottom - y1c) / s.plotH;
           const fyHi = (plotBottom - y0c) / s.plotH;
@@ -966,20 +950,12 @@ export default function ScalarPlotCard({
           const yMinNew = ya + fyLo * (yb - ya);
           const yMaxNew = ya + fyHi * (yb - ya);
           if (
-            Number.isFinite(xMinNew) &&
-            Number.isFinite(xMaxNew) &&
-            Number.isFinite(yMinNew) &&
-            Number.isFinite(yMaxNew) &&
-            xMaxNew > xMinNew &&
-            yMaxNew > yMinNew
+            Number.isFinite(xMinNew) && Number.isFinite(xMaxNew) &&
+            Number.isFinite(yMinNew) && Number.isFinite(yMaxNew) &&
+            xMaxNew > xMinNew && yMaxNew > yMinNew
           ) {
             updateSettings({
-              viewport: {
-                xMin: xMinNew,
-                xMax: xMaxNew,
-                yMin: yMinNew,
-                yMax: yMaxNew,
-              },
+              viewport: { xMin: xMinNew, xMax: xMaxNew, yMin: yMinNew, yMax: yMaxNew },
             });
           }
         }
@@ -1371,15 +1347,6 @@ export default function ScalarPlotCard({
         }
       />
 
-      <button
-        type="button"
-        className="btn w-full mt-2"
-        onClick={() => {
-          resetSettings();
-        }}
-      >
-        Reset to defaults
-      </button>
     </>
   );
 
@@ -1396,7 +1363,7 @@ export default function ScalarPlotCard({
         userSelect: "none",
         WebkitUserSelect: "none",
       }}
-      aria-label="Scalar plot. Drag to box-zoom. Alt+drag to pan. Alt+wheel to zoom. Drag the right axis to pan; Shift+drag to rescale."
+      aria-label="Scalar plot. Drag to box-zoom. Alt+drag to pan. Alt+wheel to zoom."
       onPointerDown={onChartPointerDown}
       onPointerMove={onChartPointerMove}
       onPointerUp={onChartPointerUp}
@@ -1624,8 +1591,6 @@ export default function ScalarPlotCard({
         onSettings={() => setExpanded(true)}
         onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<typeof settings>)}
         isFullWidth={(settings.colSpan ?? 1) > 1}
-        onFitHeight={() => { const p = fitHeightPatch(settings, cardRef.current); if (p) updateSettings(p as Partial<typeof settings>); }}
-        isFitted={!!settings.fitted}
         onRemove={onRemove}
       >
         {settings.smoothing > 0 && (
@@ -1660,18 +1625,7 @@ export default function ScalarPlotCard({
             aria-label="Reset view"
             title="Reset view (zoom/pan)"
           >
-            {"\u21BA"}
-          </button>
-        )}
-        {anySettingModified && (
-          <button
-            type="button"
-            onClick={() => resetSettings()}
-            className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
-            aria-label="Reset all settings"
-            title="Reset all settings"
-          >
-            {"\u27F2"}
+            {"\u2302"}
           </button>
         )}
         {projectId && (

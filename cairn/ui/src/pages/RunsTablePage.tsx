@@ -173,13 +173,26 @@ export default function RunsTablePage() {
     );
   };
 
-  const toggleRow = (id: string) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  const lastSelectedIdx = useRef<number | null>(null);
+
+  const toggleRow = (id: string, index: number, shiftKey: boolean) => {
+    if (shiftKey && lastSelectedIdx.current !== null) {
+      const lo = Math.min(lastSelectedIdx.current, index);
+      const hi = Math.max(lastSelectedIdx.current, index);
+      setSelected((prev) => {
+        const next = new Set(prev);
+        for (let i = lo; i <= hi; i++) next.add(sorted[i]!.id);
+        return next;
+      });
+    } else {
+      setSelected((prev) => {
+        const next = new Set(prev);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+      });
+    }
+    lastSelectedIdx.current = index;
   };
 
   const selectAllVisible = () => {
@@ -529,7 +542,7 @@ export default function RunsTablePage() {
       ) : (
         <>
           <ul className="flex flex-col gap-2 md:hidden">
-            {sorted.map((r) => {
+            {sorted.map((r, idx) => {
               const tags = safeJsonParse<string[]>(r.tags) ?? [];
               const isSelected = selected.has(r.id);
               return (
@@ -545,7 +558,8 @@ export default function RunsTablePage() {
                         type="checkbox"
                         aria-label={`select run ${r.display_name ?? r.id}`}
                         checked={isSelected}
-                        onChange={() => toggleRow(r.id)}
+                        onClick={(e) => toggleRow(r.id, idx, e.shiftKey)}
+                        readOnly
                       />
                     </label>
                     <Link
@@ -662,7 +676,7 @@ export default function RunsTablePage() {
               </tr>
             </thead>
             <tbody>
-              {sorted.map((r) => {
+              {sorted.map((r, idx) => {
                 const tags = safeJsonParse<string[]>(r.tags) ?? [];
                 const isSelected = selected.has(r.id);
                 return (
@@ -677,7 +691,8 @@ export default function RunsTablePage() {
                         type="checkbox"
                         aria-label={`select run ${r.display_name ?? r.id}`}
                         checked={isSelected}
-                        onChange={() => toggleRow(r.id)}
+                        onClick={(e) => toggleRow(r.id, idx, e.shiftKey)}
+                        readOnly
                       />
                     </td>
                     <td className="px-3 py-2">

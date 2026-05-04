@@ -24,10 +24,6 @@ interface Props {
   onToggleFullWidth?: () => void;
   /** Whether the card is currently full width. */
   isFullWidth?: boolean;
-  /** Toggle fit-to-content height. Renders ↕ button. */
-  onFitHeight?: () => void;
-  /** Whether height is currently fitted to content. */
-  isFitted?: boolean;
   /** Remove the card. Renders × button in upper-right. */
   onRemove?: () => void;
 }
@@ -42,8 +38,6 @@ export default function CardHeader({
   onSettings,
   onToggleFullWidth,
   isFullWidth,
-  onFitHeight,
-  isFitted,
   onRemove,
 }: Props) {
   const drag = useDraggableCard();
@@ -152,17 +146,6 @@ export default function CardHeader({
         {/* Card-specific buttons (passed as children) */}
         {children}
         {/* Standard buttons: full-width, settings, remove */}
-        {onFitHeight && (
-          <button
-            type="button"
-            onClick={onFitHeight}
-            className={`h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover ${isFitted ? "text-accent" : "text-fg-muted hover:text-fg"}`}
-            aria-label={isFitted ? "Restore height" : "Fit height to content"}
-            title={isFitted ? "Restore height" : "Fit height to content"}
-          >
-            {"\u2195"}
-          </button>
-        )}
         {onToggleFullWidth && (
           <button
             type="button"

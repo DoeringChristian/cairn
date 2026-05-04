@@ -6,7 +6,7 @@ import Plotly from "plotly.js-dist-min";
 import { useSequence } from "../api/hooks";
 import { api } from "../api/client";
 import { safeJsonParse, formatRelative } from "../lib/format";
-import { useCardSettings, resolveCardHeight, toggleColSpanPatch, fitHeightPatch, type CardSettingsKey } from "../lib/card-settings";
+import { useCardSettings, resolveCardHeight, toggleColSpanPatch, type CardSettingsKey } from "../lib/card-settings";
 import { useSeriesDrop } from "../lib/use-series-drop";
 import {
   addCardToComparison,
@@ -25,6 +25,7 @@ import CardDetailModal from "./CardDetailModal";
 import SettingsPopover from "./SettingsPopover";
 import Toggle from "./settings/Toggle";
 import Select from "./settings/Select";
+import StepSlider, { type XAxisMode } from "./StepSlider";
 
 const Plot = createPlotlyComponent(Plotly);
 
@@ -72,13 +73,12 @@ interface FigureSettings {
   height1?: number;
   height2?: number;
   colSpan?: number;
-  fitted?: boolean;
-  preFitHeight?: number;
   displayModeBar: boolean;
   scrollZoom: boolean;
   hoverMode: HoverMode;
   dragMode: DragMode;
   showLegend: boolean;
+  xAxis?: "step" | "relative_time" | "wall_time";
 }
 
 const DEFAULT_FIGURE_SETTINGS = (seed: {
@@ -710,8 +710,6 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
         onSettings={() => setExpanded(true)}
         onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<typeof settings>)}
         isFullWidth={(settings.colSpan ?? 1) > 1}
-        onFitHeight={() => { const p = fitHeightPatch(settings, cardRef.current); if (p) updateSettings(p as Partial<typeof settings>); }}
-        isFitted={!!settings.fitted}
         onRemove={onRemove}
       >
         {viewModified && (
@@ -783,16 +781,14 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
             ))}
           </div>
           </div>
-          {globalSteps.length > 1 && (
-            <input
-              type="range"
-              min={0}
-              max={globalSteps.length - 1}
-              value={safeIdx}
-              onChange={(e) => handleSliderChange(Number(e.target.value))}
-              className="mt-3 w-full accent-accent"
-            />
-          )}
+          <StepSlider
+            points={points}
+            currentIndex={safeIdx}
+            onChange={handleSliderChange}
+            xAxis={settings.xAxis}
+            onXAxisChange={(m) => updateSettings({ xAxis: m })}
+            className="mt-3"
+          />
           {/* Series chip strip */}
           <div className="mt-2 flex flex-wrap gap-1.5">
             {controlledSeries ? (
@@ -888,16 +884,14 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
               />
             </div>
           )}
-          {points.length > 1 && (
-            <input
-              type="range"
-              min={0}
-              max={points.length - 1}
-              value={safeIdx}
-              onChange={(e) => handleSliderChange(Number(e.target.value))}
-              className="mt-3 w-full accent-accent"
-            />
-          )}
+          <StepSlider
+            points={points}
+            currentIndex={safeIdx}
+            onChange={handleSliderChange}
+            xAxis={settings.xAxis}
+            onXAxisChange={(m) => updateSettings({ xAxis: m })}
+            className="mt-3"
+          />
         </>
       ) : (
         <div className="text-sm text-fg-muted">no figure logged yet</div>
@@ -933,13 +927,6 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
               checked={settings.showLegend}
               onChange={(v) => updateSettings({ showLegend: v })}
             />
-            <button
-              type="button"
-              onClick={() => resetSettings()}
-              className="btn w-full mt-2"
-            >
-              Reset to defaults
-            </button>
           </>
         );
         return (

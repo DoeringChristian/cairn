@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, useMemo, useRef } from "react";
 import { useSequence } from "../api/hooks";
-import { useCardSettings, resolveCardHeight, toggleColSpanPatch, fitHeightPatch, type CardSettingsKey } from "../lib/card-settings";
+import { useCardSettings, resolveCardHeight, toggleColSpanPatch, type CardSettingsKey } from "../lib/card-settings";
 import {
   addCardToComparison,
   createComparison,
@@ -15,6 +15,7 @@ import CardResizeHandle from "./CardResizeHandle";
 import SettingsPopover from "./SettingsPopover";
 import Select from "./settings/Select";
 import Toggle from "./settings/Toggle";
+import StepSlider, { type XAxisMode } from "./StepSlider";
 
 interface Props {
   runId: string;
@@ -31,10 +32,9 @@ interface TextSettings {
   height1?: number;
   height2?: number;
   colSpan?: number;
-  fitted?: boolean;
-  preFitHeight?: number;
   fontSize: "xs" | "sm" | "base";
   wordWrap: boolean;
+  xAxis?: "step" | "relative_time" | "wall_time";
 }
 
 const DEFAULT_TEXT_SETTINGS: TextSettings = {
@@ -156,13 +156,6 @@ export default function TextViewerCard({ runId, metric, settingsKeyOverride, onR
         onChange={(v) => updateSettings({ wordWrap: v })}
         description="Wrap long lines to card width. Off = horizontal scroll."
       />
-      <button
-        type="button"
-        className="btn w-full mt-2"
-        onClick={resetSettings}
-      >
-        Reset to defaults
-      </button>
     </>
   );
 
@@ -179,8 +172,6 @@ export default function TextViewerCard({ runId, metric, settingsKeyOverride, onR
         onSettings={() => setExpanded(true)}
         onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<TextSettings>)}
         isFullWidth={(settings.colSpan ?? 1) > 1}
-        onFitHeight={() => { const p = fitHeightPatch(settings, cardRef.current); if (p) updateSettings(p as Partial<TextSettings>); }}
-        isFitted={!!settings.fitted}
         onRemove={onRemove}
       >
         {projectId && (
@@ -205,16 +196,14 @@ export default function TextViewerCard({ runId, metric, settingsKeyOverride, onR
       >
         {content}
       </pre>
-      {points.length > 1 && (
-        <input
-          type="range"
-          min={0}
-          max={points.length - 1}
-          value={safeIdx}
-          onChange={(e) => setIdx(Number(e.target.value))}
-          className="mt-3 w-full accent-accent"
-        />
-      )}
+      <StepSlider
+        points={points}
+        currentIndex={safeIdx}
+        onChange={setIdx}
+        xAxis={settings.xAxis}
+        onXAxisChange={(m) => updateSettings({ xAxis: m })}
+        className="mt-3"
+      />
 
       <CardDetailModal
         open={expanded}

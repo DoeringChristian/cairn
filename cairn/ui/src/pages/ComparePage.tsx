@@ -376,11 +376,25 @@ function Sidebar({
   onDelete,
 }: SidebarProps) {
   const [checked, setChecked] = useState<Set<string>>(new Set());
-  const toggleCheck = (id: string) => setChecked((prev) => {
-    const next = new Set(prev);
-    if (next.has(id)) next.delete(id); else next.add(id);
-    return next;
-  });
+  const lastCheckedIdx = useRef<number | null>(null);
+  const toggleCheck = (id: string, index: number, shiftKey: boolean) => {
+    if (shiftKey && lastCheckedIdx.current !== null) {
+      const lo = Math.min(lastCheckedIdx.current, index);
+      const hi = Math.max(lastCheckedIdx.current, index);
+      setChecked((prev) => {
+        const next = new Set(prev);
+        for (let i = lo; i <= hi; i++) next.add(comparisons[i]!.id);
+        return next;
+      });
+    } else {
+      setChecked((prev) => {
+        const next = new Set(prev);
+        if (next.has(id)) next.delete(id); else next.add(id);
+        return next;
+      });
+    }
+    lastCheckedIdx.current = index;
+  };
   const bulkDelete = () => {
     if (!confirm(`Delete ${checked.size} comparison(s)?`)) return;
     for (const id of checked) onDelete(id);
@@ -430,13 +444,13 @@ function Sidebar({
         </p>
       ) : (
         <ul className="flex flex-col gap-1">
-          {comparisons.map((c) => (
+          {comparisons.map((c, idx) => (
             <SidebarRow
               key={c.id}
               comparison={c}
               selected={c.id === selectedId}
               checked={checked.has(c.id)}
-              onToggleCheck={() => toggleCheck(c.id)}
+              onToggleCheck={(shiftKey: boolean) => toggleCheck(c.id, idx, shiftKey)}
               onSelect={() => onSelect(c.id)}
               onRename={(name) => onRename(c.id, name)}
               onDelete={() => onDelete(c.id)}
@@ -452,7 +466,7 @@ interface SidebarRowProps {
   comparison: Comparison;
   selected: boolean;
   checked: boolean;
-  onToggleCheck: () => void;
+  onToggleCheck: (shiftKey: boolean) => void;
   onSelect: () => void;
   onRename: (name: string) => void;
   onDelete: () => void;
@@ -491,9 +505,9 @@ function SidebarRow({
       <input
         type="checkbox"
         checked={checked}
-        onChange={onToggleCheck}
+        onClick={(e) => { e.stopPropagation(); onToggleCheck(e.shiftKey); }}
+        readOnly
         className="shrink-0"
-        onClick={(e) => e.stopPropagation()}
       />
       {editing ? (
         <input

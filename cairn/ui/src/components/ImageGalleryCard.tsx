@@ -10,7 +10,7 @@ import { useQueries } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { useSequence, useSequences } from "../api/hooks";
 import type { SequenceMeta, SequencePoint } from "../api/types";
-import { useCardSettings, resolveCardHeight, toggleColSpanPatch, fitHeightPatch, type CardSettingsKey } from "../lib/card-settings";
+import { useCardSettings, resolveCardHeight, toggleColSpanPatch, type CardSettingsKey } from "../lib/card-settings";
 import { useSeriesDrop } from "../lib/use-series-drop";
 import {
   addCardToComparison,
@@ -32,6 +32,7 @@ import SettingsPopover from "./SettingsPopover";
 import Select from "./settings/Select";
 import Slider from "./settings/Slider";
 import Toggle from "./settings/Toggle";
+import StepSlider, { type XAxisMode } from "./StepSlider";
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -174,10 +175,22 @@ interface ImageSettings {
   /** Number of columns for multi-image layout (1 or 2). */
   imageColumns?: 1 | 2;
   colSpan?: number;
-  fitted?: boolean;
-  preFitHeight?: number;
   /** What to show when a run has no image at the current step. */
   missingImageMode?: "nothing" | "last_available";
+  /** X-axis display mode for the step slider. */
+  xAxis?: "step" | "relative_time" | "wall_time";
+  /** Reference mode: global (one ref for all) or per-run (each pane has own ref). */
+  referenceMode?: "global" | "per-run";
+  /** For per-run mode: which step to use as each run's own baseline. */
+  perRunBaselineStep?: number;
+  /** Compare mode: side-by-side (default), split slider, or alpha blend. */
+  compareMode?: "side-by-side" | "split" | "blend";
+  /** Split position 0-1, default 0.5. */
+  splitPosition?: number;
+  /** Blend alpha 0-1, default 0.5. */
+  blendAlpha?: number;
+  /** Whether split/blend position is synced across all panes (default true). */
+  splitSynced?: boolean;
 }
 
 const MIN_ZOOM = 0.25;
@@ -895,7 +908,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
   });
 
   // Per-series points that have artifacts + step→point maps.
-  const { perSeriesPoints, perSeriesStepMap, globalSteps } = useMemo(() => {
+  const { perSeriesPoints, perSeriesStepMap, globalSteps, globalStepPoints } = useMemo(() => {
     const psp = queries.map((q) =>
       (q.data?.points ?? []).filter((p: SequencePoint) => p.artifact_hash),
     );
@@ -905,10 +918,14 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
       return m;
     });
     // Union of all step numbers across all series, sorted.
-    const stepSet = new Set<number>();
-    for (const pts of psp) for (const p of pts) stepSet.add(p.step);
-    const steps = Array.from(stepSet).sort((a, b) => a - b);
-    return { perSeriesPoints: psp, perSeriesStepMap: maps, globalSteps: steps };
+    // Also collect wall_time from the first series that has it at each step.
+    const stepMap = new Map<number, string | undefined>();
+    for (const pts of psp) for (const p of pts) {
+      if (!stepMap.has(p.step)) stepMap.set(p.step, p.wall_time ?? undefined);
+    }
+    const steps = Array.from(stepMap.keys()).sort((a, b) => a - b);
+    const stepPts = steps.map((s) => ({ step: s, wall_time: stepMap.get(s) ?? null }));
+    return { perSeriesPoints: psp, perSeriesStepMap: maps, globalSteps: steps, globalStepPoints: stepPts };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queries.map((q) => q.dataUpdatedAt).join("|")]);
 
@@ -1022,11 +1039,11 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
   const containerRef = useRef<HTMLDivElement | null>(null);
   const wheelHandlerRef = useRef<((e: WheelEvent) => void) | null>(null);
 
-  // Alt key tracking — zoom/pan only while Alt is held (consistent with scalar plots).
+  // Modifier key tracking — zoom/pan while Alt, Ctrl, or Meta is held.
   const [altDown, setAltDown] = useState(false);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Alt") setAltDown(e.type === "keydown");
+      if (e.key === "Alt" || e.key === "Control" || e.key === "Meta") setAltDown(e.type === "keydown");
     };
     const onBlur = () => setAltDown(false);
     window.addEventListener("keydown", onKey);
@@ -1038,11 +1055,20 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
       window.removeEventListener("blur", onBlur);
     };
   }, []);
-
   const altDownRef = useRef(altDown);
   altDownRef.current = altDown;
 
-  // Stable wheel handler
+  // Stable wheel handler.
+  //
+  // Zoom math: with transformOrigin "0 0", screen position of element
+  // point p = p * zoom + pan. To keep the point under the cursor fixed
+  // after a zoom change: newPan = cx - ((cx - pan) / zoom) * newZoom.
+  //
+  // cx/cy MUST be relative to the pane that holds the transform, not the
+  // outer grid container. In split/blend mode each pane is an absolutely-
+  // positioned div; in side-by-side mode each half is a flex child. We
+  // walk up from e.target to find the nearest overflow-hidden ancestor
+  // inside the container — that is the pane boundary.
   wheelHandlerRef.current = (e: WheelEvent) => {
     if (!altDownRef.current) return;
     e.preventDefault();
@@ -1051,18 +1077,22 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     const s = settingsRef.current;
     const nextZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, s.zoom * factor));
     if (s.zoom === nextZoom) return;
-    // Zoom toward cursor with transformOrigin "0 0":
-    // Use the wrapper's PARENT rect (untransformed) for cursor position.
-    const target = e.target as HTMLElement;
-    const wrapper = target.closest("[data-cairn-img-wrapper]") as HTMLElement | null;
-    const parent = wrapper?.parentElement;
-    if (parent) {
-      const parentRect = parent.getBoundingClientRect();
-      const cx = e.clientX - parentRect.left;
-      const cy = e.clientY - parentRect.top;
-      // With origin "0 0": screenPos = elemPos * zoom + pan
-      // Element point under cursor: (cx - pan) / zoom
-      // Keep that point at same screen position after zoom change:
+
+    // Find the pane the cursor is over: walk up from target to find the
+    // nearest element with overflow hidden/clip inside our container.
+    // Fallback to the container itself (single-image mode).
+    let paneEl: HTMLElement | null = e.target as HTMLElement;
+    const container = containerRef.current;
+    while (paneEl && paneEl !== container) {
+      const ov = getComputedStyle(paneEl).overflow;
+      if (ov === "hidden" || ov === "clip") break;
+      paneEl = paneEl.parentElement;
+    }
+    const refEl = paneEl ?? container;
+    if (refEl) {
+      const rect = refEl.getBoundingClientRect();
+      const cx = e.clientX - rect.left;
+      const cy = e.clientY - rect.top;
       const newPanX = cx - ((cx - s.pan.x) / s.zoom) * nextZoom;
       const newPanY = cy - ((cy - s.pan.y) / s.zoom) * nextZoom;
       updateSettings({ zoom: nextZoom, pan: { x: newPanX, y: newPanY } });
@@ -1103,7 +1133,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
-      if (!altDownRef.current) return; // Only pan with Alt held
+      if (!altDownRef.current) return;
       (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
       dragStateRef.current = {
         pointerId: e.pointerId,
@@ -1283,6 +1313,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
 
   // Baseline hash for diff — external baseline takes priority
   const baselineIdx = settings.baselineIndex;
+  const refMode = settings.referenceMode ?? "global";
   const baselineHash = extBase
     ? extBasePoints[Math.min(safeIdx, Math.max(0, extBasePoints.length - 1))]?.artifact_hash ?? undefined
     : baselineIdx != null
@@ -1293,6 +1324,26 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
           settings.missingImageMode,
         ).hash
       : undefined;
+
+  // Per-run baseline: each pane uses its own image at perRunBaselineStep.
+  // Falls back to the closest available step if the exact step is missing.
+  const perRunBaselineStep = settings.perRunBaselineStep ?? 0;
+  const perPaneBaselineHash = useMemo(() => {
+    if (refMode !== "per-run") return null;
+    return effectiveMetrics.map((_, paneIdx) => {
+      const stepMap = perSeriesStepMap[paneIdx] ?? new Map();
+      // Exact match first
+      const pt = stepMap.get(perRunBaselineStep);
+      if (pt) return pt.artifact_hash ?? undefined;
+      // Fallback: first available step for this series
+      const pts = perSeriesPoints[paneIdx];
+      if (pts && pts.length > 0) return pts[0]!.artifact_hash ?? undefined;
+      return undefined;
+    });
+  }, [refMode, effectiveMetrics, perSeriesStepMap, perSeriesPoints, perRunBaselineStep]);
+
+  // Whether any baseline is active (for quick-toggle visibility)
+  const hasBaseline = refMode === "per-run" || baselineIdx != null || extBase != null;
 
   const cardRef = useRef<HTMLDivElement>(null);
 
@@ -1345,8 +1396,6 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
         onSettings={() => setExpanded(true)}
         onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<typeof settings>)}
         isFullWidth={(settings.colSpan ?? 1) > 1}
-        onFitHeight={() => { const p = fitHeightPatch(settings, cardRef.current); if (p) updateSettings(p as Partial<typeof settings>); }}
-        isFitted={!!settings.fitted}
         onRemove={onRemove}
       >
         {(settings.zoom !== 1 || settings.pan.x !== 0 || settings.pan.y !== 0) && (
@@ -1360,6 +1409,26 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
             {"\u2302"}
           </button>
         )}
+        {/* Quick diff toggle — only when a baseline is set */}
+        {hasBaseline && (
+          <button
+            type="button"
+            onClick={() => updateSettings({ diffMode: settings.diffMode === "none" ? "absolute" : "none" })}
+            className={`h-5 inline-flex items-center justify-center rounded px-1.5 text-[10px] hover:bg-bg-hover ${settings.diffMode !== "none" ? "text-accent" : "text-fg-muted hover:text-fg"}`}
+            title={settings.diffMode !== "none" ? `Diff: ${settings.diffMode} (click to disable)` : "Enable diff"}
+          >
+            diff
+          </button>
+        )}
+        {/* Quick false-color toggle */}
+        <button
+          type="button"
+          onClick={() => updateSettings({ colormap: (settings.colormap ?? "none") === "none" ? "viridis" : "none" })}
+          className={`h-5 inline-flex items-center justify-center rounded px-1.5 text-[10px] hover:bg-bg-hover ${(settings.colormap ?? "none") !== "none" ? "text-accent" : "text-fg-muted hover:text-fg"}`}
+          title={(settings.colormap ?? "none") !== "none" ? `Color: ${settings.colormap} (click to disable)` : "Enable false color"}
+        >
+          color
+        </button>
         {projectId && (
           <button
             ref={addCompBtnRef}
@@ -1409,47 +1478,176 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
               }}
             >
               {effectiveMetrics.map((m, paneIdx) => {
-                // Skip metrics that match the external baseline — shown as separate ref pane
-                if (settings.externalBaseline && m.name === settings.externalBaseline.name && (m.runId ?? runId) === (settings.externalBaseline.runId ?? runId)) return null;
+                // Skip metrics that match the external baseline — shown as separate ref pane (global mode only)
+                if (refMode === "global" && settings.externalBaseline && m.name === settings.externalBaseline.name && (m.runId ?? runId) === (settings.externalBaseline.runId ?? runId)) return null;
                 const stepMap = perSeriesStepMap[paneIdx] ?? new Map();
                 const seriesSteps = perSeriesPoints[paneIdx]?.map((p) => p.step) ?? [];
                 const { hash, fallbackStep } = resolveArtifact(stepMap, currentStep, seriesSteps, settings.missingImageMode);
                 const label = seriesLabel(m, runId, multipleRuns, availableRunIds)
                   + (fallbackStep != null ? ` (step ${fallbackStep})` : "");
+                // Per-pane baseline: per-run mode uses each pane's own ref step
+                const paneBaseline = refMode === "per-run"
+                  ? perPaneBaselineHash?.[paneIdx]
+                  : baselineHash;
+                const compareMode = settings.compareMode ?? "side-by-side";
+                const splitPos = settings.splitPosition ?? 0.5;
+                const blendAlpha = settings.blendAlpha ?? 0.5;
+                // Should we show ref+pred inline? Yes when:
+                // - per-run mode: always (even if ref == pred at baseline step)
+                // - split/blend mode with any baseline that differs from pred
+                const showInlineRef = paneBaseline && hash &&
+                  (refMode === "per-run" || (compareMode !== "side-by-side" && paneBaseline !== hash));
                 return (
                   <div key={seriesKey(m)} className="relative overflow-hidden" style={undefined}>
-                    <ImagePane
-                      metricEntry={m}
-                      paneIndex={paneIdx}
-                      artifactHash={hash}
-                      baselineHash={baselineHash}
-                      isBaseline={baselineIdx === paneIdx}
-                      diffMode={settings.diffMode}
-                      interpolation={settings.interpolation ?? "auto"}
-                      colormap={settings.colormap ?? "none"}
-                      showAxes={settings.showAxes ?? false}
-                      zoom={settings.zoom}
-                      transformStr={transformStr}
-                      filterStr={filterStr}
-                      onNaturalSize={onImageNaturalSize}
-                      onSetBaseline={() => {
-                        const isUnsetting = settings.baselineIndex === paneIdx;
-                        updateSettings({
-                          baselineIndex: isUnsetting ? undefined : paneIdx,
-                          diffMode: isUnsetting
-                            ? "none"
-                            : settings.diffMode === "none"
-                              ? "absolute"
-                              : settings.diffMode,
-                        });
-                      }}
-                      label={label}
-                    />
+                    {showInlineRef ? (
+                      /* ---------- Inline ref+pred: side-by-side / split / blend ---------- */
+                      compareMode === "side-by-side" ? (
+                        /* Per-run side-by-side: ref and pred shown as a grouped pair */
+                        <div className="flex gap-0.5 h-full cairn-checkerboard">
+                          <div className="relative flex-1 min-w-0 overflow-hidden border border-accent/20 rounded">
+                            <div className="w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
+                              <img
+                                src={api.artifactUrl(paneBaseline)}
+                                alt="ref"
+                                className="w-full h-full object-contain"
+                                draggable={false}
+                                style={{
+                                  filter: filterStr,
+                                  imageRendering: settings.interpolation === "auto" ? undefined : settings.interpolation,
+                                }}
+                              />
+                            </div>
+                            <span className="absolute top-0.5 left-0.5 z-10 rounded bg-accent/20 px-1 py-0.5 text-[9px] text-accent backdrop-blur-sm">
+                              REF
+                            </span>
+                          </div>
+                          <div className="relative flex-1 min-w-0 overflow-hidden">
+                            <div className="w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
+                              <img
+                                src={api.artifactUrl(hash)}
+                                alt="pred"
+                                className="w-full h-full object-contain"
+                                draggable={false}
+                                style={{
+                                  filter: filterStr,
+                                  imageRendering: settings.interpolation === "auto" ? undefined : settings.interpolation,
+                                }}
+                              />
+                            </div>
+                            <span className="absolute bottom-0.5 left-0.5 z-10 rounded bg-bg/80 px-1 py-0.5 text-[9px] text-fg-muted backdrop-blur-sm">
+                              {label}
+                            </span>
+                          </div>
+                        </div>
+                      ) : (
+                        /* Split / blend overlay */
+                        <div className="relative w-full overflow-hidden cairn-checkerboard" style={{ aspectRatio: "1 / 1", minHeight: 80 }}>
+                          {/* Prediction layer — full viewport */}
+                          <div className="absolute inset-0 overflow-hidden" data-cairn-img-wrapper>
+                            <div className="w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
+                              <img
+                                src={api.artifactUrl(hash)}
+                                alt="pred"
+                                className="w-full h-full object-contain"
+                                draggable={false}
+                                style={{
+                                  filter: filterStr,
+                                  imageRendering: settings.interpolation === "auto" ? undefined : settings.interpolation,
+                                  ...(compareMode === "blend" ? { opacity: blendAlpha } : {}),
+                                }}
+                              />
+                            </div>
+                          </div>
+                          {/* Reference layer — clipped at screen level (outside transform) */}
+                          <div
+                            className="absolute inset-0 overflow-hidden"
+                            style={compareMode === "split"
+                              ? { clipPath: `inset(0 ${(1 - splitPos) * 100}% 0 0)` }
+                              : undefined}
+                          >
+                            <div className="w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
+                              <img
+                                src={api.artifactUrl(paneBaseline!)}
+                                alt="ref"
+                                className="w-full h-full object-contain"
+                                draggable={false}
+                                style={{
+                                  filter: filterStr,
+                                  imageRendering: settings.interpolation === "auto" ? undefined : settings.interpolation,
+                                  ...(compareMode === "blend" ? { opacity: 1 - blendAlpha } : {}),
+                                }}
+                              />
+                            </div>
+                          </div>
+                          {/* Draggable split handle */}
+                          {compareMode === "split" && (
+                            <div
+                              className="absolute top-0 bottom-0 z-20 flex items-center"
+                              style={{ left: `${splitPos * 100}%`, transform: "translateX(-50%)", cursor: "col-resize" }}
+                              onPointerDown={(ev) => {
+                                ev.stopPropagation();
+                                ev.preventDefault();
+                                const container = ev.currentTarget.parentElement!;
+                                const rect = container.getBoundingClientRect();
+                                const onMove = (me: PointerEvent) => {
+                                  const pos = Math.max(0, Math.min(1, (me.clientX - rect.left) / rect.width));
+                                  updateSettings({ splitPosition: pos });
+                                };
+                                const onUp = () => {
+                                  window.removeEventListener("pointermove", onMove);
+                                  window.removeEventListener("pointerup", onUp);
+                                };
+                                window.addEventListener("pointermove", onMove);
+                                window.addEventListener("pointerup", onUp);
+                              }}
+                            >
+                              <div className="w-1 h-full bg-accent/80 rounded-full" />
+                            </div>
+                          )}
+                          <span className="absolute bottom-1 left-1 z-10 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm">
+                            {label}
+                          </span>
+                          <span className="absolute top-1 right-1 z-10 rounded bg-accent/20 px-1 py-0.5 text-[10px] text-accent backdrop-blur-sm">
+                            REF
+                          </span>
+                        </div>
+                      )
+                    ) : (
+                      /* ---------- Normal ImagePane (no inline ref) ---------- */
+                      <ImagePane
+                        metricEntry={m}
+                        paneIndex={paneIdx}
+                        artifactHash={hash}
+                        baselineHash={paneBaseline}
+                        isBaseline={refMode === "global" && baselineIdx === paneIdx}
+                        diffMode={settings.diffMode}
+                        interpolation={settings.interpolation ?? "auto"}
+                        colormap={settings.colormap ?? "none"}
+                        showAxes={settings.showAxes ?? false}
+                        zoom={settings.zoom}
+                        transformStr={transformStr}
+                        filterStr={filterStr}
+                        onNaturalSize={onImageNaturalSize}
+                        onSetBaseline={() => {
+                          if (refMode === "per-run") return;
+                          const isUnsetting = settings.baselineIndex === paneIdx;
+                          updateSettings({
+                            baselineIndex: isUnsetting ? undefined : paneIdx,
+                            diffMode: isUnsetting
+                              ? "none"
+                              : settings.diffMode === "none"
+                                ? "absolute"
+                                : settings.diffMode,
+                          });
+                        }}
+                        label={label}
+                      />
+                    )}
                   </div>
                 );
               })}
-              {/* External baseline reference pane */}
-              {settings.externalBaseline && extBasePoints.length > 0 && (() => {
+              {/* External baseline reference pane — hidden in split/blend/per-run modes (ref shown inline) */}
+              {(settings.compareMode ?? "side-by-side") === "side-by-side" && refMode === "global" && settings.externalBaseline && extBasePoints.length > 0 && (() => {
                 const refPt = extBasePoints[Math.min(safeIdx, extBasePoints.length - 1)];
                 const refHash = refPt?.artifact_hash ?? undefined;
                 return (
@@ -1534,17 +1732,58 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
           </div>
           </div>
 
-          {/* Shared step slider */}
-          {globalSteps.length > 1 && (
-            <input
-              type="range"
-              min={0}
-              max={globalSteps.length - 1}
-              value={safeIdx}
-              onChange={(e) => handleSliderChange(Number(e.target.value))}
-              className="mt-3 w-full accent-accent"
-            />
+          {/* Compare toolbar — reference mode, split/blend controls */}
+          {isMulti && hasBaseline && (
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px]">
+              {/* Compare mode buttons */}
+              {(["side-by-side", "split", "blend"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => updateSettings({ compareMode: mode })}
+                  className={`rounded px-1.5 py-0.5 ${(settings.compareMode ?? "side-by-side") === mode ? "bg-accent/15 text-accent" : "text-fg-muted hover:bg-bg-hover hover:text-fg"}`}
+                >
+                  {mode === "side-by-side" ? "side" : mode}
+                </button>
+              ))}
+              {/* Split position slider */}
+              {(settings.compareMode ?? "side-by-side") === "split" && (
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={settings.splitPosition ?? 0.5}
+                  onChange={(e) => updateSettings({ splitPosition: Number(e.target.value) })}
+                  className="w-24 accent-accent"
+                  title="Split position"
+                />
+              )}
+              {/* Blend alpha slider */}
+              {(settings.compareMode ?? "side-by-side") === "blend" && (
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={settings.blendAlpha ?? 0.5}
+                  onChange={(e) => updateSettings({ blendAlpha: Number(e.target.value) })}
+                  className="w-24 accent-accent"
+                  title="Blend alpha"
+                />
+              )}
+            </div>
           )}
+
+          {/* Shared step slider */}
+          <StepSlider
+            points={globalStepPoints}
+            currentIndex={safeIdx}
+            onChange={handleSliderChange}
+            xAxis={settings.xAxis}
+            onXAxisChange={(m) => updateSettings({ xAxis: m })}
+            className="mt-3"
+          />
         </>
       ) : (
         <div className="text-sm text-fg-muted">no image logged yet</div>
@@ -1730,16 +1969,6 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
               format={(v) => v.toFixed(2)}
               description="1 = no change; <1 brightens shadows, >1 darkens"
             />
-            <Slider
-              label="Zoom"
-              value={settings.zoom}
-              onChange={(v) => updateSettings({ zoom: v })}
-              min={MIN_ZOOM}
-              max={MAX_ZOOM}
-              step={0.05}
-              format={(v) => `${v.toFixed(2)}x`}
-              description="Alt+scroll to zoom; Alt+drag to pan."
-            />
             <Select<Interpolation>
               label="Interpolation"
               value={settings.interpolation ?? "auto"}
@@ -1793,6 +2022,29 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                 { value: "relative_squared" as const, label: "Relative Squared" },
               ]}
             />
+            {isMulti && (
+              <Select<"global" | "per-run">
+                label="Reference mode"
+                value={settings.referenceMode ?? "global"}
+                onChange={(v) => updateSettings({ referenceMode: v })}
+                options={[
+                  { value: "global", label: "Global (one ref for all)" },
+                  { value: "per-run", label: "Per-run (each run's own ref)" },
+                ]}
+              />
+            )}
+            {(settings.referenceMode ?? "global") === "per-run" && (
+              <Slider
+                label="Ref step"
+                value={settings.perRunBaselineStep ?? 0}
+                onChange={(v) => updateSettings({ perRunBaselineStep: Math.round(v) })}
+                min={0}
+                max={Math.max(0, ...globalSteps)}
+                step={1}
+                format={(v) => `${Math.round(v)}`}
+                description="Step used as each run's own baseline"
+              />
+            )}
             <div className="mt-2">
               <label className="block text-[10px] uppercase tracking-wide text-fg-muted mb-1">
                 Reference source
@@ -1826,16 +2078,6 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                 }}
               />
             </div>
-            <button
-              type="button"
-              className="btn w-full mt-2"
-              onClick={() => {
-                resetSettings();
-                setExpanded(false);
-              }}
-            >
-              Reset to defaults
-            </button>
           </>
         );
         return (
@@ -1870,45 +2112,109 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                   }}
                 >
                   {effectiveMetrics.map((m, paneIdx) => {
-                    if (settings.externalBaseline && m.name === settings.externalBaseline.name && (m.runId ?? runId) === (settings.externalBaseline.runId ?? runId)) return null;
+                    if (refMode === "global" && settings.externalBaseline && m.name === settings.externalBaseline.name && (m.runId ?? runId) === (settings.externalBaseline.runId ?? runId)) return null;
                     const mStepMap = perSeriesStepMap[paneIdx] ?? new Map();
                     const mSeriesSteps = perSeriesPoints[paneIdx]?.map((p) => p.step) ?? [];
                     const { hash: mHash, fallbackStep: mFallback } = resolveArtifact(mStepMap, currentStep, mSeriesSteps, settings.missingImageMode);
                     const mLabel = seriesLabel(m, runId, multipleRuns, availableRunIds)
                       + (mFallback != null ? ` (step ${mFallback})` : "");
+                    const mPaneBaseline = refMode === "per-run"
+                      ? perPaneBaselineHash?.[paneIdx]
+                      : baselineHash;
+                    const mCompareMode = settings.compareMode ?? "side-by-side";
+                    const mSplitPos = settings.splitPosition ?? 0.5;
+                    const mBlendAlpha = settings.blendAlpha ?? 0.5;
+                    const mShowInlineRef = mPaneBaseline && mHash &&
+                      (refMode === "per-run" || (mCompareMode !== "side-by-side" && mPaneBaseline !== mHash));
                     return (
                       <div key={seriesKey(m)} className="relative overflow-hidden" style={undefined}>
-                        <ImagePane
-                          metricEntry={m}
-                          paneIndex={paneIdx}
-                          artifactHash={mHash}
-                          baselineHash={baselineHash}
-                          isBaseline={baselineIdx === paneIdx}
-                          diffMode={settings.diffMode}
-                          interpolation={settings.interpolation ?? "auto"}
-                          colormap={settings.colormap ?? "none"}
-                          showAxes={settings.showAxes ?? false}
-                          zoom={settings.zoom}
-                          transformStr={transformStr}
-                          filterStr={filterStr}
-                          onNaturalSize={onImageNaturalSize}
-                          onSetBaseline={() => {
-                            const isUnsetting = settings.baselineIndex === paneIdx;
-                            updateSettings({
-                              baselineIndex: isUnsetting ? undefined : paneIdx,
-                              diffMode: isUnsetting
-                                ? "none"
-                                : settings.diffMode === "none"
-                                  ? "absolute"
-                                  : settings.diffMode,
-                            });
-                          }}
-                          label={mLabel}
-                        />
+                        {mShowInlineRef ? (
+                          mCompareMode === "side-by-side" ? (
+                            <div className="flex gap-0.5 h-full cairn-checkerboard">
+                              <div className="relative flex-1 min-w-0 overflow-hidden border border-accent/20 rounded">
+                                <div className="w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
+                                  <img src={api.artifactUrl(mPaneBaseline)} alt="ref" className="w-full h-full object-contain" draggable={false}
+                                    style={{ filter: filterStr, imageRendering: settings.interpolation === "auto" ? undefined : settings.interpolation }} />
+                                </div>
+                                <span className="absolute top-0.5 left-0.5 z-10 rounded bg-accent/20 px-1 py-0.5 text-[9px] text-accent backdrop-blur-sm">REF</span>
+                              </div>
+                              <div className="relative flex-1 min-w-0 overflow-hidden">
+                                <div className="w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
+                                  <img src={api.artifactUrl(mHash)} alt="pred" className="w-full h-full object-contain" draggable={false}
+                                    style={{ filter: filterStr, imageRendering: settings.interpolation === "auto" ? undefined : settings.interpolation }} />
+                                </div>
+                                <span className="absolute bottom-0.5 left-0.5 z-10 rounded bg-bg/80 px-1 py-0.5 text-[9px] text-fg-muted backdrop-blur-sm">{mLabel}</span>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="relative w-full overflow-hidden cairn-checkerboard" style={{ aspectRatio: "1 / 1", minHeight: 80 }}>
+                              {/* Prediction layer */}
+                              <div className="absolute inset-0 overflow-hidden" data-cairn-img-wrapper>
+                                <div className="w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
+                                  <img src={api.artifactUrl(mHash)} alt="pred" className="w-full h-full object-contain" draggable={false}
+                                    style={{ filter: filterStr, imageRendering: settings.interpolation === "auto" ? undefined : settings.interpolation, ...(mCompareMode === "blend" ? { opacity: mBlendAlpha } : {}) }} />
+                                </div>
+                              </div>
+                              {/* Reference layer — clipped at screen level */}
+                              <div className="absolute inset-0 overflow-hidden"
+                                style={mCompareMode === "split" ? { clipPath: `inset(0 ${(1 - mSplitPos) * 100}% 0 0)` } : undefined}>
+                                <div className="w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
+                                  <img src={api.artifactUrl(mPaneBaseline!)} alt="ref" className="w-full h-full object-contain" draggable={false}
+                                    style={{ filter: filterStr, imageRendering: settings.interpolation === "auto" ? undefined : settings.interpolation, ...(mCompareMode === "blend" ? { opacity: 1 - mBlendAlpha } : {}) }} />
+                                </div>
+                              </div>
+                              {mCompareMode === "split" && (
+                                <div className="absolute top-0 bottom-0 z-20 flex items-center"
+                                  style={{ left: `${mSplitPos * 100}%`, transform: "translateX(-50%)", cursor: "col-resize" }}
+                                  onPointerDown={(ev) => {
+                                    ev.stopPropagation(); ev.preventDefault();
+                                    const ctr = ev.currentTarget.parentElement!;
+                                    const r = ctr.getBoundingClientRect();
+                                    const onMv = (me: PointerEvent) => { updateSettings({ splitPosition: Math.max(0, Math.min(1, (me.clientX - r.left) / r.width)) }); };
+                                    const onUp2 = () => { window.removeEventListener("pointermove", onMv); window.removeEventListener("pointerup", onUp2); };
+                                    window.addEventListener("pointermove", onMv); window.addEventListener("pointerup", onUp2);
+                                  }}>
+                                  <div className="w-1 h-full bg-accent/80 rounded-full" />
+                                </div>
+                              )}
+                              <span className="absolute bottom-1 left-1 z-10 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm">{mLabel}</span>
+                              <span className="absolute top-1 right-1 z-10 rounded bg-accent/20 px-1 py-0.5 text-[10px] text-accent backdrop-blur-sm">REF</span>
+                            </div>
+                          )
+                        ) : (
+                          <ImagePane
+                            metricEntry={m}
+                            paneIndex={paneIdx}
+                            artifactHash={mHash}
+                            baselineHash={mPaneBaseline}
+                            isBaseline={refMode === "global" && baselineIdx === paneIdx}
+                            diffMode={settings.diffMode}
+                            interpolation={settings.interpolation ?? "auto"}
+                            colormap={settings.colormap ?? "none"}
+                            showAxes={settings.showAxes ?? false}
+                            zoom={settings.zoom}
+                            transformStr={transformStr}
+                            filterStr={filterStr}
+                            onNaturalSize={onImageNaturalSize}
+                            onSetBaseline={() => {
+                              if (refMode === "per-run") return;
+                              const isUnsetting = settings.baselineIndex === paneIdx;
+                              updateSettings({
+                                baselineIndex: isUnsetting ? undefined : paneIdx,
+                                diffMode: isUnsetting
+                                  ? "none"
+                                  : settings.diffMode === "none"
+                                    ? "absolute"
+                                    : settings.diffMode,
+                              });
+                            }}
+                            label={mLabel}
+                          />
+                        )}
                       </div>
                     );
                   })}
-                  {settings.externalBaseline && extBasePoints.length > 0 && (() => {
+                  {(settings.compareMode ?? "side-by-side") === "side-by-side" && refMode === "global" && settings.externalBaseline && extBasePoints.length > 0 && (() => {
                     const refPt = extBasePoints[Math.min(safeIdx, extBasePoints.length - 1)];
                     const refHash = refPt?.artifact_hash ?? undefined;
                     return (
@@ -1965,16 +2271,14 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                   </div>
                 </div>
               )}
-              {globalSteps.length > 1 && (
-                <input
-                  type="range"
-                  min={0}
-                  max={globalSteps.length - 1}
-                  value={safeIdx}
-                  onChange={(e) => handleSliderChange(Number(e.target.value))}
-                  className="mt-3 w-full accent-accent"
-                />
-              )}
+              <StepSlider
+                points={globalStepPoints}
+                currentIndex={safeIdx}
+                onChange={handleSliderChange}
+                xAxis={settings.xAxis}
+                onXAxisChange={(m) => updateSettings({ xAxis: m })}
+                className="mt-3"
+              />
             </div>
           </CardDetailModal>
         );

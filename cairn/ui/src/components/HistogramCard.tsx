@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSequence } from "../api/hooks";
 import { safeJsonParse, formatRelative } from "../lib/format";
-import { useCardSettings, resolveCardHeight, toggleColSpanPatch, fitHeightPatch, type CardSettingsKey } from "../lib/card-settings";
+import { useCardSettings, resolveCardHeight, toggleColSpanPatch, type CardSettingsKey } from "../lib/card-settings";
 import {
   addCardToComparison,
   createComparison,
@@ -13,6 +13,7 @@ import CardHeader from "./CardHeader";
 import CardResizeHandle from "./CardResizeHandle";
 import CardDetailModal from "./CardDetailModal";
 import SettingsPopover from "./SettingsPopover";
+import StepSlider, { type XAxisMode } from "./StepSlider";
 
 interface Props {
   runId: string;
@@ -37,8 +38,7 @@ interface HistogramSettings {
   height1?: number;
   height2?: number;
   colSpan?: number;
-  fitted?: boolean;
-  preFitHeight?: number;
+  xAxis?: "step" | "relative_time" | "wall_time";
 }
 
 const DEFAULT_HISTOGRAM_SETTINGS: HistogramSettings = { version: 1 };
@@ -138,8 +138,6 @@ export default function HistogramCard({ runId, metric, settingsKeyOverride, onRe
         onSettings={() => setExpanded(true)}
         onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<HistogramSettings>)}
         isFullWidth={(settings.colSpan ?? 1) > 1}
-        onFitHeight={() => { const p = fitHeightPatch(settings, cardRef.current); if (p) updateSettings(p as Partial<HistogramSettings>); }}
-        isFitted={!!settings.fitted}
         onRemove={onRemove}
       >
         {projectId && (
@@ -179,16 +177,14 @@ export default function HistogramCard({ runId, metric, settingsKeyOverride, onRe
               Bin counts available in the raw artifact blob.
             </p>
           </div>
-          {points.length > 1 && (
-            <input
-              type="range"
-              min={0}
-              max={points.length - 1}
-              value={safeIdx}
-              onChange={(e) => setIdx(Number(e.target.value))}
-              className="mt-3 w-full accent-accent"
-            />
-          )}
+          <StepSlider
+            points={points}
+            currentIndex={safeIdx}
+            onChange={setIdx}
+            xAxis={settings.xAxis}
+            onXAxisChange={(m) => updateSettings({ xAxis: m })}
+            className="mt-3"
+          />
         </>
       ) : (
         <div className="text-sm text-fg-muted">no histogram logged yet</div>
@@ -224,16 +220,14 @@ export default function HistogramCard({ runId, metric, settingsKeyOverride, onRe
             <p className="text-xs text-fg-subtle mt-2">
               Bin counts available in the raw artifact blob.
             </p>
-            {points.length > 1 && (
-              <input
-                type="range"
-                min={0}
-                max={points.length - 1}
-                value={safeIdx}
-                onChange={(e) => setIdx(Number(e.target.value))}
-                className="mt-3 w-full accent-accent"
-              />
-            )}
+            <StepSlider
+              points={points}
+              currentIndex={safeIdx}
+              onChange={setIdx}
+              xAxis={settings.xAxis}
+              onXAxisChange={(m) => updateSettings({ xAxis: m })}
+              className="mt-3"
+            />
           </div>
         ) : (
           <div className="text-sm text-fg-muted">no histogram logged yet</div>

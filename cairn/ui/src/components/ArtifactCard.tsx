@@ -7,10 +7,11 @@ import { useMemo, useRef, useState } from "react";
 import { useSequence } from "../api/hooks";
 import { api } from "../api/client";
 import { safeJsonParse } from "../lib/format";
-import { useCardSettings, resolveCardHeight, toggleColSpanPatch, fitHeightPatch, type CardSettingsKey } from "../lib/card-settings";
+import { useCardSettings, resolveCardHeight, toggleColSpanPatch, type CardSettingsKey } from "../lib/card-settings";
 import type { SequenceMeta } from "../api/types";
 import CardHeader from "./CardHeader";
 import CardResizeHandle from "./CardResizeHandle";
+import StepSlider, { type XAxisMode } from "./StepSlider";
 
 interface Props {
   runId: string;
@@ -35,8 +36,7 @@ interface ArtifactSettings {
   height1?: number;
   height2?: number;
   colSpan?: number;
-  fitted?: boolean;
-  preFitHeight?: number;
+  xAxis?: "step" | "relative_time" | "wall_time";
 }
 
 const DEFAULT_SETTINGS: ArtifactSettings = { version: 1 };
@@ -95,8 +95,6 @@ export default function ArtifactCard({ runId, metric, settingsKeyOverride, onRem
         onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
         onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<ArtifactSettings>)}
         isFullWidth={(settings.colSpan ?? 1) > 1}
-        onFitHeight={() => { const p = fitHeightPatch(settings, cardRef.current); if (p) updateSettings(p as Partial<ArtifactSettings>); }}
-        isFitted={!!settings.fitted}
         onRemove={onRemove}
       >
         <span className="inline-flex items-center rounded bg-bg-hover px-1.5 py-0.5 text-[10px] text-fg-muted">
@@ -155,20 +153,17 @@ export default function ArtifactCard({ runId, metric, settingsKeyOverride, onRem
             </div>
           )}
 
-          {points.length > 1 && (
-            <input
-              type="range"
-              min={0}
-              max={points.length - 1}
-              value={safeIdx}
-              onChange={(e) => {
-                const v = Number(e.target.value);
-                setIdx(v);
-                updateSettings({ sliderStep: v });
-              }}
-              className="mt-3 w-full accent-accent"
-            />
-          )}
+          <StepSlider
+            points={points}
+            currentIndex={safeIdx}
+            onChange={(v) => {
+              setIdx(v);
+              updateSettings({ sliderStep: v });
+            }}
+            xAxis={settings.xAxis}
+            onXAxisChange={(m) => updateSettings({ xAxis: m })}
+            className="mt-3"
+          />
         </>
       )}
 

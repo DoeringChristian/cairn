@@ -3,7 +3,7 @@ import { useQueries } from "@tanstack/react-query";
 import { useSequence } from "../api/hooks";
 import { api } from "../api/client";
 import { safeJsonParse, formatRelative } from "../lib/format";
-import { useCardSettings, resolveCardHeight, toggleColSpanPatch, fitHeightPatch, type CardSettingsKey } from "../lib/card-settings";
+import { useCardSettings, resolveCardHeight, toggleColSpanPatch, type CardSettingsKey } from "../lib/card-settings";
 import { useSeriesDrop } from "../lib/use-series-drop";
 import {
   addCardToComparison,
@@ -22,6 +22,7 @@ import SeriesChip , { type SeriesRef } from "./SeriesChip";
 import SettingsPopover from "./SettingsPopover";
 import Toggle from "./settings/Toggle";
 import Select from "./settings/Select";
+import StepSlider, { type XAxisMode } from "./StepSlider";
 
 interface VideoMetadata {
   fps: number;
@@ -53,12 +54,11 @@ interface VideoSettings {
   height1?: number;
   height2?: number;
   colSpan?: number;
-  fitted?: boolean;
-  preFitHeight?: number;
   autoplay: boolean;
   loop: boolean;
   muted: boolean;
   preload: "metadata" | "auto" | "none";
+  xAxis?: "step" | "relative_time" | "wall_time";
 }
 
 const SERIES_COLORS = [
@@ -387,8 +387,6 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
         onSettings={() => setExpanded(true)}
         onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<VideoSettings>)}
         isFullWidth={(settings.colSpan ?? 1) > 1}
-        onFitHeight={() => { const p = fitHeightPatch(settings, cardRef.current); if (p) updateSettings(p as Partial<VideoSettings>); }}
-        isFitted={!!settings.fitted}
         onRemove={onRemove}
       >
         {projectId && (
@@ -430,16 +428,14 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
               </div>
             ))}
           </div>
-          {globalSteps.length > 1 && (
-            <input
-              type="range"
-              min={0}
-              max={globalSteps.length - 1}
-              value={safeIdx}
-              onChange={(e) => handleSliderChange(Number(e.target.value))}
-              className="mt-3 w-full accent-accent"
-            />
-          )}
+          <StepSlider
+            points={points}
+            currentIndex={safeIdx}
+            onChange={handleSliderChange}
+            xAxis={settings.xAxis}
+            onXAxisChange={(m) => updateSettings({ xAxis: m })}
+            className="mt-3"
+          />
           {/* Series chip strip */}
           <div className="mt-2 flex flex-wrap gap-1.5">
             {controlledSeries ? (
@@ -527,16 +523,14 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
               fps
             </div>
           )}
-          {points.length > 1 && (
-            <input
-              type="range"
-              min={0}
-              max={points.length - 1}
-              value={safeIdx}
-              onChange={(e) => handleSliderChange(Number(e.target.value))}
-              className="mt-3 w-full accent-accent"
-            />
-          )}
+          <StepSlider
+            points={points}
+            currentIndex={safeIdx}
+            onChange={handleSliderChange}
+            xAxis={settings.xAxis}
+            onXAxisChange={(m) => updateSettings({ xAxis: m })}
+            className="mt-3"
+          />
         </>
       ) : (
         <div className="text-sm text-fg-muted">no video logged yet</div>
@@ -572,13 +566,6 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
                 { value: "none", label: "None" },
               ]}
             />
-            <button
-              type="button"
-              onClick={() => resetSettings()}
-              className="btn w-full mt-2"
-            >
-              Reset to defaults
-            </button>
           </>
         }
       >
@@ -599,16 +586,14 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
                   />
                 ))}
               </SplitPane>
-              {globalSteps.length > 1 && (
-                <input
-                  type="range"
-                  min={0}
-                  max={globalSteps.length - 1}
-                  value={safeIdx}
-                  onChange={(e) => handleSliderChange(Number(e.target.value))}
-                  className="mt-3 w-full accent-accent"
-                />
-              )}
+              <StepSlider
+                points={points}
+                currentIndex={safeIdx}
+                onChange={handleSliderChange}
+                xAxis={settings.xAxis}
+                onXAxisChange={(m) => updateSettings({ xAxis: m })}
+                className="mt-3"
+              />
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {controlledSeries ? (
                   (() => {
@@ -692,16 +677,14 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
                   {meta.width}{"\u00D7"}{meta.height} {"\u00B7"} {meta.num_frames} frames @ {meta.fps} fps
                 </div>
               )}
-              {points.length > 1 && (
-                <input
-                  type="range"
-                  min={0}
-                  max={points.length - 1}
-                  value={safeIdx}
-                  onChange={(e) => handleSliderChange(Number(e.target.value))}
-                  className="mt-3 w-full accent-accent"
-                />
-              )}
+              <StepSlider
+                points={points}
+                currentIndex={safeIdx}
+                onChange={handleSliderChange}
+                xAxis={settings.xAxis}
+                onXAxisChange={(m) => updateSettings({ xAxis: m })}
+                className="mt-3"
+              />
             </>
           ) : (
             <div className="text-sm text-fg-muted">no video logged yet</div>
