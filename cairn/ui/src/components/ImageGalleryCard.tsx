@@ -444,7 +444,6 @@ interface ImagePaneProps {
   zoom: number;
   transformStr: string;
   filterStr: string;
-  onSetBaseline: () => void;
   onNaturalSize?: (w: number, h: number) => void;
   label: string;
 }
@@ -460,7 +459,6 @@ function ImagePane({
   zoom: zoomLevel,
   transformStr,
   filterStr,
-  onSetBaseline,
   onNaturalSize,
   label,
 }: ImagePaneProps) {
@@ -633,23 +631,7 @@ function ImagePane({
   }, [baselineHash, artifactHash, diffMode, showDiff, colormap, onNaturalSize]);
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Pane header */}
-      <div className="flex items-center gap-1 px-1 py-0.5 text-[10px] text-fg-muted">
-        <button
-          type="button"
-          onClick={onSetBaseline}
-          className={`inline-flex items-center justify-center h-4 w-4 rounded text-xs hover:bg-bg-hover ${
-            isBaseline ? "text-accent" : "text-fg-subtle"
-          }`}
-          title={isBaseline ? "Baseline" : "Set as baseline"}
-          aria-label={isBaseline ? "Baseline" : "Set as baseline"}
-        >
-          {"\u2605"}
-        </button>
-        <span className="truncate">{label}</span>
-      </div>
-
+    <div className="relative flex flex-col h-full">
       {/* Image / diff canvas */}
       <div className="flex-1 min-h-0 min-w-0 flex items-center justify-center overflow-hidden rounded cairn-checkerboard" data-cairn-zoom-pane style={{ padding: showAxes && naturalDims ? "16px 4px 4px 28px" : "4px" }}>
         <div ref={imgWrapperRef} data-cairn-img-wrapper className="relative w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
@@ -700,6 +682,10 @@ function ImagePane({
           )}
         </div>
       </div>
+      {/* Label overlay */}
+      <span className="absolute bottom-1 left-1 z-10 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm">
+        {label}
+      </span>
     </div>
   );
 }
@@ -1305,7 +1291,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
 
   // Baseline hash for diff — external baseline takes priority
   const baselineIdx = settings.baselineIndex;
-  const refMode = settings.referenceMode ?? "global";
+  const refMode = settings.referenceMode ?? "per-run";
   const baselineHash = extBase
     ? extBasePoints[Math.min(safeIdx, Math.max(0, extBasePoints.length - 1))]?.artifact_hash ?? undefined
     : baselineIdx != null
@@ -1401,26 +1387,35 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
             {"\u2302"}
           </button>
         )}
-        {/* Quick diff toggle — only when a baseline is set */}
+        {/* Diff mode dropdown — only when a baseline is set */}
         {hasBaseline && (
-          <button
-            type="button"
-            onClick={() => updateSettings({ diffMode: settings.diffMode === "none" ? "absolute" : "none" })}
-            className={`h-5 inline-flex items-center justify-center rounded px-1.5 text-[10px] hover:bg-bg-hover ${settings.diffMode !== "none" ? "text-accent" : "text-fg-muted hover:text-fg"}`}
-            title={settings.diffMode !== "none" ? `Diff: ${settings.diffMode} (click to disable)` : "Enable diff"}
+          <select
+            value={settings.diffMode}
+            onChange={(e) => updateSettings({ diffMode: e.target.value as ImageSettings["diffMode"] })}
+            className={`h-5 rounded px-1 text-[10px] bg-transparent border-none cursor-pointer outline-none ${settings.diffMode !== "none" ? "text-accent" : "text-fg-muted hover:text-fg"}`}
+            title="Diff mode"
           >
-            diff
-          </button>
+            <option value="none">diff: off</option>
+            <option value="absolute">absolute</option>
+            <option value="signed">signed</option>
+            <option value="squared">squared</option>
+            <option value="relative_absolute">rel. absolute</option>
+            <option value="relative_signed">rel. signed</option>
+            <option value="relative_squared">rel. squared</option>
+          </select>
         )}
-        {/* Quick false-color toggle */}
-        <button
-          type="button"
-          onClick={() => updateSettings({ colormap: (settings.colormap ?? "none") === "none" ? "viridis" : "none" })}
-          className={`h-5 inline-flex items-center justify-center rounded px-1.5 text-[10px] hover:bg-bg-hover ${(settings.colormap ?? "none") !== "none" ? "text-accent" : "text-fg-muted hover:text-fg"}`}
-          title={(settings.colormap ?? "none") !== "none" ? `Color: ${settings.colormap} (click to disable)` : "Enable false color"}
+        {/* Colormap dropdown */}
+        <select
+          value={settings.colormap ?? "none"}
+          onChange={(e) => updateSettings({ colormap: e.target.value as Colormap })}
+          className={`h-5 rounded px-1 text-[10px] bg-transparent border-none cursor-pointer outline-none ${(settings.colormap ?? "none") !== "none" ? "text-accent" : "text-fg-muted hover:text-fg"}`}
+          title="False color map"
         >
-          color
-        </button>
+          <option value="none">color: off</option>
+          <option value="viridis">viridis</option>
+          <option value="red-green">red-green</option>
+          <option value="red-blue">red-blue</option>
+        </select>
         {projectId && (
           <button
             ref={addCompBtnRef}
@@ -1492,9 +1487,48 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                 return (
                   <div key={seriesKey(m)} className="relative overflow-hidden" style={undefined}>
                     {showInlineRef ? (
-                      /* ---------- Inline ref+pred: side-by-side / split / blend ---------- */
-                      compareMode === "side-by-side" ? (
-                        /* Per-run side-by-side: ref and pred shown as a grouped pair */
+                      /* ---------- Inline ref+pred ---------- */
+                      /* When diff is active, always show ref + ImagePane (which computes diff) */
+                      settings.diffMode !== "none" ? (
+                        <div className="flex gap-0.5 h-full cairn-checkerboard">
+                          <div className="relative flex-1 min-w-0 overflow-hidden border border-accent/20 rounded" data-cairn-zoom-pane>
+                            <div className="w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
+                              <img
+                                src={api.artifactUrl(paneBaseline)}
+                                alt="ref"
+                                className="w-full h-full object-contain"
+                                draggable={false}
+                                style={{
+                                  filter: filterStr,
+                                  imageRendering: settings.interpolation === "auto" ? undefined : settings.interpolation,
+                                }}
+                              />
+                            </div>
+                            <span className="absolute top-0.5 left-0.5 z-10 rounded bg-accent/20 px-1 py-0.5 text-[9px] text-accent backdrop-blur-sm">
+                              REF
+                            </span>
+                          </div>
+                          <div className="relative flex-1 min-w-0 overflow-hidden" data-cairn-zoom-pane>
+                            <ImagePane
+                              metricEntry={m}
+                              paneIndex={paneIdx}
+                              artifactHash={hash}
+                              baselineHash={paneBaseline}
+                              isBaseline={false}
+                              diffMode={settings.diffMode}
+                              interpolation={settings.interpolation ?? "auto"}
+                              colormap={settings.colormap ?? "none"}
+                              showAxes={settings.showAxes ?? false}
+                              zoom={settings.zoom}
+                              transformStr={transformStr}
+                              filterStr={filterStr}
+                              onNaturalSize={onImageNaturalSize}
+                              label={label}
+                            />
+                          </div>
+                        </div>
+                      ) : compareMode === "side-by-side" ? (
+                        /* No diff, side-by-side: ref and pred shown as a grouped pair */
                         <div className="flex gap-0.5 h-full cairn-checkerboard">
                           <div className="relative flex-1 min-w-0 overflow-hidden border border-accent/20 rounded" data-cairn-zoom-pane>
                             <div className="w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
@@ -1620,18 +1654,6 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                         transformStr={transformStr}
                         filterStr={filterStr}
                         onNaturalSize={onImageNaturalSize}
-                        onSetBaseline={() => {
-                          if (refMode === "per-run") return;
-                          const isUnsetting = settings.baselineIndex === paneIdx;
-                          updateSettings({
-                            baselineIndex: isUnsetting ? undefined : paneIdx,
-                            diffMode: isUnsetting
-                              ? "none"
-                              : settings.diffMode === "none"
-                                ? "absolute"
-                                : settings.diffMode,
-                          });
-                        }}
                         label={label}
                       />
                     )}
@@ -1657,7 +1679,6 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                       zoom={settings.zoom}
                       transformStr={transformStr}
                       filterStr={filterStr}
-                      onSetBaseline={() => updateSettings({ externalBaseline: undefined })}
                       label={`ref: ${settings.externalBaseline!.name}`}
                     />
                   </div>
@@ -2017,7 +2038,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
             {isMulti && (
               <Select<"global" | "per-run">
                 label="Reference mode"
-                value={settings.referenceMode ?? "global"}
+                value={settings.referenceMode ?? "per-run"}
                 onChange={(v) => updateSettings({ referenceMode: v })}
                 options={[
                   { value: "global", label: "Global (one ref for all)" },
@@ -2025,7 +2046,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                 ]}
               />
             )}
-            {(settings.referenceMode ?? "global") === "per-run" && (
+            {(settings.referenceMode ?? "per-run") === "per-run" && (
               <Slider
                 label="Ref step"
                 value={settings.perRunBaselineStep ?? 0}
@@ -2121,7 +2142,37 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                     return (
                       <div key={seriesKey(m)} className="relative overflow-hidden" style={undefined}>
                         {mShowInlineRef ? (
-                          mCompareMode === "side-by-side" ? (
+                          settings.diffMode !== "none" ? (
+                            /* Diff active: REF + ImagePane with diff computation */
+                            <div className="flex gap-0.5 h-full cairn-checkerboard">
+                              <div className="relative flex-1 min-w-0 overflow-hidden border border-accent/20 rounded" data-cairn-zoom-pane>
+                                <div className="w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
+                                  <img src={api.artifactUrl(mPaneBaseline)} alt="ref" className="w-full h-full object-contain" draggable={false}
+                                    style={{ filter: filterStr, imageRendering: settings.interpolation === "auto" ? undefined : settings.interpolation }} />
+                                </div>
+                                <span className="absolute top-0.5 left-0.5 z-10 rounded bg-accent/20 px-1 py-0.5 text-[9px] text-accent backdrop-blur-sm">REF</span>
+                              </div>
+                              <div className="relative flex-1 min-w-0 overflow-hidden" data-cairn-zoom-pane>
+                                <ImagePane
+                                  metricEntry={m}
+                                  paneIndex={paneIdx}
+                                  artifactHash={mHash}
+                                  baselineHash={mPaneBaseline}
+                                  isBaseline={false}
+                                  diffMode={settings.diffMode}
+                                  interpolation={settings.interpolation ?? "auto"}
+                                  colormap={settings.colormap ?? "none"}
+                                  showAxes={settings.showAxes ?? false}
+                                  zoom={settings.zoom}
+                                  transformStr={transformStr}
+                                  filterStr={filterStr}
+                                  onNaturalSize={onImageNaturalSize}
+                                  label={mLabel}
+                                />
+                              </div>
+                            </div>
+                          ) : mCompareMode === "side-by-side" ? (
+                            /* No diff, side-by-side: raw img pair */
                             <div className="flex gap-0.5 h-full cairn-checkerboard">
                               <div className="relative flex-1 min-w-0 overflow-hidden border border-accent/20 rounded" data-cairn-zoom-pane>
                                 <div className="w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
@@ -2188,18 +2239,6 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                             transformStr={transformStr}
                             filterStr={filterStr}
                             onNaturalSize={onImageNaturalSize}
-                            onSetBaseline={() => {
-                              if (refMode === "per-run") return;
-                              const isUnsetting = settings.baselineIndex === paneIdx;
-                              updateSettings({
-                                baselineIndex: isUnsetting ? undefined : paneIdx,
-                                diffMode: isUnsetting
-                                  ? "none"
-                                  : settings.diffMode === "none"
-                                    ? "absolute"
-                                    : settings.diffMode,
-                              });
-                            }}
                             label={mLabel}
                           />
                         )}
@@ -2224,7 +2263,6 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                           zoom={settings.zoom}
                           transformStr={transformStr}
                           filterStr={filterStr}
-                          onSetBaseline={() => updateSettings({ externalBaseline: undefined })}
                           label={`ref: ${settings.externalBaseline!.name}`}
                         />
                       </div>
