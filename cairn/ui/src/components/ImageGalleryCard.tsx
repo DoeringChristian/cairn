@@ -651,7 +651,7 @@ function ImagePane({
       </div>
 
       {/* Image / diff canvas */}
-      <div className="flex-1 min-h-0 min-w-0 flex items-center justify-center overflow-hidden rounded cairn-checkerboard" style={{ padding: showAxes && naturalDims ? "16px 4px 4px 28px" : "4px" }}>
+      <div className="flex-1 min-h-0 min-w-0 flex items-center justify-center overflow-hidden rounded cairn-checkerboard" data-cairn-zoom-pane style={{ padding: showAxes && naturalDims ? "16px 4px 4px 28px" : "4px" }}>
         <div ref={imgWrapperRef} data-cairn-img-wrapper className="relative w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
           {!artifactHash ? (
             <span className="text-xs text-fg-muted">no image</span>
@@ -1065,10 +1065,9 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
   // after a zoom change: newPan = cx - ((cx - pan) / zoom) * newZoom.
   //
   // cx/cy MUST be relative to the pane that holds the transform, not the
-  // outer grid container. In split/blend mode each pane is an absolutely-
-  // positioned div; in side-by-side mode each half is a flex child. We
-  // walk up from e.target to find the nearest overflow-hidden ancestor
-  // inside the container — that is the pane boundary.
+  // outer grid container. We find the pane by looking for the nearest
+  // ancestor with [data-cairn-zoom-pane] — this is the direct parent of
+  // the transform div and represents the viewport for that image.
   wheelHandlerRef.current = (e: WheelEvent) => {
     if (!altDownRef.current) return;
     e.preventDefault();
@@ -1078,17 +1077,10 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     const nextZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, s.zoom * factor));
     if (s.zoom === nextZoom) return;
 
-    // Find the pane the cursor is over: walk up from target to find the
-    // nearest element with overflow hidden/clip inside our container.
-    // Fallback to the container itself (single-image mode).
-    let paneEl: HTMLElement | null = e.target as HTMLElement;
-    const container = containerRef.current;
-    while (paneEl && paneEl !== container) {
-      const ov = getComputedStyle(paneEl).overflow;
-      if (ov === "hidden" || ov === "clip") break;
-      paneEl = paneEl.parentElement;
-    }
-    const refEl = paneEl ?? container;
+    // Find the zoom pane the cursor is over.
+    const target = e.target as HTMLElement;
+    const paneEl = target.closest("[data-cairn-zoom-pane]") as HTMLElement | null;
+    const refEl = paneEl ?? containerRef.current;
     if (refEl) {
       const rect = refEl.getBoundingClientRect();
       const cx = e.clientX - rect.left;
@@ -1504,7 +1496,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                       compareMode === "side-by-side" ? (
                         /* Per-run side-by-side: ref and pred shown as a grouped pair */
                         <div className="flex gap-0.5 h-full cairn-checkerboard">
-                          <div className="relative flex-1 min-w-0 overflow-hidden border border-accent/20 rounded">
+                          <div className="relative flex-1 min-w-0 overflow-hidden border border-accent/20 rounded" data-cairn-zoom-pane>
                             <div className="w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
                               <img
                                 src={api.artifactUrl(paneBaseline)}
@@ -1521,7 +1513,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                               REF
                             </span>
                           </div>
-                          <div className="relative flex-1 min-w-0 overflow-hidden">
+                          <div className="relative flex-1 min-w-0 overflow-hidden" data-cairn-zoom-pane>
                             <div className="w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
                               <img
                                 src={api.artifactUrl(hash)}
@@ -1541,7 +1533,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                         </div>
                       ) : (
                         /* Split / blend overlay */
-                        <div className="relative w-full overflow-hidden cairn-checkerboard" style={{ aspectRatio: "1 / 1", minHeight: 80 }}>
+                        <div className="relative w-full overflow-hidden cairn-checkerboard" data-cairn-zoom-pane style={{ aspectRatio: "1 / 1", minHeight: 80 }}>
                           {/* Prediction layer — full viewport */}
                           <div className="absolute inset-0 overflow-hidden" data-cairn-img-wrapper>
                             <div className="w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
@@ -1675,7 +1667,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
           ) : (
             /* ---------- Single-image layout (original) ---------- */
             <div
-              className="relative flex flex-1 min-h-0 justify-center items-center rounded cairn-checkerboard"
+              className="relative flex flex-1 min-h-0 justify-center items-center rounded cairn-checkerboard" data-cairn-zoom-pane
               style={{
                 overflow: "hidden",
                 padding: settings.showAxes && singleNaturalDims ? "16px 4px 4px 28px" : "8px",
@@ -2131,14 +2123,14 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                         {mShowInlineRef ? (
                           mCompareMode === "side-by-side" ? (
                             <div className="flex gap-0.5 h-full cairn-checkerboard">
-                              <div className="relative flex-1 min-w-0 overflow-hidden border border-accent/20 rounded">
+                              <div className="relative flex-1 min-w-0 overflow-hidden border border-accent/20 rounded" data-cairn-zoom-pane>
                                 <div className="w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
                                   <img src={api.artifactUrl(mPaneBaseline)} alt="ref" className="w-full h-full object-contain" draggable={false}
                                     style={{ filter: filterStr, imageRendering: settings.interpolation === "auto" ? undefined : settings.interpolation }} />
                                 </div>
                                 <span className="absolute top-0.5 left-0.5 z-10 rounded bg-accent/20 px-1 py-0.5 text-[9px] text-accent backdrop-blur-sm">REF</span>
                               </div>
-                              <div className="relative flex-1 min-w-0 overflow-hidden">
+                              <div className="relative flex-1 min-w-0 overflow-hidden" data-cairn-zoom-pane>
                                 <div className="w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
                                   <img src={api.artifactUrl(mHash)} alt="pred" className="w-full h-full object-contain" draggable={false}
                                     style={{ filter: filterStr, imageRendering: settings.interpolation === "auto" ? undefined : settings.interpolation }} />
@@ -2147,7 +2139,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                               </div>
                             </div>
                           ) : (
-                            <div className="relative w-full overflow-hidden cairn-checkerboard" style={{ aspectRatio: "1 / 1", minHeight: 80 }}>
+                            <div className="relative w-full overflow-hidden cairn-checkerboard" data-cairn-zoom-pane style={{ aspectRatio: "1 / 1", minHeight: 80 }}>
                               {/* Prediction layer */}
                               <div className="absolute inset-0 overflow-hidden" data-cairn-img-wrapper>
                                 <div className="w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
@@ -2241,7 +2233,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                 </div>
               ) : (
                 <div
-                  className="relative flex flex-1 min-h-0 justify-center items-center rounded cairn-checkerboard"
+                  className="relative flex flex-1 min-h-0 justify-center items-center rounded cairn-checkerboard" data-cairn-zoom-pane
                   style={{
                     overflow: "hidden",
                     padding: settings.showAxes && singleNaturalDims ? "16px 4px 4px 28px" : "8px",
