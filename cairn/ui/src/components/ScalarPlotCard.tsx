@@ -45,6 +45,7 @@ import Slider from "./settings/Slider";
 import Toggle from "./settings/Toggle";
 import { formatRelative } from "../lib/format";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
+import { exportChartFromContainer, safeName } from "../lib/download";
 
 // -----------------------------------------------------------------------------
 // Settings shape
@@ -1591,6 +1592,7 @@ export default function ScalarPlotCard({
         onSettings={() => setExpanded(true)}
         onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<typeof settings>)}
         isFullWidth={(settings.colSpan ?? 1) > 1}
+        onExport={(fmt) => { if (chartBoxRef.current) exportChartFromContainer(chartBoxRef.current, safeName(settings.title ?? metric.name), fmt); }}
         onRemove={onRemove}
       >
         {settings.smoothing > 0 && (

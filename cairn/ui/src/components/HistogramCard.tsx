@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSequence } from "../api/hooks";
 import { safeJsonParse, formatRelative } from "../lib/format";
+import { downloadArtifact, artifactFilename, exportChartFromContainer, safeName } from "../lib/download";
+import { api } from "../api/client";
 import { useCardSettings, resolveCardHeight, toggleColSpanPatch, type CardSettingsKey } from "../lib/card-settings";
 import {
   addCardToComparison,
@@ -139,6 +141,8 @@ export default function HistogramCard({ runId, metric, settingsKeyOverride, onRe
         onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<HistogramSettings>)}
         isFullWidth={(settings.colSpan ?? 1) > 1}
         onRemove={onRemove}
+        onDownload={current?.artifact_hash ? () => downloadArtifact(api.artifactUrl(current.artifact_hash!), artifactFilename(metric.name, current.step, "application/octet-stream")) : undefined}
+        onExport={(fmt) => { if (cardRef.current) exportChartFromContainer(cardRef.current, safeName(settings.title ?? metric.name), fmt); }}
       >
         {projectId && (
           <button

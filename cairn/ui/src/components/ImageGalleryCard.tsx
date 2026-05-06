@@ -20,6 +20,7 @@ import {
 } from "../lib/comparisons";
 import { useProjectId } from "../lib/project-context";
 import { formatRelative } from "../lib/format";
+import { downloadArtifact, artifactFilename } from "../lib/download";
 import { computeDiff, loadImageData, type DiffMode } from "../lib/image-diff";
 import { webglRenderDiffToCanvas } from "../lib/webgl-diff";
 import { getRenderMode } from "../lib/render-mode";
@@ -1375,6 +1376,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
         onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<typeof settings>)}
         isFullWidth={(settings.colSpan ?? 1) > 1}
         onRemove={onRemove}
+        onDownload={firstResolved.hash ? () => downloadArtifact(api.artifactUrl(firstResolved.hash!), artifactFilename(metric.name, currentStep, "image/png")) : undefined}
       >
         {(settings.zoom !== 1 || settings.pan.x !== 0 || settings.pan.y !== 0) && (
           <button

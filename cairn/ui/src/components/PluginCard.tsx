@@ -8,6 +8,7 @@ import { useQueries } from "@tanstack/react-query";
 import { useSequence } from "../api/hooks";
 import { api } from "../api/client";
 import { safeJsonParse } from "../lib/format";
+import { downloadArtifact, artifactFilename } from "../lib/download";
 import { useCardSettings, resolveCardHeight, toggleColSpanPatch, type CardSettingsKey } from "../lib/card-settings";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import type { SequenceMeta, SequenceResponse, SequencePoint } from "../api/types";
@@ -425,6 +426,7 @@ export default function PluginCard({
         onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<PluginSettings>)}
         isFullWidth={(settings.colSpan ?? 1) > 1}
         onRemove={onRemove}
+        onDownload={primaryCurrent?.artifact_hash ? () => downloadArtifact(api.artifactUrl(primaryCurrent.artifact_hash!), artifactFilename(metric.name, primaryCurrent.step, primaryCurrent.artifact_mime)) : undefined}
       >
         <span className="inline-flex items-center rounded bg-bg-hover px-1.5 py-0.5 text-[10px] text-fg-muted">
           {lang === "window" ? "Window" : lang === "server" ? "Server" : lang === "py" ? "Python" : "JS"}

@@ -8,6 +8,8 @@ import {
 } from "../lib/comparisons";
 import { useProjectId } from "../lib/project-context";
 import { formatRelative } from "../lib/format";
+import { downloadArtifact, artifactFilename } from "../lib/download";
+import { api } from "../api/client";
 import type { SequenceMeta } from "../api/types";
 import CardDetailModal from "./CardDetailModal";
 import CardHeader from "./CardHeader";
@@ -173,6 +175,7 @@ export default function TextViewerCard({ runId, metric, settingsKeyOverride, onR
         onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<TextSettings>)}
         isFullWidth={(settings.colSpan ?? 1) > 1}
         onRemove={onRemove}
+        onDownload={current?.artifact_hash ? () => downloadArtifact(api.artifactUrl(current.artifact_hash!), artifactFilename(metric.name, current?.step ?? 0, "text/plain")) : undefined}
       >
         {projectId && (
           <button
