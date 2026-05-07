@@ -15,7 +15,7 @@ Run ``cairn server --repo /mnt/cairn/.cairn`` on a node with PVC access to
 ingest and serve the UI.
 
 **Without shared storage**: Use Cairn's HTTP transport instead. Run
-``cairn server`` and set ``CAIRN_SERVER=http://cairn-service:4301`` as an
+``cairn server`` and set ``CAIRN_REPO=cairn://cairn-service:4301`` as an
 environment variable in the Job spec.
 
 Prerequisites for actually running the generated Jobs:

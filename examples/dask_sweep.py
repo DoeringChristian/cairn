@@ -12,7 +12,7 @@ Demonstrates two deployment modes:
    If you don't have a shared filesystem, use Cairn's HTTP transport
    instead::
 
-       cairn.configure(server="http://head-node:4301")
+       cairn.configure(repo="cairn://head-node:4301")
 
 Install Dask first::
 

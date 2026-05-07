@@ -14,7 +14,7 @@ If you don't have a shared filesystem, use Cairn's HTTP transport instead::
     cairn server --port 4301
 
     # In the training script on remote hosts:
-    cairn.configure(server="http://local-machine:4301")
+    cairn.configure(repo="cairn://local-machine:4301")
 
 Install Fabric first::
 

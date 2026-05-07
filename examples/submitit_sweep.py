@@ -13,7 +13,7 @@ WALs and serve the UI.
 If your cluster does NOT have a shared filesystem, use Cairn's HTTP transport
 instead::
 
-    cairn.configure(server="http://head-node:4301")
+    cairn.configure(repo="cairn://head-node:4301")
 
 Install submitit first::
 

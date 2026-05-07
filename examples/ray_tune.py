@@ -18,7 +18,7 @@ works out of the box.
         cairn server --port 4301
 
         # In the trainable:
-        cairn.configure(server="http://head-node:4301")
+        cairn.configure(repo="cairn://head-node:4301")
         run = cairn.Run(project="ray-tune", name="...")
 
 Install Ray first::

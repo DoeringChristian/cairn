@@ -1,12 +1,14 @@
 # Cairn
 
-An open-source ML experiment tracker. Two ways to use it:
+An open-source ML experiment tracker. Three ways to use it:
 
-**Local mode** (Aim-style, single machine): `cairn init` in your project, then log directly to `./.cairn/`. No server required. Run `cairn ui` later to browse results.
+**Local mode** (default): log directly to `./.cairn/`. No server required. Run `cairn ui` later to browse results.
 
-**Server mode** (W&B-style, cross-device): run `cairn server` on one machine and it starts both the tracking API **and** the viewer on two ports. Other machines on the network point the SDK at the tracking server's URL.
+**WAL mode** (cluster-safe): `local_wal=True` writes per-run append-only log files instead of touching the database. Safe for NFS/Slurm/Ray with hundreds of concurrent writers. The UI server ingests WAL files in the background.
 
-Both modes share the same on-disk format — a repo created locally can later be served without any migration.
+**Server mode** (cross-device): run `cairn server` on one machine, point SDK clients at it via `repo="cairn://host:port"`.
+
+All modes share the same on-disk format — a repo created locally can later be served without any migration.
 
 ## Install
 
@@ -31,95 +33,115 @@ import cairn
 
 run = cairn.Run(
     project="image-classification",
-    task="baseline-cnn",
+    name="baseline-cnn",
     repo="./.cairn",          # or: export CAIRN_REPO=./.cairn
 )
 run["hparams"] = {"lr": 3e-4, "batch_size": 32}
 for step, loss in training_loop():
     run.track(loss, name="loss", step=step)
-# No run.finish() needed — an atexit hook marks the run completed
-# when your script exits. You can still use `with cairn.Run(...) as run:`
-# or call run.finish() explicitly if you want deterministic cleanup.
 ```
 
-Browse results at any time with the UI:
+Browse results:
 
 ```bash
-cairn ui                      # reads ./.cairn/, serves http://localhost:4301/
+cairn ui                      # serves http://localhost:4301/
 ```
 
-**You can run the UI while you're logging.** The SDK detects that a `cairn ui` is already serving the repo and transparently switches to HTTP mode (rather than fighting for the DuckDB write-lock), so metrics land in the UI live as they're tracked. Just run `cairn ui` first, then start your training script — no special flags needed.
+## WAL mode — concurrent / distributed training
 
-For multi-machine setups, use `cairn server` instead (see below) — it runs the tracking API and the UI together and accepts writes from SDK clients on other machines.
+For Slurm clusters, Ray, Dask, or any setup with multiple concurrent writers on a shared filesystem:
 
-## Quick start — server mode
+```python
+import cairn
 
-On the machine that will hold the data (typically a workstation or shared GPU box):
+run = cairn.Run(
+    project="sweep",
+    name="lr-search",
+    repo="/shared/nfs/.cairn",
+    local_wal=True,           # per-run WAL, no SQLite contention
+)
+```
+
+Each run writes to its own `.cairn/wals/{run_id}.wal.jsonl` file. The UI server's background thread ingests WAL files every 2s for live preview. See `examples/` for integration with ProcessPoolExecutor, submitit, Ray Tune, Dask, Fabric, and Kubernetes.
+
+## Server mode — cross-device logging
+
+On the machine that will hold the data:
 
 ```bash
 cairn server                  # defaults to ./.cairn; creates it if missing
 ```
 
-You'll see a banner with both URLs:
-
-```
-Cairn tracking server:
-  Ingest API local:   http://localhost:4300
-  Ingest API network: http://192.168.1.42:4300
-  UI local:           http://localhost:4301
-  UI network:         http://192.168.1.42:4301
-Repo: /home/you/project/.cairn
-```
-
-From any training machine:
+From any training machine, use the `cairn://` URL scheme:
 
 ```python
 import cairn
 
-with cairn.Run(
+run = cairn.Run(
     project="image-classification",
-    task="baseline-cnn",
-    server="http://<lan-ip>:4300",
-) as run:
-    run["hparams"] = {"lr": 3e-4, "batch_size": 32}
-    run.track(0.5, name="loss", step=0)
+    name="baseline-cnn",
+    repo="cairn://192.168.1.42:4300",
+)
+run["hparams"] = {"lr": 3e-4, "batch_size": 32}
+run.track(0.5, name="loss", step=0)
 ```
 
-Open the UI URL in any browser on the network.
+Or set it globally:
 
-### Why two ports?
+```python
+cairn.configure(repo="cairn://gpu-server:4300")
+```
 
-`cairn server` runs the **ingest API** (where clients POST metrics) and the **UI viewer** (what browsers load) on separate ports, in the same process. This lets you, e.g., expose only the UI port publicly while keeping the ingest port firewalled, or serve the UI from a different path. Both ports also expose the full `/api/*` surface — the UI talks to its own port.
+Or via environment variable:
 
-Flags:
-
-- `cairn server --port 4300 --ui-port 4301 --repo ./.cairn` — all defaults shown explicitly.
-- `cairn server --no-ui` — skip spawning the UI.
-- `cairn server --open-browser` — auto-open a browser tab (off by default).
-- `cairn server --host 127.0.0.1` — LAN-restrict.
-- `cairn server --advertise` — broadcast on mDNS (requires `cairn-track[discovery]`).
-
-### `cairn server` vs `cairn ui`
-
-| | `cairn server` | `cairn ui` |
-|---|---|---|
-| Starts tracking API? | ✅ (port 4300) | ❌ |
-| Starts UI server? | ✅ (port 4301) | ✅ (port 4301) |
-| Acquires repo write-lock? | ✅ (mode `server`) | ✅ (mode `ui`) |
-| Use when | you want to log from other machines, or log + view simultaneously | you only want to browse an existing `./.cairn/` repo |
-
-They can't run on the same repo simultaneously (single-writer DuckDB rule). If a tracking server is already running, just open its UI URL in a browser.
+```bash
+export CAIRN_REPO=cairn://gpu-server:4300
+python train.py
+```
 
 ## Resolution order
 
-If you don't pass `repo=` or `server=` explicitly, the SDK picks a destination in this order:
+The SDK picks a destination in this order:
 
-1. `cairn.configure(repo=...)` or `cairn.configure(server=...)`
-2. `CAIRN_REPO` env var
-3. `CAIRN_SERVER` env var
+1. Explicit `repo=` kwarg
+2. `cairn.configure(repo=...)`
+3. `CAIRN_REPO` env var
 4. TOML config file (`~/.config/cairn/config.toml`)
-5. `./.cairn/` in the current working directory (auto-discovery)
-6. Fallback: `http://localhost:4300`
+5. `./.cairn/` in the current working directory
+
+The `repo=` parameter accepts:
+- A filesystem path: `/path/to/.cairn` or `./.cairn` → local mode
+- A URL: `cairn://host:port` → HTTP server mode
+
+## Run IDs
+
+Run IDs are 128-bit hex strings (32 characters), generated client-side. The UI shows the first 6 characters (git-style short hash) with click-to-copy for the full ID. Existing shorter IDs from earlier versions remain valid.
+
+## Reading data back
+
+```python
+import cairn
+
+reader = cairn.Reader(repo="./.cairn")
+# or: cairn.Reader(repo="cairn://localhost:4300")
+
+for run in reader.runs(project="sweep").list():
+    loss = run.sequence("loss")
+    print(f"{run.name}: final_loss={loss.values[-1]:.4f}")
+```
+
+## Examples
+
+| Example | Framework | Multi-machine? |
+|---------|-----------|---------------|
+| `examples/multi_process.py` | ProcessPoolExecutor | No |
+| `examples/multi_thread.py` | threading.Thread | No |
+| `examples/multiprocessing_pool.py` | multiprocessing.Pool | No |
+| `examples/fabric_remote.py` | Fabric/SSH | Yes |
+| `examples/submitit_sweep.py` | submitit/Slurm | Yes |
+| `examples/ray_tune.py` | Ray Tune | Yes |
+| `examples/dask_sweep.py` | Dask SSHCluster | Yes |
+| `examples/kubernetes_jobs.py` | Kubernetes Jobs | Yes |
 
 ## Development
 
@@ -127,21 +149,19 @@ This project uses [uv](https://docs.astral.sh/uv/) for Python and npm for the UI
 
 ```bash
 uv sync --extra dev
-cd ui-src && npm install && npm run build   # build the React bundle once
+cd cairn/ui && npm install && npm run build
 uv run pytest
 ```
 
-For UI development, run Vite's dev server with HMR against a local tracking server:
+For UI development with HMR:
 
 ```bash
 # terminal 1
 uv run cairn server --repo ./.cairn --no-ui
 
 # terminal 2
-cd ui-src && npm run dev   # http://localhost:5173, proxies /api to :4300
+cd cairn/ui && npm run dev   # http://localhost:5173, proxies /api to :4300
 ```
-
-The wheel's build hook (`hatch_build.py`) automatically invokes `npm run build` when you run `uv build`, so published wheels ship with the UI prebuilt — end users don't need Node.
 
 ## License
 
