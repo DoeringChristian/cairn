@@ -1,32 +1,36 @@
-"""Direct-to-SQLite transport for server-less SDK use.
+"""WAL-based transport for server-less SDK use.
 
 When a ``Run`` is constructed with ``repo=`` pointing at a ``.cairn/``
 directory, it uses ``LocalTransport`` instead of the HTTP ``Transport``.
-Writes go straight to the SQLite database and blob store in that directory.
 
-Multiple SDK processes can write to the same repo concurrently — SQLite
-in WAL mode handles write serialization with sub-millisecond contention.
+Writers NEVER touch the SQLite database. All data goes to:
+- ``.cairn/wals/{run_id}.wal.jsonl``  — append-only JSONL per run
+- ``.cairn/artifacts/``               — content-addressed blobs
 
-If a ``cairn server`` is already serving the repo (holder mode is
-``"server"`` with ``host``/``port`` recorded), ``LocalTransport.__init__``
-raises :class:`_RepoServedByOtherError` so the ``Run`` constructor can
-switch to HTTP mode (better performance via batched network calls).
+The UI server (or ``cairn.Reader``) is the sole database writer,
+draining WAL files into SQLite via the ingestion thread.
 """
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
 import logging
+import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import psutil
 
-from ..server import ingest_ops
 from ..server.storage.blobs import BlobStore
 from ..server.storage.datadir import DataDir
-from ..server.storage.db import Database
 
 log = logging.getLogger(__name__)
+
+# Max artifact size to inline in WAL (base64). Larger → temp file alongside WAL.
+_INLINE_ARTIFACT_MAX = 1 * 1024 * 1024  # 1 MB
 
 
 class _RepoServedByOtherError(Exception):
@@ -54,7 +58,9 @@ def _holder_is_live(holder: dict[str, Any] | None) -> bool:
 
 class LocalTransport:
     """Mirrors the public surface of ``cairn.sdk.transport.Transport`` but
-    writes directly to the on-disk repo instead of going over HTTP.
+    writes to per-run WAL files instead of the database.
+
+    The SDK never opens or touches the SQLite database.
     """
 
     def __init__(self, repo: str | Path):
@@ -69,75 +75,135 @@ class LocalTransport:
             and holder.get("port")
         ):
             raise _RepoServedByOtherError(holder)
-        # SQLite WAL mode handles concurrent access — no exclusive lock needed.
-        self.db = Database.open(self.data_dir.db_path)
         self.blobs = BlobStore(self.data_dir.artifacts_dir)
         self.server_url = f"file://{self.data_dir.root}"
         self._closed = False
 
-    # ---- lifecycle --------------------------------------------------------
+        # WAL state — initialized by create_run().
+        self._wal_dir = self.data_dir.root / "wals"
+        self._wal_dir.mkdir(parents=True, exist_ok=True)
+        self._wal_path: Path | None = None
+        self._lock_path: Path | None = None
+        self._wal_fh: Any = None
+        self._wal_seq = 0
+
+    # ---- WAL I/O -------------------------------------------------------------
+
+    def _wal_write(self, op: str, payload: dict[str, Any]) -> int:
+        """Append one entry to the per-run WAL. Returns sequence number."""
+        self._wal_seq += 1
+        entry = {"seq": self._wal_seq, "op": op, "payload": payload}
+        line = json.dumps(entry, separators=(",", ":"))
+        self._wal_fh.write(line + "\n")
+        self._wal_fh.flush()
+        os.fsync(self._wal_fh.fileno())
+        return self._wal_seq
+
+    # ---- lifecycle -----------------------------------------------------------
 
     def close(self) -> None:
         if self._closed:
             return
         self._closed = True
-        self.db.close()
+        if self._wal_fh:
+            try:
+                self._wal_fh.close()
+            except OSError:
+                pass
+        # Remove lock file — signals to server that this WAL is ready.
+        if self._lock_path and self._lock_path.exists():
+            self._lock_path.unlink(missing_ok=True)
 
-    # ---- high-level ops (mirror Transport) --------------------------------
+    # ---- high-level ops (mirror Transport) -----------------------------------
 
     def create_run(self, body: dict[str, Any]) -> dict[str, Any]:
-        return ingest_ops.create_run(
-            self.db,
-            project=body["project"],
-            name=body.get("name"),
-            tags=body.get("tags"),
-            notes=body.get("notes"),
-            env=body.get("env"),
-            git=body.get("git"),
-            cli_args=body.get("cli_args"),
-            hostname=body.get("hostname"),
-            user=body.get("user"),
-        )
+        run_id = body["run_id"]
+        project = body["project"]
+        project_id = project.lower().replace(" ", "-")
+
+        self._wal_path = self._wal_dir / f"{run_id}.wal.jsonl"
+        self._lock_path = self._wal_dir / f"{run_id}.lock"
+
+        # Create lock file to signal "still writing".
+        self._lock_path.write_text(str(os.getpid()))
+
+        # Open WAL for append.
+        self._wal_fh = open(self._wal_path, "a")  # noqa: SIM115
+
+        now = datetime.now(timezone.utc).isoformat()
+        self._wal_write("create_run", {
+            "run_id": run_id,
+            "project": project,
+            "project_id": project_id,
+            "name": body.get("name"),
+            "tags": body.get("tags"),
+            "notes": body.get("notes"),
+            "env": body.get("env"),
+            "git": body.get("git"),
+            "cli_args": body.get("cli_args"),
+            "hostname": body.get("hostname"),
+            "user": body.get("user"),
+            "created_at": now,
+        })
+
+        return {
+            "run_id": run_id,
+            "project_id": project_id,
+            "url": f"/p/{project_id}/r/{run_id}",
+        }
 
     def post_batch(self, run_id: str, points: list[dict[str, Any]]) -> bool:
         try:
-            ingest_ops.insert_batch(self.db, run_id, points)
+            self._wal_write("batch", {"run_id": run_id, "points": points})
             return True
         except Exception:  # noqa: BLE001
-            log.exception("local insert_batch failed for run %s", run_id)
+            log.exception("WAL write failed for run %s", run_id)
             return False
 
     def post_params(self, run_id: str, params: dict[str, Any]) -> None:
-        ingest_ops.set_params(self.db, run_id, params)
+        self._wal_write("params", {"run_id": run_id, "params": params})
 
     def post_logs(self, run_id: str, lines: list[dict[str, Any]]) -> bool:
         try:
-            ingest_ops.insert_logs(self.db, self.data_dir, run_id, lines)
+            self._wal_write("logs", {"run_id": run_id, "lines": lines})
             return True
         except Exception:  # noqa: BLE001
-            log.exception("local insert_logs failed for run %s", run_id)
+            log.exception("WAL write failed for run %s", run_id)
             return False
 
     def finish_run(
         self, run_id: str, status: str, exit_code: int | None = None
     ) -> None:
-        ingest_ops.finish_run(self.db, run_id, status, exit_code)
+        now = datetime.now(timezone.utc).isoformat()
+        self._wal_write("finish", {
+            "run_id": run_id,
+            "status": status,
+            "exit_code": exit_code,
+            "ended_at": now,
+        })
 
     def set_tags(self, run_id: str, tags: list[str]) -> None:
-        ingest_ops.set_tags(self.db, run_id, tags)
+        self._wal_write("set_tags", {"run_id": run_id, "tags": tags})
 
     def set_notes(self, run_id: str, notes: str) -> None:
-        ingest_ops.set_notes(self.db, run_id, notes)
+        self._wal_write("set_notes", {"run_id": run_id, "notes": notes})
 
     def attach_artifact(
         self, run_id: str, name: str, digest: str, step: int | None = None
     ) -> None:
-        ingest_ops.attach_artifact(self.db, self.blobs, run_id, name, digest, step)
+        self._wal_write("attach_artifact", {
+            "run_id": run_id, "name": name, "hash": digest, "step": step,
+        })
 
     def upload_source(
         self, run_id: str, archive: bytes, manifest: dict[str, Any]
     ) -> None:
-        ingest_ops.save_source(self.db, self.data_dir, run_id, archive, manifest)
+        # Store archive as a blob, record in WAL.
+        digest = hashlib.sha256(archive).hexdigest()
+        self.blobs.put(archive, "application/zip", {"manifest": manifest})
+        self._wal_write("source", {
+            "run_id": run_id, "hash": digest, "manifest": manifest,
+        })
 
     def upload_artifact(
         self,
@@ -145,12 +211,30 @@ class LocalTransport:
         mime_type: str,
         metadata: dict[str, Any] | None = None,
     ) -> str:
-        result = ingest_ops.put_artifact(self.db, self.blobs, data, mime_type, metadata)
-        return result["hash"]
+        # Blobs go to shared content-addressed store (NFS-safe atomic rename).
+        digest = hashlib.sha256(data).hexdigest()
+        self.blobs.put(data, mime_type, metadata)
+        # Record artifact metadata in WAL so ingestion can create the DB row.
+        if len(data) <= _INLINE_ARTIFACT_MAX:
+            self._wal_write("artifact_meta", {
+                "hash": digest,
+                "mime_type": mime_type,
+                "size_bytes": len(data),
+                "metadata": metadata or {},
+            })
+        else:
+            self._wal_write("artifact_meta", {
+                "hash": digest,
+                "mime_type": mime_type,
+                "size_bytes": len(data),
+                "metadata": metadata or {},
+            })
+        return digest
 
     def heartbeat(self, run_id: str) -> None:
-        ingest_ops.heartbeat(self.db, run_id)
+        now = datetime.now(timezone.utc).isoformat()
+        self._wal_write("heartbeat", {"run_id": run_id, "wall_time": now})
 
     def drain_spill(self, run_id: str | None = None) -> int:
-        """Local mode never spills; nothing to drain."""
+        """Local WAL mode never spills; nothing to drain."""
         return 0

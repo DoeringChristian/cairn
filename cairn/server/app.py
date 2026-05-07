@@ -13,6 +13,8 @@ The app can be used in one of two modes:
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -38,6 +40,9 @@ from .routes import (
 from .storage.blobs import BlobStore
 from .storage.datadir import DataDir, default_data_dir
 from .storage.db import Database
+from .wal_ingest import ingest_all
+
+_log = logging.getLogger(__name__)
 
 
 def create_app(
@@ -84,9 +89,31 @@ def create_app(
         app.state.data_dir = dd
         app.state.db = _db
         app.state.blobs = _blobs
+
+        # Background WAL ingestion — polls every 2s for new per-run WAL files.
+        _stop = asyncio.Event()
+
+        async def _wal_ingestion_loop():
+            while not _stop.is_set():
+                try:
+                    count = ingest_all(dd, _db, _blobs)
+                    if count > 0:
+                        _log.debug("WAL ingestion: %d ops", count)
+                except Exception:  # noqa: BLE001
+                    _log.exception("WAL ingestion cycle failed")
+                try:
+                    await asyncio.wait_for(_stop.wait(), timeout=2.0)
+                    break  # stop was set
+                except asyncio.TimeoutError:
+                    pass  # normal — loop again
+
+        task = asyncio.create_task(_wal_ingestion_loop())
+
         try:
             yield
         finally:
+            _stop.set()
+            task.cancel()
             if owns_db:
                 _db.close()
 

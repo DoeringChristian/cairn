@@ -12,6 +12,7 @@ import { setRunMetadata } from "../lib/run-label";
 import SettingsPopover from "../components/SettingsPopover";
 import BulkTagEditor from "../components/BulkTagEditor";
 import ImportRunsDialog from "../components/ImportRunsDialog";
+import CopyId from "../components/CopyId";
 
 type SortColumn =
   | "name"
@@ -702,11 +703,7 @@ export default function RunsTablePage() {
                       >
                         {r.display_name ?? r.id}
                       </Link>
-                      {r.display_name ? (
-                        <span className="mono ml-2 text-xs text-fg-subtle">
-                          {r.id}
-                        </span>
-                      ) : null}
+                      <CopyId id={r.id} className="ml-2 text-xs" />
                     </td>
                     <td className="px-3 py-2">
                       <RunStatusBadge status={r.status} />

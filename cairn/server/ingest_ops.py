@@ -35,6 +35,7 @@ def create_run(
     db: Database,
     *,
     project: str,
+    run_id: str | None = None,
     name: str | None = None,
     tags: list[str] | None = None,
     notes: str | None = None,
@@ -46,7 +47,8 @@ def create_run(
 ) -> dict[str, Any]:
     """Create a run (and its project if needed). Returns metadata dict."""
     project_id = slugify(project)
-    run_id = secrets.token_hex(6)
+    if not run_id:
+        run_id = secrets.token_hex(16)
     now = utc_now()
 
     with db.transaction() as con:

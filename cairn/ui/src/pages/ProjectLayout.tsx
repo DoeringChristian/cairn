@@ -8,6 +8,7 @@
 import { Link, NavLink, Outlet, useParams } from "react-router-dom";
 import { ProjectProvider } from "../lib/project-context";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
+import CopyId from "../components/CopyId";
 
 
 const NAV_ITEMS = [
@@ -80,6 +81,7 @@ export default function ProjectLayout() {
               <>
                 <span>›</span>
                 <span className="mono text-fg">{shortRunLabel(runId)}</span>
+                <CopyId id={runId} className="text-[10px]" />
               </>
             )}
           </nav>

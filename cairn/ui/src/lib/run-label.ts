@@ -68,7 +68,7 @@ export function formatRunLabel(runId: string): string {
       return name;
     }
   }
-  return runId.length > 8 ? runId.slice(0, 8) : runId;
+  return runId.length > 6 ? runId.slice(0, 6) : runId;
 }
 
 /**

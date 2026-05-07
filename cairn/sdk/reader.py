@@ -513,12 +513,22 @@ class _LocalBackend:
         from ..server.storage.blobs import BlobStore
         from ..server.storage.datadir import DataDir
         from ..server.storage.db import Database
+        from ..server.wal_ingest import ingest_all as _ingest_all
 
         self._dd = DataDir(Path(repo))
         self._db = Database.open(self._dd.db_path)
         self._blobs = BlobStore(self._dd.artifacts_dir)
+        self._ingest_all = _ingest_all
+
+    def _drain_wals(self) -> None:
+        """Ingest any pending WAL files before reading."""
+        try:
+            self._ingest_all(self._dd, self._db, self._blobs)
+        except Exception:  # noqa: BLE001
+            pass
 
     def list_projects(self) -> list[dict[str, Any]]:
+        self._drain_wals()
         return self._db.read_columns(
             """SELECT p.id, p.name, p.created_at,
                       (SELECT COUNT(*) FROM runs r WHERE r.project_id = p.id) AS run_count,
@@ -531,6 +541,7 @@ class _LocalBackend:
         self, project: str | None, status: str | None,
         limit: int, offset: int, sort_col: str, sort_desc: bool,
     ) -> tuple[list[dict[str, Any]], int]:
+        self._drain_wals()
         clauses: list[str] = []
         params: list[Any] = []
         if project:

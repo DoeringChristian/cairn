@@ -14,6 +14,7 @@ from __future__ import annotations
 import atexit
 import inspect
 import logging
+import secrets
 import signal
 import threading
 from datetime import datetime, timezone
@@ -159,8 +160,12 @@ class Run:
         env_snapshot: dict[str, Any] | None = _capture_env() if capture_env else None
         git_info = capture_git(Path.cwd()) if capture_source or capture_env else None
 
+        # Generate ID client-side (128-bit, collision-proof).
+        client_run_id = secrets.token_hex(16)
+
         create_body: dict[str, Any] = {
             "project": project,
+            "run_id": client_run_id,
             "name": name,
             "tags": tags,
             "notes": notes,
