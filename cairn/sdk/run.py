@@ -102,8 +102,8 @@ class Run:
         name: str | None = None,
         tags: list[str] | None = None,
         notes: str | None = None,
-        server: str | None = None,
         repo: str | Path | None = None,
+        local_wal: bool = False,
         capture_source: bool = True,
         capture_stdout: bool = True,
         capture_env: bool = True,
@@ -125,22 +125,20 @@ class Run:
             self._owns_transport = False
             self._server = getattr(transport, "server_url", "")
         else:
-            target = config.resolve_target(repo=repo, server=server)
+            target = config.resolve_target(repo=repo)
             if target.is_local:
                 try:
-                    self._transport = LocalTransport(target.location)
+                    self._transport = LocalTransport(target.location, use_wal=local_wal)
                     self._server = self._transport.server_url
                 except _RepoServedByOtherError as exc:
                     url = _url_from_holder(exc.holder)
                     if url is None:
                         raise
                     _verify_reachable(url, Path(target.location))
-                    # HTTP mode against a running server — use WAL for resilience.
-                    # WAL run_id isn't known yet; created after create_run below.
                     self._transport = Transport(url, timeout=timeout)
                     self._server = url
             else:
-                # Pure HTTP mode — use WAL for resilience.
+                # cairn:// URL → HTTP mode.
                 self._transport = Transport(target.location, timeout=timeout)
                 self._server = target.location
             self._owns_transport = True

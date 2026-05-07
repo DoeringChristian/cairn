@@ -794,19 +794,17 @@ class Reader:
     """Read-only interface to a Cairn repo or server.
 
     Args:
-        repo: Path to a ``.cairn/`` directory for direct DB access.
-        server: URL of a running Cairn server (e.g. ``http://localhost:4301``).
+        repo: Path to a ``.cairn/`` directory, or ``cairn://host:port``
+            for HTTP server mode.
 
-    If neither is specified, auto-detects from env/config (same logic as
-    ``cairn.Run``).
+    If not specified, auto-detects from env/config (same logic as ``cairn.Run``).
     """
 
     def __init__(
         self,
         repo: str | Path | None = None,
-        server: str | None = None,
     ) -> None:
-        target = _config.resolve_target(repo=repo, server=server)
+        target = _config.resolve_target(repo=repo)
         if target.is_local:
             self._backend: _LocalBackend | _HttpBackend = _LocalBackend(target.location)
         else:

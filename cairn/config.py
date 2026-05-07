@@ -1,14 +1,18 @@
-"""Configuration: server URL / local repo resolution and config file I/O.
+"""Configuration: repo resolution and config file I/O.
 
-A ``Run`` is bound to *one* destination — either a server URL or a local
-repo path. Resolution order:
+A ``Run`` is bound to *one* destination — either a local repo path or
+a remote server. Resolution order:
 
-    1. explicit ``repo=`` or ``server=`` kwarg
-    2. module-level ``configure(repo=...)`` or ``configure(server=...)``
-    3. ``CAIRN_REPO`` or ``CAIRN_SERVER`` env var
-    4. config file ``repo`` or ``server`` key
+    1. explicit ``repo=`` kwarg
+    2. module-level ``configure(repo=...)``
+    3. ``CAIRN_REPO`` env var
+    4. config file ``repo`` key
 
 If none of these are set, defaults to ``./.cairn`` in CWD (local mode).
+
+URL scheme:
+    repo="/path/to/.cairn"       → local mode (direct DB or WAL)
+    repo="cairn://host:port"     → HTTP server mode
 """
 
 from __future__ import annotations
@@ -34,10 +38,12 @@ DEFAULT_SERVER = "http://localhost:4300"
 _configured: dict[str, Any] = {}
 """Module-level state populated by ``configure()``."""
 
+CAIRN_SCHEME = "cairn://"
+
 
 @dataclass(frozen=True)
 class RunTarget:
-    """Resolved destination for a Run. Exactly one of ``repo`` / ``server`` is set."""
+    """Resolved destination for a Run."""
 
     kind: Literal["local", "server"]
     location: str
@@ -77,7 +83,7 @@ def configure(**kwargs: Any) -> None:
 
     Example::
 
-        cairn.configure(server="http://gpubox.local:4300")
+        cairn.configure(repo="cairn://gpubox.local:4300")
         # or
         cairn.configure(repo="./.cairn")
     """
@@ -89,51 +95,61 @@ def reset_configured() -> None:
     _configured.clear()
 
 
+def _parse_repo(value: str) -> RunTarget:
+    """Parse a repo string into a RunTarget.
+
+    ``cairn://host:port`` → server mode (HTTP)
+    anything else         → local mode (filesystem path)
+    """
+    if value.startswith(CAIRN_SCHEME):
+        http_url = "http://" + value[len(CAIRN_SCHEME):]
+        return RunTarget("server", http_url)
+    return RunTarget("local", str(Path(value).expanduser()))
+
+
 def resolve_server(explicit: str | None = None) -> str:
     """Resolve the server URL per the server-only priority chain.
 
-    Kept for callers (CLI `ping`/`list`/…) that only speak HTTP.
+    Kept for callers (CLI `ping`/`list`/...) that only speak HTTP.
     """
     if explicit is not None:
         return explicit
-    if "server" in _configured:
-        return str(_configured["server"])
-    env = os.environ.get("CAIRN_SERVER")
+    if "repo" in _configured:
+        t = _parse_repo(str(_configured["repo"]))
+        if not t.is_local:
+            return t.location
+    env = os.environ.get("CAIRN_REPO")
     if env:
-        return env
+        t = _parse_repo(env)
+        if not t.is_local:
+            return t.location
     cfg = load_config_file()
-    if "server" in cfg:
-        return str(cfg["server"])
+    if "repo" in cfg:
+        t = _parse_repo(str(cfg["repo"]))
+        if not t.is_local:
+            return t.location
     return DEFAULT_SERVER
 
 
 def resolve_target(
     repo: str | Path | None = None,
-    server: str | None = None,
 ) -> RunTarget:
     """Resolve where a ``Run`` should send its data.
 
     Returns a :class:`RunTarget` tagged ``local`` (with a filesystem path) or
-    ``server`` (with a URL). Raises ``ValueError`` if no target is configured.
+    ``server`` (with a URL).
+
+    Accepts ``cairn://host:port`` for HTTP server mode.
     """
     if repo is not None:
-        return RunTarget("local", str(Path(repo).expanduser()))
-    if server is not None:
-        return RunTarget("server", server)
+        return _parse_repo(str(repo))
     if "repo" in _configured:
-        return RunTarget("local", str(Path(str(_configured["repo"])).expanduser()))
-    if "server" in _configured:
-        return RunTarget("server", str(_configured["server"]))
+        return _parse_repo(str(_configured["repo"]))
     env_repo = os.environ.get("CAIRN_REPO")
     if env_repo:
-        return RunTarget("local", str(Path(env_repo).expanduser()))
-    env_server = os.environ.get("CAIRN_SERVER")
-    if env_server:
-        return RunTarget("server", env_server)
+        return _parse_repo(env_repo)
     cfg = load_config_file()
     if "repo" in cfg:
-        return RunTarget("local", str(Path(str(cfg["repo"])).expanduser()))
-    if "server" in cfg:
-        return RunTarget("server", str(cfg["server"]))
+        return _parse_repo(str(cfg["repo"]))
     # Default: ./.cairn in CWD
     return RunTarget("local", str(Path.cwd() / ".cairn"))

@@ -39,7 +39,7 @@ def utc_now() -> str:
 
 def simulate_run(repo: Path, project: str, run_name: str, num_steps: int = 20):
     """Simulate a training run writing to a WAL file."""
-    transport = LocalTransport(repo)
+    transport = LocalTransport(repo, use_wal=True)
     run_id = secrets.token_hex(16)
 
     resp = transport.create_run({
@@ -171,7 +171,7 @@ def main():
     # ── Step 7: Test live preview (incremental ingestion) ────────────────
     print("\n7. Testing live preview (incremental ingestion)...")
     # Start a new run but DON'T finish it
-    transport = LocalTransport(repo)
+    transport = LocalTransport(repo, use_wal=True)
     live_id = secrets.token_hex(16)
     transport.create_run({
         "project": "wal-test",
