@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Query, Request
 
-from ._common import get_db, require_run
+from ._common import get_data_dir, get_db, require_run
+
+_log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["runs"])
 
@@ -16,12 +19,13 @@ router = APIRouter(prefix="/api", tags=["runs"])
 STALE_HEARTBEAT_SECONDS = 120
 
 
-def _reap_stale_runs(db: Any) -> None:
-    """Mark running runs as killed if their heartbeat is too old."""
+def _reap_stale_runs(db: Any, data_dir: Any = None) -> None:
+    """Mark running runs as killed if their heartbeat is too old.
+
+    Also removes stale WAL lock files so the ingestion thread can
+    do a full ingest and rename the WAL to .done.
+    """
     cutoff = datetime.now(timezone.utc).isoformat()
-    # Find running runs whose last_heartbeat is older than the threshold.
-    # Also catch runs with NULL heartbeat that were created > threshold ago
-    # (pre-heartbeat runs or runs that never sent a heartbeat).
     stale = db.read_columns(
         """SELECT id FROM runs
            WHERE status = 'running'
@@ -36,10 +40,17 @@ def _reap_stale_runs(db: Any) -> None:
     )
     if stale:
         for row in stale:
+            run_id = row["id"]
             db.write(
                 "UPDATE runs SET status = 'killed', ended_at = ? WHERE id = ?",
-                [cutoff, row["id"]],
+                [cutoff, run_id],
             )
+            # Remove stale WAL lock file so ingestion can finalize.
+            if data_dir is not None:
+                lock_path = data_dir.root / "wals" / f"{run_id}.lock"
+                if lock_path.exists():
+                    lock_path.unlink(missing_ok=True)
+                    _log.info("removed stale WAL lock for killed run %s", run_id[:8])
 
 
 @router.get("/runs")
@@ -51,9 +62,10 @@ def list_runs(
     offset: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
     db = get_db(request)
+    dd = get_data_dir(request)
 
     # Auto-kill stale "running" runs before listing.
-    _reap_stale_runs(db)
+    _reap_stale_runs(db, dd)
 
     clauses: list[str] = []
     params: list[Any] = []
