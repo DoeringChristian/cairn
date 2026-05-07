@@ -141,8 +141,7 @@ export default function HistogramCard({ runId, metric, settingsKeyOverride, onRe
         onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<HistogramSettings>)}
         isFullWidth={(settings.colSpan ?? 1) > 1}
         onRemove={onRemove}
-        onDownload={current?.artifact_hash ? () => downloadArtifact(api.artifactUrl(current.artifact_hash!), artifactFilename(metric.name, current.step, "application/octet-stream")) : undefined}
-        onExport={(fmt) => { if (cardRef.current) exportChartFromContainer(cardRef.current, safeName(settings.title ?? metric.name), fmt); }}
+        onDownload={() => { if (cardRef.current) exportChartFromContainer(cardRef.current, safeName(settings.title ?? metric.name), "svg"); }}
       >
         {projectId && (
           <button

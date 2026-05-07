@@ -143,6 +143,53 @@ export async function exportChartFromContainer(
 }
 
 /**
+ * Export all images in a container as a composite PNG.
+ * Finds all <img> elements, draws them into a grid on a canvas.
+ */
+export async function exportImagesAsComposite(
+  container: HTMLElement,
+  filename: string,
+  columns = 2,
+): Promise<void> {
+  const imgs = Array.from(container.querySelectorAll("img")) as HTMLImageElement[];
+  if (imgs.length === 0) return;
+
+  // Wait for all images to be loaded
+  await Promise.all(imgs.map((img) =>
+    img.complete ? Promise.resolve() : new Promise<void>((res) => { img.onload = () => res(); img.onerror = () => res(); }),
+  ));
+
+  // Use the natural dimensions of the first image to determine cell size
+  const cellW = imgs[0]!.naturalWidth || imgs[0]!.clientWidth || 256;
+  const cellH = imgs[0]!.naturalHeight || imgs[0]!.clientHeight || 256;
+  const cols = Math.min(columns, imgs.length);
+  const rows = Math.ceil(imgs.length / cols);
+
+  const canvas = document.createElement("canvas");
+  canvas.width = cols * cellW;
+  canvas.height = rows * cellH;
+  const ctx = canvas.getContext("2d")!;
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  for (let i = 0; i < imgs.length; i++) {
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    ctx.drawImage(imgs[i]!, col * cellW, row * cellH, cellW, cellH);
+  }
+
+  canvas.toBlob((blob) => {
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${filename}.png`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, "image/png");
+}
+
+/**
  * Export a Plotly chart. Uses Plotly's built-in toImage/downloadImage.
  */
 export async function exportPlotlyChart(

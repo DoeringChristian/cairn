@@ -1592,7 +1592,7 @@ export default function ScalarPlotCard({
         onSettings={() => setExpanded(true)}
         onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<typeof settings>)}
         isFullWidth={(settings.colSpan ?? 1) > 1}
-        onExport={(fmt) => { if (chartBoxRef.current) exportChartFromContainer(chartBoxRef.current, safeName(settings.title ?? metric.name), fmt); }}
+        onDownload={() => { if (chartBoxRef.current) exportChartFromContainer(chartBoxRef.current, safeName(settings.title ?? metric.name), "svg"); }}
         onRemove={onRemove}
       >
         {settings.smoothing > 0 && (

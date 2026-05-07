@@ -24,10 +24,8 @@ interface Props {
   onToggleFullWidth?: () => void;
   /** Whether the card is currently full width. */
   isFullWidth?: boolean;
-  /** Download current artifact. Renders ⬇ button. */
+  /** Download/export. Renders ↓ button. */
   onDownload?: () => void;
-  /** Export chart as image/SVG. Renders a format dropdown. */
-  onExport?: (format: "svg" | "png" | "jpg") => void;
   /** Remove the card. Renders × button in upper-right. */
   onRemove?: () => void;
 }
@@ -43,7 +41,6 @@ export default function CardHeader({
   onToggleFullWidth,
   isFullWidth,
   onDownload,
-  onExport,
   onRemove,
 }: Props) {
   const drag = useDraggableCard();
@@ -157,28 +154,11 @@ export default function CardHeader({
             type="button"
             onClick={onDownload}
             className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
-            aria-label="Download artifact"
-            title="Download artifact"
+            aria-label="Save"
+            title="Save"
           >
-            {"\u2B07"}
+            {"\u2193"}
           </button>
-        )}
-        {onExport && (
-          <select
-            value=""
-            onChange={(e) => {
-              const fmt = e.target.value as "svg" | "png" | "jpg";
-              if (fmt) onExport(fmt);
-              e.target.value = "";
-            }}
-            className="h-5 rounded px-1 text-[10px] bg-transparent border-none cursor-pointer outline-none text-fg-muted hover:text-fg"
-            title="Export chart"
-          >
-            <option value="" disabled>export</option>
-            <option value="svg">SVG</option>
-            <option value="png">PNG</option>
-            <option value="jpg">JPG</option>
-          </select>
         )}
         {onToggleFullWidth && (
           <button

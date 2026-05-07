@@ -712,8 +712,7 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
         onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<typeof settings>)}
         isFullWidth={(settings.colSpan ?? 1) > 1}
         onRemove={onRemove}
-        onDownload={current?.artifact_hash ? () => downloadArtifact(api.artifactUrl(current.artifact_hash!), artifactFilename(metric.name, current.step, current.artifact_mime ?? "image/png")) : undefined}
-        onExport={(fmt) => { if (cardRef.current) exportPlotlyChart(cardRef.current, safeName(settings.title ?? metric.name), fmt); }}
+        onDownload={current?.artifact_hash ? () => downloadArtifact(api.artifactUrl(current.artifact_hash!), artifactFilename(metric.name, current.step, current.artifact_mime ?? "image/png")) : () => { if (cardRef.current) exportPlotlyChart(cardRef.current, safeName(settings.title ?? metric.name), "svg"); }}
       >
         {viewModified && (
           <button

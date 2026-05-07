@@ -549,7 +549,7 @@ export default function ParallelCoordsCard({
         onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<ParallelSettings>)}
         isFullWidth={(settings.colSpan ?? 1) > 1}
         onRemove={onRemove}
-        onExport={(fmt) => { if (cardRef.current) exportChartFromContainer(cardRef.current, safeName(settings.title ?? "parallel_coords"), fmt); }}
+        onDownload={() => { if (cardRef.current) exportChartFromContainer(cardRef.current, safeName(settings.title ?? "parallel_coords"), "svg"); }}
       >
       </CardHeader>
 
