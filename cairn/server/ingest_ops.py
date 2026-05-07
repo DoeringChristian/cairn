@@ -135,7 +135,7 @@ def insert_batch(
         )
     db.executemany(
         """
-        INSERT INTO sequences (
+        INSERT OR IGNORE INTO sequences (
             run_id, name, step, wall_time, context, context_hash,
             object_type, scalar_value, artifact_hash
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -156,7 +156,7 @@ def insert_logs(
         (run_id, line["stream"], line["wall_time"], line["line_no"], line["content"])
         for line in lines
     ]
-    db.executemany("INSERT INTO log_lines VALUES (?, ?, ?, ?, ?)", rows)
+    db.executemany("INSERT OR IGNORE INTO log_lines VALUES (?, ?, ?, ?, ?)", rows)
     # Append to on-disk log files, preserving ANSI if provided.
     log_dir = data_dir.run_log_dir(run_id)
     combined_path = log_dir / "combined.log"
