@@ -7,19 +7,25 @@ This script does NOT require a running cluster.  It generates:
 
 Both are printed to stdout so you can pipe them into files::
 
-    uv run python examples/kubernetes_jobs.py > /dev/null  # just prints
+    python examples/kubernetes_jobs.py > /dev/null  # just prints
+
+**With shared PVC (recommended)**: All Jobs mount the same PersistentVolumeClaim
+at ``/mnt/cairn``. Workers write WAL files to the shared ``.cairn/`` directory.
+Run ``cairn server --repo /mnt/cairn/.cairn`` on a node with PVC access to
+ingest and serve the UI.
+
+**Without shared storage**: Use Cairn's HTTP transport instead. Run
+``cairn server`` and set ``CAIRN_SERVER=http://cairn-service:4301`` as an
+environment variable in the Job spec.
 
 Prerequisites for actually running the generated Jobs:
   - A Kubernetes cluster with kubectl configured
   - A shared PVC named ``cairn-repo-pvc`` mounted at /mnt/cairn
   - The cairn package available in the container image
 
-The script also shows how you would ingest + verify locally after the Jobs
-complete (assuming the PVC is accessible).
-
 Usage::
 
-    uv run python examples/kubernetes_jobs.py
+    python examples/kubernetes_jobs.py
 """
 
 from __future__ import annotations

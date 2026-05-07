@@ -1,8 +1,18 @@
 """Cairn + Dask: distributed hyperparameter sweep.
 
-Creates a LocalCluster with 4 workers, submits training tasks via
-client.submit, and gathers results.  Each Dask task creates its own
-cairn.Run.  After all futures resolve, WALs are ingested and verified.
+Demonstrates two deployment modes:
+
+1. **LocalCluster** (default): 4 workers on the same machine.
+   All workers share the filesystem — WAL files just work.
+
+2. **SSHCluster** (multi-machine): workers on remote hosts.
+   Requires a shared filesystem (NFS) mounted at the same path on all
+   nodes. Workers write WAL files to the shared .cairn/ directory.
+
+   If you don't have a shared filesystem, use Cairn's HTTP transport
+   instead::
+
+       cairn.configure(server="http://head-node:4301")
 
 Install Dask first::
 
@@ -10,7 +20,11 @@ Install Dask first::
 
 Usage::
 
-    uv run python examples/dask_sweep.py
+    # Local mode (default)
+    python examples/dask_sweep.py
+
+    # SSHCluster mode (requires shared filesystem + SSH access)
+    python examples/dask_sweep.py --ssh host1 host2 host3
 """
 
 from __future__ import annotations
@@ -80,7 +94,29 @@ def main() -> None:
         {"name": "dask-lr1e-4", "lr": 1e-4, "decay": 0.07, "steps": 50},
     ]
 
-    cluster = LocalCluster(n_workers=4, threads_per_worker=1)
+    # -- Choose cluster mode based on CLI args --------------------------------
+    ssh_hosts = None
+    if "--ssh" in sys.argv:
+        idx = sys.argv.index("--ssh")
+        ssh_hosts = sys.argv[idx + 1:]
+        if not ssh_hosts:
+            print("Usage: python dask_sweep.py --ssh host1 host2 ...")
+            sys.exit(1)
+
+    if ssh_hosts:
+        # Multi-machine: SSHCluster requires shared filesystem (NFS).
+        # The .cairn/ repo must be at the same path on all nodes.
+        from dask.distributed import SSHCluster
+        print(f"SSHCluster: scheduler={ssh_hosts[0]}, workers={ssh_hosts[1:]}")
+        print(f"  (Requires {repo_path} accessible on all nodes via NFS)")
+        cluster = SSHCluster(
+            ssh_hosts,
+            worker_options={"nthreads": 1},
+        )
+    else:
+        # Single machine: LocalCluster.
+        cluster = LocalCluster(n_workers=4, threads_per_worker=1)
+
     client = Client(cluster)
     print(f"Dask dashboard: {client.dashboard_link}")
 
@@ -96,7 +132,7 @@ def main() -> None:
     client.close()
     cluster.close()
 
-    # --- Ingest WALs and verify -------------------------------------------
+    # --- Ingest WALs and verify -----------------------------------------------
     from cairn.server.storage.datadir import DataDir
     from cairn.server.storage.db import Database
     from cairn.server.storage.blobs import BlobStore

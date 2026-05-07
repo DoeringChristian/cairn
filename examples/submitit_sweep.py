@@ -4,13 +4,24 @@ Uses submitit.AutoExecutor with cluster="local" so the example works on any
 machine without a Slurm scheduler.  Each trial creates its own cairn.Run
 against a shared .cairn repo.
 
+**On a real Slurm cluster**: change ``cluster="local"`` to ``cluster="slurm"``
+and point ``repo=`` to an NFS-mounted directory visible to all nodes. Each
+Slurm job writes its own WAL file — no SQLite contention even with hundreds
+of concurrent jobs.  Run ``cairn server`` on the login/head node to ingest
+WALs and serve the UI.
+
+If your cluster does NOT have a shared filesystem, use Cairn's HTTP transport
+instead::
+
+    cairn.configure(server="http://head-node:4301")
+
 Install submitit first::
 
     pip install submitit
 
 Usage::
 
-    uv run python examples/submitit_sweep.py
+    python examples/submitit_sweep.py
 """
 
 from __future__ import annotations

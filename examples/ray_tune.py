@@ -4,13 +4,30 @@ Each Ray Tune trial creates its own cairn.Run.  Uses tune.Tuner with a
 grid_search over learning rates.  After the sweep, WALs are ingested and
 results verified via cairn.Reader.
 
+**Single machine** (default): all workers share the filesystem. WAL mode
+works out of the box.
+
+**Multi-machine Ray cluster**: workers run on different nodes.
+
+  - With shared filesystem (NFS): pass the NFS-mounted .cairn/ path as
+    ``repo=``. Workers write WALs to the shared directory.
+
+  - Without shared filesystem: use Cairn's HTTP transport instead::
+
+        # On the head node:
+        cairn server --port 4301
+
+        # In the trainable:
+        cairn.configure(server="http://head-node:4301")
+        run = cairn.Run(project="ray-tune", name="...")
+
 Install Ray first::
 
     pip install "ray[tune]"
 
 Usage::
 
-    uv run python examples/ray_tune.py
+    python examples/ray_tune.py
 """
 
 from __future__ import annotations
