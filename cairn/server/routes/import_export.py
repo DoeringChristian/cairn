@@ -104,7 +104,7 @@ def export_runs(body: ExportRequest, request: Request) -> StreamingResponse:
                 if not blobs.exists(h):
                     continue
                 meta_rows = db.read_columns(
-                    "SELECT mime_type, metadata FROM artifacts WHERE hash = ?", [h],
+                    "SELECT mime_type, metadata, object_type FROM artifacts WHERE hash = ?", [h],
                 )
                 mime = meta_rows[0]["mime_type"] if meta_rows else "application/octet-stream"
                 ext = mimetypes.guess_extension(mime) or ""

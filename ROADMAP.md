@@ -30,6 +30,10 @@ session-level plans live in `~/.claude/plans/`.
   original Python type via handler `deserialize()` methods.
   `artifact_bytes()` is the raw-bytes escape hatch.
 
+- ✅ **Reader can read exported ZIPs** — `cairn.Reader(repo="run.zip")`
+  unpacks an exported archive into a tempdir and serves it via the
+  local backend. Cleaned up on `close()`.
+
 - 💭 **Per-run baseline branching** — when a run is "forked" from a checkpoint,
   track the lineage so the UI can show parent/child relationships.
 
