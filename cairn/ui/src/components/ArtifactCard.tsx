@@ -25,6 +25,8 @@ interface ArtifactMeta {
   filename?: string;
   size_bytes?: number;
   mime_type?: string;
+  python_type?: string;
+  python_module?: string;
   [key: string]: unknown;
 }
 
@@ -110,7 +112,7 @@ export default function ArtifactCard({ runId, metric, settingsKeyOverride, onRem
         onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<ArtifactSettings>)}
         isFullWidth={(settings.colSpan ?? 1) > 1}
         onRemove={onRemove}
-        onDownload={current?.artifact_hash ? () => downloadArtifact(api.artifactUrl(current.artifact_hash!), artifactFilename(metric.name, current.step, meta.mime_type)) : undefined}
+        onDownload={current?.artifact_hash ? () => downloadArtifact(api.artifactUrl(current.artifact_hash!), artifactFilename(metric.name, current.step, "application/python-pickle")) : undefined}
       >
         <span className="inline-flex items-center rounded bg-bg-hover px-1.5 py-0.5 text-[10px] text-fg-muted">
           artifact
@@ -123,10 +125,12 @@ export default function ArtifactCard({ runId, metric, settingsKeyOverride, onRem
             <div className="flex-1 min-h-0 flex flex-col gap-2 overflow-auto">
               <div className="rounded border border-border bg-bg p-3 text-xs">
                 <div className="flex flex-col gap-1">
-                  {meta.filename && (
+                  {meta.python_type && (
                     <div className="flex items-baseline gap-2">
-                      <span className="text-fg-subtle">File:</span>
-                      <span className="mono text-fg">{meta.filename}</span>
+                      <span className="text-fg-subtle">Python type:</span>
+                      <span className="mono text-fg">
+                        {meta.python_module && meta.python_module !== "builtins" ? `${meta.python_module}.` : ""}{meta.python_type}
+                      </span>
                     </div>
                   )}
                   {meta.size_bytes != null && (
@@ -135,18 +139,16 @@ export default function ArtifactCard({ runId, metric, settingsKeyOverride, onRem
                       <span className="mono num text-fg">{formatBytes(meta.size_bytes)}</span>
                     </div>
                   )}
-                  {meta.mime_type && (
-                    <div className="flex items-baseline gap-2">
-                      <span className="text-fg-subtle">Type:</span>
-                      <span className="mono text-fg">{meta.mime_type}</span>
-                    </div>
-                  )}
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-fg-subtle">Format:</span>
+                    <span className="mono text-fg">pickle (.pkl)</span>
+                  </div>
                   <div className="flex items-baseline gap-2">
                     <span className="text-fg-subtle">Hash:</span>
                     <span className="mono text-fg-muted">{current.artifact_hash.slice(0, 16)}...</span>
                   </div>
                   {/* Show any extra metadata keys */}
-                  {Object.entries(meta).filter(([k]) => !["filename", "size_bytes", "mime_type"].includes(k)).map(([k, v]) => (
+                  {Object.entries(meta).filter(([k]) => !["filename", "size_bytes", "mime_type", "python_type", "python_module"].includes(k)).map(([k, v]) => (
                     <div key={k} className="flex items-baseline gap-2">
                       <span className="text-fg-subtle">{k}:</span>
                       <span className="mono text-fg">{String(v)}</span>
@@ -155,10 +157,10 @@ export default function ArtifactCard({ runId, metric, settingsKeyOverride, onRem
                 </div>
                 <a
                   href={api.artifactUrl(current.artifact_hash)}
-                  download={meta.filename ?? `artifact_step${current.step}`}
+                  download={`${metric.name.replace(/[^a-zA-Z0-9._-]/g, "_")}_step${current.step}.pkl`}
                   className="inline-flex items-center gap-1 mt-2 text-accent hover:underline"
                 >
-                  Download
+                  Download .pkl
                 </a>
               </div>
             </div>

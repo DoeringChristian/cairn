@@ -53,15 +53,19 @@ class Text(_TypeWrapper):
 
 
 class Artifact(_TypeWrapper):
-    """Generic artifact — any file or bytes blob.
+    """Pickle-serialized Python object.
 
-    Tracks arbitrary files (checkpoints, models, configs, etc.) with
-    metadata. Accepts bytes, file paths, or file-like objects.
+    Wraps any Python object and stores it as a pickle blob. Useful for
+    tracking checkpoints, configs, custom dataclasses, model state dicts,
+    or any other Python object that doesn't fit into the typed wrappers.
+
+    Download via the UI yields a ``.pkl`` file that can be loaded with
+    ``pickle.load(open("file.pkl", "rb"))``.
 
     Usage::
 
-        run.track(cairn.Artifact(b"raw bytes"), name="config", step=0)
-        run.track(cairn.Artifact("/path/to/model.pt"), name="checkpoint", step=100)
-        run.track(cairn.Artifact(open("data.csv", "rb")), name="data", step=0)
+        run.track(cairn.Artifact({"lr": 1e-3, "model": "cnn"}), name="config", step=0)
+        run.track(cairn.Artifact(model.state_dict()), name="checkpoint", step=100)
+        run.log_artifact(cairn.Artifact(my_dataclass), name="final_state")
     """
     object_type = "artifact"

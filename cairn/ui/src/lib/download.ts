@@ -12,6 +12,7 @@ const MIME_EXT: Record<string, string> = {
   "text/plain": ".txt",
   "application/json": ".json",
   "text/html": ".html",
+  "application/python-pickle": ".pkl",
   "application/octet-stream": ".bin",
 };
 

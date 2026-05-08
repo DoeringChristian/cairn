@@ -220,6 +220,15 @@ def main() -> None:
     run.log_artifact(cairn.Image(fig), name="summary_plot")
     plt.close(fig)
 
+    # Pickle a Python dict via cairn.Artifact — downloads as .pkl in UI
+    config_dict = {
+        "lr": 3e-4,
+        "batch_size": 32,
+        "model": {"type": "cnn", "layers": [64, 128, 256]},
+        "optimizer": "adamw",
+    }
+    run.log_artifact(cairn.Artifact(config_dict), name="run_config")
+
     run.add_note(
         "Demo finished. Check every tab: Overview (params/git/env), "
         "Metrics (loss curves, grad_norm, accuracy), Media (sample images, "
