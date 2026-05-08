@@ -62,7 +62,11 @@ export default function ArtifactCard({ runId, metric, settingsKeyOverride, onRem
     const seqPoints = (q.data?.points ?? []).filter((p) => p.artifact_hash);
     if (seqPoints.length > 0) return seqPoints;
     // Fall back to named artifacts matching this metric name.
-    const named = (artifactsQ.data?.named ?? []).filter((a: any) => a.name === metric.name);
+    // Sort by step ascending so the slider goes 0 → max left-to-right.
+    const named = (artifactsQ.data?.named ?? [])
+      .filter((a: any) => a.name === metric.name)
+      .slice()
+      .sort((a: any, b: any) => (a.step ?? 0) - (b.step ?? 0));
     return named.map((a: any) => ({
       step: a.step ?? 0,
       wall_time: a.created_at,
