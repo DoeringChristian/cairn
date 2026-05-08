@@ -183,6 +183,45 @@ export function addCardToComparison(
   if (cmp) syncComparisonToServer(projectId, cmp);
 }
 
+export function addRunsToComparison(
+  projectId: string,
+  comparisonId: string,
+  runIds: string[],
+): void {
+  if (runIds.length === 0) return;
+  const list = loadComparisons(projectId);
+  const next = list.map((c) => {
+    if (c.id !== comparisonId) return c;
+    const existing = new Set(c.runIds ?? []);
+    for (const id of runIds) existing.add(id);
+    return { ...c, runIds: Array.from(existing) };
+  });
+  saveComparisons(projectId, next);
+  const cmp = next.find((c) => c.id === comparisonId);
+  if (cmp) syncComparisonToServer(projectId, cmp);
+}
+
+export function removeRunFromComparison(
+  projectId: string,
+  comparisonId: string,
+  runId: string,
+): void {
+  const list = loadComparisons(projectId);
+  const next = list.map((c) => {
+    if (c.id !== comparisonId) return c;
+    const filteredRunIds = (c.runIds ?? []).filter((id) => id !== runId);
+    // Also remove the run's series from every card.
+    const filteredCards = c.cards.map((card) => ({
+      ...card,
+      series: card.series.filter((s) => s.runId !== runId),
+    }));
+    return { ...c, runIds: filteredRunIds, cards: filteredCards };
+  });
+  saveComparisons(projectId, next);
+  const cmp = next.find((c) => c.id === comparisonId);
+  if (cmp) syncComparisonToServer(projectId, cmp);
+}
+
 export function reorderComparisonCards(
   projectId: string,
   comparisonId: string,

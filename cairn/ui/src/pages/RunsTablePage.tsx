@@ -422,7 +422,7 @@ export default function RunsTablePage() {
       </div>
 
       <div
-        className={`mb-3 flex items-center justify-between gap-3 rounded-lg border border-accent/40 bg-accent/10 px-3 py-2 text-sm transition-opacity ${selectedCount > 0 ? "opacity-100" : "opacity-0 pointer-events-none"}`}
+        className={`sticky top-0 z-20 mb-3 flex items-center justify-between gap-3 rounded-lg border border-accent/40 bg-accent/10 backdrop-blur-sm px-3 py-2 text-sm transition-opacity ${selectedCount > 0 ? "opacity-100" : "opacity-0 pointer-events-none"}`}
         aria-hidden={selectedCount === 0}
       >
         <span className="text-fg">

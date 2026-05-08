@@ -8,6 +8,7 @@ import ParallelCoordsCard from "../components/ParallelCoordsCard";
 import ScatterPlotCard from "../components/ScatterPlotCard";
 import {
   addCardToComparison,
+  addRunsToComparison,
   createComparison,
   createTemplate,
   deleteTemplate,
@@ -15,6 +16,7 @@ import {
   deleteComparison,
   loadComparisons,
   removeCardFromComparison,
+  removeRunFromComparison,
   renameComparison,
   saveComparisons,
   syncComparisonsFromServer,
@@ -30,7 +32,8 @@ import { formatRelative } from "../lib/format";
 import { useRuns } from "../api/hooks";
 import { api } from "../api/client";
 
-import { setRunMetadata } from "../lib/run-label";
+import { setRunMetadata, shortRunLabel } from "../lib/run-label";
+import type { Run } from "../api/types";
 import type { SequenceMeta } from "../api/types";
 
 export default function ComparePage() {
@@ -315,12 +318,25 @@ export default function ComparePage() {
             {selected ? (
               <ComparisonView
                 comparison={selected}
+                allProjectRuns={runs}
                 allProjectRunIds={allProjectRunIds}
                 projectId={projectId}
                 onRename={(name) => handleRename(selected.id, name)}
                 onDelete={() => handleDelete(selected.id)}
                 onRemoveCard={(cardId) => handleRemoveCard(selected.id, cardId)}
                 onAddCard={(sel) => handleAddCard(selected.id, sel)}
+                onAddRuns={(runIds) => {
+                  if (projectId) {
+                    addRunsToComparison(projectId, selected.id, runIds);
+                    refresh();
+                  }
+                }}
+                onRemoveRun={(runId) => {
+                  if (projectId) {
+                    removeRunFromComparison(projectId, selected.id, runId);
+                    refresh();
+                  }
+                }}
                 onRefreshSmartFilters={handleRefreshSmartFilters}
                 onReorderCards={(fromId, toId) => {
                   if (projectId) {
@@ -572,24 +588,30 @@ function SidebarRow({
 
 interface ComparisonViewProps {
   comparison: Comparison;
+  allProjectRuns: Run[];
   allProjectRunIds: string[];
   projectId: string;
   onRename: (name: string) => void;
   onDelete: () => void;
   onRemoveCard: (cardId: string) => void;
   onAddCard: (sel: AddCardSelection) => void;
+  onAddRuns: (runIds: string[]) => void;
+  onRemoveRun: (runId: string) => void;
   onRefreshSmartFilters: (comparisonId: string, smartFilters: SmartFilters) => Promise<void>;
   onReorderCards: (fromId: string, toId: string) => void;
 }
 
 function ComparisonView({
   comparison,
+  allProjectRuns,
   allProjectRunIds,
   projectId,
   onRename,
   onDelete,
   onRemoveCard,
   onAddCard,
+  onAddRuns,
+  onRemoveRun,
   onRefreshSmartFilters,
   onReorderCards,
 }: ComparisonViewProps) {
@@ -715,6 +737,13 @@ function ComparisonView({
           </button>
         </div>
       </div>
+
+      <ComparisonRunsPanel
+        compRunIds={compRunIds}
+        allProjectRuns={allProjectRuns}
+        onAddRuns={onAddRuns}
+        onRemoveRun={onRemoveRun}
+      />
 
       <AddCardModal
         open={addCardOpen}
@@ -896,6 +925,108 @@ function TemplateSidebar({ projectId }: { projectId: string }) {
           </li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ComparisonRunsPanel — view + add/remove runs for a comparison
+// ---------------------------------------------------------------------------
+
+interface ComparisonRunsPanelProps {
+  compRunIds: string[];
+  allProjectRuns: Run[];
+  onAddRuns: (runIds: string[]) => void;
+  onRemoveRun: (runId: string) => void;
+}
+
+function ComparisonRunsPanel({
+  compRunIds,
+  allProjectRuns,
+  onAddRuns,
+  onRemoveRun,
+}: ComparisonRunsPanelProps) {
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const includedSet = useMemo(() => new Set(compRunIds), [compRunIds]);
+
+  const candidates = useMemo(
+    () => allProjectRuns.filter((r) => !includedSet.has(r.id)),
+    [allProjectRuns, includedSet],
+  );
+
+  const includedRuns = useMemo(
+    () => compRunIds
+      .map((id) => allProjectRuns.find((r) => r.id === id))
+      .filter((r): r is Run => r !== undefined),
+    [compRunIds, allProjectRuns],
+  );
+
+  return (
+    <div className="card p-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <span className="text-xs uppercase tracking-wide text-fg-muted">
+          Runs in comparison ({compRunIds.length})
+        </span>
+        <button
+          type="button"
+          onClick={() => setPickerOpen((v) => !v)}
+          className="inline-flex h-6 items-center justify-center rounded border border-border bg-bg px-2 text-[10px] text-fg-muted hover:border-accent hover:text-fg"
+        >
+          {pickerOpen ? "Done" : `+ Add runs (${candidates.length} available)`}
+        </button>
+      </div>
+
+      {/* Included runs as removable chips */}
+      {compRunIds.length === 0 ? (
+        <p className="text-xs text-fg-subtle">
+          No runs yet. Click "Add runs" or drag a series chip into a card.
+        </p>
+      ) : (
+        <div className="flex flex-wrap gap-1.5">
+          {includedRuns.map((r) => (
+            <span
+              key={r.id}
+              className="group/chip inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-hover px-1.5 py-0.5 text-[11px] mono"
+              title={r.id}
+            >
+              <span className="text-fg">{shortRunLabel(r.id)}</span>
+              <button
+                type="button"
+                onClick={() => onRemoveRun(r.id)}
+                className="text-fg-subtle hover:text-status-failed"
+                aria-label={`Remove ${shortRunLabel(r.id)} from comparison`}
+                title={`Remove ${shortRunLabel(r.id)}`}
+              >
+                {"×"}
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Picker — list of candidate runs, click to add */}
+      {pickerOpen && (
+        <div className="mt-2 border-t border-border-subtle pt-2">
+          {candidates.length === 0 ? (
+            <p className="text-xs text-fg-subtle">All runs already in this comparison.</p>
+          ) : (
+            <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto">
+              {candidates.map((r) => (
+                <button
+                  key={r.id}
+                  type="button"
+                  onClick={() => onAddRuns([r.id])}
+                  className="inline-flex items-center gap-1 rounded border border-border-subtle bg-bg px-1.5 py-0.5 text-[11px] mono text-fg-muted hover:border-accent hover:text-fg"
+                  title={r.id}
+                >
+                  <span aria-hidden="true">+</span>
+                  {r.display_name ?? shortRunLabel(r.id)}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
