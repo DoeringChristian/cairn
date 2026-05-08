@@ -63,6 +63,30 @@ def _url_from_holder(holder: dict[str, Any]) -> str | None:
     return None
 
 
+def _probe_server(url: str) -> None:
+    """Probe ``<url>/api/health`` and warn if unreachable.
+
+    Used when the user explicitly passes ``repo="cairn://host:port"`` — without
+    this, the user only learns about a wrong host/port from cryptic httpx
+    retry errors deep in the run. Emits a clear warning at startup so the
+    cause is obvious.
+    """
+    import httpx
+
+    try:
+        resp = httpx.get(f"{url}/api/health", timeout=2.0)
+        if resp.status_code != 200:
+            raise RuntimeError(f"status {resp.status_code}")
+    except Exception as exc:  # noqa: BLE001
+        cairn_url = url.replace("http://", "cairn://", 1) if url.startswith("http://") else url
+        log.warning(
+            "Cairn server at %s did not respond to /api/health (%s). "
+            "Run creation and writes will likely fail — check that the "
+            "server is running on this host:port.",
+            cairn_url, exc,
+        )
+
+
 def _verify_reachable(url: str, repo: Path) -> None:
     """Probe ``<url>/api/health`` so the SDK fails fast if the holder is hung.
 
@@ -138,7 +162,10 @@ class Run:
                     self._transport = Transport(url, timeout=timeout)
                     self._server = url
             else:
-                # cairn:// URL → HTTP mode.
+                # cairn:// URL → HTTP mode. Probe /api/health so we fail
+                # fast (with a clear message) instead of silently buffering
+                # writes to an unreachable address.
+                _probe_server(target.location)
                 self._transport = Transport(target.location, timeout=timeout)
                 self._server = target.location
             self._owns_transport = True
