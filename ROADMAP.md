@@ -79,6 +79,91 @@ session-level plans live in `~/.claude/plans/`.
 - 💭 **Resume runs** — `cairn.Run(resume="run_id")` re-opens an existing run
   to add more data (not currently supported).
 
+### Decouple data types from view types (major refactor)
+
+Currently `cairn.Image`, `cairn.Tensor`, etc. conflate two concerns: how
+data is stored AND how it is rendered in the UI. A 2D tensor logged as
+`cairn.Tensor` can only ever render as the tensor stats card. We want
+data and views to be independent.
+
+**Goal:** the user logs data with a storage type and tags. The UI offers
+multiple compatible cards (heatmap, histogram, raw stats, image-of-tensor)
+and the user picks the view per-card-instance. Custom card types can be
+registered.
+
+#### API ideas
+
+- 💭 **Storage type vs view type**
+  ```python
+  run.track(arr, name="weights", type="tensor")     # data + storage tag
+  # UI: any card whose `accepts(meta)` returns True can render this
+  ```
+
+- 💭 **Multi-view per data type**
+  A 2D tensor could render as: stats card, histogram, heatmap, image,
+  3D surface. Each card declares its data compatibility predicate.
+
+- 💭 **Card registration with predicate**
+  ```python
+  @register_card_type({
+      "id": "heatmap",
+      "name": "Heatmap",
+      "accepts": lambda meta: meta["object_type"] == "tensor"
+                              and len(meta.get("shape", [])) == 2,
+  })
+  ```
+
+- 💭 **Tags as orthogonal dimension**
+  ```python
+  run.track(grad, name="grad.layer0", type="tensor",
+            tags=["gradient", "layer0", "training"])
+  ```
+  Cards can filter by tags — e.g., a "Gradient flow" card aggregates
+  everything tagged "gradient" across layers.
+
+- 💭 **User picks view from dropdown**
+  When a card is added, the user picks the view from the list of
+  compatible cards. Defaults to the most specific match.
+
+- 💭 **Composite / inspector cards**
+  An "Inspector" card that internally composes other cards: e.g., shows
+  a tensor as image + histogram + stats simultaneously.
+
+- 💭 **Multi-output single track call**
+  ```python
+  run.track(arr, name="preds", views=["raw_tensor", "argmax_image", "topk_text"])
+  ```
+  One `track()` call writes multiple derived blobs, UI shows all.
+  Trade-off: storage vs compute (derivation could also be lazy).
+
+- 💭 **Server-side derived views**
+  Store raw data once. Server generates derived representations
+  (histogram of tensor, image of 2D matrix, etc.) on-demand or on
+  ingestion. Saves storage; expensive views computed lazily and cached.
+
+- 💭 **View presets**
+  Save a card configuration (zoom, colormap, baseline) as a named
+  preset that can be applied to any compatible data.
+
+- 💭 **Custom type ↔ card matrix**
+
+  | Data type   | Default view  | Alternative views                  |
+  |-------------|---------------|------------------------------------|
+  | `tensor`    | stats         | histogram, image (2D), heatmap, 3D |
+  | `image`     | image         | pixel histogram, stats             |
+  | `audio`     | player        | spectrogram, waveform              |
+  | `video`     | player        | frame strip, motion plot           |
+  | `histogram` | bar chart     | line, kde estimate                 |
+
+- 💭 **Plugin discovery via entry points**
+  Third-party packages can register both data handlers AND card types
+  via `cairn.cards` and `cairn.handlers` entry points. UI fetches the
+  list of registered cards from the server at startup.
+
+- 💭 **Schema versioning per type**
+  Card declares a min/max compatible schema version for a data type.
+  Lets data types evolve without breaking existing card code.
+
 ### Server / deployment
 
 - 💭 **Auth** — currently v1 explicitly skipped this. Eventually need
