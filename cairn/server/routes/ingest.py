@@ -188,6 +188,7 @@ async def post_artifact(request: Request) -> dict[str, Any]:
     file = form.get("file")
     mime_type = form.get("mime_type")
     metadata = form.get("metadata", "{}")
+    object_type = form.get("object_type")
     if file is None or not hasattr(file, "read"):
         raise HTTPException(status_code=400, detail="missing `file` multipart field")
     if not isinstance(mime_type, str):
@@ -197,7 +198,8 @@ async def post_artifact(request: Request) -> dict[str, Any]:
         meta_dict = json.loads(metadata) if metadata else {}
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="metadata must be JSON") from None
-    return ingest_ops.put_artifact(db, blobs, data, mime_type, meta_dict)
+    obj_type = object_type if isinstance(object_type, str) else None
+    return ingest_ops.put_artifact(db, blobs, data, mime_type, meta_dict, object_type=obj_type)
 
 
 @router.post("/runs/{run_id}/artifacts")

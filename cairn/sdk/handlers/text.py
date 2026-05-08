@@ -31,3 +31,7 @@ class TextHandler:
         else:
             meta["preview"] = s[:200] + ("…" if len(s) > 200 else "")
         return data, meta
+
+    def deserialize(self, data: bytes, metadata: dict[str, Any] | None = None) -> str:
+        """Decode UTF-8 bytes back into a str."""
+        return data.decode("utf-8")

@@ -42,3 +42,7 @@ class ArtifactHandler:
             meta[k] = v
 
         return data, meta
+
+    def deserialize(self, data: bytes, metadata: dict[str, Any] | None = None) -> Any:
+        """Unpickle the bytes back into the original Python object."""
+        return pickle.loads(data)

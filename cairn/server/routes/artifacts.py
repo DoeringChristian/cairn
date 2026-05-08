@@ -25,7 +25,8 @@ def list_run_artifacts(run_id: str, request: Request) -> dict[str, Any]:
         """
         SELECT ra.name, ra.hash,
                CASE WHEN ra.step = -1 THEN NULL ELSE ra.step END AS step,
-               ra.created_at, a.mime_type, a.size_bytes, a.metadata
+               ra.created_at, a.mime_type, a.size_bytes, a.metadata,
+               a.object_type
         FROM run_artifacts ra
         JOIN artifacts a ON a.hash = ra.hash
         WHERE ra.run_id = ?

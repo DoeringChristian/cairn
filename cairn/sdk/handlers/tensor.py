@@ -45,3 +45,7 @@ class TensorHandler:
             "size_bytes": int(arr.nbytes),
         }
         return data, meta
+
+    def deserialize(self, data: bytes, metadata: dict[str, Any] | None = None) -> "np.ndarray":
+        """Load .npy bytes back into a numpy array."""
+        return np.load(io.BytesIO(data), allow_pickle=False)

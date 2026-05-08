@@ -81,6 +81,7 @@ SCHEMA_SQL: list[str] = [
         mime_type     TEXT NOT NULL,
         size_bytes    INTEGER NOT NULL,
         metadata      TEXT,
+        object_type   TEXT,
         created_at    TEXT NOT NULL
     )
     """,
@@ -152,6 +153,7 @@ def apply_migrations(con: sqlite3.Connection) -> int:
 
     # Incremental column migrations for existing databases.
     _add_column_if_missing(con, "runs", "last_heartbeat", "TEXT")
+    _add_column_if_missing(con, "artifacts", "object_type", "TEXT")
 
     existing = con.execute("SELECT version FROM schema_version").fetchall()
     if not existing:

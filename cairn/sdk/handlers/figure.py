@@ -100,6 +100,20 @@ class FigureHandler:
                 log.warning("mpl_to_plotly conversion failed: %s", exc)
         return png, meta
 
+    def deserialize(self, data: bytes, metadata: dict[str, Any] | None = None) -> Any:
+        """Decode the rasterized PNG back into a PIL Image.
+
+        The original interactive Plotly source isn't returned here — it lives
+        in a separate blob referenced by ``metadata['source_hash']``. Use
+        ``run.artifact_bytes()`` with that hash if you need the source JSON.
+        """
+        import io as _io
+        try:
+            from PIL import Image as PILImage
+        except ImportError as e:
+            raise ImportError("Reading figure artifacts requires Pillow") from e
+        return PILImage.open(_io.BytesIO(data))
+
 
 def _blank_png() -> bytes:
     """1x1 transparent PNG — placeholder when no rasterizer is available."""

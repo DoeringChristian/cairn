@@ -49,3 +49,10 @@ class HistogramHandler:
             "mean": float(flat.mean()) if flat.size else 0.0,
         }
         return data, meta
+
+    def deserialize(
+        self, data: bytes, metadata: dict[str, Any] | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Load .npz bytes into ``(counts, edges)`` numpy arrays."""
+        loaded = np.load(io.BytesIO(data))
+        return loaded["counts"], loaded["edges"]

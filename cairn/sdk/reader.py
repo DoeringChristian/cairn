@@ -289,7 +289,7 @@ class Run:
             result.append(ArtifactInfo(
                 name=r["name"], hash=r["hash"], step=r.get("step"),
                 mime_type=r.get("mime_type", ""), size_bytes=r.get("size_bytes", 0),
-                metadata=r.get("metadata"),
+                metadata=r.get("metadata"), object_type=r.get("object_type"),
             ))
         for r in data.get("from_sequences", []):
             result.append(ArtifactInfo(
@@ -299,15 +299,61 @@ class Run:
             ))
         return result
 
-    def artifact(self, name: str, step: int | None = None) -> bytes:
-        """Download artifact bytes by name (and optional step)."""
+    def _find_artifact(self, name: str, step: int | None) -> dict[str, Any]:
+        """Locate an artifact entry by name (and optional step)."""
         arts = self._backend.list_artifacts(self.id)
-        # Search named artifacts first, then sequence artifacts.
         for pool in (arts.get("named", []), arts.get("from_sequences", [])):
             for a in pool:
                 if a["name"] == name and (step is None or a.get("step") == step):
-                    return self._backend.get_artifact_bytes(a["hash"])
-        raise KeyError(f"No artifact named {name!r}" + (f" at step {step}" if step is not None else ""))
+                    return a
+        raise KeyError(
+            f"No artifact named {name!r}"
+            + (f" at step {step}" if step is not None else "")
+        )
+
+    def artifact_bytes(self, name: str, step: int | None = None) -> bytes:
+        """Download an artifact's raw bytes (no deserialization)."""
+        a = self._find_artifact(name, step)
+        return self._backend.get_artifact_bytes(a["hash"])
+
+    def artifact(self, name: str, step: int | None = None) -> Any:
+        """Download an artifact and deserialize back to its original Python type.
+
+        Uses the artifact's ``object_type`` to dispatch to the matching
+        handler's ``deserialize()`` method:
+
+        - ``artifact``  → unpickled Python object (any picklable type)
+        - ``image``     → PIL.Image
+        - ``audio``     → ``(samples: np.ndarray, sample_rate: int)``
+        - ``video``     → np.ndarray (T, H, W, C)
+        - ``tensor``    → np.ndarray
+        - ``text``      → str
+        - ``histogram`` → ``(counts: np.ndarray, edges: np.ndarray)``
+        - ``figure``    → PIL.Image (rasterized; use ``artifact_bytes`` for source)
+
+        For unknown types, falls back to raw bytes. Use ``artifact_bytes()``
+        explicitly when you want raw bytes regardless of type.
+        """
+        from .handlers.registry import default_registry
+
+        a = self._find_artifact(name, step)
+        data = self._backend.get_artifact_bytes(a["hash"])
+        object_type = a.get("object_type")
+        if not object_type:
+            # Unknown type — return raw bytes.
+            return data
+        handler = default_registry.find_by_type(object_type)
+        if handler is None or not hasattr(handler, "deserialize"):
+            return data
+        # Parse metadata if it's a JSON string.
+        meta = a.get("metadata")
+        if isinstance(meta, str):
+            import json as _json
+            try:
+                meta = _json.loads(meta)
+            except _json.JSONDecodeError:
+                meta = {}
+        return handler.deserialize(data, meta or {})
 
     def artifact_path(self, name: str, step: int | None = None) -> Path | None:
         """Return the local file path for an artifact (local backend only)."""
@@ -617,7 +663,7 @@ class _LocalBackend:
     def list_artifacts(self, run_id: str) -> dict[str, Any]:
         named = self._db.read_columns(
             """SELECT ra.name, ra.hash, CASE WHEN ra.step = -1 THEN NULL ELSE ra.step END AS step,
-                      a.mime_type, a.size_bytes, a.metadata
+                      a.mime_type, a.size_bytes, a.metadata, a.object_type
                FROM run_artifacts ra JOIN artifacts a ON a.hash = ra.hash
                WHERE ra.run_id = ? ORDER BY ra.created_at DESC""",
             [run_id],
@@ -842,5 +888,8 @@ class Reader:
 
     def __repr__(self) -> str:
         if isinstance(self._backend, _LocalBackend):
-            return f"Reader(repo={self._backend._dd.root!r})"
-        return f"Reader(server={self._backend._base!r})"
+            return f"Reader(repo={str(self._backend._dd.root)!r})"
+        # HTTP backend: convert http://host:port → cairn://host:port for display
+        base = self._backend._base
+        cairn_url = base.replace("http://", "cairn://", 1) if base.startswith("http://") else base
+        return f"Reader(repo={cairn_url!r})"

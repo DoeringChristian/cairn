@@ -110,3 +110,7 @@ class ImageHandler:
             "preview": preview,
         }
         return data, meta
+
+    def deserialize(self, data: bytes, metadata: dict[str, Any] | None = None) -> Any:
+        """Decode the PNG bytes back into a PIL Image."""
+        return PILImage.open(io.BytesIO(data))

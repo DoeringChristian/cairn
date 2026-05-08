@@ -99,3 +99,29 @@ class AudioHandler:
             "num_samples": int(flat.size / max(channels, 1)),
         }
         return data, meta
+
+    def deserialize(
+        self, data: bytes, metadata: dict[str, Any] | None = None,
+    ) -> tuple[np.ndarray, int]:
+        """Decode WAV bytes into ``(samples, sample_rate)``.
+
+        ``samples`` is a numpy array of shape ``(frames,)`` for mono or
+        ``(frames, channels)`` for multi-channel.
+        """
+        sf = try_import("soundfile")
+        buf = io.BytesIO(data)
+        if sf is not None:
+            arr, rate = sf.read(buf)
+            return np.asarray(arr), int(rate)
+        # stdlib wave fallback
+        import wave
+        with wave.open(buf, "rb") as wf:
+            rate = wf.getframerate()
+            channels = wf.getnchannels()
+            sampwidth = wf.getsampwidth()
+            frames = wf.readframes(wf.getnframes())
+        dtype = {1: np.int8, 2: np.int16, 4: np.int32}.get(sampwidth, np.int16)
+        arr = np.frombuffer(frames, dtype=dtype)
+        if channels > 1:
+            arr = arr.reshape(-1, channels)
+        return arr, int(rate)

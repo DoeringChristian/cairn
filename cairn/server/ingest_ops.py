@@ -181,15 +181,17 @@ def put_artifact(
     data: bytes,
     mime_type: str,
     metadata: dict[str, Any] | None = None,
+    object_type: str | None = None,
 ) -> dict[str, Any]:
     digest, size = blobs.put(data, mime_type, metadata or {})
     db.write(
         """
-        INSERT INTO artifacts (hash, mime_type, size_bytes, metadata, created_at)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT (hash) DO NOTHING
+        INSERT INTO artifacts (hash, mime_type, size_bytes, metadata, object_type, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT (hash) DO UPDATE SET
+            object_type = COALESCE(EXCLUDED.object_type, artifacts.object_type)
         """,
-        [digest, mime_type, size, json.dumps(metadata or {}), utc_now()],
+        [digest, mime_type, size, json.dumps(metadata or {}), object_type, utc_now()],
     )
     return {"hash": digest, "size_bytes": size}
 

@@ -209,25 +209,33 @@ class Transport:
         )
 
     def upload_artifact(
-        self, data: bytes, mime_type: str, metadata: dict[str, Any] | None = None
+        self,
+        data: bytes,
+        mime_type: str,
+        metadata: dict[str, Any] | None = None,
+        object_type: str | None = None,
     ) -> str:
         """Hash, dedup-probe, upload if absent; return the sha256 digest."""
         digest = hashlib.sha256(data).hexdigest()
-        # WAL the artifact before attempting upload
         seq = self._wal.append_artifact(data, mime_type, metadata) if self._wal else None
         try:
             head_resp = self.head(f"/api/artifacts/{digest}")
             if head_resp.status_code != 200:
+                form_data: dict[str, Any] = {
+                    "mime_type": mime_type,
+                    "metadata": json.dumps(metadata or {}),
+                }
+                if object_type:
+                    form_data["object_type"] = object_type
                 self.post_multipart(
                     "/api/artifacts",
                     files={"file": ("blob", data, mime_type)},
-                    data={"mime_type": mime_type, "metadata": json.dumps(metadata or {})},
+                    data=form_data,
                 )
             if seq is not None and self._wal:
                 self._wal.checkpoint(seq)
         except (httpx.HTTPError, OSError) as exc:
             log.warning("artifact upload failed (WAL seq %s): %s", seq, exc)
-            # Artifact is in WAL — will be replayed on drain
         return digest
 
     def drain_wal(self) -> int:

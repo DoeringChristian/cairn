@@ -367,7 +367,9 @@ class Run:
             if source_blob is not None and source_mime is not None:
                 src_hash = self._transport.upload_artifact(source_blob, source_mime, {})
                 meta["source_hash"] = src_hash
-            digest = self._transport.upload_artifact(blob, handler.mime_type, meta)
+            digest = self._transport.upload_artifact(
+                blob, handler.mime_type, meta, object_type=handler.object_type,
+            )
             point["artifact_hash"] = digest
 
         self._metric_buffer.append(point)
@@ -430,7 +432,9 @@ class Run:
         blob, meta = handler.serialize(payload, **kw)
         meta.pop("_source_blob", None)
         meta.pop("_source_mime", None)
-        digest = self._transport.upload_artifact(blob, handler.mime_type, meta)
+        digest = self._transport.upload_artifact(
+            blob, handler.mime_type, meta, object_type=handler.object_type,
+        )
         self._transport.attach_artifact(self._run_id, name, digest, step=step)
         return digest
 

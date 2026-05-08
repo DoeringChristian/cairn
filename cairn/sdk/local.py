@@ -209,17 +209,26 @@ class LocalTransport:
         else:
             ingest_ops.save_source(self.db, self.data_dir, run_id, archive, manifest)
 
-    def upload_artifact(self, data: bytes, mime_type: str, metadata: dict[str, Any] | None = None) -> str:
+    def upload_artifact(
+        self,
+        data: bytes,
+        mime_type: str,
+        metadata: dict[str, Any] | None = None,
+        object_type: str | None = None,
+    ) -> str:
         if self._use_wal:
             digest = hashlib.sha256(data).hexdigest()
             self.blobs.put(data, mime_type, metadata)
             self._wal_write("artifact_meta", {
                 "hash": digest, "mime_type": mime_type,
                 "size_bytes": len(data), "metadata": metadata or {},
+                "object_type": object_type,
             })
             return digest
         else:
-            result = ingest_ops.put_artifact(self.db, self.blobs, data, mime_type, metadata)
+            result = ingest_ops.put_artifact(
+                self.db, self.blobs, data, mime_type, metadata, object_type=object_type,
+            )
             return result["hash"]
 
     def heartbeat(self, run_id: str) -> None:

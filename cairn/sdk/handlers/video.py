@@ -116,3 +116,23 @@ class VideoHandler:
             "preview": preview,
         }
         return data, meta
+
+    def deserialize(self, data: bytes, metadata: dict[str, Any] | None = None) -> "np.ndarray":
+        """Decode MP4 bytes back into a (T, H, W, C) uint8 numpy array."""
+        imageio = try_import("imageio")
+        if imageio is None:
+            raise ImportError(
+                "Reading video artifacts requires `cairn-track[media]` (imageio + imageio-ffmpeg)"
+            )
+        import tempfile
+        from pathlib import Path
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+            tmp_path = Path(tmp.name)
+        try:
+            tmp_path.write_bytes(data)
+            reader = imageio.get_reader(str(tmp_path))
+            frames = [np.asarray(f) for f in reader]
+            reader.close()
+        finally:
+            tmp_path.unlink(missing_ok=True)
+        return np.stack(frames) if frames else np.zeros((0, 0, 0, 3), dtype=np.uint8)

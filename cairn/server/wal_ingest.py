@@ -59,17 +59,23 @@ def _ensure_run_exists(db: Database, p: dict[str, Any]) -> None:
 def _ensure_artifact_row(db: Database, p: dict[str, Any]) -> None:
     """Insert artifact metadata row if not present."""
     digest = p["hash"]
-    rows = db.read_columns("SELECT hash FROM artifacts WHERE hash = ?", [digest])
-    if rows:
-        return
+    rows = db.read_columns("SELECT hash, object_type FROM artifacts WHERE hash = ?", [digest])
     from .ingest_ops import utc_now
+    if rows:
+        # Backfill object_type if missing.
+        if not rows[0].get("object_type") and p.get("object_type"):
+            db.write(
+                "UPDATE artifacts SET object_type = ? WHERE hash = ?",
+                [p["object_type"], digest],
+            )
+        return
     db.write(
         """
-        INSERT INTO artifacts (hash, mime_type, size_bytes, metadata, created_at)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO artifacts (hash, mime_type, size_bytes, metadata, object_type, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT (hash) DO NOTHING
         """,
-        [digest, p["mime_type"], p["size_bytes"], json.dumps(p.get("metadata", {})), utc_now()],
+        [digest, p["mime_type"], p["size_bytes"], json.dumps(p.get("metadata", {})), p.get("object_type"), utc_now()],
     )
 
 
