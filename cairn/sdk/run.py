@@ -441,29 +441,18 @@ class Run:
         )
         self._plugins[cls.name] = {"hash": digest, "lang": lang}
 
-    def log_artifact(self, value: Any, name: str, step: int | None = None) -> str:
-        """Log a one-off artifact attached to the run (not a sequence point)."""
-        if self._finished:
-            raise RuntimeError("Run has already been finished")
-        handler: Any = None
-        if isinstance(value, _TypeWrapper):
-            handler = self._registry.find_by_type(value.object_type)
-            payload = value.obj
-            kw = value.kwargs
-        else:
-            handler = self._registry.find_handler(value)
-            payload = value
-            kw = {}
-        if handler is None:
-            raise TypeError(f"No handler for artifact of type {type(value).__name__}")
-        blob, meta = handler.serialize(payload, **kw)
-        meta.pop("_source_blob", None)
-        meta.pop("_source_mime", None)
-        digest = self._transport.upload_artifact(
-            blob, handler.mime_type, meta, object_type=handler.object_type,
-        )
-        self._transport.attach_artifact(self._run_id, name, digest, step=step)
-        return digest
+    def log_artifact(self, value: Any, name: str, step: int | None = None) -> None:
+        """Log an artifact as a sequence point.
+
+        Equivalent to ``run.track(value, name=name, step=step)``. Kept as a
+        convenience for callers who think of the operation as "attach this
+        file to the run" rather than "track this metric over time".
+
+        Single-point artifacts (``step=None``) become a one-element sequence
+        at step 0. Multiple calls with the same ``name`` and different
+        ``step`` values build a time series.
+        """
+        self.track(value, name=name, step=step)
 
     # ---- params / metadata ------------------------------------------------
 
