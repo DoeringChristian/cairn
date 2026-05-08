@@ -4,7 +4,7 @@
  */
 
 import { useMemo, useRef, useState } from "react";
-import { useSequence } from "../api/hooks";
+import { useSequence, useArtifacts } from "../api/hooks";
 import { api } from "../api/client";
 import { safeJsonParse } from "../lib/format";
 import { downloadArtifact, artifactFilename } from "../lib/download";
@@ -54,10 +54,23 @@ export default function ArtifactCard({ runId, metric, settingsKeyOverride, onRem
     context: metric.context_hash || undefined,
     maxPoints: 200,
   });
-  const points = useMemo(
-    () => (q.data?.points ?? []).filter((p) => p.artifact_hash),
-    [q.data],
-  );
+  // Also fetch named artifacts (from log_artifact) as fallback.
+  const artifactsQ = useArtifacts(runId);
+  const points = useMemo(() => {
+    const seqPoints = (q.data?.points ?? []).filter((p) => p.artifact_hash);
+    if (seqPoints.length > 0) return seqPoints;
+    // Fall back to named artifacts matching this metric name.
+    const named = (artifactsQ.data?.named ?? []).filter((a: any) => a.name === metric.name);
+    return named.map((a: any) => ({
+      step: a.step ?? 0,
+      wall_time: a.created_at,
+      artifact_hash: a.hash,
+      artifact_mime: a.mime_type,
+      artifact_size: a.size_bytes,
+      artifact_metadata: a.metadata,
+      object_type: "artifact",
+    }));
+  }, [q.data, artifactsQ.data, metric.name]);
 
   const [settings, updateSettings] = useCardSettings(
     settingsKeyOverride ?? { runId, metricName: metric.name, contextHash: metric.context_hash },
