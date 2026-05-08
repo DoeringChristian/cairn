@@ -90,10 +90,15 @@ def init_cmd(path: Path) -> None:
 
 
 def _find_free_port(host: str, start: int, max_attempts: int = 20) -> int:
-    """Return ``start`` if available, otherwise scan upward for a free port."""
+    """Return ``start`` if available, otherwise scan upward for a free port.
+
+    Uses SO_REUSEADDR so a recently-killed server's TIME_WAIT socket
+    doesn't push us off the default port.
+    """
     for offset in range(max_attempts):
         port = start + offset
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 s.bind((host, port))
                 return port
