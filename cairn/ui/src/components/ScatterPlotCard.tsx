@@ -279,8 +279,7 @@ export default function ScatterPlotCard({
         {hoveredPt && tooltipPos && (() => {
           const pt = scatterPoints.find((p) => p.runId === hoveredPt);
           if (!pt) return null;
-          const run = runs?.find((r) => r.id === pt.runId);
-          const label = run?.display_name ?? shortRunLabel(pt.runId);
+          const label = shortRunLabel(pt.runId, runIds);
           return (
             <foreignObject x={tooltipPos.x + 12} y={tooltipPos.y - 10} width={220} height={200} style={{ overflow: "visible", pointerEvents: "none" }}>
               <div className="rounded border border-border bg-bg-elevated shadow-lg p-2 text-xs w-fit max-w-[220px]" style={{ pointerEvents: "none" }}>

@@ -32,7 +32,7 @@ import { formatRelative } from "../lib/format";
 import { useRuns } from "../api/hooks";
 import { api } from "../api/client";
 
-import { setRunMetadata, shortRunLabel } from "../lib/run-label";
+import { setRunMetadata, disambiguateRunLabels } from "../lib/run-label";
 import type { Run } from "../api/types";
 import type { SequenceMeta } from "../api/types";
 
@@ -961,6 +961,19 @@ function ComparisonRunsPanel({
     [compRunIds, allProjectRuns],
   );
 
+  // Disambiguate chip labels (recomputed when set changes).
+  const chipLabels = useMemo(
+    () => disambiguateRunLabels(compRunIds),
+    [compRunIds],
+  );
+
+  // Disambiguate the candidate picker labels too — using ALL project runs
+  // as siblings so duplicates surface clearly.
+  const candidateLabels = useMemo(
+    () => disambiguateRunLabels(allProjectRuns.map((r) => r.id)),
+    [allProjectRuns],
+  );
+
   return (
     <div className="card p-3">
       <div className="mb-2 flex items-center justify-between gap-2">
@@ -983,24 +996,27 @@ function ComparisonRunsPanel({
         </p>
       ) : (
         <div className="flex flex-wrap gap-1.5">
-          {includedRuns.map((r) => (
-            <span
-              key={r.id}
-              className="group/chip inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-hover px-1.5 py-0.5 text-[11px] mono"
-              title={r.id}
-            >
-              <span className="text-fg">{shortRunLabel(r.id)}</span>
-              <button
-                type="button"
-                onClick={() => onRemoveRun(r.id)}
-                className="text-fg-subtle hover:text-status-failed"
-                aria-label={`Remove ${shortRunLabel(r.id)} from comparison`}
-                title={`Remove ${shortRunLabel(r.id)}`}
+          {includedRuns.map((r) => {
+            const label = chipLabels[r.id] ?? r.id.slice(0, 6);
+            return (
+              <span
+                key={r.id}
+                className="group/chip inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-hover px-1.5 py-0.5 text-[11px] mono"
+                title={r.id}
               >
-                {"×"}
-              </button>
-            </span>
-          ))}
+                <span className="text-fg">{label}</span>
+                <button
+                  type="button"
+                  onClick={() => onRemoveRun(r.id)}
+                  className="text-fg-subtle hover:text-status-failed"
+                  aria-label={`Remove ${label} from comparison`}
+                  title={`Remove ${label}`}
+                >
+                  {"×"}
+                </button>
+              </span>
+            );
+          })}
         </div>
       )}
 
@@ -1020,7 +1036,7 @@ function ComparisonRunsPanel({
                   title={r.id}
                 >
                   <span aria-hidden="true">+</span>
-                  {r.display_name ?? shortRunLabel(r.id)}
+                  {candidateLabels[r.id] ?? r.id.slice(0, 6)}
                 </button>
               ))}
             </div>

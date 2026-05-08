@@ -72,42 +72,120 @@ export function formatRunLabel(runId: string): string {
 }
 
 /**
+ * Generate minimal disambiguating labels for a set of runs.
+ *
+ * Returns a map of `runId → label` where each label is the shortest form
+ * that uniquely identifies the run within the input set. The strategy
+ * (per group of runs sharing a name):
+ *
+ *   1. Just the name        — when the name is unique across the input.
+ *   2. `name HH:MM:SS`      — when ≥2 runs share a name, all on the same day.
+ *   3. `name MMM dd HH:MM:SS` — when ≥2 runs share a name across days.
+ *   4. `name HH:MM:SS (abc123)` — when even the timestamp collides.
+ *   5. `abc123` (6-char hash) — when no metadata is available.
+ *
+ * Each name-group is independent: singleton groups always get the bare name,
+ * even if other groups need timestamps.
+ */
+export function disambiguateRunLabels(runIds: string[]): Record<string, string> {
+  const result: Record<string, string> = {};
+  if (runIds.length === 0) return result;
+
+  // Resolve metadata for each run (use cached fallback for unknowns).
+  type Resolved = {
+    runId: string;
+    name: string;
+    date: Date | null;
+  };
+  const resolved: Resolved[] = runIds.map((runId) => {
+    const run = runMetadataCache.get(runId);
+    if (!run) {
+      return { runId, name: runId.length > 6 ? runId.slice(0, 6) : runId, date: null };
+    }
+    let date: Date | null = null;
+    try {
+      const d = new Date(run.created_at);
+      if (!Number.isNaN(d.getTime())) date = d;
+    } catch { /* keep null */ }
+    return { runId, name: run.display_name ?? runId.slice(0, 6), date };
+  });
+
+  // Group by name.
+  const byName = new Map<string, Resolved[]>();
+  for (const r of resolved) {
+    const arr = byName.get(r.name) ?? [];
+    arr.push(r);
+    byName.set(r.name, arr);
+  }
+
+  for (const [name, group] of byName) {
+    if (group.length === 1) {
+      result[group[0]!.runId] = name;
+      continue;
+    }
+
+    // Determine if the group spans multiple days (need date prefix).
+    const dayKeys = new Set(
+      group.map((r) => (r.date ? r.date.toDateString() : "")),
+    );
+    const spansDays = dayKeys.size > 1;
+
+    // First pass: name + (date?) + time
+    const tentative: Record<string, string> = {};
+    const seen = new Set<string>();
+    let hasCollision = false;
+    for (const r of group) {
+      let label: string;
+      if (r.date) {
+        const ts = r.date.toLocaleTimeString(undefined, {
+          hour: "2-digit", minute: "2-digit", second: "2-digit",
+        });
+        if (spansDays) {
+          const date = r.date.toLocaleDateString(undefined, {
+            month: "short", day: "numeric",
+          });
+          label = `${name} ${date} ${ts}`;
+        } else {
+          label = `${name} ${ts}`;
+        }
+      } else {
+        // No date metadata at all — fall back to hash suffix.
+        label = `${name} (${r.runId.slice(0, 6)})`;
+      }
+      if (seen.has(label)) hasCollision = true;
+      seen.add(label);
+      tentative[r.runId] = label;
+    }
+
+    if (!hasCollision) {
+      Object.assign(result, tentative);
+      continue;
+    }
+
+    // Second pass: append a hash suffix to break ties.
+    for (const r of group) {
+      const base = tentative[r.runId]!;
+      result[r.runId] = `${base} (${r.runId.slice(0, 6)})`;
+    }
+  }
+
+  return result;
+}
+
+/**
  * Short format: name, with timestamp only when needed for disambiguation.
  *
  * Pass `siblingRunIds` (other run IDs shown alongside this one) to enable
- * smart disambiguation. Timestamp is appended only when multiple siblings
- * share the same display name.
+ * smart disambiguation. Returns the shortest unique label per the rules
+ * documented in :func:`disambiguateRunLabels`.
  */
 export function shortRunLabel(runId: string, siblingRunIds?: string[]): string {
-  const run = runMetadataCache.get(runId);
-  if (!run) return runId.length > 6 ? runId.slice(0, 6) : runId;
-
-  const name = run.display_name ?? runId.slice(0, 6);
-
-  // Check if disambiguation is needed
-  let needsTimestamp = false;
-  if (siblingRunIds && siblingRunIds.length > 1) {
-    for (const sid of siblingRunIds) {
-      if (sid === runId) continue;
-      const other = runMetadataCache.get(sid);
-      const otherName = other?.display_name ?? sid.slice(0, 6);
-      if (otherName === name) {
-        needsTimestamp = true;
-        break;
-      }
-    }
+  if (!siblingRunIds || siblingRunIds.length === 0) {
+    return runName(runId);
   }
-
-  if (needsTimestamp) {
-    try {
-      const d = new Date(run.created_at);
-      const ts = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-      return `${name} ${ts}`;
-    } catch {
-      return name;
-    }
-  }
-  return name;
+  const ids = siblingRunIds.includes(runId) ? siblingRunIds : [...siblingRunIds, runId];
+  const labels = disambiguateRunLabels(ids);
+  return labels[runId] ?? runName(runId);
 }
 
 /**

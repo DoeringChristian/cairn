@@ -1163,7 +1163,7 @@ export default function ScalarPlotCard({
                 <span className="truncate">
                   {m.name}
                   {m.context_hash ? ` · ${m.context_hash.slice(0, 6)}` : ""}
-                  {` · ${shortRunLabel(rid)}`}
+                  {` · ${shortRunLabel(rid, uniqueRunIds)}`}
                 </span>
                 <button
                   type="button"

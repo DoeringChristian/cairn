@@ -411,8 +411,7 @@ export default function ParallelCoordsCard({
     if (!hoveredRun || !tooltipPos) return null;
     const row = rowData.find((r) => r.runId === hoveredRun);
     if (!row) return null;
-    const run = runs?.find((r) => r.id === hoveredRun);
-    const label = run?.display_name ?? shortRunLabel(hoveredRun);
+    const label = shortRunLabel(hoveredRun, runIds);
     const cols = settings.columns;
     return (
       <div

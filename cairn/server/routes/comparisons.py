@@ -80,7 +80,7 @@ def create_comparison(project_id: str, body: ComparisonCreate, request: Request)
     db = get_db(request)
     cid = secrets.token_hex(8)
     now = utc_now().isoformat()
-    db.execute(
+    db.write(
         """INSERT INTO comparisons (id, project_id, name, created_at, updated_at, payload)
            VALUES (?, ?, ?, ?, ?, ?)""",
         [cid, project_id, body.name, now, now, json.dumps(body.payload)],
@@ -102,12 +102,12 @@ def update_comparison(
 
     now = utc_now().isoformat()
     if body.name is not None:
-        db.execute(
+        db.write(
             "UPDATE comparisons SET name = ?, updated_at = ? WHERE id = ?",
             [body.name, now, comparison_id],
         )
     if body.payload is not None:
-        db.execute(
+        db.write(
             "UPDATE comparisons SET payload = ?, updated_at = ? WHERE id = ?",
             [json.dumps(body.payload), now, comparison_id],
         )
@@ -117,7 +117,7 @@ def update_comparison(
 @router.delete("/projects/{project_id}/comparisons/{comparison_id}")
 def delete_comparison(project_id: str, comparison_id: str, request: Request) -> dict[str, Any]:
     db = get_db(request)
-    db.execute(
+    db.write(
         "DELETE FROM comparisons WHERE id = ? AND project_id = ?",
         [comparison_id, project_id],
     )
