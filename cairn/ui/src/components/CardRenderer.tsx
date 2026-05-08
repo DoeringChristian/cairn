@@ -3,10 +3,13 @@
  * and the Comparison view (ComparePage). One code path for all card types.
  */
 
-import { Suspense, lazy } from "react";
+import { Suspense, lazy, useMemo } from "react";
 import type { SequenceMeta } from "../api/types";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
 import type { CardSettingsKey } from "../lib/card-settings";
+import { useSequence } from "../api/hooks";
+import { api } from "../api/client";
+import { downloadArtifact, artifactFilename } from "../lib/download";
 import ScalarPlotCard from "./ScalarPlotCard";
 import ImageGalleryCard from "./ImageGalleryCard";
 import AudioPlayerCard from "./AudioPlayerCard";
@@ -32,6 +35,34 @@ export interface CardRendererProps {
   onRemove?: () => void;
   /** When true, ignore persisted metrics — always use props. */
   controlledSeries?: boolean;
+}
+
+/** Fallback card for unknown object types — shows type info + download button. */
+function UnknownTypeCard({ runId, metric }: { runId: string; metric: SequenceMeta }) {
+  const q = useSequence(runId, metric.name, { context: metric.context_hash || undefined, maxPoints: 1 });
+  const point = useMemo(() => (q.data?.points ?? [])[0], [q.data]);
+
+  return (
+    <div className="card p-4 text-sm text-fg-muted">
+      <div className="mb-2 flex items-baseline justify-between gap-2">
+        <div className="mono font-semibold">{metric.name}</div>
+        <div className="flex items-center gap-1 text-xs">
+          <span className="rounded bg-bg-hover px-1.5 py-0.5 text-[10px]">{metric.object_type}</span>
+          {point?.artifact_hash && (
+            <button
+              type="button"
+              onClick={() => downloadArtifact(api.artifactUrl(point.artifact_hash!), artifactFilename(metric.name, point.step, point.artifact_mime))}
+              className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
+              title="Download"
+            >
+              {"\u2193"}
+            </button>
+          )}
+        </div>
+      </div>
+      <div>{metric.count} point{metric.count !== 1 ? "s" : ""} logged</div>
+    </div>
+  );
 }
 
 export default function CardRenderer({
@@ -100,14 +131,6 @@ export default function CardRenderer({
         </Suspense>
       );
     default:
-      return (
-        <div className="card p-4 text-sm text-fg-muted">
-          <div className="mono mb-1 font-semibold">{metric.name}</div>
-          <div>
-            object_type <span className="mono">{metric.object_type}</span> has
-            no dedicated renderer yet.
-          </div>
-        </div>
-      );
+      return <UnknownTypeCard {...baseProps} />;
   }
 }
