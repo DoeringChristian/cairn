@@ -300,16 +300,31 @@ class Run:
         return result
 
     def _find_artifact(self, name: str, step: int | None) -> dict[str, Any]:
-        """Locate an artifact entry by name (and optional step)."""
+        """Locate an artifact entry by name (and optional step).
+
+        When ``step`` is ``None``, returns the highest-step entry (the
+        "latest" checkpoint). Pass an explicit ``step`` for a specific one.
+        """
         arts = self._backend.list_artifacts(self.id)
+        # Collect all matches across both pools.
+        matches: list[dict[str, Any]] = []
         for pool in (arts.get("named", []), arts.get("from_sequences", [])):
             for a in pool:
-                if a["name"] == name and (step is None or a.get("step") == step):
-                    return a
-        raise KeyError(
-            f"No artifact named {name!r}"
-            + (f" at step {step}" if step is not None else "")
-        )
+                if a["name"] != name:
+                    continue
+                if step is not None and a.get("step") != step:
+                    continue
+                matches.append(a)
+        if not matches:
+            raise KeyError(
+                f"No artifact named {name!r}"
+                + (f" at step {step}" if step is not None else "")
+            )
+        if step is not None:
+            return matches[0]
+        # No step specified — return the entry with the highest step
+        # (or the only one, if there's just one).
+        return max(matches, key=lambda a: a.get("step") if a.get("step") is not None else -1)
 
     def artifact_bytes(self, name: str, step: int | None = None) -> bytes:
         """Download an artifact's raw bytes (no deserialization)."""
@@ -412,6 +427,7 @@ class RunQuery:
         status: str | None = None,
         tags_contain: str | None = None,
         param_filters: dict[str, Any] | None = None,
+        name_exact: str | None = None,
         name_pattern: str | None = None,
         sort_col: str = "created_at",
         sort_desc: bool = True,
@@ -422,6 +438,7 @@ class RunQuery:
         self._status = status
         self._tags_contain = tags_contain
         self._param_filters = param_filters or {}
+        self._name_exact = name_exact
         self._name_pattern = name_pattern
         self._sort_col = sort_col
         self._sort_desc = sort_desc
@@ -434,6 +451,7 @@ class RunQuery:
             "status": self._status,
             "tags_contain": self._tags_contain,
             "param_filters": dict(self._param_filters),
+            "name_exact": self._name_exact,
             "name_pattern": self._name_pattern,
             "sort_col": self._sort_col,
             "sort_desc": self._sort_desc,
@@ -445,15 +463,25 @@ class RunQuery:
     def filter(
         self, *,
         status: str | None = None,
+        name: str | None = None,
         tags__contains: str | None = None,
         name__contains: str | None = None,
         **param_filters: Any,
     ) -> RunQuery:
-        """Add filters. Param filters use key=value matching."""
+        """Add filters.
+
+        Args:
+            status: exact match on run status (running/completed/killed/...).
+            name: exact match on the run's display_name.
+            name__contains: substring match on display_name.
+            tags__contains: tag membership.
+            **param_filters: arbitrary param key=value matches.
+        """
         merged_params = {**self._param_filters, **param_filters}
         return self._clone(
             status=status or self._status,
             tags_contain=tags__contains or self._tags_contain,
+            name_exact=name or self._name_exact,
             name_pattern=name__contains or self._name_pattern,
             param_filters=merged_params,
         )
@@ -480,6 +508,10 @@ class RunQuery:
         if self._tags_contain:
             tag = self._tags_contain
             result = [r for r in result if tag in r.tags]
+
+        if self._name_exact is not None:
+            target = self._name_exact
+            result = [r for r in result if r.name == target]
 
         if self._name_pattern:
             pat = self._name_pattern.lower()
