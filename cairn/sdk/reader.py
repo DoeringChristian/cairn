@@ -18,7 +18,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterator, Protocol, runtime_checkable
+from typing import Any, Callable, Iterator, Protocol, runtime_checkable
 
 from .. import config as _config
 
@@ -418,28 +418,119 @@ class Run:
 # RunQuery — lazy chainable query builder
 # ---------------------------------------------------------------------------
 
+# Mapping from Django-style suffix to a comparator. Each comparator takes
+# (actual_value, query_value) and returns True if the row matches.
+_OPERATORS: dict[str, "Callable[[Any, Any], bool]"] = {
+    "exact": lambda a, b: a == b,
+    "iexact": lambda a, b: isinstance(a, str) and isinstance(b, str) and a.lower() == b.lower(),
+    "gt": lambda a, b: a is not None and a > b,
+    "gte": lambda a, b: a is not None and a >= b,
+    "lt": lambda a, b: a is not None and a < b,
+    "lte": lambda a, b: a is not None and a <= b,
+    "in": lambda a, b: a in b,
+    "contains": lambda a, b: (
+        b in a if isinstance(a, (str, list, tuple, set)) else False
+    ),
+    "icontains": lambda a, b: (
+        isinstance(a, str) and isinstance(b, str) and b.lower() in a.lower()
+    ),
+    "startswith": lambda a, b: isinstance(a, str) and a.startswith(b),
+    "endswith": lambda a, b: isinstance(a, str) and a.endswith(b),
+    "isnull": lambda a, b: (a is None) == bool(b),
+}
+
+# Top-level fields on a Run that can be filtered. Anything else is treated
+# as a param lookup (params.<key>).
+_RUN_FIELDS = {"name", "status", "project", "tags", "id", "hostname", "user", "notes"}
+
+
+def _parse_lookup(key: str) -> tuple[str, str, str | None]:
+    """Parse a Django-style filter key into (field_root, op, sub_field).
+
+    Examples:
+      "lr"               → ("lr", "exact", None)
+      "lr__gt"           → ("lr", "gt", None)
+      "tags__contains"   → ("tags", "contains", None)
+      "metrics__loss"    → ("metrics", "exact", "loss")
+      "metrics__loss__lt" → ("metrics", "lt", "loss")
+    """
+    parts = key.split("__")
+    if len(parts) == 1:
+        return parts[0], "exact", None
+    # Last part might be an operator
+    last = parts[-1]
+    if last in _OPERATORS:
+        op = last
+        if len(parts) == 2:
+            return parts[0], op, None
+        return parts[0], op, "__".join(parts[1:-1])
+    # No trailing operator → the whole tail is a sub-field path
+    return parts[0], "exact", "__".join(parts[1:])
+
+
+def _get_field_value(run: "Run", field: str, sub_field: str | None) -> Any:
+    """Resolve a filter field to a value on the Run."""
+    if field in _RUN_FIELDS:
+        # Built-in run fields. Sub-field ignored (run has no nested structures here).
+        return getattr(run, field, None)
+    if field == "metrics":
+        if sub_field is None:
+            return None
+        seq = run.sequence(sub_field)
+        if seq is None or not seq.values:
+            return None
+        return seq.values[-1]  # final value
+    if field == "params":
+        # params__lr or just lr (param fallback handled at parse time)
+        return run.params.get(sub_field) if sub_field else None
+    # Default: treat field as a param key.
+    if sub_field:
+        # e.g. hparams__lr → params["hparams.lr"]
+        full = f"{field}.{sub_field}"
+        return run.params.get(full)
+    return run.params.get(field)
+
+
 class RunQuery:
-    """Lazy query builder for runs. Executes on .list()/.first()/.last()/iteration."""
+    """Lazy query builder for runs. Executes on .list()/.first()/.last()/iteration.
+
+    Filters use Django-style ``field__operator=value`` suffixes::
+
+        reader.runs(project="x").filter(
+            status="completed",                    # exact match (default op)
+            name__contains="my-run",               # substring
+            tags__contains="best",                 # list membership
+            lr__gt=1e-4,                           # > on a param
+            lr__lt=1e-2,
+            status__in=["completed", "killed"],    # set membership
+            metrics__loss__lt=0.1,                 # final scalar value
+            hostname__startswith="gpu",
+        )
+
+    Supported operators: ``exact``, ``iexact``, ``gt``, ``gte``, ``lt``,
+    ``lte``, ``in``, ``contains``, ``icontains``, ``startswith``,
+    ``endswith``, ``isnull``.
+
+    Special field roots: ``metrics`` (final scalar value), ``params``
+    (explicit param lookup), ``tags`` (list membership). Any other root
+    is treated as a param key.
+    """
 
     def __init__(
         self, backend: _Backend, *,
         project: str | None = None,
         status: str | None = None,
-        tags_contain: str | None = None,
-        param_filters: dict[str, Any] | None = None,
-        name_exact: str | None = None,
-        name_pattern: str | None = None,
+        filters: list[tuple[str, str, str | None, Any]] | None = None,
         sort_col: str = "created_at",
         sort_desc: bool = True,
         limit_n: int | None = None,
     ) -> None:
         self._backend = backend
         self._project = project
+        # status is kept separate because it's pushed down to SQL (faster).
         self._status = status
-        self._tags_contain = tags_contain
-        self._param_filters = param_filters or {}
-        self._name_exact = name_exact
-        self._name_pattern = name_pattern
+        # All other filters: list of (field, op, sub_field, value) tuples.
+        self._filters = filters or []
         self._sort_col = sort_col
         self._sort_desc = sort_desc
         self._limit_n = limit_n
@@ -449,10 +540,7 @@ class RunQuery:
             "backend": self._backend,
             "project": self._project,
             "status": self._status,
-            "tags_contain": self._tags_contain,
-            "param_filters": dict(self._param_filters),
-            "name_exact": self._name_exact,
-            "name_pattern": self._name_pattern,
+            "filters": list(self._filters),
             "sort_col": self._sort_col,
             "sort_desc": self._sort_desc,
             "limit_n": self._limit_n,
@@ -460,31 +548,21 @@ class RunQuery:
         kw.update(overrides)
         return RunQuery(**kw)
 
-    def filter(
-        self, *,
-        status: str | None = None,
-        name: str | None = None,
-        tags__contains: str | None = None,
-        name__contains: str | None = None,
-        **param_filters: Any,
-    ) -> RunQuery:
-        """Add filters.
+    def filter(self, **kwargs: Any) -> RunQuery:
+        """Add filters using Django-style ``field__operator=value`` syntax.
 
-        Args:
-            status: exact match on run status (running/completed/killed/...).
-            name: exact match on the run's display_name.
-            name__contains: substring match on display_name.
-            tags__contains: tag membership.
-            **param_filters: arbitrary param key=value matches.
+        See class docstring for the full operator list and examples.
         """
-        merged_params = {**self._param_filters, **param_filters}
-        return self._clone(
-            status=status or self._status,
-            tags_contain=tags__contains or self._tags_contain,
-            name_exact=name or self._name_exact,
-            name_pattern=name__contains or self._name_pattern,
-            param_filters=merged_params,
-        )
+        new_filters = list(self._filters)
+        new_status = self._status
+        for key, value in kwargs.items():
+            field, op, sub_field = _parse_lookup(key)
+            # Push status=... down to SQL for performance.
+            if field == "status" and op == "exact" and sub_field is None:
+                new_status = value
+                continue
+            new_filters.append((field, op, sub_field, value))
+        return self._clone(status=new_status, filters=new_filters)
 
     def sort(self, column: str, *, desc: bool = True) -> RunQuery:
         return self._clone(sort_col=column, sort_desc=desc)
@@ -504,30 +582,18 @@ class RunQuery:
         )
         result = [Run(r, self._backend) for r in runs]
 
-        # Client-side filters that SQL doesn't handle.
-        if self._tags_contain:
-            tag = self._tags_contain
-            result = [r for r in result if tag in r.tags]
-
-        if self._name_exact is not None:
-            target = self._name_exact
-            result = [r for r in result if r.name == target]
-
-        if self._name_pattern:
-            pat = self._name_pattern.lower()
-            result = [r for r in result if r.name and pat in r.name.lower()]
-
-        if self._param_filters:
-            filtered = []
+        # Apply Django-style filters client-side.
+        for field, op, sub_field, value in self._filters:
+            comparator = _OPERATORS[op]
+            kept: list[Run] = []
             for run in result:
-                params = run.params
-                match = all(
-                    str(params.get(k)) == str(v)
-                    for k, v in self._param_filters.items()
-                )
-                if match:
-                    filtered.append(run)
-            result = filtered
+                actual = _get_field_value(run, field, sub_field)
+                try:
+                    if comparator(actual, value):
+                        kept.append(run)
+                except (TypeError, ValueError):
+                    pass
+            result = kept
 
         if self._limit_n and len(result) > self._limit_n:
             result = result[:self._limit_n]
@@ -554,8 +620,11 @@ class RunQuery:
             parts.append(f"project={self._project!r}")
         if self._status:
             parts.append(f"status={self._status!r}")
-        if self._param_filters:
-            parts.append(f"params={self._param_filters!r}")
+        for field, op, sub_field, value in self._filters:
+            key = field if sub_field is None else f"{field}__{sub_field}"
+            if op != "exact":
+                key = f"{key}__{op}"
+            parts.append(f"{key}={value!r}")
         return f"RunQuery({', '.join(parts)})"
 
 
