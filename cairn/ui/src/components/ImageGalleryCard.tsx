@@ -437,7 +437,8 @@ interface ImagePaneProps {
   paneIndex: number;
   artifactHash: string | undefined;
   baselineHash: string | undefined;
-  isBaseline: boolean;
+  /** True when this pane IS the global baseline (legacy ★ promotion). */
+  isBaseline?: boolean;
   diffMode: ImageSettings["diffMode"];
   interpolation: Interpolation;
   colormap: Colormap;
@@ -452,7 +453,7 @@ interface ImagePaneProps {
 function ImagePane({
   artifactHash,
   baselineHash,
-  isBaseline,
+  isBaseline = false,
   diffMode,
   interpolation,
   colormap,
@@ -1174,15 +1175,19 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     setRefDropHighlight(false);
     const raw = e.dataTransfer.getData(CAIRN_SERIES_MIME);
     if (!raw) return;
-    e.stopPropagation(); // Prevent useSeriesDrop on outer card from also adding the metric
+    e.stopPropagation();
     try {
       const ref = JSON.parse(raw) as { runId: string; name: string; context_hash: string };
+      // First drag → default to per-run reference mode (each run uses its
+      // own copy of the dragged tag). Don't override an explicit user choice.
+      const firstTime = settings.externalBaseline == null && settings.referenceMode == null;
       updateSettings({
         externalBaseline: { runId: ref.runId, name: ref.name, context_hash: ref.context_hash },
         baselineIndex: undefined,
+        ...(firstTime ? { referenceMode: "per-run" as const } : {}),
       });
     } catch { /* ignore */ }
-  }, [updateSettings]);
+  }, [updateSettings, settings.externalBaseline, settings.referenceMode]);
   const [singleNaturalDims, setSingleNaturalDims] = useState<{ w: number; h: number } | null>(null);
   // Single-image: resolve for the first series at current global step
   const firstResolved = useMemo(() => {
@@ -1281,6 +1286,9 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
   const extBaseRid = extBase?.runId ?? runId;
   const extBaseName = extBase?.name ?? "";
   const extBaseCtx = extBase?.context_hash ?? "";
+  const refMode = settings.referenceMode ?? "global";
+
+  // Global mode: one shared reference series fetched from extBase.runId.
   const extBaseQuery = useSequence(extBaseRid, extBaseName, {
     context: extBaseCtx || undefined,
     maxPoints: 500,
@@ -1290,10 +1298,24 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     return (extBaseQuery.data.points ?? []).filter((p: SequencePoint) => p.artifact_hash);
   }, [extBase, extBaseQuery.data]);
 
-  // Baseline hash for diff — external baseline takes priority
+  // Per-run mode: fetch the reference series (extBase.name) from EACH run
+  // in the comparison. Each pane gets its own run's copy of the ref tag.
+  const perRunRefQueries = useQueries({
+    queries: extBase && refMode === "per-run"
+      ? effectiveMetrics.map((m) => ({
+          queryKey: ["ref-series", m.runId ?? runId, extBase.name, extBase.context_hash],
+          queryFn: () => api.sequence(m.runId ?? runId, extBase.name, {
+            context: extBase.context_hash || undefined,
+            maxPoints: 500,
+          }),
+          refetchInterval: 2000,
+        }))
+      : [],
+  });
+
+  // Baseline hash for diff — external baseline takes priority (global mode).
   const baselineIdx = settings.baselineIndex;
-  const refMode = settings.referenceMode ?? "global";
-  const baselineHash = extBase
+  const baselineHash = extBase && refMode === "global"
     ? extBasePoints[Math.min(safeIdx, Math.max(0, extBasePoints.length - 1))]?.artifact_hash ?? undefined
     : baselineIdx != null
       ? resolveArtifact(
@@ -1304,25 +1326,24 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
         ).hash
       : undefined;
 
-  // Per-run baseline: each pane uses its own image at perRunBaselineStep.
-  // Falls back to the closest available step if the exact step is missing.
-  const perRunBaselineStep = settings.perRunBaselineStep ?? 0;
+  // Per-run baseline: each pane uses its own run's copy of the reference
+  // tag at the current step.
   const perPaneBaselineHash = useMemo(() => {
-    if (refMode !== "per-run") return null;
+    if (refMode !== "per-run" || !extBase) return null;
     return effectiveMetrics.map((_, paneIdx) => {
-      const stepMap = perSeriesStepMap[paneIdx] ?? new Map();
-      // Exact match first
-      const pt = stepMap.get(perRunBaselineStep);
-      if (pt) return pt.artifact_hash ?? undefined;
-      // Fallback: first available step for this series
-      const pts = perSeriesPoints[paneIdx];
-      if (pts && pts.length > 0) return pts[0]!.artifact_hash ?? undefined;
-      return undefined;
+      const points: SequencePoint[] = (perRunRefQueries[paneIdx]?.data?.points ?? [])
+        .filter((p: SequencePoint) => p.artifact_hash);
+      if (points.length === 0) return undefined;
+      const stepMap = new Map<number, SequencePoint>();
+      for (const p of points) stepMap.set(p.step, p);
+      const seriesSteps = points.map((p) => p.step);
+      return resolveArtifact(stepMap, currentStep, seriesSteps, settings.missingImageMode).hash;
     });
-  }, [refMode, effectiveMetrics, perSeriesStepMap, perSeriesPoints, perRunBaselineStep]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refMode, extBase, effectiveMetrics, perRunRefQueries.map((q) => q.dataUpdatedAt).join("|"), currentStep, settings.missingImageMode]);
 
-  // Whether any baseline is active (for quick-toggle visibility)
-  const hasBaseline = refMode === "per-run" || baselineIdx != null || extBase != null;
+  // Whether any baseline is active (for diff dropdown visibility).
+  const hasBaseline = baselineIdx != null || extBase != null;
 
   const cardRef = useRef<HTMLDivElement>(null);
 
@@ -1483,11 +1504,12 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                 const compareMode = settings.compareMode ?? "side-by-side";
                 const splitPos = settings.splitPosition ?? 0.5;
                 const blendAlpha = settings.blendAlpha ?? 0.5;
-                // Should we show ref+pred inline? Yes when:
-                // - per-run mode: always (even if ref == pred at baseline step)
-                // - split/blend mode with any baseline that differs from pred
-                const showInlineRef = paneBaseline && hash &&
-                  (refMode === "per-run" || (compareMode !== "side-by-side" && paneBaseline !== hash));
+                // Show ref+pred inline only when there's something to compare:
+                //   - diff mode is active, OR
+                //   - split/blend overlay is active.
+                // When diff is off and side-by-side, just show the prediction.
+                const showInlineRef = paneBaseline && hash && paneBaseline !== hash &&
+                  (settings.diffMode !== "none" || compareMode !== "side-by-side");
                 return (
                   <div key={seriesKey(m)} className="relative overflow-hidden" style={undefined}>
                     {showInlineRef ? (
@@ -2039,27 +2061,15 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                 { value: "relative_squared" as const, label: "Relative Squared" },
               ]}
             />
-            {isMulti && (
+            {isMulti && extBase && (
               <Select<"global" | "per-run">
                 label="Reference mode"
                 value={settings.referenceMode ?? "global"}
                 onChange={(v) => updateSettings({ referenceMode: v })}
                 options={[
-                  { value: "global", label: "Global (one ref for all)" },
-                  { value: "per-run", label: "Per-run (each run's own ref)" },
+                  { value: "per-run", label: "Per-run (each run uses its own copy of the ref tag)" },
+                  { value: "global", label: "Global (same ref for all runs)" },
                 ]}
-              />
-            )}
-            {(settings.referenceMode ?? "global") === "per-run" && (
-              <Slider
-                label="Ref step"
-                value={settings.perRunBaselineStep ?? 0}
-                onChange={(v) => updateSettings({ perRunBaselineStep: Math.round(v) })}
-                min={0}
-                max={Math.max(0, ...globalSteps)}
-                step={1}
-                format={(v) => `${Math.round(v)}`}
-                description="Step used as each run's own baseline"
               />
             )}
             <div className="mt-2">
@@ -2078,7 +2088,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                 </div>
               ) : (
                 <p className="text-[10px] text-fg-subtle mb-1">
-                  {isMulti ? "Click \u2605 on a pane, or select a tag below." : "Select a tag below."}
+                  Drag a series chip onto the card, or select a tag below.
                 </p>
               )}
               <ExternalBaselinePicker
@@ -2141,8 +2151,8 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                     const mCompareMode = settings.compareMode ?? "side-by-side";
                     const mSplitPos = settings.splitPosition ?? 0.5;
                     const mBlendAlpha = settings.blendAlpha ?? 0.5;
-                    const mShowInlineRef = mPaneBaseline && mHash &&
-                      (refMode === "per-run" || (mCompareMode !== "side-by-side" && mPaneBaseline !== mHash));
+                    const mShowInlineRef = mPaneBaseline && mHash && mPaneBaseline !== mHash &&
+                      (settings.diffMode !== "none" || mCompareMode !== "side-by-side");
                     return (
                       <div key={seriesKey(m)} className="relative overflow-hidden" style={undefined}>
                         {mShowInlineRef ? (
