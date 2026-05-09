@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    name: pytest (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Install Python ${{ matrix.python }}
+        run: uv python install ${{ matrix.python }}
+
+      - name: Sync dev dependencies
+        env:
+          CAIRN_SKIP_UI_BUILD: "1"
+        run: uv sync --python ${{ matrix.python }} --extra dev
+
+      - name: Run pytest
+        run: uv run --python ${{ matrix.python }} pytest -q -m "not torch and not slow"
+
+  ui:
+    name: UI typecheck + build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cairn/ui
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: cairn/ui/package-lock.json
+
+      - run: npm ci
+
+      - run: npm run typecheck
+
+      - run: npm run build
