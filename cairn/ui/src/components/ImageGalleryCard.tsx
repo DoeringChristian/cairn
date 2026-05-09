@@ -1292,7 +1292,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
 
   // Baseline hash for diff — external baseline takes priority
   const baselineIdx = settings.baselineIndex;
-  const refMode = settings.referenceMode ?? "per-run";
+  const refMode = settings.referenceMode ?? "global";
   const baselineHash = extBase
     ? extBasePoints[Math.min(safeIdx, Math.max(0, extBasePoints.length - 1))]?.artifact_hash ?? undefined
     : baselineIdx != null
@@ -2042,7 +2042,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
             {isMulti && (
               <Select<"global" | "per-run">
                 label="Reference mode"
-                value={settings.referenceMode ?? "per-run"}
+                value={settings.referenceMode ?? "global"}
                 onChange={(v) => updateSettings({ referenceMode: v })}
                 options={[
                   { value: "global", label: "Global (one ref for all)" },
@@ -2050,7 +2050,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                 ]}
               />
             )}
-            {(settings.referenceMode ?? "per-run") === "per-run" && (
+            {(settings.referenceMode ?? "global") === "per-run" && (
               <Slider
                 label="Ref step"
                 value={settings.perRunBaselineStep ?? 0}
