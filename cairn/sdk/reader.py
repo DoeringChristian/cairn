@@ -844,11 +844,36 @@ class _LocalBackend:
 # HTTP backend — connects to a running Cairn server
 # ---------------------------------------------------------------------------
 
+def _resolve_cache_dir(explicit: Path | None) -> Path:
+    """Where to cache artifact blobs fetched over HTTP.
+
+    1. Explicit ``cache_dir=`` wins.
+    2. Else nearest ``.cairn/`` walking up from CWD → ``<.cairn>/cache/blobs``.
+    3. Else user-global cache.
+    """
+    if explicit is not None:
+        return Path(explicit) / "blobs"
+    cwd = Path.cwd().resolve()
+    for parent in [cwd, *cwd.parents]:
+        candidate = parent / ".cairn"
+        if candidate.is_dir():
+            return candidate / "cache" / "blobs"
+    import platformdirs
+    return Path(platformdirs.user_cache_dir("cairn")) / "reader" / "blobs"
+
+
 class _HttpBackend:
-    def __init__(self, server_url: str) -> None:
+    def __init__(
+        self,
+        server_url: str,
+        *,
+        cache: bool = True,
+        cache_dir: Path | None = None,
+    ) -> None:
         import httpx
         self._base = server_url.rstrip("/")
         self._client = httpx.Client(base_url=self._base, timeout=30.0)
+        self._cache_dir = _resolve_cache_dir(cache_dir) if cache else None
 
     def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         resp = self._client.get(path, params=params)
@@ -897,9 +922,29 @@ class _HttpBackend:
         return self._get(f"/api/runs/{run_id}/artifacts")
 
     def get_artifact_bytes(self, digest: str) -> bytes:
+        if self._cache_dir is not None:
+            cached = self._cache_dir / digest[:2] / digest / "blob"
+            if cached.exists():
+                try:
+                    return cached.read_bytes()
+                except OSError:
+                    pass
+
         resp = self._client.get(f"/api/artifacts/{digest}")
         resp.raise_for_status()
-        return resp.content
+        data = resp.content
+
+        if self._cache_dir is not None:
+            try:
+                target = self._cache_dir / digest[:2] / digest / "blob"
+                target.parent.mkdir(parents=True, exist_ok=True)
+                tmp = target.with_suffix(".tmp")
+                tmp.write_bytes(data)
+                tmp.replace(target)
+            except OSError:
+                pass
+
+        return data
 
     def get_artifact_path(self, digest: str) -> Path | None:
         return None  # HTTP backend can't provide local paths.
@@ -1113,6 +1158,10 @@ class Reader:
     Args:
         repo: Path to a ``.cairn/`` directory, ``cairn://host:port`` for an
             HTTP server, or a path to an exported ``.zip`` archive.
+        cache: For HTTP repos, cache downloaded artifact bytes by SHA256
+            so repeated reads don't re-download. Default True.
+        cache_dir: Override cache location. By default uses
+            ``<nearest .cairn>/cache/`` if found, else the user cache dir.
 
     If not specified, auto-detects from env/config (same logic as ``cairn.Run``).
     """
@@ -1120,6 +1169,9 @@ class Reader:
     def __init__(
         self,
         repo: str | Path | None = None,
+        *,
+        cache: bool = True,
+        cache_dir: str | Path | None = None,
     ) -> None:
         # ZIP file: ``cairn.Reader(repo="run.zip")`` — load an exported archive
         # into a tempdir and read from there.
@@ -1134,7 +1186,11 @@ class Reader:
         if target.is_local:
             self._backend = _LocalBackend(target.location)
         else:
-            self._backend = _HttpBackend(target.location)
+            self._backend = _HttpBackend(
+                target.location,
+                cache=cache,
+                cache_dir=Path(cache_dir) if cache_dir else None,
+            )
 
     def projects(self) -> list[Project]:
         """List all projects."""
