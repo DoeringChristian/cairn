@@ -16,6 +16,7 @@ import inspect
 import logging
 import secrets
 import signal
+import sys
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -313,6 +314,25 @@ class Run:
             except (OSError, ValueError):
                 pass  # Not all environments allow signal registration.
 
+        # Detect unhandled exceptions so the atexit cleanup can mark the
+        # run as "failed" rather than the default "completed". Chains the
+        # previous excepthook so the user still sees the traceback.
+        self._unhandled_exception_type: type[BaseException] | None = None
+        self._prev_excepthook = sys.excepthook
+
+        def _excepthook(exc_type: type[BaseException], exc: BaseException, tb: Any) -> None:
+            if not self._finished:
+                self._unhandled_exception_type = exc_type
+            try:
+                self._prev_excepthook(exc_type, exc, tb)
+            except Exception:  # noqa: BLE001
+                pass
+
+        try:
+            sys.excepthook = _excepthook
+        except Exception:  # noqa: BLE001
+            self._prev_excepthook = None  # type: ignore[assignment]
+
     # ---- properties -------------------------------------------------------
 
     @property
@@ -518,6 +538,12 @@ class Run:
                     signal.signal(signal.SIGINT, self._prev_sigint)
                 except (OSError, ValueError):
                     pass
+            # Restore original excepthook (only if we still own it).
+            if self._prev_excepthook is not None:
+                try:
+                    sys.excepthook = self._prev_excepthook
+                except Exception:  # noqa: BLE001
+                    pass
             if self._owns_transport:
                 # Ensure source thread is done before closing the DB.
                 if self._source_thread is not None and self._source_thread.is_alive():
@@ -546,11 +572,20 @@ class Run:
         Registered in ``__init__``; removed in ``finish()``. Swallows errors
         because the interpreter is shutting down and reraising would just
         produce noise in an unrecoverable state.
+
+        If an unhandled exception killed the script (caught via our custom
+        ``sys.excepthook``), marks the run as ``"failed"`` instead of the
+        default ``"completed"``. ``KeyboardInterrupt`` is excluded because
+        the SIGINT signal handler already marks the run as ``"killed"``.
         """
         if self._finished:
             return
+        status = "completed"
+        exc_type = self._unhandled_exception_type
+        if exc_type is not None and not issubclass(exc_type, KeyboardInterrupt):
+            status = "failed"
         try:
-            self.finish(status="completed")
+            self.finish(status=status)
         except Exception:  # noqa: BLE001
             log.warning("atexit finish failed", exc_info=True)
 
