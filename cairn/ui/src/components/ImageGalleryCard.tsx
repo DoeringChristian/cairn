@@ -1083,6 +1083,9 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
 
   const roRef = useRef<ResizeObserver | null>(null);
 
+  // Track the previous size so we can keep the visible center stable on resize.
+  const lastSizeRef = useRef<{ w: number; h: number } | null>(null);
+
   // Callback ref: attach wheel listener + ResizeObserver when element mounts
   const setContainerRef = useCallback((el: HTMLDivElement | null) => {
     if (containerRef.current) {
@@ -1090,18 +1093,41 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
       roRef.current?.disconnect();
     }
     containerRef.current = el;
+    lastSizeRef.current = null;
     if (el) {
       const handler = (e: WheelEvent) => wheelHandlerRef.current?.(e);
       (el as any).__cairnWheel = handler;
       el.addEventListener("wheel", handler, { passive: false });
       const ro = new ResizeObserver((entries) => {
-        for (const entry of entries) setContainerWidth(entry.contentRect.width);
+        for (const entry of entries) {
+          const newW = entry.contentRect.width;
+          const newH = entry.contentRect.height;
+          setContainerWidth(newW);
+
+          // Re-center pan so the visible midpoint stays put on resize/colSpan change.
+          const prev = lastSizeRef.current;
+          const s = settingsRef.current;
+          const isZoomed = s.zoom !== 1 || s.pan.x !== 0 || s.pan.y !== 0;
+          if (prev && isZoomed && (prev.w !== newW || prev.h !== newH)) {
+            // element-space coord of the OLD viewport center:
+            //   cxElem = (oldCenter - oldPan) / zoom
+            const cxElem = (prev.w / 2 - s.pan.x) / s.zoom;
+            const cyElem = (prev.h / 2 - s.pan.y) / s.zoom;
+            // pan to put that same element point at the NEW center
+            const newPanX = newW / 2 - cxElem * s.zoom;
+            const newPanY = newH / 2 - cyElem * s.zoom;
+            updateSettings({ pan: { x: newPanX, y: newPanY } });
+          }
+          lastSizeRef.current = { w: newW, h: newH };
+        }
       });
       ro.observe(el);
       roRef.current = ro;
-      setContainerWidth(el.getBoundingClientRect().width);
+      const rect = el.getBoundingClientRect();
+      setContainerWidth(rect.width);
+      lastSizeRef.current = { w: rect.width, h: rect.height };
     }
-  }, []);
+  }, [updateSettings]);
 
   const dragStateRef = useRef<{
     pointerId: number;
