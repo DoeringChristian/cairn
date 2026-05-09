@@ -1504,12 +1504,14 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                 const compareMode = settings.compareMode ?? "side-by-side";
                 const splitPos = settings.splitPosition ?? 0.5;
                 const blendAlpha = settings.blendAlpha ?? 0.5;
-                // Show ref+pred inline only when there's something to compare:
-                //   - diff mode is active, OR
-                //   - split/blend overlay is active.
-                // When diff is off and side-by-side, just show the prediction.
+                // Show ref+pred inline when:
+                //   - per-run mode (each pane shows its own ref + pred), OR
+                //   - split/blend overlay (the ref overlays the pred), OR
+                //   - diff mode is active.
+                // Global + side-by-side renders the ref as a separate pane
+                // outside this loop (at the bottom), so we skip inline there.
                 const showInlineRef = paneBaseline && hash && paneBaseline !== hash &&
-                  (settings.diffMode !== "none" || compareMode !== "side-by-side");
+                  (refMode === "per-run" || settings.diffMode !== "none" || compareMode !== "side-by-side");
                 return (
                   <div key={seriesKey(m)} className="relative overflow-hidden" style={undefined}>
                     {showInlineRef ? (
@@ -2152,7 +2154,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                     const mSplitPos = settings.splitPosition ?? 0.5;
                     const mBlendAlpha = settings.blendAlpha ?? 0.5;
                     const mShowInlineRef = mPaneBaseline && mHash && mPaneBaseline !== mHash &&
-                      (settings.diffMode !== "none" || mCompareMode !== "side-by-side");
+                      (refMode === "per-run" || settings.diffMode !== "none" || mCompareMode !== "side-by-side");
                     return (
                       <div key={seriesKey(m)} className="relative overflow-hidden" style={undefined}>
                         {mShowInlineRef ? (
