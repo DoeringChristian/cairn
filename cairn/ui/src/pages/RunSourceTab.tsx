@@ -1,56 +1,9 @@
 import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import type { Highlighter } from "shiki";
 import { useSourceFile, useSourceTree } from "../api/hooks";
 import { formatBytes } from "../lib/format";
-
-const SHIKI_LANGS = [
-  "python",
-  "typescript",
-  "json",
-  "yaml",
-  "toml",
-  "markdown",
-  "ini",
-  "bash",
-] as const;
-
-let highlighterPromise: Promise<Highlighter> | null = null;
-function getHighlighter(): Promise<Highlighter> {
-  if (!highlighterPromise) {
-    highlighterPromise = import("shiki").then((mod) =>
-      mod.createHighlighter({
-        themes: ["github-dark"],
-        langs: [...SHIKI_LANGS],
-      }),
-    );
-  }
-  return highlighterPromise;
-}
-
-function langFromPath(path: string): string | null {
-  const ext = path.split(".").pop()?.toLowerCase() ?? "";
-  const map: Record<string, string> = {
-    py: "python",
-    ts: "typescript",
-    tsx: "typescript",
-    mjs: "typescript",
-    cjs: "typescript",
-    js: "typescript",
-    jsx: "typescript",
-    json: "json",
-    yaml: "yaml",
-    yml: "yaml",
-    toml: "toml",
-    md: "markdown",
-    ini: "ini",
-    cfg: "ini",
-    sh: "bash",
-    bash: "bash",
-  };
-  return map[ext] ?? null;
-}
+import { getHighlighter, langFromPath } from "../lib/syntax-highlight";
 
 export default function RunSourceTab() {
   const { runId } = useParams<{ runId: string }>();

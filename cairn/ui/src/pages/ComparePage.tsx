@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
+import { useElementScrollRestore } from "../lib/use-element-scroll-restore";
+import ComparisonOverviewTab from "./ComparisonOverviewTab";
+import ComparisonSourceTab from "./ComparisonSourceTab";
 import AddCardModal, { type AddCardSelection } from "../components/AddCardModal";
 import CardRenderer from "../components/CardRenderer";
 import ReorderableCardGrid from "../components/ReorderableCardGrid";
@@ -270,6 +273,8 @@ export default function ComparePage() {
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [wizardOpen, setWizardOpen] = useState(false);
+  const sidebarRef = useRef<HTMLDivElement>(null);
+  useElementScrollRestore(sidebarRef, `compare-sidebar:${projectId}`, comparisons.length > 0);
 
   const handleWizardCreated = useCallback(
     (comparisonId: string) => {
@@ -301,6 +306,7 @@ export default function ComparePage() {
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-[320px_1fr]">
           <aside
+            ref={sidebarRef}
             className={`card p-3 md:sticky md:top-[41px] md:max-h-[calc(100vh-41px)] md:overflow-y-auto ${sidebarOpen ? "" : "hidden md:block"}`}
           >
             <Sidebar
@@ -586,6 +592,12 @@ function SidebarRow({
 // Main pane — renders the selected comparison.
 // -----------------------------------------------------------------------------
 
+const COMPARISON_TABS = [
+  { id: "overview", label: "Overview" },
+  { id: "metrics", label: "Metrics & Media" },
+  { id: "source", label: "Source" },
+];
+
 interface ComparisonViewProps {
   comparison: Comparison;
   allProjectRuns: Run[];
@@ -615,6 +627,17 @@ function ComparisonView({
   onRefreshSmartFilters,
   onReorderCards,
 }: ComparisonViewProps) {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = searchParams.get("tab") ?? "overview";
+  const setTab = useCallback(
+    (t: string) => {
+      const p = new URLSearchParams(searchParams);
+      p.set("tab", t);
+      setSearchParams(p, { replace: true });
+    },
+    [searchParams, setSearchParams],
+  );
+
   const [editingName, setEditingName] = useState(false);
   const [draft, setDraft] = useState(comparison.name);
   const [addCardOpen, setAddCardOpen] = useState(false);
@@ -647,6 +670,7 @@ function ComparisonView({
 
   return (
     <div className="flex flex-col gap-4">
+      {/* Header */}
       <div className="flex items-baseline justify-between gap-2">
         {editingName ? (
           <input
@@ -696,13 +720,6 @@ function ComparisonView({
           )}
           <button
             type="button"
-            onClick={() => setAddCardOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded border border-border px-3 py-1.5 text-xs font-medium text-fg-muted hover:border-accent hover:text-fg transition-colors"
-          >
-            <span aria-hidden="true">+</span> Add card
-          </button>
-          <button
-            type="button"
             onClick={() => {
               if (confirm(`Delete "${comparison.name}"?`)) onDelete();
             }}
@@ -738,39 +755,80 @@ function ComparisonView({
         </div>
       </div>
 
-      <ComparisonRunsPanel
-        compRunIds={compRunIds}
-        allProjectRuns={allProjectRuns}
-        onAddRuns={onAddRuns}
-        onRemoveRun={onRemoveRun}
-      />
+      {/* Tab bar */}
+      <nav className="flex gap-1 overflow-x-auto whitespace-nowrap border-b border-border">
+        {COMPARISON_TABS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => setTab(t.id)}
+            className={[
+              "border-b-2 px-3 py-2 text-sm transition-colors",
+              tab === t.id
+                ? "border-accent text-fg"
+                : "border-transparent text-fg-muted hover:text-fg",
+            ].join(" ")}
+          >
+            {t.label}
+          </button>
+        ))}
+      </nav>
 
-      <AddCardModal
-        open={addCardOpen}
-        onClose={() => setAddCardOpen(false)}
-        runIds={compRunIds.length > 0 ? compRunIds : allProjectRunIds}
+      {/* Tab content */}
+      {tab === "overview" && (
+        <ComparisonOverviewTab compRunIds={compRunIds} />
+      )}
 
-        onAdd={onAddCard}
-      />
+      {tab === "metrics" && (
+        <>
+          <ComparisonRunsPanel
+            compRunIds={compRunIds}
+            allProjectRuns={allProjectRuns}
+            onAddRuns={onAddRuns}
+            onRemoveRun={onRemoveRun}
+          />
 
-      {comparison.cards.length === 0 ? (
-        <div className="card p-6 text-sm text-fg-muted">
-          No cards yet. Click "Add card" to pick metrics from the comparison's runs.
-        </div>
-      ) : (
-        <ReorderableCardGrid
-          cards={comparison.cards.map((card) => ({
-            key: card.id,
-            content: (
-              <ComparisonCardRenderer
-                card={card}
-                comparisonId={comparison.id}
-                onRemove={() => onRemoveCard(card.id)}
-              />
-            ),
-          }))}
-          onReorder={onReorderCards}
-        />
+          <AddCardModal
+            open={addCardOpen}
+            onClose={() => setAddCardOpen(false)}
+            runIds={compRunIds.length > 0 ? compRunIds : allProjectRunIds}
+            onAdd={onAddCard}
+          />
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setAddCardOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded border border-border px-3 py-1.5 text-xs font-medium text-fg-muted hover:border-accent hover:text-fg transition-colors"
+            >
+              <span aria-hidden="true">+</span> Add card
+            </button>
+          </div>
+
+          {comparison.cards.length === 0 ? (
+            <div className="card p-6 text-sm text-fg-muted">
+              No cards yet. Click "Add card" to pick metrics from the comparison's runs.
+            </div>
+          ) : (
+            <ReorderableCardGrid
+              cards={comparison.cards.map((card) => ({
+                key: card.id,
+                content: (
+                  <ComparisonCardRenderer
+                    card={card}
+                    comparisonId={comparison.id}
+                    onRemove={() => onRemoveCard(card.id)}
+                  />
+                ),
+              }))}
+              onReorder={onReorderCards}
+            />
+          )}
+        </>
+      )}
+
+      {tab === "source" && (
+        <ComparisonSourceTab compRunIds={compRunIds} />
       )}
     </div>
   );
