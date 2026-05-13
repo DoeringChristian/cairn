@@ -138,3 +138,55 @@ def test_ping_unreachable_exits_nonzero(monkeypatch):
     runner = CliRunner()
     result = runner.invoke(cli.main, ["ping"])
     assert result.exit_code != 0
+
+
+def test_diff_against_local_snapshot(tmp_path, monkeypatch):
+    import cairn
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    # pyproject.toml is a project-root marker, so capture anchors here.
+    (project / "pyproject.toml").write_text("[project]\nname='t'\n")
+    train = project / "train.py"
+    train.write_text("lr = 1e-3\nepochs = 50\n")
+
+    monkeypatch.chdir(project)
+    repo = project / ".cairn"
+
+    run = cairn.Run(
+        project="diff-test",
+        repo=str(repo),
+        capture_stdout=False,
+        capture_env=False,
+        capture_system_metrics=False,
+    )
+    rid = run.id
+    run.finish()
+
+    # Edit a file after the snapshot was taken.
+    train.write_text("lr = 1e-3\nepochs = 100\n")
+
+    runner = CliRunner()
+    result = runner.invoke(cli.main, ["diff", rid, "--repo", str(repo)])
+    assert result.exit_code == 0, result.output
+    assert "M  train.py" in result.output
+    assert "epochs = 50" in result.output  # snapshot side
+    assert "epochs = 100" in result.output  # cwd side
+
+    # --summary skips the unified diff body.
+    result_summary = runner.invoke(
+        cli.main, ["diff", rid, "--repo", str(repo), "--summary"]
+    )
+    assert result_summary.exit_code == 0
+    assert "M  train.py" in result_summary.output
+    assert "epochs" not in result_summary.output
+
+    # No changes after reverting.
+    train.write_text("lr = 1e-3\nepochs = 50\n")
+    result_clean = runner.invoke(cli.main, ["diff", rid, "--repo", str(repo)])
+    assert result_clean.exit_code == 0
+    assert "(no changes)" in result_clean.output
+
+    # Unknown run id → exit 1.
+    result_missing = runner.invoke(cli.main, ["diff", "nope", "--repo", str(repo)])
+    assert result_missing.exit_code == 1

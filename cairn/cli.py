@@ -497,6 +497,119 @@ def export_cmd(run_id: str, fmt: str, out: Path) -> None:
         t.close()
 
 
+@main.command("diff")
+@click.argument("run_id")
+@click.option(
+    "--repo",
+    default=None,
+    help="Path to a .cairn/ directory or cairn://host:port URL. "
+         "Default: ./.cairn if it exists, else env/config.",
+)
+@click.option(
+    "--summary",
+    is_flag=True,
+    help="Only print the changed-file list, not the unified diffs.",
+)
+def diff_cmd(run_id: str, repo: str | None, summary: bool) -> None:
+    """Diff the current working directory against a run's source snapshot."""
+    import difflib
+    import hashlib
+
+    from .sdk.reader import Reader
+
+    resolved: str | None
+    if repo is not None:
+        resolved = repo
+    else:
+        local = Path.cwd() / ".cairn"
+        resolved = str(local) if local.is_dir() else None
+
+    try:
+        reader = Reader(repo=resolved)
+    except Exception as exc:  # noqa: BLE001
+        click.echo(f"failed to open repo: {exc}", err=True)
+        sys.exit(1)
+
+    try:
+        try:
+            run = reader.run(run_id)
+        except Exception as exc:  # noqa: BLE001
+            click.echo(f"run not found: {exc}", err=True)
+            sys.exit(1)
+
+        tree = run.source_tree()
+        if tree is None:
+            click.echo(f"no source snapshot for run {run_id}", err=True)
+            sys.exit(1)
+
+        cwd = Path.cwd()
+        # status: "M" modified, "D" deleted, "B" binary differ
+        changes: list[tuple[str, str, list[str]]] = []
+        for entry in sorted(tree, key=lambda e: e.path):
+            rel = entry.path
+            local_path = cwd / rel
+            if not local_path.exists():
+                changes.append(("D", rel, []))
+                continue
+
+            try:
+                cwd_bytes = local_path.read_bytes()
+            except OSError as exc:
+                click.echo(f"cannot read {rel}: {exc}", err=True)
+                continue
+
+            if entry.sha256 is not None:
+                cwd_hash = hashlib.sha256(cwd_bytes).hexdigest()
+                if cwd_hash == entry.sha256:
+                    continue
+
+            snapshot_text = run.source_file(rel)
+            if snapshot_text is None:
+                # Binary file (snapshot can't return text) — hash already
+                # differs (or wasn't recorded), so flag without a body.
+                changes.append(("B", rel, []))
+                continue
+
+            try:
+                cwd_text = cwd_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                changes.append(("B", rel, []))
+                continue
+
+            diff_lines = list(difflib.unified_diff(
+                snapshot_text.splitlines(keepends=True),
+                cwd_text.splitlines(keepends=True),
+                fromfile=f"snapshot/{rel}",
+                tofile=f"cwd/{rel}",
+            ))
+            if not diff_lines:
+                # Hashes differed but text matches (e.g. trailing newline
+                # only) — still surface it.
+                changes.append(("M", rel, []))
+            else:
+                changes.append(("M", rel, diff_lines))
+
+        if not changes:
+            click.echo("(no changes)")
+            return
+
+        for status, rel, _ in changes:
+            click.echo(f"{status}  {rel}")
+
+        if summary:
+            return
+
+        for status, rel, lines in changes:
+            if not lines:
+                continue
+            click.echo("")
+            click.echo(f"diff --cairn snapshot/{rel} cwd/{rel}")
+            for line in lines:
+                click.echo(line.rstrip("\n"))
+    finally:
+        reader.close()
+
+
 @main.command("sync")
 def sync_cmd() -> None:
     """Reconcile any spilled batches with the server."""
