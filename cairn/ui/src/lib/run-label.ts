@@ -41,9 +41,7 @@ export function useRunMetadataVersion(): number {
 }
 
 export function setRunMetadata(runs: Run[]): void {
-  const next = new Map<string, Run>();
-  for (const r of runs) next.set(r.id, r);
-  runMetadataCache = next;
+  for (const r of runs) runMetadataCache.set(r.id, r);
   _notify();
 }
 

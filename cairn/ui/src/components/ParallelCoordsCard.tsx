@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { api } from "../api/client";
+import { viridis } from "../lib/colors";
 import type { Run } from "../api/types";
 import { useCardSettings, resolveCardHeight, toggleColSpanPatch } from "../lib/card-settings";
 import { exportChartFromContainer, safeName } from "../lib/download";
@@ -36,20 +37,6 @@ const DEFAULT_SETTINGS: ParallelSettings = {
   version: 1,
   columns: [],
 };
-
-// ---------------------------------------------------------------------------
-// Color scale — viridis-like
-// ---------------------------------------------------------------------------
-
-function viridis(t: number): string {
-  // Simple 3-stop: dark purple → teal → yellow
-  t = Math.max(0, Math.min(1, t));
-  const r = Math.round(68 + t * (253 - 68));
-  const g = Math.round(1 + t * (231 - 1));
-  const b = Math.round(84 + (t < 0.5 ? t * 2 * (158 - 84) : (158 + (t - 0.5) * 2 * (37 - 158))));
-  return `rgb(${r},${g},${b})`;
-}
-
 
 // ---------------------------------------------------------------------------
 // Component

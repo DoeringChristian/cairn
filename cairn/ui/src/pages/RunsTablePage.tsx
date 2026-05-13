@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from "react";
+import { useInfiniteScroll } from "../lib/use-infinite-scroll";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useInfiniteRuns } from "../api/hooks";
@@ -104,32 +105,11 @@ export default function RunsTablePage() {
   const serverTotal = q.data?.pages[0]?.total ?? 0;
 
   // Auto-load next page when sentinel enters viewport.
-  const hasNextRef = useRef(q.hasNextPage);
-  const fetchingRef = useRef(q.isFetchingNextPage);
-  const fetchNextRef = useRef(q.fetchNextPage);
-  hasNextRef.current = q.hasNextPage;
-  fetchingRef.current = q.isFetchingNextPage;
-  fetchNextRef.current = q.fetchNextPage;
-
-  // Callback ref — fires when the sentinel DOM node mounts (after early returns).
-  const observerRef = useRef<IntersectionObserver | null>(null);
-  const sentinelRef = useCallback((el: HTMLDivElement | null) => {
-    if (observerRef.current) {
-      observerRef.current.disconnect();
-      observerRef.current = null;
-    }
-    if (!el) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0]?.isIntersecting && hasNextRef.current && !fetchingRef.current) {
-          fetchNextRef.current();
-        }
-      },
-      { rootMargin: "400px" },
-    );
-    observer.observe(el);
-    observerRef.current = observer;
-  }, []);
+  const sentinelRef = useInfiniteScroll({
+    hasNextPage: q.hasNextPage,
+    isFetchingNextPage: q.isFetchingNextPage,
+    fetchNextPage: q.fetchNextPage,
+  });
   const allTags = useProjectTags(runs);
 
   const removeTagFromRun = useCallback(async (runId: string, tag: string) => {

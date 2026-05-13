@@ -45,6 +45,8 @@ import Slider from "./settings/Slider";
 import Toggle from "./settings/Toggle";
 import { formatRelative } from "../lib/format";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
+import { SERIES_COLORS } from "../lib/colors";
+import { seriesKey, seriesLabel } from "../lib/series-utils";
 import { exportChartFromContainer, safeName } from "../lib/download";
 
 // -----------------------------------------------------------------------------
@@ -116,41 +118,6 @@ const DEFAULT_SCALAR_SETTINGS = (seed: {
 // Palette & helpers
 // -----------------------------------------------------------------------------
 
-const SERIES_COLORS = [
-  "#0969da",
-  "#d29922",
-  "#3fb950",
-  "#f85149",
-  "#c678dd",
-  "#56d4dd",
-];
-
-function seriesKey(m: {
-  runId?: string;
-  name: string;
-  context_hash: string;
-}): string {
-  return `${m.runId ?? ""}::${m.name}::${m.context_hash}`;
-}
-
-function seriesLabel(
-  name: string,
-  contextHash: string,
-  runId: string | undefined,
-  includeRun: boolean,
-  siblingRunIds?: string[],
-): string {
-  if (includeRun && runId) {
-    // Multi-run: show run name (+ timestamp if ambiguous). Tag is in card title.
-    const parts: string[] = [shortRunLabel(runId, siblingRunIds)];
-    if (contextHash) parts.push(contextHash.slice(0, 6));
-    return parts.join(" · ");
-  }
-  // Single-run: show metric name
-  const parts: string[] = [name];
-  if (contextHash) parts.push(contextHash.slice(0, 6));
-  return parts.join(" · ");
-}
 
 function percentile(sorted: number[], p: number): number {
   if (sorted.length === 0) return 0;

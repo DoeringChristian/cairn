@@ -25,6 +25,7 @@ import { computeDiff, loadImageData, type DiffMode } from "../lib/image-diff";
 import { webglRenderDiffToCanvas } from "../lib/webgl-diff";
 import { getRenderMode } from "../lib/render-mode";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
+import { SERIES_COLORS } from "../lib/colors";
 import CardDetailModal from "./CardDetailModal";
 import CardHeader from "./CardHeader";
 import CardResizeHandle from "./CardResizeHandle";
@@ -218,15 +219,6 @@ function defaultImageSettings(seed: {
 
 
 
-// Palette (same as ScalarPlotCard)
-const SERIES_COLORS = [
-  "#0969da",
-  "#d29922",
-  "#3fb950",
-  "#f85149",
-  "#c678dd",
-  "#56d4dd",
-];
 
 function seriesLabel(
   m: { runId?: string; name: string; context_hash: string },

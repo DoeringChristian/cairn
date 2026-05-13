@@ -14,6 +14,8 @@ import {
 } from "../lib/comparisons";
 import { useProjectId } from "../lib/project-context";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
+import { SERIES_COLORS } from "../lib/colors";
+import { seriesKey, seriesLabel } from "../lib/series-utils";
 import type { SequenceMeta, SequenceResponse } from "../api/types";
 import CardHeader from "./CardHeader";
 import CardResizeHandle from "./CardResizeHandle";
@@ -62,15 +64,6 @@ interface VideoSettings {
   xAxis?: "step" | "relative_time" | "wall_time";
 }
 
-const SERIES_COLORS = [
-  "#0969da",
-  "#d29922",
-  "#3fb950",
-  "#f85149",
-  "#c678dd",
-  "#56d4dd",
-];
-
 const DEFAULT_VIDEO_SETTINGS = (seed: {
   name: string;
   context_hash: string;
@@ -82,27 +75,6 @@ const DEFAULT_VIDEO_SETTINGS = (seed: {
   muted: false,
   preload: "metadata",
 });
-
-function seriesKey(m: { runId?: string; name: string; context_hash: string }): string {
-  return `${m.runId ?? ""}::${m.name}::${m.context_hash}`;
-}
-
-function seriesLabel(
-  name: string,
-  contextHash: string,
-  runId: string | undefined,
-  includeRun: boolean,
-  siblingRunIds?: string[],
-): string {
-  if (includeRun && runId) {
-    const parts: string[] = [shortRunLabel(runId, siblingRunIds)];
-    if (contextHash) parts.push(contextHash.slice(0, 6));
-    return parts.join(" \u00B7 ");
-  }
-  const parts: string[] = [name];
-  if (contextHash) parts.push(contextHash.slice(0, 6));
-  return parts.join(" \u00B7 ");
-}
 
 // ---------------------------------------------------------------------------
 // Single video pane (used in multi-series split view).

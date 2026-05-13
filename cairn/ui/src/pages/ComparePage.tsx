@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
-import { useElementScrollRestore } from "../lib/use-element-scroll-restore";
+import { useElementScrollRestore } from "../lib/use-scroll-restore";
 import ComparisonOverviewTab from "./ComparisonOverviewTab";
 import ComparisonSourceTab from "./ComparisonSourceTab";
 import AddCardModal, { type AddCardSelection } from "../components/AddCardModal";

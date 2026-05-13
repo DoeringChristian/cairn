@@ -23,8 +23,10 @@ export default function ComparisonSourceTab({ compRunIds }: Props) {
     [compRunIds],
   );
 
-  const [leftId, setLeftId] = useState<string>(compRunIds[0] ?? "");
-  const [rightId, setRightId] = useState<string>(compRunIds[1] ?? compRunIds[0] ?? "");
+  const [rawLeftId, setLeftId] = useState<string>("");
+  const [rawRightId, setRightId] = useState<string>("");
+  const leftId = compRunIds.includes(rawLeftId) ? rawLeftId : (compRunIds[0] ?? "");
+  const rightId = compRunIds.includes(rawRightId) ? rawRightId : (compRunIds[1] ?? compRunIds[0] ?? "");
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
 
   const leftTree = useQuery({
@@ -71,11 +73,17 @@ export default function ComparisonSourceTab({ compRunIds }: Props) {
     [mergedFiles],
   );
 
+  // Determine the selected file's status so we skip fetching the missing side.
+  const selectedFileStatus = useMemo(
+    () => mergedFiles.find((f) => f.path === selectedFile)?.status ?? null,
+    [mergedFiles, selectedFile],
+  );
+
   // Fetch file contents for diff
   const leftFile = useQuery({
     queryKey: ["sourceFile", leftId, selectedFile],
     queryFn: () => api.sourceFile(leftId, selectedFile!),
-    enabled: !!selectedFile && !!leftId,
+    enabled: !!selectedFile && !!leftId && selectedFileStatus !== "added",
     staleTime: Infinity,
     retry: false,
   });
@@ -83,7 +91,7 @@ export default function ComparisonSourceTab({ compRunIds }: Props) {
   const rightFile = useQuery({
     queryKey: ["sourceFile", rightId, selectedFile],
     queryFn: () => api.sourceFile(rightId, selectedFile!),
-    enabled: !!selectedFile && !!rightId,
+    enabled: !!selectedFile && !!rightId && selectedFileStatus !== "removed",
     staleTime: Infinity,
     retry: false,
   });
@@ -215,14 +223,13 @@ interface DiffViewProps {
 }
 
 function DiffView({ leftContent, rightContent, leftLabel, rightLabel, path }: DiffViewProps) {
+  const left = leftContent ?? "";
+  const right = rightContent ?? "";
+  const parts = useMemo(() => diffLines(left, right), [left, right]);
+
   if (leftContent == null && rightContent == null) {
     return <p className="text-fg-muted">Binary file — cannot display diff.</p>;
   }
-
-  const left = leftContent ?? "";
-  const right = rightContent ?? "";
-
-  const parts = diffLines(left, right);
 
   return (
     <div className="text-xs">
