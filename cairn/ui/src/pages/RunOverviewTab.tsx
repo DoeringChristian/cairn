@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { useOutletContext } from "react-router-dom";
-import { useSetNotes, useSetTags } from "../api/hooks";
+import { useRuns, useSetNotes, useSetTags } from "../api/hooks";
 import type { Param, Run } from "../api/types";
 import { safeJsonParse } from "../lib/format";
+import { useProjectTags } from "../lib/use-project-tags";
+import TagInput from "../components/TagInput";
 
 interface Ctx {
   run: Run;
@@ -48,7 +50,7 @@ export default function RunOverviewTab() {
         />
       </Section>
       <Section title="Tags / Notes" className="lg:col-span-2">
-        <TagsEditor runId={run.id} tags={tags} />
+        <TagsEditor run={run} tags={tags} />
         <NotesEditor runId={run.id} notes={run.notes ?? ""} />
       </Section>
       <Section title={`Params (${params.length})`} className="lg:col-span-2">
@@ -140,19 +142,12 @@ function DefinitionList({ rows }: { rows: Array<[string, React.ReactNode]> }) {
   );
 }
 
-function TagsEditor({ runId, tags }: { runId: string; tags: string[] }) {
-  const mutation = useSetTags(runId);
+function TagsEditor({ run, tags }: { run: Run; tags: string[] }) {
+  const mutation = useSetTags(run.id);
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState("");
-
-  const commitAdd = () => {
-    const next = draft.trim();
-    if (next && !tags.includes(next)) {
-      mutation.mutate([...tags, next]);
-    }
-    setDraft("");
-    setAdding(false);
-  };
+  const runsQ = useRuns({ project: run.project_id, limit: 500 });
+  const suggestions = useProjectTags(runsQ.data?.runs ?? []);
 
   const removeTag = (tag: string) => {
     mutation.mutate(tags.filter((t) => t !== tag));
@@ -182,26 +177,19 @@ function TagsEditor({ runId, tags }: { runId: string; tags: string[] }) {
           ))
         )}
         {adding ? (
-          <input
+          <TagInput
             autoFocus
-            className="input w-40 py-0.5 text-xs"
+            className="w-40"
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                commitAdd();
-              } else if (e.key === "Escape") {
-                e.preventDefault();
-                setDraft("");
-                setAdding(false);
-              }
-            }}
-            onBlur={() => {
+            onChange={setDraft}
+            onCommit={(tag) => {
+              if (!tags.includes(tag)) mutation.mutate([...tags, tag]);
               setDraft("");
               setAdding(false);
             }}
-            placeholder="tag"
+            onCancel={() => { setDraft(""); setAdding(false); }}
+            suggestions={suggestions}
+            exclude={tags}
           />
         ) : (
           <button

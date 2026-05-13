@@ -1,9 +1,11 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
 import type { Run } from "../api/types";
 import { safeJsonParse } from "../lib/format";
+import { useProjectTags } from "../lib/use-project-tags";
 import SettingsPopover from "./SettingsPopover";
+import TagInput from "./TagInput";
 
 interface Props {
   open: boolean;
@@ -17,7 +19,6 @@ export default function BulkTagEditor({ open, onClose, anchorRef, selectedRunIds
   const qc = useQueryClient();
   const [newTag, setNewTag] = useState("");
   const [busy, setBusy] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
 
   // Build tag → set of run IDs that have it.
   const tagMap = useMemo(() => {
@@ -35,6 +36,7 @@ export default function BulkTagEditor({ open, onClose, anchorRef, selectedRunIds
   }, [runs, selectedRunIds]);
 
   const allTags = useMemo(() => [...tagMap.keys()].sort(), [tagMap]);
+  const allProjectTags = useProjectTags(runs);
   const totalSelected = selectedRunIds.size;
 
   const updateTags = useCallback(async (
@@ -47,8 +49,8 @@ export default function BulkTagEditor({ open, onClose, anchorRef, selectedRunIds
     await api.setTags(runId, next);
   }, [runs]);
 
-  const addTag = useCallback(async () => {
-    const tag = newTag.trim();
+  const addTagValue = useCallback(async (value: string) => {
+    const tag = value.trim();
     if (!tag) return;
     setBusy(true);
     try {
@@ -64,7 +66,9 @@ export default function BulkTagEditor({ open, onClose, anchorRef, selectedRunIds
     } finally {
       setBusy(false);
     }
-  }, [newTag, selectedRunIds, tagMap, updateTags, qc]);
+  }, [selectedRunIds, tagMap, updateTags, qc]);
+
+  const addTag = useCallback(() => addTagValue(newTag), [newTag, addTagValue]);
 
   const removeTag = useCallback(async (tag: string) => {
     setBusy(true);
@@ -86,12 +90,14 @@ export default function BulkTagEditor({ open, onClose, anchorRef, selectedRunIds
     <SettingsPopover open={open} onClose={onClose} anchorRef={anchorRef} title="Bulk tag editor">
       <div className="flex flex-col gap-2">
         <div className="flex gap-1">
-          <input
-            ref={inputRef}
-            className="input flex-1 py-1 text-xs"
+          <TagInput
+            className="flex-1"
             value={newTag}
-            onChange={(e) => setNewTag(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addTag(); } }}
+            onChange={setNewTag}
+            onCommit={(tag) => addTagValue(tag)}
+            onCancel={() => setNewTag("")}
+            suggestions={allProjectTags}
+            exclude={allTags}
             placeholder="New tag..."
             disabled={busy}
           />

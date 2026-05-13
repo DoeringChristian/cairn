@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { useRuns } from "../api/hooks";
+import { useInfiniteRuns } from "../api/hooks";
 import type { Run, RunStatus } from "../api/types";
 import RunStatusBadge from "../components/RunStatusBadge";
 import { formatDuration, formatRelative, safeJsonParse } from "../lib/format";
@@ -13,6 +13,9 @@ import SettingsPopover from "../components/SettingsPopover";
 import BulkTagEditor from "../components/BulkTagEditor";
 import ImportRunsDialog from "../components/ImportRunsDialog";
 import CopyId from "../components/CopyId";
+import TagInput from "../components/TagInput";
+import { useWindowScrollRestore } from "../lib/use-scroll-restore";
+import { useProjectTags } from "../lib/use-project-tags";
 
 type SortColumn =
   | "name"
@@ -69,7 +72,7 @@ export default function RunsTablePage() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const q = useRuns({ project: projectId, limit: 200 });
+  const q = useInfiniteRuns({ project: projectId });
 
   const [statusFilter, setStatusFilter] = useState<"all" | RunStatus>("all");
   const [search, setSearch] = useState<string>("");
@@ -88,7 +91,46 @@ export default function RunsTablePage() {
   const [addingTagFor, setAddingTagFor] = useState<string | null>(null);
   const [newTagValue, setNewTagValue] = useState("");
 
-  const runs = useMemo(() => q.data?.runs ?? [], [q.data]);
+  const runs = useMemo(() => {
+    const all = q.data?.pages.flatMap((p) => p.runs) ?? [];
+    // Deduplicate: pages can overlap when new runs are inserted between fetches.
+    const seen = new Set<string>();
+    return all.filter((r) => {
+      if (seen.has(r.id)) return false;
+      seen.add(r.id);
+      return true;
+    });
+  }, [q.data]);
+  const serverTotal = q.data?.pages[0]?.total ?? 0;
+
+  // Auto-load next page when sentinel enters viewport.
+  const hasNextRef = useRef(q.hasNextPage);
+  const fetchingRef = useRef(q.isFetchingNextPage);
+  const fetchNextRef = useRef(q.fetchNextPage);
+  hasNextRef.current = q.hasNextPage;
+  fetchingRef.current = q.isFetchingNextPage;
+  fetchNextRef.current = q.fetchNextPage;
+
+  // Callback ref — fires when the sentinel DOM node mounts (after early returns).
+  const observerRef = useRef<IntersectionObserver | null>(null);
+  const sentinelRef = useCallback((el: HTMLDivElement | null) => {
+    if (observerRef.current) {
+      observerRef.current.disconnect();
+      observerRef.current = null;
+    }
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting && hasNextRef.current && !fetchingRef.current) {
+          fetchNextRef.current();
+        }
+      },
+      { rootMargin: "400px" },
+    );
+    observer.observe(el);
+    observerRef.current = observer;
+  }, []);
+  const allTags = useProjectTags(runs);
 
   const removeTagFromRun = useCallback(async (runId: string, tag: string) => {
     const run = runs.find((r) => r.id === runId);
@@ -158,7 +200,9 @@ export default function RunsTablePage() {
     const arr = [...filtered];
     arr.sort((a, b) => {
       const cmp = compareRuns(a, b, sort.column);
-      return sort.direction === "asc" ? cmp : -cmp;
+      if (cmp !== 0) return sort.direction === "asc" ? cmp : -cmp;
+      // Stable tiebreaker: run ID is unique and immutable.
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
     });
     return arr;
   }, [filtered, sort]);
@@ -174,27 +218,42 @@ export default function RunsTablePage() {
     );
   };
 
-  const lastSelectedIdx = useRef<number | null>(null);
+  const lastSelectedId = useRef<string | null>(null);
 
-  const toggleRow = (id: string, index: number, shiftKey: boolean) => {
-    if (shiftKey && lastSelectedIdx.current !== null) {
-      const lo = Math.min(lastSelectedIdx.current, index);
-      const hi = Math.max(lastSelectedIdx.current, index);
-      setSelected((prev) => {
-        const next = new Set(prev);
-        for (let i = lo; i <= hi; i++) next.add(sorted[i]!.id);
-        return next;
-      });
-    } else {
+  // Build a stable ID→index lookup, recomputed only when sorted changes.
+  const sortedIdToIdx = useMemo(() => {
+    const map = new Map<string, number>();
+    for (let i = 0; i < sorted.length; i++) map.set(sorted[i]!.id, i);
+    return map;
+  }, [sorted]);
+
+  const toggleRow = useCallback(
+    (id: string, shiftKey: boolean) => {
+      if (shiftKey && lastSelectedId.current !== null) {
+        const lastIdx = sortedIdToIdx.get(lastSelectedId.current);
+        const curIdx = sortedIdToIdx.get(id);
+        if (lastIdx != null && curIdx != null) {
+          const lo = Math.min(lastIdx, curIdx);
+          const hi = Math.max(lastIdx, curIdx);
+          setSelected((prev) => {
+            const next = new Set(prev);
+            for (let i = lo; i <= hi; i++) next.add(sorted[i]!.id);
+            return next;
+          });
+          lastSelectedId.current = id;
+          return;
+        }
+      }
       setSelected((prev) => {
         const next = new Set(prev);
         if (next.has(id)) next.delete(id);
         else next.add(id);
         return next;
       });
-    }
-    lastSelectedIdx.current = index;
-  };
+      lastSelectedId.current = id;
+    },
+    [sorted, sortedIdToIdx],
+  );
 
   const selectAllVisible = () => {
     setSelected(new Set(sorted.map((r) => r.id)));
@@ -342,6 +401,11 @@ export default function RunsTablePage() {
     navigate(`/p/${projectId}/compare?c=${encodeURIComponent(cmp.id)}`);
   }, [projectId, selected, navigate]);
 
+  useWindowScrollRestore(
+    `runs:${projectId ?? ""}`,
+    !q.isLoading && !!q.data,
+  );
+
   if (!projectId) return null;
   if (q.isLoading) return <p className="text-fg-muted">Loading…</p>;
   if (q.isError)
@@ -352,7 +416,7 @@ export default function RunsTablePage() {
       <div className="mb-6 flex items-baseline justify-between gap-4">
         <h1 className="mono text-xl font-semibold">{projectId} / runs</h1>
         <p className="text-sm text-fg-muted">
-          {sorted.length} of {runs.length} run(s)
+          {sorted.length} of {serverTotal} run{serverTotal === 1 ? "" : "s"}
         </p>
       </div>
 
@@ -384,22 +448,6 @@ export default function RunsTablePage() {
           />
         </label>
         <div className="ml-auto flex gap-2">
-          <button
-            type="button"
-            className="btn px-2 py-1 text-xs"
-            onClick={selectAllVisible}
-            disabled={sorted.length === 0}
-          >
-            Select all
-          </button>
-          <button
-            type="button"
-            className="btn px-2 py-1 text-xs"
-            onClick={selectNone}
-            disabled={selectedCount === 0}
-          >
-            Select none
-          </button>
           <button
             type="button"
             className="btn px-2 py-1 text-xs"
@@ -543,7 +591,7 @@ export default function RunsTablePage() {
       ) : (
         <>
           <ul className="flex flex-col gap-2 md:hidden">
-            {sorted.map((r, idx) => {
+            {sorted.map((r) => {
               const tags = safeJsonParse<string[]>(r.tags) ?? [];
               const isSelected = selected.has(r.id);
               return (
@@ -554,15 +602,14 @@ export default function RunsTablePage() {
                   }`}
                 >
                   <div className="flex flex-wrap items-center gap-2">
-                    <label className="inline-flex min-h-[44px] min-w-[44px] cursor-pointer items-center justify-center">
+                    <div className="inline-flex min-h-[44px] min-w-[44px] cursor-pointer items-center justify-center">
                       <input
                         type="checkbox"
                         aria-label={`select run ${r.display_name ?? r.id}`}
                         checked={isSelected}
-                        onClick={(e) => toggleRow(r.id, idx, e.shiftKey)}
-                        readOnly
+                        onChange={(e) => toggleRow(r.id, (e.nativeEvent as MouseEvent).shiftKey ?? false)}
                       />
-                    </label>
+                    </div>
                     <Link
                       to={`/p/${projectId}/r/${r.id}`}
                       className="mono min-h-[44px] flex-1 truncate text-accent hover:underline"
@@ -599,15 +646,14 @@ export default function RunsTablePage() {
                       </span>
                     ))}
                     {addingTagFor === r.id ? (
-                      <input
-                        className="input py-0 px-1 text-xs w-20"
+                      <TagInput
+                        className="w-20"
                         value={newTagValue}
-                        onChange={(e) => setNewTagValue(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") { e.preventDefault(); addTagToRun(r.id, newTagValue); }
-                          if (e.key === "Escape") { setAddingTagFor(null); setNewTagValue(""); }
-                        }}
-                        onBlur={() => { setAddingTagFor(null); setNewTagValue(""); }}
+                        onChange={setNewTagValue}
+                        onCommit={(tag) => addTagToRun(r.id, tag)}
+                        onCancel={() => { setAddingTagFor(null); setNewTagValue(""); }}
+                        suggestions={allTags}
+                        exclude={safeJsonParse<string[]>(r.tags) ?? []}
                         autoFocus
                         placeholder="tag..."
                       />
@@ -677,7 +723,7 @@ export default function RunsTablePage() {
               </tr>
             </thead>
             <tbody>
-              {sorted.map((r, idx) => {
+              {sorted.map((r) => {
                 const tags = safeJsonParse<string[]>(r.tags) ?? [];
                 const isSelected = selected.has(r.id);
                 return (
@@ -692,8 +738,7 @@ export default function RunsTablePage() {
                         type="checkbox"
                         aria-label={`select run ${r.display_name ?? r.id}`}
                         checked={isSelected}
-                        onClick={(e) => toggleRow(r.id, idx, e.shiftKey)}
-                        readOnly
+                        onChange={(e) => toggleRow(r.id, (e.nativeEvent as MouseEvent).shiftKey ?? false)}
                       />
                     </td>
                     <td className="px-3 py-2">
@@ -738,15 +783,14 @@ export default function RunsTablePage() {
                           </span>
                         ))}
                         {addingTagFor === r.id ? (
-                          <input
-                            className="input py-0 px-1 text-xs w-20"
+                          <TagInput
+                            className="w-20"
                             value={newTagValue}
-                            onChange={(e) => setNewTagValue(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") { e.preventDefault(); addTagToRun(r.id, newTagValue); }
-                              if (e.key === "Escape") { setAddingTagFor(null); setNewTagValue(""); }
-                            }}
-                            onBlur={() => { setAddingTagFor(null); setNewTagValue(""); }}
+                            onChange={setNewTagValue}
+                            onCommit={(tag) => addTagToRun(r.id, tag)}
+                            onCancel={() => { setAddingTagFor(null); setNewTagValue(""); }}
+                            suggestions={allTags}
+                            exclude={safeJsonParse<string[]>(r.tags) ?? []}
                             autoFocus
                             placeholder="tag..."
                           />
@@ -769,6 +813,11 @@ export default function RunsTablePage() {
           </table>
           </div>
         </>
+      )}
+      {/* Sentinel for infinite scroll */}
+      <div ref={sentinelRef} className="h-1" />
+      {q.isFetchingNextPage && (
+        <p className="py-4 text-center text-sm text-fg-muted">Loading more runs...</p>
       )}
       <ImportRunsDialog open={importOpen} onClose={() => setImportOpen(false)} />
     </div>
