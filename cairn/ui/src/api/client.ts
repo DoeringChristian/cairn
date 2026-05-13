@@ -43,11 +43,12 @@ export const api = {
   project: (id: string) => get<import("./types").Project>(`/api/projects/${id}`),
   createProject: (name: string) =>
     post<{ id: string; name: string; created_at: string }>("/api/projects", { name }),
-  runs: (params: { project?: string; status?: string; limit?: number } = {}) => {
+  runs: (params: { project?: string; status?: string; limit?: number; offset?: number } = {}) => {
     const q = new URLSearchParams();
     if (params.project) q.set("project", params.project);
     if (params.status) q.set("status", params.status);
     if (params.limit != null) q.set("limit", String(params.limit));
+    if (params.offset != null) q.set("offset", String(params.offset));
     const qs = q.toString();
     return get<import("./types").RunsListResponse>(
       `/api/runs${qs ? `?${qs}` : ""}`,

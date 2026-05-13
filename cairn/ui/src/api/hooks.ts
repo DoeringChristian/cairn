@@ -1,4 +1,5 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { RunsListResponse } from "./types";
 import { api } from "./client";
 
 export function useHealth() {
@@ -18,6 +19,27 @@ export function useRuns(params: Parameters<typeof api.runs>[0]) {
       const data = q.state.data;
       if (!data) return false;
       return data.runs.some((r) => r.status === "running") ? 3_000 : false;
+    },
+  });
+}
+
+const INFINITE_PAGE_SIZE = 100;
+
+export function useInfiniteRuns(params: { project?: string; status?: string }) {
+  return useInfiniteQuery<RunsListResponse>({
+    queryKey: ["runs-infinite", params],
+    queryFn: ({ pageParam }) =>
+      api.runs({ ...params, limit: INFINITE_PAGE_SIZE, offset: pageParam as number }),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage) => {
+      const next = lastPage.offset + lastPage.limit;
+      return next < lastPage.total ? next : undefined;
+    },
+    refetchInterval: (q) => {
+      const pages = q.state.data?.pages;
+      if (!pages) return false;
+      // Poll if any run on the first page is still running.
+      return pages[0]?.runs.some((r) => r.status === "running") ? 3_000 : false;
     },
   });
 }
