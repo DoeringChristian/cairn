@@ -1,5 +1,6 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, RefObject, ReactNode } from "react";
+import { useClickOutside } from "../lib/use-click-outside";
 
 interface Props {
   open: boolean;
@@ -96,29 +97,8 @@ export default function SettingsPopover({
   }, [open, anchorRef]);
 
   // Close on outside click + Escape.
-  useEffect(() => {
-    if (!open) return;
-
-    const onPointerDown = (e: PointerEvent) => {
-      const target = e.target as Node | null;
-      if (!target) return;
-      if (panelRef.current && panelRef.current.contains(target)) return;
-      if (anchorRef.current && anchorRef.current.contains(target)) return;
-      onClose();
-    };
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        onClose();
-      }
-    };
-    document.addEventListener("pointerdown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [open, onClose, anchorRef]);
+  const excludeRefs = useMemo(() => [anchorRef], [anchorRef]);
+  useClickOutside(panelRef, onClose, open, excludeRefs);
 
   // Focus the first focusable child when opened.
   useEffect(() => {

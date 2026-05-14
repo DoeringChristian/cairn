@@ -8,7 +8,7 @@ import { useSequence, useArtifacts } from "../api/hooks";
 import { api } from "../api/client";
 import { safeJsonParse } from "../lib/format";
 import { downloadArtifact, artifactFilename } from "../lib/download";
-import { useCardSettings, resolveCardHeight, toggleColSpanPatch, type CardSettingsKey } from "../lib/card-settings";
+import { useCardSettings, resolveCardHeight, type CardSettingsKey } from "../lib/card-settings";
 import type { SequenceMeta } from "../api/types";
 import CardHeader from "./CardHeader";
 import CardResizeHandle from "./CardResizeHandle";
@@ -104,7 +104,7 @@ export default function ArtifactCard({ runId, metric, settingsKeyOverride, onRem
       style={{
         position: "relative",
         height: resolveCardHeight(settings, undefined),
-        gridColumn: (settings.colSpan ?? 1) > 1 ? `span ${settings.colSpan}` : undefined,
+        gridColumn: `span ${settings.colSpan ?? 3}`,
       }}
     >
       <CardHeader
@@ -113,8 +113,6 @@ export default function ArtifactCard({ runId, metric, settingsKeyOverride, onRem
         subtitle={subtitle}
         collapsed={settings.collapsed}
         onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
-        onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<ArtifactSettings>)}
-        isFullWidth={(settings.colSpan ?? 1) > 1}
         onRemove={onRemove}
         onDownload={current?.artifact_hash ? () => downloadArtifact(api.artifactUrl(current.artifact_hash!), artifactFilename(metric.name, current.step, "application/python-pickle")) : undefined}
       >
@@ -191,7 +189,7 @@ export default function ArtifactCard({ runId, metric, settingsKeyOverride, onRem
       <CardResizeHandle
         height={settings.height}
         onHeightChange={(h) => updateSettings({ height: h })}
-        colSpan={settings.colSpan ?? 1}
+        colSpan={settings.colSpan ?? 3}
         onColSpanChange={(s) => updateSettings({ colSpan: s })}
         onPerColHeightChange={(p) => updateSettings(p as Partial<ArtifactSettings>)}
       />

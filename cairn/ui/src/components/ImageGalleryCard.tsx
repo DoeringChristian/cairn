@@ -8,18 +8,13 @@ import {
 } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { api } from "../api/client";
+import { qk } from "../api/query-keys";
 import { useSequence, useSequences } from "../api/hooks";
 import type { SequenceMeta, SequencePoint } from "../api/types";
-import { useCardSettings, resolveCardHeight, toggleColSpanPatch, type CardSettingsKey } from "../lib/card-settings";
+import { useCardSettings, resolveCardHeight, type CardSettingsKey } from "../lib/card-settings";
 import { useSeriesDrop } from "../lib/use-series-drop";
-import {
-  addCardToComparison,
-  createComparison,
-  useComparisons,
-  type ComparisonSeriesRef,
-} from "../lib/comparisons";
-import { useProjectId } from "../lib/project-context";
-import { formatRelative } from "../lib/format";
+import type { ComparisonSeriesRef } from "../lib/comparisons";
+import {  } from "../lib/format";
 import { downloadArtifact, artifactFilename, exportImagesAsComposite, safeName } from "../lib/download";
 import { computeDiff, loadImageData, type DiffMode } from "../lib/image-diff";
 import { webglRenderDiffToCanvas } from "../lib/webgl-diff";
@@ -27,10 +22,10 @@ import { getRenderMode } from "../lib/render-mode";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import { SERIES_COLORS } from "../lib/colors";
 import CardDetailModal from "./CardDetailModal";
+import AddToComparisonButton from "./AddToComparisonButton";
 import CardHeader from "./CardHeader";
 import CardResizeHandle from "./CardResizeHandle";
 import SeriesChip , { CAIRN_SERIES_MIME, type SeriesRef } from "./SeriesChip";
-import SettingsPopover from "./SettingsPopover";
 import Select from "./settings/Select";
 import Slider from "./settings/Slider";
 import Toggle from "./settings/Toggle";
@@ -877,7 +872,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
   // -----------------------------------------------------------------------
   const queries = useQueries({
     queries: effectiveMetrics.map((m) => ({
-      queryKey: ["sequence", m.runId ?? runId, m.name, m.context_hash],
+      queryKey: qk.sequence(m.runId ?? runId, m.name, m.context_hash),
       queryFn: () =>
         api.sequence(m.runId ?? runId, m.name, {
           context: m.context_hash || undefined,
@@ -951,53 +946,15 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
 
   const [expanded, setExpanded] = useState(false);
 
-  // "Add to comparison" popover state.
-  const projectId = useProjectId();
-  const { comparisons, refresh: refreshComparisons } =
-    useComparisons(projectId ?? "");
-  const addCompBtnRef = useRef<HTMLButtonElement | null>(null);
-  const [addCompOpen, setAddCompOpen] = useState(false);
-  const [addCompConfirm, setAddCompConfirm] = useState<string | null>(null);
-  const addCompTimer = useRef<number | null>(null);
-  const [newCompName, setNewCompName] = useState("");
-
-  const addToComp = useCallback(
-    (comparisonId: string, compName: string) => {
-      if (!projectId) return;
-      addCardToComparison(projectId, comparisonId, {
-        type: "image",
-        series: effectiveMetrics.map((m) => ({
-          runId: m.runId ?? runId,
-          name: m.name,
-          context_hash: m.context_hash,
-        })),
-      });
-      refreshComparisons();
-      if (addCompTimer.current != null)
-        window.clearTimeout(addCompTimer.current);
-      setAddCompConfirm(`Added to ${compName}`);
-      addCompTimer.current = window.setTimeout(() => {
-        setAddCompConfirm(null);
-        setAddCompOpen(false);
-      }, 1500);
-    },
-    [projectId, runId, effectiveMetrics, refreshComparisons],
+  const compSeries = useMemo(
+    () => effectiveMetrics.map((m) => ({
+      runId: m.runId ?? runId,
+      name: m.name,
+      context_hash: m.context_hash,
+    })),
+    [runId, effectiveMetrics],
   );
 
-  const createAndAdd = useCallback(() => {
-    if (!projectId) return;
-    const name = newCompName.trim() || "New comparison";
-    const cmp = createComparison(projectId, name);
-    addToComp(cmp.id, cmp.name);
-    setNewCompName("");
-  }, [projectId, newCompName, addToComp]);
-
-  useEffect(() => {
-    return () => {
-      if (addCompTimer.current != null)
-        window.clearTimeout(addCompTimer.current);
-    };
-  }, []);
 
   // -----------------------------------------------------------------------
   // SVG gamma filter
@@ -1321,7 +1278,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
   const perRunRefQueries = useQueries({
     queries: extBase && refMode === "per-run"
       ? effectiveMetrics.map((m) => ({
-          queryKey: ["ref-series", m.runId ?? runId, extBase.name, extBase.context_hash],
+          queryKey: qk.refSeries(m.runId ?? runId, extBase.name, extBase.context_hash),
           queryFn: () => api.sequence(m.runId ?? runId, extBase.name, {
             context: extBase.context_hash || undefined,
             maxPoints: 500,
@@ -1372,7 +1329,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
       style={{
         position: "relative",
         height: settings.collapsed ? undefined : resolveCardHeight(settings, undefined),
-        gridColumn: (settings.colSpan ?? 1) > 1 ? `span ${settings.colSpan}` : undefined,
+        gridColumn: `span ${settings.colSpan ?? 3}`,
       }}
       {...dropProps}
     >
@@ -1412,8 +1369,6 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
         collapsed={settings.collapsed}
         onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
         onSettings={() => setExpanded(true)}
-        onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<typeof settings>)}
-        isFullWidth={(settings.colSpan ?? 1) > 1}
         onRemove={onRemove}
         onDownload={isMulti
           ? () => { if (containerRef.current) exportImagesAsComposite(containerRef.current, safeName(metric.name) + `_step${currentStep}`, settings.imageColumns ?? 2); }
@@ -1459,20 +1414,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
           <option value="red-green">red-green</option>
           <option value="red-blue">red-blue</option>
         </select>
-        {projectId && (
-          <button
-            ref={addCompBtnRef}
-            type="button"
-            onClick={() => setAddCompOpen((v) => !v)}
-            className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
-            aria-label="Add to comparison"
-            aria-haspopup="dialog"
-            aria-expanded={addCompOpen}
-            title="Add to comparison"
-          >
-            {"\u002B"}
-          </button>
-        )}
+        <AddToComparisonButton cardType="image" series={compSeries} />
       </CardHeader>
 
       {!settings.collapsed && (<>
@@ -1922,79 +1864,6 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
         )}
       </div>
 
-      {/* Add to comparison popover */}
-      <SettingsPopover
-        open={addCompOpen && projectId != null}
-        onClose={() => {
-          setAddCompOpen(false);
-          setAddCompConfirm(null);
-        }}
-        anchorRef={addCompBtnRef}
-        title="Add to comparison"
-      >
-        {addCompConfirm ? (
-          <p className="text-xs text-accent">{addCompConfirm}</p>
-        ) : (
-          <>
-            {comparisons.length === 0 ? (
-              <p className="text-xs text-fg-subtle mb-2">
-                No comparisons yet.
-              </p>
-            ) : (
-              <div className="flex flex-col gap-1 mb-2 max-h-48 overflow-y-auto">
-                {comparisons.map((c) => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() => addToComp(c.id, c.name)}
-                    className="text-left text-xs text-fg-muted hover:bg-bg-hover rounded px-2 py-1.5 border border-border-subtle"
-                  >
-                    <div className="truncate">{c.name}</div>
-                    <div className="text-[10px] text-fg-subtle">
-                      {c.cards.length} card(s) ·{" "}
-                      {formatRelative(c.createdAt)}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-            <div className="border-t border-border-subtle pt-2 mt-1">
-              <label className="text-[10px] uppercase tracking-wide text-fg-muted block mb-1">
-                Create new comparison
-              </label>
-              <div className="flex gap-1">
-                <input
-                  type="text"
-                  value={newCompName}
-                  onChange={(e) => setNewCompName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      createAndAdd();
-                    }
-                  }}
-                  placeholder="Name"
-                  className="input flex-1 text-xs"
-                />
-                <button
-                  type="button"
-                  onClick={createAndAdd}
-                  className="btn text-xs px-2"
-                >
-                  Create
-                </button>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => setAddCompOpen(false)}
-              className="btn w-full mt-2 text-xs"
-            >
-              Cancel
-            </button>
-          </>
-        )}
-      </SettingsPopover>
       </>)}
 
       {(() => {
@@ -2351,7 +2220,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
       <CardResizeHandle
         height={settings.height}
         onHeightChange={(h) => updateSettings({ height: h })}
-        colSpan={settings.colSpan ?? 1}
+        colSpan={settings.colSpan ?? 3}
         onColSpanChange={(s) => updateSettings({ colSpan: s })}
         onPerColHeightChange={(p) => updateSettings(p as Partial<typeof settings>)}
       />

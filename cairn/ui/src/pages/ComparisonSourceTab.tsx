@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { diffLines } from "diff";
 import { api } from "../api/client";
+import { qk } from "../api/query-keys";
 import { disambiguateRunLabels } from "../lib/run-label";
 
 interface Props {
@@ -30,7 +31,7 @@ export default function ComparisonSourceTab({ compRunIds }: Props) {
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
 
   const leftTree = useQuery({
-    queryKey: ["sourceTree", leftId],
+    queryKey: qk.sourceTree(leftId),
     queryFn: () => api.sourceTree(leftId),
     enabled: !!leftId,
     staleTime: Infinity,
@@ -38,7 +39,7 @@ export default function ComparisonSourceTab({ compRunIds }: Props) {
   });
 
   const rightTree = useQuery({
-    queryKey: ["sourceTree", rightId],
+    queryKey: qk.sourceTree(rightId),
     queryFn: () => api.sourceTree(rightId),
     enabled: !!rightId,
     staleTime: Infinity,
@@ -81,7 +82,7 @@ export default function ComparisonSourceTab({ compRunIds }: Props) {
 
   // Fetch file contents for diff
   const leftFile = useQuery({
-    queryKey: ["sourceFile", leftId, selectedFile],
+    queryKey: qk.sourceFile(leftId, selectedFile),
     queryFn: () => api.sourceFile(leftId, selectedFile!),
     enabled: !!selectedFile && !!leftId && selectedFileStatus !== "added",
     staleTime: Infinity,
@@ -89,7 +90,7 @@ export default function ComparisonSourceTab({ compRunIds }: Props) {
   });
 
   const rightFile = useQuery({
-    queryKey: ["sourceFile", rightId, selectedFile],
+    queryKey: qk.sourceFile(rightId, selectedFile),
     queryFn: () => api.sourceFile(rightId, selectedFile!),
     enabled: !!selectedFile && !!rightId && selectedFileStatus !== "removed",
     staleTime: Infinity,

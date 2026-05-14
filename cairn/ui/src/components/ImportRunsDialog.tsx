@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
+import { qk } from "../api/query-keys";
 
 interface Props {
   open: boolean;
@@ -34,7 +35,7 @@ export default function ImportRunsDialog({ open, onClose }: Props) {
     try {
       const res = await api.importRuns(file);
       setResult(res.imported);
-      qc.invalidateQueries({ queryKey: ["runs"] });
+      qc.invalidateQueries({ queryKey: qk.runs() });
     } catch (err) {
       setError(String(err));
     } finally {

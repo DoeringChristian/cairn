@@ -11,6 +11,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { api } from "../api/client";
+import { qk } from "../api/query-keys";
+import { useModalBehavior } from "../lib/use-modal-behavior";
 const TYPE_LABELS: Record<string, string> = {
   scalar: "Scalars",
   image: "Images",
@@ -58,31 +60,13 @@ export default function AddCardModal({
     }
   }, [open]);
 
-  // Close on Escape
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [open, onClose]);
-
-  // Prevent body scroll
-  useEffect(() => {
-    if (!open) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [open]);
+  useModalBehavior(open, onClose);
 
   // Fetch sequences for all runs
   const seqQueries = useQueries({
     queries: open
       ? runIds.map((rid) => ({
-          queryKey: ["sequences", rid],
+          queryKey: qk.sequences(rid),
           queryFn: () => api.sequences(rid),
           staleTime: 10_000,
         }))

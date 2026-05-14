@@ -6,6 +6,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { api } from "../../api/client";
+import { qk } from "../../api/query-keys";
+import { useClickOutside } from "../../lib/use-click-outside";
 
 interface Props {
   /** Run IDs to scan for available metrics. */
@@ -33,7 +35,7 @@ export default function TagPicker({
   const seqQueries = useQueries({
     queries: open
       ? runIds.map((rid) => ({
-          queryKey: ["sequences", rid],
+          queryKey: qk.sequences(rid),
           queryFn: () => api.sequences(rid),
           staleTime: 10_000,
         }))
@@ -71,28 +73,8 @@ export default function TagPicker({
     if (open) inputRef.current?.focus();
   }, [open]);
 
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (e: PointerEvent) => {
-      const target = e.target as Node | null;
-      if (!target) return;
-      if (dropdownRef.current?.contains(target)) return;
-      if (btnRef.current?.contains(target)) return;
-      setOpen(false);
-    };
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        setOpen(false);
-      }
-    };
-    document.addEventListener("pointerdown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [open]);
+  const excludeRefs = useMemo(() => [btnRef], []);
+  useClickOutside(dropdownRef, () => setOpen(false), open, excludeRefs);
 
   return (
     <div className="relative mt-1">

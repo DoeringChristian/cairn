@@ -1,5 +1,5 @@
-import { useEffect } from "react";
 import type { ReactNode } from "react";
+import { useModalBehavior } from "../lib/use-modal-behavior";
 
 interface Props {
   open: boolean;
@@ -16,25 +16,7 @@ export default function CardDetailModal({
   settingsContent,
   title,
 }: Props) {
-  // Close on Escape
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [open, onClose]);
-
-  // Prevent body scroll while open
-  useEffect(() => {
-    if (!open) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [open]);
+  useModalBehavior(open, onClose);
 
   if (!open) return null;
 

@@ -118,51 +118,27 @@ export function useCardSettings<T extends { version: number }>(
 /**
  * Resolve the effective card height for the current colSpan.
  *
- * Cards store per-colSpan heights as `height1` (single column) and
- * `height2` (double column). The legacy `height` field is used as
- * fallback when the per-colSpan field hasn't been set yet.
+ * Cards store per-colSpan heights in a `heights` record keyed by span
+ * (e.g. `{ 3: 350, 6: 500 }`). The legacy `height`, `height1`, and
+ * `height2` fields are used as fallbacks for backward compatibility.
  *
- * @param settings  - card settings object (must have height/height1/height2/colSpan)
+ * @param settings  - card settings object
  * @param fallback  - default height when nothing is set (e.g. 300, 350, undefined)
  */
 export function resolveCardHeight(
-  settings: { height?: number; height1?: number; height2?: number; colSpan?: number; collapsed?: boolean },
+  settings: { height?: number; height1?: number; height2?: number; heights?: Record<number, number>; colSpan?: number; collapsed?: boolean },
   fallback?: number,
 ): number | undefined {
   if (settings.collapsed) return undefined;
-  const span = settings.colSpan ?? 1;
+  const span = settings.colSpan ?? 3;
+
+  // New path: per-span heights record
+  if (settings.heights && settings.heights[span] != null) {
+    return settings.heights[span];
+  }
+
+  // Legacy fallback: height1 (span 1) / height2 (span > 1)
   if (span > 1) return settings.height2 ?? settings.height ?? fallback;
   return settings.height1 ?? settings.height ?? fallback;
-}
-
-/**
- * Build the settings patch for a colSpan toggle.
- * Saves the current card element height to the outgoing colSpan's slot,
- * then switches to the new colSpan (loading its stored height if any).
- */
-export function toggleColSpanPatch(
-  settings: { height?: number; height1?: number; height2?: number; colSpan?: number },
-  cardEl: HTMLElement | null,
-): Record<string, unknown> {
-  const oldSpan = settings.colSpan ?? 1;
-  const newSpan = oldSpan > 1 ? 1 : 2;
-  const currentHeight = cardEl ? Math.round(cardEl.getBoundingClientRect().height) : undefined;
-
-  const patch: Record<string, unknown> = { colSpan: newSpan };
-
-  // Save current height to outgoing slot
-  if (currentHeight) {
-    if (oldSpan > 1) patch.height2 = currentHeight;
-    else patch.height1 = currentHeight;
-  }
-
-  // Set height to incoming slot's stored value (or clear to let fallback apply)
-  if (newSpan > 1) {
-    patch.height = settings.height2;
-  } else {
-    patch.height = settings.height1;
-  }
-
-  return patch;
 }
 

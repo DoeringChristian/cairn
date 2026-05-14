@@ -8,9 +8,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { api } from "../api/client";
+import { qk } from "../api/query-keys";
 import { viridis } from "../lib/colors";
 import type { Run } from "../api/types";
-import { useCardSettings, resolveCardHeight, toggleColSpanPatch } from "../lib/card-settings";
+import { useCardSettings, resolveCardHeight } from "../lib/card-settings";
 import { exportChartFromContainer, safeName } from "../lib/download";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import CardHeader from "./CardHeader";
@@ -70,7 +71,7 @@ export default function ParallelCoordsCard({
   // Fetch run details (params) for all runs
   const runQueries = useQueries({
     queries: runIds.map((rid) => ({
-      queryKey: ["run", rid],
+      queryKey: qk.run(rid),
       queryFn: () => api.run(rid),
       staleTime: 30_000,
     })),
@@ -85,7 +86,7 @@ export default function ParallelCoordsCard({
   const metricQueries = useQueries({
     queries: runIds.flatMap((rid) =>
       metricColumns.map((col) => ({
-        queryKey: ["sequence", rid, col.key, ""],
+        queryKey: qk.sequence(rid, col.key, ""),
         queryFn: () => api.sequence(rid, col.key, { maxPoints: 1000 }),
         staleTime: 30_000,
       })),
@@ -190,7 +191,7 @@ export default function ParallelCoordsCard({
   // Fetch sequences list for metric column options
   const seqQueries = useQueries({
     queries: runIds.map((rid) => ({
-      queryKey: ["sequences", rid],
+      queryKey: qk.sequences(rid),
       queryFn: () => api.sequences(rid),
       staleTime: 30_000,
     })),
@@ -522,7 +523,7 @@ export default function ParallelCoordsCard({
       style={{
         height: resolveCardHeight(settings, 350),
         position: "relative",
-        gridColumn: (settings.colSpan ?? 1) > 1 ? `span ${settings.colSpan}` : undefined,
+        gridColumn: `span ${settings.colSpan ?? 3}`,
       }}
     >
       <CardHeader
@@ -532,8 +533,6 @@ export default function ParallelCoordsCard({
         collapsed={settings.collapsed}
         onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
         onSettings={() => setExpanded(true)}
-        onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<ParallelSettings>)}
-        isFullWidth={(settings.colSpan ?? 1) > 1}
         onRemove={onRemove}
         onDownload={() => { if (cardRef.current) exportChartFromContainer(cardRef.current, safeName(settings.title ?? "parallel_coords"), "svg"); }}
       >
@@ -565,7 +564,7 @@ export default function ParallelCoordsCard({
       <CardResizeHandle
         height={settings.height}
         onHeightChange={(h) => updateSettings({ height: h })}
-        colSpan={settings.colSpan ?? 1}
+        colSpan={settings.colSpan ?? 3}
         onColSpanChange={(s) => updateSettings({ colSpan: s })}
         onPerColHeightChange={(p) => updateSettings(p as Partial<ParallelSettings>)}
       />

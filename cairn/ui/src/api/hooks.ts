@@ -1,18 +1,19 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { RunsListResponse } from "./types";
 import { api } from "./client";
+import { qk } from "./query-keys";
 
 export function useHealth() {
-  return useQuery({ queryKey: ["health"], queryFn: api.health, refetchInterval: 5_000 });
+  return useQuery({ queryKey: qk.health(), queryFn: api.health, refetchInterval: 5_000 });
 }
 
 export function useProjects() {
-  return useQuery({ queryKey: ["projects"], queryFn: api.projects });
+  return useQuery({ queryKey: qk.projects(), queryFn: api.projects });
 }
 
 export function useRuns(params: Parameters<typeof api.runs>[0]) {
   return useQuery({
-    queryKey: ["runs", params],
+    queryKey: qk.runs(params),
     queryFn: () => api.runs(params),
     refetchInterval: (q) => {
       // Poll every 3s if there are any running runs.
@@ -46,7 +47,7 @@ export function useInfiniteRuns(params: { project?: string; status?: string }) {
 
 export function useRun(runId: string) {
   return useQuery({
-    queryKey: ["run", runId],
+    queryKey: qk.run(runId),
     queryFn: () => api.run(runId),
     refetchInterval: (q) =>
       q.state.data?.run.status === "running" ? 2_000 : false,
@@ -55,7 +56,7 @@ export function useRun(runId: string) {
 
 export function useSequences(runId: string) {
   return useQuery({
-    queryKey: ["sequences", runId],
+    queryKey: qk.sequences(runId),
     queryFn: () => api.sequences(runId),
     refetchInterval: 2_000,
   });
@@ -67,7 +68,7 @@ export function useSequence(
   opts: { context?: string; maxPoints?: number } = {},
 ) {
   return useQuery({
-    queryKey: ["sequence", runId, name, opts],
+    queryKey: qk.sequence(runId, name, opts),
     queryFn: () => api.sequence(runId, name, opts),
     refetchInterval: 2_000,
   });
@@ -75,7 +76,7 @@ export function useSequence(
 
 export function useArtifacts(runId: string) {
   return useQuery({
-    queryKey: ["artifacts", runId],
+    queryKey: qk.artifacts(runId),
     queryFn: () => api.artifactsForRun(runId),
   });
 }
@@ -85,7 +86,7 @@ export function useLogs(
   opts: { offset?: number; limit?: number; stream?: string; search?: string },
 ) {
   return useQuery({
-    queryKey: ["logs", runId, opts],
+    queryKey: qk.logs(runId, opts),
     queryFn: () => api.logs(runId, opts),
     refetchInterval: 3_000,
   });
@@ -93,7 +94,7 @@ export function useLogs(
 
 export function useSourceTree(runId: string) {
   return useQuery({
-    queryKey: ["source-tree", runId],
+    queryKey: qk.sourceTree(runId),
     queryFn: () => api.sourceTree(runId),
     retry: false,
   });
@@ -101,7 +102,7 @@ export function useSourceTree(runId: string) {
 
 export function useSourceFile(runId: string, path: string | null) {
   return useQuery({
-    queryKey: ["source-file", runId, path],
+    queryKey: qk.sourceFile(runId, path),
     queryFn: () => {
       if (!path) throw new Error("no path");
       return api.sourceFile(runId, path);
@@ -114,7 +115,7 @@ export function useSetTags(runId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (tags: string[]) => api.setTags(runId, tags),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["run", runId] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.run(runId) }),
   });
 }
 
@@ -122,6 +123,6 @@ export function useSetNotes(runId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (notes: string) => api.setNotes(runId, notes),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["run", runId] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.run(runId) }),
   });
 }

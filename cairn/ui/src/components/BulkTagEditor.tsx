@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
+import { qk } from "../api/query-keys";
 import type { Run } from "../api/types";
 import { safeJsonParse } from "../lib/format";
 import { useProjectTags } from "../lib/use-project-tags";
@@ -62,7 +63,7 @@ export default function BulkTagEditor({ open, onClose, anchorRef, selectedRunIds
       }
       await Promise.all(promises);
       setNewTag("");
-      qc.invalidateQueries({ queryKey: ["runs"] });
+      qc.invalidateQueries({ queryKey: qk.runs() });
     } finally {
       setBusy(false);
     }
@@ -80,7 +81,7 @@ export default function BulkTagEditor({ open, onClose, anchorRef, selectedRunIds
           updateTags(runId, (prev) => prev.filter((t) => t !== tag)),
         ),
       );
-      qc.invalidateQueries({ queryKey: ["runs"] });
+      qc.invalidateQueries({ queryKey: qk.runs() });
     } finally {
       setBusy(false);
     }

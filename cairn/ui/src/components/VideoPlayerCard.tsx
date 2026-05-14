@@ -1,28 +1,23 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { useSequence } from "../api/hooks";
 import { api } from "../api/client";
-import { safeJsonParse, formatRelative } from "../lib/format";
+import { qk } from "../api/query-keys";
+import { safeJsonParse } from "../lib/format";
 import { downloadArtifact, artifactFilename } from "../lib/download";
-import { useCardSettings, resolveCardHeight, toggleColSpanPatch, type CardSettingsKey } from "../lib/card-settings";
+import { useCardSettings, resolveCardHeight, type CardSettingsKey } from "../lib/card-settings";
 import { useSeriesDrop } from "../lib/use-series-drop";
-import {
-  addCardToComparison,
-  createComparison,
-  useComparisons,
-  type ComparisonSeriesRef,
-} from "../lib/comparisons";
-import { useProjectId } from "../lib/project-context";
+import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import { SERIES_COLORS } from "../lib/colors";
 import { seriesKey, seriesLabel } from "../lib/series-utils";
 import type { SequenceMeta, SequenceResponse } from "../api/types";
+import AddToComparisonButton from "./AddToComparisonButton";
 import CardHeader from "./CardHeader";
 import CardResizeHandle from "./CardResizeHandle";
 import CardDetailModal from "./CardDetailModal";
 import SplitPane from "./SplitPane";
 import SeriesChip , { type SeriesRef } from "./SeriesChip";
-import SettingsPopover from "./SettingsPopover";
 import Toggle from "./settings/Toggle";
 import Select from "./settings/Select";
 import StepSlider, { type XAxisMode } from "./StepSlider";
@@ -237,7 +232,7 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
       ? effectiveMetrics.map((m) => {
           const rid = m.runId ?? runId;
           return {
-            queryKey: ["sequence", rid, m.name, m.context_hash],
+            queryKey: qk.sequence(rid, m.name, m.context_hash),
             queryFn: () =>
               api.sequence(rid, m.name, {
                 context: m.context_hash || undefined,
@@ -280,47 +275,11 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
 
   const [expanded, setExpanded] = useState(false);
 
-  // "Add to comparison" popover state.
-  const projectId = useProjectId();
-  const { comparisons, refresh: refreshComparisons } =
-    useComparisons(projectId ?? "");
-  const addCompBtnRef = useRef<HTMLButtonElement | null>(null);
-  const [addCompOpen, setAddCompOpen] = useState(false);
-  const [addCompConfirm, setAddCompConfirm] = useState<string | null>(null);
-  const addCompTimer = useRef<number | null>(null);
-  const [newCompName, setNewCompName] = useState("");
-
-  const addToComp = useCallback(
-    (comparisonId: string, compName: string) => {
-      if (!projectId) return;
-      addCardToComparison(projectId, comparisonId, {
-        type: "video",
-        series: [{ runId, name: metric.name, context_hash: metric.context_hash }],
-      });
-      refreshComparisons();
-      if (addCompTimer.current != null) window.clearTimeout(addCompTimer.current);
-      setAddCompConfirm(`Added to ${compName}`);
-      addCompTimer.current = window.setTimeout(() => {
-        setAddCompConfirm(null);
-        setAddCompOpen(false);
-      }, 1500);
-    },
-    [projectId, runId, metric.name, metric.context_hash, refreshComparisons],
+  const compSeries = useMemo(
+    () => [{ runId, name: metric.name, context_hash: metric.context_hash }],
+    [runId, metric.name, metric.context_hash],
   );
 
-  const createAndAdd = useCallback(() => {
-    if (!projectId) return;
-    const name = newCompName.trim() || "New comparison";
-    const cmp = createComparison(projectId, name);
-    addToComp(cmp.id, cmp.name);
-    setNewCompName("");
-  }, [projectId, newCompName, addToComp]);
-
-  useEffect(() => {
-    return () => {
-      if (addCompTimer.current != null) window.clearTimeout(addCompTimer.current);
-    };
-  }, []);
 
   const allRunIds = useMemo(() => {
     const ids = new Set<string>();
@@ -347,7 +306,7 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
       style={{
         height: resolveCardHeight(settings, 350),
         position: "relative",
-        gridColumn: (settings.colSpan ?? 1) > 1 ? `span ${settings.colSpan}` : undefined,
+        gridColumn: `span ${settings.colSpan ?? 3}`,
       }}
       {...dropProps}
     >
@@ -358,25 +317,10 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
         collapsed={settings.collapsed}
         onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
         onSettings={() => setExpanded(true)}
-        onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<VideoSettings>)}
-        isFullWidth={(settings.colSpan ?? 1) > 1}
         onRemove={onRemove}
         onDownload={current?.artifact_hash ? () => downloadArtifact(api.artifactUrl(current.artifact_hash!), artifactFilename(metric.name, current.step, current.artifact_mime ?? "video/mp4")) : undefined}
       >
-        {projectId && (
-          <button
-            ref={addCompBtnRef}
-            type="button"
-            onClick={() => setAddCompOpen((v) => !v)}
-            className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
-            aria-label="Add to comparison"
-            aria-haspopup="dialog"
-            aria-expanded={addCompOpen}
-            title="Add to comparison"
-          >
-            {"\u002B"}
-          </button>
-        )}
+        <AddToComparisonButton cardType="video" series={compSeries} />
       </CardHeader>
 
       {!settings.collapsed && (<>
@@ -666,68 +610,11 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
         </div>
       </CardDetailModal>
 
-      <SettingsPopover
-        open={addCompOpen && projectId != null}
-        onClose={() => { setAddCompOpen(false); setAddCompConfirm(null); }}
-        anchorRef={addCompBtnRef}
-        title="Add to comparison"
-      >
-        {addCompConfirm ? (
-          <p className="text-xs text-accent">{addCompConfirm}</p>
-        ) : (
-          <>
-            {comparisons.length === 0 ? (
-              <p className="text-xs text-fg-subtle mb-2">No comparisons yet.</p>
-            ) : (
-              <div className="flex flex-col gap-1 mb-2 max-h-48 overflow-y-auto">
-                {comparisons.map((c) => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() => addToComp(c.id, c.name)}
-                    className="text-left text-xs text-fg-muted hover:bg-bg-hover rounded px-2 py-1.5 border border-border-subtle"
-                  >
-                    <div className="truncate">{c.name}</div>
-                    <div className="text-[10px] text-fg-subtle">
-                      {c.cards.length} card(s) · {formatRelative(c.createdAt)}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-            <div className="border-t border-border-subtle pt-2 mt-1">
-              <label className="text-[10px] uppercase tracking-wide text-fg-muted block mb-1">
-                Create new comparison
-              </label>
-              <div className="flex gap-1">
-                <input
-                  type="text"
-                  value={newCompName}
-                  onChange={(e) => setNewCompName(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); createAndAdd(); } }}
-                  placeholder="Name"
-                  className="input flex-1 text-xs"
-                />
-                <button type="button" onClick={createAndAdd} className="btn text-xs px-2">
-                  Create
-                </button>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => setAddCompOpen(false)}
-              className="btn w-full mt-2 text-xs"
-            >
-              Cancel
-            </button>
-          </>
-        )}
-      </SettingsPopover>
       </>)}
       <CardResizeHandle
         height={settings.height}
         onHeightChange={(h) => updateSettings({ height: h })}
-        colSpan={settings.colSpan ?? 1}
+        colSpan={settings.colSpan ?? 3}
         onColSpanChange={(s) => updateSettings({ colSpan: s })}
         onPerColHeightChange={(p) => updateSettings(p as Partial<VideoSettings>)}
       />

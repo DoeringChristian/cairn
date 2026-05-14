@@ -7,9 +7,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { useSequence } from "../api/hooks";
 import { api } from "../api/client";
+import { qk } from "../api/query-keys";
 import { safeJsonParse } from "../lib/format";
 import { downloadArtifact, artifactFilename } from "../lib/download";
-import { useCardSettings, resolveCardHeight, toggleColSpanPatch, type CardSettingsKey } from "../lib/card-settings";
+import { useCardSettings, resolveCardHeight, type CardSettingsKey } from "../lib/card-settings";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import type { SequenceMeta, SequenceResponse, SequencePoint } from "../api/types";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
@@ -344,7 +345,7 @@ export default function PluginCard({
   const multiQueries = useQueries({
     queries: effectiveMetrics.length > 1
       ? effectiveMetrics.map((m) => ({
-          queryKey: ["sequence", m.runId ?? runId, m.name, m.context_hash],
+          queryKey: qk.sequence(m.runId ?? runId, m.name, m.context_hash),
           queryFn: () => api.sequence(m.runId ?? runId, m.name, { context: m.context_hash || undefined, maxPoints: 200 }),
           refetchInterval: 2_000,
           staleTime: 2_000,
@@ -414,7 +415,7 @@ export default function PluginCard({
       style={{
         position: "relative",
         height: resolveCardHeight(settings, 400),
-        gridColumn: (settings.colSpan ?? 1) > 1 ? `span ${settings.colSpan}` : undefined,
+        gridColumn: `span ${settings.colSpan ?? 3}`,
       }}
     >
       <CardHeader
@@ -423,8 +424,6 @@ export default function PluginCard({
         subtitle={subtitle}
         collapsed={settings.collapsed}
         onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
-        onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<PluginSettings>)}
-        isFullWidth={(settings.colSpan ?? 1) > 1}
         onRemove={onRemove}
         onDownload={primaryCurrent?.artifact_hash ? () => downloadArtifact(api.artifactUrl(primaryCurrent.artifact_hash!), artifactFilename(metric.name, primaryCurrent.step, primaryCurrent.artifact_mime)) : undefined}
       >
@@ -530,7 +529,7 @@ export default function PluginCard({
       <CardResizeHandle
         height={settings.height}
         onHeightChange={(h) => updateSettings({ height: h })}
-        colSpan={settings.colSpan ?? 1}
+        colSpan={settings.colSpan ?? 3}
         onColSpanChange={(s) => updateSettings({ colSpan: s })}
         onPerColHeightChange={(p) => updateSettings(p as Partial<PluginSettings>)}
       />

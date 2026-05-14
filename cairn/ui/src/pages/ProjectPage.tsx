@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQueries } from "@tanstack/react-query";
 import { api } from "../api/client";
+import { qk } from "../api/query-keys";
 import { useRuns } from "../api/hooks";
 import type { SequenceMeta } from "../api/types";
 import { formatDuration, formatRelative } from "../lib/format";
@@ -59,7 +60,7 @@ export default function ProjectPage() {
   );
   const seqQueries = useQueries({
     queries: visibleRunIds.map((rid) => ({
-      queryKey: ["sequences", rid],
+      queryKey: qk.sequences(rid),
       queryFn: () => api.sequences(rid),
       staleTime: 5000,
     })),

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useSourceFile, useSourceTree } from "../api/hooks";
+import { qk } from "../api/query-keys";
 import { formatBytes } from "../lib/format";
 import { getHighlighter, langFromPath } from "../lib/syntax-highlight";
 
@@ -12,7 +13,7 @@ export default function RunSourceTab() {
   const file = useSourceFile(runId!, selected);
 
   const highlighted = useQuery({
-    queryKey: ["highlight", selected, file.data?.content],
+    queryKey: qk.highlight(selected, file.data?.content),
     enabled: !!file.data && file.data.encoding === "utf-8",
     queryFn: async () => {
       const lang = langFromPath(selected!);

@@ -7,15 +7,30 @@ interface Props {
   /** Column span (1 = single column, 2 = double, etc.). */
   colSpan: number;
   onColSpanChange: (span: number) => void;
-  /** Total grid columns available (default 2). */
+  /** Total grid columns available (default 6). */
   gridCols?: number;
   /** Minimum height in px (default 150). */
   minHeight?: number;
-  /** Called with per-colSpan height when dragging. Saves to height1/height2. */
+  /** Called with per-colSpan height when dragging. */
   onPerColHeightChange?: (patch: Record<string, unknown>) => void;
 }
 
 const MAX_HEIGHT = 2000;
+const VALID_SPANS = [1, 2, 3, 6] as const;
+
+/** Snap a raw column-span value to the nearest valid span. */
+function snapToValidSpan(raw: number): number {
+  let best: number = VALID_SPANS[0];
+  let bestDist = Math.abs(raw - best);
+  for (const v of VALID_SPANS) {
+    const d = Math.abs(raw - v);
+    if (d < bestDist) {
+      best = v;
+      bestDist = d;
+    }
+  }
+  return best;
+}
 
 /**
  * Corner resize handle for cards. Drag to resize both width (column span)
@@ -25,7 +40,7 @@ export default function CardResizeHandle({
   onHeightChange,
   colSpan,
   onColSpanChange,
-  gridCols = 2,
+  gridCols = 6,
   minHeight = 150,
   onPerColHeightChange,
 }: Props) {
@@ -72,13 +87,13 @@ export default function CardResizeHandle({
 
         // Also save to per-colSpan slot
         if (onPerColHeightChange) {
-          const key = currentSpan > 1 ? "height2" : "height1";
-          onPerColHeightChange({ [key]: newH, height: newH });
+          onPerColHeightChange({ [`heights.${currentSpan}`]: newH, height: newH });
         }
 
-        // Width: snap to column spans based on drag distance
+        // Width: snap to valid column spans based on drag distance
         const targetWidth = startWidth + (ev.clientX - startX);
-        const newSpan = Math.max(1, Math.min(actualCols, Math.round(targetWidth / colWidth)));
+        const rawSpan = Math.max(1, Math.min(actualCols, Math.round(targetWidth / colWidth)));
+        const newSpan = snapToValidSpan(rawSpan);
         if (newSpan !== currentSpan) currentSpan = newSpan;
         onColSpanChange(newSpan);
       };

@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { useSequences } from "../../api/hooks";
 import { api } from "../../api/client";
+import { qk } from "../../api/query-keys";
+import { useClickOutside } from "../../lib/use-click-outside";
 import type { SequenceMeta } from "../../api/types";
 
 export interface ChipValue {
@@ -51,7 +53,7 @@ export default function MetricChips({
   // Multi-run fetch
   const multiQueries = useQueries({
     queries: (runIds ?? []).map((rid) => ({
-      queryKey: ["sequences", rid],
+      queryKey: qk.sequences(rid),
       queryFn: () => api.sequences(rid),
       staleTime: 10_000,
     })),
@@ -146,28 +148,8 @@ export default function MetricChips({
     inputRef.current?.focus();
   }, [open]);
 
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (e: PointerEvent) => {
-      const target = e.target as Node | null;
-      if (!target) return;
-      if (dropdownRef.current?.contains(target)) return;
-      if (addButtonRef.current?.contains(target)) return;
-      setOpen(false);
-    };
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        setOpen(false);
-      }
-    };
-    document.addEventListener("pointerdown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [open]);
+  const excludeRefs = useMemo(() => [addButtonRef], []);
+  useClickOutside(dropdownRef, () => setOpen(false), open, excludeRefs);
 
   const removeChip = (chip: ChipValue) => {
     if (tagMode) {

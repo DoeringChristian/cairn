@@ -9,6 +9,7 @@ import { formatDuration, formatRelative, safeJsonParse } from "../lib/format";
 import { addCardToComparison, createComparison, useTemplates, type ComparisonTemplate } from "../lib/comparisons";
 import { saveCardSettings } from "../lib/card-settings";
 import { api } from "../api/client";
+import { qk } from "../api/query-keys";
 import { setRunMetadata } from "../lib/run-label";
 import SettingsPopover from "../components/SettingsPopover";
 import BulkTagEditor from "../components/BulkTagEditor";
@@ -116,7 +117,7 @@ export default function RunsTablePage() {
     const run = runs.find((r) => r.id === runId);
     const prev = safeJsonParse<string[]>(run?.tags ?? null) ?? [];
     await api.setTags(runId, prev.filter((t) => t !== tag));
-    qc.invalidateQueries({ queryKey: ["runs"] });
+    qc.invalidateQueries({ queryKey: qk.runs() });
   }, [runs, qc]);
 
   const addTagToRun = useCallback(async (runId: string, tag: string) => {
@@ -127,26 +128,26 @@ export default function RunsTablePage() {
     await api.setTags(runId, [...prev, tag.trim()]);
     setAddingTagFor(null);
     setNewTagValue("");
-    qc.invalidateQueries({ queryKey: ["runs"] });
+    qc.invalidateQueries({ queryKey: qk.runs() });
   }, [runs, qc]);
 
   const onBulkDelete = useCallback(async () => {
     if (!confirm(`Delete ${selected.size} run(s)? This cannot be undone.`)) return;
     await Promise.all([...selected].map((id) => api.deleteRun(id)));
     setSelected(new Set());
-    qc.invalidateQueries({ queryKey: ["runs"] });
+    qc.invalidateQueries({ queryKey: qk.runs() });
   }, [selected, qc]);
 
   const onBulkArchive = useCallback(async () => {
     await Promise.all([...selected].map((id) => api.archiveRun(id)));
     setSelected(new Set());
-    qc.invalidateQueries({ queryKey: ["runs"] });
+    qc.invalidateQueries({ queryKey: qk.runs() });
   }, [selected, qc]);
 
   const onBulkUnarchive = useCallback(async () => {
     await Promise.all([...selected].map((id) => api.unarchiveRun(id)));
     setSelected(new Set());
-    qc.invalidateQueries({ queryKey: ["runs"] });
+    qc.invalidateQueries({ queryKey: qk.runs() });
   }, [selected, qc]);
 
   // Populate run label cache for formatting across the app.
@@ -450,7 +451,7 @@ export default function RunsTablePage() {
       </div>
 
       <div
-        className={`sticky top-0 z-20 mb-3 flex items-center justify-between gap-3 rounded-lg border border-accent/40 bg-accent/10 backdrop-blur-sm px-3 py-2 text-sm transition-opacity ${selectedCount > 0 ? "opacity-100" : "opacity-0 pointer-events-none"}`}
+        className={`sticky top-[41px] z-20 mb-3 flex items-center justify-between gap-3 rounded-lg border border-accent/40 bg-accent/10 backdrop-blur-sm px-3 py-2 text-sm transition-opacity ${selectedCount > 0 ? "opacity-100" : "opacity-0 pointer-events-none"}`}
         aria-hidden={selectedCount === 0}
       >
         <span className="text-fg">

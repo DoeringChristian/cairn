@@ -9,6 +9,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { useRuns } from "../api/hooks";
 import { api } from "../api/client";
+import { qk } from "../api/query-keys";
+import { useModalBehavior } from "../lib/use-modal-behavior";
 import type { Run } from "../api/types";
 import {
   createComparison,
@@ -79,23 +81,7 @@ export default function SmartComparisonWizard({
     }
   }, [open]);
 
-  // Close on Escape
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [open, onClose]);
-
-  // Prevent body scroll
-  useEffect(() => {
-    if (!open) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = prev; };
-  }, [open]);
+  useModalBehavior(open, onClose);
 
   // Fetch all runs for the project
   const runsQ = useRuns({ project: projectId, limit: 500 });
@@ -105,7 +91,7 @@ export default function SmartComparisonWizard({
   const runDetailQueries = useQueries({
     queries: open
       ? allRuns.map((r) => ({
-          queryKey: ["run", r.id],
+          queryKey: qk.run(r.id),
           queryFn: () => api.run(r.id),
           staleTime: 60_000,
         }))

@@ -6,8 +6,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { api } from "../api/client";
+import { qk } from "../api/query-keys";
 import type { Run } from "../api/types";
-import { useCardSettings, resolveCardHeight, toggleColSpanPatch } from "../lib/card-settings";
+import { useCardSettings, resolveCardHeight } from "../lib/card-settings";
 import { viridis } from "../lib/colors";
 import { exportChartFromContainer, safeName } from "../lib/download";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
@@ -69,7 +70,7 @@ export default function ScatterPlotCard({
   // Fetch run details (params)
   const runQueries = useQueries({
     queries: runIds.map((rid) => ({
-      queryKey: ["run", rid],
+      queryKey: qk.run(rid),
       queryFn: () => api.run(rid),
       staleTime: 30_000,
     })),
@@ -91,7 +92,7 @@ export default function ScatterPlotCard({
   const metricQueries = useQueries({
     queries: runIds.flatMap((rid) =>
       metricAxes.map((ax) => ({
-        queryKey: ["sequence", rid, ax.key, ""],
+        queryKey: qk.sequence(rid, ax.key, ""),
         queryFn: () => api.sequence(rid, ax.key, { maxPoints: 1000 }),
         staleTime: 30_000,
       })),
@@ -163,7 +164,7 @@ export default function ScatterPlotCard({
 
   const seqQueries = useQueries({
     queries: runIds.map((rid) => ({
-      queryKey: ["sequences", rid],
+      queryKey: qk.sequences(rid),
       queryFn: () => api.sequences(rid),
       staleTime: 30_000,
     })),
@@ -353,7 +354,7 @@ export default function ScatterPlotCard({
       style={{
         height: resolveCardHeight(settings, 350),
         position: "relative",
-        gridColumn: (settings.colSpan ?? 1) > 1 ? `span ${settings.colSpan}` : undefined,
+        gridColumn: `span ${settings.colSpan ?? 3}`,
       }}
     >
       <CardHeader
@@ -363,8 +364,6 @@ export default function ScatterPlotCard({
         collapsed={settings.collapsed}
         onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
         onSettings={() => setExpanded(true)}
-        onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<ScatterSettings>)}
-        isFullWidth={(settings.colSpan ?? 1) > 1}
         onRemove={onRemove}
         onDownload={() => { if (cardRef.current) exportChartFromContainer(cardRef.current, safeName(settings.title ?? "scatter_plot"), "svg"); }}
       >
@@ -392,7 +391,7 @@ export default function ScatterPlotCard({
       <CardResizeHandle
         height={settings.height}
         onHeightChange={(h) => updateSettings({ height: h })}
-        colSpan={settings.colSpan ?? 1}
+        colSpan={settings.colSpan ?? 3}
         onColSpanChange={(s) => updateSettings({ colSpan: s })}
         onPerColHeightChange={(p) => updateSettings(p as Partial<ScatterSettings>)}
       />

@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { useProjects } from "../api/hooks";
 import { api } from "../api/client";
+import { qk } from "../api/query-keys";
 import { formatRelative } from "../lib/format";
 import ImportRunsDialog from "../components/ImportRunsDialog";
 
@@ -21,7 +22,7 @@ export default function ProjectsPage() {
       const res = await api.createProject(name);
       setCreating(false);
       setNewName("");
-      qc.invalidateQueries({ queryKey: ["projects"] });
+      qc.invalidateQueries({ queryKey: qk.projects() });
       navigate(`/p/${res.id}`);
     } catch (err) {
       alert(String(err));
@@ -145,7 +146,7 @@ export default function ProjectsPage() {
           </div>
         </>
       )}
-      <ImportRunsDialog open={importOpen} onClose={() => { setImportOpen(false); qc.invalidateQueries({ queryKey: ["projects"] }); }} />
+      <ImportRunsDialog open={importOpen} onClose={() => { setImportOpen(false); qc.invalidateQueries({ queryKey: qk.projects() }); }} />
     </div>
   );
 }

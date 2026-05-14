@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { api } from "../api/client";
+import { qk } from "../api/query-keys";
 import type { Param, Run } from "../api/types";
 import RunStatusBadge from "../components/RunStatusBadge";
 import { formatDuration, safeJsonParse } from "../lib/format";
@@ -15,7 +16,7 @@ export default function ComparisonOverviewTab({ compRunIds }: Props) {
 
   const queries = useQueries({
     queries: compRunIds.map((id) => ({
-      queryKey: ["run", id],
+      queryKey: qk.run(id),
       queryFn: () => api.run(id),
       staleTime: 30_000,
     })),

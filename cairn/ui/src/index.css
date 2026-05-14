@@ -78,3 +78,9 @@
   outline: 2px solid var(--color-accent, #0969da) !important;
   outline-offset: -2px;
 }
+
+/* Font Awesome icons inside buttons */
+button i[class*="fa-"] { font-size: 12px; line-height: 1; }
+
+/* Mobile: collapse multi-column cards to single column */
+@media (max-width: 767px) { .grid-cols-1 > * { grid-column: span 1 !important; } }

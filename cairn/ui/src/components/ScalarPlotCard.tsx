@@ -19,14 +19,9 @@ import {
   YAxis,
 } from "recharts";
 import { api } from "../api/client";
-import { useCardSettings, resolveCardHeight, toggleColSpanPatch, type CardSettingsKey } from "../lib/card-settings";
-import {
-  addCardToComparison,
-  createComparison,
-  useComparisons,
-  type ComparisonSeriesRef,
-} from "../lib/comparisons";
-import { useProjectId } from "../lib/project-context";
+import { qk } from "../api/query-keys";
+import { useCardSettings, resolveCardHeight, type CardSettingsKey } from "../lib/card-settings";
+import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { useSeriesDrop } from "../lib/use-series-drop";
 import type {
   SequenceMeta,
@@ -34,16 +29,16 @@ import type {
   SequenceResponse,
 } from "../api/types";
 import SeriesChip , { type SeriesRef } from "./SeriesChip";
+import AddToComparisonButton from "./AddToComparisonButton";
 import CardHeader from "./CardHeader";
 import CardDetailModal from "./CardDetailModal";
 import CardResizeHandle from "./CardResizeHandle";
-import SettingsPopover from "./SettingsPopover";
 import MetricChips from "./settings/MetricChips";
 import NumberInput from "./settings/NumberInput";
 import Select from "./settings/Select";
 import Slider from "./settings/Slider";
 import Toggle from "./settings/Toggle";
-import { formatRelative } from "../lib/format";
+import {  } from "../lib/format";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import { SERIES_COLORS } from "../lib/colors";
 import { seriesKey, seriesLabel } from "../lib/series-utils";
@@ -320,7 +315,7 @@ export default function ScalarPlotCard({
 
   const runQueries = useQueries({
     queries: uniqueRunIds.map((rid) => ({
-      queryKey: ["run", rid],
+      queryKey: qk.run(rid),
       queryFn: () => api.run(rid),
       staleTime: 5_000,
     })),
@@ -344,7 +339,7 @@ export default function ScalarPlotCard({
     queries: effectiveMetrics.map((m) => {
       const rid = m.runId ?? runId;
       return {
-        queryKey: ["sequence", rid, m.name, m.context_hash],
+        queryKey: qk.sequence(rid, m.name, m.context_hash),
         queryFn: () =>
           api.sequence(rid, m.name, {
             context: m.context_hash || undefined,
@@ -989,71 +984,15 @@ export default function ScalarPlotCard({
   const [expanded, setExpanded] = useState(false);
   const [hoveredSeries, setHoveredSeries] = useState<string | null>(null);
 
-  // "Add to comparison" popover state.
-  const addBtnRef = useRef<HTMLButtonElement | null>(null);
-  const [addOpen, setAddOpen] = useState(false);
-  const projectId = useProjectId();
-  const { comparisons, refresh: refreshComparisons } =
-    useComparisons(projectId ?? "");
-  const [addConfirmation, setAddConfirmation] = useState<string | null>(null);
-  const addConfirmationTimer = useRef<number | null>(null);
-  const [newCmpName, setNewCmpName] = useState("");
-
-  const currentSeriesRefs = useCallback((): ComparisonSeriesRef[] => {
+  const compSeries = useMemo((): ComparisonSeriesRef[] => {
     return settingsRef.current.metrics.map((m) => ({
       runId: m.runId ?? runId,
       name: m.name,
       context_hash: m.context_hash,
     }));
-  }, [runId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runId, effectiveMetrics]);
 
-  const addToExistingComparison = useCallback(
-    (comparisonId: string, label: string) => {
-      if (!projectId) return;
-      addCardToComparison(projectId, comparisonId, {
-        type: "scalar",
-        series: currentSeriesRefs(),
-      });
-      refreshComparisons();
-      if (addConfirmationTimer.current != null) {
-        window.clearTimeout(addConfirmationTimer.current);
-      }
-      setAddConfirmation(`Added to ${label}`);
-      addConfirmationTimer.current = window.setTimeout(() => {
-        setAddConfirmation(null);
-        setAddOpen(false);
-      }, 1500);
-    },
-    [projectId, currentSeriesRefs, refreshComparisons],
-  );
-
-  const createAndAdd = useCallback(() => {
-    if (!projectId) return;
-    const name = newCmpName.trim() || "New comparison";
-    const cmp = createComparison(projectId, name);
-    addCardToComparison(projectId, cmp.id, {
-      type: "scalar",
-      series: currentSeriesRefs(),
-    });
-    refreshComparisons();
-    setNewCmpName("");
-    if (addConfirmationTimer.current != null) {
-      window.clearTimeout(addConfirmationTimer.current);
-    }
-    setAddConfirmation(`Added to ${name}`);
-    addConfirmationTimer.current = window.setTimeout(() => {
-      setAddConfirmation(null);
-      setAddOpen(false);
-    }, 1500);
-  }, [projectId, newCmpName, currentSeriesRefs, refreshComparisons]);
-
-  useEffect(() => {
-    return () => {
-      if (addConfirmationTimer.current != null) {
-        window.clearTimeout(addConfirmationTimer.current);
-      }
-    };
-  }, []);
 
   const flipYScale = () =>
     updateSettings({ yScale: settings.yScale === "log" ? "linear" : "log" });
@@ -1546,7 +1485,7 @@ export default function ScalarPlotCard({
       style={{
         height: settings.collapsed ? undefined : resolveCardHeight(settings, 300),
         position: "relative",
-        gridColumn: (settings.colSpan ?? 1) > 1 ? `span ${settings.colSpan}` : undefined,
+        gridColumn: `span ${settings.colSpan ?? 3}`,
       }}
       {...dropProps}
     >
@@ -1557,8 +1496,6 @@ export default function ScalarPlotCard({
         collapsed={settings.collapsed}
         onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
         onSettings={() => setExpanded(true)}
-        onToggleFullWidth={() => updateSettings(toggleColSpanPatch(settings, cardRef.current) as Partial<typeof settings>)}
-        isFullWidth={(settings.colSpan ?? 1) > 1}
         onDownload={() => { if (chartBoxRef.current) exportChartFromContainer(chartBoxRef.current, safeName(settings.title ?? metric.name), "svg"); }}
         onRemove={onRemove}
       >
@@ -1597,20 +1534,7 @@ export default function ScalarPlotCard({
             {"\u2302"}
           </button>
         )}
-        {projectId && (
-          <button
-            ref={addBtnRef}
-            type="button"
-            onClick={() => setAddOpen((v) => !v)}
-            className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
-            aria-label="Add to comparison"
-            aria-haspopup="dialog"
-            aria-expanded={addOpen}
-            title="Add to comparison"
-          >
-            {"\u002B"}
-          </button>
-        )}
+        <AddToComparisonButton cardType="scalar" series={compSeries} />
       </CardHeader>
 
       {!settings.collapsed && (<>
@@ -1690,77 +1614,6 @@ export default function ScalarPlotCard({
         )}
       </div>
 
-      <SettingsPopover
-        open={addOpen && projectId != null}
-        onClose={() => {
-          setAddOpen(false);
-          setAddConfirmation(null);
-        }}
-        anchorRef={addBtnRef}
-        title="Add to comparison"
-      >
-        {addConfirmation ? (
-          <p className="text-xs text-accent">{addConfirmation}</p>
-        ) : (
-          <>
-            {comparisons.length === 0 ? (
-              <p className="text-xs text-fg-subtle mb-2">
-                No comparisons yet.
-              </p>
-            ) : (
-              <div className="flex flex-col gap-1 mb-2 max-h-48 overflow-y-auto">
-                {comparisons.map((c) => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() => addToExistingComparison(c.id, c.name)}
-                    className="text-left text-xs text-fg-muted hover:bg-bg-hover rounded px-2 py-1.5 border border-border-subtle"
-                  >
-                    <div className="truncate">{c.name}</div>
-                    <div className="text-[10px] text-fg-subtle">
-                      {c.cards.length} card(s) · {formatRelative(c.createdAt)}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-            <div className="border-t border-border-subtle pt-2 mt-1">
-              <label className="text-[10px] uppercase tracking-wide text-fg-muted block mb-1">
-                Create new comparison
-              </label>
-              <div className="flex gap-1">
-                <input
-                  type="text"
-                  value={newCmpName}
-                  onChange={(e) => setNewCmpName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      createAndAdd();
-                    }
-                  }}
-                  placeholder="Name"
-                  className="input flex-1 text-xs"
-                />
-                <button
-                  type="button"
-                  onClick={createAndAdd}
-                  className="btn text-xs px-2"
-                >
-                  Create
-                </button>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => setAddOpen(false)}
-              className="btn w-full mt-2 text-xs"
-            >
-              Cancel
-            </button>
-          </>
-        )}
-      </SettingsPopover>
       <CardDetailModal
         open={expanded}
         onClose={() => setExpanded(false)}
@@ -1773,7 +1626,7 @@ export default function ScalarPlotCard({
       <CardResizeHandle
         height={settings.height}
         onHeightChange={(h) => updateSettings({ height: h })}
-        colSpan={settings.colSpan ?? 1}
+        colSpan={settings.colSpan ?? 3}
         onColSpanChange={(s) => updateSettings({ colSpan: s })}
         onPerColHeightChange={(p) => updateSettings(p as Partial<typeof settings>)}
       />
