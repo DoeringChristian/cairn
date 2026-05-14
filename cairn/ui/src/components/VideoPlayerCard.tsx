@@ -319,9 +319,8 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
         onSettings={() => setExpanded(true)}
         onRemove={onRemove}
         onDownload={current?.artifact_hash ? () => downloadArtifact(api.artifactUrl(current.artifact_hash!), artifactFilename(metric.name, current.step, current.artifact_mime ?? "video/mp4")) : undefined}
-      >
-        <AddToComparisonButton cardType="video" series={compSeries} />
-      </CardHeader>
+        addToComparisonSlot={<AddToComparisonButton cardType="video" series={compSeries} />}
+      />
 
       {!settings.collapsed && (<>
       {isMulti ? (

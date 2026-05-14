@@ -15,7 +15,7 @@ interface Props {
 export default function Toggle({ label, checked, onChange, description }: Props) {
   const id = useId();
   return (
-    <div className="flex items-start justify-between gap-3 py-1.5">
+    <div className="flex items-start justify-between gap-3 py-1">
       <div className="min-w-0 flex-1">
         <label
           htmlFor={id}
@@ -24,7 +24,7 @@ export default function Toggle({ label, checked, onChange, description }: Props)
           {label}
         </label>
         {description && (
-          <p className="mt-0.5 text-xs text-fg-subtle">{description}</p>
+          <p className="mt-0.5 text-xs text-fg-muted">{description}</p>
         )}
       </div>
       <label

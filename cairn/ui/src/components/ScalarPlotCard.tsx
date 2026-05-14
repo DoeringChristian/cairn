@@ -359,6 +359,8 @@ export default function ScalarPlotCard({
     label: string;
     color: string;
     points: Array<{ x: number; y: number; wall_time: string; context: string | null }>;
+    /** Non-null when EMA smoothing is active — the original unsmoothed data. */
+    rawPoints: Array<{ x: number; y: number; wall_time: string; context: string | null }> | null;
   };
 
   const allRunIds = useMemo(() => {
@@ -380,7 +382,7 @@ export default function ScalarPlotCard({
       const rid = m.runId ?? runId;
 
       // Map to (x, y) based on the current x-axis source.
-      const mapped: Array<{
+      let mapped: Array<{
         x: number;
         y: number;
         wall_time: string;
@@ -412,27 +414,61 @@ export default function ScalarPlotCard({
       }
       mapped.sort((a, b) => a.x - b.x);
 
+      // Downsample when many series are rendered to keep the chart responsive.
+      // With >10 series, cap each to 500 points using LTTB-like stride sampling
+      // (keep first and last, evenly sample the rest).
+      const maxPointsPerSeries = effectiveMetrics.length > 10 ? 500 : Infinity;
+      if (mapped.length > maxPointsPerSeries) {
+        const sampled: typeof mapped = [mapped[0]!];
+        const step = (mapped.length - 1) / (maxPointsPerSeries - 1);
+        for (let i = 1; i < maxPointsPerSeries - 1; i++) {
+          sampled.push(mapped[Math.round(i * step)]!);
+        }
+        sampled.push(mapped[mapped.length - 1]!);
+        mapped = sampled;
+      }
+
       // Smoothing (EMA) — lower alpha = less smoothing. Spec uses α as the
       // weight on the *previous* value, so: y[i] = α·prev + (1−α)·raw[i].
+      // When smoothing is active, build a separate smoothed array and keep
+      // `mapped` as the unsmoothed (raw) data so both can be rendered.
+      let smoothed: typeof mapped | null = null;
       if (settings.smoothing > 0 && mapped.length > 0) {
         const alpha = settings.smoothing;
         let prev = mapped[0]!.y;
+        smoothed = new Array(mapped.length);
         for (let i = 0; i < mapped.length; i++) {
           const cur = mapped[i]!.y;
           const sm = alpha * prev + (1 - alpha) * cur;
-          mapped[i] = { ...mapped[i]!, y: sm };
+          smoothed[i] = { ...mapped[i]!, y: sm };
           prev = sm;
         }
       }
 
-      // Outlier clamp by percentile over this series' y values.
-      let filtered = mapped;
+      // Use smoothed data as the primary when available; raw stays as-is.
+      const primary = smoothed ?? mapped;
+
+      // Outlier clamp by percentile over the primary y values.
+      let filtered = primary;
       const [pLo, pHi] = settings.outlierPct;
-      if ((pLo > 0 || pHi < 100) && mapped.length > 1) {
-        const ys = mapped.map((p) => p.y).slice().sort((a, b) => a - b);
+      if ((pLo > 0 || pHi < 100) && primary.length > 1) {
+        const ys = primary.map((p) => p.y).slice().sort((a, b) => a - b);
         const yLo = percentile(ys, pLo);
         const yHi = percentile(ys, pHi);
-        filtered = mapped.filter((p) => p.y >= yLo && p.y <= yHi);
+        filtered = primary.filter((p) => p.y >= yLo && p.y <= yHi);
+      }
+
+      // Also filter raw points by the same outlier range (based on raw y).
+      let filteredRaw: typeof mapped | null = null;
+      if (smoothed) {
+        if ((pLo > 0 || pHi < 100) && mapped.length > 1) {
+          const ys = mapped.map((p) => p.y).slice().sort((a, b) => a - b);
+          const yLo = percentile(ys, pLo);
+          const yHi = percentile(ys, pHi);
+          filteredRaw = mapped.filter((p) => p.y >= yLo && p.y <= yHi);
+        } else {
+          filteredRaw = mapped;
+        }
       }
 
       return {
@@ -440,6 +476,7 @@ export default function ScalarPlotCard({
         label: seriesLabel(m.name, m.context_hash, rid, multipleRuns, allRunIds),
         color: SERIES_COLORS[idx % SERIES_COLORS.length]!,
         points: filtered,
+        rawPoints: filteredRaw,
       };
     });
 
@@ -455,6 +492,14 @@ export default function ScalarPlotCard({
         row[`${s.key}__wall`] = p.wall_time;
         if (p.context != null) row[`${s.key}__ctx`] = p.context;
         byX.set(p.x, row);
+      }
+      // Also merge raw (unsmoothed) data points when smoothing is active.
+      if (s.rawPoints) {
+        for (const p of s.rawPoints) {
+          const row = byX.get(p.x) ?? ({ x: p.x } as Row);
+          row[`${s.key}__raw`] = p.y;
+          byX.set(p.x, row);
+        }
       }
     }
     const rows = Array.from(byX.values()).sort((a, b) => a.x - b.x);
@@ -932,7 +977,12 @@ export default function ScalarPlotCard({
   // -------------------------------------------------------------------------
   // Viewport state flags.
   // -------------------------------------------------------------------------
-  const viewportModified = !viewportIsAuto(settings.viewport);
+  const viewportModified =
+    !viewportIsAuto(settings.viewport) ||
+    settings.xRange[0] != null ||
+    settings.xRange[1] != null ||
+    settings.yRange[0] != null ||
+    settings.yRange[1] != null;
   const anySettingModified = !defaultsEqual(settings, defaults);
 
   // -------------------------------------------------------------------------
@@ -1000,12 +1050,19 @@ export default function ScalarPlotCard({
   const resetViewport = () =>
     updateSettings({
       viewport: { xMin: null, xMax: null, yMin: null, yMax: null },
+      xRange: [null, null],
+      yRange: [null, null],
     });
 
-  const subtitle = `${series.length} ${series.length === 1 ? "series" : "series"}${
-    effectiveMetrics.length > 0 && queries[0]?.data
-      ? ` · ${queries[0].data.points.length} pts`
-      : ""
+  const totalPoints = useMemo(() => {
+    let n = 0;
+    for (const q of queries) n += q.data?.points.length ?? 0;
+    return n;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queries.map((q) => q.dataUpdatedAt).join("|")]);
+
+  const subtitle = `${series.length} series${
+    totalPoints > 0 ? ` · ${totalPoints} pts` : ""
   }`;
 
   // Run IDs for tag picker (workspace/comparison mode)
@@ -1111,7 +1168,7 @@ export default function ScalarPlotCard({
         />
       )}
 
-      <h4 className="text-xs uppercase tracking-wide text-fg-muted mt-4 mb-2">
+      <h4 className="text-xs uppercase tracking-wide text-fg-muted mt-3 mb-2">
         Axes
       </h4>
       <Select
@@ -1186,21 +1243,21 @@ export default function ScalarPlotCard({
         ]}
       />
 
-      <h4 className="text-xs uppercase tracking-wide text-fg-muted mt-4 mb-2">
+      <h4 className="text-xs uppercase tracking-wide text-fg-muted mt-3 mb-2">
         Smoothing
       </h4>
       <Slider
-        label="EMA \u03B1"
+        label="EMA smoothing"
         value={settings.smoothing}
         onChange={(v) => updateSettings({ smoothing: v })}
         min={0}
         max={0.99}
         step={0.01}
         format={(v) => v.toFixed(2)}
-        description="exponential moving average over each series"
+        description="Exponential moving average over each series"
       />
 
-      <h4 className="text-xs uppercase tracking-wide text-fg-muted mt-4 mb-2">
+      <h4 className="text-xs uppercase tracking-wide text-fg-muted mt-3 mb-2">
         Outliers
       </h4>
       <Slider
@@ -1225,9 +1282,9 @@ export default function ScalarPlotCard({
         step={0.5}
         format={(v) => `${v.toFixed(1)}%`}
       />
-      <p className="text-xs text-fg-subtle">Set [0, 100] to disable.</p>
+      <p className="text-xs text-fg-muted">Set [0, 100] to disable.</p>
 
-      <h4 className="text-xs uppercase tracking-wide text-fg-muted mt-4 mb-2">
+      <h4 className="text-xs uppercase tracking-wide text-fg-muted mt-3 mb-2">
         Display
       </h4>
       <Toggle
@@ -1390,7 +1447,26 @@ export default function ScalarPlotCard({
           {series.map((s) => {
             const isHovered = hoveredSeries === s.key;
             const isDimmed = hoveredSeries != null && !isHovered;
-            return (
+            const axisId = settings.promotedSeries[s.key] ? s.key : "__left__";
+            return [
+              // When smoothing is active, render the raw (unsmoothed) line first
+              // at low opacity as a reference behind the smoothed line.
+              s.rawPoints && (
+                <Line
+                  key={`${s.key}__raw`}
+                  type={settings.lineType ?? "linear"}
+                  dataKey={`${s.key}__raw`}
+                  stroke={s.color}
+                  strokeWidth={1}
+                  strokeOpacity={isDimmed ? 0.05 : 0.2}
+                  dot={false}
+                  isAnimationActive={false}
+                  connectNulls
+                  yAxisId={axisId}
+                  legendType="none"
+                  tooltipType="none"
+                />
+              ),
               <Line
                 key={s.key}
                 type={settings.lineType ?? "linear"}
@@ -1402,9 +1478,9 @@ export default function ScalarPlotCard({
                 dot={false}
                 isAnimationActive={false}
                 connectNulls
-                yAxisId={settings.promotedSeries[s.key] ? s.key : "__left__"}
-              />
-            );
+                yAxisId={axisId}
+              />,
+            ];
           })}
           {/* Transparent overlay strips for drag-to-pan on promoted axes. */}
           <Customized
@@ -1497,6 +1573,7 @@ export default function ScalarPlotCard({
         onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
         onSettings={() => setExpanded(true)}
         onDownload={() => { if (chartBoxRef.current) exportChartFromContainer(chartBoxRef.current, safeName(settings.title ?? metric.name), "svg"); }}
+        addToComparisonSlot={<AddToComparisonButton cardType="scalar" series={compSeries} />}
         onRemove={onRemove}
       >
         {settings.smoothing > 0 && (
@@ -1506,7 +1583,7 @@ export default function ScalarPlotCard({
             className="h-5 inline-flex items-center justify-center rounded px-1.5 text-[10px] text-accent hover:bg-bg-hover"
             title="Smoothing active — click to open settings"
           >
-            α={settings.smoothing.toFixed(2)}
+            EMA {settings.smoothing.toFixed(2)}
           </button>
         )}
         <button
@@ -1534,7 +1611,6 @@ export default function ScalarPlotCard({
             {"\u2302"}
           </button>
         )}
-        <AddToComparisonButton cardType="scalar" series={compSeries} />
       </CardHeader>
 
       {!settings.collapsed && (<>
@@ -1545,7 +1621,7 @@ export default function ScalarPlotCard({
       )}
 
       {/* Series chip strip */}
-      <div className="mt-2 flex flex-wrap gap-1.5">
+      <div className={`mt-2 flex flex-wrap gap-1.5${series.length > 12 ? " max-h-24 overflow-y-auto" : ""}`}>
         {controlledSeries ? (
           /* Tag-level chips: one draggable chip per unique metric name */
           (() => {

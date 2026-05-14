@@ -362,9 +362,8 @@ export default function AudioPlayerCard({ runId, metric, extraContexts = [], ext
         onSettings={() => setExpanded(true)}
         onRemove={onRemove}
         onDownload={current?.artifact_hash ? () => downloadArtifact(api.artifactUrl(current.artifact_hash!), artifactFilename(metric.name, current.step, current.artifact_mime ?? "audio/wav")) : undefined}
-      >
-        <AddToComparisonButton cardType="audio" series={compSeries} />
-      </CardHeader>
+        addToComparisonSlot={<AddToComparisonButton cardType="audio" series={compSeries} />}
+      />
 
       {!settings.collapsed && (<>
       {isMulti ? (

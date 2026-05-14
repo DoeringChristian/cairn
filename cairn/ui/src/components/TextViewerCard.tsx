@@ -97,7 +97,7 @@ export default function TextViewerCard({ runId, metric, settingsKeyOverride, onR
       : `${metric.count} pts`;
 
   const wrapClass = settings.wordWrap
-    ? "whitespace-pre-wrap"
+    ? "whitespace-pre-wrap break-all"
     : "whitespace-pre overflow-x-auto";
 
   const settingsPanel = (
@@ -134,9 +134,8 @@ export default function TextViewerCard({ runId, metric, settingsKeyOverride, onR
         onSettings={() => setExpanded(true)}
         onRemove={onRemove}
         onDownload={current?.artifact_hash ? () => downloadArtifact(api.artifactUrl(current.artifact_hash!), artifactFilename(metric.name, current?.step ?? 0, "text/plain")) : undefined}
-      >
-        <AddToComparisonButton cardType="text" series={compSeries} />
-      </CardHeader>
+        addToComparisonSlot={<AddToComparisonButton cardType="text" series={compSeries} />}
+      />
       {!settings.collapsed && (<>
       <pre
         className={`mono flex-1 min-h-0 overflow-auto ${wrapClass} rounded bg-bg p-3 ${FONT_SIZE_CLASS[settings.fontSize]} text-fg-muted`}

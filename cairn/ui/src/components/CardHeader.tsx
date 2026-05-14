@@ -24,6 +24,8 @@ interface Props {
   onSettings?: () => void;
   /** Download/export. Renders download button. */
   onDownload?: () => void;
+  /** Slot for AddToComparisonButton in the standard cluster. */
+  addToComparisonSlot?: ReactNode;
   /** Remove the card. Renders close button in upper-right. */
   onRemove?: () => void;
 }
@@ -38,6 +40,7 @@ export default function CardHeader({
   onToggleCollapse,
   onSettings,
   onDownload,
+  addToComparisonSlot,
   onRemove,
 }: Props) {
   const drag = useDraggableCard();
@@ -80,7 +83,7 @@ export default function CardHeader({
   );
 
   const resolvedActions = cardActions ?? children;
-  const hasStandardActions = !!(onDownload || onSettings || onRemove);
+  const hasStandardActions = !!(onDownload || addToComparisonSlot || onSettings || onRemove);
 
   return (
     <div className="group mb-2 flex items-baseline justify-between gap-2">
@@ -168,6 +171,7 @@ export default function CardHeader({
                 <i className="fa-solid fa-arrow-down" aria-hidden="true" />
               </button>
             )}
+            {addToComparisonSlot}
             {onSettings && (
               <button
                 type="button"

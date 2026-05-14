@@ -533,7 +533,29 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
   }, []);
   const resetView = useCallback(() => {
     setSharedView({});
-    // Bump revision to force Plotly to re-apply the base layout (with autorange).
+    // Force Plotly to autorange all axes via relayout on every plot in the card.
+    const container = cardRef.current;
+    if (container) {
+      const plots = container.querySelectorAll<Plotly.PlotlyHTMLElement>(".js-plotly-plot");
+      const update: Record<string, boolean> = {};
+      for (const plot of plots) {
+        // Discover all axes on the plot and set autorange for each.
+        const layout = (plot as any)?.layout as Record<string, unknown> | undefined;
+        if (layout) {
+          for (const key of Object.keys(layout)) {
+            if (/^[xy]axis\d*$/.test(key)) {
+              update[`${key}.autorange`] = true;
+            }
+          }
+        }
+      }
+      // Fallback: always include at least the default axes.
+      if (!update["xaxis.autorange"]) update["xaxis.autorange"] = true;
+      if (!update["yaxis.autorange"]) update["yaxis.autorange"] = true;
+      for (const plot of plots) {
+        Plotly.relayout(plot, update);
+      }
+    }
     setPlotRevision((r) => r + 1);
   }, []);
 
@@ -643,6 +665,7 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
         onSettings={() => setExpanded(true)}
         onRemove={onRemove}
         onDownload={current?.artifact_hash ? () => downloadArtifact(api.artifactUrl(current.artifact_hash!), artifactFilename(metric.name, current.step, current.artifact_mime ?? "image/png")) : () => { if (cardRef.current) exportPlotlyChart(cardRef.current, safeName(settings.title ?? metric.name), "svg"); }}
+        addToComparisonSlot={<AddToComparisonButton cardType="figure" series={compSeries} />}
       >
         {viewModified && (
           <button
@@ -667,7 +690,6 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
         >
           bar
         </button>
-        <AddToComparisonButton cardType="figure" series={compSeries} />
       </CardHeader>
 
       {!settings.collapsed && (<>

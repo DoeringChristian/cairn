@@ -123,50 +123,73 @@ export default function ArtifactCard({ runId, metric, settingsKeyOverride, onRem
 
       {!settings.collapsed && (
         <>
-          {current?.artifact_hash ? (
-            <div className="flex-1 min-h-0 flex flex-col gap-2 overflow-auto">
-              <div className="rounded border border-border bg-bg p-3 text-xs">
-                <div className="flex flex-col gap-1">
-                  {meta.python_type && (
-                    <div className="flex items-baseline gap-2">
-                      <span className="text-fg-subtle">Python type:</span>
-                      <span className="mono text-fg">
-                        {meta.python_module && meta.python_module !== "builtins" ? `${meta.python_module}.` : ""}{meta.python_type}
-                      </span>
-                    </div>
-                  )}
-                  {meta.size_bytes != null && (
-                    <div className="flex items-baseline gap-2">
-                      <span className="text-fg-subtle">Size:</span>
-                      <span className="mono num text-fg">{formatBytes(meta.size_bytes)}</span>
-                    </div>
-                  )}
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-fg-subtle">Format:</span>
-                    <span className="mono text-fg">pickle (.pkl)</span>
+          {current?.artifact_hash ? (() => {
+            const mime = meta.mime_type ?? current.artifact_mime ?? "";
+            const isImage = /^image\//i.test(mime);
+            const ext = meta.filename
+              ? meta.filename.replace(/^.*\./, ".")
+              : mime === "application/python-pickle" || meta.python_type
+                ? ".pkl"
+                : "";
+            const downloadName = `${metric.name.replace(/[^a-zA-Z0-9._-]/g, "_")}_step${current.step}${ext}`;
+            return (
+              <div className="flex-1 min-h-0 flex flex-col gap-2 overflow-auto">
+                {/* Image preview for image MIME types */}
+                {isImage && (
+                  <div className="flex justify-center items-center rounded bg-bg p-2 min-h-[6rem]">
+                    <img
+                      src={api.artifactUrl(current.artifact_hash!)}
+                      alt={`${metric.name} @ step ${current.step}`}
+                      className="max-w-full max-h-full object-contain"
+                      style={{ maxHeight: "320px" }}
+                    />
                   </div>
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-fg-subtle">Hash:</span>
-                    <span className="mono text-fg-muted">{current.artifact_hash.slice(0, 16)}...</span>
-                  </div>
-                  {/* Show any extra metadata keys */}
-                  {Object.entries(meta).filter(([k]) => !["filename", "size_bytes", "mime_type", "python_type", "python_module"].includes(k)).map(([k, v]) => (
-                    <div key={k} className="flex items-baseline gap-2">
-                      <span className="text-fg-subtle">{k}:</span>
-                      <span className="mono text-fg">{String(v)}</span>
+                )}
+                <div className="rounded border border-border bg-bg p-3 text-xs">
+                  <div className="flex flex-col gap-1">
+                    {meta.python_type && (
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-fg-subtle">Type:</span>
+                        <span className="mono text-fg">
+                          {meta.python_module && meta.python_module !== "builtins" ? `${meta.python_module}.` : ""}{meta.python_type}
+                        </span>
+                      </div>
+                    )}
+                    {meta.size_bytes != null && (
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-fg-subtle">Size:</span>
+                        <span className="mono num text-fg">{formatBytes(meta.size_bytes)}</span>
+                      </div>
+                    )}
+                    {(mime || ext) && (
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-fg-subtle">Format:</span>
+                        <span className="mono text-fg">{mime || `pickle (${ext})`}</span>
+                      </div>
+                    )}
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-fg-subtle">Hash:</span>
+                      <span className="mono text-fg-muted">{current.artifact_hash!.slice(0, 16)}...</span>
                     </div>
-                  ))}
+                    {/* Show any extra metadata keys */}
+                    {Object.entries(meta).filter(([k]) => !["filename", "size_bytes", "mime_type", "python_type", "python_module"].includes(k)).map(([k, v]) => (
+                      <div key={k} className="flex items-baseline gap-2">
+                        <span className="text-fg-subtle">{k}:</span>
+                        <span className="mono text-fg">{String(v)}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <a
+                    href={api.artifactUrl(current.artifact_hash!)}
+                    download={downloadName}
+                    className="inline-flex items-center gap-1.5 mt-3 px-3 py-1.5 rounded border border-accent text-accent hover:bg-accent/10 text-xs font-medium"
+                  >
+                    {"\u2913"} Download{ext ? ` ${ext}` : ""}
+                  </a>
                 </div>
-                <a
-                  href={api.artifactUrl(current.artifact_hash)}
-                  download={`${metric.name.replace(/[^a-zA-Z0-9._-]/g, "_")}_step${current.step}.pkl`}
-                  className="inline-flex items-center gap-1 mt-2 text-accent hover:underline"
-                >
-                  Download .pkl
-                </a>
               </div>
-            </div>
-          ) : (
+            );
+          })() : (
             <div className="flex-1 flex items-center justify-center text-sm text-fg-muted">
               No artifact at this step
             </div>

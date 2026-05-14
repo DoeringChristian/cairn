@@ -115,7 +115,11 @@ export function useSetTags(runId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (tags: string[]) => api.setTags(runId, tags),
-    onSuccess: () => qc.invalidateQueries({ queryKey: qk.run(runId) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.run(runId) });
+      qc.invalidateQueries({ queryKey: ["runs"] });
+      qc.invalidateQueries({ queryKey: ["runs-infinite"] });
+    },
   });
 }
 

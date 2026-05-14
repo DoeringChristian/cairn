@@ -25,7 +25,7 @@ export default function Slider({
   const id = useId();
   const display = format ? format(value) : String(value);
   return (
-    <div className="py-1.5">
+    <div className="py-1">
       <div className="mb-1 flex items-baseline justify-between gap-2">
         <label htmlFor={id} className="text-sm text-fg">
           {label}
@@ -43,7 +43,7 @@ export default function Slider({
         className="w-full accent-accent"
       />
       {description && (
-        <p className="mt-1 text-xs text-fg-subtle">{description}</p>
+        <p className="mt-1 text-xs text-fg-muted">{description}</p>
       )}
     </div>
   );

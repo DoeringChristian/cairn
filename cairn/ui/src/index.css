@@ -39,6 +39,17 @@
   }
   .card {
     @apply rounded-lg border border-border bg-bg-elevated;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  /* Re-enable text selection inside content areas */
+  .card pre,
+  .card code,
+  .card textarea,
+  .card input,
+  .card [contenteditable] {
+    user-select: text;
+    -webkit-user-select: text;
   }
   .kbd {
     @apply mono rounded border border-border bg-bg px-1.5 py-0.5 text-xs;

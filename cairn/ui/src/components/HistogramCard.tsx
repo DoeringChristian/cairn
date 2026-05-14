@@ -98,9 +98,8 @@ export default function HistogramCard({ runId, metric, settingsKeyOverride, onRe
         onSettings={() => setExpanded(true)}
         onRemove={onRemove}
         onDownload={() => { if (cardRef.current) exportChartFromContainer(cardRef.current, safeName(settings.title ?? metric.name), "svg"); }}
-      >
-        <AddToComparisonButton cardType="histogram" series={compSeries} />
-      </CardHeader>
+        addToComparisonSlot={<AddToComparisonButton cardType="histogram" series={compSeries} />}
+      />
       {!settings.collapsed && (<>
       {q.isLoading ? (
         <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />

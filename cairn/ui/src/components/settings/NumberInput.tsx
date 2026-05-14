@@ -25,7 +25,7 @@ export default function NumberInput({
 }: Props) {
   const id = useId();
   return (
-    <div className="py-1.5">
+    <div className="py-1">
       <label htmlFor={id} className="mb-1 block text-sm text-fg">
         {label}
       </label>
@@ -50,7 +50,7 @@ export default function NumberInput({
         }}
       />
       {description && (
-        <p className="mt-1 text-xs text-fg-subtle">{description}</p>
+        <p className="mt-1 text-xs text-fg-muted">{description}</p>
       )}
     </div>
   );

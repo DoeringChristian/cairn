@@ -1373,6 +1373,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
         onDownload={isMulti
           ? () => { if (containerRef.current) exportImagesAsComposite(containerRef.current, safeName(metric.name) + `_step${currentStep}`, settings.imageColumns ?? 2); }
           : firstResolved.hash ? () => downloadArtifact(api.artifactUrl(firstResolved.hash!), artifactFilename(metric.name, currentStep, "image/png")) : undefined}
+        addToComparisonSlot={<AddToComparisonButton cardType="image" series={compSeries} />}
       >
         {(settings.zoom !== 1 || settings.pan.x !== 0 || settings.pan.y !== 0) && (
           <button
@@ -1390,7 +1391,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
           <select
             value={settings.diffMode}
             onChange={(e) => updateSettings({ diffMode: e.target.value as ImageSettings["diffMode"] })}
-            className={`h-5 rounded px-1 text-[10px] bg-transparent border-none cursor-pointer outline-none ${settings.diffMode !== "none" ? "text-accent" : "text-fg-muted hover:text-fg"}`}
+            className={`h-[22px] rounded border border-border bg-bg-elevated px-1.5 text-[10px] mono cursor-pointer ${settings.diffMode !== "none" ? "text-accent" : "text-fg-muted hover:text-fg"}`}
             title="Diff mode"
           >
             <option value="none">diff: off</option>
@@ -1406,7 +1407,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
         <select
           value={settings.colormap ?? "none"}
           onChange={(e) => updateSettings({ colormap: e.target.value as Colormap })}
-          className={`h-5 rounded px-1 text-[10px] bg-transparent border-none cursor-pointer outline-none ${(settings.colormap ?? "none") !== "none" ? "text-accent" : "text-fg-muted hover:text-fg"}`}
+          className={`h-[22px] rounded border border-border bg-bg-elevated px-1.5 text-[10px] mono cursor-pointer ${(settings.colormap ?? "none") !== "none" ? "text-accent" : "text-fg-muted hover:text-fg"}`}
           title="False color map"
         >
           <option value="none">color: off</option>
@@ -1414,7 +1415,6 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
           <option value="red-green">red-green</option>
           <option value="red-blue">red-blue</option>
         </select>
-        <AddToComparisonButton cardType="image" series={compSeries} />
       </CardHeader>
 
       {!settings.collapsed && (<>
@@ -1869,6 +1869,9 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
       {(() => {
         const settingsPanel = (
           <>
+            <h4 className="text-xs uppercase tracking-wide text-fg-muted mb-2">
+              Image
+            </h4>
             <Slider
               label="Brightness"
               value={settings.brightness}
@@ -1933,7 +1936,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
               onChange={(v) => updateSettings({ showAxes: v })}
               description="Show pixel coordinate ticks along edges"
             />
-            <h4 className="text-xs uppercase tracking-wide text-fg-muted mt-4 mb-2">
+            <h4 className="text-xs uppercase tracking-wide text-fg-muted mt-3 mb-2">
               Diff
             </h4>
             <Select
