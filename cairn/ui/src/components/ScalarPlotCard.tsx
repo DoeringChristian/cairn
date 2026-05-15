@@ -1559,7 +1559,7 @@ export default function ScalarPlotCard({
       ref={cardRef}
       className={`card p-4 flex flex-col${dropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
       style={{
-        minHeight: settings.collapsed ? undefined : resolveCardHeight(settings, 300),
+        height: settings.collapsed ? undefined : resolveCardHeight(settings, 300),
         position: "relative",
         gridColumn: `span ${settings.colSpan ?? 3}`,
       }}

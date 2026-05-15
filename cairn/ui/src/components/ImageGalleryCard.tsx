@@ -1328,7 +1328,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
       className={`card p-4 flex flex-col${dropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
       style={{
         position: "relative",
-        minHeight: settings.collapsed ? undefined : resolveCardHeight(settings, undefined),
+        height: settings.collapsed ? undefined : resolveCardHeight(settings, undefined),
         gridColumn: `span ${settings.colSpan ?? 3}`,
       }}
       {...dropProps}
