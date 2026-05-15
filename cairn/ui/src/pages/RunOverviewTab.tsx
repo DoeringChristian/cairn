@@ -142,34 +142,24 @@ function DefinitionList({ rows }: { rows: Array<[string, React.ReactNode]> }) {
   );
 }
 
-function TagsEditor({ run, tags: serverTags }: { run: Run; tags: string[] }) {
+function TagsEditor({ run, tags }: { run: Run; tags: string[] }) {
   const mutation = useSetTags(run.id);
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState("");
   const runsQ = useRuns({ project: run.project_id, limit: 500 });
   const suggestions = useProjectTags(runsQ.data?.runs ?? []);
 
-  // Keep optimistic local copy so rapid add/remove never works against stale
-  // data.  Syncs back to server truth whenever the query refetches.
-  const [localTags, setLocalTags] = useState(serverTags);
-  useEffect(() => { setLocalTags(serverTags); }, [serverTags]);
-
-  const applyTags = (next: string[]) => {
-    setLocalTags(next);
-    mutation.mutate(next);
-  };
-
   const removeTag = (tag: string) => {
-    applyTags(localTags.filter((t) => t !== tag));
+    mutation.mutate(tags.filter((t) => t !== tag));
   };
 
   return (
     <div className="mb-3">
       <div className="flex flex-wrap items-center gap-2">
-        {localTags.length === 0 && !adding ? (
+        {tags.length === 0 && !adding ? (
           <span className="text-sm text-fg-subtle">(none)</span>
         ) : (
-          localTags.map((t) => (
+          tags.map((t) => (
             <span
               key={t}
               className="mono group inline-flex items-center gap-1 rounded border border-border bg-bg px-2 py-0.5 text-xs text-fg-muted"
@@ -193,13 +183,13 @@ function TagsEditor({ run, tags: serverTags }: { run: Run; tags: string[] }) {
             value={draft}
             onChange={setDraft}
             onCommit={(tag) => {
-              if (!localTags.includes(tag)) applyTags([...localTags, tag]);
+              if (!tags.includes(tag)) mutation.mutate([...tags, tag]);
               setDraft("");
               setAdding(false);
             }}
             onCancel={() => { setDraft(""); setAdding(false); }}
             suggestions={suggestions}
-            exclude={localTags}
+            exclude={tags}
           />
         ) : (
           <button
