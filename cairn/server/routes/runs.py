@@ -76,8 +76,13 @@ def list_runs(
         clauses.append("status = ?")
         params.append(status)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    # Exclude env_snapshot from list responses — it's large and only needed
+    # on the run detail page.  SELECT * would include it for every row.
     rows = db.read_columns(
-        f"SELECT * FROM runs {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+        f"""SELECT id, project_id, display_name, created_at, ended_at, status,
+                   exit_code, git_sha, git_dirty, git_branch, cli_args,
+                   hostname, "user", tags, notes, last_heartbeat
+            FROM runs {where} ORDER BY created_at DESC LIMIT ? OFFSET ?""",
         [*params, limit, offset],
     )
     (total,) = db.read_one(f"SELECT COUNT(*) FROM runs {where}", params) or (0,)

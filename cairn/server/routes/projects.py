@@ -18,15 +18,20 @@ def list_projects(request: Request) -> dict[str, Any]:
     rows = db.read_columns(
         """
         SELECT p.id, p.name, p.created_at, p.description, p.tags,
-               (SELECT COUNT(*) FROM runs r WHERE r.project_id = p.id) AS run_count,
-               (SELECT COUNT(*) FROM runs r WHERE r.project_id = p.id
-                                               AND r.status = 'running')
-                   AS active_run_count,
-               (SELECT MAX(COALESCE(r.ended_at, r.created_at)) FROM runs r
-                  WHERE r.project_id = p.id) AS last_run_at
+               COALESCE(agg.run_count, 0) AS run_count,
+               COALESCE(agg.active_run_count, 0) AS active_run_count,
+               agg.last_run_at
         FROM projects p
-        ORDER BY CASE WHEN last_run_at IS NULL THEN 1 ELSE 0 END,
-                 last_run_at DESC, p.created_at DESC
+        LEFT JOIN (
+            SELECT project_id,
+                   COUNT(*) AS run_count,
+                   SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS active_run_count,
+                   MAX(COALESCE(ended_at, created_at)) AS last_run_at
+            FROM runs
+            GROUP BY project_id
+        ) agg ON agg.project_id = p.id
+        ORDER BY CASE WHEN agg.last_run_at IS NULL THEN 1 ELSE 0 END,
+                 agg.last_run_at DESC, p.created_at DESC
         """
     )
     return {"projects": rows}
