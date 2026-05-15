@@ -103,7 +103,7 @@ export default function ArtifactCard({ runId, metric, settingsKeyOverride, onRem
       className="card p-4 flex flex-col"
       style={{
         position: "relative",
-        minHeight: resolveCardHeight(settings, undefined),
+        height: resolveCardHeight(settings, undefined),
         gridColumn: `span ${settings.colSpan ?? 3}`,
       }}
     >

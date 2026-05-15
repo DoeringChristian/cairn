@@ -521,7 +521,7 @@ export default function ParallelCoordsCard({
       ref={cardRef}
       className="card p-4 flex flex-col"
       style={{
-        minHeight: resolveCardHeight(settings, 350),
+        height: resolveCardHeight(settings, 350),
         position: "relative",
         gridColumn: `span ${settings.colSpan ?? 3}`,
       }}

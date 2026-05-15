@@ -77,6 +77,17 @@ export default function CardResizeHandle({
         : gridCols;
       const colWidth = gridWidth / actualCols;
 
+      // Find sibling cards in the same grid row for height sync.
+      const cardTop = card.getBoundingClientRect().top;
+      const rowSiblings: HTMLElement[] = [];
+      if (gridEl) {
+        for (const el of gridEl.querySelectorAll(".card")) {
+          if (el !== card && Math.abs(el.getBoundingClientRect().top - cardTop) < 2) {
+            rowSiblings.push(el as HTMLElement);
+          }
+        }
+      }
+
       let currentSpan = colSpan;
       const onPointerMove = (ev: PointerEvent) => {
         // Height: continuous
@@ -84,6 +95,11 @@ export default function CardResizeHandle({
           Math.min(MAX_HEIGHT, Math.max(minHeight, startHeight + (ev.clientY - startY))),
         );
         onHeightChange(newH);
+
+        // Sync height to sibling cards in the same row (visual only during drag).
+        for (const sib of rowSiblings) {
+          sib.style.height = `${newH}px`;
+        }
 
         // Also save to per-colSpan slot
         if (onPerColHeightChange) {

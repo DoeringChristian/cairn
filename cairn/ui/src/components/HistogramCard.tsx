@@ -88,7 +88,7 @@ export default function HistogramCard({ runId, metric, settingsKeyOverride, onRe
   const cardRef = useRef<HTMLDivElement>(null);
 
   return (
-    <div ref={cardRef} className="card p-4 flex flex-col" style={{ minHeight: resolveCardHeight(settings, 250), position: "relative", gridColumn: `span ${settings.colSpan ?? 3}` }}>
+    <div ref={cardRef} className="card p-4 flex flex-col" style={{ height: resolveCardHeight(settings, 250), position: "relative", gridColumn: `span ${settings.colSpan ?? 3}` }}>
       <CardHeader
         title={settings.title ?? metric.name}
         onTitleChange={(t) => updateSettings({ title: t || undefined })}
