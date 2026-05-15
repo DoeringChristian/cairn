@@ -15,7 +15,7 @@ import { useCardSettings, resolveCardHeight, type CardSettingsKey } from "../lib
 import { useSeriesDrop } from "../lib/use-series-drop";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
 import {  } from "../lib/format";
-import { downloadArtifact, artifactFilename, exportImagesAsComposite, safeName } from "../lib/download";
+import { downloadArtifact, downloadBlob, artifactFilename, exportImagesAsComposite, safeName, type CompositePane } from "../lib/download";
 import { computeDiff, loadImageData, type DiffMode } from "../lib/image-diff";
 import { webglRenderDiffToCanvas } from "../lib/webgl-diff";
 import { getRenderMode } from "../lib/render-mode";
@@ -1371,9 +1371,50 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
         onSettings={() => setExpanded(true)}
         onRemove={onRemove}
         onDownload={firstResolved.hash ? () => downloadArtifact(api.artifactUrl(firstResolved.hash!), artifactFilename(metric.name, currentStep, "image/png")) : undefined}
-        onScreenshot={isMulti
-          ? () => { if (containerRef.current) exportImagesAsComposite(containerRef.current, safeName(metric.name) + `_step${currentStep}`, settings.imageColumns ?? 2); }
-          : firstResolved.hash ? () => { if (containerRef.current) exportImagesAsComposite(containerRef.current, safeName(metric.name) + `_step${currentStep}`, 1); } : undefined}
+        onScreenshot={() => {
+          // Build structured pane data for the export (don't scrape DOM).
+          const panes: CompositePane[] = [];
+          const cmap = settings.colormap ?? "none";
+
+          if (isMulti) {
+            for (let pi = 0; pi < effectiveMetrics.length; pi++) {
+              const m = effectiveMetrics[pi]!;
+              const stepMap = perSeriesStepMap[pi] ?? new Map();
+              const steps = perSeriesPoints[pi]?.map((p) => p.step) ?? [];
+              const { hash } = resolveArtifact(stepMap, currentStep, steps, settings.missingImageMode);
+              const label = seriesLabel(m, runId, multipleRuns, availableRunIds);
+
+              // If per-run reference is active, add REF + Pred as a group
+              const paneBaseline = refMode === "per-run"
+                ? perPaneBaselineHash?.[pi]
+                : baselineHash;
+              if (paneBaseline && hash && paneBaseline !== hash) {
+                panes.push({ url: api.artifactUrl(paneBaseline), label: `${label} (REF)`, groupWithNext: true, skipColormap: true });
+                panes.push({ url: hash ? api.artifactUrl(hash) : undefined, label });
+              } else if (hash) {
+                panes.push({ url: api.artifactUrl(hash), label });
+              }
+            }
+          } else {
+            // Single image
+            if (singleUseFalseColor && singleFCRef.current) {
+              panes.push({ canvas: singleFCRef.current, label: metric.name });
+            } else if (firstResolved.hash) {
+              panes.push({ url: api.artifactUrl(firstResolved.hash), label: metric.name });
+            }
+          }
+
+          const colorbar = cmap !== "none"
+            ? { lut: getColormapLUT(cmap as Exclude<Colormap, "none">), name: cmap }
+            : undefined;
+
+          exportImagesAsComposite(
+            panes,
+            safeName(metric.name) + `_step${currentStep}`,
+            isMulti ? (settings.imageColumns ?? 2) : 1,
+            colorbar,
+          );
+        }}
         addToComparisonSlot={<AddToComparisonButton cardType="image" series={compSeries} />}
       >
         {(settings.zoom !== 1 || settings.pan.x !== 0 || settings.pan.y !== 0) && (
@@ -1477,25 +1518,25 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                   <div key={seriesKey(m)} className="relative overflow-hidden" style={undefined}>
                     {showInlineRef ? (
                       /* ---------- Inline ref+pred ---------- */
-                      /* When diff is active, always show ref + ImagePane (which computes diff) */
-                      settings.diffMode !== "none" ? (
+                      compareMode === "side-by-side" || settings.diffMode !== "none" ? (
+                        /* Side-by-side or diff: REF pane + ImagePane (handles diff + colormap) */
                         <div className="flex gap-0.5 h-full cairn-checkerboard">
                           <div className="relative flex-1 min-w-0 overflow-hidden border border-accent/20 rounded" data-cairn-zoom-pane>
-                            <div className="w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
-                              <img
-                                src={api.artifactUrl(paneBaseline)}
-                                alt="ref"
-                                className="w-full h-full object-contain"
-                                draggable={false}
-                                style={{
-                                  filter: filterStr,
-                                  imageRendering: settings.interpolation === "auto" ? undefined : settings.interpolation,
-                                }}
-                              />
-                            </div>
-                            <span className="absolute top-0.5 left-0.5 z-10 rounded bg-accent/20 px-1 py-0.5 text-[9px] text-accent backdrop-blur-sm">
-                              REF
-                            </span>
+                            <ImagePane
+                              metricEntry={m}
+                              paneIndex={paneIdx}
+                              artifactHash={paneBaseline}
+                              baselineHash={undefined}
+                              isBaseline={true}
+                              diffMode="none"
+                              interpolation={settings.interpolation ?? "auto"}
+                              colormap={"none"}
+                              showAxes={false}
+                              zoom={settings.zoom}
+                              transformStr={transformStr}
+                              filterStr={filterStr}
+                              label="REF"
+                            />
                           </div>
                           <div className="relative flex-1 min-w-0 overflow-hidden" data-cairn-zoom-pane>
                             <ImagePane
@@ -1514,44 +1555,6 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                               onNaturalSize={onImageNaturalSize}
                               label={label}
                             />
-                          </div>
-                        </div>
-                      ) : compareMode === "side-by-side" ? (
-                        /* No diff, side-by-side: ref and pred shown as a grouped pair */
-                        <div className="flex gap-0.5 h-full cairn-checkerboard">
-                          <div className="relative flex-1 min-w-0 overflow-hidden border border-accent/20 rounded" data-cairn-zoom-pane>
-                            <div className="w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
-                              <img
-                                src={api.artifactUrl(paneBaseline)}
-                                alt="ref"
-                                className="w-full h-full object-contain"
-                                draggable={false}
-                                style={{
-                                  filter: filterStr,
-                                  imageRendering: settings.interpolation === "auto" ? undefined : settings.interpolation,
-                                }}
-                              />
-                            </div>
-                            <span className="absolute top-0.5 left-0.5 z-10 rounded bg-accent/20 px-1 py-0.5 text-[9px] text-accent backdrop-blur-sm">
-                              REF
-                            </span>
-                          </div>
-                          <div className="relative flex-1 min-w-0 overflow-hidden" data-cairn-zoom-pane>
-                            <div className="w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
-                              <img
-                                src={api.artifactUrl(hash)}
-                                alt="pred"
-                                className="w-full h-full object-contain"
-                                draggable={false}
-                                style={{
-                                  filter: filterStr,
-                                  imageRendering: settings.interpolation === "auto" ? undefined : settings.interpolation,
-                                }}
-                              />
-                            </div>
-                            <span className="absolute bottom-0.5 left-0.5 z-10 rounded bg-bg/80 px-1 py-0.5 text-[9px] text-fg-muted backdrop-blur-sm">
-                              {label}
-                            </span>
                           </div>
                         </div>
                       ) : (
@@ -2049,15 +2052,25 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                     return (
                       <div key={seriesKey(m)} className="relative overflow-hidden" style={undefined}>
                         {mShowInlineRef ? (
-                          settings.diffMode !== "none" ? (
-                            /* Diff active: REF + ImagePane with diff computation */
+                          mCompareMode === "side-by-side" || settings.diffMode !== "none" ? (
+                            /* Side-by-side or diff: REF ImagePane + pred ImagePane */
                             <div className="flex gap-0.5 h-full cairn-checkerboard">
                               <div className="relative flex-1 min-w-0 overflow-hidden border border-accent/20 rounded" data-cairn-zoom-pane>
-                                <div className="w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
-                                  <img src={api.artifactUrl(mPaneBaseline)} alt="ref" className="w-full h-full object-contain" draggable={false}
-                                    style={{ filter: filterStr, imageRendering: settings.interpolation === "auto" ? undefined : settings.interpolation }} />
-                                </div>
-                                <span className="absolute top-0.5 left-0.5 z-10 rounded bg-accent/20 px-1 py-0.5 text-[9px] text-accent backdrop-blur-sm">REF</span>
+                                <ImagePane
+                                  metricEntry={m}
+                                  paneIndex={paneIdx}
+                                  artifactHash={mPaneBaseline}
+                                  baselineHash={undefined}
+                                  isBaseline={true}
+                                  diffMode="none"
+                                  interpolation={settings.interpolation ?? "auto"}
+                                  colormap={"none"}
+                                  showAxes={false}
+                                  zoom={settings.zoom}
+                                  transformStr={transformStr}
+                                  filterStr={filterStr}
+                                  label="REF"
+                                />
                               </div>
                               <div className="relative flex-1 min-w-0 overflow-hidden" data-cairn-zoom-pane>
                                 <ImagePane
@@ -2076,24 +2089,6 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                                   onNaturalSize={onImageNaturalSize}
                                   label={mLabel}
                                 />
-                              </div>
-                            </div>
-                          ) : mCompareMode === "side-by-side" ? (
-                            /* No diff, side-by-side: raw img pair */
-                            <div className="flex gap-0.5 h-full cairn-checkerboard">
-                              <div className="relative flex-1 min-w-0 overflow-hidden border border-accent/20 rounded" data-cairn-zoom-pane>
-                                <div className="w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
-                                  <img src={api.artifactUrl(mPaneBaseline)} alt="ref" className="w-full h-full object-contain" draggable={false}
-                                    style={{ filter: filterStr, imageRendering: settings.interpolation === "auto" ? undefined : settings.interpolation }} />
-                                </div>
-                                <span className="absolute top-0.5 left-0.5 z-10 rounded bg-accent/20 px-1 py-0.5 text-[9px] text-accent backdrop-blur-sm">REF</span>
-                              </div>
-                              <div className="relative flex-1 min-w-0 overflow-hidden" data-cairn-zoom-pane>
-                                <div className="w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
-                                  <img src={api.artifactUrl(mHash)} alt="pred" className="w-full h-full object-contain" draggable={false}
-                                    style={{ filter: filterStr, imageRendering: settings.interpolation === "auto" ? undefined : settings.interpolation }} />
-                                </div>
-                                <span className="absolute bottom-0.5 left-0.5 z-10 rounded bg-bg/80 px-1 py-0.5 text-[9px] text-fg-muted backdrop-blur-sm">{mLabel}</span>
                               </div>
                             </div>
                           ) : (
