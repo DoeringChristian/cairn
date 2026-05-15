@@ -9,7 +9,7 @@ import { useSequence } from "../api/hooks";
 import { api } from "../api/client";
 import { qk } from "../api/query-keys";
 import { safeJsonParse } from "../lib/format";
-import { downloadArtifact, artifactFilename } from "../lib/download";
+import { downloadArtifact, artifactFilename, exportChartFromContainer, safeName } from "../lib/download";
 import { useCardSettings, resolveCardHeight, type CardSettingsKey } from "../lib/card-settings";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import type { SequenceMeta, SequenceResponse, SequencePoint } from "../api/types";
@@ -426,6 +426,7 @@ export default function PluginCard({
         onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
         onRemove={onRemove}
         onDownload={primaryCurrent?.artifact_hash ? () => downloadArtifact(api.artifactUrl(primaryCurrent.artifact_hash!), artifactFilename(metric.name, primaryCurrent.step, primaryCurrent.artifact_mime)) : undefined}
+        onScreenshot={() => { if (cardRef.current) exportChartFromContainer(cardRef.current, safeName(settings.title ?? metric.name), "svg"); }}
       >
         <span className="inline-flex items-center rounded bg-bg-hover px-1.5 py-0.5 text-[10px] text-fg-muted">
           {lang === "window" ? "Window" : lang === "server" ? "Server" : lang === "py" ? "Python" : "JS"}

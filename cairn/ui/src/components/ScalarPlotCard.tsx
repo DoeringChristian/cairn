@@ -42,7 +42,7 @@ import {  } from "../lib/format";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import { SERIES_COLORS } from "../lib/colors";
 import { seriesKey, seriesLabel } from "../lib/series-utils";
-import { exportChartFromContainer, safeName } from "../lib/download";
+import { downloadCsv, exportChartFromContainer, safeName } from "../lib/download";
 
 // -----------------------------------------------------------------------------
 // Settings shape
@@ -1572,7 +1572,17 @@ export default function ScalarPlotCard({
         collapsed={settings.collapsed}
         onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
         onSettings={() => setExpanded(true)}
-        onDownload={() => { if (chartBoxRef.current) exportChartFromContainer(chartBoxRef.current, safeName(settings.title ?? metric.name), "svg"); }}
+        onDownload={() => {
+          const headers = ["series", "x", "y", "wall_time"];
+          const rows: (string | number)[][] = [];
+          for (const s of series) {
+            for (const p of s.points) {
+              rows.push([s.label, p.x, p.y, p.wall_time]);
+            }
+          }
+          downloadCsv(headers, rows, safeName(settings.title ?? metric.name) + ".csv");
+        }}
+        onScreenshot={() => { if (chartBoxRef.current) exportChartFromContainer(chartBoxRef.current, safeName(settings.title ?? metric.name), "svg"); }}
         addToComparisonSlot={<AddToComparisonButton cardType="scalar" series={compSeries} />}
         onRemove={onRemove}
       >

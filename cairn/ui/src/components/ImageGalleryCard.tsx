@@ -1370,9 +1370,10 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
         onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
         onSettings={() => setExpanded(true)}
         onRemove={onRemove}
-        onDownload={isMulti
+        onDownload={firstResolved.hash ? () => downloadArtifact(api.artifactUrl(firstResolved.hash!), artifactFilename(metric.name, currentStep, "image/png")) : undefined}
+        onScreenshot={isMulti
           ? () => { if (containerRef.current) exportImagesAsComposite(containerRef.current, safeName(metric.name) + `_step${currentStep}`, settings.imageColumns ?? 2); }
-          : firstResolved.hash ? () => downloadArtifact(api.artifactUrl(firstResolved.hash!), artifactFilename(metric.name, currentStep, "image/png")) : undefined}
+          : firstResolved.hash ? () => { if (containerRef.current) exportImagesAsComposite(containerRef.current, safeName(metric.name) + `_step${currentStep}`, 1); } : undefined}
         addToComparisonSlot={<AddToComparisonButton cardType="image" series={compSeries} />}
       >
         {(settings.zoom !== 1 || settings.pan.x !== 0 || settings.pan.y !== 0) && (

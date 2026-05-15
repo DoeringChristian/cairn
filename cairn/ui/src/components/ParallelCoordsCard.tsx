@@ -12,7 +12,7 @@ import { qk } from "../api/query-keys";
 import { viridis } from "../lib/colors";
 import type { Run } from "../api/types";
 import { useCardSettings, resolveCardHeight } from "../lib/card-settings";
-import { exportChartFromContainer, safeName } from "../lib/download";
+import { downloadCsv, exportChartFromContainer, safeName } from "../lib/download";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import CardHeader from "./CardHeader";
 import CardDetailModal from "./CardDetailModal";
@@ -534,7 +534,14 @@ export default function ParallelCoordsCard({
         onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
         onSettings={() => setExpanded(true)}
         onRemove={onRemove}
-        onDownload={() => { if (cardRef.current) exportChartFromContainer(cardRef.current, safeName(settings.title ?? "parallel_coords"), "svg"); }}
+        onDownload={() => {
+          const headers = ["run_id", ...settings.columns.map((c) => c.key)];
+          const rows: (string | number)[][] = rowData.map((row) => {
+            return [row.runId, ...row.raw.map((v) => v ?? "")];
+          });
+          downloadCsv(headers, rows, safeName(settings.title ?? "parallel_coords") + ".csv");
+        }}
+        onScreenshot={() => { if (cardRef.current) exportChartFromContainer(cardRef.current, safeName(settings.title ?? "parallel_coords"), "svg"); }}
       >
       </CardHeader>
 

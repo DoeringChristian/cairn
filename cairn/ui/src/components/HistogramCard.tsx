@@ -97,7 +97,8 @@ export default function HistogramCard({ runId, metric, settingsKeyOverride, onRe
         onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
         onSettings={() => setExpanded(true)}
         onRemove={onRemove}
-        onDownload={() => { if (cardRef.current) exportChartFromContainer(cardRef.current, safeName(settings.title ?? metric.name), "svg"); }}
+        onDownload={current?.artifact_hash ? () => downloadArtifact(api.artifactUrl(current.artifact_hash!), artifactFilename(metric.name, current.step, current.artifact_mime)) : undefined}
+        onScreenshot={() => { if (cardRef.current) exportChartFromContainer(cardRef.current, safeName(settings.title ?? metric.name), "svg"); }}
         addToComparisonSlot={<AddToComparisonButton cardType="histogram" series={compSeries} />}
       />
       {!settings.collapsed && (<>

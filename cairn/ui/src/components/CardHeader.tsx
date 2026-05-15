@@ -24,6 +24,8 @@ interface Props {
   onSettings?: () => void;
   /** Download/export. Renders download button. */
   onDownload?: () => void;
+  /** Screenshot/export-as-image. Renders camera button. */
+  onScreenshot?: () => void;
   /** Slot for AddToComparisonButton in the standard cluster. */
   addToComparisonSlot?: ReactNode;
   /** Remove the card. Renders close button in upper-right. */
@@ -40,6 +42,7 @@ export default function CardHeader({
   onToggleCollapse,
   onSettings,
   onDownload,
+  onScreenshot,
   addToComparisonSlot,
   onRemove,
 }: Props) {
@@ -83,7 +86,7 @@ export default function CardHeader({
   );
 
   const resolvedActions = cardActions ?? children;
-  const hasStandardActions = !!(onDownload || addToComparisonSlot || onSettings || onRemove);
+  const hasStandardActions = !!(onDownload || onScreenshot || addToComparisonSlot || onSettings || onRemove);
 
   return (
     <div className="group mb-2 flex items-baseline justify-between gap-2">
@@ -169,6 +172,17 @@ export default function CardHeader({
                 title="Save"
               >
                 <i className="fa-solid fa-arrow-down" aria-hidden="true" />
+              </button>
+            )}
+            {onScreenshot && (
+              <button
+                type="button"
+                onClick={onScreenshot}
+                className="h-[22px] min-w-[22px] inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
+                aria-label="Screenshot"
+                title="Screenshot"
+              >
+                <i className="fa-solid fa-camera" aria-hidden="true" />
               </button>
             )}
             {addToComparisonSlot}

@@ -10,7 +10,7 @@ import { qk } from "../api/query-keys";
 import type { Run } from "../api/types";
 import { useCardSettings, resolveCardHeight } from "../lib/card-settings";
 import { viridis } from "../lib/colors";
-import { exportChartFromContainer, safeName } from "../lib/download";
+import { downloadCsv, exportChartFromContainer, safeName } from "../lib/download";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import CardHeader from "./CardHeader";
 import CardDetailModal from "./CardDetailModal";
@@ -365,7 +365,17 @@ export default function ScatterPlotCard({
         onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
         onSettings={() => setExpanded(true)}
         onRemove={onRemove}
-        onDownload={() => { if (cardRef.current) exportChartFromContainer(cardRef.current, safeName(settings.title ?? "scatter_plot"), "svg"); }}
+        onDownload={() => {
+          const headers = ["run_id", settings.xAxis?.key ?? "x", settings.yAxis?.key ?? "y"];
+          if (settings.colorAxis) headers.push(settings.colorAxis.key);
+          const rows: (string | number)[][] = scatterPoints.map((pt) => {
+            const row: (string | number)[] = [pt.runId, pt.x, pt.y];
+            if (settings.colorAxis) row.push(pt.color ?? "");
+            return row;
+          });
+          downloadCsv(headers, rows, safeName(settings.title ?? "scatter_plot") + ".csv");
+        }}
+        onScreenshot={() => { if (cardRef.current) exportChartFromContainer(cardRef.current, safeName(settings.title ?? "scatter_plot"), "svg"); }}
       >
       </CardHeader>
 
