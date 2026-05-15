@@ -117,7 +117,7 @@ export default function RunsTablePage() {
     const run = runs.find((r) => r.id === runId);
     const prev = safeJsonParse<string[]>(run?.tags ?? null) ?? [];
     await api.setTags(runId, prev.filter((t) => t !== tag));
-    qc.invalidateQueries({ queryKey: qk.runs() });
+    qc.invalidateQueries({ queryKey: ["runs-infinite"] });
   }, [runs, qc]);
 
   const addTagToRun = useCallback(async (runId: string, tag: string) => {
@@ -128,26 +128,26 @@ export default function RunsTablePage() {
     await api.setTags(runId, [...prev, tag.trim()]);
     setAddingTagFor(null);
     setNewTagValue("");
-    qc.invalidateQueries({ queryKey: qk.runs() });
+    qc.invalidateQueries({ queryKey: ["runs-infinite"] });
   }, [runs, qc]);
 
   const onBulkDelete = useCallback(async () => {
     if (!confirm(`Delete ${selected.size} run(s)? This cannot be undone.`)) return;
     await Promise.all([...selected].map((id) => api.deleteRun(id)));
     setSelected(new Set());
-    qc.invalidateQueries({ queryKey: qk.runs() });
+    qc.invalidateQueries({ queryKey: ["runs-infinite"] });
   }, [selected, qc]);
 
   const onBulkArchive = useCallback(async () => {
     await Promise.all([...selected].map((id) => api.archiveRun(id)));
     setSelected(new Set());
-    qc.invalidateQueries({ queryKey: qk.runs() });
+    qc.invalidateQueries({ queryKey: ["runs-infinite"] });
   }, [selected, qc]);
 
   const onBulkUnarchive = useCallback(async () => {
     await Promise.all([...selected].map((id) => api.unarchiveRun(id)));
     setSelected(new Set());
-    qc.invalidateQueries({ queryKey: qk.runs() });
+    qc.invalidateQueries({ queryKey: ["runs-infinite"] });
   }, [selected, qc]);
 
   // Populate run label cache for formatting across the app.

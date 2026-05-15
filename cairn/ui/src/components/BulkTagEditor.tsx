@@ -63,7 +63,7 @@ export default function BulkTagEditor({ open, onClose, anchorRef, selectedRunIds
       }
       await Promise.all(promises);
       setNewTag("");
-      qc.invalidateQueries({ queryKey: qk.runs() });
+      qc.invalidateQueries({ queryKey: ["runs-infinite"] });
     } finally {
       setBusy(false);
     }
@@ -81,7 +81,7 @@ export default function BulkTagEditor({ open, onClose, anchorRef, selectedRunIds
           updateTags(runId, (prev) => prev.filter((t) => t !== tag)),
         ),
       );
-      qc.invalidateQueries({ queryKey: qk.runs() });
+      qc.invalidateQueries({ queryKey: ["runs-infinite"] });
     } finally {
       setBusy(false);
     }
