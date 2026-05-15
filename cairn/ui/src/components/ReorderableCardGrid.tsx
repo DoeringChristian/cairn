@@ -99,7 +99,7 @@ export default function ReorderableCardGrid({
   return (
     <div
       ref={gridRef}
-      className={`grid grid-cols-1 gap-4 md:grid-cols-6 ${className ?? ""}`}
+      className={`grid grid-cols-1 items-stretch gap-4 md:grid-cols-6 ${className ?? ""}`}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}

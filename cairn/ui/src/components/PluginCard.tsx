@@ -414,7 +414,7 @@ export default function PluginCard({
       className="card p-4 flex flex-col"
       style={{
         position: "relative",
-        height: resolveCardHeight(settings, 400),
+        minHeight: resolveCardHeight(settings, 400),
         gridColumn: `span ${settings.colSpan ?? 3}`,
       }}
     >
