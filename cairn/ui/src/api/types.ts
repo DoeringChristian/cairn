@@ -137,3 +137,65 @@ export interface SourceFileResponse {
   encoding: "utf-8" | "base64";
   content: string;
 }
+
+export interface ArtifactFamily {
+  id: string;
+  project_id: string;
+  name: string;
+  type: string;
+  description: string | null;
+  created_at: string;
+  updated_at: string;
+  latest_version: number | null;
+  total_versions: number;
+  total_size_bytes: number;
+  aliases: Array<{ alias: string; version: number }>;
+}
+
+export interface ArtifactVersionInfo {
+  id: string;
+  family_id: string;
+  version: number;
+  hash: string;
+  size_bytes: number;
+  metadata: string | null;
+  created_at: string;
+  created_by_run: string | null;
+}
+
+export interface ArtifactFamilyDetail extends ArtifactFamily {
+  versions: ArtifactVersionInfo[];
+}
+
+export interface LineageNode {
+  id: string;
+  type: "artifact_version" | "run";
+  label: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface LineageEdge {
+  source: string;
+  target: string;
+  type: "produced" | "consumed";
+}
+
+export interface LineageGraph {
+  nodes: LineageNode[];
+  edges: LineageEdge[];
+}
+
+export interface RunArtifactInput {
+  artifact_version_id: string;
+  family_id: string;
+  family_name: string;
+  version: number;
+  role: string | null;
+}
+
+export interface RunArtifactOutput {
+  artifact_version_id: string;
+  family_id: string;
+  family_name: string;
+  version: number;
+}

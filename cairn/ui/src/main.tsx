@@ -13,6 +13,9 @@ import RunMetricsTab from "./pages/RunMetricsTab";
 import RunLogsTab from "./pages/RunLogsTab";
 import RunSourceTab from "./pages/RunSourceTab";
 import RunEnvTab from "./pages/RunEnvTab";
+import ArtifactsPage from "./pages/ArtifactsPage";
+import ArtifactDetailPage from "./pages/ArtifactDetailPage";
+import LineagePage from "./pages/LineagePage";
 import "./index.css";
 
 const queryClient = new QueryClient({
@@ -37,6 +40,9 @@ const router = createBrowserRouter([
         children: [
           { index: true, element: <RunsTablePage /> },
           { path: "compare", element: <ComparePage /> },
+          { path: "artifacts", element: <ArtifactsPage /> },
+          { path: "artifacts/:familyId", element: <ArtifactDetailPage /> },
+          { path: "lineage", element: <LineagePage /> },
           {
             path: "r/:runId",
             element: <RunDetailPage />,

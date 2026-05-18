@@ -19,4 +19,10 @@ export const qk = {
   highlight: (selected: string | null, content: string | undefined) => ["highlight", selected, content] as const,
   plotlySource: (sourceHash: string | null | undefined) => ["plotly-source", sourceHash] as const,
   refSeries: (runId: string, name: string, contextHash: string) => ["ref-series", runId, name, contextHash] as const,
+  artifactFamilies: (projectId: string) => ["artifact-families", projectId] as const,
+  artifactFamily: (projectId: string, familyId: string) => ["artifact-family", projectId, familyId] as const,
+  artifactVersions: (familyId: string) => ["artifact-versions", familyId] as const,
+  runInputArtifacts: (runId: string) => ["run-input-artifacts", runId] as const,
+  runOutputArtifacts: (runId: string) => ["run-output-artifacts", runId] as const,
+  lineage: (projectId: string) => ["lineage", projectId] as const,
 } as const;

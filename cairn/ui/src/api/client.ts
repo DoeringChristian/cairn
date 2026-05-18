@@ -30,6 +30,16 @@ async function put<T>(path: string, body: unknown): Promise<T> {
   return (await res.json()) as T;
 }
 
+async function patch<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(path, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${path}`);
+  return (await res.json()) as T;
+}
+
 async function del_<T>(path: string): Promise<T> {
   const res = await fetch(path, { method: "DELETE" });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${path}`);
@@ -144,4 +154,44 @@ export const api = {
     ),
   deleteServerComparison: (projectId: string, id: string) =>
     del_<{ deleted: string }>(`/api/projects/${projectId}/comparisons/${id}`),
+
+  // Artifact registry
+  artifactFamilies: (projectId: string) =>
+    get<{ families: import("./types").ArtifactFamily[] }>(
+      `/api/projects/${projectId}/artifact-families`,
+    ),
+  artifactFamily: (projectId: string, familyId: string) =>
+    get<import("./types").ArtifactFamilyDetail>(
+      `/api/projects/${projectId}/artifact-families/${familyId}`,
+    ),
+  updateArtifactFamily: (familyId: string, body: { name?: string; description?: string | null }) =>
+    patch<import("./types").ArtifactFamily>(
+      `/api/artifact-families/${familyId}`,
+      body,
+    ),
+  artifactVersions: (familyId: string) =>
+    get<{ versions: import("./types").ArtifactVersionInfo[] }>(
+      `/api/artifact-families/${familyId}/versions`,
+    ),
+  setArtifactAlias: (familyId: string, alias: string, version: number) =>
+    put<{ alias: string; version: number }>(
+      `/api/artifact-families/${familyId}/aliases`,
+      { alias, version },
+    ),
+  deleteArtifactAlias: (familyId: string, alias: string) =>
+    del_<{ deleted: string }>(
+      `/api/artifact-families/${familyId}/aliases/${encodeURIComponent(alias)}`,
+    ),
+  runInputArtifacts: (runId: string) =>
+    get<{ inputs: import("./types").RunArtifactInput[] }>(
+      `/api/runs/${runId}/inputs`,
+    ),
+  runOutputArtifacts: (runId: string) =>
+    get<{ outputs: import("./types").RunArtifactOutput[] }>(
+      `/api/runs/${runId}/outputs`,
+    ),
+  lineage: (projectId: string) =>
+    get<import("./types").LineageGraph>(
+      `/api/projects/${projectId}/lineage`,
+    ),
 };

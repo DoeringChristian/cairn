@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { useOutletContext } from "react-router-dom";
-import { useRuns, useSetNotes, useSetTags } from "../api/hooks";
+import { Link, useOutletContext } from "react-router-dom";
+import { useRuns, useSetNotes, useSetTags, useRunInputArtifacts, useRunOutputArtifacts } from "../api/hooks";
 import type { Param, Run } from "../api/types";
 import { safeJsonParse } from "../lib/format";
 import { useProjectTags } from "../lib/use-project-tags";
@@ -106,6 +106,7 @@ export default function RunOverviewTab() {
           />
         </Section>
       )}
+      <RunArtifactsSection run={run} />
     </div>
   );
 }
@@ -206,6 +207,67 @@ function TagsEditor({ run, tags }: { run: Run; tags: string[] }) {
         <span className="text-xs text-status-failed">save failed</span>
       )}
     </div>
+  );
+}
+
+function RunArtifactsSection({ run }: { run: Run }) {
+  const inputsQ = useRunInputArtifacts(run.id);
+  const outputsQ = useRunOutputArtifacts(run.id);
+
+  const inputs = inputsQ.data?.inputs ?? [];
+  const outputs = outputsQ.data?.outputs ?? [];
+
+  if (inputsQ.isLoading || outputsQ.isLoading) return null;
+  if (inputs.length === 0 && outputs.length === 0) return null;
+
+  return (
+    <Section title="Artifacts" className="lg:col-span-2">
+      {outputs.length > 0 && (
+        <div className="mb-3">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-fg-muted mb-1">
+            Produced
+          </h3>
+          <ul className="flex flex-col gap-1">
+            {outputs.map((o) => (
+              <li key={o.artifact_version_id} className="flex items-center gap-2 text-sm">
+                <Link
+                  to={`/p/${run.project_id}/artifacts/${o.family_id}`}
+                  className="mono text-accent hover:underline"
+                >
+                  {o.family_name}
+                </Link>
+                <span className="mono text-fg-muted text-xs">v{o.version}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {inputs.length > 0 && (
+        <div>
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-fg-muted mb-1">
+            Consumed
+          </h3>
+          <ul className="flex flex-col gap-1">
+            {inputs.map((inp) => (
+              <li key={inp.artifact_version_id} className="flex items-center gap-2 text-sm">
+                <Link
+                  to={`/p/${run.project_id}/artifacts/${inp.family_id}`}
+                  className="mono text-accent hover:underline"
+                >
+                  {inp.family_name}
+                </Link>
+                <span className="mono text-fg-muted text-xs">v{inp.version}</span>
+                {inp.role && (
+                  <span className="rounded border border-border bg-bg px-1.5 py-0.5 text-[10px] text-fg-muted">
+                    {inp.role}
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </Section>
   );
 }
 

@@ -35,6 +35,32 @@ const NAV_ITEMS = [
       </svg>
     ),
   },
+  {
+    path: "artifacts",
+    end: false,
+    label: "Artifacts",
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 6l6-3 6 3-6 3z" />
+        <path d="M3 6v6l6 3V9" />
+        <path d="M15 6v6l-6 3V9" />
+      </svg>
+    ),
+  },
+  {
+    path: "lineage",
+    end: false,
+    label: "Lineage",
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="4" cy="5" r="2" />
+        <circle cx="14" cy="5" r="2" />
+        <circle cx="9" cy="14" r="2" />
+        <line x1="5.5" y1="6.5" x2="8" y2="12" />
+        <line x1="12.5" y1="6.5" x2="10" y2="12" />
+      </svg>
+    ),
+  },
 ];
 
 export default function ProjectLayout() {
