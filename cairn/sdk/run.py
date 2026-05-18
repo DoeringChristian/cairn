@@ -13,11 +13,13 @@ from __future__ import annotations
 
 import atexit
 import inspect
+import json
 import logging
 import secrets
 import signal
 import sys
 import threading
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -39,6 +41,19 @@ from .wal import WriteAheadLog
 from ..server.storage.datadir import DataDir, RepoLockedError
 
 log = logging.getLogger(__name__)
+
+
+@dataclass
+class ArtifactVersion:
+    """A single version of a versioned artifact."""
+    id: str
+    family_id: str
+    family_name: str
+    version: int
+    hash: str
+    size_bytes: int
+    metadata: dict
+    created_at: str
 
 
 def _now_iso() -> str:
@@ -211,7 +226,8 @@ class Run:
         }
         resp = self._transport.create_run(create_body)
         self._run_id: str = resp["run_id"]
-        self._url_path: str = resp.get("url", f"/p/{resp['project_id']}/r/{self._run_id}")
+        self._project_id: str = resp["project_id"]
+        self._url_path: str = resp.get("url", f"/p/{self._project_id}/r/{self._run_id}")
 
         # Attach WAL for HTTP transports (not local — DuckDB is its own WAL).
         if isinstance(self._transport, Transport):
@@ -461,18 +477,99 @@ class Run:
         )
         self._plugins[cls.name] = {"hash": digest, "lang": lang}
 
-    def log_artifact(self, value: Any, name: str, step: int | None = None) -> None:
-        """Log an artifact as a sequence point.
+    def log_artifact(
+        self,
+        value: Any,
+        name: str,
+        step: int | None = None,
+        *,
+        type: str | None = None,
+        metadata: dict | None = None,
+        aliases: list[str] | None = None,
+    ) -> ArtifactVersion | None:
+        """Log an artifact as a sequence point, or as a versioned artifact.
 
-        Equivalent to ``run.track(value, name=name, step=step)``. Kept as a
-        convenience for callers who think of the operation as "attach this
-        file to the run" rather than "track this metric over time".
+        When ``type`` is provided, the artifact is registered in the versioned
+        artifact registry (family + versions). Otherwise it behaves like
+        ``run.track(value, name=name, step=step)`` — a convenience for callers
+        who think of the operation as "attach this file to the run".
 
         Single-point artifacts (``step=None``) become a one-element sequence
         at step 0. Multiple calls with the same ``name`` and different
         ``step`` values build a time series.
         """
+        if type is not None:
+            return self._log_versioned_artifact(value, name, type, metadata, aliases)
         self.track(value, name=name, step=step)
+        return None
+
+    def _log_versioned_artifact(
+        self,
+        value: Any,
+        name: str,
+        family_type: str,
+        metadata: dict | None,
+        aliases: list[str] | None,
+    ) -> ArtifactVersion | None:
+        """Upload a blob and create a versioned artifact entry."""
+        handler_meta: dict[str, Any] = {}
+        mime_type = "application/octet-stream"
+
+        # Handle Path/str as file path
+        if isinstance(value, (str, Path)):
+            path = Path(value)
+            with open(path, "rb") as f:
+                blob = f.read()
+        else:
+            # Use the handler registry to serialize the value
+            handler = self._registry.find_handler(value)
+            if handler is not None:
+                blob, handler_meta = handler.serialize(value)
+                mime_type = handler.mime_type if hasattr(handler, "mime_type") else mime_type
+            elif isinstance(value, (bytes, bytearray)):
+                blob = bytes(value)
+            else:
+                raise TypeError(
+                    f"No handler for value of type {type(value).__name__} and "
+                    "value is not bytes or a file path."
+                )
+
+        # Merge metadata
+        merged_meta = {**handler_meta, **(metadata or {})}
+
+        # Upload blob (reuse existing upload_artifact)
+        digest = self._transport.upload_artifact(blob, mime_type, merged_meta)
+
+        # Create version via transport
+        result = self._transport.create_artifact_version(
+            project_id=self._project_id,
+            family_name=name,
+            family_type=family_type,
+            digest=digest,
+            size_bytes=len(blob),
+            metadata=merged_meta,
+            created_by_run=self._run_id,
+            aliases=aliases,
+        )
+        return ArtifactVersion(**result) if result else None
+
+    def use_artifact(self, ref: str, *, role: str = "input") -> Any:
+        """Consume an artifact. ``ref`` is ``"name:alias"`` or ``"name:vN"``."""
+        version_info = self._transport.resolve_artifact(self._project_id, ref)
+        # Record consumption
+        self._transport.record_artifact_input(self._run_id, version_info["id"], role)
+        # Download bytes (uses existing cache)
+        data = self._transport.download_artifact_bytes(version_info["hash"])
+        # Deserialize if possible
+        object_type = version_info.get("object_type")
+        if object_type:
+            handler = self._registry.find_by_type(object_type)
+            if handler and hasattr(handler, "deserialize"):
+                meta = version_info.get("metadata", {})
+                if isinstance(meta, str):
+                    meta = json.loads(meta) if meta else {}
+                return handler.deserialize(data, meta)
+        return data
 
     # ---- params / metadata ------------------------------------------------
 

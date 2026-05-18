@@ -238,6 +238,57 @@ class Transport:
             log.warning("artifact upload failed (WAL seq %s): %s", seq, exc)
         return digest
 
+    # ---- versioned artifact registry -----------------------------------------
+
+    def create_artifact_version(
+        self,
+        project_id: str,
+        family_name: str,
+        family_type: str,
+        digest: str,
+        size_bytes: int,
+        metadata: dict[str, Any],
+        created_by_run: str,
+        aliases: list[str] | None,
+    ) -> dict[str, Any]:
+        """Ensure the artifact family exists and create a new version."""
+        # Ensure family exists
+        self.post_json(f"/api/projects/{project_id}/artifact-families", {
+            "name": family_name, "type": family_type,
+        })
+        # Get family id
+        family = self.get(f"/api/projects/{project_id}/artifact-families/by-name/{family_name}").json()
+        # Create version
+        return self.post_json(
+            f"/api/projects/{project_id}/artifact-families/{family['id']}/versions",
+            {
+                "hash": digest,
+                "size_bytes": size_bytes,
+                "metadata": metadata,
+                "created_by_run": created_by_run,
+                "aliases": aliases or ["latest"],
+            },
+        ).json()
+
+    def resolve_artifact(self, project_id: str, ref: str) -> dict[str, Any]:
+        """Resolve ``"name:alias"`` or ``"name:vN"`` to a version dict."""
+        return self.get(
+            f"/api/projects/{project_id}/artifact-families/resolve",
+            params={"ref": ref},
+        ).json()
+
+    def record_artifact_input(self, run_id: str, artifact_version_id: str, role: str) -> None:
+        """Record that a run consumed an artifact version."""
+        self.post_json(f"/api/runs/{run_id}/input-artifacts", {
+            "artifact_version_id": artifact_version_id, "role": role,
+        })
+
+    def download_artifact_bytes(self, digest: str) -> bytes:
+        """Download raw artifact bytes by hash."""
+        resp = self._client.get(f"/api/artifacts/{digest}")
+        resp.raise_for_status()
+        return resp.content
+
     def drain_wal(self) -> int:
         """Replay pending WAL entries. Return count replayed."""
         if not self._wal or not self._wal.has_pending:

@@ -24,6 +24,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .routes import (
+    artifact_registry,
     artifacts,
     compare,
     comparisons,
@@ -146,6 +147,7 @@ def create_app(
         comparisons.router,
         import_export.router,
         plugin_ws.router,
+        artifact_registry.router,
     ):
         app.include_router(router)
 

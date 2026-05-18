@@ -121,6 +121,53 @@ SCHEMA_SQL: list[str] = [
         payload       TEXT NOT NULL
     )
     """,
+    # ── Artifact registry tables ──────────────────────────────────────
+    """
+    CREATE TABLE IF NOT EXISTS artifact_families (
+        id            TEXT PRIMARY KEY,
+        project_id    TEXT NOT NULL REFERENCES projects(id),
+        name          TEXT NOT NULL,
+        type          TEXT NOT NULL DEFAULT 'artifact',
+        description   TEXT,
+        created_at    TEXT NOT NULL,
+        updated_at    TEXT NOT NULL,
+        UNIQUE(project_id, name)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS artifact_versions (
+        id              TEXT PRIMARY KEY,
+        family_id       TEXT NOT NULL REFERENCES artifact_families(id),
+        version         INTEGER NOT NULL,
+        hash            TEXT NOT NULL REFERENCES artifacts(hash),
+        size_bytes      INTEGER NOT NULL,
+        metadata        TEXT,
+        created_at      TEXT NOT NULL,
+        created_by_run  TEXT,
+        UNIQUE(family_id, version)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS artifact_aliases (
+        family_id     TEXT NOT NULL REFERENCES artifact_families(id),
+        alias         TEXT NOT NULL,
+        version_id    TEXT NOT NULL REFERENCES artifact_versions(id),
+        PRIMARY KEY (family_id, alias)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS run_inputs (
+        run_id              TEXT NOT NULL REFERENCES runs(id),
+        artifact_version_id TEXT NOT NULL REFERENCES artifact_versions(id),
+        role                TEXT NOT NULL DEFAULT 'input',
+        created_at          TEXT NOT NULL,
+        PRIMARY KEY (run_id, artifact_version_id)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_artifact_families_project ON artifact_families(project_id)",
+    "CREATE INDEX IF NOT EXISTS idx_artifact_versions_family ON artifact_versions(family_id, version DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_artifact_versions_producer ON artifact_versions(created_by_run)",
+    "CREATE INDEX IF NOT EXISTS idx_run_inputs_artifact ON run_inputs(artifact_version_id)",
 ]
 
 

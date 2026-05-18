@@ -238,6 +238,72 @@ class LocalTransport:
         else:
             ingest_ops.heartbeat(self.db, run_id)
 
+    # ---- versioned artifact registry ------------------------------------------
+
+    def create_artifact_version(
+        self,
+        project_id: str,
+        family_name: str,
+        family_type: str,
+        digest: str,
+        size_bytes: int,
+        metadata: dict[str, Any],
+        created_by_run: str,
+        aliases: list[str] | None,
+    ) -> dict[str, Any]:
+        """Ensure the artifact family exists and create a new version."""
+        if self._use_wal:
+            self._wal_write("create_artifact_version", {
+                "project_id": project_id,
+                "family_name": family_name,
+                "family_type": family_type,
+                "hash": digest,
+                "size_bytes": size_bytes,
+                "metadata": metadata,
+                "created_by_run": created_by_run,
+                "aliases": aliases or ["latest"],
+            })
+            # WAL mode can't return the full version info synchronously.
+            return {}
+        from ..server import artifact_registry_ops
+        return artifact_registry_ops.create_artifact_version(
+            self.db,
+            project_id=project_id,
+            family_name=family_name,
+            family_type=family_type,
+            digest=digest,
+            size_bytes=size_bytes,
+            metadata=metadata,
+            created_by_run=created_by_run,
+            aliases=aliases or ["latest"],
+        )
+
+    def resolve_artifact(self, project_id: str, ref: str) -> dict[str, Any]:
+        """Resolve ``"name:alias"`` or ``"name:vN"`` to a version dict."""
+        if self._use_wal:
+            raise RuntimeError("resolve_artifact is not supported in WAL mode")
+        from ..server import artifact_registry_ops
+        return artifact_registry_ops.resolve_artifact(self.db, project_id, ref)
+
+    def record_artifact_input(self, run_id: str, artifact_version_id: str, role: str) -> None:
+        """Record that a run consumed an artifact version."""
+        if self._use_wal:
+            self._wal_write("record_artifact_input", {
+                "run_id": run_id,
+                "artifact_version_id": artifact_version_id,
+                "role": role,
+            })
+        else:
+            from ..server import artifact_registry_ops
+            artifact_registry_ops.record_artifact_input(
+                self.db, run_id, artifact_version_id, role,
+            )
+
+    def download_artifact_bytes(self, digest: str) -> bytes:
+        """Download raw artifact bytes by hash from the local blob store."""
+        data, _ = self.blobs.get(digest)
+        return data
+
     def drain_spill(self, run_id: str | None = None) -> int:
         """Local mode never spills; nothing to drain."""
         return 0

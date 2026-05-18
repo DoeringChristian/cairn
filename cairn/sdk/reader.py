@@ -409,6 +409,16 @@ class Run:
     def source_file(self, path: str) -> str | None:
         return self._backend.get_source_file(self.id, path)
 
+    # ---- Versioned Artifact Inputs/Outputs ----
+
+    def input_artifacts(self) -> list[dict[str, Any]]:
+        """Return versioned artifacts consumed by this run."""
+        return self._backend.get_run_inputs(self.id)
+
+    def output_artifacts(self) -> list[dict[str, Any]]:
+        """Return versioned artifacts produced by this run."""
+        return self._backend.get_run_outputs(self.id)
+
     def __repr__(self) -> str:
         name = self.name or self.id
         return f"Run({name!r}, status={self.status!r}, project={self.project!r})"
@@ -649,6 +659,13 @@ class _Backend(Protocol):
                  limit: int, offset: int) -> tuple[list[dict[str, Any]], int]: ...
     def get_source_tree(self, run_id: str) -> dict[str, Any] | None: ...
     def get_source_file(self, run_id: str, path: str) -> str | None: ...
+    # Versioned artifact registry
+    def list_artifact_families(self, project_id: str, type_filter: str | None = None) -> list[dict[str, Any]]: ...
+    def list_artifact_versions(self, family_id: str) -> list[dict[str, Any]]: ...
+    def resolve_artifact_ref(self, project_id: str, ref: str) -> dict[str, Any]: ...
+    def get_run_inputs(self, run_id: str) -> list[dict[str, Any]]: ...
+    def get_run_outputs(self, run_id: str) -> list[dict[str, Any]]: ...
+    def get_lineage(self, project_id: str, **kwargs: Any) -> dict[str, Any]: ...
 
 
 # ---------------------------------------------------------------------------
@@ -836,6 +853,38 @@ class _LocalBackend:
             return None
         return None
 
+    # ---- Versioned artifact registry ----
+
+    def list_artifact_families(self, project_id: str, type_filter: str | None = None) -> list[dict[str, Any]]:
+        self._drain_wals()
+        from ..server import artifact_registry_ops
+        return artifact_registry_ops.list_families(self._db, project_id, type_filter=type_filter)
+
+    def list_artifact_versions(self, family_id: str) -> list[dict[str, Any]]:
+        self._drain_wals()
+        from ..server import artifact_registry_ops
+        return artifact_registry_ops.list_versions(self._db, family_id)
+
+    def resolve_artifact_ref(self, project_id: str, ref: str) -> dict[str, Any]:
+        self._drain_wals()
+        from ..server import artifact_registry_ops
+        return artifact_registry_ops.resolve_artifact(self._db, project_id, ref)
+
+    def get_run_inputs(self, run_id: str) -> list[dict[str, Any]]:
+        self._drain_wals()
+        from ..server import artifact_registry_ops
+        return artifact_registry_ops.get_run_inputs(self._db, run_id)
+
+    def get_run_outputs(self, run_id: str) -> list[dict[str, Any]]:
+        self._drain_wals()
+        from ..server import artifact_registry_ops
+        return artifact_registry_ops.get_run_outputs(self._db, run_id)
+
+    def get_lineage(self, project_id: str, **kwargs: Any) -> dict[str, Any]:
+        self._drain_wals()
+        from ..server import artifact_registry_ops
+        return artifact_registry_ops.get_lineage(self._db, project_id, **kwargs)
+
     def close(self) -> None:
         self._db.close()
 
@@ -973,6 +1022,29 @@ class _HttpBackend:
             return data.get("content")
         except Exception:
             return None
+
+    # ---- Versioned artifact registry ----
+
+    def list_artifact_families(self, project_id: str, type_filter: str | None = None) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {}
+        if type_filter:
+            params["type"] = type_filter
+        return self._get(f"/api/projects/{project_id}/artifact-families", params=params)
+
+    def list_artifact_versions(self, family_id: str) -> list[dict[str, Any]]:
+        return self._get(f"/api/artifact-families/{family_id}/versions")
+
+    def resolve_artifact_ref(self, project_id: str, ref: str) -> dict[str, Any]:
+        return self._get(f"/api/projects/{project_id}/artifact-families/resolve", params={"ref": ref})
+
+    def get_run_inputs(self, run_id: str) -> list[dict[str, Any]]:
+        return self._get(f"/api/runs/{run_id}/input-artifacts")
+
+    def get_run_outputs(self, run_id: str) -> list[dict[str, Any]]:
+        return self._get(f"/api/runs/{run_id}/output-artifacts")
+
+    def get_lineage(self, project_id: str, **kwargs: Any) -> dict[str, Any]:
+        return self._get(f"/api/projects/{project_id}/lineage", params=kwargs)
 
     def close(self) -> None:
         self._client.close()
@@ -1211,6 +1283,56 @@ class Reader:
         """Get a specific run by ID."""
         data = self._backend.get_run(run_id)
         return Run(data["run"], self._backend)
+
+    # ---- Versioned Artifact Registry ----
+
+    def artifact_families(self, project: str, *, type: str | None = None) -> list[dict[str, Any]]:
+        """List artifact families in a project, optionally filtered by type."""
+        project_id = project.lower().replace(" ", "-")
+        return self._backend.list_artifact_families(project_id, type_filter=type)
+
+    def artifact_versions(self, family_name: str, *, project: str) -> list[dict[str, Any]]:
+        """List all versions of an artifact family."""
+        project_id = project.lower().replace(" ", "-")
+        # Resolve family name to id first
+        ref = f"{family_name}:latest"
+        try:
+            info = self._backend.resolve_artifact_ref(project_id, ref)
+            family_id = info.get("family_id", "")
+        except Exception:
+            # Fallback: search through families
+            families = self._backend.list_artifact_families(project_id)
+            family_id = ""
+            for f in families:
+                if f.get("name") == family_name:
+                    family_id = f["id"]
+                    break
+            if not family_id:
+                raise KeyError(f"Artifact family {family_name!r} not found in project {project!r}")
+        return self._backend.list_artifact_versions(family_id)
+
+    def lineage(self, project: str, **kwargs: Any) -> dict[str, Any]:
+        """Get artifact lineage graph for a project."""
+        project_id = project.lower().replace(" ", "-")
+        return self._backend.get_lineage(project_id, **kwargs)
+
+    def resolve_and_download_artifact(self, project_id: str, ref: str) -> Any:
+        """Resolve an artifact ref and download+deserialize the content."""
+        info = self._backend.resolve_artifact_ref(project_id, ref)
+        data = self._backend.get_artifact_bytes(info["hash"])
+        object_type = info.get("object_type")
+        if object_type:
+            from .handlers.registry import default_registry
+            handler = default_registry.find_by_type(object_type)
+            if handler and hasattr(handler, "deserialize"):
+                meta = info.get("metadata", {})
+                if isinstance(meta, str):
+                    try:
+                        meta = json.loads(meta)
+                    except (json.JSONDecodeError, TypeError):
+                        meta = {}
+                return handler.deserialize(data, meta)
+        return data
 
     def close(self) -> None:
         """Close the underlying database or HTTP connection."""
