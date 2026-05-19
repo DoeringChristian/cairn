@@ -87,6 +87,21 @@ def get_family(family_id: str, request: Request) -> dict[str, Any]:
     try:
         family = ops.get_family(db, family_id)
         family["versions"] = ops.list_versions(db, family_id)
+        # Add aliases
+        alias_rows = db.read_columns(
+            """SELECT a.alias, v.version
+               FROM artifact_aliases a
+               JOIN artifact_versions v ON v.id = a.version_id
+               WHERE a.family_id = ?
+               ORDER BY a.alias""",
+            [family_id],
+        )
+        family["aliases"] = [r["alias"] for r in alias_rows]
+        # Add aggregate fields the UI expects
+        versions = family["versions"]
+        family["total_versions"] = len(versions)
+        family["latest_version"] = max((v["version"] for v in versions), default=None)
+        family["total_size"] = sum(v["size_bytes"] for v in versions)
         return family
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
