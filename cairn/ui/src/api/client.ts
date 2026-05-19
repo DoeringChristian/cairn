@@ -160,9 +160,9 @@ export const api = {
     get<{ families: import("./types").ArtifactFamily[] }>(
       `/api/projects/${projectId}/artifact-families`,
     ),
-  artifactFamily: (projectId: string, familyId: string) =>
+  artifactFamily: (_projectId: string, familyId: string) =>
     get<import("./types").ArtifactFamilyDetail>(
-      `/api/projects/${projectId}/artifact-families/${familyId}`,
+      `/api/artifact-families/${familyId}`,
     ),
   updateArtifactFamily: (familyId: string, body: { name?: string; description?: string | null }) =>
     patch<import("./types").ArtifactFamily>(

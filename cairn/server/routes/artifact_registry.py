@@ -85,7 +85,9 @@ def get_family_by_name(
 def get_family(family_id: str, request: Request) -> dict[str, Any]:
     db = get_db(request)
     try:
-        return ops.get_family(db, family_id)
+        family = ops.get_family(db, family_id)
+        family["versions"] = ops.list_versions(db, family_id)
+        return family
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
