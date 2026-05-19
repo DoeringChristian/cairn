@@ -246,6 +246,68 @@ def create_version(
     }
 
 
+def create_artifact_version(
+    db: Database,
+    *,
+    project_id: str,
+    family_name: str,
+    family_type: str = "artifact",
+    digest: str,
+    size_bytes: int,
+    metadata: dict[str, Any] | None = None,
+    created_by_run: str | None = None,
+    aliases: list[str] | None = None,
+) -> dict[str, Any]:
+    """High-level: ensure family exists, create version from pre-uploaded blob."""
+    family = get_or_create_family(db, project_id=project_id, name=family_name, type=family_type)
+    family_id = family["id"]
+    now = _now_iso()
+    version_id = _new_id()
+
+    with db.transaction() as con:
+        row = con.execute(
+            "SELECT COALESCE(MAX(version), 0) FROM artifact_versions WHERE family_id = ?",
+            [family_id],
+        ).fetchone()
+        next_version = row[0] + 1
+
+        con.execute(
+            """
+            INSERT INTO artifact_versions
+                (id, family_id, version, hash, size_bytes, metadata, created_at, created_by_run)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [version_id, family_id, next_version, digest, size_bytes,
+             json.dumps(metadata) if metadata else None, now, created_by_run],
+        )
+
+        for alias in (aliases or ["latest"]):
+            con.execute(
+                """
+                INSERT INTO artifact_aliases (family_id, alias, version_id)
+                VALUES (?, ?, ?)
+                ON CONFLICT (family_id, alias) DO UPDATE SET version_id = EXCLUDED.version_id
+                """,
+                [family_id, alias, version_id],
+            )
+
+        con.execute(
+            "UPDATE artifact_families SET updated_at = ? WHERE id = ?",
+            [now, family_id],
+        )
+
+    return {
+        "id": version_id,
+        "family_id": family_id,
+        "family_name": family_name,
+        "version": next_version,
+        "hash": digest,
+        "size_bytes": size_bytes,
+        "metadata": metadata or {},
+        "created_at": now,
+    }
+
+
 def list_versions(db: Database, family_id: str) -> list[dict[str, Any]]:
     return db.read_columns(
         "SELECT * FROM artifact_versions WHERE family_id = ? ORDER BY version DESC",

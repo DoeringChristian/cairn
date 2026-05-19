@@ -283,7 +283,7 @@ class LocalTransport:
         if self._use_wal:
             raise RuntimeError("resolve_artifact is not supported in WAL mode")
         from ..server import artifact_registry_ops
-        return artifact_registry_ops.resolve_artifact(self.db, project_id, ref)
+        return artifact_registry_ops.resolve_ref(self.db, project_id, ref)
 
     def record_artifact_input(self, run_id: str, artifact_version_id: str, role: str) -> None:
         """Record that a run consumed an artifact version."""
@@ -295,8 +295,8 @@ class LocalTransport:
             })
         else:
             from ..server import artifact_registry_ops
-            artifact_registry_ops.record_artifact_input(
-                self.db, run_id, artifact_version_id, role,
+            artifact_registry_ops.record_input(
+                self.db, run_id=run_id, artifact_version_id=artifact_version_id, role=role,
             )
 
     def download_artifact_bytes(self, digest: str) -> bytes:
