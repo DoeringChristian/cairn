@@ -139,15 +139,15 @@ export default function ArtifactDetailPage() {
           )}
           {family.aliases.map((a) => (
             <span
-              key={a.alias}
+              key={a}
               className="group mono inline-flex items-center gap-1 rounded border border-border bg-bg px-2 py-0.5 text-xs text-fg-muted"
             >
-              {a.alias} {"\u2192"} v{a.version}
+              {a}
               <button
                 type="button"
                 className="ml-0.5 transition-opacity hover:text-status-failed md:opacity-0 md:group-hover:opacity-100"
-                onClick={() => deleteAliasMutation.mutate(a.alias)}
-                aria-label={`delete alias ${a.alias}`}
+                onClick={() => deleteAliasMutation.mutate(a)}
+                aria-label={`delete alias ${a}`}
               >
                 {"\u00D7"}
               </button>

@@ -148,8 +148,8 @@ export interface ArtifactFamily {
   updated_at: string;
   latest_version: number | null;
   total_versions: number;
-  total_size_bytes: number;
-  aliases: Array<{ alias: string; version: number }>;
+  total_size: number;
+  aliases: string[];
 }
 
 export interface ArtifactVersionInfo {
@@ -170,8 +170,13 @@ export interface ArtifactFamilyDetail extends ArtifactFamily {
 export interface LineageNode {
   id: string;
   type: "artifact_version" | "run";
-  label: string;
-  metadata: Record<string, unknown>;
+  // Artifact version fields (present when type === "artifact_version")
+  family_id?: string;
+  family_name?: string;
+  version?: number;
+  // Run fields may be absent — label derived from id
+  label?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface LineageEdge {

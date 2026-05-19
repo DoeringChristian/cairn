@@ -110,7 +110,7 @@ function nodeColor(node: LineageNode): { fill: string; stroke: string } {
     }
   }
   // artifact_version
-  const atype = node.metadata?.artifact_type as string | undefined;
+  const atype = (node.metadata?.artifact_type ?? node.metadata?.type) as string | undefined;
   switch (atype) {
     case "dataset":
       return { fill: "rgba(59,130,246,0.12)", stroke: "rgba(59,130,246,0.5)" };
@@ -225,9 +225,12 @@ export default function LineagePage() {
                   className="fill-fg text-[10px]"
                   fontFamily="monospace"
                 >
-                  {p.node.label.length > 20
-                    ? p.node.label.slice(0, 18) + "..."
-                    : p.node.label}
+                  {(() => {
+                    const lbl = p.node.type === "artifact_version"
+                      ? `${p.node.family_name ?? "?"} v${p.node.version ?? "?"}`
+                      : p.node.label ?? p.node.id.slice(0, 8);
+                    return lbl.length > 20 ? lbl.slice(0, 18) + "..." : lbl;
+                  })()}
                 </text>
                 <text
                   x={p.x + p.w / 2}

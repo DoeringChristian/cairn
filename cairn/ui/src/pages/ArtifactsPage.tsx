@@ -115,17 +115,17 @@ export default function ArtifactsPage() {
                 </div>
                 <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-fg-muted">
                   <span>v{f.latest_version ?? 0}</span>
-                  <span>{formatBytes(f.total_size_bytes)}</span>
+                  <span>{formatBytes(f.total_size)}</span>
                   <span>{formatRelative(f.updated_at)}</span>
                 </div>
                 {f.aliases.length > 0 && (
                   <div className="mt-1 flex flex-wrap gap-1">
                     {f.aliases.map((a) => (
                       <span
-                        key={a.alias}
+                        key={a}
                         className="mono rounded border border-border bg-bg px-1.5 py-0.5 text-[10px] text-fg-muted"
                       >
-                        {a.alias}:v{a.version}
+                        {a}
                       </span>
                     ))}
                   </div>
@@ -172,16 +172,16 @@ export default function ArtifactsPage() {
                       {f.latest_version != null ? `v${f.latest_version}` : "\u2014"}
                     </td>
                     <td className="mono num px-3 py-2 text-fg-muted">
-                      {formatBytes(f.total_size_bytes)}
+                      {formatBytes(f.total_size)}
                     </td>
                     <td className="px-3 py-2">
                       <span className="flex flex-wrap gap-1">
                         {f.aliases.map((a) => (
                           <span
-                            key={a.alias}
+                            key={a}
                             className="mono rounded border border-border bg-bg px-1.5 py-0.5 text-[10px] text-fg-muted"
                           >
-                            {a.alias}:v{a.version}
+                            {a}
                           </span>
                         ))}
                       </span>
