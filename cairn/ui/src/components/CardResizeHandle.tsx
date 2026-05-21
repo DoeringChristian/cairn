@@ -106,12 +106,14 @@ export default function CardResizeHandle({
           onPerColHeightChange({ [`heights.${currentSpan}`]: newH, height: newH });
         }
 
-        // Width: snap to valid column spans based on drag distance
-        const targetWidth = startWidth + (ev.clientX - startX);
-        const rawSpan = Math.max(1, Math.min(actualCols, Math.round(targetWidth / colWidth)));
-        const newSpan = snapToValidSpan(rawSpan);
-        if (newSpan !== currentSpan) currentSpan = newSpan;
-        onColSpanChange(newSpan);
+        // Width: snap to valid column spans (skip on single-column mobile grid)
+        if (actualCols > 1) {
+          const targetWidth = startWidth + (ev.clientX - startX);
+          const rawSpan = Math.max(1, Math.min(actualCols, Math.round(targetWidth / colWidth)));
+          const newSpan = snapToValidSpan(rawSpan);
+          if (newSpan !== currentSpan) currentSpan = newSpan;
+          onColSpanChange(newSpan);
+        }
       };
 
       const onPointerUp = () => {
@@ -129,7 +131,7 @@ export default function CardResizeHandle({
     <div className="absolute bottom-0 right-0 p-1">
       <div
         onPointerDown={handlePointerDown}
-        className="flex h-5 w-5 cursor-nwse-resize items-end justify-end text-fg-muted hover:text-fg"
+        className="flex h-5 w-5 cursor-ns-resize md:cursor-nwse-resize items-end justify-end text-fg-muted hover:text-fg"
         title="Drag to resize"
         style={{ touchAction: "none" }}
       >
