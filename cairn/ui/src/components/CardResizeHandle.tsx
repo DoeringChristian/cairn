@@ -89,21 +89,20 @@ export default function CardResizeHandle({
       }
 
       let currentSpan = colSpan;
+      let lastH = startHeight;
+
       const onPointerMove = (ev: PointerEvent) => {
-        // Height: continuous
+        // Height: continuous — set directly on DOM during drag to avoid
+        // React re-renders (which can interfere with zoom/pan transforms).
         const newH = Math.round(
           Math.min(MAX_HEIGHT, Math.max(minHeight, startHeight + (ev.clientY - startY))),
         );
-        onHeightChange(newH);
+        lastH = newH;
+        card.style.height = `${newH}px`;
 
-        // Sync height to sibling cards in the same row (visual only during drag).
+        // Sync height to sibling cards in the same row.
         for (const sib of rowSiblings) {
           sib.style.height = `${newH}px`;
-        }
-
-        // Also save to per-colSpan slot
-        if (onPerColHeightChange) {
-          onPerColHeightChange({ [`heights.${currentSpan}`]: newH, height: newH });
         }
 
         // Width: snap to valid column spans (skip on single-column mobile grid)
@@ -119,6 +118,11 @@ export default function CardResizeHandle({
       const onPointerUp = () => {
         window.removeEventListener("pointermove", onPointerMove);
         window.removeEventListener("pointerup", onPointerUp);
+        // Persist final height to React state (triggers one re-render).
+        onHeightChange(lastH);
+        if (onPerColHeightChange) {
+          onPerColHeightChange({ [`heights.${currentSpan}`]: lastH, height: lastH });
+        }
       };
 
       window.addEventListener("pointermove", onPointerMove);
