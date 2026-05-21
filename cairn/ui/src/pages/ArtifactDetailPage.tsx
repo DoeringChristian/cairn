@@ -155,7 +155,7 @@ export default function ArtifactDetailPage() {
           ))}
         </div>
         <form
-          className="flex items-center gap-2"
+          className="flex flex-wrap items-center gap-2"
           onSubmit={(e) => {
             e.preventDefault();
             const ver = parseInt(aliasVersionInput, 10);
@@ -192,60 +192,91 @@ export default function ArtifactDetailPage() {
         {family.versions.length === 0 ? (
           <p className="text-sm text-fg-subtle">No versions yet.</p>
         ) : (
-          <div className="overflow-hidden rounded-lg border border-border">
-            <table className="w-full text-sm">
-              <thead className="bg-bg-elevated text-left text-xs uppercase tracking-wide text-fg-muted">
-                <tr>
-                  <th className="px-3 py-2">Version</th>
-                  <th className="px-3 py-2">Hash</th>
-                  <th className="px-3 py-2">Size</th>
-                  <th className="px-3 py-2">Created</th>
-                  <th className="px-3 py-2">Produced by</th>
-                  <th className="px-3 py-2"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {family.versions.map((v) => (
-                  <tr
-                    key={v.id}
-                    className="border-t border-border-subtle hover:bg-bg-elevated"
-                  >
-                    <td className="mono num px-3 py-2">v{v.version}</td>
-                    <td className="mono px-3 py-2 text-fg-muted" title={v.hash}>
-                      {v.hash.slice(0, 12)}
-                    </td>
-                    <td className="mono num px-3 py-2 text-fg-muted">
-                      {formatBytes(v.size_bytes)}
-                    </td>
-                    <td className="px-3 py-2 text-fg-muted">
-                      {formatRelative(v.created_at)}
-                    </td>
-                    <td className="px-3 py-2">
-                      {v.created_by_run ? (
-                        <Link
-                          to={`/p/${projectId}/r/${v.created_by_run}`}
-                          className="mono text-accent hover:underline text-xs"
-                        >
-                          {v.created_by_run.slice(0, 8)}
-                        </Link>
-                      ) : (
-                        <span className="text-fg-subtle">{"\u2014"}</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2">
-                      <a
-                        href={api.artifactUrl(v.hash)}
-                        className="btn px-2 py-0.5 text-xs inline-flex items-center gap-1"
-                        download
-                      >
-                        {"\u2193"} Download
-                      </a>
-                    </td>
+          <>
+            {/* Mobile: card list */}
+            <ul className="flex flex-col gap-2 md:hidden">
+              {family.versions.map((v) => (
+                <li key={v.id} className="rounded-lg border border-border bg-bg-elevated p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="mono font-semibold">v{v.version}</span>
+                    <a
+                      href={api.artifactUrl(v.hash)}
+                      className="btn px-2 py-0.5 text-xs inline-flex items-center gap-1"
+                      download
+                    >
+                      <i className="fa-solid fa-arrow-down" aria-hidden="true" /> Download
+                    </a>
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-fg-muted">
+                    <span className="mono" title={v.hash}>{v.hash.slice(0, 12)}</span>
+                    <span>{formatBytes(v.size_bytes)}</span>
+                    <span>{formatRelative(v.created_at)}</span>
+                    {v.created_by_run && (
+                      <Link to={`/p/${projectId}/r/${v.created_by_run}`} className="mono text-accent hover:underline">
+                        run {v.created_by_run.slice(0, 8)}
+                      </Link>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+
+            {/* Desktop: table */}
+            <div className="hidden overflow-x-auto rounded-lg border border-border md:block">
+              <table className="w-full text-sm">
+                <thead className="bg-bg-elevated text-left text-xs uppercase tracking-wide text-fg-muted">
+                  <tr>
+                    <th className="px-3 py-2">Version</th>
+                    <th className="px-3 py-2">Hash</th>
+                    <th className="px-3 py-2">Size</th>
+                    <th className="px-3 py-2">Created</th>
+                    <th className="px-3 py-2">Produced by</th>
+                    <th className="px-3 py-2"></th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {family.versions.map((v) => (
+                    <tr
+                      key={v.id}
+                      className="border-t border-border-subtle hover:bg-bg-elevated"
+                    >
+                      <td className="mono num px-3 py-2">v{v.version}</td>
+                      <td className="mono px-3 py-2 text-fg-muted" title={v.hash}>
+                        {v.hash.slice(0, 12)}
+                      </td>
+                      <td className="mono num px-3 py-2 text-fg-muted">
+                        {formatBytes(v.size_bytes)}
+                      </td>
+                      <td className="px-3 py-2 text-fg-muted">
+                        {formatRelative(v.created_at)}
+                      </td>
+                      <td className="px-3 py-2">
+                        {v.created_by_run ? (
+                          <Link
+                            to={`/p/${projectId}/r/${v.created_by_run}`}
+                            className="mono text-accent hover:underline text-xs"
+                          >
+                            {v.created_by_run.slice(0, 8)}
+                          </Link>
+                        ) : (
+                          <span className="text-fg-subtle">{"\u2014"}</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2">
+                        <a
+                          href={api.artifactUrl(v.hash)}
+                          className="btn px-2 py-0.5 text-xs inline-flex items-center gap-1"
+                          download
+                        >
+                          <i className="fa-solid fa-arrow-down" aria-hidden="true" /> Download
+                        </a>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </section>
     </div>

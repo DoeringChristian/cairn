@@ -94,7 +94,7 @@ export default function ProjectLayout() {
         </nav>
 
         {/* Main content */}
-        <div className="flex-1 min-w-0 px-4 md:ml-16">
+        <div className="flex-1 min-w-0 px-4 pb-20 md:ml-16 md:pb-0">
           <nav className="mb-3 flex flex-wrap items-center gap-x-1 text-sm text-fg-muted">
             <Link to="/" className="hover:text-fg">
               Projects

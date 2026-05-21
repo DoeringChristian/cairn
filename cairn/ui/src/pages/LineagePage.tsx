@@ -163,12 +163,11 @@ export default function LineagePage() {
       <h1 className="mono text-xl font-semibold mb-6">
         {projectId} / lineage
       </h1>
-      <div className="overflow-auto rounded-lg border border-border bg-bg-elevated">
+      <div className="overflow-auto rounded-lg border border-border bg-bg-elevated -mx-4 md:mx-0" style={{ WebkitOverflowScrolling: "touch" }}>
         <svg
-          width={maxX}
-          height={maxY}
-          viewBox={`0 0 ${maxX} ${maxY}`}
-          className="min-w-full"
+          width={Math.max(maxX, 300)}
+          height={Math.max(maxY, 200)}
+          viewBox={`0 0 ${Math.max(maxX, 300)} ${Math.max(maxY, 200)}`}
         >
           <defs>
             <marker
