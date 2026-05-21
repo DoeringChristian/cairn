@@ -128,10 +128,10 @@ export default function CardResizeHandle({
   );
 
   return (
-    <div className="absolute bottom-0 right-0 p-1">
+    <div className="absolute bottom-0 right-0 p-1 hidden md:block">
       <div
         onPointerDown={handlePointerDown}
-        className="flex h-5 w-5 cursor-ns-resize md:cursor-nwse-resize items-end justify-end text-fg-muted hover:text-fg"
+        className="flex h-5 w-5 cursor-nwse-resize items-end justify-end text-fg-muted hover:text-fg"
         title="Drag to resize"
         style={{ touchAction: "none" }}
       >
