@@ -97,6 +97,9 @@ const COLORMAP_STOPS: Record<Exclude<Colormap, "none">, Array<[number, number, n
   "red-blue":  [[215,25,28],[255,255,255],[44,123,182]],   // diverging: red → white → blue
 };
 
+/** Diverging colormaps must be centered at 0 (LUT midpoint = pixel value 0). */
+const DIVERGING_COLORMAPS = new Set<string>(["red-green", "red-blue"]);
+
 const colormapLUTs = new Map<string, Uint8Array>();
 function getColormapLUT(name: Exclude<Colormap, "none">): Uint8Array {
   let lut = colormapLUTs.get(name);
@@ -348,6 +351,30 @@ function PixelAxes({
 }
 
 // ---------------------------------------------------------------------------
+// ColormapSwatch — horizontal gradient preview for the settings panel
+// ---------------------------------------------------------------------------
+
+function ColormapSwatch({ colormap: cmap }: { colormap: Exclude<Colormap, "none"> }) {
+  const lut = getColormapLUT(cmap);
+  const stops: string[] = [];
+  for (let i = 0; i < 256; i += 32) {
+    stops.push(`rgb(${lut[i * 3]},${lut[i * 3 + 1]},${lut[i * 3 + 2]})`);
+  }
+  stops.push(`rgb(${lut[255 * 3]},${lut[255 * 3 + 1]},${lut[255 * 3 + 2]})`);
+  const gradient = `linear-gradient(to right, ${stops.join(", ")})`;
+  return (
+    <div className="flex items-center gap-2 py-1">
+      <div
+        className="h-3 flex-1 rounded border border-border"
+        style={{ background: gradient }}
+      />
+      <span className="text-[10px] text-fg-subtle mono">0</span>
+      <span className="text-[10px] text-fg-subtle mono">1</span>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Colorbar — vertical gradient showing the active colormap
 // ---------------------------------------------------------------------------
 
@@ -503,7 +530,8 @@ function ImagePane({
       if (!ctx) return;
       ctx.drawImage(img, 0, 0);
       const src = ctx.getImageData(0, 0, c.width, c.height);
-      const mapped = applyColormap(src, colormap as Exclude<Colormap, "none">);
+      const cmapMode = DIVERGING_COLORMAPS.has(colormap) ? "positive" : "linear";
+      const mapped = applyColormap(src, colormap as Exclude<Colormap, "none">, cmapMode);
       setCachedImageData(cacheKey, mapped);
       const fc = falseColorRef.current;
       if (!fc || cancelled) return;
@@ -1208,7 +1236,9 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
       if (!ctx) return;
       ctx.drawImage(img, 0, 0);
       const src = ctx.getImageData(0, 0, c.width, c.height);
-      const mapped = applyColormap(src, (settings.colormap ?? "viridis") as Exclude<Colormap, "none">);
+      const cmap = (settings.colormap ?? "viridis") as Exclude<Colormap, "none">;
+      const cmapMode = DIVERGING_COLORMAPS.has(cmap) ? "positive" : "linear";
+      const mapped = applyColormap(src, cmap, cmapMode);
       setCachedImageData(cacheKey, mapped);
       const fc = singleFCRef.current;
       if (!fc || cancelled) return;
@@ -1405,7 +1435,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
           }
 
           const colorbar = cmap !== "none"
-            ? { lut: getColormapLUT(cmap as Exclude<Colormap, "none">), name: cmap }
+            ? { lut: getColormapLUT(cmap as Exclude<Colormap, "none">), name: cmap, diverging: DIVERGING_COLORMAPS.has(cmap) }
             : undefined;
 
           exportImagesAsComposite(
@@ -1916,6 +1946,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
             />
             <Select<Colormap>
               label="False color"
+              description={DIVERGING_COLORMAPS.has(settings.colormap ?? "none") ? "Diverging: 0 = center (white)" : undefined}
               value={settings.colormap ?? "none"}
               onChange={(v) => updateSettings({ colormap: v })}
               options={[
@@ -1925,6 +1956,9 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                 { value: "red-blue", label: "Red \u2013 Blue (\u00B1)" },
               ]}
             />
+            {(settings.colormap ?? "none") !== "none" && (
+              <ColormapSwatch colormap={settings.colormap as Exclude<Colormap, "none">} />
+            )}
             <Select<"nothing" | "last_available">
               label="Missing image"
               value={settings.missingImageMode ?? "last_available"}

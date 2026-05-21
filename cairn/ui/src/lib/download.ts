@@ -182,7 +182,7 @@ export async function exportImagesAsComposite(
   panes: CompositePane[],
   filename: string,
   columns = 2,
-  colorbar?: { lut: Uint8Array; name: string },
+  colorbar?: { lut: Uint8Array; name: string; diverging?: boolean },
 ): Promise<void> {
   if (panes.length === 0) return;
 
@@ -226,7 +226,9 @@ export async function exportImagesAsComposite(
       const od = out.data;
       for (let j = 0; j < sd.length; j += 4) {
         const avg = (sd[j]! + sd[j + 1]! + sd[j + 2]!) / 3;
-        const idx = Math.max(0, Math.min(255, Math.round(avg)));
+        const idx = colorbar.diverging
+          ? Math.max(0, Math.min(255, Math.round(128 + (avg / 255) * 127)))
+          : Math.max(0, Math.min(255, Math.round(avg)));
         od[j] = lut[idx * 3]!;
         od[j + 1] = lut[idx * 3 + 1]!;
         od[j + 2] = lut[idx * 3 + 2]!;
