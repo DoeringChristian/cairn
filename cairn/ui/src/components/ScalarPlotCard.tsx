@@ -1140,7 +1140,7 @@ export default function ScalarPlotCard({
                     })
                   }
                 >
-                  {"\u00D7"}
+                  <i className="fa-solid fa-xmark" aria-hidden="true" />
                 </button>
               </div>
             );
@@ -1618,7 +1618,7 @@ export default function ScalarPlotCard({
             aria-label="Reset view"
             title="Reset view (zoom/pan)"
           >
-            {"\u2302"}
+            <i className="fa-solid fa-house" aria-hidden="true" />
           </button>
         )}
       </CardHeader>
@@ -1767,7 +1767,7 @@ function CustomLegend({ series, promoted, onToggle }: CustomLegendProps) {
                 isPromoted ? "Demote (single Y axis)" : "Promote to own Y axis"
               }
             >
-              {"\u2195"}
+              <i className="fa-solid fa-arrows-up-down" aria-hidden="true" />
             </button>
           </li>
         );
