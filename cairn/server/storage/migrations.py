@@ -110,7 +110,6 @@ SCHEMA_SQL: list[str] = [
     # Indexes for efficient project listing and run queries at scale.
     "CREATE INDEX IF NOT EXISTS idx_runs_project_created ON runs(project_id, created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status)",
-    "CREATE INDEX IF NOT EXISTS idx_comparisons_project ON comparisons(project_id)",
     """
     CREATE TABLE IF NOT EXISTS comparisons (
         id            TEXT PRIMARY KEY,
@@ -121,6 +120,7 @@ SCHEMA_SQL: list[str] = [
         payload       TEXT NOT NULL
     )
     """,
+    "CREATE INDEX IF NOT EXISTS idx_comparisons_project ON comparisons(project_id)",
     # ── Artifact registry tables ──────────────────────────────────────
     """
     CREATE TABLE IF NOT EXISTS artifact_families (
