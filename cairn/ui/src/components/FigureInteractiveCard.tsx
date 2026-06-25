@@ -12,14 +12,13 @@ import { useCardSettings, resolveCardHeight, type CardSettingsKey } from "../lib
 import { useSeriesDrop } from "../lib/use-series-drop";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
-import { SERIES_COLORS } from "../lib/colors";
 import { seriesKey, seriesLabel } from "../lib/series-utils";
 import type { SequenceMeta, SequenceResponse } from "../api/types";
 import AddToComparisonButton from "./AddToComparisonButton";
 import CardHeader from "./CardHeader";
 import CardResizeHandle from "./CardResizeHandle";
 import SplitPane from "./SplitPane";
-import SeriesChip , { type SeriesRef } from "./SeriesChip";
+import SeriesChipStrip from "./SeriesChipStrip";
 import CardDetailModal from "./CardDetailModal";
 import Toggle from "./settings/Toggle";
 import Select from "./settings/Select";
@@ -645,6 +644,126 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
     return { figAutoHeight: `${total}px`, figRowHeight: `${rowH}px` };
   }, [settings.height, settings.height1, settings.height2, settings.colSpan, cardWidth, effectiveMetrics.length, isMulti]);
 
+  const renderSingleFigure = (heightClass: string, heightStyle?: React.CSSProperties) => {
+    if (q.isLoading) {
+      return <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />;
+    }
+    if (!current?.artifact_hash) {
+      return <div className="text-sm text-fg-muted">no figure logged yet</div>;
+    }
+    return (
+      <>
+        {showPlotly ? (
+          <div className={`rounded bg-bg ${heightClass}`} style={heightStyle}>
+            <Plot
+              data={(sourceQ.data?.data ?? []) as Plotly.Data[]}
+              layout={mergedLayout as Partial<Plotly.Layout>}
+              config={plotlyConfig}
+              useResizeHandler
+              style={{ width: "100%", height: "100%" }}
+              onRelayout={(e) => {
+                const view = extractViewState(e as unknown as Record<string, unknown>);
+                if (view) handlePaneRelayout(view);
+              }}
+              revision={plotRevision}
+            />
+          </div>
+        ) : sourceHash && sourceQ.isLoading ? (
+          <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
+        ) : (
+          <div className={`flex justify-center items-center rounded bg-bg p-2 ${heightClass}`}>
+            <img
+              src={api.artifactUrl(current.artifact_hash)}
+              alt={`${metric.name} @ step ${current.step}`}
+              className="max-w-full max-h-full object-contain"
+            />
+          </div>
+        )}
+        <StepSlider
+          points={points}
+          currentIndex={safeIdx}
+          onChange={handleSliderChange}
+          xAxis={settings.xAxis}
+          onXAxisChange={(m) => updateSettings({ xAxis: m })}
+          className="mt-3"
+        />
+      </>
+    );
+  };
+
+  const renderMultiFigure = (inModal: boolean) => (
+    <>
+      {inModal ? (
+        <SplitPane
+          widths={settings.paneWidths ?? Array(effectiveMetrics.length).fill(1 / effectiveMetrics.length)}
+          onWidthsChange={(w) => updateSettings({ paneWidths: w })}
+        >
+          {effectiveMetrics.map((m) => (
+            <FigurePane
+              key={seriesKey(m)}
+              runId={runId}
+              m={m}
+              targetStep={currentStep}
+              settings={settings}
+              viewOverrides={sharedView}
+              onRelayout={handlePaneRelayout}
+              revision={plotRevision}
+            />
+          ))}
+        </SplitPane>
+      ) : (
+        <div ref={figContainerRef} className="flex-1 min-h-0 overflow-auto" style={{ height: resolveCardHeight(settings, undefined) != null ? undefined : figAutoHeight }}>
+          <div
+            className="grid gap-1 flex-1 min-h-0 overflow-auto"
+            style={{ gridTemplateColumns: `repeat(${Math.min(effectiveMetrics.length, 2)}, 1fr)` }}
+          >
+            {effectiveMetrics.map((m) => (
+              <div key={seriesKey(m)} className="relative overflow-hidden">
+                <FigurePane
+                  runId={runId}
+                  m={m}
+                  targetStep={currentStep}
+                  settings={settings}
+                  viewOverrides={sharedView}
+                  onRelayout={handlePaneRelayout}
+                  revision={plotRevision}
+                />
+                {multipleRuns && (
+                  <span className="absolute top-1 left-1 z-10 rounded bg-bg/80 px-1.5 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm">
+                    {seriesLabel(m.name, m.context_hash, m.runId ?? runId, true, allRunIds)}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      <StepSlider
+        points={points}
+        currentIndex={safeIdx}
+        onChange={handleSliderChange}
+        xAxis={settings.xAxis}
+        onXAxisChange={(m) => updateSettings({ xAxis: m })}
+        className="mt-3"
+      />
+      <SeriesChipStrip
+        metrics={effectiveMetrics}
+        controlledSeries={controlledSeries}
+        runId={runId}
+        allRunIds={allRunIds}
+        onMetricsChange={(next) => updateSettings({ metrics: next })}
+      />
+    </>
+  );
+
+  const renderContent = (inModal: boolean) => {
+    if (isMulti) return renderMultiFigure(inModal);
+    return renderSingleFigure(
+      inModal ? "h-[calc(100vh-12rem)]" : "flex-1 min-h-0",
+      inModal ? undefined : { height: resolveCardHeight(settings, undefined) != null ? undefined : figAutoHeight },
+    );
+  };
+
   return (
     <div
       ref={cardRef}
@@ -694,150 +813,7 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
       </CardHeader>
 
       {!settings.collapsed && (<>
-      {isMulti ? (
-        <>
-          <div ref={figContainerRef} className="flex-1 min-h-0 overflow-auto" style={{ height: resolveCardHeight(settings, undefined) != null ? undefined : figAutoHeight }}>
-          <div
-            className="grid gap-1 flex-1 min-h-0 overflow-auto"
-            style={{
-              gridTemplateColumns: `repeat(${Math.min(effectiveMetrics.length, 2)}, 1fr)`,
-            }}
-          >
-            {effectiveMetrics.map((m) => (
-              <div key={seriesKey(m)} className="relative overflow-hidden">
-                <FigurePane
-                  runId={runId}
-                  m={m}
-                  targetStep={currentStep}
-                  settings={settings}
-                  viewOverrides={sharedView}
-                  onRelayout={handlePaneRelayout}
-                  revision={plotRevision}
-                />
-                {multipleRuns && (
-                  <span className="absolute top-1 left-1 z-10 rounded bg-bg/80 px-1.5 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm">
-                    {seriesLabel(m.name, m.context_hash, m.runId ?? runId, true, allRunIds)}
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
-          </div>
-          <StepSlider
-            points={points}
-            currentIndex={safeIdx}
-            onChange={handleSliderChange}
-            xAxis={settings.xAxis}
-            onXAxisChange={(m) => updateSettings({ xAxis: m })}
-            className="mt-3"
-          />
-          {/* Series chip strip */}
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {controlledSeries ? (
-              /* Tag-level chips in workspace/comparison mode */
-              (() => {
-                const seen = new Set<string>();
-                const tags: Array<{ name: string; color: string; firstIdx: number }> = [];
-                for (let i = 0; i < effectiveMetrics.length; i++) {
-                  const m = effectiveMetrics[i]!;
-                  if (seen.has(m.name)) continue;
-                  seen.add(m.name);
-                  tags.push({ name: m.name, color: SERIES_COLORS[tags.length % SERIES_COLORS.length]!, firstIdx: i });
-                }
-                return tags.map((tag) => {
-                  const m = effectiveMetrics[tag.firstIdx]!;
-                  const ref: SeriesRef = { runId: m.runId, name: m.name, context_hash: m.context_hash };
-                  return (
-                    <SeriesChip
-                      key={tag.name}
-                      series={ref}
-                      color={tag.color}
-                      label={tag.name}
-                      runId={runId}
-                      onRemove={
-                        tags.length > 1
-                          ? () => {
-                              const next = effectiveMetrics.filter((x) => x.name !== tag.name);
-                              updateSettings({ metrics: next });
-                            }
-                          : undefined
-                      }
-                    />
-                  );
-                });
-              })()
-            ) : (
-              /* Per-run series chips */
-              effectiveMetrics.map((m, i) => {
-                const ref: SeriesRef = {
-                  runId: m.runId,
-                  name: m.name,
-                  context_hash: m.context_hash,
-                };
-                return (
-                  <SeriesChip
-                    key={seriesKey(m)}
-                    series={ref}
-                    color={SERIES_COLORS[i % SERIES_COLORS.length]!}
-                    label={seriesLabel(m.name, m.context_hash, m.runId, multipleRuns, allRunIds)}
-                    runId={runId}
-                    onRemove={
-                      effectiveMetrics.length > 1
-                        ? () => {
-                            const next = effectiveMetrics.filter((_, j) => j !== i);
-                            updateSettings({ metrics: next });
-                          }
-                        : undefined
-                    }
-                  />
-                );
-              })
-            )}
-          </div>
-        </>
-      ) : q.isLoading ? (
-        <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
-      ) : current?.artifact_hash ? (
-        <>
-          {showPlotly ? (
-            <div className="rounded flex-1 min-h-0" style={{ height: resolveCardHeight(settings, undefined) != null ? undefined : figAutoHeight }}>
-              <Plot
-                data={(sourceQ.data?.data ?? []) as Plotly.Data[]}
-                layout={mergedLayout as Partial<Plotly.Layout>}
-                config={plotlyConfig}
-                useResizeHandler
-                style={{ width: "100%", height: "100%" }}
-                onRelayout={(e) => {
-                  const view = extractViewState(e as unknown as Record<string, unknown>);
-                  if (view) handlePaneRelayout(view);
-                }}
-                revision={plotRevision}
-              />
-            </div>
-          ) : sourceHash && sourceQ.isLoading ? (
-            <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
-          ) : (
-            <div className="flex justify-center items-center rounded bg-bg p-2 flex-1 min-h-0">
-              <img
-                src={api.artifactUrl(current.artifact_hash)}
-                alt={`${metric.name} @ step ${current.step}`}
-                className="max-w-full max-h-full object-contain"
-                style={{ maxHeight: resolveCardHeight(settings, undefined) != null ? undefined : "320px" }}
-              />
-            </div>
-          )}
-          <StepSlider
-            points={points}
-            currentIndex={safeIdx}
-            onChange={handleSliderChange}
-            xAxis={settings.xAxis}
-            onXAxisChange={(m) => updateSettings({ xAxis: m })}
-            className="mt-3"
-          />
-        </>
-      ) : (
-        <div className="text-sm text-fg-muted">no figure logged yet</div>
-      )}
+      {renderContent(false)}
       {(() => {
         const settingsPanel = (
           <>
@@ -878,45 +854,7 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
             title={settings.title ?? metric.name}
             settingsContent={settingsPanel}
           >
-            {isMulti ? (
-              <SplitPane
-                widths={settings.paneWidths ?? Array(effectiveMetrics.length).fill(1 / effectiveMetrics.length)}
-                onWidthsChange={(w) => updateSettings({ paneWidths: w })}
-              >
-                {effectiveMetrics.map((m) => (
-                  <FigurePane
-                    key={seriesKey(m)}
-                    runId={runId}
-                    m={m}
-                    targetStep={currentStep}
-                    settings={settings}
-                    viewOverrides={sharedView}
-                    onRelayout={handlePaneRelayout}
-                    revision={plotRevision}
-                  />
-                ))}
-              </SplitPane>
-            ) : showPlotly ? (
-              <div className="rounded bg-bg h-[calc(100vh-12rem)]">
-                <Plot
-                  data={(sourceQ.data?.data ?? []) as Plotly.Data[]}
-                  layout={mergedLayout as Partial<Plotly.Layout>}
-                  config={plotlyConfig}
-                  useResizeHandler
-                  style={{ width: "100%", height: "100%" }}
-                />
-              </div>
-            ) : current?.artifact_hash ? (
-              <div className="flex h-[calc(100vh-12rem)] justify-center items-center rounded bg-bg p-2 overflow-hidden">
-                <img
-                  src={api.artifactUrl(current.artifact_hash)}
-                  alt={`${metric.name} @ step ${current.step}`}
-                  className="max-h-full max-w-full object-contain"
-                />
-              </div>
-            ) : (
-              <div className="text-sm text-fg-muted">no figure logged yet</div>
-            )}
+            {renderContent(true)}
           </CardDetailModal>
         );
       })()}

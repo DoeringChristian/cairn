@@ -20,12 +20,12 @@ import { computeDiff, loadImageData, type DiffMode } from "../lib/image-diff";
 import { webglRenderDiffToCanvas } from "../lib/webgl-diff";
 import { getRenderMode } from "../lib/render-mode";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
-import { SERIES_COLORS } from "../lib/colors";
 import CardDetailModal from "./CardDetailModal";
 import AddToComparisonButton from "./AddToComparisonButton";
 import CardHeader from "./CardHeader";
 import CardResizeHandle from "./CardResizeHandle";
-import SeriesChip , { CAIRN_SERIES_MIME, type SeriesRef } from "./SeriesChip";
+import { CAIRN_SERIES_MIME } from "./SeriesChip";
+import SeriesChipStrip from "./SeriesChipStrip";
 import Select from "./settings/Select";
 import Slider from "./settings/Slider";
 import Toggle from "./settings/Toggle";
@@ -1352,6 +1352,237 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
 
   const cardRef = useRef<HTMLDivElement>(null);
 
+  const renderMultiPaneGrid = () => (
+    <div
+      className="grid gap-1 flex-1 min-h-0 overflow-auto"
+      style={{ gridTemplateColumns: `repeat(${settings.imageColumns ?? 2}, 1fr)` }}
+    >
+      {effectiveMetrics.map((m, paneIdx) => {
+        if (refMode === "global" && settings.externalBaseline && m.name === settings.externalBaseline.name && (m.runId ?? runId) === (settings.externalBaseline.runId ?? runId)) return null;
+        const stepMap = perSeriesStepMap[paneIdx] ?? new Map();
+        const steps = perSeriesPoints[paneIdx]?.map((p) => p.step) ?? [];
+        const { hash, fallbackStep } = resolveArtifact(stepMap, currentStep, steps, settings.missingImageMode);
+        const label = seriesLabel(m, runId, multipleRuns, availableRunIds)
+          + (fallbackStep != null ? ` (step ${fallbackStep})` : "");
+        const paneBaseline = refMode === "per-run"
+          ? perPaneBaselineHash?.[paneIdx]
+          : baselineHash;
+        const compareMode = settings.compareMode ?? "side-by-side";
+        const splitPos = settings.splitPosition ?? 0.5;
+        const blendAlpha = settings.blendAlpha ?? 0.5;
+        const showInlineRef = paneBaseline && hash && paneBaseline !== hash &&
+          (refMode === "per-run" || settings.diffMode !== "none" || compareMode !== "side-by-side");
+        return (
+          <div key={seriesKey(m)} className="relative overflow-hidden" style={undefined}>
+            {showInlineRef ? (
+              compareMode === "side-by-side" || settings.diffMode !== "none" ? (
+                <div className="flex gap-0.5 h-full cairn-checkerboard">
+                  <div className="relative flex-1 min-w-0 overflow-hidden border border-accent/20 rounded" data-cairn-zoom-pane>
+                    <ImagePane
+                      metricEntry={m}
+                      paneIndex={paneIdx}
+                      artifactHash={paneBaseline}
+                      baselineHash={undefined}
+                      isBaseline={true}
+                      diffMode="none"
+                      interpolation={settings.interpolation ?? "auto"}
+                      colormap={"none"}
+                      showAxes={false}
+                      zoom={settings.zoom}
+                      transformStr={transformStr}
+                      filterStr={filterStr}
+                      label="REF"
+                    />
+                  </div>
+                  <div className="relative flex-1 min-w-0 overflow-hidden" data-cairn-zoom-pane>
+                    <ImagePane
+                      metricEntry={m}
+                      paneIndex={paneIdx}
+                      artifactHash={hash}
+                      baselineHash={paneBaseline}
+                      isBaseline={false}
+                      diffMode={settings.diffMode}
+                      interpolation={settings.interpolation ?? "auto"}
+                      colormap={settings.colormap ?? "none"}
+                      showAxes={settings.showAxes ?? false}
+                      zoom={settings.zoom}
+                      transformStr={transformStr}
+                      filterStr={filterStr}
+                      onNaturalSize={onImageNaturalSize}
+                      label={label}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="relative w-full overflow-hidden cairn-checkerboard" data-cairn-zoom-pane style={{ aspectRatio: "1 / 1", minHeight: 80 }}>
+                  <div className="absolute inset-0 overflow-hidden" data-cairn-img-wrapper>
+                    <div className="w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
+                      <img
+                        src={api.artifactUrl(hash)}
+                        alt="pred"
+                        className="w-full h-full object-contain"
+                        draggable={false}
+                        style={{
+                          filter: filterStr,
+                          imageRendering: settings.interpolation === "auto" ? undefined : settings.interpolation,
+                          ...(compareMode === "blend" ? { opacity: blendAlpha } : {}),
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <div
+                    className="absolute inset-0 overflow-hidden"
+                    style={compareMode === "split"
+                      ? { clipPath: `inset(0 ${(1 - splitPos) * 100}% 0 0)` }
+                      : undefined}
+                  >
+                    <div className="w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
+                      <img
+                        src={api.artifactUrl(paneBaseline!)}
+                        alt="ref"
+                        className="w-full h-full object-contain"
+                        draggable={false}
+                        style={{
+                          filter: filterStr,
+                          imageRendering: settings.interpolation === "auto" ? undefined : settings.interpolation,
+                          ...(compareMode === "blend" ? { opacity: 1 - blendAlpha } : {}),
+                        }}
+                      />
+                    </div>
+                  </div>
+                  {compareMode === "split" && (
+                    <div
+                      className="absolute top-0 bottom-0 z-20 flex items-center"
+                      style={{ left: `${splitPos * 100}%`, transform: "translateX(-50%)", cursor: "col-resize" }}
+                      onPointerDown={(ev) => {
+                        ev.stopPropagation();
+                        ev.preventDefault();
+                        const container = ev.currentTarget.parentElement!;
+                        const rect = container.getBoundingClientRect();
+                        const onMove = (me: PointerEvent) => {
+                          const pos = Math.max(0, Math.min(1, (me.clientX - rect.left) / rect.width));
+                          updateSettings({ splitPosition: pos });
+                        };
+                        const onUp = () => {
+                          window.removeEventListener("pointermove", onMove);
+                          window.removeEventListener("pointerup", onUp);
+                        };
+                        window.addEventListener("pointermove", onMove);
+                        window.addEventListener("pointerup", onUp);
+                      }}
+                    >
+                      <div className="w-1 h-full bg-accent/80 rounded-full" />
+                    </div>
+                  )}
+                  <span className="absolute bottom-1 left-1 z-10 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm">
+                    {label}
+                  </span>
+                  <span className="absolute top-1 right-1 z-10 rounded bg-accent/20 px-1 py-0.5 text-[10px] text-accent backdrop-blur-sm">
+                    REF
+                  </span>
+                </div>
+              )
+            ) : (
+              <ImagePane
+                metricEntry={m}
+                paneIndex={paneIdx}
+                artifactHash={hash}
+                baselineHash={paneBaseline}
+                isBaseline={refMode === "global" && baselineIdx === paneIdx}
+                diffMode={settings.diffMode}
+                interpolation={settings.interpolation ?? "auto"}
+                colormap={settings.colormap ?? "none"}
+                showAxes={settings.showAxes ?? false}
+                zoom={settings.zoom}
+                transformStr={transformStr}
+                filterStr={filterStr}
+                onNaturalSize={onImageNaturalSize}
+                label={label}
+              />
+            )}
+          </div>
+        );
+      })}
+      {(settings.compareMode ?? "side-by-side") === "side-by-side" && refMode === "global" && settings.externalBaseline && extBasePoints.length > 0 && (() => {
+        const refPt = extBasePoints[Math.min(safeIdx, extBasePoints.length - 1)];
+        const refHash = refPt?.artifact_hash ?? undefined;
+        return (
+          <div className="relative overflow-hidden" style={undefined}>
+            <ImagePane
+              metricEntry={{ runId: settings.externalBaseline!.runId, name: settings.externalBaseline!.name, context_hash: settings.externalBaseline!.context_hash }}
+              paneIndex={-1}
+              artifactHash={refHash}
+              baselineHash={undefined}
+              isBaseline={true}
+              diffMode="none"
+              interpolation={settings.interpolation ?? "auto"}
+              colormap={"none"}
+              showAxes={settings.showAxes ?? false}
+              zoom={settings.zoom}
+              transformStr={transformStr}
+              filterStr={filterStr}
+              label={`ref: ${settings.externalBaseline!.name}`}
+            />
+          </div>
+        );
+      })()}
+    </div>
+  );
+
+  const renderSingleImageView = () => (
+    <div
+      className="relative flex flex-1 min-h-0 justify-center items-center rounded cairn-checkerboard" data-cairn-zoom-pane
+      style={{
+        overflow: "hidden",
+        padding: settings.showAxes && singleNaturalDims ? "16px 4px 4px 28px" : "8px",
+      }}
+    >
+      <div
+        data-cairn-img-wrapper className="relative w-full h-full"
+        style={{ transform: transformStr, transformOrigin: "0 0" }}
+      >
+      {firstResolved.hash ? (
+        singleUseFalseColor ? (
+          <>
+            {!singleFCReady && <span className="text-xs text-fg-muted motion-safe:animate-pulse">applying colormap...</span>}
+            <canvas
+              ref={singleFCRef}
+              className="w-full h-full object-contain block"
+              style={{
+                display: singleFCReady ? "block" : "none",
+                imageRendering: settings.interpolation === "auto" ? undefined : settings.interpolation,
+              }}
+            />
+          </>
+        ) : (
+          <img
+            src={api.artifactUrl(firstResolved.hash!)}
+            alt={`${metric.name} @ step ${currentStep}`}
+            className="w-full h-full object-contain block"
+            draggable={false}
+            style={{
+              filter: filterStr,
+              imageRendering: settings.interpolation === "auto" ? undefined : settings.interpolation,
+            }}
+            onLoad={(e) => {
+              const imgEl = e.currentTarget;
+              setSingleNaturalDims({ w: imgEl.naturalWidth, h: imgEl.naturalHeight });
+              onImageNaturalSize(imgEl.naturalWidth, imgEl.naturalHeight);
+            }}
+          />
+        )
+      ) : (
+        <span className="text-sm text-fg-muted">no image</span>
+      )}
+      {settings.showAxes && singleNaturalDims && (
+        <PixelAxes naturalWidth={singleNaturalDims.w} naturalHeight={singleNaturalDims.h} zoom={settings.zoom} />
+      )}
+      </div>
+    </div>
+  );
+
+  const renderImageContent = () => isMulti ? renderMultiPaneGrid() : renderSingleImageView();
+
   return (
     <div
       ref={cardRef}
@@ -1512,253 +1743,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
           >
           <div className="flex flex-1 min-h-0">
           <div className="flex-1 min-w-0 min-h-0 flex flex-col">
-          {isMulti ? (
-            /* ---------- Multi-pane grid layout ---------- */
-            <div
-              className="grid gap-1 flex-1 min-h-0 overflow-auto"
-              style={{
-                gridTemplateColumns: `repeat(${settings.imageColumns ?? 2}, 1fr)`,
-                /* rows auto-size to content */
-              }}
-            >
-              {effectiveMetrics.map((m, paneIdx) => {
-                // Skip metrics that match the external baseline — shown as separate ref pane (global mode only)
-                if (refMode === "global" && settings.externalBaseline && m.name === settings.externalBaseline.name && (m.runId ?? runId) === (settings.externalBaseline.runId ?? runId)) return null;
-                const stepMap = perSeriesStepMap[paneIdx] ?? new Map();
-                const seriesSteps = perSeriesPoints[paneIdx]?.map((p) => p.step) ?? [];
-                const { hash, fallbackStep } = resolveArtifact(stepMap, currentStep, seriesSteps, settings.missingImageMode);
-                const label = seriesLabel(m, runId, multipleRuns, availableRunIds)
-                  + (fallbackStep != null ? ` (step ${fallbackStep})` : "");
-                // Per-pane baseline: per-run mode uses each pane's own ref step
-                const paneBaseline = refMode === "per-run"
-                  ? perPaneBaselineHash?.[paneIdx]
-                  : baselineHash;
-                const compareMode = settings.compareMode ?? "side-by-side";
-                const splitPos = settings.splitPosition ?? 0.5;
-                const blendAlpha = settings.blendAlpha ?? 0.5;
-                // Show ref+pred inline when:
-                //   - per-run mode (each pane shows its own ref + pred), OR
-                //   - split/blend overlay (the ref overlays the pred), OR
-                //   - diff mode is active.
-                // Global + side-by-side renders the ref as a separate pane
-                // outside this loop (at the bottom), so we skip inline there.
-                const showInlineRef = paneBaseline && hash && paneBaseline !== hash &&
-                  (refMode === "per-run" || settings.diffMode !== "none" || compareMode !== "side-by-side");
-                return (
-                  <div key={seriesKey(m)} className="relative overflow-hidden" style={undefined}>
-                    {showInlineRef ? (
-                      /* ---------- Inline ref+pred ---------- */
-                      compareMode === "side-by-side" || settings.diffMode !== "none" ? (
-                        /* Side-by-side or diff: REF pane + ImagePane (handles diff + colormap) */
-                        <div className="flex gap-0.5 h-full cairn-checkerboard">
-                          <div className="relative flex-1 min-w-0 overflow-hidden border border-accent/20 rounded" data-cairn-zoom-pane>
-                            <ImagePane
-                              metricEntry={m}
-                              paneIndex={paneIdx}
-                              artifactHash={paneBaseline}
-                              baselineHash={undefined}
-                              isBaseline={true}
-                              diffMode="none"
-                              interpolation={settings.interpolation ?? "auto"}
-                              colormap={"none"}
-                              showAxes={false}
-                              zoom={settings.zoom}
-                              transformStr={transformStr}
-                              filterStr={filterStr}
-                              label="REF"
-                            />
-                          </div>
-                          <div className="relative flex-1 min-w-0 overflow-hidden" data-cairn-zoom-pane>
-                            <ImagePane
-                              metricEntry={m}
-                              paneIndex={paneIdx}
-                              artifactHash={hash}
-                              baselineHash={paneBaseline}
-                              isBaseline={false}
-                              diffMode={settings.diffMode}
-                              interpolation={settings.interpolation ?? "auto"}
-                              colormap={settings.colormap ?? "none"}
-                              showAxes={settings.showAxes ?? false}
-                              zoom={settings.zoom}
-                              transformStr={transformStr}
-                              filterStr={filterStr}
-                              onNaturalSize={onImageNaturalSize}
-                              label={label}
-                            />
-                          </div>
-                        </div>
-                      ) : (
-                        /* Split / blend overlay */
-                        <div className="relative w-full overflow-hidden cairn-checkerboard" data-cairn-zoom-pane style={{ aspectRatio: "1 / 1", minHeight: 80 }}>
-                          {/* Prediction layer — full viewport */}
-                          <div className="absolute inset-0 overflow-hidden" data-cairn-img-wrapper>
-                            <div className="w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
-                              <img
-                                src={api.artifactUrl(hash)}
-                                alt="pred"
-                                className="w-full h-full object-contain"
-                                draggable={false}
-                                style={{
-                                  filter: filterStr,
-                                  imageRendering: settings.interpolation === "auto" ? undefined : settings.interpolation,
-                                  ...(compareMode === "blend" ? { opacity: blendAlpha } : {}),
-                                }}
-                              />
-                            </div>
-                          </div>
-                          {/* Reference layer — clipped at screen level (outside transform) */}
-                          <div
-                            className="absolute inset-0 overflow-hidden"
-                            style={compareMode === "split"
-                              ? { clipPath: `inset(0 ${(1 - splitPos) * 100}% 0 0)` }
-                              : undefined}
-                          >
-                            <div className="w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
-                              <img
-                                src={api.artifactUrl(paneBaseline!)}
-                                alt="ref"
-                                className="w-full h-full object-contain"
-                                draggable={false}
-                                style={{
-                                  filter: filterStr,
-                                  imageRendering: settings.interpolation === "auto" ? undefined : settings.interpolation,
-                                  ...(compareMode === "blend" ? { opacity: 1 - blendAlpha } : {}),
-                                }}
-                              />
-                            </div>
-                          </div>
-                          {/* Draggable split handle */}
-                          {compareMode === "split" && (
-                            <div
-                              className="absolute top-0 bottom-0 z-20 flex items-center"
-                              style={{ left: `${splitPos * 100}%`, transform: "translateX(-50%)", cursor: "col-resize" }}
-                              onPointerDown={(ev) => {
-                                ev.stopPropagation();
-                                ev.preventDefault();
-                                const container = ev.currentTarget.parentElement!;
-                                const rect = container.getBoundingClientRect();
-                                const onMove = (me: PointerEvent) => {
-                                  const pos = Math.max(0, Math.min(1, (me.clientX - rect.left) / rect.width));
-                                  updateSettings({ splitPosition: pos });
-                                };
-                                const onUp = () => {
-                                  window.removeEventListener("pointermove", onMove);
-                                  window.removeEventListener("pointerup", onUp);
-                                };
-                                window.addEventListener("pointermove", onMove);
-                                window.addEventListener("pointerup", onUp);
-                              }}
-                            >
-                              <div className="w-1 h-full bg-accent/80 rounded-full" />
-                            </div>
-                          )}
-                          <span className="absolute bottom-1 left-1 z-10 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm">
-                            {label}
-                          </span>
-                          <span className="absolute top-1 right-1 z-10 rounded bg-accent/20 px-1 py-0.5 text-[10px] text-accent backdrop-blur-sm">
-                            REF
-                          </span>
-                        </div>
-                      )
-                    ) : (
-                      /* ---------- Normal ImagePane (no inline ref) ---------- */
-                      <ImagePane
-                        metricEntry={m}
-                        paneIndex={paneIdx}
-                        artifactHash={hash}
-                        baselineHash={paneBaseline}
-                        isBaseline={refMode === "global" && baselineIdx === paneIdx}
-                        diffMode={settings.diffMode}
-                        interpolation={settings.interpolation ?? "auto"}
-                        colormap={settings.colormap ?? "none"}
-                        showAxes={settings.showAxes ?? false}
-                        zoom={settings.zoom}
-                        transformStr={transformStr}
-                        filterStr={filterStr}
-                        onNaturalSize={onImageNaturalSize}
-                        label={label}
-                      />
-                    )}
-                  </div>
-                );
-              })}
-              {/* External baseline reference pane — hidden in split/blend/per-run modes (ref shown inline) */}
-              {(settings.compareMode ?? "side-by-side") === "side-by-side" && refMode === "global" && settings.externalBaseline && extBasePoints.length > 0 && (() => {
-                const refPt = extBasePoints[Math.min(safeIdx, extBasePoints.length - 1)];
-                const refHash = refPt?.artifact_hash ?? undefined;
-                return (
-                  <div className="relative overflow-hidden" style={undefined}>
-                    <ImagePane
-                      metricEntry={{ runId: settings.externalBaseline!.runId, name: settings.externalBaseline!.name, context_hash: settings.externalBaseline!.context_hash }}
-                      paneIndex={-1}
-                      artifactHash={refHash}
-                      baselineHash={undefined}
-                      isBaseline={true}
-                      diffMode="none"
-                      interpolation={settings.interpolation ?? "auto"}
-                      colormap={"none"}
-                      showAxes={settings.showAxes ?? false}
-                      zoom={settings.zoom}
-                      transformStr={transformStr}
-                      filterStr={filterStr}
-                      label={`ref: ${settings.externalBaseline!.name}`}
-                    />
-                  </div>
-                );
-              })()}
-            </div>
-          ) : (
-            /* ---------- Single-image layout (original) ---------- */
-            <div
-              className="relative flex flex-1 min-h-0 justify-center items-center rounded cairn-checkerboard" data-cairn-zoom-pane
-              style={{
-                overflow: "hidden",
-                padding: settings.showAxes && singleNaturalDims ? "16px 4px 4px 28px" : "8px",
-              }}
-            >
-              <div
-                data-cairn-img-wrapper className="relative w-full h-full"
-                style={{ transform: transformStr, transformOrigin: "0 0" }}
-              >
-              {firstResolved.hash ? (
-                singleUseFalseColor ? (
-                  <>
-                    {!singleFCReady && <span className="text-xs text-fg-muted motion-safe:animate-pulse">applying colormap...</span>}
-                    <canvas
-                      ref={singleFCRef}
-                      className="w-full h-full object-contain block"
-                      style={{
-                        display: singleFCReady ? "block" : "none",
-                        imageRendering: settings.interpolation === "auto" ? undefined : settings.interpolation,
-                      }}
-                    />
-                  </>
-                ) : (
-                  <img
-                    src={api.artifactUrl(firstResolved.hash!)}
-                    alt={`${metric.name} @ step ${currentStep}`}
-                    className="w-full h-full object-contain block"
-                    draggable={false}
-                    style={{
-                      filter: filterStr,
-                      imageRendering: settings.interpolation === "auto" ? undefined : settings.interpolation,
-                    }}
-                    onLoad={(e) => {
-                      const imgEl = e.currentTarget;
-                      setSingleNaturalDims({ w: imgEl.naturalWidth, h: imgEl.naturalHeight });
-                      onImageNaturalSize(imgEl.naturalWidth, imgEl.naturalHeight);
-                    }}
-                  />
-                )
-              ) : (
-                <span className="text-sm text-fg-muted">no image</span>
-              )}
-              {settings.showAxes && singleNaturalDims && (
-                <PixelAxes naturalWidth={singleNaturalDims.w} naturalHeight={singleNaturalDims.h} zoom={settings.zoom} />
-              )}
-              </div>
-            </div>
-          )}
+          {renderImageContent()}
           </div>
           {/* Colorbar — flex sibling to image area */}
           {(settings.colormap ?? "none") !== "none" && (
@@ -1824,79 +1809,14 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
         <div className="text-sm text-fg-muted">no image logged yet</div>
       )}
 
-      {/* Series chip strip */}
-      <div className="mt-2 flex flex-wrap gap-1.5">
-        {controlledSeries ? (
-          /* Tag-level draggable chips in workspace/comparison mode */
-          (() => {
-            const seen = new Set<string>();
-            const tags: Array<{ name: string; color: string; firstIdx: number }> = [];
-            for (let i = 0; i < effectiveMetrics.length; i++) {
-              const m = effectiveMetrics[i]!;
-              if (seen.has(m.name)) continue;
-              seen.add(m.name);
-              tags.push({ name: m.name, color: SERIES_COLORS[tags.length % SERIES_COLORS.length]!, firstIdx: i });
-            }
-            return tags.map((tag) => {
-              const m = effectiveMetrics[tag.firstIdx]!;
-              const ref: SeriesRef = { runId: m.runId, name: m.name, context_hash: m.context_hash };
-              return (
-                <SeriesChip
-                  key={tag.name}
-                  series={ref}
-                  color={tag.color}
-                  label={tag.name}
-                  runId={runId}
-                  onRemove={
-                    tags.length > 1
-                      ? () => {
-                          const next = effectiveMetrics.filter((x) => x.name !== tag.name);
-                          updateSettings({ metrics: next, baselineIndex: undefined, paneWidths: undefined });
-                        }
-                      : undefined
-                  }
-                />
-              );
-            });
-          })()
-        ) : (
-          effectiveMetrics.map((m, i) => {
-            const ref: SeriesRef = {
-              runId: m.runId,
-              name: m.name,
-              context_hash: m.context_hash,
-            };
-            return (
-              <SeriesChip
-                key={seriesKey(m)}
-                series={ref}
-                color={SERIES_COLORS[i % SERIES_COLORS.length]!}
-                label={seriesLabel(m, runId, multipleRuns, availableRunIds)}
-                runId={runId}
-                onRemove={
-                  effectiveMetrics.length > 1
-                    ? () => {
-                        const next = effectiveMetrics.filter(
-                          (_, idx2) => idx2 !== i,
-                        );
-                        let newBaseline = settings.baselineIndex;
-                        if (newBaseline != null) {
-                          if (newBaseline === i) newBaseline = undefined;
-                          else if (newBaseline > i) newBaseline -= 1;
-                        }
-                        updateSettings({
-                          metrics: next,
-                          baselineIndex: newBaseline,
-                          paneWidths: undefined,
-                        });
-                      }
-                    : undefined
-                }
-              />
-            );
-          })
-        )}
-      </div>
+      <SeriesChipStrip
+        metrics={effectiveMetrics}
+        controlledSeries={controlledSeries}
+        runId={runId}
+        allRunIds={availableRunIds}
+        onMetricsChange={(next) => updateSettings({ metrics: next, baselineIndex: undefined, paneWidths: undefined })}
+        labelFn={(m, rid, multipleRuns, ids) => seriesLabel(m, rid, multipleRuns, ids)}
+      />
 
       </>)}
 
@@ -2060,183 +1980,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
               onPointerUp={onPointerUp}
               onPointerCancel={onPointerUp}
             >
-              {isMulti ? (
-                <div
-                  className="grid gap-1 flex-1 min-h-0 overflow-auto"
-                  style={{
-                    gridTemplateColumns: `repeat(${settings.imageColumns ?? 2}, 1fr)`,
-                    /* rows auto-size to content */
-                  }}
-                >
-                  {effectiveMetrics.map((m, paneIdx) => {
-                    if (refMode === "global" && settings.externalBaseline && m.name === settings.externalBaseline.name && (m.runId ?? runId) === (settings.externalBaseline.runId ?? runId)) return null;
-                    const mStepMap = perSeriesStepMap[paneIdx] ?? new Map();
-                    const mSeriesSteps = perSeriesPoints[paneIdx]?.map((p) => p.step) ?? [];
-                    const { hash: mHash, fallbackStep: mFallback } = resolveArtifact(mStepMap, currentStep, mSeriesSteps, settings.missingImageMode);
-                    const mLabel = seriesLabel(m, runId, multipleRuns, availableRunIds)
-                      + (mFallback != null ? ` (step ${mFallback})` : "");
-                    const mPaneBaseline = refMode === "per-run"
-                      ? perPaneBaselineHash?.[paneIdx]
-                      : baselineHash;
-                    const mCompareMode = settings.compareMode ?? "side-by-side";
-                    const mSplitPos = settings.splitPosition ?? 0.5;
-                    const mBlendAlpha = settings.blendAlpha ?? 0.5;
-                    const mShowInlineRef = mPaneBaseline && mHash && mPaneBaseline !== mHash &&
-                      (refMode === "per-run" || settings.diffMode !== "none" || mCompareMode !== "side-by-side");
-                    return (
-                      <div key={seriesKey(m)} className="relative overflow-hidden" style={undefined}>
-                        {mShowInlineRef ? (
-                          mCompareMode === "side-by-side" || settings.diffMode !== "none" ? (
-                            /* Side-by-side or diff: REF ImagePane + pred ImagePane */
-                            <div className="flex gap-0.5 h-full cairn-checkerboard">
-                              <div className="relative flex-1 min-w-0 overflow-hidden border border-accent/20 rounded" data-cairn-zoom-pane>
-                                <ImagePane
-                                  metricEntry={m}
-                                  paneIndex={paneIdx}
-                                  artifactHash={mPaneBaseline}
-                                  baselineHash={undefined}
-                                  isBaseline={true}
-                                  diffMode="none"
-                                  interpolation={settings.interpolation ?? "auto"}
-                                  colormap={"none"}
-                                  showAxes={false}
-                                  zoom={settings.zoom}
-                                  transformStr={transformStr}
-                                  filterStr={filterStr}
-                                  label="REF"
-                                />
-                              </div>
-                              <div className="relative flex-1 min-w-0 overflow-hidden" data-cairn-zoom-pane>
-                                <ImagePane
-                                  metricEntry={m}
-                                  paneIndex={paneIdx}
-                                  artifactHash={mHash}
-                                  baselineHash={mPaneBaseline}
-                                  isBaseline={false}
-                                  diffMode={settings.diffMode}
-                                  interpolation={settings.interpolation ?? "auto"}
-                                  colormap={settings.colormap ?? "none"}
-                                  showAxes={settings.showAxes ?? false}
-                                  zoom={settings.zoom}
-                                  transformStr={transformStr}
-                                  filterStr={filterStr}
-                                  onNaturalSize={onImageNaturalSize}
-                                  label={mLabel}
-                                />
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="relative w-full overflow-hidden cairn-checkerboard" data-cairn-zoom-pane style={{ aspectRatio: "1 / 1", minHeight: 80 }}>
-                              {/* Prediction layer */}
-                              <div className="absolute inset-0 overflow-hidden" data-cairn-img-wrapper>
-                                <div className="w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
-                                  <img src={api.artifactUrl(mHash)} alt="pred" className="w-full h-full object-contain" draggable={false}
-                                    style={{ filter: filterStr, imageRendering: settings.interpolation === "auto" ? undefined : settings.interpolation, ...(mCompareMode === "blend" ? { opacity: mBlendAlpha } : {}) }} />
-                                </div>
-                              </div>
-                              {/* Reference layer — clipped at screen level */}
-                              <div className="absolute inset-0 overflow-hidden"
-                                style={mCompareMode === "split" ? { clipPath: `inset(0 ${(1 - mSplitPos) * 100}% 0 0)` } : undefined}>
-                                <div className="w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
-                                  <img src={api.artifactUrl(mPaneBaseline!)} alt="ref" className="w-full h-full object-contain" draggable={false}
-                                    style={{ filter: filterStr, imageRendering: settings.interpolation === "auto" ? undefined : settings.interpolation, ...(mCompareMode === "blend" ? { opacity: 1 - mBlendAlpha } : {}) }} />
-                                </div>
-                              </div>
-                              {mCompareMode === "split" && (
-                                <div className="absolute top-0 bottom-0 z-20 flex items-center"
-                                  style={{ left: `${mSplitPos * 100}%`, transform: "translateX(-50%)", cursor: "col-resize" }}
-                                  onPointerDown={(ev) => {
-                                    ev.stopPropagation(); ev.preventDefault();
-                                    const ctr = ev.currentTarget.parentElement!;
-                                    const r = ctr.getBoundingClientRect();
-                                    const onMv = (me: PointerEvent) => { updateSettings({ splitPosition: Math.max(0, Math.min(1, (me.clientX - r.left) / r.width)) }); };
-                                    const onUp2 = () => { window.removeEventListener("pointermove", onMv); window.removeEventListener("pointerup", onUp2); };
-                                    window.addEventListener("pointermove", onMv); window.addEventListener("pointerup", onUp2);
-                                  }}>
-                                  <div className="w-1 h-full bg-accent/80 rounded-full" />
-                                </div>
-                              )}
-                              <span className="absolute bottom-1 left-1 z-10 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm">{mLabel}</span>
-                              <span className="absolute top-1 right-1 z-10 rounded bg-accent/20 px-1 py-0.5 text-[10px] text-accent backdrop-blur-sm">REF</span>
-                            </div>
-                          )
-                        ) : (
-                          <ImagePane
-                            metricEntry={m}
-                            paneIndex={paneIdx}
-                            artifactHash={mHash}
-                            baselineHash={mPaneBaseline}
-                            isBaseline={refMode === "global" && baselineIdx === paneIdx}
-                            diffMode={settings.diffMode}
-                            interpolation={settings.interpolation ?? "auto"}
-                            colormap={settings.colormap ?? "none"}
-                            showAxes={settings.showAxes ?? false}
-                            zoom={settings.zoom}
-                            transformStr={transformStr}
-                            filterStr={filterStr}
-                            onNaturalSize={onImageNaturalSize}
-                            label={mLabel}
-                          />
-                        )}
-                      </div>
-                    );
-                  })}
-                  {(settings.compareMode ?? "side-by-side") === "side-by-side" && refMode === "global" && settings.externalBaseline && extBasePoints.length > 0 && (() => {
-                    const refPt = extBasePoints[Math.min(safeIdx, extBasePoints.length - 1)];
-                    const refHash = refPt?.artifact_hash ?? undefined;
-                    return (
-                      <div className="relative overflow-hidden" style={undefined}>
-                        <ImagePane
-                          metricEntry={{ runId: settings.externalBaseline!.runId, name: settings.externalBaseline!.name, context_hash: settings.externalBaseline!.context_hash }}
-                          paneIndex={-1}
-                          artifactHash={refHash}
-                          baselineHash={undefined}
-                          isBaseline={true}
-                          diffMode="none"
-                          interpolation={settings.interpolation ?? "auto"}
-                          colormap={"none"}
-                          showAxes={settings.showAxes ?? false}
-                          zoom={settings.zoom}
-                          transformStr={transformStr}
-                          filterStr={filterStr}
-                          label={`ref: ${settings.externalBaseline!.name}`}
-                        />
-                      </div>
-                    );
-                  })()}
-                </div>
-              ) : (
-                <div
-                  className="relative flex flex-1 min-h-0 justify-center items-center rounded cairn-checkerboard" data-cairn-zoom-pane
-                  style={{
-                    overflow: "hidden",
-                    padding: settings.showAxes && singleNaturalDims ? "16px 4px 4px 28px" : "8px",
-                  }}
-                >
-                  <div
-                    className="relative w-full h-full"
-                    style={{ transform: transformStr, transformOrigin: "0 0" }}
-                  >
-                    {firstResolved.hash ? (
-                      <img
-                        src={api.artifactUrl(firstResolved.hash!)}
-                        alt={`${metric.name} @ step ${currentStep}`}
-                        className="w-full h-full object-contain block"
-                        draggable={false}
-                        style={{
-                          filter: filterStr,
-                          imageRendering: settings.interpolation === "auto" ? undefined : settings.interpolation,
-                        }}
-                      />
-                    ) : (
-                      <span className="text-sm text-fg-muted">no image</span>
-                    )}
-                    {settings.showAxes && singleNaturalDims && (
-                      <PixelAxes naturalWidth={singleNaturalDims.w} naturalHeight={singleNaturalDims.h} zoom={settings.zoom} />
-                    )}
-                  </div>
-                </div>
-              )}
+              {renderImageContent()}
               <StepSlider
                 points={globalStepPoints}
                 currentIndex={safeIdx}

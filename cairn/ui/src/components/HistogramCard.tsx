@@ -87,6 +87,44 @@ export default function HistogramCard({ runId, metric, settingsKeyOverride, onRe
 
   const cardRef = useRef<HTMLDivElement>(null);
 
+  const renderContent = () => {
+    if (q.isLoading) {
+      return <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />;
+    }
+    if (!current?.artifact_hash || !meta) {
+      return <div className="text-sm text-fg-muted">no histogram logged yet</div>;
+    }
+    return (
+      <>
+        <div className="flex-1 min-h-0 overflow-auto">
+          <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-fg-muted">
+            <span>min</span>
+            <span className="mono num">{fmtSig(meta.min)}</span>
+            <span>max</span>
+            <span className="mono num">{fmtSig(meta.max)}</span>
+            <span>mean</span>
+            <span className="mono num">{fmtSig(meta.mean)}</span>
+            <span>count</span>
+            <span className="mono num">{meta.count}</span>
+            <span>num_bins</span>
+            <span className="mono num">{meta.num_bins}</span>
+          </div>
+          <p className="text-xs text-fg-subtle mt-2">
+            Bin counts available in the raw artifact blob.
+          </p>
+        </div>
+        <StepSlider
+          points={points}
+          currentIndex={safeIdx}
+          onChange={setIdx}
+          xAxis={settings.xAxis}
+          onXAxisChange={(m) => updateSettings({ xAxis: m })}
+          className="mt-3"
+        />
+      </>
+    );
+  };
+
   return (
     <div ref={cardRef} className="card p-4 flex flex-col" style={{ height: resolveCardHeight(settings, 250), position: "relative", gridColumn: `span ${settings.colSpan ?? 3}` }}>
       <CardHeader
@@ -102,39 +140,7 @@ export default function HistogramCard({ runId, metric, settingsKeyOverride, onRe
         addToComparisonSlot={<AddToComparisonButton cardType="histogram" series={compSeries} />}
       />
       {!settings.collapsed && (<>
-      {q.isLoading ? (
-        <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
-      ) : current?.artifact_hash && meta ? (
-        <>
-          <div className="flex-1 min-h-0 overflow-auto">
-            <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-fg-muted">
-              <span>min</span>
-              <span className="mono num">{fmtSig(meta.min)}</span>
-              <span>max</span>
-              <span className="mono num">{fmtSig(meta.max)}</span>
-              <span>mean</span>
-              <span className="mono num">{fmtSig(meta.mean)}</span>
-              <span>count</span>
-              <span className="mono num">{meta.count}</span>
-              <span>num_bins</span>
-              <span className="mono num">{meta.num_bins}</span>
-            </div>
-            <p className="text-xs text-fg-subtle mt-2">
-              Bin counts available in the raw artifact blob.
-            </p>
-          </div>
-          <StepSlider
-            points={points}
-            currentIndex={safeIdx}
-            onChange={setIdx}
-            xAxis={settings.xAxis}
-            onXAxisChange={(m) => updateSettings({ xAxis: m })}
-            className="mt-3"
-          />
-        </>
-      ) : (
-        <div className="text-sm text-fg-muted">no histogram logged yet</div>
-      )}
+      {renderContent()}
 
       <CardDetailModal
         open={expanded}
@@ -147,37 +153,9 @@ export default function HistogramCard({ runId, metric, settingsKeyOverride, onRe
           </p>
         }
       >
-        {q.isLoading ? (
-          <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
-        ) : current?.artifact_hash && meta ? (
-          <div className="flex flex-col h-full">
-            <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-fg-muted">
-              <span>min</span>
-              <span className="mono num">{fmtSig(meta.min)}</span>
-              <span>max</span>
-              <span className="mono num">{fmtSig(meta.max)}</span>
-              <span>mean</span>
-              <span className="mono num">{fmtSig(meta.mean)}</span>
-              <span>count</span>
-              <span className="mono num">{meta.count}</span>
-              <span>num_bins</span>
-              <span className="mono num">{meta.num_bins}</span>
-            </div>
-            <p className="text-xs text-fg-subtle mt-2">
-              Bin counts available in the raw artifact blob.
-            </p>
-            <StepSlider
-              points={points}
-              currentIndex={safeIdx}
-              onChange={setIdx}
-              xAxis={settings.xAxis}
-              onXAxisChange={(m) => updateSettings({ xAxis: m })}
-              className="mt-3"
-            />
-          </div>
-        ) : (
-          <div className="text-sm text-fg-muted">no histogram logged yet</div>
-        )}
+        <div className="flex flex-col h-full">
+          {renderContent()}
+        </div>
       </CardDetailModal>
 
       </>)}

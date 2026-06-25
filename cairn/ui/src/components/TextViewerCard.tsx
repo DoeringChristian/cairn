@@ -123,6 +123,24 @@ export default function TextViewerCard({ runId, metric, settingsKeyOverride, onR
 
   const cardRef = useRef<HTMLDivElement>(null);
 
+  const renderContent = () => (
+    <>
+      <pre
+        className={`mono flex-1 min-h-0 overflow-auto ${wrapClass} rounded bg-bg p-3 ${FONT_SIZE_CLASS[settings.fontSize]} text-fg-muted`}
+      >
+        {content}
+      </pre>
+      <StepSlider
+        points={points}
+        currentIndex={safeIdx}
+        onChange={setIdx}
+        xAxis={settings.xAxis}
+        onXAxisChange={(m) => updateSettings({ xAxis: m })}
+        className="mt-3"
+      />
+    </>
+  );
+
   return (
     <div ref={cardRef} className="card p-4 flex flex-col" style={{ height: resolveCardHeight(settings, 250), position: "relative", gridColumn: `span ${settings.colSpan ?? 3}` }}>
       <CardHeader
@@ -137,20 +155,7 @@ export default function TextViewerCard({ runId, metric, settingsKeyOverride, onR
         addToComparisonSlot={<AddToComparisonButton cardType="text" series={compSeries} />}
       />
       {!settings.collapsed && (<>
-      <pre
-        className={`mono flex-1 min-h-0 overflow-auto ${wrapClass} rounded bg-bg p-3 ${FONT_SIZE_CLASS[settings.fontSize]} text-fg-muted`}
-        style={{ maxHeight: undefined }}
-      >
-        {content}
-      </pre>
-      <StepSlider
-        points={points}
-        currentIndex={safeIdx}
-        onChange={setIdx}
-        xAxis={settings.xAxis}
-        onXAxisChange={(m) => updateSettings({ xAxis: m })}
-        className="mt-3"
-      />
+      {renderContent()}
 
       <CardDetailModal
         open={expanded}
@@ -158,11 +163,7 @@ export default function TextViewerCard({ runId, metric, settingsKeyOverride, onR
         title={settings.title ?? metric.name}
         settingsContent={settingsPanel}
       >
-        <pre
-          className={`mono flex-1 min-h-0 overflow-auto ${wrapClass} rounded bg-bg p-3 ${FONT_SIZE_CLASS[settings.fontSize]} text-fg-muted`}
-        >
-          {content}
-        </pre>
+        {renderContent()}
       </CardDetailModal>
 
       </>)}

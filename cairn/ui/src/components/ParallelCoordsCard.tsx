@@ -561,8 +561,9 @@ export default function ParallelCoordsCard({
             title={settings.title ?? "Parallel Coordinates"}
             settingsContent={settingsPanel}
           >
-            <div className="h-[calc(100vh-12rem)]">
+            <div className="relative h-[calc(100vh-12rem)]">
               {renderPlot(900, 500)}
+              {renderTooltip()}
             </div>
           </CardDetailModal>
         </>

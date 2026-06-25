@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useEffect, useRef } from "react";
 
 interface Props {
   /** Current persisted height in px; undefined = auto/default. */
@@ -34,7 +34,8 @@ function snapToValidSpan(raw: number): number {
 
 /**
  * Corner resize handle for cards. Drag to resize both width (column span)
- * and height simultaneously.
+ * and height simultaneously. ColSpan changes are broadcast to all sibling
+ * cards in the same grid (section) via a custom DOM event.
  */
 export default function CardResizeHandle({
   onHeightChange,
@@ -44,6 +45,41 @@ export default function CardResizeHandle({
   minHeight = 150,
   onPerColHeightChange,
 }: Props) {
+  const handleRef = useRef<HTMLDivElement>(null);
+  const colSpanCbRef = useRef(onColSpanChange);
+  colSpanCbRef.current = onColSpanChange;
+  const heightCbRef = useRef(onHeightChange);
+  heightCbRef.current = onHeightChange;
+
+  // Listen for colSpan/height changes broadcast by sibling CardResizeHandles.
+  useEffect(() => {
+    const el = handleRef.current;
+    if (!el) return;
+    let grid = el.closest(".card")?.parentElement;
+    while (grid && getComputedStyle(grid).display === "contents") grid = grid.parentElement;
+    if (!grid || !grid.closest(".grid")) grid = el.closest(".grid")?.parentElement ?? grid;
+    const gridEl = (grid?.closest(".grid") ?? grid) as HTMLElement | null;
+    if (!gridEl) return;
+    const onColSpan = (e: Event) => {
+      colSpanCbRef.current((e as CustomEvent).detail.colSpan);
+    };
+    const card = el.closest(".card") as HTMLElement | null;
+    const onHeight = (e: Event) => {
+      const d = (e as CustomEvent).detail;
+      if (!card) return;
+      const myTop = card.getBoundingClientRect().top;
+      if (Math.abs(myTop - d.rowTop) < 2) {
+        heightCbRef.current(d.height);
+      }
+    };
+    gridEl.addEventListener("cairn:colSpanChange", onColSpan);
+    gridEl.addEventListener("cairn:heightChange", onHeight);
+    return () => {
+      gridEl.removeEventListener("cairn:colSpanChange", onColSpan);
+      gridEl.removeEventListener("cairn:heightChange", onHeight);
+    };
+  }, []);
+
   const handlePointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       e.preventDefault();
@@ -77,12 +113,15 @@ export default function CardResizeHandle({
         : gridCols;
       const colWidth = gridWidth / actualCols;
 
-      // Find sibling cards in the same grid row for height sync.
+      // Row siblings for height sync, all siblings for colSpan sync.
       const cardTop = card.getBoundingClientRect().top;
       const rowSiblings: HTMLElement[] = [];
+      const allSiblings: HTMLElement[] = [];
       if (gridEl) {
         for (const el of gridEl.querySelectorAll(".card")) {
-          if (el !== card && Math.abs(el.getBoundingClientRect().top - cardTop) < 2) {
+          if (el === card) continue;
+          allSiblings.push(el as HTMLElement);
+          if (Math.abs(el.getBoundingClientRect().top - cardTop) < 2) {
             rowSiblings.push(el as HTMLElement);
           }
         }
@@ -110,7 +149,13 @@ export default function CardResizeHandle({
           const targetWidth = startWidth + (ev.clientX - startX);
           const rawSpan = Math.max(1, Math.min(actualCols, Math.round(targetWidth / colWidth)));
           const newSpan = snapToValidSpan(rawSpan);
-          if (newSpan !== currentSpan) currentSpan = newSpan;
+          if (newSpan !== currentSpan) {
+            currentSpan = newSpan;
+            // Sync colSpan to all sibling cards in the grid during drag.
+            for (const sib of allSiblings) {
+              sib.style.gridColumn = `span ${newSpan}`;
+            }
+          }
           onColSpanChange(newSpan);
         }
       };
@@ -123,6 +168,11 @@ export default function CardResizeHandle({
         if (onPerColHeightChange) {
           onPerColHeightChange({ [`heights.${currentSpan}`]: lastH, height: lastH });
         }
+        // Broadcast changes to all sibling cards via custom events.
+        if (gridEl) {
+          gridEl.dispatchEvent(new CustomEvent("cairn:heightChange", { detail: { height: lastH, rowTop: card.getBoundingClientRect().top } }));
+          gridEl.dispatchEvent(new CustomEvent("cairn:colSpanChange", { detail: { colSpan: currentSpan } }));
+        }
       };
 
       window.addEventListener("pointermove", onPointerMove);
@@ -132,7 +182,7 @@ export default function CardResizeHandle({
   );
 
   return (
-    <div className="absolute bottom-0 right-0 p-1 hidden md:block">
+    <div ref={handleRef} className="absolute bottom-0 right-0 p-1 hidden md:block">
       <div
         onPointerDown={handlePointerDown}
         className="flex h-5 w-5 cursor-nwse-resize items-end justify-end text-fg-muted hover:text-fg"

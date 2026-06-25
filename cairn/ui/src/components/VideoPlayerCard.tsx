@@ -9,15 +9,14 @@ import { useCardSettings, resolveCardHeight, type CardSettingsKey } from "../lib
 import { useSeriesDrop } from "../lib/use-series-drop";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
-import { SERIES_COLORS } from "../lib/colors";
-import { seriesKey, seriesLabel } from "../lib/series-utils";
+import { seriesKey } from "../lib/series-utils";
 import type { SequenceMeta, SequenceResponse } from "../api/types";
 import AddToComparisonButton from "./AddToComparisonButton";
 import CardHeader from "./CardHeader";
 import CardResizeHandle from "./CardResizeHandle";
 import CardDetailModal from "./CardDetailModal";
 import SplitPane from "./SplitPane";
-import SeriesChip , { type SeriesRef } from "./SeriesChip";
+import SeriesChipStrip from "./SeriesChipStrip";
 import Toggle from "./settings/Toggle";
 import Select from "./settings/Select";
 import StepSlider, { type XAxisMode } from "./StepSlider";
@@ -299,6 +298,105 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
   const isMulti = effectiveMetrics.length > 1;
   const cardRef = useRef<HTMLDivElement>(null);
 
+  const renderSingleVideo = (maxH: string) => {
+    if (q.isLoading) {
+      return <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />;
+    }
+    if (!current?.artifact_hash) {
+      return <div className="text-sm text-fg-muted">no video logged yet</div>;
+    }
+    return (
+      <>
+        <div className="flex justify-center rounded bg-bg p-2 flex-1 min-h-0">
+          <video
+            key={current.artifact_hash}
+            controls
+            autoPlay={settings.autoplay}
+            loop={settings.loop}
+            muted={settings.muted}
+            preload={settings.preload}
+            src={api.artifactUrl(current.artifact_hash)}
+            poster={meta?.preview}
+            className={`${maxH} object-contain`}
+          />
+        </div>
+        {meta && (
+          <div className="mono mt-2 text-xs text-fg-subtle">
+            {meta.width}{"×"}{meta.height} {"·"} {meta.num_frames} frames @ {meta.fps} fps
+          </div>
+        )}
+        <StepSlider
+          points={points}
+          currentIndex={safeIdx}
+          onChange={handleSliderChange}
+          xAxis={settings.xAxis}
+          onXAxisChange={(m) => updateSettings({ xAxis: m })}
+          className="mt-3"
+        />
+      </>
+    );
+  };
+
+  const renderMultiVideo = (inModal: boolean) => (
+    <>
+      {inModal ? (
+        <SplitPane
+          widths={settings.paneWidths ?? Array(effectiveMetrics.length).fill(1 / effectiveMetrics.length)}
+          onWidthsChange={(w) => updateSettings({ paneWidths: w })}
+        >
+          {effectiveMetrics.map((m) => (
+            <VideoPane
+              key={seriesKey(m)}
+              runId={runId}
+              m={m}
+              targetStep={currentStep}
+              settings={settings}
+            />
+          ))}
+        </SplitPane>
+      ) : (
+        <div
+          className="grid gap-1 flex-1 min-h-0 overflow-auto"
+          style={{ gridTemplateColumns: `repeat(${Math.min(effectiveMetrics.length, 2)}, 1fr)` }}
+        >
+          {effectiveMetrics.map((m) => (
+            <div key={seriesKey(m)} className="relative overflow-hidden">
+              <VideoPane
+                runId={runId}
+                m={m}
+                targetStep={currentStep}
+                settings={settings}
+              />
+              {multipleRuns && (
+                <span className="absolute top-1 left-1 z-10 rounded bg-bg/80 px-1.5 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm">
+                  {shortRunLabel(m.runId ?? runId, allRunIds)}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      <StepSlider
+        points={points}
+        currentIndex={safeIdx}
+        onChange={handleSliderChange}
+        xAxis={settings.xAxis}
+        onXAxisChange={(m) => updateSettings({ xAxis: m })}
+        className="mt-3"
+      />
+      <SeriesChipStrip
+        metrics={effectiveMetrics}
+        controlledSeries={controlledSeries}
+        runId={runId}
+        allRunIds={allRunIds}
+        onMetricsChange={(next) => updateSettings({ metrics: next })}
+      />
+    </>
+  );
+
+  const renderContent = (inModal: boolean) =>
+    isMulti ? renderMultiVideo(inModal) : renderSingleVideo(inModal ? "max-h-[70vh]" : "max-h-64");
+
   return (
     <div
       ref={cardRef}
@@ -323,135 +421,7 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
       />
 
       {!settings.collapsed && (<>
-      {isMulti ? (
-        <>
-          <div
-            className="grid gap-1 flex-1 min-h-0 overflow-auto"
-            style={{ gridTemplateColumns: `repeat(${Math.min(effectiveMetrics.length, 2)}, 1fr)` }}
-          >
-            {effectiveMetrics.map((m) => (
-              <div key={seriesKey(m)} className="relative overflow-hidden">
-                <VideoPane
-                  runId={runId}
-                  m={m}
-                  targetStep={currentStep}
-                  settings={settings}
-                />
-                {multipleRuns && (
-                  <span className="absolute top-1 left-1 z-10 rounded bg-bg/80 px-1.5 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm">
-                    {shortRunLabel(m.runId ?? runId, allRunIds)}
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
-          <StepSlider
-            points={points}
-            currentIndex={safeIdx}
-            onChange={handleSliderChange}
-            xAxis={settings.xAxis}
-            onXAxisChange={(m) => updateSettings({ xAxis: m })}
-            className="mt-3"
-          />
-          {/* Series chip strip */}
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {controlledSeries ? (
-              /* Tag-level chips in workspace/comparison mode */
-              (() => {
-                const seen = new Set<string>();
-                const tags: Array<{ name: string; color: string; firstIdx: number }> = [];
-                for (let i = 0; i < effectiveMetrics.length; i++) {
-                  const m = effectiveMetrics[i]!;
-                  if (seen.has(m.name)) continue;
-                  seen.add(m.name);
-                  tags.push({ name: m.name, color: SERIES_COLORS[tags.length % SERIES_COLORS.length]!, firstIdx: i });
-                }
-                return tags.map((tag) => {
-                  const m = effectiveMetrics[tag.firstIdx]!;
-                  const ref: SeriesRef = { runId: m.runId, name: m.name, context_hash: m.context_hash };
-                  return (
-                    <SeriesChip
-                      key={tag.name}
-                      series={ref}
-                      color={tag.color}
-                      label={tag.name}
-                      runId={runId}
-                      onRemove={
-                        tags.length > 1
-                          ? () => {
-                              const next = effectiveMetrics.filter((x) => x.name !== tag.name);
-                              updateSettings({ metrics: next });
-                            }
-                          : undefined
-                      }
-                    />
-                  );
-                });
-              })()
-            ) : (
-              /* Per-run series chips */
-              effectiveMetrics.map((m, i) => {
-                const ref: SeriesRef = {
-                  runId: m.runId,
-                  name: m.name,
-                  context_hash: m.context_hash,
-                };
-                return (
-                  <SeriesChip
-                    key={seriesKey(m)}
-                    series={ref}
-                    color={SERIES_COLORS[i % SERIES_COLORS.length]!}
-                    label={seriesLabel(m.name, m.context_hash, m.runId, multipleRuns, allRunIds)}
-                    runId={runId}
-                    onRemove={
-                      effectiveMetrics.length > 1
-                        ? () => {
-                            const next = effectiveMetrics.filter((_, j) => j !== i);
-                            updateSettings({ metrics: next });
-                          }
-                        : undefined
-                    }
-                  />
-                );
-              })
-            )}
-          </div>
-        </>
-      ) : q.isLoading ? (
-        <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
-      ) : current?.artifact_hash ? (
-        <>
-          <div className="flex justify-center rounded bg-bg p-2 flex-1 min-h-0">
-            <video
-              key={current.artifact_hash}
-              controls
-              autoPlay={settings.autoplay}
-              loop={settings.loop}
-              muted={settings.muted}
-              preload={settings.preload}
-              src={api.artifactUrl(current.artifact_hash)}
-              poster={meta?.preview}
-              className="max-h-64 object-contain"
-            />
-          </div>
-          {meta && (
-            <div className="mono mt-2 text-xs text-fg-subtle">
-              {meta.width}{"\u00D7"}{meta.height} {"\u00B7"} {meta.num_frames} frames @ {meta.fps}
-              fps
-            </div>
-          )}
-          <StepSlider
-            points={points}
-            currentIndex={safeIdx}
-            onChange={handleSliderChange}
-            xAxis={settings.xAxis}
-            onXAxisChange={(m) => updateSettings({ xAxis: m })}
-            className="mt-3"
-          />
-        </>
-      ) : (
-        <div className="text-sm text-fg-muted">no video logged yet</div>
-      )}
+      {renderContent(false)}
       <CardDetailModal
         open={expanded}
         onClose={() => setExpanded(false)}
@@ -487,125 +457,7 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
         }
       >
         <div className="flex flex-col h-full">
-          {isMulti ? (
-            <>
-              <SplitPane
-                widths={settings.paneWidths ?? Array(effectiveMetrics.length).fill(1 / effectiveMetrics.length)}
-                onWidthsChange={(w) => updateSettings({ paneWidths: w })}
-              >
-                {effectiveMetrics.map((m) => (
-                  <VideoPane
-                    key={seriesKey(m)}
-                    runId={runId}
-                    m={m}
-                    targetStep={currentStep}
-                    settings={settings}
-                  />
-                ))}
-              </SplitPane>
-              <StepSlider
-                points={points}
-                currentIndex={safeIdx}
-                onChange={handleSliderChange}
-                xAxis={settings.xAxis}
-                onXAxisChange={(m) => updateSettings({ xAxis: m })}
-                className="mt-3"
-              />
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {controlledSeries ? (
-                  (() => {
-                    const seen = new Set<string>();
-                    const tags: Array<{ name: string; color: string; firstIdx: number }> = [];
-                    for (let i = 0; i < effectiveMetrics.length; i++) {
-                      const m = effectiveMetrics[i]!;
-                      if (seen.has(m.name)) continue;
-                      seen.add(m.name);
-                      tags.push({ name: m.name, color: SERIES_COLORS[tags.length % SERIES_COLORS.length]!, firstIdx: i });
-                    }
-                    return tags.map((tag) => {
-                      const m = effectiveMetrics[tag.firstIdx]!;
-                      const ref: SeriesRef = { runId: m.runId, name: m.name, context_hash: m.context_hash };
-                      return (
-                        <SeriesChip
-                          key={tag.name}
-                          series={ref}
-                          color={tag.color}
-                          label={tag.name}
-                          runId={runId}
-                          onRemove={
-                            tags.length > 1
-                              ? () => {
-                                  const next = effectiveMetrics.filter((x) => x.name !== tag.name);
-                                  updateSettings({ metrics: next });
-                                }
-                              : undefined
-                          }
-                        />
-                      );
-                    });
-                  })()
-                ) : (
-                  effectiveMetrics.map((m, i) => {
-                    const ref: SeriesRef = {
-                      runId: m.runId,
-                      name: m.name,
-                      context_hash: m.context_hash,
-                    };
-                    return (
-                      <SeriesChip
-                        key={seriesKey(m)}
-                        series={ref}
-                        color={SERIES_COLORS[i % SERIES_COLORS.length]!}
-                        label={seriesLabel(m.name, m.context_hash, m.runId, multipleRuns, allRunIds)}
-                        runId={runId}
-                        onRemove={
-                          effectiveMetrics.length > 1
-                            ? () => {
-                                const next = effectiveMetrics.filter((_, j) => j !== i);
-                                updateSettings({ metrics: next });
-                              }
-                            : undefined
-                        }
-                      />
-                    );
-                  })
-                )}
-              </div>
-            </>
-          ) : q.isLoading ? (
-            <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
-          ) : current?.artifact_hash ? (
-            <>
-              <div className="flex justify-center rounded bg-bg p-2">
-                <video
-                  key={current.artifact_hash}
-                  controls
-                  autoPlay={settings.autoplay}
-                  loop={settings.loop}
-                  muted={settings.muted}
-                  preload={settings.preload}
-                  src={api.artifactUrl(current.artifact_hash)}
-                  poster={meta?.preview}
-                  className="max-h-[70vh] object-contain"
-                />
-              </div>
-              {meta && (
-                <div className="mono mt-2 text-xs text-fg-subtle">
-                  {meta.width}{"\u00D7"}{meta.height} {"\u00B7"} {meta.num_frames} frames @ {meta.fps} fps
-                </div>
-              )}
-              <StepSlider
-                points={points}
-                currentIndex={safeIdx}
-                onChange={handleSliderChange}
-                xAxis={settings.xAxis}
-                onXAxisChange={(m) => updateSettings({ xAxis: m })}
-                className="mt-3"
-              />
-            </>
-          ) : (
-            <div className="text-sm text-fg-muted">no video logged yet</div>
-          )}
+          {renderContent(true)}
         </div>
       </CardDetailModal>
 
