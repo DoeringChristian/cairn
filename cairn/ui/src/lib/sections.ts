@@ -4,6 +4,7 @@
 // alphabetically, Media, system last.
 
 import type { SequenceMeta } from "../api/types";
+import type { ComparisonCard } from "./comparisons";
 
 export interface Section {
   name: string;
@@ -18,6 +19,22 @@ const MEDIA_TYPES = new Set([
   "histogram",
   "plugin",
 ]);
+
+function sectionOrder(name: string): number {
+  if (name === "Charts") return 0;
+  if (name === "Media") return 98;
+  if (name === "system") return 99;
+  return 1;
+}
+
+function sortBuckets<T>(buckets: Map<string, T[]>): [string, T[]][] {
+  return Array.from(buckets.entries()).sort(([a], [b]) => {
+    const oa = sectionOrder(a);
+    const ob = sectionOrder(b);
+    if (oa !== ob) return oa - ob;
+    return a.localeCompare(b);
+  });
+}
 
 export function groupIntoSections(meta: SequenceMeta[]): Section[] {
   const buckets = new Map<string, SequenceMeta[]>();
@@ -42,18 +59,36 @@ export function groupIntoSections(meta: SequenceMeta[]): Section[] {
       return (a.context_hash ?? "").localeCompare(b.context_hash ?? "");
     });
   }
-  // Deterministic section order.
-  const order = (name: string): number => {
-    if (name === "Charts") return 0;
-    if (name === "Media") return 98;
-    if (name === "system") return 99;
-    return 1; // user-defined sections
-  };
-  const entries = Array.from(buckets.entries()).sort(([a], [b]) => {
-    const oa = order(a);
-    const ob = order(b);
-    if (oa !== ob) return oa - ob;
-    return a.localeCompare(b);
-  });
-  return entries.map(([name, items]) => ({ name, items }));
+  const order = sectionOrder;
+  return sortBuckets(buckets).map(([name, items]) => ({ name, items }));
+}
+
+export interface ComparisonSection {
+  name: string;
+  cards: ComparisonCard[];
+}
+
+export function groupComparisonCardsIntoSections(
+  cards: ComparisonCard[],
+): ComparisonSection[] {
+  const buckets = new Map<string, ComparisonCard[]>();
+  for (const card of cards) {
+    let section: string;
+    if (card.type === "parallel" || card.type === "scatter") {
+      section = "Charts";
+    } else if (MEDIA_TYPES.has(card.type)) {
+      section = "Media";
+    } else {
+      const name = card.series[0]?.name ?? "";
+      if (name.includes(".")) {
+        section = name.split(".")[0]!;
+      } else {
+        section = "Charts";
+      }
+    }
+    const arr = buckets.get(section) ?? [];
+    arr.push(card);
+    buckets.set(section, arr);
+  }
+  return sortBuckets(buckets).map(([name, cards]) => ({ name, cards }));
 }

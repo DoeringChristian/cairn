@@ -6,6 +6,8 @@ import ComparisonSourceTab from "./ComparisonSourceTab";
 import AddCardModal, { type AddCardSelection } from "../components/AddCardModal";
 import CardRenderer from "../components/CardRenderer";
 import ReorderableCardGrid from "../components/ReorderableCardGrid";
+import { SectionBlock } from "../components/CardGrid";
+import { groupComparisonCardsIntoSections } from "../lib/sections";
 import SmartComparisonWizard from "../components/SmartComparisonWizard";
 import ParallelCoordsCard from "../components/ParallelCoordsCard";
 import ScatterPlotCard from "../components/ScatterPlotCard";
@@ -643,6 +645,27 @@ function ComparisonView({
   const [addCardOpen, setAddCardOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
+  const collapsedKey = `cairn:collapsed-sections:compare:${comparison.id}`;
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem(collapsedKey);
+      return raw ? new Set(JSON.parse(raw) as string[]) : new Set();
+    } catch { return new Set(); }
+  });
+  const toggleSection = useCallback((name: string) => {
+    setCollapsedSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name); else next.add(name);
+      try { localStorage.setItem(collapsedKey, JSON.stringify([...next])); } catch {}
+      return next;
+    });
+  }, [collapsedKey]);
+
+  const sections = useMemo(
+    () => groupComparisonCardsIntoSections(comparison.cards),
+    [comparison.cards],
+  );
+
   const handleRefresh = useCallback(async () => {
     if (!comparison.smartFilters) return;
     setRefreshing(true);
@@ -810,19 +833,31 @@ function ComparisonView({
               No cards yet. Click "Add card" to pick metrics from the comparison's runs.
             </div>
           ) : (
-            <ReorderableCardGrid
-              cards={comparison.cards.map((card) => ({
-                key: card.id,
-                content: (
-                  <ComparisonCardRenderer
-                    card={card}
-                    comparisonId={comparison.id}
-                    onRemove={() => onRemoveCard(card.id)}
+            <div className="space-y-8">
+              {sections.map((section) => (
+                <SectionBlock
+                  key={section.name}
+                  sectionName={section.name}
+                  itemCount={section.cards.length}
+                  collapsed={collapsedSections.has(section.name)}
+                  onToggleCollapse={() => toggleSection(section.name)}
+                >
+                  <ReorderableCardGrid
+                    cards={section.cards.map((card) => ({
+                      key: card.id,
+                      content: (
+                        <ComparisonCardRenderer
+                          card={card}
+                          comparisonId={comparison.id}
+                          onRemove={() => onRemoveCard(card.id)}
+                        />
+                      ),
+                    }))}
+                    onReorder={onReorderCards}
                   />
-                ),
-              }))}
-              onReorder={onReorderCards}
-            />
+                </SectionBlock>
+              ))}
+            </div>
           )}
         </>
       )}

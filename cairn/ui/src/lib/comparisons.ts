@@ -183,6 +183,22 @@ export function addCardToComparison(
   if (cmp) syncComparisonToServer(projectId, cmp);
 }
 
+export function addCardsToComparison(
+  projectId: string,
+  comparisonId: string,
+  cards: Omit<ComparisonCard, "id">[],
+): void {
+  const list = loadComparisons(projectId);
+  const next = list.map((c) => {
+    if (c.id !== comparisonId) return c;
+    const newCards = cards.map((card) => ({ id: newId(), ...card }));
+    return { ...c, cards: [...c.cards, ...newCards] };
+  });
+  saveComparisons(projectId, next);
+  const cmp = next.find((c) => c.id === comparisonId);
+  if (cmp) syncComparisonToServer(projectId, cmp);
+}
+
 export function addRunsToComparison(
   projectId: string,
   comparisonId: string,

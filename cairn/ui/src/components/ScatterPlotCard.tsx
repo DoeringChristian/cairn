@@ -36,6 +36,8 @@ interface ScatterSettings {
   xAxis: AxisDef | null;
   yAxis: AxisDef | null;
   colorAxis: AxisDef | null;
+  xLog?: boolean;
+  yLog?: boolean;
 }
 
 const DEFAULT_SETTINGS: ScatterSettings = {
@@ -180,7 +182,8 @@ export default function ScatterPlotCard({
   }, [seqQueries.map((q) => q.dataUpdatedAt).join("|")]);
 
   const [hoveredPt, setHoveredPt] = useState<string | null>(null);
-  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
+  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number; containerW?: number; containerH?: number } | null>(null);
+  const [selectedPt, setSelectedPt] = useState<string | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
 
   // ---------------------------------------------------------------------------
@@ -195,18 +198,42 @@ export default function ScatterPlotCard({
       );
     }
 
-    const pad = { top: 20, bottom: 40, left: 55, right: 30 };
+    const hasColorbar = !!settings.colorAxis;
+    const pad = { top: 20, bottom: 40, left: 55, right: hasColorbar ? 70 : 30 };
     const plotW = width - pad.left - pad.right;
     const plotH = height - pad.top - pad.bottom;
     if (plotW <= 0 || plotH <= 0) return null;
 
-    const toX = (v: number) => pad.left + ((v - xDomain.min) / (xDomain.max - xDomain.min)) * plotW;
-    const toY = (v: number) => pad.top + plotH - ((v - yDomain.min) / (yDomain.max - yDomain.min)) * plotH;
+    // Log-scale helpers
+    const logX = (v: number) => Math.log10(Math.max(v, 1e-10));
+    const logY = (v: number) => Math.log10(Math.max(v, 1e-10));
+
+    const xMin = settings.xLog ? logX(xDomain.min) : xDomain.min;
+    const xMax = settings.xLog ? logX(xDomain.max) : xDomain.max;
+    const yMin = settings.yLog ? logY(yDomain.min) : yDomain.min;
+    const yMax = settings.yLog ? logY(yDomain.max) : yDomain.max;
+
+    const xRange = xMax - xMin || 1;
+    const yRange = yMax - yMin || 1;
+
+    const toX = (v: number) => {
+      const mapped = settings.xLog ? logX(v) : v;
+      return pad.left + ((mapped - xMin) / xRange) * plotW;
+    };
+    const toY = (v: number) => {
+      const mapped = settings.yLog ? logY(v) : v;
+      return pad.top + plotH - ((mapped - yMin) / yRange) * plotH;
+    };
 
     return (
       <svg ref={svgRef} width={width} height={height} className="select-none" onMouseLeave={() => { setHoveredPt(null); setTooltipPos(null); }}>
         {/* Grid */}
-        <rect x={pad.left} y={pad.top} width={plotW} height={plotH} fill="none" stroke="#d0d7de" />
+        <rect
+          x={pad.left} y={pad.top} width={plotW} height={plotH}
+          fill="transparent" stroke="#d0d7de"
+          onClick={() => setSelectedPt(null)}
+          className="cursor-default"
+        />
 
         {/* Axis labels */}
         <text x={pad.left + plotW / 2} y={height - 4} textAnchor="middle" className="text-[10px] fill-fg-muted" style={{ fontSize: 10 }}>
@@ -218,12 +245,16 @@ export default function ScatterPlotCard({
 
         {/* Axis ticks */}
         {[0, 0.25, 0.5, 0.75, 1].map((t) => {
-          const xv = xDomain.min + t * (xDomain.max - xDomain.min);
-          const yv = yDomain.min + t * (yDomain.max - yDomain.min);
+          const xTickLog = xMin + t * xRange;
+          const yTickLog = yMin + t * yRange;
+          const xLabel = settings.xLog ? Math.pow(10, xTickLog).toPrecision(3) : (xDomain.min + t * (xDomain.max - xDomain.min)).toPrecision(3);
+          const yLabel = settings.yLog ? Math.pow(10, yTickLog).toPrecision(3) : (yDomain.min + t * (yDomain.max - yDomain.min)).toPrecision(3);
+          const xPixel = pad.left + t * plotW;
+          const yPixel = pad.top + plotH - t * plotH;
           return (
             <g key={t}>
-              <text x={toX(xv)} y={pad.top + plotH + 14} textAnchor="middle" className="mono text-[8px] fill-fg-subtle" style={{ fontSize: 8 }}>{xv.toPrecision(3)}</text>
-              <text x={pad.left - 4} y={toY(yv) + 3} textAnchor="end" className="mono text-[8px] fill-fg-subtle" style={{ fontSize: 8 }}>{yv.toPrecision(3)}</text>
+              <text x={xPixel} y={pad.top + plotH + 14} textAnchor="middle" className="mono text-[8px] fill-fg-subtle" style={{ fontSize: 8 }}>{xLabel}</text>
+              <text x={pad.left - 4} y={yPixel + 3} textAnchor="end" className="mono text-[8px] fill-fg-subtle" style={{ fontSize: 8 }}>{yLabel}</text>
             </g>
           );
         })}
@@ -238,6 +269,7 @@ export default function ScatterPlotCard({
             color = viridis(t);
           }
           const isHovered = hoveredPt === pt.runId;
+          const isSelected = selectedPt === pt.runId;
           return (
             <circle
               key={pt.runId}
@@ -245,22 +277,23 @@ export default function ScatterPlotCard({
               cy={cy}
               r={isHovered ? 7 : 5}
               fill={color}
-              stroke={isHovered ? "#1f2328" : "white"}
-              strokeWidth={isHovered ? 2 : 1.5}
+              stroke={isSelected ? "var(--color-accent, #0969da)" : isHovered ? "#1f2328" : "white"}
+              strokeWidth={isSelected ? 2.5 : isHovered ? 2 : 1.5}
               className="cursor-pointer"
+              onClick={() => setSelectedPt((prev) => prev === pt.runId ? null : pt.runId)}
               onMouseEnter={(e) => {
                 setHoveredPt(pt.runId);
-                const svg = svgRef.current;
-                if (svg) {
-                  const rect = svg.getBoundingClientRect();
-                  setTooltipPos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+                const container = (e.currentTarget as SVGElement).closest('[data-scatter-container]') as HTMLElement | null;
+                if (container) {
+                  const rect = container.getBoundingClientRect();
+                  setTooltipPos({ x: e.clientX - rect.left, y: e.clientY - rect.top, containerW: rect.width, containerH: rect.height });
                 }
               }}
               onMouseMove={(e) => {
-                const svg = svgRef.current;
-                if (svg) {
-                  const rect = svg.getBoundingClientRect();
-                  setTooltipPos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+                const container = (e.currentTarget as SVGElement).closest('[data-scatter-container]') as HTMLElement | null;
+                if (container) {
+                  const rect = container.getBoundingClientRect();
+                  setTooltipPos({ x: e.clientX - rect.left, y: e.clientY - rect.top, containerW: rect.width, containerH: rect.height });
                 }
               }}
               onMouseLeave={() => { setHoveredPt(null); setTooltipPos(null); }}
@@ -268,20 +301,38 @@ export default function ScatterPlotCard({
           );
         })}
 
-        {/* Tooltip */}
-        {hoveredPt && tooltipPos && (() => {
-          const pt = scatterPoints.find((p) => p.runId === hoveredPt);
-          if (!pt) return null;
-          const label = shortRunLabel(pt.runId, runIds);
+        {/* Colorbar */}
+        {hasColorbar && (() => {
+          const barX = width - pad.right + 10;
+          const barW = 12;
+          const gradId = "scatter-colorbar-grad";
+          const cMid = (colorDomain.min + colorDomain.max) / 2;
           return (
-            <foreignObject x={tooltipPos.x + 12} y={tooltipPos.y - 10} width={220} height={200} style={{ overflow: "visible", pointerEvents: "none" }}>
-              <div className="rounded border border-border bg-bg-elevated shadow-lg p-2 text-xs w-fit max-w-[220px]" style={{ pointerEvents: "none" }}>
-                <div className="font-semibold mono mb-1 truncate">{label}</div>
-                <div className="flex justify-between gap-2"><span className="text-fg-muted">{settings.xAxis!.key}</span><span className="mono">{pt.x.toPrecision(4)}</span></div>
-                <div className="flex justify-between gap-2"><span className="text-fg-muted">{settings.yAxis!.key}</span><span className="mono">{pt.y.toPrecision(4)}</span></div>
-                {settings.colorAxis && <div className="flex justify-between gap-2"><span className="text-fg-muted">{settings.colorAxis.key}</span><span className="mono">{pt.color?.toPrecision(4) ?? "—"}</span></div>}
-              </div>
-            </foreignObject>
+            <>
+              <defs>
+                <linearGradient id={gradId} x1="0" y1="1" x2="0" y2="0">
+                  <stop offset="0%" stopColor={viridis(0)} />
+                  <stop offset="50%" stopColor={viridis(0.5)} />
+                  <stop offset="100%" stopColor={viridis(1)} />
+                </linearGradient>
+              </defs>
+              <rect x={barX} y={pad.top} width={barW} height={plotH} fill={`url(#${gradId})`} stroke="#d0d7de" />
+              {/* Tick labels */}
+              <text x={barX + barW + 4} y={pad.top + plotH + 3} textAnchor="start" className="mono text-[8px] fill-fg-subtle" style={{ fontSize: 8 }}>{colorDomain.min.toPrecision(3)}</text>
+              <text x={barX + barW + 4} y={pad.top + plotH / 2 + 3} textAnchor="start" className="mono text-[8px] fill-fg-subtle" style={{ fontSize: 8 }}>{cMid.toPrecision(3)}</text>
+              <text x={barX + barW + 4} y={pad.top + 3} textAnchor="start" className="mono text-[8px] fill-fg-subtle" style={{ fontSize: 8 }}>{colorDomain.max.toPrecision(3)}</text>
+              {/* Color axis label (rotated, offset past tick labels) */}
+              <text
+                x={barX + barW + 18}
+                y={pad.top + plotH / 2}
+                textAnchor="middle"
+                className="text-[9px] fill-fg-muted"
+                style={{ fontSize: 9 }}
+                transform={`rotate(90, ${barX + barW + 18}, ${pad.top + plotH / 2})`}
+              >
+                {settings.colorAxis!.key}
+              </text>
+            </>
           );
         })()}
       </svg>
@@ -326,6 +377,16 @@ export default function ScatterPlotCard({
       <AxisSelect label="X Axis" value={settings.xAxis} onChange={(v) => updateSettings({ xAxis: v })} />
       <AxisSelect label="Y Axis" value={settings.yAxis} onChange={(v) => updateSettings({ yAxis: v })} />
       <AxisSelect label="Color" value={settings.colorAxis} onChange={(v) => updateSettings({ colorAxis: v })} />
+      <div className="mt-2 flex flex-col gap-1">
+        <label className="flex items-center gap-1.5 text-xs text-fg-muted">
+          <input type="checkbox" checked={!!settings.xLog} onChange={(e) => updateSettings({ xLog: e.target.checked })} />
+          X log scale
+        </label>
+        <label className="flex items-center gap-1.5 text-xs text-fg-muted">
+          <input type="checkbox" checked={!!settings.yLog} onChange={(e) => updateSettings({ yLog: e.target.checked })} />
+          Y log scale
+        </label>
+      </div>
     </>
   );
 
@@ -384,6 +445,59 @@ export default function ScatterPlotCard({
           <div ref={containerRef} className="rounded bg-bg flex-1 min-h-0">
             {size.w > 0 && size.h > 0 && renderPlot(size.w, size.h)}
           </div>
+
+          {/* Tooltip rendered as a plain div overlay (avoids foreignObject clipping) */}
+          {hoveredPt && tooltipPos && (() => {
+            const pt = scatterPoints.find((p) => p.runId === hoveredPt);
+            if (!pt) return null;
+            const label = shortRunLabel(pt.runId, runIds);
+            const cardEl = cardRef.current;
+            const cardW = cardEl?.offsetWidth ?? 0;
+            const cardH = cardEl?.offsetHeight ?? 0;
+            const flipX = tooltipPos.x > cardW - 240;
+            const flipY = tooltipPos.y > cardH - 100;
+            return (
+              <div
+                className="pointer-events-none absolute z-50 rounded border border-border bg-bg-elevated shadow-lg p-2 text-xs w-fit max-w-[220px]"
+                style={{
+                  left: flipX ? tooltipPos.x - 230 : tooltipPos.x + 14,
+                  top: flipY ? tooltipPos.y - 80 : tooltipPos.y - 8,
+                }}
+              >
+                <div className="font-semibold mono mb-1 truncate">{label}</div>
+                <div className="flex justify-between gap-2"><span className="text-fg-muted">{settings.xAxis!.key}</span><span className="mono">{pt.x.toPrecision(4)}</span></div>
+                <div className="flex justify-between gap-2"><span className="text-fg-muted">{settings.yAxis!.key}</span><span className="mono">{pt.y.toPrecision(4)}</span></div>
+                {settings.colorAxis && <div className="flex justify-between gap-2"><span className="text-fg-muted">{settings.colorAxis.key}</span><span className="mono">{pt.color?.toPrecision(4) ?? "—"}</span></div>}
+              </div>
+            );
+          })()}
+
+          {/* Selected point info panel */}
+          {selectedPt && (() => {
+            const pt = scatterPoints.find((p) => p.runId === selectedPt);
+            const runData = runQueries[runIds.indexOf(selectedPt)]?.data;
+            if (!pt || !runData) return null;
+            return (
+              <div className="mt-2 rounded border border-border p-2 text-xs flex items-center justify-between">
+                <div>
+                  <span className="font-semibold">{runData.run.display_name || shortRunLabel(pt.runId, runIds)}</span>
+                  <span className="ml-2 text-fg-muted mono">{pt.runId.slice(0, 8)}</span>
+                  <span className="ml-2 text-fg-muted">{settings.xAxis?.key}: <span className="mono">{pt.x.toPrecision(4)}</span></span>
+                  <span className="ml-2 text-fg-muted">{settings.yAxis?.key}: <span className="mono">{pt.y.toPrecision(4)}</span></span>
+                  {settings.colorAxis && pt.color != null && (
+                    <span className="ml-2 text-fg-muted">{settings.colorAxis.key}: <span className="mono">{pt.color.toPrecision(4)}</span></span>
+                  )}
+                </div>
+                <a
+                  href={`/p/${runData.run.project_id}/r/${pt.runId}`}
+                  className="ml-2 text-fg-muted hover:text-fg shrink-0"
+                  title="Open run"
+                >
+                  <i className="fa-solid fa-arrow-up-right-from-square" />
+                </a>
+              </div>
+            );
+          })()}
 
           <CardDetailModal
             open={expanded}

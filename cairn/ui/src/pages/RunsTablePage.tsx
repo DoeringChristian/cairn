@@ -6,7 +6,7 @@ import { useInfiniteRuns } from "../api/hooks";
 import type { Run, RunStatus } from "../api/types";
 import RunStatusBadge from "../components/RunStatusBadge";
 import { formatDuration, formatRelative, safeJsonParse } from "../lib/format";
-import { addCardToComparison, createComparison, useTemplates, type ComparisonTemplate } from "../lib/comparisons";
+import { addCardsToComparison, createComparison, useTemplates, type ComparisonTemplate } from "../lib/comparisons";
 import { saveCardSettings } from "../lib/card-settings";
 import { api } from "../api/client";
 import { qk } from "../api/query-keys";
@@ -88,6 +88,7 @@ export default function RunsTablePage() {
   const [tagPopoverOpen, setTagPopoverOpen] = useState(false);
   const tagBtnRef = useRef<HTMLButtonElement | null>(null);
   const [importOpen, setImportOpen] = useState(false);
+  const [showLatestOnly, setShowLatestOnly] = useState(false);
   const [exporting, setExporting] = useState(false);
   const { templates } = useTemplates(projectId ?? "");
   const [addingTagFor, setAddingTagFor] = useState<string | null>(null);
@@ -104,6 +105,27 @@ export default function RunsTablePage() {
     });
   }, [q.data]);
   const serverTotal = q.data?.pages[0]?.total ?? 0;
+
+  // Latest run per display_name — for highlighting and filtering.
+  const { latestByName, latestIds } = useMemo(() => {
+    const byName = new Map<string, { id: string; created_at: string }>();
+    const counts = new Map<string, number>();
+    for (const r of runs) {
+      const name = r.display_name ?? r.id;
+      counts.set(name, (counts.get(name) ?? 0) + 1);
+      const existing = byName.get(name);
+      if (!existing || r.created_at > existing.created_at) {
+        byName.set(name, { id: r.id, created_at: r.created_at });
+      }
+    }
+    const highlight = new Set<string>();
+    const all = new Set<string>();
+    for (const [name, best] of byName) {
+      all.add(best.id);
+      if ((counts.get(name) ?? 0) > 1) highlight.add(best.id);
+    }
+    return { latestByName: highlight, latestIds: all };
+  }, [runs]);
 
   // Auto-load next page when sentinel enters viewport.
   const sentinelRef = useInfiniteScroll({
@@ -150,6 +172,48 @@ export default function RunsTablePage() {
     qc.invalidateQueries({ queryKey: ["runs-infinite"] });
   }, [selected, qc]);
 
+  const onArchiveOldVersions = useCallback(async () => {
+    const groups = new Map<string, Run[]>();
+    for (const r of runs) {
+      if (r.status === "archived") continue;
+      const name = r.display_name ?? r.id;
+      const arr = groups.get(name) ?? [];
+      arr.push(r);
+      groups.set(name, arr);
+    }
+    const toArchive: string[] = [];
+    for (const [, group] of groups) {
+      if (group.length <= 1) continue;
+      group.sort((a, b) => b.created_at.localeCompare(a.created_at));
+      for (let i = 1; i < group.length; i++) toArchive.push(group[i]!.id);
+    }
+    if (toArchive.length === 0) { alert("No old versions to archive."); return; }
+    if (!confirm(`Archive ${toArchive.length} old run(s)?`)) return;
+    await Promise.all(toArchive.map((id) => api.archiveRun(id)));
+    qc.invalidateQueries({ queryKey: ["runs-infinite"] });
+  }, [runs, qc]);
+
+  const onDeleteOldVersions = useCallback(async () => {
+    const groups = new Map<string, Run[]>();
+    for (const r of runs) {
+      if (r.status === "archived") continue;
+      const name = r.display_name ?? r.id;
+      const arr = groups.get(name) ?? [];
+      arr.push(r);
+      groups.set(name, arr);
+    }
+    const toDelete: string[] = [];
+    for (const [, group] of groups) {
+      if (group.length <= 1) continue;
+      group.sort((a, b) => b.created_at.localeCompare(a.created_at));
+      for (let i = 1; i < group.length; i++) toDelete.push(group[i]!.id);
+    }
+    if (toDelete.length === 0) { alert("No old versions to delete."); return; }
+    if (!confirm(`Delete ${toDelete.length} old run(s)? This cannot be undone.`)) return;
+    await Promise.all(toDelete.map((id) => api.deleteRun(id)));
+    qc.invalidateQueries({ queryKey: ["runs-infinite"] });
+  }, [runs, qc]);
+
   // Populate run label cache for formatting across the app.
   useMemo(() => { if (runs.length > 0) setRunMetadata(runs); }, [runs]);
 
@@ -165,6 +229,7 @@ export default function RunsTablePage() {
 
   const filtered = useMemo(() => {
     return runs.filter((r) => {
+      if (showLatestOnly && !latestIds.has(r.id)) return false;
       // Hide archived runs by default; only show when explicitly filtered.
       if (statusFilter === "all" && r.status === "archived") return false;
       if (statusFilter !== "all" && r.status !== statusFilter) return false;
@@ -175,7 +240,7 @@ export default function RunsTablePage() {
       }
       return true;
     });
-  }, [runs, statusFilter, searchRegex]);
+  }, [runs, statusFilter, searchRegex, showLatestOnly, latestIds]);
 
   const sorted = useMemo(() => {
     const arr = [...filtered];
@@ -318,13 +383,15 @@ export default function RunsTablePage() {
       }
     });
 
-    // Add each card to the comparison.
-    for (const card of cardMap.values()) {
-      addCardToComparison(projectId!, cmp.id, {
-        type: card.object_type as "scalar",
-        series: card.series,
-      });
-    }
+    // Add all cards in one batch (avoids race condition creating multiple
+    // server-side comparisons). Skip system metrics.
+    addCardsToComparison(
+      projectId!,
+      cmp.id,
+      Array.from(cardMap.values())
+        .filter((card) => !card.name.startsWith("system."))
+        .map((card) => ({ type: card.object_type as "scalar", series: card.series })),
+    );
 
     navigate(`/p/${projectId}/compare?c=${encodeURIComponent(cmp.id)}`);
   };
@@ -356,27 +423,34 @@ export default function RunsTablePage() {
       }
     });
 
-    // For each template card, match against available sequences.
-    for (const tc of template.cards) {
-      const matching = seqMap.get(tc.metricName);
-      if (!matching || matching.length === 0) continue;
-      addCardToComparison(projectId!, cmp.id, {
-        type: tc.type,
-        series: matching,
-      });
-      // Restore saved settings from template.
-      if (tc.settings) {
-        // Re-read the comparison to get the card's new ID.
-        const { loadComparisons } = await import("../lib/comparisons");
-        const updated = loadComparisons(projectId).find((c) => c.id === cmp.id);
-        const newCard = updated?.cards[updated.cards.length - 1];
-        if (newCard) {
-          saveCardSettings(
-            { runId: `compare:${cmp.id}`, metricName: newCard.id, contextHash: "" },
-            tc.settings,
-          );
+    // Collect all matched template cards, then add in one batch.
+    const matched = template.cards
+      .filter((tc) => !tc.metricName.startsWith("system."))
+      .map((tc) => ({ tc, series: seqMap.get(tc.metricName) }))
+      .filter((m): m is { tc: typeof template.cards[number]; series: NonNullable<typeof m.series> } => !!m.series?.length);
+
+    addCardsToComparison(
+      projectId!,
+      cmp.id,
+      matched.map((m) => ({ type: m.tc.type, series: m.series })),
+    );
+
+    // Restore saved settings from template.
+    const { loadComparisons } = await import("../lib/comparisons");
+    const updated = loadComparisons(projectId).find((c) => c.id === cmp.id);
+    if (updated) {
+      const baseIdx = updated.cards.length - matched.length;
+      matched.forEach((m, i) => {
+        if (m.tc.settings) {
+          const card = updated.cards[baseIdx + i];
+          if (card) {
+            saveCardSettings(
+              { runId: `compare:${cmp.id}`, metricName: card.id, contextHash: "" },
+              m.tc.settings,
+            );
+          }
         }
-      }
+      });
     }
 
     navigate(`/p/${projectId}/compare?c=${encodeURIComponent(cmp.id)}`);
@@ -428,7 +502,13 @@ export default function RunsTablePage() {
             title={searchError ?? "Search by name, id, status, or tags (regex)"}
           />
         </label>
+        <label className="flex items-center gap-1.5 text-xs text-fg-muted cursor-pointer select-none">
+          <input type="checkbox" checked={showLatestOnly} onChange={(e) => setShowLatestOnly(e.target.checked)} className="accent-accent" />
+          Latest only
+        </label>
         <div className="ml-auto flex gap-2">
+          <button type="button" className="btn px-2 py-1 text-xs" onClick={onArchiveOldVersions}>Archive old</button>
+          <button type="button" className="btn px-2 py-1 text-xs text-status-failed" onClick={onDeleteOldVersions}>Delete old</button>
           <button
             type="button"
             className="btn px-2 py-1 text-xs"
@@ -580,7 +660,7 @@ export default function RunsTablePage() {
                   key={r.id}
                   className={`rounded-lg border border-border bg-bg-elevated p-3 ${
                     isSelected ? "border-accent/50 bg-accent/5" : ""
-                  }`}
+                  } ${latestByName.has(r.id) ? "border-l-2 border-l-accent" : ""}`}
                 >
                   <div className="flex flex-wrap items-center gap-2">
                     <div className="inline-flex min-h-[44px] min-w-[44px] cursor-pointer items-center justify-center">
@@ -712,7 +792,7 @@ export default function RunsTablePage() {
                     key={r.id}
                     className={`border-t border-border-subtle hover:bg-bg-elevated ${
                       isSelected ? "bg-accent/5" : ""
-                    }`}
+                    } ${latestByName.has(r.id) ? "border-l-2 border-l-accent" : ""}`}
                   >
                     <td className="px-3 py-2">
                       <input

@@ -159,7 +159,7 @@ export default function CardGrid({ runId, sequences }: Props) {
 // Section wrapper with drop targets on both the header and the card grid.
 // -----------------------------------------------------------------------------
 
-interface SectionBlockProps {
+export interface SectionBlockProps {
   sectionName: string;
   itemCount: number;
   collapsed: boolean;
@@ -167,7 +167,7 @@ interface SectionBlockProps {
   children: React.ReactNode;
 }
 
-function SectionBlock({
+export function SectionBlock({
   sectionName,
   itemCount,
   collapsed,
