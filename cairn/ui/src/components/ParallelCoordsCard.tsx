@@ -14,7 +14,7 @@ import type { Run } from "../api/types";
 import { useCardSettings, resolveCardHeight } from "../lib/card-settings";
 import { downloadCsv, exportChartFromContainer, safeName } from "../lib/download";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
-import { useRunSelection } from "../lib/use-run-selection";
+import { useRunSelection, useRunSelectionHasProvider } from "../lib/use-run-selection";
 import CardHeader from "./CardHeader";
 import CardDetailModal from "./CardDetailModal";
 import CardResizeHandle from "./CardResizeHandle";
@@ -259,6 +259,7 @@ export default function ParallelCoordsCard({
   const svgRef = useRef<SVGSVGElement | null>(null);
 
   const { selectedIds, selectedArray, toggle, clear } = useRunSelection();
+  const hasSelectionProvider = useRunSelectionHasProvider();
 
   const runInfoMap = useMemo(() => {
     const m = new Map<string, { displayName?: string; projectId?: string }>();
@@ -570,13 +571,15 @@ export default function ParallelCoordsCard({
             {renderTooltip()}
           </div>
 
-          <RunSelectionPanel
-            selectedRunIds={selectedArray}
-            allRunIds={runIds}
-            onClear={clear}
-            runInfo={runInfoMap}
-            label="Parallel coords selection"
-          />
+          {!hasSelectionProvider && (
+            <RunSelectionPanel
+              selectedRunIds={selectedArray}
+              allRunIds={runIds}
+              onClear={clear}
+              runInfo={runInfoMap}
+              label="Parallel coords selection"
+            />
+          )}
 
           <CardDetailModal
             open={expanded}
@@ -588,13 +591,15 @@ export default function ParallelCoordsCard({
               {renderPlot(900, 500)}
               {renderTooltip()}
             </div>
-            <RunSelectionPanel
-              selectedRunIds={selectedArray}
-              allRunIds={runIds}
-              onClear={clear}
-              runInfo={runInfoMap}
-              label="Parallel coords selection"
-            />
+            {!hasSelectionProvider && (
+              <RunSelectionPanel
+                selectedRunIds={selectedArray}
+                allRunIds={runIds}
+                onClear={clear}
+                runInfo={runInfoMap}
+                label="Parallel coords selection"
+              />
+            )}
           </CardDetailModal>
         </>
       )}

@@ -7,7 +7,7 @@ import { useCardSettings, resolveCardHeight } from "../lib/card-settings";
 import { SERIES_COLORS, viridis } from "../lib/colors";
 import { downloadCsv, exportChartFromContainer, safeName } from "../lib/download";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
-import { useRunSelection } from "../lib/use-run-selection";
+import { useRunSelection, useRunSelectionHasProvider } from "../lib/use-run-selection";
 import CardHeader from "./CardHeader";
 import CardDetailModal from "./CardDetailModal";
 import CardResizeHandle from "./CardResizeHandle";
@@ -212,6 +212,7 @@ export default function ScatterPlotCard({
   const [hoveredPt, setHoveredPt] = useState<string | null>(null);
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number; containerW?: number; containerH?: number } | null>(null);
   const { selectedIds, selectedArray, toggle, clear } = useRunSelection();
+  const hasSelectionProvider = useRunSelectionHasProvider();
   const svgRef = useRef<SVGSVGElement | null>(null);
 
   const runInfoMap = useMemo(() => {
@@ -567,22 +568,24 @@ export default function ScatterPlotCard({
             {size.w > 0 && size.h > 0 && renderPlot(size.w, size.h)}
             {renderTooltip()}
           </div>
-          <RunSelectionPanel
-            selectedRunIds={selectedArray}
-            allRunIds={runIds}
-            onClear={clear}
-            runInfo={runInfoMap}
-            renderExtra={(rid) => {
-              const pt = scatterPoints.find(p => p.runId === rid);
-              return pt ? (
-                <>
-                  <span className="ml-2 text-fg-subtle">{settings.xAxis?.key}: {pt.x.toPrecision(4)}</span>
-                  <span className="ml-2 text-fg-subtle">{settings.yAxis?.key}: {pt.y.toPrecision(4)}</span>
-                </>
-              ) : null;
-            }}
-            label="Scatter selection"
-          />
+          {!hasSelectionProvider && (
+            <RunSelectionPanel
+              selectedRunIds={selectedArray}
+              allRunIds={runIds}
+              onClear={clear}
+              runInfo={runInfoMap}
+              renderExtra={(rid) => {
+                const pt = scatterPoints.find(p => p.runId === rid);
+                return pt ? (
+                  <>
+                    <span className="ml-2 text-fg-subtle">{settings.xAxis?.key}: {pt.x.toPrecision(4)}</span>
+                    <span className="ml-2 text-fg-subtle">{settings.yAxis?.key}: {pt.y.toPrecision(4)}</span>
+                  </>
+                ) : null;
+              }}
+              label="Scatter selection"
+            />
+          )}
 
           <CardDetailModal
             open={expanded}
@@ -593,22 +596,24 @@ export default function ScatterPlotCard({
             <div data-scatter-container className="relative h-[calc(100vh-12rem)] flex flex-col">
               {renderPlot(900, 500)}
               {renderTooltip()}
-              <RunSelectionPanel
-                selectedRunIds={selectedArray}
-                allRunIds={runIds}
-                onClear={clear}
-                runInfo={runInfoMap}
-                renderExtra={(rid) => {
-                  const pt = scatterPoints.find(p => p.runId === rid);
-                  return pt ? (
-                    <>
-                      <span className="ml-2 text-fg-subtle">{settings.xAxis?.key}: {pt.x.toPrecision(4)}</span>
-                      <span className="ml-2 text-fg-subtle">{settings.yAxis?.key}: {pt.y.toPrecision(4)}</span>
-                    </>
-                  ) : null;
-                }}
-                label="Scatter selection"
-              />
+              {!hasSelectionProvider && (
+                <RunSelectionPanel
+                  selectedRunIds={selectedArray}
+                  allRunIds={runIds}
+                  onClear={clear}
+                  runInfo={runInfoMap}
+                  renderExtra={(rid) => {
+                    const pt = scatterPoints.find(p => p.runId === rid);
+                    return pt ? (
+                      <>
+                        <span className="ml-2 text-fg-subtle">{settings.xAxis?.key}: {pt.x.toPrecision(4)}</span>
+                        <span className="ml-2 text-fg-subtle">{settings.yAxis?.key}: {pt.y.toPrecision(4)}</span>
+                      </>
+                    ) : null;
+                  }}
+                  label="Scatter selection"
+                />
+              )}
             </div>
           </CardDetailModal>
         </>

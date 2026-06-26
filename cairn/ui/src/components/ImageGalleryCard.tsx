@@ -26,7 +26,7 @@ import CardHeader from "./CardHeader";
 import CardResizeHandle from "./CardResizeHandle";
 import SeriesChip, { CAIRN_SERIES_MIME, type SeriesRef } from "./SeriesChip";
 import { SERIES_COLORS } from "../lib/colors";
-import { useRunSelection } from "../lib/use-run-selection";
+import { useRunSelection, useRunSelectionHasProvider } from "../lib/use-run-selection";
 import RunSelectionPanel from "./RunSelectionPanel";
 import Select from "./settings/Select";
 import Slider from "./settings/Slider";
@@ -966,6 +966,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
   });
 
   const { selectedIds, selectedArray, toggle, clear } = useRunSelection();
+  const hasSelectionProvider = useRunSelectionHasProvider();
 
   const runInfoMap = useMemo(() => {
     const m = new Map<string, { displayName?: string; projectId?: string }>();
@@ -1897,13 +1898,15 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
             })}
       </div>
 
-      <RunSelectionPanel
-        selectedRunIds={selectedArray}
-        allRunIds={availableRunIds}
-        onClear={clear}
-        runInfo={runInfoMap}
-        label="Image selection"
-      />
+      {!hasSelectionProvider && (
+        <RunSelectionPanel
+          selectedRunIds={selectedArray}
+          allRunIds={availableRunIds}
+          onClear={clear}
+          runInfo={runInfoMap}
+          label="Image selection"
+        />
+      )}
 
       </>)}
 
@@ -2076,13 +2079,15 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                 onXAxisChange={(m) => updateSettings({ xAxis: m })}
                 className="mt-3"
               />
-              <RunSelectionPanel
-                selectedRunIds={selectedArray}
-                allRunIds={availableRunIds}
-                onClear={clear}
-                runInfo={runInfoMap}
-                label="Image selection"
-              />
+              {!hasSelectionProvider && (
+                <RunSelectionPanel
+                  selectedRunIds={selectedArray}
+                  allRunIds={availableRunIds}
+                  onClear={clear}
+                  runInfo={runInfoMap}
+                  label="Image selection"
+                />
+              )}
             </div>
           </CardDetailModal>
         );

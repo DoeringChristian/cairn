@@ -12,7 +12,7 @@ import { useCardSettings, resolveCardHeight, type CardSettingsKey } from "../lib
 import { useSeriesDrop } from "../lib/use-series-drop";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
-import { useRunSelection } from "../lib/use-run-selection";
+import { useRunSelection, useRunSelectionHasProvider } from "../lib/use-run-selection";
 import { seriesKey, seriesLabel } from "../lib/series-utils";
 import type { SequenceMeta, SequenceResponse } from "../api/types";
 import AddToComparisonButton from "./AddToComparisonButton";
@@ -611,6 +611,7 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
   });
 
   const { selectedIds, selectedArray, toggle, clear } = useRunSelection();
+  const hasSelectionProvider = useRunSelectionHasProvider();
 
   const runInfoMap = useMemo(() => {
     const m = new Map<string, { displayName?: string; projectId?: string }>();
@@ -837,13 +838,15 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
 
       {!settings.collapsed && (<>
       {renderContent(false)}
-      <RunSelectionPanel
-        selectedRunIds={selectedArray}
-        allRunIds={allRunIds}
-        onClear={clear}
-        runInfo={runInfoMap}
-        label="Figure selection"
-      />
+      {!hasSelectionProvider && (
+        <RunSelectionPanel
+          selectedRunIds={selectedArray}
+          allRunIds={allRunIds}
+          onClear={clear}
+          runInfo={runInfoMap}
+          label="Figure selection"
+        />
+      )}
       {(() => {
         const settingsPanel = (
           <>
@@ -885,13 +888,15 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
             settingsContent={settingsPanel}
           >
             {renderContent(true)}
-            <RunSelectionPanel
-              selectedRunIds={selectedArray}
-              allRunIds={allRunIds}
-              onClear={clear}
-              runInfo={runInfoMap}
-              label="Figure selection"
-            />
+            {!hasSelectionProvider && (
+              <RunSelectionPanel
+                selectedRunIds={selectedArray}
+                allRunIds={allRunIds}
+                onClear={clear}
+                runInfo={runInfoMap}
+                label="Figure selection"
+              />
+            )}
           </CardDetailModal>
         );
       })()}

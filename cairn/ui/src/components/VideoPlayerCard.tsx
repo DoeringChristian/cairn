@@ -17,7 +17,7 @@ import CardResizeHandle from "./CardResizeHandle";
 import CardDetailModal from "./CardDetailModal";
 import SplitPane from "./SplitPane";
 import SeriesChip, { type SeriesRef } from "./SeriesChip";
-import { useRunSelection } from "../lib/use-run-selection";
+import { useRunSelection, useRunSelectionHasProvider } from "../lib/use-run-selection";
 import RunSelectionPanel from "./RunSelectionPanel";
 import { SERIES_COLORS } from "../lib/colors";
 import Toggle from "./settings/Toggle";
@@ -302,6 +302,7 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
   useRunMetadataVersion();
 
   const { selectedIds, selectedArray, toggle, clear } = useRunSelection();
+  const hasSelectionProvider = useRunSelectionHasProvider();
 
   const runInfoMap = useMemo(() => {
     const m = new Map<string, { displayName?: string; projectId?: string }>();
@@ -472,13 +473,15 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
               );
             })}
       </div>
-      <RunSelectionPanel
-        selectedRunIds={selectedArray}
-        allRunIds={allRunIds}
-        onClear={clear}
-        runInfo={runInfoMap}
-        label="Video selection"
-      />
+      {!hasSelectionProvider && (
+        <RunSelectionPanel
+          selectedRunIds={selectedArray}
+          allRunIds={allRunIds}
+          onClear={clear}
+          runInfo={runInfoMap}
+          label="Video selection"
+        />
+      )}
     </>
   );
 
@@ -546,13 +549,15 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
       >
         <div className="flex flex-col h-full">
           {renderContent(true)}
-          <RunSelectionPanel
-            selectedRunIds={selectedArray}
-            allRunIds={allRunIds}
-            onClear={clear}
-            runInfo={runInfoMap}
-            label="Video selection"
-          />
+          {!hasSelectionProvider && (
+            <RunSelectionPanel
+              selectedRunIds={selectedArray}
+              allRunIds={allRunIds}
+              onClear={clear}
+              runInfo={runInfoMap}
+              label="Video selection"
+            />
+          )}
         </div>
       </CardDetailModal>
 

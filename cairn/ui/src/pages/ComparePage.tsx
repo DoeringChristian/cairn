@@ -38,6 +38,8 @@ import { useRuns } from "../api/hooks";
 import { api } from "../api/client";
 
 import { setRunMetadata, disambiguateRunLabels } from "../lib/run-label";
+import { RunSelectionContext, useRunSelectionState } from "../lib/use-run-selection";
+import RunSelectionPanel from "../components/RunSelectionPanel";
 import type { Run } from "../api/types";
 import type { SequenceMeta } from "../api/types";
 
@@ -273,6 +275,26 @@ export default function ComparePage() {
     [projectId, refresh],
   );
 
+  const selectionState = useRunSelectionState();
+
+  const compRunIds = useMemo(() => {
+    if (!selected) return [];
+    const ids = new Set<string>();
+    if (selected.runIds) for (const id of selected.runIds) ids.add(id);
+    for (const card of selected.cards) {
+      for (const s of card.series) ids.add(s.runId);
+    }
+    return Array.from(ids);
+  }, [selected]);
+
+  const runInfoMap = useMemo(() => {
+    const m = new Map<string, { displayName?: string; projectId?: string }>();
+    for (const r of runs) {
+      m.set(r.id, { displayName: r.display_name || undefined, projectId: r.project_id });
+    }
+    return m;
+  }, [runs]);
+
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [wizardOpen, setWizardOpen] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
@@ -289,6 +311,7 @@ export default function ComparePage() {
   if (!projectId) return null;
 
   return (
+    <RunSelectionContext.Provider value={selectionState}>
       <div>
         <h1 className="mono mb-4 text-xl font-semibold">
           Compare
@@ -321,6 +344,20 @@ export default function ComparePage() {
               onDelete={handleDelete}
             />
             <TemplateSidebar projectId={projectId} />
+            {selectionState.selectedArray.length > 0 && (
+              <div className="mt-4 border-t border-border-subtle pt-3">
+                <h2 className="mb-1 text-xs font-semibold uppercase tracking-wide text-fg-muted">
+                  Selection
+                </h2>
+                <RunSelectionPanel
+                  selectedRunIds={selectionState.selectedArray}
+                  allRunIds={compRunIds}
+                  onClear={selectionState.clear}
+                  runInfo={runInfoMap}
+                  label="Comparison selection"
+                />
+              </div>
+            )}
           </aside>
           <main>
             {selected ? (
@@ -371,6 +408,7 @@ export default function ComparePage() {
           />
         )}
       </div>
+    </RunSelectionContext.Provider>
   );
 }
 

@@ -33,7 +33,7 @@ import AddToComparisonButton from "./AddToComparisonButton";
 import CardHeader from "./CardHeader";
 import CardDetailModal from "./CardDetailModal";
 import CardResizeHandle from "./CardResizeHandle";
-import { useRunSelection } from "../lib/use-run-selection";
+import { useRunSelection, useRunSelectionHasProvider } from "../lib/use-run-selection";
 import RunSelectionPanel from "./RunSelectionPanel";
 import MetricChips from "./settings/MetricChips";
 import NumberInput from "./settings/NumberInput";
@@ -772,6 +772,7 @@ export default function ScalarPlotCard({
 
   const toggleSelectionRef = useRef<(runId: string) => void>(() => {});
   const seriesKeyToRunIdRef = useRef(new Map<string, string>());
+  const wasDragRef = useRef(false);
 
   type PlotDragMode = "pan" | "select";
 
@@ -812,6 +813,7 @@ export default function ScalarPlotCard({
 
   const onChartPointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
+      wasDragRef.current = false;
       const el = chartBoxRef.current;
       if (!el) return;
       const rect = el.getBoundingClientRect();
@@ -831,9 +833,9 @@ export default function ScalarPlotCard({
       }
       // Only left mouse button (or primary touch/pen).
       if (e.button !== 0) return;
-      // Prevent text selection while dragging (axis labels, legend text, etc.).
-      e.preventDefault();
-      (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+      // Don't capture the pointer yet — capturing causes pointerout on SVG
+      // children which triggers Recharts' onMouseLeave, clearing hoveredSeries.
+      // Defer capture to onChartPointerMove once the user drags >= 6px.
       const mode: PlotDragMode = (e.altKey || e.ctrlKey || e.metaKey) ? "pan" : "select";
       plotDragRef.current = {
         pointerId: e.pointerId,
@@ -847,11 +849,6 @@ export default function ScalarPlotCard({
         startXDomain: effectiveRef.current.x,
         startYDomain: effectiveRef.current.y,
       };
-      if (mode === "select") {
-        const localX = e.clientX - rect.left;
-        const localY = e.clientY - rect.top;
-        setSelection({ x0: localX, y0: localY, x1: localX, y1: localY });
-      }
     },
     [dynamicMargin.right],
   );
@@ -892,6 +889,12 @@ export default function ScalarPlotCard({
       // Handle plot-body drags (box-zoom or pan).
       const s = plotDragRef.current;
       if (!s || s.pointerId !== e.pointerId) return;
+      // Capture pointer on first real movement (deferred from pointerdown).
+      const moved = Math.abs(e.clientX - s.startClientX) >= 3 || Math.abs(e.clientY - s.startClientY) >= 3;
+      if (moved) {
+        wasDragRef.current = true;
+        try { (e.currentTarget as HTMLDivElement).setPointerCapture(s.pointerId); } catch { /* ok */ }
+      }
       if (s.mode === "pan") {
         const dxPx = e.clientX - s.startClientX;
         const dyPx = e.clientY - s.startClientY;
@@ -909,15 +912,19 @@ export default function ScalarPlotCard({
         });
         return;
       }
-      // select: update rubber-band rect.
+      // select: show rubber-band only after the user drags >= 6px.
       const el2 = chartBoxRef.current;
       if (!el2) return;
       const rect2 = el2.getBoundingClientRect();
       const localX = e.clientX - rect2.left;
       const localY = e.clientY - rect2.top;
-      setSelection((prev) =>
-        prev === null ? prev : { ...prev, x1: localX, y1: localY },
-      );
+      const wPx = Math.abs(e.clientX - s.startClientX);
+      const hPx = Math.abs(e.clientY - s.startClientY);
+      if (wPx >= 6 || hPx >= 6) {
+        const startLocalX = s.startClientX - rect2.left;
+        const startLocalY = s.startClientY - rect2.top;
+        setSelection({ x0: startLocalX, y0: startLocalY, x1: localX, y1: localY });
+      }
     },
     [updateSettings],
   );
@@ -927,6 +934,7 @@ export default function ScalarPlotCard({
       // End axis-strip drag if active.
       const ax = rightAxisDragRef.current;
       if (ax && ax.pointerId === e.pointerId) {
+        wasDragRef.current = true;
         rightAxisDragRef.current = null;
         try {
           (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId);
@@ -947,6 +955,7 @@ export default function ScalarPlotCard({
         const wPx = Math.abs(e.clientX - s.startClientX);
         const hPx = Math.abs(e.clientY - s.startClientY);
         if (wPx >= 6 && hPx >= 6) {
+          wasDragRef.current = true;
           const x0c = Math.min(s.startClientX, e.clientX);
           const x1c = Math.max(s.startClientX, e.clientX);
           const y0c = Math.min(s.startClientY, e.clientY);
@@ -970,13 +979,6 @@ export default function ScalarPlotCard({
             updateSettings({
               viewport: { xMin: xMinNew, xMax: xMaxNew, yMin: yMinNew, yMax: yMaxNew },
             });
-          }
-        } else {
-          // Simple click (no drag) — toggle run selection for the hovered line.
-          const hk = hoveredSeriesRef.current;
-          if (hk) {
-            const rid = seriesKeyToRunIdRef.current.get(hk);
-            if (rid) toggleSelectionRef.current(rid);
           }
         }
         setSelection(null);
@@ -1049,6 +1051,7 @@ export default function ScalarPlotCard({
   hoveredSeriesRef.current = hoveredSeries;
 
   const { selectedIds, selectedArray, toggle, clear } = useRunSelection();
+  const hasSelectionProvider = useRunSelectionHasProvider();
 
   const seriesKeyToRunId = useMemo(() => {
     const m = new Map<string, string>();
@@ -1358,7 +1361,7 @@ export default function ScalarPlotCard({
       className={`${heightClass} relative overflow-hidden`}
       style={{
         touchAction: "none",
-        cursor: altDown ? "move" : "crosshair",
+        cursor: altDown ? "move" : hoveredSeries ? "pointer" : "crosshair",
         userSelect: "none",
         WebkitUserSelect: "none",
       }}
@@ -1367,6 +1370,14 @@ export default function ScalarPlotCard({
       onPointerMove={onChartPointerMove}
       onPointerUp={onChartPointerUp}
       onPointerCancel={onChartPointerUp}
+      onClick={() => {
+        if (wasDragRef.current) { wasDragRef.current = false; return; }
+        const hk = hoveredSeriesRef.current;
+        if (hk) {
+          const rid = seriesKeyToRunIdRef.current.get(hk);
+          if (rid) toggleSelectionRef.current(rid);
+        }
+      }}
       onLostPointerCapture={() => {
         plotDragRef.current = null;
         rightAxisDragRef.current = null;
@@ -1749,13 +1760,15 @@ export default function ScalarPlotCard({
         )}
       </div>
 
-      <RunSelectionPanel
-        selectedRunIds={selectedArray}
-        allRunIds={uniqueRunIds}
-        onClear={clear}
-        runInfo={runInfoMap}
-        label="Scalar plot selection"
-      />
+      {!hasSelectionProvider && (
+        <RunSelectionPanel
+          selectedRunIds={selectedArray}
+          allRunIds={uniqueRunIds}
+          onClear={clear}
+          runInfo={runInfoMap}
+          label="Scalar plot selection"
+        />
+      )}
 
       <CardDetailModal
         open={expanded}
@@ -1767,13 +1780,15 @@ export default function ScalarPlotCard({
           <div className="flex-1 min-h-0">
             {renderChart("h-full")}
           </div>
-          <RunSelectionPanel
-            selectedRunIds={selectedArray}
-            allRunIds={uniqueRunIds}
-            onClear={clear}
-            runInfo={runInfoMap}
-            label="Scalar plot selection"
-          />
+          {!hasSelectionProvider && (
+            <RunSelectionPanel
+              selectedRunIds={selectedArray}
+              allRunIds={uniqueRunIds}
+              onClear={clear}
+              runInfo={runInfoMap}
+              label="Scalar plot selection"
+            />
+          )}
         </div>
       </CardDetailModal>
       </>)}

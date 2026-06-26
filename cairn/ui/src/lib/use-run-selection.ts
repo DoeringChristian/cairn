@@ -1,6 +1,15 @@
-import { useCallback, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useMemo, useState } from "react";
 
-export function useRunSelection() {
+export interface RunSelectionValue {
+  selectedIds: Set<string>;
+  selectedArray: string[];
+  toggle: (runId: string) => void;
+  clear: () => void;
+}
+
+export const RunSelectionContext = createContext<RunSelectionValue | null>(null);
+
+export function useRunSelectionState(): RunSelectionValue {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   const toggle = useCallback((runId: string) => {
@@ -16,5 +25,15 @@ export function useRunSelection() {
 
   const selectedArray = useMemo(() => [...selectedIds], [selectedIds]);
 
-  return { selectedIds, selectedArray, toggle, clear } as const;
+  return { selectedIds, selectedArray, toggle, clear };
+}
+
+export function useRunSelection(): RunSelectionValue {
+  const ctx = useContext(RunSelectionContext);
+  const local = useRunSelectionState();
+  return ctx ?? local;
+}
+
+export function useRunSelectionHasProvider(): boolean {
+  return useContext(RunSelectionContext) !== null;
 }

@@ -19,7 +19,7 @@ import CardDetailModal from "./CardDetailModal";
 import SplitPane from "./SplitPane";
 import SeriesChip, { type SeriesRef } from "./SeriesChip";
 import Toggle from "./settings/Toggle";
-import { useRunSelection } from "../lib/use-run-selection";
+import { useRunSelection, useRunSelectionHasProvider } from "../lib/use-run-selection";
 import RunSelectionPanel from "./RunSelectionPanel";
 import StepSlider, { type XAxisMode } from "./StepSlider";
 
@@ -337,6 +337,7 @@ export default function AudioPlayerCard({ runId, metric, extraContexts = [], ext
   useRunMetadataVersion();
 
   const { selectedIds, selectedArray, toggle, clear } = useRunSelection();
+  const hasSelectionProvider = useRunSelectionHasProvider();
 
   const runQueries = useQueries({
     queries: allRunIds.map((rid) => ({
@@ -553,13 +554,15 @@ export default function AudioPlayerCard({ runId, metric, extraContexts = [], ext
 
       {!settings.collapsed && (<>
       {renderContent(false)}
-      <RunSelectionPanel
-        selectedRunIds={selectedArray}
-        allRunIds={allRunIds}
-        onClear={clear}
-        runInfo={runInfoMap}
-        label="Audio selection"
-      />
+      {!hasSelectionProvider && (
+        <RunSelectionPanel
+          selectedRunIds={selectedArray}
+          allRunIds={allRunIds}
+          onClear={clear}
+          runInfo={runInfoMap}
+          label="Audio selection"
+        />
+      )}
       <CardDetailModal
         open={expanded}
         onClose={() => setExpanded(false)}
@@ -577,13 +580,15 @@ export default function AudioPlayerCard({ runId, metric, extraContexts = [], ext
       >
         <div className="flex flex-col h-full">
           {renderContent(true)}
-          <RunSelectionPanel
-            selectedRunIds={selectedArray}
-            allRunIds={allRunIds}
-            onClear={clear}
-            runInfo={runInfoMap}
-            label="Audio selection"
-          />
+          {!hasSelectionProvider && (
+            <RunSelectionPanel
+              selectedRunIds={selectedArray}
+              allRunIds={allRunIds}
+              onClear={clear}
+              runInfo={runInfoMap}
+              label="Audio selection"
+            />
+          )}
         </div>
       </CardDetailModal>
 
