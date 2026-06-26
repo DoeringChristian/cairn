@@ -240,8 +240,8 @@ export default function ParallelCoordsCard({
     [settings.columns, updateSettings],
   );
 
-  // Drag-to-reorder state
   const [dragIdx, setDragIdx] = useState<number | null>(null);
+  const [dropIdx, setDropIdx] = useState<number | null>(null);
 
   const toggleColumnFlag = useCallback(
     (idx: number, flag: "log" | "invert") => {
@@ -445,27 +445,40 @@ export default function ParallelCoordsCard({
         {settings.columns.map((col, i) => (
           <div
             key={`${col.source}:${col.key}:${i}`}
-            draggable
-            onDragStart={(e) => {
-              setDragIdx(i);
-              e.dataTransfer.effectAllowed = "move";
-            }}
             onDragOver={(e) => {
+              if (dragIdx == null) return;
               e.preventDefault();
               e.dataTransfer.dropEffect = "move";
+              if (dropIdx !== i) setDropIdx(i);
             }}
+            onDragLeave={() => { if (dropIdx === i) setDropIdx(null); }}
             onDrop={(e) => {
               e.preventDefault();
-              if (dragIdx != null && dragIdx !== i) {
-                moveColumn(dragIdx, i);
-              }
+              if (dragIdx != null && dragIdx !== i) moveColumn(dragIdx, i);
               setDragIdx(null);
+              setDropIdx(null);
             }}
-            onDragEnd={() => setDragIdx(null)}
-            className={`mono flex items-center justify-between gap-1 rounded border border-border-subtle bg-bg px-2 py-1 text-xs text-fg-muted cursor-grab${dragIdx === i ? " opacity-50" : ""}`}
+            className={`mono flex items-center justify-between gap-1 rounded border px-2 py-1 text-xs text-fg-muted${
+              dragIdx === i ? " opacity-50 border-accent" : dropIdx === i ? " border-accent bg-accent/5" : " border-border-subtle bg-bg"
+            }`}
           >
             <span className="flex items-center gap-1.5 truncate">
-              <span className="text-fg-subtle select-none">{"\u2261"}</span>
+              <span
+                draggable
+                onDragStart={(e) => {
+                  e.dataTransfer.effectAllowed = "move";
+                  e.dataTransfer.setData("text/plain", String(i));
+                  const row = (e.target as HTMLElement).closest(".mono") as HTMLElement | null;
+                  if (row) e.dataTransfer.setDragImage(row, 20, 14);
+                  setDragIdx(i);
+                  setDropIdx(null);
+                }}
+                onDragEnd={() => { setDragIdx(null); setDropIdx(null); }}
+                className="cursor-grab active:cursor-grabbing select-none text-fg-subtle hover:text-fg"
+                title="Drag to reorder"
+              >
+                <i className="fa-solid fa-grip-vertical" aria-hidden="true" />
+              </span>
               <span className={`shrink-0 rounded px-1 py-0.5 text-[9px] ${col.source === "param" ? "bg-accent/10 text-accent" : "bg-green-100 text-green-700"}`}>
                 {col.source === "param" ? "P" : "M"}
               </span>
