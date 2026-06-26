@@ -9,14 +9,17 @@ import { useCardSettings, resolveCardHeight, type CardSettingsKey } from "../lib
 import { useSeriesDrop } from "../lib/use-series-drop";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
-import { seriesKey } from "../lib/series-utils";
+import { seriesKey, seriesLabel } from "../lib/series-utils";
 import type { SequenceMeta, SequenceResponse } from "../api/types";
 import AddToComparisonButton from "./AddToComparisonButton";
 import CardHeader from "./CardHeader";
 import CardResizeHandle from "./CardResizeHandle";
 import CardDetailModal from "./CardDetailModal";
 import SplitPane from "./SplitPane";
-import SeriesChipStrip from "./SeriesChipStrip";
+import SeriesChip, { type SeriesRef } from "./SeriesChip";
+import { useRunSelection } from "../lib/use-run-selection";
+import RunSelectionPanel from "./RunSelectionPanel";
+import { SERIES_COLORS } from "../lib/colors";
 import Toggle from "./settings/Toggle";
 import Select from "./settings/Select";
 import StepSlider, { type XAxisMode } from "./StepSlider";
@@ -288,7 +291,26 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
 
   const multipleRuns = allRunIds.length > 1;
 
+  const runQueries = useQueries({
+    queries: allRunIds.map((rid) => ({
+      queryKey: qk.run(rid),
+      queryFn: () => api.run(rid),
+      staleTime: 5_000,
+    })),
+  });
+
   useRunMetadataVersion();
+
+  const { selectedIds, selectedArray, toggle, clear } = useRunSelection();
+
+  const runInfoMap = useMemo(() => {
+    const m = new Map<string, { displayName?: string; projectId?: string }>();
+    allRunIds.forEach((rid, i) => {
+      const d = runQueries[i]?.data;
+      if (d) m.set(rid, { displayName: d.run.display_name || undefined, projectId: d.run.project_id });
+    });
+    return m;
+  }, [allRunIds, runQueries]);
 
   const subtitle =
     globalSteps.length > 0
@@ -384,12 +406,78 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
         onXAxisChange={(m) => updateSettings({ xAxis: m })}
         className="mt-3"
       />
-      <SeriesChipStrip
-        metrics={effectiveMetrics}
-        controlledSeries={controlledSeries}
-        runId={runId}
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {controlledSeries
+          ? (() => {
+              const seen = new Set<string>();
+              const tags: Array<{ name: string; color: string; firstIdx: number }> = [];
+              for (let i = 0; i < effectiveMetrics.length; i++) {
+                const m = effectiveMetrics[i]!;
+                if (seen.has(m.name)) continue;
+                seen.add(m.name);
+                tags.push({
+                  name: m.name,
+                  color: SERIES_COLORS[tags.length % SERIES_COLORS.length]!,
+                  firstIdx: i,
+                });
+              }
+              return tags.map((tag) => {
+                const m = effectiveMetrics[tag.firstIdx]!;
+                const chipRunId = m.runId ?? runId;
+                const ref: SeriesRef = {
+                  runId: m.runId,
+                  name: m.name,
+                  context_hash: m.context_hash,
+                };
+                return (
+                  <SeriesChip
+                    key={tag.name}
+                    series={ref}
+                    color={tag.color}
+                    label={tag.name}
+                    runId={runId}
+                    onClick={multipleRuns ? () => toggle(chipRunId) : undefined}
+                    selected={selectedIds.has(chipRunId)}
+                    onRemove={
+                      tags.length > 1
+                        ? () => updateSettings({ metrics: effectiveMetrics.filter((x) => x.name !== tag.name) })
+                        : undefined
+                    }
+                  />
+                );
+              });
+            })()
+          : effectiveMetrics.map((m, i) => {
+              const chipRunId = m.runId ?? runId;
+              const ref: SeriesRef = {
+                runId: m.runId,
+                name: m.name,
+                context_hash: m.context_hash,
+              };
+              return (
+                <SeriesChip
+                  key={seriesKey(m)}
+                  series={ref}
+                  color={SERIES_COLORS[i % SERIES_COLORS.length]!}
+                  label={seriesLabel(m.name, m.context_hash, chipRunId, multipleRuns, allRunIds)}
+                  runId={runId}
+                  onClick={multipleRuns ? () => toggle(chipRunId) : undefined}
+                  selected={selectedIds.has(chipRunId)}
+                  onRemove={
+                    effectiveMetrics.length > 1
+                      ? () => updateSettings({ metrics: effectiveMetrics.filter((_, j) => j !== i) })
+                      : undefined
+                  }
+                />
+              );
+            })}
+      </div>
+      <RunSelectionPanel
+        selectedRunIds={selectedArray}
         allRunIds={allRunIds}
-        onMetricsChange={(next) => updateSettings({ metrics: next })}
+        onClear={clear}
+        runInfo={runInfoMap}
+        label="Video selection"
       />
     </>
   );
@@ -458,6 +546,13 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
       >
         <div className="flex flex-col h-full">
           {renderContent(true)}
+          <RunSelectionPanel
+            selectedRunIds={selectedArray}
+            allRunIds={allRunIds}
+            onClear={clear}
+            runInfo={runInfoMap}
+            label="Video selection"
+          />
         </div>
       </CardDetailModal>
 

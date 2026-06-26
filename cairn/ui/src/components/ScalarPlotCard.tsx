@@ -33,6 +33,8 @@ import AddToComparisonButton from "./AddToComparisonButton";
 import CardHeader from "./CardHeader";
 import CardDetailModal from "./CardDetailModal";
 import CardResizeHandle from "./CardResizeHandle";
+import { useRunSelection } from "../lib/use-run-selection";
+import RunSelectionPanel from "./RunSelectionPanel";
 import MetricChips from "./settings/MetricChips";
 import NumberInput from "./settings/NumberInput";
 import Select from "./settings/Select";
@@ -768,6 +770,9 @@ export default function ScalarPlotCard({
     return () => el.removeEventListener("wheel", handler);
   }, [updateSettings, dynamicMargin.right]);
 
+  const toggleSelectionRef = useRef<(runId: string) => void>(() => {});
+  const seriesKeyToRunIdRef = useRef(new Map<string, string>());
+
   type PlotDragMode = "pan" | "select";
 
   const plotDragRef = useRef<{
@@ -966,6 +971,13 @@ export default function ScalarPlotCard({
               viewport: { xMin: xMinNew, xMax: xMaxNew, yMin: yMinNew, yMax: yMaxNew },
             });
           }
+        } else {
+          // Simple click (no drag) — toggle run selection for the hovered line.
+          const hk = hoveredSeriesRef.current;
+          if (hk) {
+            const rid = seriesKeyToRunIdRef.current.get(hk);
+            if (rid) toggleSelectionRef.current(rid);
+          }
         }
         setSelection(null);
       }
@@ -1033,6 +1045,29 @@ export default function ScalarPlotCard({
   // -------------------------------------------------------------------------
   const [expanded, setExpanded] = useState(false);
   const [hoveredSeries, setHoveredSeries] = useState<string | null>(null);
+  const hoveredSeriesRef = useRef<string | null>(null);
+  hoveredSeriesRef.current = hoveredSeries;
+
+  const { selectedIds, selectedArray, toggle, clear } = useRunSelection();
+
+  const seriesKeyToRunId = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const metric of effectiveMetrics) {
+      m.set(seriesKey(metric), metric.runId ?? runId);
+    }
+    return m;
+  }, [effectiveMetrics, runId]);
+  toggleSelectionRef.current = toggle;
+  seriesKeyToRunIdRef.current = seriesKeyToRunId;
+
+  const runInfoMap = useMemo(() => {
+    const m = new Map<string, { displayName?: string; projectId?: string }>();
+    uniqueRunIds.forEach((rid, i) => {
+      const d = runQueries[i]?.data;
+      if (d) m.set(rid, { displayName: d.run.display_name || undefined, projectId: d.run.project_id });
+    });
+    return m;
+  }, [uniqueRunIds, runQueries]);
 
   const compSeries = useMemo((): ComparisonSeriesRef[] => {
     return settingsRef.current.metrics.map((m) => ({
@@ -1320,7 +1355,7 @@ export default function ScalarPlotCard({
   const renderChart = (heightClass: string) => (
     <div
       ref={chartBoxRef}
-      className={`${heightClass} relative`}
+      className={`${heightClass} relative overflow-hidden`}
       style={{
         touchAction: "none",
         cursor: altDown ? "move" : "crosshair",
@@ -1440,13 +1475,27 @@ export default function ScalarPlotCard({
                   series={series}
                   promoted={settings.promotedSeries}
                   onToggle={togglePromote}
+                  onSelect={(key) => {
+                    const rid = seriesKeyToRunId.get(key);
+                    if (rid) toggle(rid);
+                  }}
+                  selectedKeys={(() => {
+                    if (selectedIds.size === 0) return undefined;
+                    const s = new Set<string>();
+                    for (const [k, rid] of seriesKeyToRunId) {
+                      if (selectedIds.has(rid)) s.add(k);
+                    }
+                    return s;
+                  })()}
                 />
               }
             />
           )}
           {series.map((s) => {
             const isHovered = hoveredSeries === s.key;
-            const isDimmed = hoveredSeries != null && !isHovered;
+            const sRunId = seriesKeyToRunId.get(s.key);
+            const isSelected = sRunId ? selectedIds.has(sRunId) : false;
+            const isDimmed = (hoveredSeries != null && !isHovered) || (selectedIds.size > 0 && !isSelected && !isHovered);
             const axisId = settings.promotedSeries[s.key] ? s.key : "__left__";
             return [
               // When smoothing is active, render the raw (unsmoothed) line first
@@ -1700,13 +1749,32 @@ export default function ScalarPlotCard({
         )}
       </div>
 
+      <RunSelectionPanel
+        selectedRunIds={selectedArray}
+        allRunIds={uniqueRunIds}
+        onClear={clear}
+        runInfo={runInfoMap}
+        label="Scalar plot selection"
+      />
+
       <CardDetailModal
         open={expanded}
         onClose={() => setExpanded(false)}
         title={settings.title ?? metric.name}
         settingsContent={settingsPanel}
       >
-        {renderChart("h-[calc(100vh-12rem)]")}
+        <div className="flex flex-col h-[calc(100vh-12rem)]">
+          <div className="flex-1 min-h-0">
+            {renderChart("h-full")}
+          </div>
+          <RunSelectionPanel
+            selectedRunIds={selectedArray}
+            allRunIds={uniqueRunIds}
+            onClear={clear}
+            runInfo={runInfoMap}
+            label="Scalar plot selection"
+          />
+        </div>
       </CardDetailModal>
       </>)}
       <CardResizeHandle
@@ -1734,29 +1802,41 @@ interface CustomLegendProps {
   series: LegendSeries[];
   promoted: Record<string, PromotedSeriesConfig>;
   onToggle: (key: string) => void;
+  onSelect?: (seriesKey: string) => void;
+  selectedKeys?: Set<string>;
 }
 
-function CustomLegend({ series, promoted, onToggle }: CustomLegendProps) {
+function CustomLegend({ series, promoted, onToggle, onSelect, selectedKeys }: CustomLegendProps) {
   return (
     <ul className="flex flex-wrap justify-center gap-x-3 gap-y-1">
       {series.map((s) => {
         const isPromoted = !!promoted[s.key];
+        const isSelected = selectedKeys?.has(s.key) ?? false;
+        const hasSel = selectedKeys != null && selectedKeys.size > 0;
         return (
           <li
             key={s.key}
             className="inline-flex items-center gap-1 text-[11px] text-fg-muted"
           >
-            <span
-              aria-hidden="true"
-              style={{
-                display: "inline-block",
-                width: 10,
-                height: 2,
-                background: s.color,
-                marginRight: 2,
-              }}
-            />
-            <span>{s.label}</span>
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 hover:text-fg"
+              style={{ opacity: hasSel && !isSelected ? 0.35 : 1 }}
+              onClick={onSelect ? () => onSelect(s.key) : undefined}
+              title="Click to select this run"
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  display: "inline-block",
+                  width: 10,
+                  height: isSelected ? 3 : 2,
+                  background: s.color,
+                  marginRight: 2,
+                }}
+              />
+              <span>{s.label}</span>
+            </button>
             <button
               type="button"
               onClick={() => onToggle(s.key)}

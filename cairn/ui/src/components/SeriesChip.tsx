@@ -24,6 +24,8 @@ interface Props {
   label: string;
   runId: string;
   onRemove?: () => void;
+  onClick?: () => void;
+  selected?: boolean;
 }
 
 export default function SeriesChip({
@@ -32,6 +34,8 @@ export default function SeriesChip({
   label,
   runId,
   onRemove,
+  onClick,
+  selected,
 }: Props) {
   const [dragging, setDragging] = useState(false);
 
@@ -58,9 +62,10 @@ export default function SeriesChip({
       draggable
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
-      className={`mono inline-flex items-center gap-1 rounded border border-border bg-bg px-2 py-0.5 text-xs text-fg-muted cursor-grab active:cursor-grabbing ${
+      onClick={onClick}
+      className={`mono inline-flex items-center gap-1 rounded border px-2 py-0.5 text-xs cursor-grab active:cursor-grabbing ${
         dragging ? "opacity-50" : ""
-      }`}
+      } ${selected ? "border-accent bg-accent/10 text-fg" : "border-border bg-bg text-fg-muted"} ${onClick ? "hover:border-accent/50" : ""}`}
       style={{ WebkitUserDrag: "element" } as React.CSSProperties}
     >
       <span

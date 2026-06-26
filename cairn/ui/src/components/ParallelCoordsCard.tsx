@@ -14,9 +14,11 @@ import type { Run } from "../api/types";
 import { useCardSettings, resolveCardHeight } from "../lib/card-settings";
 import { downloadCsv, exportChartFromContainer, safeName } from "../lib/download";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
+import { useRunSelection } from "../lib/use-run-selection";
 import CardHeader from "./CardHeader";
 import CardDetailModal from "./CardDetailModal";
 import CardResizeHandle from "./CardResizeHandle";
+import RunSelectionPanel from "./RunSelectionPanel";
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -256,6 +258,17 @@ export default function ParallelCoordsCard({
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
 
+  const { selectedIds, selectedArray, toggle, clear } = useRunSelection();
+
+  const runInfoMap = useMemo(() => {
+    const m = new Map<string, { displayName?: string; projectId?: string }>();
+    runIds.forEach((rid, i) => {
+      const d = runQueries[i]?.data;
+      if (d) m.set(rid, { displayName: d.run.display_name || undefined, projectId: d.run.project_id });
+    });
+    return m;
+  }, [runIds, runQueries]);
+
   // ---------------------------------------------------------------------------
   // SVG rendering
   // ---------------------------------------------------------------------------
@@ -341,7 +354,8 @@ export default function ParallelCoordsCard({
           const colorT = colorDomain ? normalize(colorColIdx, row.values[colorColIdx]) : null;
           const color = colorT != null ? viridis(colorT) : "#656d76";
           const isHovered = hoveredRun === row.runId;
-          const isDimmed = hoveredRun != null && !isHovered;
+          const isSelected = selectedIds.has(row.runId);
+          const isDimmed = (hoveredRun != null && !isHovered) || (selectedIds.size > 0 && !isSelected && !isHovered);
 
           const d = points.map((p, i) => `${i === 0 ? "M" : "L"}${p.x},${p.y}`).join(" ");
 
@@ -349,6 +363,7 @@ export default function ParallelCoordsCard({
             <g
               key={row.runId}
               className="cursor-pointer"
+              onClick={() => toggle(row.runId)}
               onMouseEnter={(e) => {
                 setHoveredRun(row.runId);
                 const svg = svgRef.current;
@@ -555,6 +570,14 @@ export default function ParallelCoordsCard({
             {renderTooltip()}
           </div>
 
+          <RunSelectionPanel
+            selectedRunIds={selectedArray}
+            allRunIds={runIds}
+            onClear={clear}
+            runInfo={runInfoMap}
+            label="Parallel coords selection"
+          />
+
           <CardDetailModal
             open={expanded}
             onClose={() => setExpanded(false)}
@@ -565,6 +588,13 @@ export default function ParallelCoordsCard({
               {renderPlot(900, 500)}
               {renderTooltip()}
             </div>
+            <RunSelectionPanel
+              selectedRunIds={selectedArray}
+              allRunIds={runIds}
+              onClear={clear}
+              runInfo={runInfoMap}
+              label="Parallel coords selection"
+            />
           </CardDetailModal>
         </>
       )}

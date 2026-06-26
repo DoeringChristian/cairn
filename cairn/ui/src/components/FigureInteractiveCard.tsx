@@ -12,11 +12,13 @@ import { useCardSettings, resolveCardHeight, type CardSettingsKey } from "../lib
 import { useSeriesDrop } from "../lib/use-series-drop";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
+import { useRunSelection } from "../lib/use-run-selection";
 import { seriesKey, seriesLabel } from "../lib/series-utils";
 import type { SequenceMeta, SequenceResponse } from "../api/types";
 import AddToComparisonButton from "./AddToComparisonButton";
 import CardHeader from "./CardHeader";
 import CardResizeHandle from "./CardResizeHandle";
+import RunSelectionPanel from "./RunSelectionPanel";
 import SplitPane from "./SplitPane";
 import SeriesChipStrip from "./SeriesChipStrip";
 import CardDetailModal from "./CardDetailModal";
@@ -600,6 +602,25 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
 
   const multipleRuns = allRunIds.length > 1;
 
+  const runQueries = useQueries({
+    queries: allRunIds.map((rid) => ({
+      queryKey: qk.run(rid),
+      queryFn: () => api.run(rid),
+      staleTime: 5_000,
+    })),
+  });
+
+  const { selectedIds, selectedArray, toggle, clear } = useRunSelection();
+
+  const runInfoMap = useMemo(() => {
+    const m = new Map<string, { displayName?: string; projectId?: string }>();
+    allRunIds.forEach((rid, i) => {
+      const d = runQueries[i]?.data;
+      if (d) m.set(rid, { displayName: d.run.display_name || undefined, projectId: d.run.project_id });
+    });
+    return m;
+  }, [allRunIds, runQueries]);
+
   // Re-render when run metadata cache is populated so labels update.
   useRunMetadataVersion();
 
@@ -752,6 +773,8 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
         runId={runId}
         allRunIds={allRunIds}
         onMetricsChange={(next) => updateSettings({ metrics: next })}
+        onClick={multipleRuns ? toggle : undefined}
+        selectedIds={selectedIds}
       />
     </>
   );
@@ -814,6 +837,13 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
 
       {!settings.collapsed && (<>
       {renderContent(false)}
+      <RunSelectionPanel
+        selectedRunIds={selectedArray}
+        allRunIds={allRunIds}
+        onClear={clear}
+        runInfo={runInfoMap}
+        label="Figure selection"
+      />
       {(() => {
         const settingsPanel = (
           <>
@@ -855,6 +885,13 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
             settingsContent={settingsPanel}
           >
             {renderContent(true)}
+            <RunSelectionPanel
+              selectedRunIds={selectedArray}
+              allRunIds={allRunIds}
+              onClear={clear}
+              runInfo={runInfoMap}
+              label="Figure selection"
+            />
           </CardDetailModal>
         );
       })()}

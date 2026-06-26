@@ -113,35 +113,35 @@ export default function CardResizeHandle({
         : gridCols;
       const colWidth = gridWidth / actualCols;
 
-      // Row siblings for height sync, all siblings for colSpan sync.
-      const cardTop = card.getBoundingClientRect().top;
-      const rowSiblings: HTMLElement[] = [];
+      // Collect all siblings for colSpan sync.
       const allSiblings: HTMLElement[] = [];
       if (gridEl) {
         for (const el of gridEl.querySelectorAll(".card")) {
-          if (el === card) continue;
-          allSiblings.push(el as HTMLElement);
-          if (Math.abs(el.getBoundingClientRect().top - cardTop) < 2) {
-            rowSiblings.push(el as HTMLElement);
-          }
+          if (el !== card) allSiblings.push(el as HTMLElement);
         }
       }
 
       let currentSpan = colSpan;
       let lastH = startHeight;
+      const heightTouched = new Set<HTMLElement>();
 
       const onPointerMove = (ev: PointerEvent) => {
-        // Height: continuous — set directly on DOM during drag to avoid
-        // React re-renders (which can interfere with zoom/pan transforms).
         const newH = Math.round(
           Math.min(MAX_HEIGHT, Math.max(minHeight, startHeight + (ev.clientY - startY))),
         );
         lastH = newH;
         card.style.height = `${newH}px`;
 
-        // Sync height to sibling cards in the same row.
-        for (const sib of rowSiblings) {
-          sib.style.height = `${newH}px`;
+        // Recompute row siblings dynamically (grid may have reflowed).
+        const cardTop = card.getBoundingClientRect().top;
+        for (const sib of allSiblings) {
+          if (Math.abs(sib.getBoundingClientRect().top - cardTop) < 2) {
+            sib.style.height = `${newH}px`;
+            heightTouched.add(sib);
+          } else if (heightTouched.has(sib)) {
+            sib.style.height = "";
+            heightTouched.delete(sib);
+          }
         }
 
         // Width: snap to valid column spans (skip on single-column mobile grid)

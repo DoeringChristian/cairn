@@ -1,18 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { qk } from "../api/query-keys";
 import type { Run } from "../api/types";
 import { useCardSettings, resolveCardHeight } from "../lib/card-settings";
 import { SERIES_COLORS, viridis } from "../lib/colors";
-import { createComparison } from "../lib/comparisons";
 import { downloadCsv, exportChartFromContainer, safeName } from "../lib/download";
-import { useProjectId } from "../lib/project-context";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
+import { useRunSelection } from "../lib/use-run-selection";
 import CardHeader from "./CardHeader";
 import CardDetailModal from "./CardDetailModal";
 import CardResizeHandle from "./CardResizeHandle";
+import RunSelectionPanel from "./RunSelectionPanel";
 import Toggle from "./settings/Toggle";
 import Select from "./settings/Select";
 
@@ -97,8 +96,6 @@ export default function ScatterPlotCard({
 }: Props) {
   useRunMetadataVersion();
 
-  const projectId = useProjectId();
-  const navigate = useNavigate();
   const [settings, updateSettings] = useCardSettings(settingsKey, DEFAULT_SETTINGS);
   const [expanded, setExpanded] = useState(false);
 
@@ -214,17 +211,17 @@ export default function ScatterPlotCard({
 
   const [hoveredPt, setHoveredPt] = useState<string | null>(null);
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number; containerW?: number; containerH?: number } | null>(null);
-  const [selectedPts, setSelectedPts] = useState<Set<string>>(new Set());
+  const { selectedIds, selectedArray, toggle, clear } = useRunSelection();
   const svgRef = useRef<SVGSVGElement | null>(null);
 
-  const toggleSelected = (runId: string) => {
-    setSelectedPts((prev) => {
-      const next = new Set(prev);
-      if (next.has(runId)) next.delete(runId);
-      else next.add(runId);
-      return next;
+  const runInfoMap = useMemo(() => {
+    const m = new Map<string, { displayName?: string; projectId?: string }>();
+    runIds.forEach((rid, i) => {
+      const d = runQueries[i]?.data;
+      if (d) m.set(rid, { displayName: d.run.display_name || undefined, projectId: d.run.project_id });
     });
-  };
+    return m;
+  }, [runIds, runQueries]);
 
   // Pareto front
   const paretoFront = useMemo(() => {
@@ -297,7 +294,7 @@ export default function ScatterPlotCard({
         <rect
           x={pad.left} y={pad.top} width={plotW} height={plotH}
           fill="transparent" stroke="#d0d7de"
-          onClick={() => setSelectedPts(new Set())}
+          onClick={clear}
           className="cursor-default"
         />
 
@@ -349,7 +346,7 @@ export default function ScatterPlotCard({
             color = SERIES_COLORS[i % SERIES_COLORS.length];
           }
           const isHovered = hoveredPt === pt.runId;
-          const isSelected = selectedPts.has(pt.runId);
+          const isSelected = selectedIds.has(pt.runId);
           const isOnPareto = paretoSet.has(pt.runId);
           return (
             <circle
@@ -361,7 +358,7 @@ export default function ScatterPlotCard({
               stroke={isSelected ? "var(--color-accent, #0969da)" : isHovered ? "#1f2328" : "white"}
               strokeWidth={isSelected ? 2.5 : isHovered ? 2 : 1.5}
               className="cursor-pointer"
-              onClick={() => toggleSelected(pt.runId)}
+              onClick={() => toggle(pt.runId)}
               onMouseEnter={(e) => {
                 setHoveredPt(pt.runId);
                 const container = (e.currentTarget as SVGElement).closest('[data-scatter-container]') as HTMLElement | null;
@@ -532,64 +529,6 @@ export default function ScatterPlotCard({
     );
   };
 
-  const renderSelectedPanel = () => {
-    if (selectedPts.size === 0) return null;
-    const selectedArr = scatterPoints.filter((p) => selectedPts.has(p.runId));
-    return (
-      <div className="mt-2 rounded border border-border p-2 text-xs">
-        <div className="flex items-center justify-between mb-1">
-          <span className="text-fg-muted">{selectedArr.length} run{selectedArr.length !== 1 ? "s" : ""} selected</span>
-          <div className="flex items-center gap-1">
-            {projectId && selectedArr.length >= 2 && (
-              <button
-                type="button"
-                className="btn text-xs px-2 py-0.5"
-                onClick={() => {
-                  const ids = selectedArr.map((p) => p.runId);
-                  const cmp = createComparison(projectId, `Scatter selection (${ids.length} runs)`, ids);
-                  navigate(`/p/${projectId}/compare?id=${cmp.id}`);
-                }}
-              >
-                <i className="fa-solid fa-code-compare mr-1" />
-                Compare
-              </button>
-            )}
-            <button
-              type="button"
-              className="text-fg-muted hover:text-fg px-1"
-              onClick={() => setSelectedPts(new Set())}
-              title="Clear selection"
-            >
-              <i className="fa-solid fa-xmark" />
-            </button>
-          </div>
-        </div>
-        <div className="flex flex-col gap-0.5 max-h-32 overflow-y-auto">
-          {selectedArr.map((pt) => {
-            const runData = runQueries[runIds.indexOf(pt.runId)]?.data;
-            return (
-              <div key={pt.runId} className="flex items-center justify-between gap-2">
-                <div className="truncate">
-                  <span className="font-semibold">{runData?.run.display_name || shortRunLabel(pt.runId, runIds)}</span>
-                  <span className="ml-1 text-fg-muted mono">{pt.runId.slice(0, 8)}</span>
-                  <span className="ml-2 text-fg-subtle">{settings.xAxis?.key}: {pt.x.toPrecision(4)}</span>
-                  <span className="ml-2 text-fg-subtle">{settings.yAxis?.key}: {pt.y.toPrecision(4)}</span>
-                </div>
-                <a
-                  href={`/p/${runData?.run.project_id}/r/${pt.runId}`}
-                  className="text-fg-muted hover:text-fg shrink-0"
-                  title="Open run"
-                >
-                  <i className="fa-solid fa-arrow-up-right-from-square" />
-                </a>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    );
-  };
-
   return (
     <div
       ref={cardRef}
@@ -628,7 +567,22 @@ export default function ScatterPlotCard({
             {size.w > 0 && size.h > 0 && renderPlot(size.w, size.h)}
             {renderTooltip()}
           </div>
-          {renderSelectedPanel()}
+          <RunSelectionPanel
+            selectedRunIds={selectedArray}
+            allRunIds={runIds}
+            onClear={clear}
+            runInfo={runInfoMap}
+            renderExtra={(rid) => {
+              const pt = scatterPoints.find(p => p.runId === rid);
+              return pt ? (
+                <>
+                  <span className="ml-2 text-fg-subtle">{settings.xAxis?.key}: {pt.x.toPrecision(4)}</span>
+                  <span className="ml-2 text-fg-subtle">{settings.yAxis?.key}: {pt.y.toPrecision(4)}</span>
+                </>
+              ) : null;
+            }}
+            label="Scatter selection"
+          />
 
           <CardDetailModal
             open={expanded}
@@ -639,7 +593,22 @@ export default function ScatterPlotCard({
             <div data-scatter-container className="relative h-[calc(100vh-12rem)] flex flex-col">
               {renderPlot(900, 500)}
               {renderTooltip()}
-              {renderSelectedPanel()}
+              <RunSelectionPanel
+                selectedRunIds={selectedArray}
+                allRunIds={runIds}
+                onClear={clear}
+                runInfo={runInfoMap}
+                renderExtra={(rid) => {
+                  const pt = scatterPoints.find(p => p.runId === rid);
+                  return pt ? (
+                    <>
+                      <span className="ml-2 text-fg-subtle">{settings.xAxis?.key}: {pt.x.toPrecision(4)}</span>
+                      <span className="ml-2 text-fg-subtle">{settings.yAxis?.key}: {pt.y.toPrecision(4)}</span>
+                    </>
+                  ) : null;
+                }}
+                label="Scatter selection"
+              />
             </div>
           </CardDetailModal>
         </>

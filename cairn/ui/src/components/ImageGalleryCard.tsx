@@ -24,8 +24,10 @@ import CardDetailModal from "./CardDetailModal";
 import AddToComparisonButton from "./AddToComparisonButton";
 import CardHeader from "./CardHeader";
 import CardResizeHandle from "./CardResizeHandle";
-import { CAIRN_SERIES_MIME } from "./SeriesChip";
-import SeriesChipStrip from "./SeriesChipStrip";
+import SeriesChip, { CAIRN_SERIES_MIME, type SeriesRef } from "./SeriesChip";
+import { SERIES_COLORS } from "../lib/colors";
+import { useRunSelection } from "../lib/use-run-selection";
+import RunSelectionPanel from "./RunSelectionPanel";
 import Select from "./settings/Select";
 import Slider from "./settings/Slider";
 import Toggle from "./settings/Toggle";
@@ -955,6 +957,25 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     return Array.from(seen);
   }, [effectiveMetrics, runId]);
 
+  const runQueries = useQueries({
+    queries: availableRunIds.map((rid) => ({
+      queryKey: qk.run(rid),
+      queryFn: () => api.run(rid),
+      staleTime: 5_000,
+    })),
+  });
+
+  const { selectedIds, selectedArray, toggle, clear } = useRunSelection();
+
+  const runInfoMap = useMemo(() => {
+    const m = new Map<string, { displayName?: string; projectId?: string }>();
+    availableRunIds.forEach((rid, i) => {
+      const d = runQueries[i]?.data;
+      if (d) m.set(rid, { displayName: d.run.display_name || undefined, projectId: d.run.project_id });
+    });
+    return m;
+  }, [availableRunIds, runQueries]);
+
   // -----------------------------------------------------------------------
   // Settings refs for non-passive handlers
   // -----------------------------------------------------------------------
@@ -1809,13 +1830,79 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
         <div className="text-sm text-fg-muted">no image logged yet</div>
       )}
 
-      <SeriesChipStrip
-        metrics={effectiveMetrics}
-        controlledSeries={controlledSeries}
-        runId={runId}
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {controlledSeries
+          ? (() => {
+              const seen = new Set<string>();
+              const tags: Array<{ name: string; color: string; firstIdx: number }> = [];
+              for (let i = 0; i < effectiveMetrics.length; i++) {
+                const m = effectiveMetrics[i]!;
+                if (seen.has(m.name)) continue;
+                seen.add(m.name);
+                tags.push({
+                  name: m.name,
+                  color: SERIES_COLORS[tags.length % SERIES_COLORS.length]!,
+                  firstIdx: i,
+                });
+              }
+              return tags.map((tag) => {
+                const m = effectiveMetrics[tag.firstIdx]!;
+                const chipRunId = m.runId ?? runId;
+                const ref: SeriesRef = {
+                  runId: m.runId,
+                  name: m.name,
+                  context_hash: m.context_hash,
+                };
+                return (
+                  <SeriesChip
+                    key={tag.name}
+                    series={ref}
+                    color={tag.color}
+                    label={tag.name}
+                    runId={runId}
+                    onClick={multipleRuns ? () => toggle(chipRunId) : undefined}
+                    selected={selectedIds.has(chipRunId)}
+                    onRemove={
+                      tags.length > 1
+                        ? () => updateSettings({ metrics: effectiveMetrics.filter((x) => x.name !== tag.name), baselineIndex: undefined, paneWidths: undefined })
+                        : undefined
+                    }
+                  />
+                );
+              });
+            })()
+          : effectiveMetrics.map((m, i) => {
+              const chipRunId = m.runId ?? runId;
+              const ref: SeriesRef = {
+                runId: m.runId,
+                name: m.name,
+                context_hash: m.context_hash,
+              };
+              return (
+                <SeriesChip
+                  key={seriesKey(m)}
+                  series={ref}
+                  color={SERIES_COLORS[i % SERIES_COLORS.length]!}
+                  label={seriesLabel(m, runId, multipleRuns, availableRunIds)}
+                  runId={runId}
+                  onClick={multipleRuns ? () => toggle(chipRunId) : undefined}
+                  selected={selectedIds.has(chipRunId)}
+                  onRemove={
+                    effectiveMetrics.length > 1
+                      ? () => updateSettings({ metrics: effectiveMetrics.filter((_, j) => j !== i), baselineIndex: undefined, paneWidths: undefined })
+                      : undefined
+                  }
+                />
+              );
+            })}
+      </div>
+
+      <RunSelectionPanel
+        selectedRunIds={selectedArray}
         allRunIds={availableRunIds}
-        onMetricsChange={(next) => updateSettings({ metrics: next, baselineIndex: undefined, paneWidths: undefined })}
-        labelFn={(m, rid, multipleRuns, ids) => seriesLabel(m, rid, multipleRuns, ids)}
+        onClear={clear}
+        runInfo={runInfoMap}
+        label="Image selection"
       />
 
       </>)}
@@ -1988,6 +2075,13 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                 xAxis={settings.xAxis}
                 onXAxisChange={(m) => updateSettings({ xAxis: m })}
                 className="mt-3"
+              />
+              <RunSelectionPanel
+                selectedRunIds={selectedArray}
+                allRunIds={availableRunIds}
+                onClear={clear}
+                runInfo={runInfoMap}
+                label="Image selection"
               />
             </div>
           </CardDetailModal>
