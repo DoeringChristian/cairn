@@ -496,7 +496,7 @@ function OverlayComparePane({
         REF
       </span>
       <span
-        className="absolute bottom-1 right-1 z-10 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm flex items-center gap-1"
+        className={`absolute bottom-1 right-1 z-10 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm flex items-center gap-1${isDraggable && !altDown ? " cairn-drag-grip" : ""}`}
         draggable={isDraggable && !altDown}
         onDragStart={onDragStart}
         style={{ cursor: isDraggable && !altDown ? "grab" : undefined }}

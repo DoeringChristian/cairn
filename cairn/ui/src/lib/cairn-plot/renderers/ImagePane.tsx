@@ -532,7 +532,7 @@ export default function ImagePane({
         </div>
       </div>
       <span
-        className="absolute bottom-1 left-1 z-10 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm flex items-center gap-1"
+        className={`absolute bottom-1 left-1 z-10 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm flex items-center gap-1${isDraggable ? " cairn-drag-grip" : ""}`}
         draggable={isDraggable}
         onDragStart={onDragStart}
         style={{ cursor: isDraggable ? "grab" : undefined }}
