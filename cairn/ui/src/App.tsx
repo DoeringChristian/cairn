@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, Outlet } from "react-router-dom";
 import { useHealth } from "./api/hooks";
 import ServerStatus from "./components/ServerStatus";
-import { getRenderMode, setRenderMode, type RenderMode } from "./lib/render-mode";
+import { getRenderMode, setRenderMode, type RenderMode } from "./lib/cairn-plot";
 import { getStreamMode, setStreamMode, type StreamMode } from "./lib/stream-mode";
 
 export default function App() {

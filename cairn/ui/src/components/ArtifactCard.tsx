@@ -8,10 +8,9 @@ import { useSequence, useArtifacts } from "../api/hooks";
 import { api } from "../api/client";
 import { safeJsonParse } from "../lib/format";
 import { downloadArtifact, artifactFilename } from "../lib/download";
-import { useCardSettings, resolveCardHeight, type CardSettingsKey } from "../lib/card-settings";
+import { useCardSettings, type CardSettingsKey } from "../lib/card-settings";
 import type { SequenceMeta } from "../api/types";
-import CardHeader from "./CardHeader";
-import CardResizeHandle from "./CardResizeHandle";
+import CardShell from "./CardShell";
 import StepSlider, { type XAxisMode } from "./StepSlider";
 
 interface Props {
@@ -98,30 +97,20 @@ export default function ArtifactCard({ runId, metric, settingsKeyOverride, onRem
   const cardRef = useRef<HTMLDivElement>(null);
 
   return (
-    <div
-      ref={cardRef}
-      className="card p-4 flex flex-col"
-      style={{
-        position: "relative",
-        height: resolveCardHeight(settings, undefined),
-        gridColumn: `span ${settings.colSpan ?? 3}`,
-      }}
-    >
-      <CardHeader
-        title={settings.title ?? metric.name}
-        onTitleChange={(t) => updateSettings({ title: t || undefined })}
-        subtitle={subtitle}
-        collapsed={settings.collapsed}
-        onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
-        onRemove={onRemove}
-        onDownload={current?.artifact_hash ? () => downloadArtifact(api.artifactUrl(current.artifact_hash!), artifactFilename(metric.name, current.step, "application/python-pickle")) : undefined}
-      >
+    <CardShell
+      cardRef={cardRef}
+      settings={settings}
+      updateSettings={updateSettings}
+      title={metric.name}
+      subtitle={subtitle}
+      onRemove={onRemove}
+      onDownload={current?.artifact_hash ? () => downloadArtifact(api.artifactUrl(current.artifact_hash!), artifactFilename(metric.name, current.step, "application/python-pickle")) : undefined}
+      headerActions={
         <span className="inline-flex items-center rounded bg-bg-hover px-1.5 py-0.5 text-[10px] text-fg-muted">
           artifact
         </span>
-      </CardHeader>
-
-      {!settings.collapsed && (
+      }
+    >
         <>
           {current?.artifact_hash ? (() => {
             const mime = meta.mime_type ?? current.artifact_mime ?? "";
@@ -207,15 +196,6 @@ export default function ArtifactCard({ runId, metric, settingsKeyOverride, onRem
             className="mt-3"
           />
         </>
-      )}
-
-      <CardResizeHandle
-        height={settings.height}
-        onHeightChange={(h) => updateSettings({ height: h })}
-        colSpan={settings.colSpan ?? 3}
-        onColSpanChange={(s) => updateSettings({ colSpan: s })}
-        onPerColHeightChange={(p) => updateSettings(p as Partial<ArtifactSettings>)}
-      />
-    </div>
+    </CardShell>
   );
 }

@@ -1,16 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { qk } from "../api/query-keys";
 import type { Run } from "../api/types";
-import { useCardSettings, resolveCardHeight } from "../lib/card-settings";
-import { SERIES_COLORS, viridis } from "../lib/colors";
+import { useCardSettings } from "../lib/card-settings";
+import { ScatterPlot, type ScatterPoint, type ParetoDirection } from "../lib/cairn-plot";
 import { downloadCsv, exportChartFromContainer, safeName } from "../lib/download";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import { useRunSelection, useRunSelectionHasProvider } from "../lib/use-run-selection";
-import CardHeader from "./CardHeader";
+import CardShell from "./CardShell";
 import CardDetailModal from "./CardDetailModal";
-import CardResizeHandle from "./CardResizeHandle";
 import RunSelectionPanel from "./RunSelectionPanel";
 import Toggle from "./settings/Toggle";
 import Select from "./settings/Select";
@@ -23,8 +22,6 @@ interface AxisDef {
   key: string;
   source: "param" | "metric";
 }
-
-type ParetoDirection = "min-min" | "min-max" | "max-min" | "max-max";
 
 interface ScatterSettings {
   version: 1;
@@ -49,33 +46,6 @@ const DEFAULT_SETTINGS: ScatterSettings = {
   yAxis: null,
   colorAxis: null,
 };
-
-// ---------------------------------------------------------------------------
-// Pareto front computation
-// ---------------------------------------------------------------------------
-type ScatterPt = { runId: string; x: number; y: number; color: number | null };
-
-function computeParetoFront(points: ScatterPt[], direction: ParetoDirection): ScatterPt[] {
-  if (points.length === 0) return [];
-  const minX = direction.startsWith("min");
-  const minY = direction.endsWith("min");
-
-  const sorted = [...points].sort((a, b) => {
-    const cmp = minX ? a.x - b.x : b.x - a.x;
-    return cmp !== 0 ? cmp : (minY ? a.y - b.y : b.y - a.y);
-  });
-
-  const front: ScatterPt[] = [];
-  let bestY = minY ? Infinity : -Infinity;
-  for (const pt of sorted) {
-    const dominated = minY ? pt.y > bestY : pt.y < bestY;
-    if (!dominated) {
-      front.push(pt);
-      bestY = pt.y;
-    }
-  }
-  return front;
-}
 
 // ---------------------------------------------------------------------------
 // Component
@@ -132,7 +102,7 @@ export default function ScatterPlotCard({
   });
 
   // Build scatter data
-  const { points: scatterPoints, xDomain, yDomain, colorDomain } = useMemo(() => {
+  const scatterPoints = useMemo(() => {
     const resolve = (rid: string, axis: AxisDef | null): number | null => {
       if (!axis) return null;
       if (axis.source === "param") {
@@ -152,29 +122,15 @@ export default function ScatterPlotCard({
       return pts[pts.length - 1]?.scalar_value ?? null;
     };
 
-    const pts: ScatterPt[] = [];
+    const pts: ScatterPoint[] = [];
     for (const rid of runIds) {
       const x = resolve(rid, settings.xAxis);
       const y = resolve(rid, settings.yAxis);
       if (x == null || y == null) continue;
       const c = resolve(rid, settings.colorAxis);
-      pts.push({ runId: rid, x, y, color: c });
+      pts.push({ id: rid, x, y, color: c, label: shortRunLabel(rid, runIds) });
     }
-
-    const xMin = pts.length ? Math.min(...pts.map((p) => p.x)) : 0;
-    const xMax = pts.length ? Math.max(...pts.map((p) => p.x)) : 1;
-    const yMin = pts.length ? Math.min(...pts.map((p) => p.y)) : 0;
-    const yMax = pts.length ? Math.max(...pts.map((p) => p.y)) : 1;
-    const cVals = pts.map((p) => p.color).filter((v): v is number => v != null);
-    const cMin = cVals.length ? Math.min(...cVals) : 0;
-    const cMax = cVals.length ? Math.max(...cVals) : 1;
-
-    return {
-      points: pts,
-      xDomain: { min: xMin === xMax ? xMin - 0.5 : xMin, max: xMin === xMax ? xMax + 0.5 : xMax },
-      yDomain: { min: yMin === yMax ? yMin - 0.5 : yMin, max: yMin === yMax ? yMax + 0.5 : yMax },
-      colorDomain: { min: cMin === cMax ? cMin - 0.5 : cMin, max: cMin === cMax ? cMax + 0.5 : cMax },
-    };
+    return pts;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     settings.xAxis, settings.yAxis, settings.colorAxis,
@@ -209,11 +165,8 @@ export default function ScatterPlotCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seqQueries.map((q) => q.dataUpdatedAt).join("|")]);
 
-  const [hoveredPt, setHoveredPt] = useState<string | null>(null);
-  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number; containerW?: number; containerH?: number } | null>(null);
   const { selectedIds, selectedArray, toggle, clear } = useRunSelection();
   const hasSelectionProvider = useRunSelectionHasProvider();
-  const svgRef = useRef<SVGSVGElement | null>(null);
 
   const runInfoMap = useMemo(() => {
     const m = new Map<string, { displayName?: string; projectId?: string }>();
@@ -223,198 +176,6 @@ export default function ScatterPlotCard({
     });
     return m;
   }, [runIds, runQueries]);
-
-  // Pareto front
-  const paretoFront = useMemo(() => {
-    if (!settings.showPareto) return [];
-    return computeParetoFront(scatterPoints, settings.paretoDirection ?? "min-min");
-  }, [scatterPoints, settings.showPareto, settings.paretoDirection]);
-
-  // ---------------------------------------------------------------------------
-  // SVG rendering
-  // ---------------------------------------------------------------------------
-  const renderPlot = (width: number, height: number) => {
-    if (!settings.xAxis || !settings.yAxis) {
-      return (
-        <div className="flex items-center justify-center h-full text-sm text-fg-muted">
-          Select X and Y axes in settings to create the scatter plot.
-        </div>
-      );
-    }
-
-    const hasColorbar = !!settings.colorAxis;
-    const pad = { top: 20, bottom: 40, left: 55, right: hasColorbar ? 70 : 30 };
-    const plotW = width - pad.left - pad.right;
-    const plotH = height - pad.top - pad.bottom;
-    if (plotW <= 0 || plotH <= 0) return null;
-
-    const logX = (v: number) => Math.log10(Math.max(v, 1e-10));
-    const logY = (v: number) => Math.log10(Math.max(v, 1e-10));
-
-    const xMin = settings.xLog ? logX(xDomain.min) : xDomain.min;
-    const xMax = settings.xLog ? logX(xDomain.max) : xDomain.max;
-    const yMin = settings.yLog ? logY(yDomain.min) : yDomain.min;
-    const yMax = settings.yLog ? logY(yDomain.max) : yDomain.max;
-
-    const xRange = xMax - xMin || 1;
-    const yRange = yMax - yMin || 1;
-
-    const toX = (v: number) => {
-      const mapped = settings.xLog ? logX(v) : v;
-      return pad.left + ((mapped - xMin) / xRange) * plotW;
-    };
-    const toY = (v: number) => {
-      const mapped = settings.yLog ? logY(v) : v;
-      return pad.top + plotH - ((mapped - yMin) / yRange) * plotH;
-    };
-
-    // Build Pareto step-line path
-    let paretoPath = "";
-    if (settings.showPareto && paretoFront.length >= 2) {
-      const dir = settings.paretoDirection ?? "min-min";
-      const sorted = [...paretoFront].sort((a, b) => a.x - b.x);
-      const parts: string[] = [`M${toX(sorted[0].x)},${toY(sorted[0].y)}`];
-      for (let i = 1; i < sorted.length; i++) {
-        const prev = sorted[i - 1];
-        const curr = sorted[i];
-        if (dir.endsWith("min")) {
-          parts.push(`L${toX(curr.x)},${toY(prev.y)}`);
-        } else {
-          parts.push(`L${toX(prev.x)},${toY(curr.y)}`);
-        }
-        parts.push(`L${toX(curr.x)},${toY(curr.y)}`);
-      }
-      paretoPath = parts.join(" ");
-    }
-
-    const paretoSet = new Set(paretoFront.map((p) => p.runId));
-
-    return (
-      <svg ref={svgRef} width={width} height={height} className="select-none" onMouseLeave={() => { setHoveredPt(null); setTooltipPos(null); }}>
-        {/* Grid */}
-        <rect
-          x={pad.left} y={pad.top} width={plotW} height={plotH}
-          fill="transparent" stroke="#d0d7de"
-          onClick={clear}
-          className="cursor-default"
-        />
-
-        {/* Axis labels */}
-        <text x={pad.left + plotW / 2} y={height - 4} textAnchor="middle" className="text-[10px] fill-fg-muted" style={{ fontSize: 10 }}>
-          {settings.xAxis.key}
-        </text>
-        <text x={12} y={pad.top + plotH / 2} textAnchor="middle" className="text-[10px] fill-fg-muted" style={{ fontSize: 10 }} transform={`rotate(-90, 12, ${pad.top + plotH / 2})`}>
-          {settings.yAxis.key}
-        </text>
-
-        {/* Axis ticks */}
-        {[0, 0.25, 0.5, 0.75, 1].map((t) => {
-          const xTickLog = xMin + t * xRange;
-          const yTickLog = yMin + t * yRange;
-          const xLabel = settings.xLog ? Math.pow(10, xTickLog).toPrecision(3) : (xDomain.min + t * (xDomain.max - xDomain.min)).toPrecision(3);
-          const yLabel = settings.yLog ? Math.pow(10, yTickLog).toPrecision(3) : (yDomain.min + t * (yDomain.max - yDomain.min)).toPrecision(3);
-          const xPixel = pad.left + t * plotW;
-          const yPixel = pad.top + plotH - t * plotH;
-          return (
-            <g key={t}>
-              <text x={xPixel} y={pad.top + plotH + 14} textAnchor="middle" className="mono text-[8px] fill-fg-subtle" style={{ fontSize: 8 }}>{xLabel}</text>
-              <text x={pad.left - 4} y={yPixel + 3} textAnchor="end" className="mono text-[8px] fill-fg-subtle" style={{ fontSize: 8 }}>{yLabel}</text>
-            </g>
-          );
-        })}
-
-        {/* Pareto front */}
-        {paretoPath && (
-          <path
-            d={paretoPath}
-            fill="none"
-            stroke="var(--color-accent, #0969da)"
-            strokeWidth={1.5}
-            strokeDasharray="6 3"
-            opacity={0.7}
-          />
-        )}
-
-        {/* Points */}
-        {scatterPoints.map((pt, i) => {
-          const cx = toX(pt.x);
-          const cy = toY(pt.y);
-          let color: string;
-          if (settings.colorAxis && pt.color != null) {
-            const t = (pt.color - colorDomain.min) / (colorDomain.max - colorDomain.min);
-            color = viridis(t);
-          } else {
-            color = SERIES_COLORS[i % SERIES_COLORS.length];
-          }
-          const isHovered = hoveredPt === pt.runId;
-          const isSelected = selectedIds.has(pt.runId);
-          const isOnPareto = paretoSet.has(pt.runId);
-          return (
-            <circle
-              key={pt.runId}
-              cx={cx}
-              cy={cy}
-              r={isHovered ? 7 : isOnPareto && settings.showPareto ? 6 : 5}
-              fill={color}
-              stroke={isSelected ? "var(--color-accent, #0969da)" : isHovered ? "#1f2328" : "white"}
-              strokeWidth={isSelected ? 2.5 : isHovered ? 2 : 1.5}
-              className="cursor-pointer"
-              onClick={() => toggle(pt.runId)}
-              onMouseEnter={(e) => {
-                setHoveredPt(pt.runId);
-                const container = (e.currentTarget as SVGElement).closest('[data-scatter-container]') as HTMLElement | null;
-                if (container) {
-                  const rect = container.getBoundingClientRect();
-                  setTooltipPos({ x: e.clientX - rect.left, y: e.clientY - rect.top, containerW: rect.width, containerH: rect.height });
-                }
-              }}
-              onMouseMove={(e) => {
-                const container = (e.currentTarget as SVGElement).closest('[data-scatter-container]') as HTMLElement | null;
-                if (container) {
-                  const rect = container.getBoundingClientRect();
-                  setTooltipPos({ x: e.clientX - rect.left, y: e.clientY - rect.top, containerW: rect.width, containerH: rect.height });
-                }
-              }}
-              onMouseLeave={() => { setHoveredPt(null); setTooltipPos(null); }}
-            />
-          );
-        })}
-
-        {/* Colorbar */}
-        {hasColorbar && (() => {
-          const barX = width - pad.right + 10;
-          const barW = 12;
-          const gradId = "scatter-colorbar-grad";
-          const cMid = (colorDomain.min + colorDomain.max) / 2;
-          return (
-            <>
-              <defs>
-                <linearGradient id={gradId} x1="0" y1="1" x2="0" y2="0">
-                  <stop offset="0%" stopColor={viridis(0)} />
-                  <stop offset="50%" stopColor={viridis(0.5)} />
-                  <stop offset="100%" stopColor={viridis(1)} />
-                </linearGradient>
-              </defs>
-              <rect x={barX} y={pad.top} width={barW} height={plotH} fill={`url(#${gradId})`} stroke="#d0d7de" />
-              <text x={barX + barW + 4} y={pad.top + plotH + 3} textAnchor="start" className="mono text-[8px] fill-fg-subtle" style={{ fontSize: 8 }}>{colorDomain.min.toPrecision(3)}</text>
-              <text x={barX + barW + 4} y={pad.top + plotH / 2 + 3} textAnchor="start" className="mono text-[8px] fill-fg-subtle" style={{ fontSize: 8 }}>{cMid.toPrecision(3)}</text>
-              <text x={barX + barW + 4} y={pad.top + 3} textAnchor="start" className="mono text-[8px] fill-fg-subtle" style={{ fontSize: 8 }}>{colorDomain.max.toPrecision(3)}</text>
-              <text
-                x={barX + barW + 18}
-                y={pad.top + plotH / 2}
-                textAnchor="middle"
-                className="text-[9px] fill-fg-muted"
-                style={{ fontSize: 9 }}
-                transform={`rotate(90, ${barX + barW + 18}, ${pad.top + plotH / 2})`}
-              >
-                {settings.colorAxis!.key}
-              </text>
-            </>
-          );
-        })()}
-      </svg>
-    );
-  };
 
   // ---------------------------------------------------------------------------
   // Settings panel
@@ -488,144 +249,96 @@ export default function ScatterPlotCard({
   );
 
   // ---------------------------------------------------------------------------
-  // Render helpers
+  // Render
   // ---------------------------------------------------------------------------
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [size, setSize] = useState({ w: 0, h: 0 });
-
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver((entries) => {
-      for (const entry of entries) setSize({ w: entry.contentRect.width, h: entry.contentRect.height });
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
   const cardRef = useRef<HTMLDivElement>(null);
 
-  const renderTooltip = () => {
-    if (!hoveredPt || !tooltipPos) return null;
-    const pt = scatterPoints.find((p) => p.runId === hoveredPt);
-    if (!pt) return null;
-    const label = shortRunLabel(pt.runId, runIds);
-    const cW = tooltipPos.containerW ?? 0;
-    const cH = tooltipPos.containerH ?? 0;
-    const flipX = tooltipPos.x + 234 > cW;
-    const flipY = tooltipPos.y > cH - 100;
-    return (
-      <div
-        className="pointer-events-none absolute z-50 rounded border border-border bg-bg-elevated shadow-lg p-2 text-xs w-fit max-w-[220px]"
-        style={{
-          left: flipX ? Math.max(4, tooltipPos.x - 224) : tooltipPos.x + 14,
-          top: flipY ? tooltipPos.y - 80 : tooltipPos.y - 8,
-        }}
-      >
-        <div className="font-semibold mono mb-1 truncate">{label}</div>
-        <div className="flex justify-between gap-2"><span className="text-fg-muted">{settings.xAxis!.key}</span><span className="mono">{pt.x.toPrecision(4)}</span></div>
-        <div className="flex justify-between gap-2"><span className="text-fg-muted">{settings.yAxis!.key}</span><span className="mono">{pt.y.toPrecision(4)}</span></div>
-        {settings.colorAxis && <div className="flex justify-between gap-2"><span className="text-fg-muted">{settings.colorAxis.key}</span><span className="mono">{pt.color?.toPrecision(4) ?? "--"}</span></div>}
-      </div>
-    );
+  const noAxes = !settings.xAxis || !settings.yAxis;
+
+  const plotProps = {
+    points: scatterPoints,
+    xLabel: settings.xAxis?.key,
+    yLabel: settings.yAxis?.key,
+    colorLabel: settings.colorAxis?.key,
+    xLog: settings.xLog,
+    yLog: settings.yLog,
+    pareto: settings.showPareto
+      ? { show: true, direction: settings.paretoDirection ?? ("min-min" as ParetoDirection) }
+      : undefined,
+    selectedIds,
+    onClick: (id: string) => toggle(id),
+    onBackgroundClick: clear,
   };
 
-  return (
-    <div
-      ref={cardRef}
-      className="card p-4 flex flex-col"
-      style={{
-        height: resolveCardHeight(settings, 350),
-        position: "relative",
-        gridColumn: `span ${settings.colSpan ?? 3}`,
+  const selectionPanel = !hasSelectionProvider && (
+    <RunSelectionPanel
+      selectedRunIds={selectedArray}
+      allRunIds={runIds}
+      onClear={clear}
+      runInfo={runInfoMap}
+      renderExtra={(rid) => {
+        const pt = scatterPoints.find((p) => p.id === rid);
+        return pt ? (
+          <>
+            <span className="ml-2 text-fg-subtle">{settings.xAxis?.key}: {pt.x.toPrecision(4)}</span>
+            <span className="ml-2 text-fg-subtle">{settings.yAxis?.key}: {pt.y.toPrecision(4)}</span>
+          </>
+        ) : null;
       }}
+      label="Scatter selection"
+    />
+  );
+
+  return (
+    <CardShell
+      cardRef={cardRef}
+      settings={settings}
+      updateSettings={updateSettings}
+      title="Scatter Plot"
+      subtitle={`${scatterPoints.length} points`}
+      defaultHeight={350}
+      onSettings={() => setExpanded(true)}
+      onRemove={onRemove}
+      onDownload={() => {
+        const headers = ["run_id", settings.xAxis?.key ?? "x", settings.yAxis?.key ?? "y"];
+        if (settings.colorAxis) headers.push(settings.colorAxis.key);
+        const rows: (string | number)[][] = scatterPoints.map((pt) => {
+          const row: (string | number)[] = [pt.id, pt.x, pt.y];
+          if (settings.colorAxis) row.push(pt.color ?? "");
+          return row;
+        });
+        downloadCsv(headers, rows, safeName(settings.title ?? "scatter_plot") + ".csv");
+      }}
+      onScreenshot={() => { if (cardRef.current) exportChartFromContainer(cardRef.current, safeName(settings.title ?? "scatter_plot"), "svg"); }}
     >
-      <CardHeader
-        title={settings.title ?? "Scatter Plot"}
-        onTitleChange={(t) => updateSettings({ title: t || undefined })}
-        subtitle={`${scatterPoints.length} points`}
-        collapsed={settings.collapsed}
-        onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
-        onSettings={() => setExpanded(true)}
-        onRemove={onRemove}
-        onDownload={() => {
-          const headers = ["run_id", settings.xAxis?.key ?? "x", settings.yAxis?.key ?? "y"];
-          if (settings.colorAxis) headers.push(settings.colorAxis.key);
-          const rows: (string | number)[][] = scatterPoints.map((pt) => {
-            const row: (string | number)[] = [pt.runId, pt.x, pt.y];
-            if (settings.colorAxis) row.push(pt.color ?? "");
-            return row;
-          });
-          downloadCsv(headers, rows, safeName(settings.title ?? "scatter_plot") + ".csv");
-        }}
-        onScreenshot={() => { if (cardRef.current) exportChartFromContainer(cardRef.current, safeName(settings.title ?? "scatter_plot"), "svg"); }}
-      >
-      </CardHeader>
-
-      {!settings.collapsed && (
-        <>
-          <div ref={containerRef} data-scatter-container className="relative rounded bg-bg flex-1 min-h-0">
-            {size.w > 0 && size.h > 0 && renderPlot(size.w, size.h)}
-            {renderTooltip()}
+      <>
+        {noAxes ? (
+          <div className="flex items-center justify-center flex-1 min-h-0 text-sm text-fg-muted">
+            Select X and Y axes in settings to create the scatter plot.
           </div>
-          {!hasSelectionProvider && (
-            <RunSelectionPanel
-              selectedRunIds={selectedArray}
-              allRunIds={runIds}
-              onClear={clear}
-              runInfo={runInfoMap}
-              renderExtra={(rid) => {
-                const pt = scatterPoints.find(p => p.runId === rid);
-                return pt ? (
-                  <>
-                    <span className="ml-2 text-fg-subtle">{settings.xAxis?.key}: {pt.x.toPrecision(4)}</span>
-                    <span className="ml-2 text-fg-subtle">{settings.yAxis?.key}: {pt.y.toPrecision(4)}</span>
-                  </>
-                ) : null;
-              }}
-              label="Scatter selection"
-            />
-          )}
+        ) : (
+          <ScatterPlot {...plotProps} className="rounded bg-bg flex-1 min-h-0" />
+        )}
+        {selectionPanel}
 
-          <CardDetailModal
-            open={expanded}
-            onClose={() => setExpanded(false)}
-            title={settings.title ?? "Scatter Plot"}
-            settingsContent={settingsPanel}
-          >
-            <div data-scatter-container className="relative h-[calc(100vh-12rem)] flex flex-col">
-              {renderPlot(900, 500)}
-              {renderTooltip()}
-              {!hasSelectionProvider && (
-                <RunSelectionPanel
-                  selectedRunIds={selectedArray}
-                  allRunIds={runIds}
-                  onClear={clear}
-                  runInfo={runInfoMap}
-                  renderExtra={(rid) => {
-                    const pt = scatterPoints.find(p => p.runId === rid);
-                    return pt ? (
-                      <>
-                        <span className="ml-2 text-fg-subtle">{settings.xAxis?.key}: {pt.x.toPrecision(4)}</span>
-                        <span className="ml-2 text-fg-subtle">{settings.yAxis?.key}: {pt.y.toPrecision(4)}</span>
-                      </>
-                    ) : null;
-                  }}
-                  label="Scatter selection"
-                />
-              )}
-            </div>
-          </CardDetailModal>
-        </>
-      )}
-
-      <CardResizeHandle
-        height={settings.height}
-        onHeightChange={(h) => updateSettings({ height: h })}
-        colSpan={settings.colSpan ?? 3}
-        onColSpanChange={(s) => updateSettings({ colSpan: s })}
-        onPerColHeightChange={(p) => updateSettings(p as Partial<ScatterSettings>)}
-      />
-    </div>
+        <CardDetailModal
+          open={expanded}
+          onClose={() => setExpanded(false)}
+          title={settings.title ?? "Scatter Plot"}
+          settingsContent={settingsPanel}
+        >
+          <div className="flex flex-col h-[calc(100vh-12rem)]">
+            {noAxes ? (
+              <div className="flex items-center justify-center flex-1 text-sm text-fg-muted">
+                Select X and Y axes in settings to create the scatter plot.
+              </div>
+            ) : (
+              <ScatterPlot {...plotProps} className="flex-1 min-h-0" />
+            )}
+            {selectionPanel}
+          </div>
+        </CardDetailModal>
+      </>
+    </CardShell>
   );
 }

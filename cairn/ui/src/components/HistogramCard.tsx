@@ -3,11 +3,10 @@ import { useSequence } from "../api/hooks";
 import { safeJsonParse } from "../lib/format";
 import { downloadArtifact, artifactFilename, exportChartFromContainer, safeName } from "../lib/download";
 import { api } from "../api/client";
-import { useCardSettings, resolveCardHeight, type CardSettingsKey } from "../lib/card-settings";
+import { useCardSettings, type CardSettingsKey } from "../lib/card-settings";
 import type { SequenceMeta } from "../api/types";
 import AddToComparisonButton from "./AddToComparisonButton";
-import CardHeader from "./CardHeader";
-import CardResizeHandle from "./CardResizeHandle";
+import CardShell from "./CardShell";
 import CardDetailModal from "./CardDetailModal";
 import StepSlider, { type XAxisMode } from "./StepSlider";
 
@@ -126,20 +125,20 @@ export default function HistogramCard({ runId, metric, settingsKeyOverride, onRe
   };
 
   return (
-    <div ref={cardRef} className="card p-4 flex flex-col" style={{ height: resolveCardHeight(settings, 250), position: "relative", gridColumn: `span ${settings.colSpan ?? 3}` }}>
-      <CardHeader
-        title={settings.title ?? metric.name}
-        onTitleChange={(t) => updateSettings({ title: t || undefined })}
-        subtitle={subtitle}
-        collapsed={settings.collapsed}
-        onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
-        onSettings={() => setExpanded(true)}
-        onRemove={onRemove}
-        onDownload={current?.artifact_hash ? () => downloadArtifact(api.artifactUrl(current.artifact_hash!), artifactFilename(metric.name, current.step, current.artifact_mime)) : undefined}
-        onScreenshot={() => { if (cardRef.current) exportChartFromContainer(cardRef.current, safeName(settings.title ?? metric.name), "svg"); }}
-        addToComparisonSlot={<AddToComparisonButton cardType="histogram" series={compSeries} />}
-      />
-      {!settings.collapsed && (<>
+    <CardShell
+      cardRef={cardRef}
+      settings={settings}
+      updateSettings={updateSettings}
+      title={metric.name}
+      subtitle={subtitle}
+      defaultHeight={250}
+      onSettings={() => setExpanded(true)}
+      onRemove={onRemove}
+      onDownload={current?.artifact_hash ? () => downloadArtifact(api.artifactUrl(current.artifact_hash!), artifactFilename(metric.name, current.step, current.artifact_mime)) : undefined}
+      onScreenshot={() => { if (cardRef.current) exportChartFromContainer(cardRef.current, safeName(settings.title ?? metric.name), "svg"); }}
+      addToComparisonSlot={<AddToComparisonButton cardType="histogram" series={compSeries} />}
+    >
+      <>
       {renderContent()}
 
       <CardDetailModal
@@ -157,15 +156,7 @@ export default function HistogramCard({ runId, metric, settingsKeyOverride, onRe
           {renderContent()}
         </div>
       </CardDetailModal>
-
-      </>)}
-      <CardResizeHandle
-        height={settings.height}
-        onHeightChange={(h) => updateSettings({ height: h })}
-        colSpan={settings.colSpan ?? 3}
-        onColSpanChange={(s) => updateSettings({ colSpan: s })}
-        onPerColHeightChange={(p) => updateSettings(p as Partial<HistogramSettings>)}
-      />
-    </div>
+      </>
+    </CardShell>
   );
 }

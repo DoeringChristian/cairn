@@ -5,18 +5,17 @@ import { api } from "../api/client";
 import { qk } from "../api/query-keys";
 import { safeJsonParse } from "../lib/format";
 import { downloadArtifact, artifactFilename } from "../lib/download";
-import { useCardSettings, resolveCardHeight, type CardSettingsKey } from "../lib/card-settings";
-import { useSeriesDrop } from "../lib/use-series-drop";
+import { useCardSettings, type CardSettingsKey } from "../lib/card-settings";
+import { useCardDrop } from "../lib/use-series-drop";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
-import { seriesKey, seriesLabel } from "../lib/series-utils";
+import { seriesKey } from "../lib/series-utils";
 import type { SequenceMeta, SequenceResponse } from "../api/types";
 import AddToComparisonButton from "./AddToComparisonButton";
-import CardHeader from "./CardHeader";
-import CardResizeHandle from "./CardResizeHandle";
+import CardShell from "./CardShell";
 import CardDetailModal from "./CardDetailModal";
 import SplitPane from "./SplitPane";
-import SeriesChip, { type SeriesRef } from "./SeriesChip";
+import SeriesChipStrip from "./SeriesChipStrip";
 import { useRunSelection, useRunSelectionHasProvider } from "../lib/use-run-selection";
 import RunSelectionPanel from "./RunSelectionPanel";
 import { SERIES_COLORS } from "../lib/colors";
@@ -207,16 +206,7 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
-  const metricsRef = useRef(effectiveMetrics);
-  metricsRef.current = effectiveMetrics;
-
-  const { highlight: dropHighlight, dropProps } = useSeriesDrop({
-    metricsRef,
-    onMetricsChange: useCallback(
-      (next) => updateSettings({ metrics: next }),
-      [updateSettings],
-    ),
-  });
+  const { highlight: dropHighlight, dropProps } = useCardDrop(effectiveMetrics, updateSettings);
 
   // Single-metric path.
   const q = useSequence(runId, metric.name, {
@@ -407,72 +397,15 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
         onXAxisChange={(m) => updateSettings({ xAxis: m })}
         className="mt-3"
       />
-      <div className="mt-2 flex flex-wrap gap-1.5">
-        {controlledSeries
-          ? (() => {
-              const seen = new Set<string>();
-              const tags: Array<{ name: string; color: string; firstIdx: number }> = [];
-              for (let i = 0; i < effectiveMetrics.length; i++) {
-                const m = effectiveMetrics[i]!;
-                if (seen.has(m.name)) continue;
-                seen.add(m.name);
-                tags.push({
-                  name: m.name,
-                  color: SERIES_COLORS[tags.length % SERIES_COLORS.length]!,
-                  firstIdx: i,
-                });
-              }
-              return tags.map((tag) => {
-                const m = effectiveMetrics[tag.firstIdx]!;
-                const chipRunId = m.runId ?? runId;
-                const ref: SeriesRef = {
-                  runId: m.runId,
-                  name: m.name,
-                  context_hash: m.context_hash,
-                };
-                return (
-                  <SeriesChip
-                    key={tag.name}
-                    series={ref}
-                    color={tag.color}
-                    label={tag.name}
-                    runId={runId}
-                    onClick={multipleRuns ? () => toggle(chipRunId) : undefined}
-                    selected={selectedIds.has(chipRunId)}
-                    onRemove={
-                      tags.length > 1
-                        ? () => updateSettings({ metrics: effectiveMetrics.filter((x) => x.name !== tag.name) })
-                        : undefined
-                    }
-                  />
-                );
-              });
-            })()
-          : effectiveMetrics.map((m, i) => {
-              const chipRunId = m.runId ?? runId;
-              const ref: SeriesRef = {
-                runId: m.runId,
-                name: m.name,
-                context_hash: m.context_hash,
-              };
-              return (
-                <SeriesChip
-                  key={seriesKey(m)}
-                  series={ref}
-                  color={SERIES_COLORS[i % SERIES_COLORS.length]!}
-                  label={seriesLabel(m.name, m.context_hash, chipRunId, multipleRuns, allRunIds)}
-                  runId={runId}
-                  onClick={multipleRuns ? () => toggle(chipRunId) : undefined}
-                  selected={selectedIds.has(chipRunId)}
-                  onRemove={
-                    effectiveMetrics.length > 1
-                      ? () => updateSettings({ metrics: effectiveMetrics.filter((_, j) => j !== i) })
-                      : undefined
-                  }
-                />
-              );
-            })}
-      </div>
+      <SeriesChipStrip
+        metrics={effectiveMetrics}
+        controlledSeries={controlledSeries}
+        runId={runId}
+        allRunIds={allRunIds}
+        onMetricsChange={(next) => updateSettings({ metrics: next })}
+        onClick={multipleRuns ? toggle : undefined}
+        selectedIds={selectedIds}
+      />
       {!hasSelectionProvider && (
         <RunSelectionPanel
           selectedRunIds={selectedArray}
@@ -489,29 +422,21 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
     isMulti ? renderMultiVideo(inModal) : renderSingleVideo(inModal ? "max-h-[70vh]" : "max-h-64");
 
   return (
-    <div
-      ref={cardRef}
-      className={`card p-4 flex flex-col${dropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
-      style={{
-        height: resolveCardHeight(settings, 350),
-        position: "relative",
-        gridColumn: `span ${settings.colSpan ?? 3}`,
-      }}
-      {...dropProps}
+    <CardShell
+      cardRef={cardRef}
+      settings={settings}
+      updateSettings={updateSettings}
+      title={metric.name}
+      subtitle={subtitle}
+      defaultHeight={350}
+      onSettings={() => setExpanded(true)}
+      onRemove={onRemove}
+      onDownload={current?.artifact_hash ? () => downloadArtifact(api.artifactUrl(current.artifact_hash!), artifactFilename(metric.name, current.step, current.artifact_mime ?? "video/mp4")) : undefined}
+      addToComparisonSlot={<AddToComparisonButton cardType="video" series={compSeries} />}
+      dropHighlight={dropHighlight}
+      dropProps={dropProps}
     >
-      <CardHeader
-        title={settings.title ?? metric.name}
-        onTitleChange={(t) => updateSettings({ title: t || undefined })}
-        subtitle={subtitle}
-        collapsed={settings.collapsed}
-        onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
-        onSettings={() => setExpanded(true)}
-        onRemove={onRemove}
-        onDownload={current?.artifact_hash ? () => downloadArtifact(api.artifactUrl(current.artifact_hash!), artifactFilename(metric.name, current.step, current.artifact_mime ?? "video/mp4")) : undefined}
-        addToComparisonSlot={<AddToComparisonButton cardType="video" series={compSeries} />}
-      />
-
-      {!settings.collapsed && (<>
+      <>
       {renderContent(false)}
       <CardDetailModal
         open={expanded}
@@ -560,15 +485,7 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
           )}
         </div>
       </CardDetailModal>
-
-      </>)}
-      <CardResizeHandle
-        height={settings.height}
-        onHeightChange={(h) => updateSettings({ height: h })}
-        colSpan={settings.colSpan ?? 3}
-        onColSpanChange={(s) => updateSettings({ colSpan: s })}
-        onPerColHeightChange={(p) => updateSettings(p as Partial<VideoSettings>)}
-      />
-    </div>
+      </>
+    </CardShell>
   );
 }

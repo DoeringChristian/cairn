@@ -1,17 +1,5 @@
-/**
- * Client-side per-pixel image diff computation.
- *
- * Six diff modes covering signed/absolute/squared × raw/relative.
- * Signed modes map to [0, 255] via midpoint offset (128 = no diff).
- */
-
-export type DiffMode =
-  | "signed"
-  | "absolute"
-  | "squared"
-  | "relative_signed"
-  | "relative_absolute"
-  | "relative_squared";
+export type { DiffMode } from "../types";
+import type { DiffMode } from "../types";
 
 export const DIFF_MODE_LABELS: Record<DiffMode, string> = {
   signed: "Signed Error",
@@ -22,11 +10,6 @@ export const DIFF_MODE_LABELS: Record<DiffMode, string> = {
   relative_squared: "Relative Squared",
 };
 
-/**
- * Compute a per-pixel diff between a baseline and another image.
- * Both inputs and the output are ImageData objects (from Canvas getImageData).
- * If dimensions differ, crop to the intersection (min width × min height).
- */
 export function computeDiff(
   baseline: ImageData,
   other: ImageData,
@@ -81,15 +64,9 @@ export function computeDiff(
   return result;
 }
 
-// Cache loaded ImageData by URL to avoid re-fetching + re-decoding.
 const imageDataLoadCache = new Map<string, ImageData>();
 const IMAGE_LOAD_CACHE_MAX = 100;
 
-/**
- * Load an image URL into an ImageData by drawing to an offscreen canvas.
- * Results are cached by URL — subsequent calls with the same URL return instantly.
- * Returns null if the image fails to load or the canvas is tainted.
- */
 export async function loadImageData(url: string): Promise<ImageData | null> {
   const cached = imageDataLoadCache.get(url);
   if (cached) return cached;
@@ -108,7 +85,6 @@ export async function loadImageData(url: string): Promise<ImageData | null> {
         }
         ctx.drawImage(img, 0, 0);
         const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        // Cache the result
         if (imageDataLoadCache.size >= IMAGE_LOAD_CACHE_MAX) {
           const firstKey = imageDataLoadCache.keys().next().value;
           if (firstKey !== undefined) imageDataLoadCache.delete(firstKey);

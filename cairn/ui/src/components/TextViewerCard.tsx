@@ -1,14 +1,12 @@
 import { useEffect, useState, useMemo, useRef } from "react";
 import { useSequence } from "../api/hooks";
-import { useCardSettings, resolveCardHeight, type CardSettingsKey } from "../lib/card-settings";
-import {  } from "../lib/format";
+import { useCardSettings, type CardSettingsKey } from "../lib/card-settings";
 import { downloadArtifact, artifactFilename } from "../lib/download";
 import { api } from "../api/client";
 import type { SequenceMeta } from "../api/types";
 import CardDetailModal from "./CardDetailModal";
 import AddToComparisonButton from "./AddToComparisonButton";
-import CardHeader from "./CardHeader";
-import CardResizeHandle from "./CardResizeHandle";
+import CardShell from "./CardShell";
 import Select from "./settings/Select";
 import Toggle from "./settings/Toggle";
 import StepSlider, { type XAxisMode } from "./StepSlider";
@@ -142,19 +140,19 @@ export default function TextViewerCard({ runId, metric, settingsKeyOverride, onR
   );
 
   return (
-    <div ref={cardRef} className="card p-4 flex flex-col" style={{ height: resolveCardHeight(settings, 250), position: "relative", gridColumn: `span ${settings.colSpan ?? 3}` }}>
-      <CardHeader
-        title={settings.title ?? metric.name}
-        onTitleChange={(t) => updateSettings({ title: t || undefined })}
-        subtitle={subtitle}
-        collapsed={settings.collapsed}
-        onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
-        onSettings={() => setExpanded(true)}
-        onRemove={onRemove}
-        onDownload={current?.artifact_hash ? () => downloadArtifact(api.artifactUrl(current.artifact_hash!), artifactFilename(metric.name, current?.step ?? 0, "text/plain")) : undefined}
-        addToComparisonSlot={<AddToComparisonButton cardType="text" series={compSeries} />}
-      />
-      {!settings.collapsed && (<>
+    <CardShell
+      cardRef={cardRef}
+      settings={settings}
+      updateSettings={updateSettings}
+      title={metric.name}
+      subtitle={subtitle}
+      defaultHeight={250}
+      onSettings={() => setExpanded(true)}
+      onRemove={onRemove}
+      onDownload={current?.artifact_hash ? () => downloadArtifact(api.artifactUrl(current.artifact_hash!), artifactFilename(metric.name, current?.step ?? 0, "text/plain")) : undefined}
+      addToComparisonSlot={<AddToComparisonButton cardType="text" series={compSeries} />}
+    >
+      <>
       {renderContent()}
 
       <CardDetailModal
@@ -165,15 +163,7 @@ export default function TextViewerCard({ runId, metric, settingsKeyOverride, onR
       >
         {renderContent()}
       </CardDetailModal>
-
-      </>)}
-      <CardResizeHandle
-        height={settings.height}
-        onHeightChange={(h) => updateSettings({ height: h })}
-        colSpan={settings.colSpan ?? 3}
-        onColSpanChange={(s) => updateSettings({ colSpan: s })}
-        onPerColHeightChange={(p) => updateSettings(p as Partial<TextSettings>)}
-      />
-    </div>
+      </>
+    </CardShell>
   );
 }

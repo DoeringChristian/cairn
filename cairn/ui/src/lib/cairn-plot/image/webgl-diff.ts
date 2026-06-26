@@ -1,13 +1,4 @@
-/**
- * WebGL 2 image diff and colormap computation.
- *
- * Uses a fragment shader on a full-screen quad to compute diff + colormap
- * per pixel. Works in all modern browsers — no secure context or Vulkan required.
- *
- * The result is rendered to an offscreen canvas and read back via getImageData.
- */
-
-import type { DiffMode } from "./image-diff";
+import type { DiffMode } from "../types";
 
 const DIFF_MODE_MAP: Record<DiffMode, number> = {
   signed: 0,
@@ -24,10 +15,6 @@ const CMAP_MODE_MAP: Record<string, number> = {
   positive: 2,
 };
 
-// ---------------------------------------------------------------------------
-// Shaders
-// ---------------------------------------------------------------------------
-
 const VERTEX_SRC = `#version 300 es
 in vec2 a_pos;
 out vec2 v_uv;
@@ -41,7 +28,7 @@ precision highp float;
 
 uniform sampler2D u_baseline;
 uniform sampler2D u_other;
-uniform sampler2D u_lut;       // 256x1 RGB lookup texture
+uniform sampler2D u_lut;
 uniform int u_diff_mode;
 uniform int u_cmap_mode;
 uniform bool u_use_colormap;
@@ -53,12 +40,12 @@ float computeDiffChannel(float a, float b, int mode) {
   float diff = a - b;
   float absDiff = abs(diff);
   float denom = max(a, 1.0 / 255.0);
-  if (mode == 0) return (diff + 1.0) / 2.0;                        // signed
-  if (mode == 1) return absDiff;                                     // absolute
-  if (mode == 2) return diff * diff;                                 // squared
-  if (mode == 3) return (diff / denom + 1.0) / 2.0;                 // relative_signed
-  if (mode == 4) return absDiff / denom;                             // relative_absolute
-  if (mode == 5) return (diff * diff) / (denom * denom);             // relative_squared
+  if (mode == 0) return (diff + 1.0) / 2.0;
+  if (mode == 1) return absDiff;
+  if (mode == 2) return diff * diff;
+  if (mode == 3) return (diff / denom + 1.0) / 2.0;
+  if (mode == 4) return absDiff / denom;
+  if (mode == 5) return (diff * diff) / (denom * denom);
   return absDiff;
 }
 
@@ -76,7 +63,6 @@ void main() {
     float avg = (result.r + result.g + result.b) / 3.0;
     float idx;
     if (u_cmap_mode == 2) {
-      // positive: map [0,1] -> [0.5, 1.0]
       idx = 0.5 + avg * 0.5;
     } else {
       idx = avg;
@@ -87,10 +73,6 @@ void main() {
   fragColor = vec4(result, 1.0);
 }`;
 
-// ---------------------------------------------------------------------------
-// Cached GL state
-// ---------------------------------------------------------------------------
-
 let glCanvas: OffscreenCanvas | HTMLCanvasElement | null = null;
 let gl: WebGL2RenderingContext | null = null;
 let program: WebGLProgram | null = null;
@@ -99,18 +81,18 @@ let vao: WebGLVertexArrayObject | null = null;
 function getGL(): WebGL2RenderingContext | null {
   if (gl) return gl;
   try {
-    // Prefer OffscreenCanvas for no-DOM rendering
     if (typeof OffscreenCanvas !== "undefined") {
       glCanvas = new OffscreenCanvas(1, 1);
     } else {
       glCanvas = document.createElement("canvas");
     }
-    gl = glCanvas.getContext("webgl2", { preserveDrawingBuffer: true }) as WebGL2RenderingContext | null;
+    gl = glCanvas.getContext("webgl2", {
+      preserveDrawingBuffer: true,
+    }) as WebGL2RenderingContext | null;
     if (!gl) {
       console.warn("[cairn] WebGL 2 not available");
       return null;
     }
-    // Compile shaders + program
     const vs = gl.createShader(gl.VERTEX_SHADER)!;
     gl.shaderSource(vs, VERTEX_SRC);
     gl.compileShader(vs);
@@ -122,7 +104,10 @@ function getGL(): WebGL2RenderingContext | null {
     gl.shaderSource(fs, FRAGMENT_SRC);
     gl.compileShader(fs);
     if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) {
-      console.error("[cairn] WebGL fragment shader:", gl.getShaderInfoLog(fs));
+      console.error(
+        "[cairn] WebGL fragment shader:",
+        gl.getShaderInfoLog(fs),
+      );
       return null;
     }
     program = gl.createProgram()!;
@@ -130,15 +115,21 @@ function getGL(): WebGL2RenderingContext | null {
     gl.attachShader(program, fs);
     gl.linkProgram(program);
     if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-      console.error("[cairn] WebGL program link:", gl.getProgramInfoLog(program));
+      console.error(
+        "[cairn] WebGL program link:",
+        gl.getProgramInfoLog(program),
+      );
       return null;
     }
-    // Full-screen quad VAO
     vao = gl.createVertexArray()!;
     gl.bindVertexArray(vao);
     const buf = gl.createBuffer()!;
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+    gl.bufferData(
+      gl.ARRAY_BUFFER,
+      new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]),
+      gl.STATIC_DRAW,
+    );
     const loc = gl.getAttribLocation(program, "a_pos");
     gl.enableVertexAttribArray(loc);
     gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
@@ -151,7 +142,11 @@ function getGL(): WebGL2RenderingContext | null {
   }
 }
 
-function uploadTexture(g: WebGL2RenderingContext, img: ImageData, unit: number): WebGLTexture {
+function uploadTexture(
+  g: WebGL2RenderingContext,
+  img: ImageData,
+  unit: number,
+): WebGLTexture {
   const tex = g.createTexture()!;
   g.activeTexture(g.TEXTURE0 + unit);
   g.bindTexture(g.TEXTURE_2D, tex);
@@ -159,12 +154,25 @@ function uploadTexture(g: WebGL2RenderingContext, img: ImageData, unit: number):
   g.texParameteri(g.TEXTURE_2D, g.TEXTURE_MAG_FILTER, g.NEAREST);
   g.texParameteri(g.TEXTURE_2D, g.TEXTURE_WRAP_S, g.CLAMP_TO_EDGE);
   g.texParameteri(g.TEXTURE_2D, g.TEXTURE_WRAP_T, g.CLAMP_TO_EDGE);
-  g.texImage2D(g.TEXTURE_2D, 0, g.RGBA8, img.width, img.height, 0, g.RGBA, g.UNSIGNED_BYTE, img.data);
+  g.texImage2D(
+    g.TEXTURE_2D,
+    0,
+    g.RGBA8,
+    img.width,
+    img.height,
+    0,
+    g.RGBA,
+    g.UNSIGNED_BYTE,
+    img.data,
+  );
   return tex;
 }
 
-function uploadLUT(g: WebGL2RenderingContext, lut: Uint8Array, unit: number): WebGLTexture {
-  // LUT is 256*3 bytes. Pack into a 256x1 RGBA texture.
+function uploadLUT(
+  g: WebGL2RenderingContext,
+  lut: Uint8Array,
+  unit: number,
+): WebGLTexture {
   const rgba = new Uint8Array(256 * 4);
   for (let i = 0; i < 256; i++) {
     rgba[i * 4] = lut[i * 3]!;
@@ -179,13 +187,19 @@ function uploadLUT(g: WebGL2RenderingContext, lut: Uint8Array, unit: number): We
   g.texParameteri(g.TEXTURE_2D, g.TEXTURE_MAG_FILTER, g.LINEAR);
   g.texParameteri(g.TEXTURE_2D, g.TEXTURE_WRAP_S, g.CLAMP_TO_EDGE);
   g.texParameteri(g.TEXTURE_2D, g.TEXTURE_WRAP_T, g.CLAMP_TO_EDGE);
-  g.texImage2D(g.TEXTURE_2D, 0, g.RGBA8, 256, 1, 0, g.RGBA, g.UNSIGNED_BYTE, rgba);
+  g.texImage2D(
+    g.TEXTURE_2D,
+    0,
+    g.RGBA8,
+    256,
+    1,
+    0,
+    g.RGBA,
+    g.UNSIGNED_BYTE,
+    rgba,
+  );
   return tex;
 }
-
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
 
 export interface WebGLDiffOptions {
   diffMode: DiffMode;
@@ -204,48 +218,59 @@ export function webglComputeDiff(
   const w = Math.min(baseline.width, other.width);
   const h = Math.min(baseline.height, other.height);
 
-  // Resize canvas
   if (glCanvas) {
     glCanvas.width = w;
     glCanvas.height = h;
   }
   g.viewport(0, 0, w, h);
 
-  // Upload textures
   const baseTex = uploadTexture(g, baseline, 0);
   const otherTex = uploadTexture(g, other, 1);
 
-  // LUT texture (or dummy)
   let lutTex: WebGLTexture | null = null;
   if (opts.colormap) {
     lutTex = uploadLUT(g, opts.colormap, 2);
   } else {
-    // Dummy 1x1 texture
     lutTex = g.createTexture()!;
     g.activeTexture(g.TEXTURE2);
     g.bindTexture(g.TEXTURE_2D, lutTex);
-    g.texImage2D(g.TEXTURE_2D, 0, g.RGBA8, 1, 1, 0, g.RGBA, g.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]));
+    g.texImage2D(
+      g.TEXTURE_2D,
+      0,
+      g.RGBA8,
+      1,
+      1,
+      0,
+      g.RGBA,
+      g.UNSIGNED_BYTE,
+      new Uint8Array([0, 0, 0, 255]),
+    );
   }
 
-  // Set uniforms
   g.useProgram(program);
   g.uniform1i(g.getUniformLocation(program, "u_baseline"), 0);
   g.uniform1i(g.getUniformLocation(program, "u_other"), 1);
   g.uniform1i(g.getUniformLocation(program, "u_lut"), 2);
-  g.uniform1i(g.getUniformLocation(program, "u_diff_mode"), DIFF_MODE_MAP[opts.diffMode]);
-  g.uniform1i(g.getUniformLocation(program, "u_cmap_mode"), CMAP_MODE_MAP[opts.cmapMode] ?? 0);
-  g.uniform1i(g.getUniformLocation(program, "u_use_colormap"), opts.colormap ? 1 : 0);
+  g.uniform1i(
+    g.getUniformLocation(program, "u_diff_mode"),
+    DIFF_MODE_MAP[opts.diffMode],
+  );
+  g.uniform1i(
+    g.getUniformLocation(program, "u_cmap_mode"),
+    CMAP_MODE_MAP[opts.cmapMode] ?? 0,
+  );
+  g.uniform1i(
+    g.getUniformLocation(program, "u_use_colormap"),
+    opts.colormap ? 1 : 0,
+  );
 
-  // Draw
   g.bindVertexArray(vao);
   g.drawArrays(g.TRIANGLE_STRIP, 0, 4);
   g.bindVertexArray(null);
 
-  // Read back (slow path — avoid if possible, use webglRenderDiffToCanvas instead)
   const pixels = new Uint8Array(w * h * 4);
   g.readPixels(0, 0, w, h, g.RGBA, g.UNSIGNED_BYTE, pixels);
 
-  // WebGL renders bottom-up; flip vertically
   const result = new ImageData(w, h);
   for (let y = 0; y < h; y++) {
     const srcRow = (h - 1 - y) * w * 4;
@@ -253,7 +278,6 @@ export function webglComputeDiff(
     result.data.set(pixels.subarray(srcRow, srcRow + w * 4), dstRow);
   }
 
-  // Cleanup textures
   g.deleteTexture(baseTex);
   g.deleteTexture(otherTex);
   g.deleteTexture(lutTex);
@@ -261,11 +285,6 @@ export function webglComputeDiff(
   return result;
 }
 
-/**
- * Render diff directly to a visible canvas — no readback, no ImageData.
- * The GL canvas is drawn to the target canvas via drawImage (GPU→GPU copy).
- * Returns {width, height} on success, null on failure.
- */
 export function webglRenderDiffToCanvas(
   baseline: ImageData,
   other: ImageData,
@@ -292,27 +311,44 @@ export function webglRenderDiffToCanvas(
     lutTex = g.createTexture()!;
     g.activeTexture(g.TEXTURE2);
     g.bindTexture(g.TEXTURE_2D, lutTex);
-    g.texImage2D(g.TEXTURE_2D, 0, g.RGBA8, 1, 1, 0, g.RGBA, g.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]));
+    g.texImage2D(
+      g.TEXTURE_2D,
+      0,
+      g.RGBA8,
+      1,
+      1,
+      0,
+      g.RGBA,
+      g.UNSIGNED_BYTE,
+      new Uint8Array([0, 0, 0, 255]),
+    );
   }
 
   g.useProgram(program);
   g.uniform1i(g.getUniformLocation(program, "u_baseline"), 0);
   g.uniform1i(g.getUniformLocation(program, "u_other"), 1);
   g.uniform1i(g.getUniformLocation(program, "u_lut"), 2);
-  g.uniform1i(g.getUniformLocation(program, "u_diff_mode"), DIFF_MODE_MAP[opts.diffMode]);
-  g.uniform1i(g.getUniformLocation(program, "u_cmap_mode"), CMAP_MODE_MAP[opts.cmapMode] ?? 0);
-  g.uniform1i(g.getUniformLocation(program, "u_use_colormap"), opts.colormap ? 1 : 0);
+  g.uniform1i(
+    g.getUniformLocation(program, "u_diff_mode"),
+    DIFF_MODE_MAP[opts.diffMode],
+  );
+  g.uniform1i(
+    g.getUniformLocation(program, "u_cmap_mode"),
+    CMAP_MODE_MAP[opts.cmapMode] ?? 0,
+  );
+  g.uniform1i(
+    g.getUniformLocation(program, "u_use_colormap"),
+    opts.colormap ? 1 : 0,
+  );
 
   g.bindVertexArray(vao);
   g.drawArrays(g.TRIANGLE_STRIP, 0, 4);
   g.bindVertexArray(null);
 
-  // Copy GL canvas → target canvas (GPU→GPU, no CPU readback)
   targetCanvas.width = w;
   targetCanvas.height = h;
   const ctx = targetCanvas.getContext("2d");
   if (ctx) {
-    // WebGL is bottom-up; flip when drawing
     ctx.save();
     ctx.scale(1, -1);
     ctx.drawImage(glCanvas as any, 0, 0, w, h, 0, -h, w, h);

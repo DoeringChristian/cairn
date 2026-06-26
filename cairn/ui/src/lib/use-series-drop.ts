@@ -10,6 +10,23 @@
 import { useCallback, useRef, useState } from "react";
 import { CAIRN_SERIES_MIME, type SeriesRef } from "../components/SeriesChip";
 
+type MetricEntry = { runId?: string; name: string; context_hash: string };
+
+export function useCardDrop(
+  effectiveMetrics: MetricEntry[],
+  updateSettings: (patch: { metrics: MetricEntry[] }) => void,
+) {
+  const metricsRef = useRef(effectiveMetrics);
+  metricsRef.current = effectiveMetrics;
+  return useSeriesDrop({
+    metricsRef,
+    onMetricsChange: useCallback(
+      (next: MetricEntry[]) => updateSettings({ metrics: next }),
+      [updateSettings],
+    ),
+  });
+}
+
 interface UseSeriesDropOpts {
   /** Current metrics list — read via ref to avoid re-render loops. */
   metricsRef: React.RefObject<

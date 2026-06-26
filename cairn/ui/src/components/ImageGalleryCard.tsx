@@ -12,27 +12,35 @@ import { qk } from "../api/query-keys";
 import { useSequence, useSequences } from "../api/hooks";
 import type { SequenceMeta, SequencePoint } from "../api/types";
 import { useCardSettings, resolveCardHeight, type CardSettingsKey } from "../lib/card-settings";
-import { useSeriesDrop } from "../lib/use-series-drop";
+import { useCardDrop } from "../lib/use-series-drop";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
-import {  } from "../lib/format";
-import { downloadArtifact, downloadBlob, artifactFilename, exportImagesAsComposite, safeName, type CompositePane } from "../lib/download";
-import { computeDiff, loadImageData, type DiffMode } from "../lib/image-diff";
-import { webglRenderDiffToCanvas } from "../lib/webgl-diff";
-import { getRenderMode } from "../lib/render-mode";
+import { downloadArtifact, exportImagesAsComposite, safeName, type CompositePane } from "../lib/download";
+import {
+  type DiffMode,
+  type ImageProcessingProps,
+  DIVERGING_COLORMAPS,
+  getColormapLUT,
+  ImagePane,
+  Colorbar,
+  ColormapSwatch,
+  useContainerSize,
+} from "../lib/cairn-plot";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import CardDetailModal from "./CardDetailModal";
 import AddToComparisonButton from "./AddToComparisonButton";
 import CardHeader from "./CardHeader";
 import CardResizeHandle from "./CardResizeHandle";
-import SeriesChip, { CAIRN_SERIES_MIME, type SeriesRef } from "./SeriesChip";
+import { CAIRN_SERIES_MIME } from "./SeriesChip";
+import SeriesChipStrip from "./SeriesChipStrip";
 const CAIRN_IMAGE_MIME = "application/x-cairn-image";
-import { SERIES_COLORS } from "../lib/colors";
 import { useRunSelection, useRunSelectionHasProvider } from "../lib/use-run-selection";
 import RunSelectionPanel from "./RunSelectionPanel";
 import Select from "./settings/Select";
 import Slider from "./settings/Slider";
 import Toggle from "./settings/Toggle";
-import StepSlider, { type XAxisMode } from "./StepSlider";
+import SettingsSection from "./settings/SettingsSection";
+import StepSlider from "./StepSlider";
+import { artifactFilename } from "../lib/download";
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -50,109 +58,6 @@ interface Props {
 type Interpolation = "auto" | "pixelated" | "crisp-edges";
 type Colormap = "none" | "viridis" | "red-green" | "red-blue";
 
-// ---------------------------------------------------------------------------
-// In-memory ImageData cache (diff + false-color computations)
-// ---------------------------------------------------------------------------
-
-const IMAGE_DATA_CACHE_MAX = 50;
-const imageDataCache = new Map<string, ImageData>();
-
-function getCachedImageData(key: string): ImageData | undefined {
-  return imageDataCache.get(key);
-}
-
-function setCachedImageData(key: string, data: ImageData): void {
-  if (imageDataCache.size >= IMAGE_DATA_CACHE_MAX) {
-    // Evict oldest entry (first key in insertion order)
-    const firstKey = imageDataCache.keys().next().value;
-    if (firstKey !== undefined) imageDataCache.delete(firstKey);
-  }
-  imageDataCache.set(key, data);
-}
-
-// ---------------------------------------------------------------------------
-// Colormap LUT generation
-// ---------------------------------------------------------------------------
-
-function lerp3(a: [number, number, number], b: [number, number, number], t: number): [number, number, number] {
-  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
-}
-
-function buildLUT(stops: Array<[number, number, number]>): Uint8Array {
-  const lut = new Uint8Array(256 * 3);
-  for (let i = 0; i < 256; i++) {
-    const t = i / 255;
-    const seg = t * (stops.length - 1);
-    const lo = Math.floor(seg);
-    const hi = Math.min(lo + 1, stops.length - 1);
-    const f = seg - lo;
-    const [r, g, b] = lerp3(stops[lo]!, stops[hi]!, f);
-    lut[i * 3] = Math.round(r);
-    lut[i * 3 + 1] = Math.round(g);
-    lut[i * 3 + 2] = Math.round(b);
-  }
-  return lut;
-}
-
-const COLORMAP_STOPS: Record<Exclude<Colormap, "none">, Array<[number, number, number]>> = {
-  viridis:     [[68,1,84],[59,82,139],[33,145,140],[94,201,98],[253,231,37]],
-  "red-green": [[215,25,28],[255,255,255],[26,150,65]],   // diverging: red → white → green
-  "red-blue":  [[215,25,28],[255,255,255],[44,123,182]],   // diverging: red → white → blue
-};
-
-/** Diverging colormaps must be centered at 0 (LUT midpoint = pixel value 0). */
-const DIVERGING_COLORMAPS = new Set<string>(["red-green", "red-blue"]);
-
-const colormapLUTs = new Map<string, Uint8Array>();
-function getColormapLUT(name: Exclude<Colormap, "none">): Uint8Array {
-  let lut = colormapLUTs.get(name);
-  if (!lut) {
-    lut = buildLUT(COLORMAP_STOPS[name]);
-    colormapLUTs.set(name, lut);
-  }
-  return lut;
-}
-
-/**
- * Apply a colormap LUT to an ImageData.
- * @param center — the pixel value that should map to the LUT midpoint (index 128).
- *   For signed diffs, center=128 (default). For absolute/squared, center=0.
- */
-/**
- * Apply a colormap LUT to an ImageData.
- *
- * `mode` controls how pixel values map to the LUT:
- * - "linear": 0→LUT[0], 255→LUT[255]. Use for raw images and non-signed diffs.
- * - "signed": 0→LUT[0], 128→LUT[128], 255→LUT[255]. Same as linear, but
- *   semantically the midpoint (128) represents zero diff. Use for signed diffs
- *   where the diff computation already maps zero to 128.
- * - "positive": 0→LUT[128], 255→LUT[255]. Use for absolute/squared diffs
- *   where 0 = no diff (should map to colormap center/white in diverging maps).
- */
-function applyColormap(src: ImageData, cmap: Exclude<Colormap, "none">, mode: "linear" | "signed" | "positive" = "linear"): ImageData {
-  const lut = getColormapLUT(cmap);
-  const out = new ImageData(src.width, src.height);
-  const sd = src.data;
-  const od = out.data;
-  for (let i = 0; i < sd.length; i += 4) {
-    const avg = (sd[i]! + sd[i + 1]! + sd[i + 2]!) / 3;
-    let idx: number;
-    if (mode === "positive") {
-      // Map [0,255] → [128,255] so 0 = LUT midpoint (white in diverging)
-      idx = Math.round(128 + (avg / 255) * 127);
-    } else {
-      // Linear: direct mapping. For signed diffs, 128 is already the midpoint.
-      idx = Math.round(avg);
-    }
-    idx = Math.max(0, Math.min(255, idx));
-    od[i] = lut[idx * 3]!;
-    od[i + 1] = lut[idx * 3 + 1]!;
-    od[i + 2] = lut[idx * 3 + 2]!;
-    od[i + 3] = sd[i + 3]!;
-  }
-  return out;
-}
-
 interface ImageSettings {
   version: 1;
   title?: string;
@@ -168,7 +73,6 @@ interface ImageSettings {
   zoom: number;
   pan: { x: number; y: number };
   baselineIndex?: number;
-  /** External baseline from a different metric tag. Overrides baselineIndex when set. */
   externalBaseline?: { runId?: string; name: string; context_hash: string };
   diffMode: "none" | DiffMode;
   interpolation: Interpolation;
@@ -178,29 +82,17 @@ interface ImageSettings {
   height?: number;
   height1?: number;
   height2?: number;
-  /** Number of columns for multi-image layout (1 or 2). */
   imageColumns?: 1 | 2;
   colSpan?: number;
-  /** What to show when a run has no image at the current step. */
   missingImageMode?: "nothing" | "last_available";
-  /** X-axis display mode for the step slider. */
   xAxis?: "step" | "relative_time" | "wall_time";
-  /** Reference mode: global (one ref for all) or per-run (each pane has own ref). */
   referenceMode?: "global" | "per-run";
-  /** For per-run mode: which step to use as each run's own baseline. */
   perRunBaselineStep?: number;
-  /** Compare mode: side-by-side (default), split slider, or alpha blend. */
   compareMode?: "side-by-side" | "split" | "blend";
-  /** Split position 0-1, default 0.5. */
   splitPosition?: number;
-  /** Blend alpha 0-1, default 0.5. */
   blendAlpha?: number;
-  /** Whether split/blend position is synced across all panes (default true). */
   splitSynced?: boolean;
 }
-
-const MIN_ZOOM = 0.25;
-const MAX_ZOOM = 16;
 
 function defaultImageSettings(seed: {
   name: string;
@@ -224,9 +116,6 @@ function defaultImageSettings(seed: {
   };
 }
 
-
-
-
 function seriesLabel(
   m: { runId?: string; name: string; context_hash: string },
   fallbackRunId: string,
@@ -234,13 +123,11 @@ function seriesLabel(
   siblingRunIds?: string[],
 ): string {
   if (multiRun) {
-    // Multi-run: show only run name+timestamp (tag shown once in card header)
     return shortRunLabel(m.runId ?? fallbackRunId, siblingRunIds);
   }
-  // Single-run: show metric name
   const parts: string[] = [m.name];
   if (m.context_hash) parts.push(m.context_hash.slice(0, 6));
-  return parts.join(" \u00b7 ");
+  return parts.join(" · ");
 }
 
 function seriesKey(m: {
@@ -251,11 +138,6 @@ function seriesKey(m: {
   return `${m.runId ?? ""}::${m.name}::${m.context_hash}`;
 }
 
-/**
- * Resolve the artifact hash for a given global step number.
- * Uses a step→point map for O(1) lookup, with optional fallback to the
- * closest prior step that has an image.
- */
 function resolveArtifact(
   stepMap: Map<number, SequencePoint>,
   targetStep: number,
@@ -265,7 +147,6 @@ function resolveArtifact(
   const exact = stepMap.get(targetStep);
   if (exact?.artifact_hash) return { hash: exact.artifact_hash, fallbackStep: null };
   if (mode === "nothing") return { hash: undefined, fallbackStep: null };
-  // Default ("last_available"): find closest step ≤ targetStep with an image.
   for (let i = sortedSteps.length - 1; i >= 0; i--) {
     if (sortedSteps[i]! > targetStep) continue;
     const pt = stepMap.get(sortedSteps[i]!);
@@ -277,463 +158,7 @@ function resolveArtifact(
 }
 
 // ---------------------------------------------------------------------------
-// PixelAxes — lightweight SVG overlay showing pixel coordinates.
-// ---------------------------------------------------------------------------
-
-function PixelAxes({
-  naturalWidth,
-  naturalHeight,
-  zoom = 1,
-  containerRef,
-}: {
-  naturalWidth: number;
-  naturalHeight: number;
-  zoom?: number;
-  /** Ref to the container that holds the image with object-contain */
-  containerRef?: React.RefObject<HTMLElement | null>;
-}) {
-  const tickInterval = (dim: number) => {
-    if (dim <= 32) return 4;
-    if (dim <= 128) return 16;
-    if (dim <= 512) return 64;
-    if (dim <= 2048) return 256;
-    return 512;
-  };
-
-  const xInterval = tickInterval(naturalWidth);
-  const yInterval = tickInterval(naturalHeight);
-
-  const xTicks: number[] = [];
-  for (let x = 0; x <= naturalWidth; x += xInterval) xTicks.push(x);
-
-  const yTicks: number[] = [];
-  for (let y = 0; y <= naturalHeight; y += yInterval) yTicks.push(y);
-
-  const counterScale = 1 / zoom;
-  const fontSize = 8 * counterScale;
-  const topOffset = -12 * counterScale;
-  const leftOffset = -2 * counterScale;
-
-  // Compute rendered image bounds within the object-contain container
-  const el = containerRef?.current;
-  let imgLeft = 0, imgTop = 0, imgW = 0, imgH = 0;
-  if (el) {
-    const cw = el.clientWidth;
-    const ch = el.clientHeight;
-    const scaleX = cw / naturalWidth;
-    const scaleY = ch / naturalHeight;
-    const scale = Math.min(scaleX, scaleY);
-    imgW = naturalWidth * scale;
-    imgH = naturalHeight * scale;
-    imgLeft = (cw - imgW) / 2;
-    imgTop = (ch - imgH) / 2;
-  }
-
-  // Use computed bounds if available, else fall back to percentage
-  const useBounds = el && imgW > 0;
-
-  return (
-    <>
-      {/* Top axis */}
-      <div className="absolute left-0 right-0 text-fg-muted leading-none pointer-events-none select-none" style={{ top: useBounds ? imgTop : 0, transform: `translateY(${topOffset}px)`, fontSize }}>
-        {xTicks.map((x) => (
-          <span key={x} className="mono" style={{
-            position: "absolute",
-            left: useBounds ? imgLeft + (x / naturalWidth) * imgW : `${(x / naturalWidth) * 100}%`,
-            transform: "translateX(-50%)",
-          }}>{x}</span>
-        ))}
-      </div>
-      {/* Left axis */}
-      <div className="absolute top-0 bottom-0 text-fg-muted leading-none pointer-events-none select-none" style={{ left: useBounds ? imgLeft : 0, transform: `translateX(${leftOffset}px)`, fontSize }}>
-        {yTicks.map((y) => (
-          <span key={y} className="mono" style={{
-            position: "absolute",
-            top: useBounds ? imgTop + (y / naturalHeight) * imgH : `${(y / naturalHeight) * 100}%`,
-            transform: "translate(-100%, -50%)",
-            paddingRight: `${3 * counterScale}px`,
-          }}>{y}</span>
-        ))}
-      </div>
-    </>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// ColormapSwatch — horizontal gradient preview for the settings panel
-// ---------------------------------------------------------------------------
-
-function ColormapSwatch({ colormap: cmap }: { colormap: Exclude<Colormap, "none"> }) {
-  const lut = getColormapLUT(cmap);
-  const stops: string[] = [];
-  for (let i = 0; i < 256; i += 32) {
-    stops.push(`rgb(${lut[i * 3]},${lut[i * 3 + 1]},${lut[i * 3 + 2]})`);
-  }
-  stops.push(`rgb(${lut[255 * 3]},${lut[255 * 3 + 1]},${lut[255 * 3 + 2]})`);
-  const gradient = `linear-gradient(to right, ${stops.join(", ")})`;
-  return (
-    <div className="flex items-center gap-2 py-1">
-      <div
-        className="h-3 flex-1 rounded border border-border"
-        style={{ background: gradient }}
-      />
-      <span className="text-[10px] text-fg-subtle mono">0</span>
-      <span className="text-[10px] text-fg-subtle mono">1</span>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Colorbar — vertical gradient showing the active colormap
-// ---------------------------------------------------------------------------
-
-function Colorbar({ colormap: cmap, isDiff }: { colormap: Exclude<Colormap, "none">; isDiff?: boolean }) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  useEffect(() => {
-    const c = canvasRef.current;
-    if (!c) return;
-    const lut = getColormapLUT(cmap);
-    c.width = 1;
-    c.height = 256;
-    const ctx = c.getContext("2d");
-    if (!ctx) return;
-    const img = ctx.createImageData(1, 256);
-    for (let i = 0; i < 256; i++) {
-      const li = (255 - i) * 3;
-      const pi = i * 4;
-      img.data[pi] = lut[li]!;
-      img.data[pi + 1] = lut[li + 1]!;
-      img.data[pi + 2] = lut[li + 2]!;
-      img.data[pi + 3] = 255;
-    }
-    ctx.putImageData(img, 0, 0);
-  }, [cmap]);
-
-  const ticks = isDiff
-    ? [
-        { pos: 0, label: "1.0" },
-        { pos: 25, label: "0.5" },
-        { pos: 50, label: "0.0" },
-        { pos: 75, label: "\u22120.5" },
-        { pos: 100, label: "\u22121.0" },
-      ]
-    : [
-        { pos: 0, label: "255" },
-        { pos: 25, label: "192" },
-        { pos: 50, label: "128" },
-        { pos: 75, label: "64" },
-        { pos: 100, label: "0" },
-      ];
-
-  return (
-    <div className="flex shrink-0 pl-1 w-14 py-1" style={{ height: "100%" }}>
-      <canvas
-        ref={canvasRef}
-        className="rounded-sm shrink-0"
-        style={{ imageRendering: "auto", width: 10, height: "100%" }}
-      />
-      <div className="relative flex-1 ml-0.5" style={{ height: "100%" }}>
-        {ticks.map((t, i) => (
-          <span
-            key={t.pos}
-            className="mono absolute text-[7px] text-fg-muted leading-none whitespace-nowrap"
-            style={{
-              top: `${t.pos}%`,
-              // First and last ticks: align to edge instead of centering
-              transform: i === 0 ? "none" : i === ticks.length - 1 ? "translateY(-100%)" : "translateY(-50%)",
-            }}
-          >
-            {t.label}
-          </span>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// ImagePane — renders a single image or canvas diff inside a split pane.
-// ---------------------------------------------------------------------------
-
-interface ImagePaneProps {
-  metricEntry: { runId?: string; name: string; context_hash: string };
-  paneIndex: number;
-  artifactHash: string | undefined;
-  baselineHash: string | undefined;
-  /** True when this pane IS the global baseline (legacy ★ promotion). */
-  isBaseline?: boolean;
-  diffMode: ImageSettings["diffMode"];
-  interpolation: Interpolation;
-  colormap: Colormap;
-  showAxes: boolean;
-  zoom: number;
-  transformStr: string;
-  filterStr: string;
-  flipSign?: boolean;
-  isDraggable?: boolean;
-  onImageDragStart?: (e: React.DragEvent) => void;
-  onNaturalSize?: (w: number, h: number) => void;
-  label: string;
-}
-
-function ImagePane({
-  artifactHash,
-  baselineHash,
-  isBaseline = false,
-  diffMode,
-  interpolation,
-  colormap,
-  showAxes,
-  zoom: zoomLevel,
-  transformStr,
-  filterStr,
-  flipSign = false,
-  isDraggable = false,
-  onImageDragStart,
-  onNaturalSize,
-  label,
-}: ImagePaneProps) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const falseColorRef = useRef<HTMLCanvasElement | null>(null);
-  const imgWrapperRef = useRef<HTMLDivElement | null>(null);
-  const [diffReady, setDiffReady] = useState(false);
-  const [falseColorReady, setFalseColorReady] = useState(false);
-  const [naturalDims, setNaturalDims] = useState<{ w: number; h: number } | null>(null);
-
-  const showDiff =
-    !isBaseline &&
-    diffMode !== "none" &&
-    baselineHash != null &&
-    artifactHash != null;
-
-  // Don't show false color when diff is active (colormap applied in diff pipeline)
-  // When diff is active, the baseline pane shows raw (no colormap) so the user
-  // sees the actual reference. Non-baseline panes show the diff with colormap
-  // (handled in showDiff path). When no diff, all panes get colormap.
-  const isDiffActive = diffMode !== "none" && baselineHash != null;
-  const useFalseColor = colormap !== "none" && !showDiff && !(isBaseline && isDiffActive) && artifactHash != null;
-
-  // False color rendering
-  useEffect(() => {
-    if (!useFalseColor || !artifactHash) { setFalseColorReady(false); return; }
-    let cancelled = false;
-    setFalseColorReady(false);
-
-    const cacheKey = `${artifactHash}::${colormap}`;
-    const cached = getCachedImageData(cacheKey);
-    if (cached) {
-      const fc = falseColorRef.current;
-      if (fc) {
-        fc.width = cached.width;
-        fc.height = cached.height;
-        const fctx = fc.getContext("2d");
-        if (fctx) fctx.putImageData(cached, 0, 0);
-        setNaturalDims({ w: cached.width, h: cached.height });
-        onNaturalSize?.(cached.width, cached.height);
-        setFalseColorReady(true);
-      }
-      return;
-    }
-
-    const img = new Image();
-    img.onload = () => {
-      if (cancelled) return;
-      const c = document.createElement("canvas");
-      c.width = img.naturalWidth;
-      c.height = img.naturalHeight;
-      const ctx = c.getContext("2d");
-      if (!ctx) return;
-      ctx.drawImage(img, 0, 0);
-      const src = ctx.getImageData(0, 0, c.width, c.height);
-      const cmapMode = DIVERGING_COLORMAPS.has(colormap) ? "positive" : "linear";
-      const mapped = applyColormap(src, colormap as Exclude<Colormap, "none">, cmapMode);
-      setCachedImageData(cacheKey, mapped);
-      const fc = falseColorRef.current;
-      if (!fc || cancelled) return;
-      fc.width = mapped.width;
-      fc.height = mapped.height;
-      const fctx = fc.getContext("2d");
-      if (fctx) fctx.putImageData(mapped, 0, 0);
-      setNaturalDims({ w: mapped.width, h: mapped.height });
-      onNaturalSize?.(mapped.width, mapped.height);
-      setFalseColorReady(true);
-    };
-    img.src = api.artifactUrl(artifactHash);
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [useFalseColor, artifactHash, colormap]);
-
-
-  // Helper: update dims only if changed (avoids layout thrash)
-  const updateDims = useCallback((w: number, h: number) => {
-    setNaturalDims((prev) => (prev && prev.w === w && prev.h === h) ? prev : { w, h });
-    onNaturalSize?.(w, h);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    if (!showDiff) {
-      setDiffReady(false);
-      return;
-    }
-    let cancelled = false;
-    // Don't reset diffReady — keep showing the old frame while computing new one.
-    // Only reset when diff mode itself changes (not just the step).
-
-    const renderMode = getRenderMode();
-    const useGPU = renderMode === "gpu" || renderMode === "auto";
-
-    // CPU cache: check first (instant)
-    const cacheKey = `${baselineHash}::${artifactHash}::${diffMode}::${colormap}`;
-    if (renderMode !== "gpu") {
-      const cached = getCachedImageData(cacheKey);
-      if (cached) {
-        const canvas = canvasRef.current;
-        if (canvas) {
-          if (canvas.width !== cached.width || canvas.height !== cached.height) {
-            canvas.width = cached.width;
-            canvas.height = cached.height;
-          }
-          const ctx = canvas.getContext("2d");
-          if (ctx) ctx.putImageData(cached, 0, 0);
-          updateDims(cached.width, cached.height);
-          setDiffReady(true);
-        }
-        return;
-      }
-    }
-
-    (async () => {
-      const [baseData, otherData] = await Promise.all([
-        loadImageData(api.artifactUrl(baselineHash!)),
-        loadImageData(api.artifactUrl(artifactHash!)),
-      ]);
-      if (cancelled) return;
-      if (!baseData || !otherData) return;
-
-      const isSigned = (diffMode as string).includes("signed");
-      const cmapMode: "linear" | "signed" | "positive" = isSigned ? "signed" : "positive";
-      const gpuLut = colormap !== "none" ? getColormapLUT(colormap as Exclude<Colormap, "none">) : null;
-      const gpuOpts = { diffMode: diffMode as DiffMode, colormap: gpuLut, cmapMode };
-
-      // GPU path: WebGL 2 direct render (synchronous after image load)
-      if (useGPU) {
-        try {
-          const canvas = canvasRef.current;
-          if (canvas) {
-            const dims = webglRenderDiffToCanvas(baseData, otherData, gpuOpts, canvas);
-            if (dims) {
-              if (cancelled) return;
-              updateDims(dims.width, dims.height);
-              setDiffReady(true);
-              return;
-            }
-          }
-        } catch (err) {
-          console.warn("[cairn] WebGL 2 diff error:", err);
-        }
-      }
-
-      // CPU fallback
-      if (renderMode === "gpu") {
-        console.error("[cairn] WebGL 2 unavailable — set render mode to 'Auto' or 'CPU'");
-        return;
-      }
-      let diffData = computeDiff(baseData, otherData, diffMode as DiffMode);
-      if (colormap !== "none") {
-        diffData = applyColormap(diffData, colormap as Exclude<Colormap, "none">, cmapMode);
-      }
-      setCachedImageData(cacheKey, diffData);
-      const canvas = canvasRef.current;
-      if (!canvas || cancelled) return;
-      if (canvas.width !== diffData.width || canvas.height !== diffData.height) {
-        canvas.width = diffData.width;
-        canvas.height = diffData.height;
-      }
-      const ctx = canvas.getContext("2d");
-      if (ctx) ctx.putImageData(diffData, 0, 0);
-      updateDims(diffData.width, diffData.height);
-      setDiffReady(true);
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [baselineHash, artifactHash, diffMode, showDiff, colormap, onNaturalSize]);
-
-  return (
-    <div className="relative flex flex-col h-full">
-      {/* Image / diff canvas */}
-      <div className="flex-1 min-h-0 min-w-0 flex items-center justify-center overflow-hidden rounded cairn-checkerboard" data-cairn-zoom-pane style={{ padding: showAxes && naturalDims ? "16px 4px 4px 28px" : "4px" }}>
-        <div ref={imgWrapperRef} data-cairn-img-wrapper className="relative w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
-          {!artifactHash ? (
-            <span className="text-xs text-fg-muted">no image</span>
-          ) : showDiff ? (
-            <>
-              {!diffReady && (
-                <span className="text-xs text-fg-muted motion-safe:animate-pulse">
-                  computing diff...
-                </span>
-              )}
-              <canvas
-                ref={canvasRef}
-                className="w-full h-full object-contain block"
-                style={{ display: diffReady ? "block" : "none", imageRendering: interpolation === "auto" ? undefined : interpolation, ...(flipSign ? { filter: "invert(1)" } : {}) }}
-              />
-            </>
-          ) : useFalseColor ? (
-            <>
-              {!falseColorReady && (
-                <span className="text-xs text-fg-muted motion-safe:animate-pulse">
-                  applying colormap...
-                </span>
-              )}
-              <canvas
-                ref={falseColorRef}
-                className="w-full h-full object-contain block"
-                style={{ display: falseColorReady ? "block" : "none", imageRendering: interpolation === "auto" ? undefined : interpolation, ...(flipSign ? { filter: "invert(1)" } : {}) }}
-              />
-            </>
-          ) : (
-            <img
-              src={api.artifactUrl(artifactHash)}
-              alt={label}
-              className="w-full h-full object-contain block"
-              draggable={false}
-              style={{ filter: filterStr, imageRendering: interpolation === "auto" ? undefined : interpolation }}
-              onLoad={(e) => {
-                const img = e.currentTarget;
-                setNaturalDims({ w: img.naturalWidth, h: img.naturalHeight });
-                onNaturalSize?.(img.naturalWidth, img.naturalHeight);
-              }}
-            />
-          )}
-          {showAxes && naturalDims && (
-            <PixelAxes naturalWidth={naturalDims.w} naturalHeight={naturalDims.h} zoom={zoomLevel} containerRef={imgWrapperRef} />
-          )}
-        </div>
-      </div>
-      {/* Label overlay — draggable as global baseline source */}
-      <span
-        className="absolute bottom-1 left-1 z-10 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm flex items-center gap-1"
-        draggable={isDraggable}
-        onDragStart={onImageDragStart}
-        style={{ cursor: isDraggable ? "grab" : undefined }}
-      >
-        {isDraggable && <i className="fa-solid fa-grip-vertical text-[8px] opacity-50" />}
-        {label}
-      </span>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// ImageGalleryCard
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// ExternalBaselinePicker — dropdown to select a reference image from another tag
+// ExternalBaselinePicker
 // ---------------------------------------------------------------------------
 
 function ExternalBaselinePicker({
@@ -747,7 +172,6 @@ function ExternalBaselinePicker({
   currentMetricName: string;
   selected?: string;
   onSelect: (name: string, contextHash: string, selectedRunId: string) => void;
-  /** All distinct run IDs from the card's effective metrics. */
   availableRunIds: string[];
 }) {
   const multiRun = availableRunIds.length > 1;
@@ -847,6 +271,247 @@ function ExternalBaselinePicker({
   );
 }
 
+// ---------------------------------------------------------------------------
+// OverlayComparePane — self-contained split/blend comparison
+// ---------------------------------------------------------------------------
+
+const MIN_ZOOM = 0.25;
+const MAX_ZOOM = 16;
+
+function OverlayComparePane({
+  predUrl,
+  refUrl,
+  label,
+  mode,
+  splitPos,
+  blendAlpha,
+  processing,
+  zoom: zoomProp,
+  pan: panProp,
+  onViewportChange,
+  interpolation,
+  isDraggable,
+  onDragStart,
+  onSplitPositionChange,
+}: {
+  predUrl: string;
+  refUrl: string;
+  label: string;
+  mode: "split" | "blend";
+  splitPos: number;
+  blendAlpha: number;
+  processing: ImageProcessingProps;
+  zoom: number;
+  pan: { x: number; y: number };
+  onViewportChange: (patch: { zoom?: number; pan?: { x: number; y: number } }) => void;
+  interpolation: Interpolation;
+  isDraggable: boolean;
+  onDragStart: (e: React.DragEvent) => void;
+  onSplitPositionChange: (pos: number) => void;
+}) {
+  const paneRef = useRef<HTMLDivElement>(null);
+
+  const rawId = useId();
+  const gammaFilterId = `cairn-gamma-overlay-${rawId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+
+  const { brightness, contrast, gamma, exposure, offset, flipSign } = processing;
+  const filterStr = useMemo(
+    () =>
+      [
+        `url(#${gammaFilterId})`,
+        `brightness(${(1 + brightness) * Math.pow(2, exposure)})`,
+        `contrast(${1 + contrast})`,
+        ...(flipSign ? ["invert(1)"] : []),
+      ].join(" "),
+    [gammaFilterId, brightness, contrast, exposure, flipSign],
+  );
+  const transformStr = `translate(${panProp.x}px, ${panProp.y}px) scale(${zoomProp})`;
+  const imgRendering = interpolation === "auto" ? undefined : interpolation;
+
+  const [altDown, setAltDown] = useState(false);
+  const altDownRef = useRef(false);
+  altDownRef.current = altDown;
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Alt" || e.key === "Control" || e.key === "Meta")
+        setAltDown(e.type === "keydown");
+    };
+    const onBlur = () => setAltDown(false);
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("keyup", onKey);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keyup", onKey);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, []);
+
+  const viewportRef = useRef({ zoom: zoomProp, pan: panProp });
+  viewportRef.current = { zoom: zoomProp, pan: panProp };
+
+  const onVpChangeRef = useRef(onViewportChange);
+  onVpChangeRef.current = onViewportChange;
+
+  useEffect(() => {
+    const el = paneRef.current;
+    if (!el) return;
+    const handler = (e: WheelEvent) => {
+      if (!altDownRef.current) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+      const s = viewportRef.current;
+      const nextZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, s.zoom * factor));
+      if (s.zoom === nextZoom) return;
+      const rect = el.getBoundingClientRect();
+      const cx = e.clientX - rect.left;
+      const cy = e.clientY - rect.top;
+      const newPanX = cx - ((cx - s.pan.x) / s.zoom) * nextZoom;
+      const newPanY = cy - ((cy - s.pan.y) / s.zoom) * nextZoom;
+      onVpChangeRef.current({ zoom: nextZoom, pan: { x: newPanX, y: newPanY } });
+    };
+    el.addEventListener("wheel", handler, { passive: false });
+    return () => el.removeEventListener("wheel", handler);
+  }, []);
+
+  const dragStateRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    panX: number;
+    panY: number;
+  } | null>(null);
+
+  const onPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!altDownRef.current) return;
+    (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+    dragStateRef.current = {
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      panX: viewportRef.current.pan.x,
+      panY: viewportRef.current.pan.y,
+    };
+  }, []);
+
+  const onPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const s = dragStateRef.current;
+    if (!s || s.pointerId !== e.pointerId) return;
+    onVpChangeRef.current({ pan: { x: s.panX + (e.clientX - s.startX), y: s.panY + (e.clientY - s.startY) } });
+  }, []);
+
+  const onPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const s = dragStateRef.current;
+    if (!s || s.pointerId !== e.pointerId) return;
+    try { (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+    dragStateRef.current = null;
+  }, []);
+
+  return (
+    <div className="relative flex flex-col h-full">
+      <svg aria-hidden="true" style={{ position: "absolute", width: 0, height: 0 }}>
+        <filter id={gammaFilterId} colorInterpolationFilters="sRGB">
+          <feComponentTransfer>
+            <feFuncR type="gamma" amplitude={1} exponent={1 / gamma} offset={offset} />
+            <feFuncG type="gamma" amplitude={1} exponent={1 / gamma} offset={offset} />
+            <feFuncB type="gamma" amplitude={1} exponent={1 / gamma} offset={offset} />
+          </feComponentTransfer>
+        </filter>
+      </svg>
+
+      <div
+        ref={paneRef}
+        className="flex-1 min-h-0 min-w-0 flex items-center justify-center overflow-hidden rounded cairn-checkerboard"
+        style={{
+          padding: "4px",
+          cursor: altDown ? "move" : undefined,
+          touchAction: altDown ? "none" : undefined,
+        }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+      >
+        <div className="relative w-full h-full">
+          <div className="w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
+            <img
+              src={predUrl}
+              alt="pred"
+              className="w-full h-full object-contain block"
+              draggable={false}
+              style={{
+                filter: filterStr,
+                imageRendering: imgRendering,
+                ...(mode === "blend" ? { opacity: blendAlpha } : {}),
+              }}
+            />
+          </div>
+          <div
+            className="absolute inset-0 overflow-hidden"
+            style={mode === "split" ? { clipPath: `inset(0 ${(1 - splitPos) * 100}% 0 0)` } : undefined}
+          >
+            <div className="w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
+              <img
+                src={refUrl}
+                alt="ref"
+                className="w-full h-full object-contain block"
+                draggable={false}
+                style={{
+                  filter: filterStr,
+                  imageRendering: imgRendering,
+                  ...(mode === "blend" ? { opacity: 1 - blendAlpha } : {}),
+                }}
+              />
+            </div>
+          </div>
+          {mode === "split" && (
+            <div
+              className="absolute top-0 bottom-0 z-20 flex items-center"
+              style={{ left: `${splitPos * 100}%`, transform: "translateX(-50%)", cursor: "col-resize" }}
+              onDoubleClick={() => onSplitPositionChange(0.5)}
+              onPointerDown={(ev) => {
+                ev.stopPropagation();
+                ev.preventDefault();
+                const container = ev.currentTarget.parentElement!;
+                const rect = container.getBoundingClientRect();
+                const onMoveEvt = (me: PointerEvent) => {
+                  onSplitPositionChange(Math.max(0, Math.min(1, (me.clientX - rect.left) / rect.width)));
+                };
+                const onUpEvt = () => {
+                  window.removeEventListener("pointermove", onMoveEvt);
+                  window.removeEventListener("pointerup", onUpEvt);
+                };
+                window.addEventListener("pointermove", onMoveEvt);
+                window.addEventListener("pointerup", onUpEvt);
+              }}
+            >
+              <div className="w-1 h-full bg-accent/80 rounded-full" />
+            </div>
+          )}
+        </div>
+      </div>
+      <span className="absolute top-1 left-1 z-10 rounded bg-accent/20 px-1 py-0.5 text-[10px] text-accent backdrop-blur-sm">
+        REF
+      </span>
+      <span
+        className="absolute bottom-1 right-1 z-10 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm flex items-center gap-1"
+        draggable={isDraggable && !altDown}
+        onDragStart={onDragStart}
+        style={{ cursor: isDraggable && !altDown ? "grab" : undefined }}
+      >
+        <i className="fa-solid fa-grip-vertical text-[8px] opacity-50" />
+        {label}
+      </span>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ImageGalleryCard
+// ---------------------------------------------------------------------------
+
 export default function ImageGalleryCard({ runId, metric, extraSeries, controlledSeries, settingsKeyOverride, onRemove }: Props) {
   useRunMetadataVersion();
 
@@ -931,7 +596,6 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     })),
   });
 
-  // Per-series points that have artifacts + step→point maps.
   const { perSeriesPoints, perSeriesStepMap, globalSteps, globalStepPoints } = useMemo(() => {
     const psp = queries.map((q) =>
       (q.data?.points ?? []).filter((p: SequencePoint) => p.artifact_hash),
@@ -941,8 +605,6 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
       for (const p of pts) m.set(p.step, p);
       return m;
     });
-    // Union of all step numbers across all series, sorted.
-    // Also collect wall_time from the first series that has it at each step.
     const stepMap = new Map<number, string | undefined>();
     for (const pts of psp) for (const p of pts) {
       if (!stepMap.has(p.step)) stepMap.set(p.step, p.wall_time ?? undefined);
@@ -953,7 +615,6 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queries.map((q) => q.dataUpdatedAt).join("|")]);
 
-  // Shared step slider — indexes into globalSteps
   const [idx, setIdx] = useState(settings.sliderStep ?? 0);
   const handleSliderChange = (newIdx: number) => {
     setIdx(newIdx);
@@ -996,22 +657,10 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     return m;
   }, [availableRunIds, runQueries]);
 
-  // -----------------------------------------------------------------------
-  // Settings refs for non-passive handlers
-  // -----------------------------------------------------------------------
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
-  const metricsRef = useRef(effectiveMetrics);
-  metricsRef.current = effectiveMetrics;
-
-  const { highlight: dropHighlight, dropProps } = useSeriesDrop({
-    metricsRef,
-    onMetricsChange: useCallback(
-      (next) => updateSettings({ metrics: next }),
-      [updateSettings],
-    ),
-  });
+  const { highlight: dropHighlight, dropProps } = useCardDrop(effectiveMetrics, updateSettings);
 
   const [expanded, setExpanded] = useState(false);
 
@@ -1024,189 +673,36 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     [runId, effectiveMetrics],
   );
 
-
   // -----------------------------------------------------------------------
-  // SVG gamma filter
+  // Processing props (passed to self-contained ImagePane / OverlayComparePane)
   // -----------------------------------------------------------------------
-  const rawId = useId();
-  const gammaFilterId = `cairn-gamma-${rawId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+  const processing: ImageProcessingProps = useMemo(() => ({
+    brightness: settings.brightness,
+    contrast: settings.contrast,
+    gamma: settings.gamma,
+    exposure: settings.exposure,
+    offset: settings.offset,
+    flipSign: settings.flipSign,
+  }), [settings.brightness, settings.contrast, settings.gamma, settings.exposure, settings.offset, settings.flipSign]);
 
-  const filterStr = [
-    `url(#${gammaFilterId})`,
-    `brightness(${(1 + settings.brightness) * Math.pow(2, settings.exposure)})`,
-    `contrast(${1 + settings.contrast})`,
-    ...(settings.flipSign ? ["invert(1)"] : []),
-  ].join(" ");
-
-  const transformStr = `translate(${settings.pan.x}px, ${settings.pan.y}px) scale(${settings.zoom})`;
-
-  // -----------------------------------------------------------------------
-  // Single-image zoom/pan (disabled in multi-pane)
-  // -----------------------------------------------------------------------
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const wheelHandlerRef = useRef<((e: WheelEvent) => void) | null>(null);
-
-  // Modifier key tracking — zoom/pan while Alt, Ctrl, or Meta is held.
-  const [altDown, setAltDown] = useState(false);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Alt" || e.key === "Control" || e.key === "Meta") setAltDown(e.type === "keydown");
-    };
-    const onBlur = () => setAltDown(false);
-    window.addEventListener("keydown", onKey);
-    window.addEventListener("keyup", onKey);
-    window.addEventListener("blur", onBlur);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("keyup", onKey);
-      window.removeEventListener("blur", onBlur);
-    };
-  }, []);
-  const altDownRef = useRef(altDown);
-  altDownRef.current = altDown;
-
-  // Stable wheel handler.
-  //
-  // Zoom math: with transformOrigin "0 0", screen position of element
-  // point p = p * zoom + pan. To keep the point under the cursor fixed
-  // after a zoom change: newPan = cx - ((cx - pan) / zoom) * newZoom.
-  //
-  // cx/cy MUST be relative to the pane that holds the transform, not the
-  // outer grid container. We find the pane by looking for the nearest
-  // ancestor with [data-cairn-zoom-pane] — this is the direct parent of
-  // the transform div and represents the viewport for that image.
-  wheelHandlerRef.current = (e: WheelEvent) => {
-    if (!altDownRef.current) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
-    const s = settingsRef.current;
-    const nextZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, s.zoom * factor));
-    if (s.zoom === nextZoom) return;
-
-    // Find the zoom pane the cursor is over.
-    const target = e.target as HTMLElement;
-    const paneEl = target.closest("[data-cairn-zoom-pane]") as HTMLElement | null;
-    const refEl = paneEl ?? containerRef.current;
-    if (refEl) {
-      const rect = refEl.getBoundingClientRect();
-      const cx = e.clientX - rect.left;
-      const cy = e.clientY - rect.top;
-      const newPanX = cx - ((cx - s.pan.x) / s.zoom) * nextZoom;
-      const newPanY = cy - ((cy - s.pan.y) / s.zoom) * nextZoom;
-      updateSettings({ zoom: nextZoom, pan: { x: newPanX, y: newPanY } });
-    } else {
-      updateSettings({ zoom: nextZoom });
-    }
-  };
-
-  const roRef = useRef<ResizeObserver | null>(null);
-
-  // Track the previous size so we can keep the visible center stable on resize.
-  const lastSizeRef = useRef<{ w: number; h: number } | null>(null);
-
-  // Callback ref: attach wheel listener + ResizeObserver when element mounts
-  const setContainerRef = useCallback((el: HTMLDivElement | null) => {
-    if (containerRef.current) {
-      containerRef.current.removeEventListener("wheel", (containerRef.current as any).__cairnWheel);
-      roRef.current?.disconnect();
-    }
-    containerRef.current = el;
-    lastSizeRef.current = null;
-    if (el) {
-      const handler = (e: WheelEvent) => wheelHandlerRef.current?.(e);
-      (el as any).__cairnWheel = handler;
-      el.addEventListener("wheel", handler, { passive: false });
-      const ro = new ResizeObserver((entries) => {
-        for (const entry of entries) {
-          const newW = entry.contentRect.width;
-          const newH = entry.contentRect.height;
-          setContainerWidth(newW);
-
-          // Re-center pan so the visible midpoint stays put on resize/colSpan change.
-          const prev = lastSizeRef.current;
-          const s = settingsRef.current;
-          const isZoomed = s.zoom !== 1 || s.pan.x !== 0 || s.pan.y !== 0;
-          if (prev && isZoomed && (prev.w !== newW || prev.h !== newH)) {
-            // element-space coord of the OLD viewport center:
-            //   cxElem = (oldCenter - oldPan) / zoom
-            const cxElem = (prev.w / 2 - s.pan.x) / s.zoom;
-            const cyElem = (prev.h / 2 - s.pan.y) / s.zoom;
-            // pan to put that same element point at the NEW center
-            const newPanX = newW / 2 - cxElem * s.zoom;
-            const newPanY = newH / 2 - cyElem * s.zoom;
-            updateSettings({ pan: { x: newPanX, y: newPanY } });
-          }
-          lastSizeRef.current = { w: newW, h: newH };
-        }
-      });
-      ro.observe(el);
-      roRef.current = ro;
-      const rect = el.getBoundingClientRect();
-      setContainerWidth(rect.width);
-      lastSizeRef.current = { w: rect.width, h: rect.height };
-    }
+  const handleViewportChange = useCallback((patch: { zoom?: number; pan?: { x: number; y: number } }) => {
+    updateSettings(patch);
   }, [updateSettings]);
 
-  const dragStateRef = useRef<{
-    pointerId: number;
-    startX: number;
-    startY: number;
-    panX: number;
-    panY: number;
-  } | null>(null);
+  // -----------------------------------------------------------------------
+  // Container size (for auto-height) + image aspect
+  // -----------------------------------------------------------------------
+  const { ref: containerSizeRef, size: containerSize } = useContainerSize<HTMLDivElement>();
+  const containerWidth = containerSize.w;
 
-  const onPointerDown = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      if (!altDownRef.current) return;
-      (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
-      dragStateRef.current = {
-        pointerId: e.pointerId,
-        startX: e.clientX,
-        startY: e.clientY,
-        panX: settingsRef.current.pan.x,
-        panY: settingsRef.current.pan.y,
-      };
-    },
-    [],
-  );
-
-  const onPointerMove = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      const s = dragStateRef.current;
-      if (!s || s.pointerId !== e.pointerId) return;
-      const dx = e.clientX - s.startX;
-      const dy = e.clientY - s.startY;
-      updateSettings({ pan: { x: s.panX + dx, y: s.panY + dy } });
-    },
-    [updateSettings],
-  );
-
-  const onPointerUp = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      const s = dragStateRef.current;
-      if (!s || s.pointerId !== e.pointerId) return;
-      try {
-        (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId);
-      } catch {
-        /* ignore */
-      }
-      dragStateRef.current = null;
-    },
-    [],
-  );
+  const [imageAspect, setImageAspect] = useState<number | null>(null);
+  const onImageNaturalSize = useCallback((w: number, h: number) => {
+    setImageAspect((prev) => prev ?? h / w);
+  }, []);
 
   // -----------------------------------------------------------------------
-  // Drop target
+  // Drop target for baseline references
   // -----------------------------------------------------------------------
-
-  // -----------------------------------------------------------------------
-  // Derived
-  // -----------------------------------------------------------------------
-  const canPan = altDown;
-
-
-  // Drop handler: accept a dragged chip or image as external baseline reference
   const [refDropHighlight, setRefDropHighlight] = useState(false);
   const onRefDragOver = useCallback((e: React.DragEvent) => {
     if (e.dataTransfer.types.includes(CAIRN_SERIES_MIME) || e.dataTransfer.types.includes(CAIRN_IMAGE_MIME)) {
@@ -1219,7 +715,6 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
   const onRefDrop = useCallback((e: React.DragEvent) => {
     setRefDropHighlight(false);
 
-    // Chip drop → per-run reference mode
     const chipData = e.dataTransfer.getData(CAIRN_SERIES_MIME);
     if (chipData) {
       e.stopPropagation();
@@ -1235,7 +730,6 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
       return;
     }
 
-    // Image drop → global reference mode
     const imageData = e.dataTransfer.getData(CAIRN_IMAGE_MIME);
     if (imageData) {
       e.stopPropagation();
@@ -1256,12 +750,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     }
   }, [updateSettings]);
 
-  // Drag start for images: sets CAIRN_IMAGE_MIME so dropping onto another card sets global ref
   const onImageDragStart = useCallback((e: React.DragEvent, m: { runId?: string; name: string; context_hash: string }) => {
-    if (altDownRef.current) {
-      e.preventDefault();
-      return;
-    }
     e.dataTransfer.effectAllowed = "copy";
     e.dataTransfer.setData(CAIRN_IMAGE_MIME, JSON.stringify({
       runId: m.runId ?? runId,
@@ -1270,90 +759,24 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     }));
     e.dataTransfer.setData("text/plain", m.name);
   }, [runId]);
-  const [singleNaturalDims, setSingleNaturalDims] = useState<{ w: number; h: number } | null>(null);
-  // Single-image: resolve for the first series at current global step
+
+  // -----------------------------------------------------------------------
+  // Derived
+  // -----------------------------------------------------------------------
   const firstResolved = useMemo(() => {
     const stepMap = perSeriesStepMap[0] ?? new Map();
     const steps = perSeriesPoints[0]?.map((p) => p.step) ?? [];
     return resolveArtifact(stepMap, currentStep, steps, settings.missingImageMode);
   }, [perSeriesStepMap, perSeriesPoints, currentStep, settings.missingImageMode]);
 
-  const singleFCRef = useRef<HTMLCanvasElement | null>(null);
-  const [singleFCReady, setSingleFCReady] = useState(false);
-  const singleArtifactHash = useMemo(() => {
-    return firstResolved.hash ?? null;
-  }, [firstResolved]);
-  const singleUseFalseColor = (settings.colormap ?? "none") !== "none" && !isMulti && singleArtifactHash != null;
-
-  useEffect(() => {
-    if (!singleUseFalseColor || !singleArtifactHash) { setSingleFCReady(false); return; }
-    let cancelled = false;
-    setSingleFCReady(false);
-
-    const cacheKey = `${singleArtifactHash}::${settings.colormap}`;
-    const cached = getCachedImageData(cacheKey);
-    if (cached) {
-      const fc = singleFCRef.current;
-      if (fc) {
-        fc.width = cached.width;
-        fc.height = cached.height;
-        const fctx = fc.getContext("2d");
-        if (fctx) fctx.putImageData(cached, 0, 0);
-        setSingleNaturalDims({ w: cached.width, h: cached.height });
-        setSingleFCReady(true);
-      }
-      return;
-    }
-
-    const img = new Image();
-    img.onload = () => {
-      if (cancelled) return;
-      const c = document.createElement("canvas");
-      c.width = img.naturalWidth;
-      c.height = img.naturalHeight;
-      const ctx = c.getContext("2d");
-      if (!ctx) return;
-      ctx.drawImage(img, 0, 0);
-      const src = ctx.getImageData(0, 0, c.width, c.height);
-      const cmap = (settings.colormap ?? "viridis") as Exclude<Colormap, "none">;
-      const cmapMode = DIVERGING_COLORMAPS.has(cmap) ? "positive" : "linear";
-      const mapped = applyColormap(src, cmap, cmapMode);
-      setCachedImageData(cacheKey, mapped);
-      const fc = singleFCRef.current;
-      if (!fc || cancelled) return;
-      fc.width = mapped.width;
-      fc.height = mapped.height;
-      const fctx = fc.getContext("2d");
-      if (fctx) fctx.putImageData(mapped, 0, 0);
-      setSingleNaturalDims({ w: mapped.width, h: mapped.height });
-      setSingleFCReady(true);
-    };
-    img.src = api.artifactUrl(singleArtifactHash);
-    return () => { cancelled = true; };
-  }, [singleUseFalseColor, singleArtifactHash, settings.colormap]);
-
-  // Track image natural aspect ratio (h/w) from first loaded image
-  const [imageAspect, setImageAspect] = useState<number | null>(null);
-  const onImageNaturalSize = useCallback((w: number, h: number) => {
-    setImageAspect((prev) => prev ?? h / w);
-  }, []);
-
-  // Track container width for auto-height calculation
-  const [containerWidth, setContainerWidth] = useState(0);
-
-  // Compute viewport height from container width + image aspect ratio
-  // so the viewport matches the image proportions
   const autoHeight = useMemo((): string | undefined => {
-    if (resolveCardHeight(settings, undefined) != null) return undefined; // user-set height
-    if (!imageAspect || containerWidth <= 0) return "20rem"; // before image loads
+    if (resolveCardHeight(settings, undefined) != null) return undefined;
+    if (!imageAspect || containerWidth <= 0) return "20rem";
     const n = effectiveMetrics.length;
-    // How many columns will SplitPane use? It wraps at minPaneWidth=200
     const cols = Math.min(n, Math.max(1, Math.floor(containerWidth / 200)));
     const rows = Math.ceil(n / cols);
     const paneWidth = containerWidth / cols;
-    // Height per row = pane width * image aspect + pane header (24px)
     const rowHeight = paneWidth * imageAspect + 24;
-    // Clamp: at least 120px, at most 500px per row
     const clampedRow = Math.max(120, Math.min(500, rowHeight));
     return `${Math.round(rows * clampedRow)}px`;
   }, [settings.height, settings.height1, settings.height2, settings.colSpan, imageAspect, containerWidth, effectiveMetrics.length]);
@@ -1365,7 +788,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
 
   const anyLoading = queries.some((q) => q.isLoading);
 
-  // External baseline: fetch image from a different metric tag
+  // External baseline
   const extBase = settings.externalBaseline;
   const extBaseRid = extBase?.runId ?? runId;
   const extBaseName = extBase?.name ?? "";
@@ -1380,7 +803,6 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     updateSettings(updates);
   }, [updateSettings]);
 
-  // Global mode: one shared reference series fetched from extBase.runId.
   const extBaseQuery = useSequence(extBaseRid, extBaseName, {
     context: extBaseCtx || undefined,
     maxPoints: 500,
@@ -1390,8 +812,6 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     return (extBaseQuery.data.points ?? []).filter((p: SequencePoint) => p.artifact_hash);
   }, [extBase, extBaseQuery.data]);
 
-  // Per-run mode: fetch the reference series (extBase.name) from EACH run
-  // in the comparison. Each pane gets its own run's copy of the ref tag.
   const perRunRefQueries = useQueries({
     queries: extBase && refMode === "per-run"
       ? effectiveMetrics.map((m) => ({
@@ -1405,7 +825,6 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
       : [],
   });
 
-  // Baseline hash for diff — external baseline takes priority (global mode).
   const baselineIdx = settings.baselineIndex;
   const baselineHash = extBase && refMode === "global"
     ? extBasePoints[Math.min(safeIdx, Math.max(0, extBasePoints.length - 1))]?.artifact_hash ?? undefined
@@ -1418,8 +837,6 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
         ).hash
       : undefined;
 
-  // Per-run baseline: each pane uses its own run's copy of the reference
-  // tag at the current step.
   const perPaneBaselineHash = useMemo(() => {
     if (refMode !== "per-run" || !extBase) return null;
     return effectiveMetrics.map((_, paneIdx) => {
@@ -1434,7 +851,6 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refMode, extBase, effectiveMetrics, perRunRefQueries.map((q) => q.dataUpdatedAt).join("|"), currentStep, settings.missingImageMode]);
 
-  // Whether any baseline is active (for diff dropdown visibility).
   const hasBaseline = baselineIdx != null || extBase != null;
 
   const cardRef = useRef<HTMLDivElement>(null);
@@ -1442,7 +858,6 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
   // -----------------------------------------------------------------------
   // Pane layout resolution
   // -----------------------------------------------------------------------
-
   type PaneLayout = "plain" | "side-by-side" | "split" | "blend";
 
   function resolvePaneLayout(
@@ -1459,50 +874,45 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
   // -----------------------------------------------------------------------
   // Per-pane render helpers
   // -----------------------------------------------------------------------
-
-  const sharedPaneProps = {
-    interpolation: settings.interpolation ?? "auto" as Interpolation,
-    zoom: settings.zoom,
-    transformStr,
-    filterStr,
-    flipSign: settings.flipSign,
-  };
-
   const renderSideBySidePane = (
-    predHash: string,
-    refHash: string,
+    predUrl: string,
+    refUrl: string,
     m: { runId?: string; name: string; context_hash: string },
-    paneIdx: number,
+    _paneIdx: number,
     label: string,
   ) => (
-    <div className="flex gap-0.5 h-full cairn-checkerboard">
-      <div className="relative flex-1 min-w-0 overflow-hidden border border-accent/20 rounded" data-cairn-zoom-pane>
+    <div className="flex gap-0.5 h-full">
+      <div className="relative flex-1 min-w-0 overflow-hidden border border-accent/20 rounded">
         <ImagePane
-          metricEntry={m}
-          paneIndex={paneIdx}
-          artifactHash={refHash}
-          baselineHash={undefined}
+          imageUrl={refUrl}
+          baselineUrl={null}
           isBaseline={true}
           diffMode="none"
+          interpolation={(settings.interpolation ?? "auto") as Interpolation}
           colormap={"none"}
           showAxes={false}
-          {...sharedPaneProps}
+          processing={processing}
+          zoom={settings.zoom}
+          pan={settings.pan}
+          onViewportChange={handleViewportChange}
           label="REF"
         />
       </div>
-      <div className="relative flex-1 min-w-0 overflow-hidden" data-cairn-zoom-pane>
+      <div className="relative flex-1 min-w-0 overflow-hidden">
         <ImagePane
-          metricEntry={m}
-          paneIndex={paneIdx}
-          artifactHash={predHash}
-          baselineHash={refHash}
+          imageUrl={predUrl}
+          baselineUrl={refUrl}
           isBaseline={false}
           diffMode={settings.diffMode}
+          interpolation={(settings.interpolation ?? "auto") as Interpolation}
           colormap={settings.colormap ?? "none"}
           showAxes={settings.showAxes ?? false}
-          {...sharedPaneProps}
-          isDraggable={!altDown}
-          onImageDragStart={(e) => onImageDragStart(e, m)}
+          processing={processing}
+          zoom={settings.zoom}
+          pan={settings.pan}
+          onViewportChange={handleViewportChange}
+          isDraggable
+          onDragStart={(e) => onImageDragStart(e, m)}
           onNaturalSize={onImageNaturalSize}
           label={label}
         />
@@ -1511,105 +921,35 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
   );
 
   const renderOverlayPane = (
-    predHash: string,
-    refHash: string,
+    predUrl: string,
+    refUrl: string,
     label: string,
     m: { runId?: string; name: string; context_hash: string },
     mode: "split" | "blend",
     splitPos: number,
     blendAlpha: number,
-  ) => {
-    const imgRendering = settings.interpolation === "auto" ? undefined : settings.interpolation;
-    return (
-      <div className="relative flex flex-col h-full">
-        <div
-          className="flex-1 min-h-0 min-w-0 flex items-center justify-center overflow-hidden rounded cairn-checkerboard"
-          data-cairn-zoom-pane
-          style={{ padding: "4px" }}
-        >
-          <div className="relative w-full h-full">
-            {/* Prediction layer — in-flow, provides natural sizing */}
-            <div className="w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
-              <img
-                src={api.artifactUrl(predHash)}
-                alt="pred"
-                className="w-full h-full object-contain block"
-                draggable={false}
-                style={{
-                  filter: filterStr,
-                  imageRendering: imgRendering,
-                  ...(mode === "blend" ? { opacity: blendAlpha } : {}),
-                }}
-              />
-            </div>
-            {/* Reference overlay — absolutely positioned on top */}
-            <div
-              className="absolute inset-0 overflow-hidden"
-              style={mode === "split" ? { clipPath: `inset(0 ${(1 - splitPos) * 100}% 0 0)` } : undefined}
-            >
-              <div className="w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
-                <img
-                  src={api.artifactUrl(refHash)}
-                  alt="ref"
-                  className="w-full h-full object-contain block"
-                  draggable={false}
-                  style={{
-                    filter: filterStr,
-                    imageRendering: imgRendering,
-                    ...(mode === "blend" ? { opacity: 1 - blendAlpha } : {}),
-                  }}
-                />
-              </div>
-            </div>
-            {/* Split handle */}
-            {mode === "split" && (
-              <div
-                className="absolute top-0 bottom-0 z-20 flex items-center"
-                style={{ left: `${splitPos * 100}%`, transform: "translateX(-50%)", cursor: "col-resize" }}
-                onDoubleClick={() => updateSettings({ splitPosition: 0.5 })}
-                onPointerDown={(ev) => {
-                  ev.stopPropagation();
-                  ev.preventDefault();
-                  const container = ev.currentTarget.parentElement!;
-                  const rect = container.getBoundingClientRect();
-                  const onMove = (me: PointerEvent) => {
-                    const pos = Math.max(0, Math.min(1, (me.clientX - rect.left) / rect.width));
-                    updateSettings({ splitPosition: pos });
-                  };
-                  const onUp = () => {
-                    window.removeEventListener("pointermove", onMove);
-                    window.removeEventListener("pointerup", onUp);
-                  };
-                  window.addEventListener("pointermove", onMove);
-                  window.addEventListener("pointerup", onUp);
-                }}
-              >
-                <div className="w-1 h-full bg-accent/80 rounded-full" />
-              </div>
-            )}
-          </div>
-        </div>
-        {/* Labels — REF top-left, prediction bottom-right (draggable) */}
-        <span className="absolute top-1 left-1 z-10 rounded bg-accent/20 px-1 py-0.5 text-[10px] text-accent backdrop-blur-sm">
-          REF
-        </span>
-        <span
-          className="absolute bottom-1 right-1 z-10 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm flex items-center gap-1"
-          draggable={!altDown}
-          onDragStart={(e) => onImageDragStart(e, m)}
-          style={{ cursor: !altDown ? "grab" : undefined }}
-        >
-          <i className="fa-solid fa-grip-vertical text-[8px] opacity-50" />
-          {label}
-        </span>
-      </div>
-    );
-  };
+  ) => (
+    <OverlayComparePane
+      predUrl={predUrl}
+      refUrl={refUrl}
+      label={label}
+      mode={mode}
+      splitPos={splitPos}
+      blendAlpha={blendAlpha}
+      processing={processing}
+      zoom={settings.zoom}
+      pan={settings.pan}
+      onViewportChange={handleViewportChange}
+      interpolation={(settings.interpolation ?? "auto") as Interpolation}
+      isDraggable
+      onDragStart={(e) => onImageDragStart(e, m)}
+      onSplitPositionChange={(pos) => updateSettings({ splitPosition: pos })}
+    />
+  );
 
   // -----------------------------------------------------------------------
   // Multi-pane grid
   // -----------------------------------------------------------------------
-
   const renderMultiPaneGrid = () => {
     const compareMode = settings.compareMode ?? "side-by-side";
     const splitPos = settings.splitPosition ?? 0.5;
@@ -1637,30 +977,35 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
             compareMode,
           );
 
+          const imageUrl = hash ? api.artifactUrl(hash) : null;
+          const baselineUrl = paneBaseline ? api.artifactUrl(paneBaseline) : null;
+
           let content: React.ReactNode;
           switch (layout) {
             case "side-by-side":
-              content = renderSideBySidePane(hash!, paneBaseline!, m, paneIdx, label);
+              content = renderSideBySidePane(imageUrl!, baselineUrl!, m, paneIdx, label);
               break;
             case "split":
             case "blend":
-              content = renderOverlayPane(hash!, paneBaseline!, label, m, layout, splitPos, blendAlpha);
+              content = renderOverlayPane(imageUrl!, baselineUrl!, label, m, layout, splitPos, blendAlpha);
               break;
             case "plain":
             default:
               content = (
                 <ImagePane
-                  metricEntry={m}
-                  paneIndex={paneIdx}
-                  artifactHash={hash}
-                  baselineHash={paneBaseline}
+                  imageUrl={imageUrl}
+                  baselineUrl={baselineUrl}
                   isBaseline={refMode === "global" && baselineIdx === paneIdx}
                   diffMode={settings.diffMode}
+                  interpolation={(settings.interpolation ?? "auto") as Interpolation}
                   colormap={settings.colormap ?? "none"}
                   showAxes={settings.showAxes ?? false}
-                  {...sharedPaneProps}
-                  isDraggable={!altDown}
-                  onImageDragStart={(e) => onImageDragStart(e, m)}
+                  processing={processing}
+                  zoom={settings.zoom}
+                  pan={settings.pan}
+                  onViewportChange={handleViewportChange}
+                  isDraggable
+                  onDragStart={(e) => onImageDragStart(e, m)}
                   onNaturalSize={onImageNaturalSize}
                   label={label}
                 />
@@ -1674,22 +1019,23 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
             </div>
           );
         })}
-        {/* Global ref pane — shown once at grid end in normal (side-by-side) mode */}
         {compareMode === "side-by-side" && refMode === "global" && settings.externalBaseline && extBasePoints.length > 0 && (() => {
           const refPt = extBasePoints[Math.min(safeIdx, extBasePoints.length - 1)];
           const refHash = refPt?.artifact_hash ?? undefined;
           return (
             <div className="relative overflow-hidden">
               <ImagePane
-                metricEntry={{ runId: settings.externalBaseline!.runId, name: settings.externalBaseline!.name, context_hash: settings.externalBaseline!.context_hash }}
-                paneIndex={-1}
-                artifactHash={refHash}
-                baselineHash={undefined}
+                imageUrl={refHash ? api.artifactUrl(refHash) : null}
+                baselineUrl={null}
                 isBaseline={true}
                 diffMode="none"
+                interpolation={(settings.interpolation ?? "auto") as Interpolation}
                 colormap={"none"}
                 showAxes={settings.showAxes ?? false}
-                {...sharedPaneProps}
+                processing={processing}
+                zoom={settings.zoom}
+                pan={settings.pan}
+                onViewportChange={handleViewportChange}
                 label={`ref: ${settings.externalBaseline!.name}`}
               />
             </div>
@@ -1699,67 +1045,26 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     );
   };
 
+  // -----------------------------------------------------------------------
+  // Single-image view (uses ImagePane from library)
+  // -----------------------------------------------------------------------
   const renderSingleImageView = () => (
-    <div
-      className="relative flex flex-1 min-h-0 justify-center items-center rounded cairn-checkerboard" data-cairn-zoom-pane
-      style={{
-        overflow: "hidden",
-        padding: settings.showAxes && singleNaturalDims ? "16px 4px 4px 28px" : "8px",
-      }}
-    >
-      <div
-        data-cairn-img-wrapper className="relative w-full h-full"
-        style={{ transform: transformStr, transformOrigin: "0 0" }}
-      >
-      {firstResolved.hash ? (
-        singleUseFalseColor ? (
-          <>
-            {!singleFCReady && <span className="text-xs text-fg-muted motion-safe:animate-pulse">applying colormap...</span>}
-            <canvas
-              ref={singleFCRef}
-              className="w-full h-full object-contain block"
-              style={{
-                display: singleFCReady ? "block" : "none",
-                imageRendering: settings.interpolation === "auto" ? undefined : settings.interpolation,
-                ...(settings.flipSign ? { filter: "invert(1)" } : {}),
-              }}
-            />
-          </>
-        ) : (
-          <img
-            src={api.artifactUrl(firstResolved.hash!)}
-            alt={`${metric.name} @ step ${currentStep}`}
-            className="w-full h-full object-contain block"
-            draggable={false}
-            style={{
-              filter: filterStr,
-              imageRendering: settings.interpolation === "auto" ? undefined : settings.interpolation,
-            }}
-            onLoad={(e) => {
-              const imgEl = e.currentTarget;
-              setSingleNaturalDims({ w: imgEl.naturalWidth, h: imgEl.naturalHeight });
-              onImageNaturalSize(imgEl.naturalWidth, imgEl.naturalHeight);
-            }}
-          />
-        )
-      ) : (
-        <span className="text-sm text-fg-muted">no image</span>
-      )}
-      {settings.showAxes && singleNaturalDims && (
-        <PixelAxes naturalWidth={singleNaturalDims.w} naturalHeight={singleNaturalDims.h} zoom={settings.zoom} />
-      )}
-      </div>
-      {/* Label overlay — draggable as global baseline source */}
-      <span
-        className="absolute bottom-1 left-1 z-10 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm flex items-center gap-1"
-        draggable={!altDown}
-        onDragStart={(e) => onImageDragStart(e, effectiveMetrics[0]!)}
-        style={{ cursor: !altDown ? "grab" : undefined }}
-      >
-        <i className="fa-solid fa-grip-vertical text-[8px] opacity-50" />
-        {metric.name}
-      </span>
-    </div>
+    <ImagePane
+      imageUrl={firstResolved.hash ? api.artifactUrl(firstResolved.hash) : null}
+      baselineUrl={null}
+      diffMode="none"
+      interpolation={(settings.interpolation ?? "auto") as Interpolation}
+      colormap={settings.colormap ?? "none"}
+      showAxes={settings.showAxes ?? false}
+      processing={processing}
+      zoom={settings.zoom}
+      pan={settings.pan}
+      onViewportChange={handleViewportChange}
+      isDraggable
+      onDragStart={(e) => onImageDragStart(e, effectiveMetrics[0]!)}
+      onNaturalSize={onImageNaturalSize}
+      label={metric.name}
+    />
   );
 
   const renderImageContent = () => isMulti ? renderMultiPaneGrid() : renderSingleImageView();
@@ -1775,35 +1080,6 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
       }}
       {...dropProps}
     >
-      {/* SVG gamma filter */}
-      <svg
-        aria-hidden="true"
-        style={{ position: "absolute", width: 0, height: 0 }}
-      >
-        <filter id={gammaFilterId} colorInterpolationFilters="sRGB">
-          <feComponentTransfer>
-            <feFuncR
-              type="gamma"
-              amplitude={1}
-              exponent={1 / settings.gamma}
-              offset={settings.offset}
-            />
-            <feFuncG
-              type="gamma"
-              amplitude={1}
-              exponent={1 / settings.gamma}
-              offset={settings.offset}
-            />
-            <feFuncB
-              type="gamma"
-              amplitude={1}
-              exponent={1 / settings.gamma}
-              offset={settings.offset}
-            />
-          </feComponentTransfer>
-        </filter>
-      </svg>
-
       <CardHeader
         title={settings.title ?? metric.name}
         subtitle={subtitle}
@@ -1814,7 +1090,6 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
         onRemove={onRemove}
         onDownload={firstResolved.hash ? () => downloadArtifact(api.artifactUrl(firstResolved.hash!), artifactFilename(metric.name, currentStep, "image/png")) : undefined}
         onScreenshot={() => {
-          // Build structured pane data for the export (don't scrape DOM).
           const panes: CompositePane[] = [];
           const cmap = settings.colormap ?? "none";
 
@@ -1826,7 +1101,6 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
               const { hash } = resolveArtifact(stepMap, currentStep, steps, settings.missingImageMode);
               const label = seriesLabel(m, runId, multipleRuns, availableRunIds);
 
-              // If per-run reference is active, add REF + Pred as a group
               const paneBaseline = refMode === "per-run"
                 ? perPaneBaselineHash?.[pi]
                 : baselineHash;
@@ -1838,10 +1112,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
               }
             }
           } else {
-            // Single image
-            if (singleUseFalseColor && singleFCRef.current) {
-              panes.push({ canvas: singleFCRef.current, label: metric.name });
-            } else if (firstResolved.hash) {
+            if (firstResolved.hash) {
               panes.push({ url: api.artifactUrl(firstResolved.hash), label: metric.name });
             }
           }
@@ -1867,10 +1138,9 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
             aria-label="Reset zoom and pan"
             title="Reset zoom and pan"
           >
-            {"\u2302"}
+            {"⌂"}
           </button>
         )}
-        {/* Diff mode dropdown — only when a baseline is set */}
         {hasBaseline && (
           <select
             value={settings.diffMode}
@@ -1887,7 +1157,6 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
             <option value="relative_squared">rel. squared</option>
           </select>
         )}
-        {/* Colormap dropdown */}
         <select
           value={settings.colormap ?? "none"}
           onChange={(e) => updateSettings({ colormap: e.target.value as Colormap })}
@@ -1907,36 +1176,27 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
       ) : globalSteps.length > 0 ? (
         <>
           <div
-            ref={setContainerRef}
+            ref={containerSizeRef}
             className={`relative min-h-0 flex flex-col overflow-hidden${resolveCardHeight(settings, undefined) != null ? " flex-1" : ""}${refDropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
             style={{
               height: resolveCardHeight(settings, undefined) == null ? autoHeight : undefined,
-              cursor: canPan ? "move" : "default",
-              touchAction: canPan ? "none" : undefined,
             }}
             onDragOver={onRefDragOver}
             onDragLeave={onRefDragLeave}
             onDrop={onRefDrop}
-            onPointerDown={onPointerDown}
-            onPointerMove={onPointerMove}
-            onPointerUp={onPointerUp}
-            onPointerCancel={onPointerUp}
           >
           <div className="flex flex-1 min-h-0">
           <div className="flex-1 min-w-0 min-h-0 flex flex-col">
           {renderImageContent()}
           </div>
-          {/* Colorbar — flex sibling to image area */}
           {(settings.colormap ?? "none") !== "none" && (
             <Colorbar colormap={settings.colormap as Exclude<Colormap, "none">} isDiff={settings.diffMode !== "none" && (settings.baselineIndex != null || settings.externalBaseline != null)} />
           )}
           </div>
           </div>
 
-          {/* Compare toolbar — reference mode, split/blend controls */}
           {isMulti && hasBaseline && (
             <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px]">
-              {/* Compare mode buttons */}
               {(["side-by-side", "split", "blend"] as const).map((mode) => (
                 <button
                   key={mode}
@@ -1947,7 +1207,6 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                   {mode === "side-by-side" ? (refMode === "global" ? "normal" : "side") : mode}
                 </button>
               ))}
-              {/* Split position slider */}
               {(settings.compareMode ?? "side-by-side") === "split" && (
                 <input
                   type="range"
@@ -1960,7 +1219,6 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                   title="Split position"
                 />
               )}
-              {/* Blend alpha slider */}
               {(settings.compareMode ?? "side-by-side") === "blend" && (
                 <input
                   type="range"
@@ -1976,7 +1234,6 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
             </div>
           )}
 
-          {/* Shared step slider */}
           <StepSlider
             points={globalStepPoints}
             currentIndex={safeIdx}
@@ -1990,72 +1247,16 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
         <div className="text-sm text-fg-muted">no image logged yet</div>
       )}
 
-      <div className="mt-2 flex flex-wrap gap-1.5">
-        {controlledSeries
-          ? (() => {
-              const seen = new Set<string>();
-              const tags: Array<{ name: string; color: string; firstIdx: number }> = [];
-              for (let i = 0; i < effectiveMetrics.length; i++) {
-                const m = effectiveMetrics[i]!;
-                if (seen.has(m.name)) continue;
-                seen.add(m.name);
-                tags.push({
-                  name: m.name,
-                  color: SERIES_COLORS[tags.length % SERIES_COLORS.length]!,
-                  firstIdx: i,
-                });
-              }
-              return tags.map((tag) => {
-                const m = effectiveMetrics[tag.firstIdx]!;
-                const chipRunId = m.runId ?? runId;
-                const ref: SeriesRef = {
-                  runId: m.runId,
-                  name: m.name,
-                  context_hash: m.context_hash,
-                };
-                return (
-                  <SeriesChip
-                    key={tag.name}
-                    series={ref}
-                    color={tag.color}
-                    label={tag.name}
-                    runId={runId}
-                    onClick={multipleRuns ? () => toggle(chipRunId) : undefined}
-                    selected={selectedIds.has(chipRunId)}
-                    onRemove={
-                      tags.length > 1
-                        ? () => updateSettings({ metrics: effectiveMetrics.filter((x) => x.name !== tag.name), baselineIndex: undefined, paneWidths: undefined })
-                        : undefined
-                    }
-                  />
-                );
-              });
-            })()
-          : effectiveMetrics.map((m, i) => {
-              const chipRunId = m.runId ?? runId;
-              const ref: SeriesRef = {
-                runId: m.runId,
-                name: m.name,
-                context_hash: m.context_hash,
-              };
-              return (
-                <SeriesChip
-                  key={seriesKey(m)}
-                  series={ref}
-                  color={SERIES_COLORS[i % SERIES_COLORS.length]!}
-                  label={seriesLabel(m, runId, multipleRuns, availableRunIds)}
-                  runId={runId}
-                  onClick={multipleRuns ? () => toggle(chipRunId) : undefined}
-                  selected={selectedIds.has(chipRunId)}
-                  onRemove={
-                    effectiveMetrics.length > 1
-                      ? () => updateSettings({ metrics: effectiveMetrics.filter((_, j) => j !== i), baselineIndex: undefined, paneWidths: undefined })
-                      : undefined
-                  }
-                />
-              );
-            })}
-      </div>
+      <SeriesChipStrip
+        metrics={effectiveMetrics}
+        controlledSeries={controlledSeries}
+        runId={runId}
+        allRunIds={availableRunIds}
+        onMetricsChange={(next) => updateSettings({ metrics: next, baselineIndex: undefined, paneWidths: undefined })}
+        labelFn={seriesLabel}
+        onClick={multipleRuns ? toggle : undefined}
+        selectedIds={selectedIds}
+      />
 
       {!hasSelectionProvider && (
         <RunSelectionPanel
@@ -2072,9 +1273,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
       {(() => {
         const settingsPanel = (
           <>
-            <h4 className="text-xs uppercase tracking-wide text-fg-muted mb-2">
-              Image
-            </h4>
+            <SettingsSection title="Image" first />
             <Slider
               label="Brightness"
               value={settings.brightness}
@@ -2129,7 +1328,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
               onChange={(v) => updateSettings({ flipSign: v })}
               description="Invert / negate pixel values"
             />
-            <Select<Interpolation>
+            <Select<"auto" | "pixelated" | "crisp-edges">
               label="Interpolation"
               value={settings.interpolation ?? "auto"}
               onChange={(v) => updateSettings({ interpolation: v })}
@@ -2147,8 +1346,8 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
               options={[
                 { value: "none", label: "None (original)" },
                 { value: "viridis", label: "Viridis" },
-                { value: "red-green", label: "Red \u2013 Green (\u00B1)" },
-                { value: "red-blue", label: "Red \u2013 Blue (\u00B1)" },
+                { value: "red-green", label: "Red – Green (±)" },
+                { value: "red-blue", label: "Red – Blue (±)" },
               ]}
             />
             {(settings.colormap ?? "none") !== "none" && (
@@ -2169,9 +1368,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
               onChange={(v) => updateSettings({ showAxes: v })}
               description="Show pixel coordinate ticks along edges"
             />
-            <h4 className="text-xs uppercase tracking-wide text-fg-muted mt-3 mb-2">
-              Diff
-            </h4>
+            <SettingsSection title="Diff" />
             <Select
               label="Diff mode"
               value={settings.diffMode}
@@ -2209,7 +1406,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                     onClick={() => updateSettings({ externalBaseline: undefined, baselineIndex: undefined, diffMode: settings.diffMode === "none" ? "none" : settings.diffMode })}
                     className="text-fg-subtle hover:text-fg shrink-0"
                     title="Remove external reference"
-                  >{"\u00D7"}</button>
+                  >{"×"}</button>
                 </div>
               ) : (
                 <p className="text-[10px] text-fg-subtle mb-1">
@@ -2239,22 +1436,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
             title={settings.title ?? metric.name}
             settingsContent={settingsPanel}
           >
-            <div
-              ref={(el) => {
-                if (!el) return;
-                if (!(el as any).__cairnModalWheel) {
-                  const handler = (e: WheelEvent) => wheelHandlerRef.current?.(e);
-                  el.addEventListener("wheel", handler, { passive: false });
-                  (el as any).__cairnModalWheel = true;
-                }
-              }}
-              className="h-[calc(100vh-12rem)] flex flex-col"
-              style={{ cursor: canPan ? "move" : "default", touchAction: canPan ? "none" : undefined }}
-              onPointerDown={onPointerDown}
-              onPointerMove={onPointerMove}
-              onPointerUp={onPointerUp}
-              onPointerCancel={onPointerUp}
-            >
+            <div className="h-[calc(100vh-12rem)] flex flex-col">
               {renderImageContent()}
               <StepSlider
                 points={globalStepPoints}

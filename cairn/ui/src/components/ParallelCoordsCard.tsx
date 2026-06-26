@@ -5,19 +5,23 @@
  * Each polyline is a run. Lines are colored by the rightmost column's value.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { qk } from "../api/query-keys";
-import { viridis } from "../lib/colors";
+import {
+  ParallelCoords,
+  type ParallelColumn,
+  type ParallelRow,
+} from "../lib/cairn-plot";
 import type { Run } from "../api/types";
-import { useCardSettings, resolveCardHeight } from "../lib/card-settings";
+import { useCardSettings } from "../lib/card-settings";
 import { downloadCsv, exportChartFromContainer, safeName } from "../lib/download";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import { useRunSelection, useRunSelectionHasProvider } from "../lib/use-run-selection";
-import CardHeader from "./CardHeader";
+import CardShell from "./CardShell";
 import CardDetailModal from "./CardDetailModal";
-import CardResizeHandle from "./CardResizeHandle";
+import SettingsSection from "./settings/SettingsSection";
 import RunSelectionPanel from "./RunSelectionPanel";
 
 // ---------------------------------------------------------------------------
@@ -32,8 +36,7 @@ interface ParallelSettings {
   height1?: number;
   height2?: number;
   colSpan?: number;
-  /** Column definitions: each is either a param key or a scalar metric name. */
-  columns: Array<{ key: string; source: "param" | "metric"; log?: boolean; invert?: boolean }>;
+  columns: ParallelColumn[];
 }
 
 const DEFAULT_SETTINGS: ParallelSettings = {
@@ -46,13 +49,9 @@ const DEFAULT_SETTINGS: ParallelSettings = {
 // ---------------------------------------------------------------------------
 
 interface Props {
-  /** All run IDs to show. */
   runIds: string[];
-  /** Run display info (id → display_name, color). */
   runs?: Run[];
-  /** Settings key override. */
   settingsKey: { runId: string; metricName: string; contextHash: string };
-  /** Card index for unique keying. */
   onRemove?: () => void;
 }
 
@@ -100,7 +99,6 @@ export default function ParallelCoordsCard({
     const cols = settings.columns;
     if (cols.length === 0) return { rowData: [], columnDomains: [] as Array<{ min: number; max: number; isNumeric: boolean }> };
 
-    // Per-run param maps
     const runParams = new Map<string, Map<string, string>>();
     runQueries.forEach((q, idx) => {
       const rid = runIds[idx];
@@ -112,7 +110,6 @@ export default function ParallelCoordsCard({
       runParams.set(rid, pmap);
     });
 
-    // Per-run metric final values
     const runMetrics = new Map<string, Map<string, number>>();
     let mIdx = 0;
     for (const rid of runIds) {
@@ -131,9 +128,7 @@ export default function ParallelCoordsCard({
       runMetrics.set(rid, mmap);
     }
 
-    // Build rows
-    type Row = { runId: string; values: Array<number | null>; raw: Array<string | null> };
-    const rows: Row[] = [];
+    const rows: ParallelRow[] = [];
     for (const rid of runIds) {
       const pmap = runParams.get(rid);
       const mmap = runMetrics.get(rid);
@@ -152,10 +147,9 @@ export default function ParallelCoordsCard({
           values.push(v);
         }
       }
-      rows.push({ runId: rid, values, raw });
+      rows.push({ id: rid, values, raw, label: shortRunLabel(rid, runIds) });
     }
 
-    // Compute domains per column
     const domains = cols.map((_, ci) => {
       let min = Infinity;
       let max = -Infinity;
@@ -190,7 +184,6 @@ export default function ParallelCoordsCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runQueries.map((q) => q.dataUpdatedAt).join("|")]);
 
-  // Fetch sequences list for metric column options
   const seqQueries = useQueries({
     queries: runIds.map((rid) => ({
       queryKey: qk.sequences(rid),
@@ -253,11 +246,6 @@ export default function ParallelCoordsCard({
     [settings.columns, updateSettings],
   );
 
-  // Hover state for tooltip
-  const [hoveredRun, setHoveredRun] = useState<string | null>(null);
-  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
-  const svgRef = useRef<SVGSVGElement | null>(null);
-
   const { selectedIds, selectedArray, toggle, clear } = useRunSelection();
   const hasSelectionProvider = useRunSelectionHasProvider();
 
@@ -271,176 +259,11 @@ export default function ParallelCoordsCard({
   }, [runIds, runQueries]);
 
   // ---------------------------------------------------------------------------
-  // SVG rendering
-  // ---------------------------------------------------------------------------
-  const renderPlot = (width: number, height: number) => {
-    const cols = settings.columns;
-    if (cols.length === 0) {
-      return (
-        <div className="flex items-center justify-center h-full text-sm text-fg-muted">
-          Add columns in settings to build the parallel coordinates plot.
-        </div>
-      );
-    }
-
-    const pad = { top: 30, bottom: 20, left: 60, right: 60 };
-    const plotW = width - pad.left - pad.right;
-    const plotH = height - pad.top - pad.bottom;
-    if (plotW <= 0 || plotH <= 0) return null;
-
-    const colX = cols.map((_, i) => pad.left + (cols.length === 1 ? plotW / 2 : (i / (cols.length - 1)) * plotW));
-
-    // Normalize value to [0,1] within column domain, applying log/invert
-    const normalize = (ci: number, v: number | null): number | null => {
-      if (v == null) return null;
-      const col = cols[ci]!;
-      const d = columnDomains[ci]!;
-      let val = v;
-      let min = d.min;
-      let max = d.max;
-      if (col.log) {
-        // Shift to positive range before log if needed
-        const offset = min > 0 ? 0 : 1 - min;
-        val = Math.log10(val + offset);
-        min = Math.log10(min + offset);
-        max = Math.log10(max + offset);
-      }
-      let t = (max - min) === 0 ? 0.5 : (val - min) / (max - min);
-      if (col.invert) t = 1 - t;
-      return t;
-    };
-
-    // Color by rightmost column
-    const colorColIdx = cols.length - 1;
-    const colorDomain = columnDomains[colorColIdx];
-
-    return (
-      <svg
-        ref={svgRef}
-        width={width}
-        height={height}
-        className="select-none"
-        onMouseLeave={() => { setHoveredRun(null); setTooltipPos(null); }}
-      >
-        {/* Column axes */}
-        {cols.map((col, ci) => {
-          const x = colX[ci]!;
-          const d = columnDomains[ci]!;
-          return (
-            <g key={ci}>
-              <line x1={x} y1={pad.top} x2={x} y2={pad.top + plotH} stroke="#d0d7de" strokeWidth={1} />
-              <text x={x} y={pad.top - 8} textAnchor="middle" className="text-[10px] fill-fg-muted" style={{ fontSize: 10 }}>
-                {col.key}
-              </text>
-              <text x={x} y={pad.top + plotH + 14} textAnchor="middle" className="mono text-[9px] fill-fg-subtle" style={{ fontSize: 9 }}>
-                {d.min.toPrecision(3)}
-              </text>
-              <text x={x} y={pad.top - 1} textAnchor="middle" className="mono text-[9px] fill-fg-subtle" style={{ fontSize: 9 }}>
-                {d.max.toPrecision(3)}
-              </text>
-            </g>
-          );
-        })}
-
-        {/* Polylines — dim non-hovered when hovering */}
-        {rowData.map((row) => {
-          const points: Array<{ x: number; y: number }> = [];
-          for (let ci = 0; ci < cols.length; ci++) {
-            const t = normalize(ci, row.values[ci]);
-            if (t == null) continue;
-            points.push({ x: colX[ci]!, y: pad.top + plotH - t * plotH });
-          }
-          if (points.length < 2) return null;
-
-          const colorT = colorDomain ? normalize(colorColIdx, row.values[colorColIdx]) : null;
-          const color = colorT != null ? viridis(colorT) : "#656d76";
-          const isHovered = hoveredRun === row.runId;
-          const isSelected = selectedIds.has(row.runId);
-          const isDimmed = (hoveredRun != null && !isHovered) || (selectedIds.size > 0 && !isSelected && !isHovered);
-
-          const d = points.map((p, i) => `${i === 0 ? "M" : "L"}${p.x},${p.y}`).join(" ");
-
-          return (
-            <g
-              key={row.runId}
-              className="cursor-pointer"
-              onClick={() => toggle(row.runId)}
-              onMouseEnter={(e) => {
-                setHoveredRun(row.runId);
-                const svg = svgRef.current;
-                if (svg) {
-                  const rect = svg.getBoundingClientRect();
-                  setTooltipPos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
-                }
-              }}
-              onMouseMove={(e) => {
-                const svg = svgRef.current;
-                if (svg) {
-                  const rect = svg.getBoundingClientRect();
-                  setTooltipPos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
-                }
-              }}
-              onMouseLeave={() => { setHoveredRun(null); setTooltipPos(null); }}
-            >
-              {/* Wider invisible hit area */}
-              <path d={d} fill="none" stroke="transparent" strokeWidth={8} />
-              <path d={d} fill="none" stroke={color} strokeWidth={isHovered ? 3 : 1.5} strokeOpacity={isDimmed ? 0.15 : 0.8} />
-              {points.map((p, pi) => (
-                <circle key={pi} cx={p.x} cy={p.y} r={isHovered ? 4 : 3} fill={color} stroke="white" strokeWidth={1} opacity={isDimmed ? 0.2 : 1} />
-              ))}
-            </g>
-          );
-        })}
-
-        {/* Color legend for rightmost column */}
-        {colorDomain && (
-          <g>
-            <defs>
-              <linearGradient id="pc-color-grad" x1="0" y1="1" x2="0" y2="0">
-                <stop offset="0%" stopColor={viridis(0)} />
-                <stop offset="50%" stopColor={viridis(0.5)} />
-                <stop offset="100%" stopColor={viridis(1)} />
-              </linearGradient>
-            </defs>
-            <rect x={width - 18} y={pad.top} width={10} height={plotH} fill="url(#pc-color-grad)" rx={2} />
-          </g>
-        )}
-
-      </svg>
-    );
-  };
-
-  // Tooltip rendered as a plain div overlay (avoids foreignObject browser issues)
-  const renderTooltip = () => {
-    if (!hoveredRun || !tooltipPos) return null;
-    const row = rowData.find((r) => r.runId === hoveredRun);
-    if (!row) return null;
-    const label = shortRunLabel(hoveredRun, runIds);
-    const cols = settings.columns;
-    return (
-      <div
-        className="absolute z-20 rounded border border-border bg-bg-elevated shadow-lg p-2 text-xs w-fit max-w-[220px] pointer-events-none"
-        style={{ left: tooltipPos.x + 14, top: tooltipPos.y - 8 }}
-      >
-        <div className="font-semibold mono mb-1 truncate">{label}</div>
-        {cols.map((col, ci) => (
-          <div key={ci} className="flex justify-between gap-2">
-            <span className="text-fg-muted truncate">{col.key}</span>
-            <span className="mono shrink-0">{row.raw[ci] ?? "—"}</span>
-          </div>
-        ))}
-      </div>
-    );
-  };
-
-  // ---------------------------------------------------------------------------
   // Settings panel
   // ---------------------------------------------------------------------------
   const settingsPanel = (
     <>
-      <h4 className="text-xs uppercase tracking-wide text-fg-muted mb-2">
-        Columns
-      </h4>
+      <SettingsSection title="Columns" first />
       <div className="flex flex-col gap-1 mb-2">
         {settings.columns.map((col, i) => (
           <div
@@ -502,9 +325,9 @@ export default function ParallelCoordsCard({
                 className={`rounded px-1 py-0.5 text-[9px] ${col.invert ? "bg-accent/20 text-accent" : "text-fg-subtle hover:text-fg"}`}
                 title="Invert axis"
               >
-                {"\u2195"}
+                {"↕"}
               </button>
-              <button type="button" onClick={() => removeColumn(i)} className="text-fg-subtle hover:text-fg" title="Remove">{"\u00D7"}</button>
+              <button type="button" onClick={() => removeColumn(i)} className="text-fg-subtle hover:text-fg" title="Remove">{"×"}</button>
             </div>
           </div>
         ))}
@@ -513,9 +336,7 @@ export default function ParallelCoordsCard({
         The rightmost column determines line color.
       </p>
 
-      <h4 className="text-xs uppercase tracking-wide text-fg-muted mt-3 mb-2">
-        Add Column
-      </h4>
+      <SettingsSection title="Add Column" />
       <UnifiedColumnPicker
         params={availableParams}
         metrics={availableMetrics}
@@ -528,103 +349,76 @@ export default function ParallelCoordsCard({
   // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [size, setSize] = useState({ w: 0, h: 0 });
-
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        setSize({ w: entry.contentRect.width, h: entry.contentRect.height });
-      }
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
   const cardRef = useRef<HTMLDivElement>(null);
 
+  const noColumns = settings.columns.length === 0;
+
+  const plotProps = {
+    columns: settings.columns,
+    rows: rowData,
+    columnDomains,
+    selectedIds,
+    onClick: (id: string) => toggle(id),
+  };
+
+  const selectionPanel = !hasSelectionProvider && (
+    <RunSelectionPanel
+      selectedRunIds={selectedArray}
+      allRunIds={runIds}
+      onClear={clear}
+      runInfo={runInfoMap}
+      label="Parallel coords selection"
+    />
+  );
+
   return (
-    <div
-      ref={cardRef}
-      className="card p-4 flex flex-col"
-      style={{
-        height: resolveCardHeight(settings, 350),
-        position: "relative",
-        gridColumn: `span ${settings.colSpan ?? 3}`,
+    <CardShell
+      cardRef={cardRef}
+      settings={settings}
+      updateSettings={updateSettings}
+      title="Parallel Coordinates"
+      subtitle={`${runIds.length} runs · ${settings.columns.length} columns`}
+      defaultHeight={350}
+      onSettings={() => setExpanded(true)}
+      onRemove={onRemove}
+      onDownload={() => {
+        const headers = ["run_id", ...settings.columns.map((c) => c.key)];
+        const rows: (string | number)[][] = rowData.map((row) => {
+          return [row.id, ...row.raw.map((v) => v ?? "")];
+        });
+        downloadCsv(headers, rows, safeName(settings.title ?? "parallel_coords") + ".csv");
       }}
+      onScreenshot={() => { if (cardRef.current) exportChartFromContainer(cardRef.current, safeName(settings.title ?? "parallel_coords"), "svg"); }}
     >
-      <CardHeader
-        title={settings.title ?? "Parallel Coordinates"}
-        onTitleChange={(t) => updateSettings({ title: t || undefined })}
-        subtitle={`${runIds.length} runs · ${settings.columns.length} columns`}
-        collapsed={settings.collapsed}
-        onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
-        onSettings={() => setExpanded(true)}
-        onRemove={onRemove}
-        onDownload={() => {
-          const headers = ["run_id", ...settings.columns.map((c) => c.key)];
-          const rows: (string | number)[][] = rowData.map((row) => {
-            return [row.runId, ...row.raw.map((v) => v ?? "")];
-          });
-          downloadCsv(headers, rows, safeName(settings.title ?? "parallel_coords") + ".csv");
-        }}
-        onScreenshot={() => { if (cardRef.current) exportChartFromContainer(cardRef.current, safeName(settings.title ?? "parallel_coords"), "svg"); }}
-      >
-      </CardHeader>
-
-      {!settings.collapsed && (
-        <>
-          <div
-            ref={containerRef}
-            className="relative rounded bg-bg flex-1 min-h-0"
-          >
-            {size.w > 0 && size.h > 0 && renderPlot(size.w, size.h)}
-            {renderTooltip()}
+      <>
+        {noColumns ? (
+          <div className="flex items-center justify-center flex-1 min-h-0 text-sm text-fg-muted">
+            Add columns in settings to build the parallel coordinates plot.
           </div>
+        ) : (
+          <ParallelCoords {...plotProps} className="rounded bg-bg flex-1 min-h-0" />
+        )}
+        {selectionPanel}
 
-          {!hasSelectionProvider && (
-            <RunSelectionPanel
-              selectedRunIds={selectedArray}
-              allRunIds={runIds}
-              onClear={clear}
-              runInfo={runInfoMap}
-              label="Parallel coords selection"
-            />
-          )}
-
-          <CardDetailModal
-            open={expanded}
-            onClose={() => setExpanded(false)}
-            title={settings.title ?? "Parallel Coordinates"}
-            settingsContent={settingsPanel}
-          >
-            <div className="relative h-[calc(100vh-12rem)]">
-              {renderPlot(900, 500)}
-              {renderTooltip()}
-            </div>
-            {!hasSelectionProvider && (
-              <RunSelectionPanel
-                selectedRunIds={selectedArray}
-                allRunIds={runIds}
-                onClear={clear}
-                runInfo={runInfoMap}
-                label="Parallel coords selection"
-              />
+        <CardDetailModal
+          open={expanded}
+          onClose={() => setExpanded(false)}
+          title={settings.title ?? "Parallel Coordinates"}
+          settingsContent={settingsPanel}
+        >
+          <div className="flex flex-col h-[calc(100vh-12rem)]">
+            {noColumns ? (
+              <div className="flex items-center justify-center flex-1 text-sm text-fg-muted">
+                Add columns in settings to build the parallel coordinates plot.
+              </div>
+            ) : (
+              <ParallelCoords {...plotProps} className="flex-1 min-h-0" />
             )}
-          </CardDetailModal>
-        </>
-      )}
-
-      <CardResizeHandle
-        height={settings.height}
-        onHeightChange={(h) => updateSettings({ height: h })}
-        colSpan={settings.colSpan ?? 3}
-        onColSpanChange={(s) => updateSettings({ colSpan: s })}
-        onPerColHeightChange={(p) => updateSettings(p as Partial<ParallelSettings>)}
-      />
-    </div>
+            {selectionPanel}
+          </div>
+        </CardDetailModal>
+      </>
+    </CardShell>
   );
 }
 

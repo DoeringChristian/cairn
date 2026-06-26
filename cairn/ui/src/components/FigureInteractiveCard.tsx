@@ -9,15 +9,14 @@ import { qk } from "../api/query-keys";
 import { safeJsonParse } from "../lib/format";
 import { downloadArtifact, artifactFilename, exportPlotlyChart, safeName } from "../lib/download";
 import { useCardSettings, resolveCardHeight, type CardSettingsKey } from "../lib/card-settings";
-import { useSeriesDrop } from "../lib/use-series-drop";
+import { useCardDrop } from "../lib/use-series-drop";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import { useRunSelection, useRunSelectionHasProvider } from "../lib/use-run-selection";
 import { seriesKey, seriesLabel } from "../lib/series-utils";
 import type { SequenceMeta, SequenceResponse } from "../api/types";
 import AddToComparisonButton from "./AddToComparisonButton";
-import CardHeader from "./CardHeader";
-import CardResizeHandle from "./CardResizeHandle";
+import CardShell from "./CardShell";
 import RunSelectionPanel from "./RunSelectionPanel";
 import SplitPane from "./SplitPane";
 import SeriesChipStrip from "./SeriesChipStrip";
@@ -435,16 +434,7 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
-  const metricsRef = useRef(effectiveMetrics);
-  metricsRef.current = effectiveMetrics;
-
-  const { highlight: dropHighlight, dropProps } = useSeriesDrop({
-    metricsRef,
-    onMetricsChange: useCallback(
-      (next) => updateSettings({ metrics: next }),
-      [updateSettings],
-    ),
-  });
+  const { highlight: dropHighlight, dropProps } = useCardDrop(effectiveMetrics, updateSettings);
 
   // For the single-metric path, fetch points to drive the step slider.
   const q = useSequence(runId, metric.name, {
@@ -789,28 +779,19 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
   };
 
   return (
-    <div
-      ref={cardRef}
-      className={`card p-4 flex flex-col${dropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
-      style={{
-        height: settings.collapsed ? undefined : resolveCardHeight(settings, 350),
-        position: "relative",
-        gridColumn: `span ${settings.colSpan ?? 3}`,
-      }}
-      {...dropProps}
-    >
-      <CardHeader
-        title={settings.title ?? metric.name}
-        onTitleChange={(t) => updateSettings({ title: t || undefined })}
-        subtitle={subtitle}
-        collapsed={settings.collapsed}
-        onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
-        onSettings={() => setExpanded(true)}
-        onRemove={onRemove}
-        onDownload={current?.artifact_hash ? () => downloadArtifact(api.artifactUrl(current.artifact_hash!), artifactFilename(metric.name, current.step, current.artifact_mime ?? "image/png")) : undefined}
-        onScreenshot={() => { if (cardRef.current) exportPlotlyChart(cardRef.current, safeName(settings.title ?? metric.name), "svg"); }}
-        addToComparisonSlot={<AddToComparisonButton cardType="figure" series={compSeries} />}
-      >
+    <CardShell
+      cardRef={cardRef}
+      settings={settings}
+      updateSettings={updateSettings}
+      title={metric.name}
+      subtitle={subtitle}
+      defaultHeight={350}
+      onSettings={() => setExpanded(true)}
+      onRemove={onRemove}
+      onDownload={current?.artifact_hash ? () => downloadArtifact(api.artifactUrl(current.artifact_hash!), artifactFilename(metric.name, current.step, current.artifact_mime ?? "image/png")) : undefined}
+      onScreenshot={() => { if (cardRef.current) exportPlotlyChart(cardRef.current, safeName(settings.title ?? metric.name), "svg"); }}
+      addToComparisonSlot={<AddToComparisonButton cardType="figure" series={compSeries} />}
+      headerActions={<>
         {viewModified && (
           <button
             type="button"
@@ -834,9 +815,11 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
         >
           bar
         </button>
-      </CardHeader>
-
-      {!settings.collapsed && (<>
+      </>}
+      dropHighlight={dropHighlight}
+      dropProps={dropProps}
+    >
+      <>
       {renderContent(false)}
       {!hasSelectionProvider && (
         <RunSelectionPanel
@@ -900,15 +883,7 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
           </CardDetailModal>
         );
       })()}
-
-      </>)}
-      <CardResizeHandle
-        height={settings.height}
-        onHeightChange={(h) => updateSettings({ height: h })}
-        colSpan={settings.colSpan ?? 3}
-        onColSpanChange={(s) => updateSettings({ colSpan: s })}
-        onPerColHeightChange={(p) => updateSettings(p as Partial<typeof settings>)}
-      />
-    </div>
+      </>
+    </CardShell>
   );
 }
