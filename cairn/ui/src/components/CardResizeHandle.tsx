@@ -90,7 +90,7 @@ export default function CardResizeHandle({
       const card = target.closest(".card") as HTMLElement | null;
       if (!card) return;
 
-      const startY = e.clientY;
+      const startPageY = e.clientY + window.scrollY;
       const startX = e.clientX;
       const startHeight = card.getBoundingClientRect().height;
       const startWidth = card.getBoundingClientRect().width;
@@ -125,14 +125,26 @@ export default function CardResizeHandle({
       let lastH = startHeight;
       const heightTouched = new Set<HTMLElement>();
 
-      const onPointerMove = (ev: PointerEvent) => {
+      // Add temporary spacer so the last card has room to resize into.
+      // Append to the grid's parent (a <section>), which is in the document
+      // flow and will extend the scrollable area.
+      const spacerParent = (gridEl as HTMLElement)?.parentElement ?? card.parentElement!;
+      const spacer = document.createElement("div");
+      spacer.style.height = `${MAX_HEIGHT}px`;
+      spacer.style.flexShrink = "0";
+      spacerParent.appendChild(spacer);
+
+      let scrollRaf = 0;
+      let lastClientY = 0;
+
+      const updateCardHeight = () => {
+        const pageY = lastClientY + window.scrollY;
         const newH = Math.round(
-          Math.min(MAX_HEIGHT, Math.max(minHeight, startHeight + (ev.clientY - startY))),
+          Math.min(MAX_HEIGHT, Math.max(minHeight, startHeight + (pageY - startPageY))),
         );
         lastH = newH;
         card.style.height = `${newH}px`;
 
-        // Recompute row siblings dynamically (grid may have reflowed).
         const cardTop = card.getBoundingClientRect().top;
         for (const sib of allSiblings) {
           if (Math.abs(sib.getBoundingClientRect().top - cardTop) < 2) {
@@ -143,15 +155,37 @@ export default function CardResizeHandle({
             heightTouched.delete(sib);
           }
         }
+      };
 
-        // Width: snap to valid column spans (skip on single-column mobile grid)
+      const scrollTick = () => {
+        const threshold = 48;
+        const vh = window.innerHeight;
+        if (lastClientY > vh - threshold) {
+          const speed = 8 + 12 * ((lastClientY - (vh - threshold)) / threshold);
+          window.scrollBy(0, speed);
+          updateCardHeight();
+          scrollRaf = requestAnimationFrame(scrollTick);
+        } else if (lastClientY < threshold) {
+          const speed = 8 + 12 * ((threshold - lastClientY) / threshold);
+          window.scrollBy(0, -speed);
+          updateCardHeight();
+          scrollRaf = requestAnimationFrame(scrollTick);
+        }
+      };
+
+      const onPointerMove = (ev: PointerEvent) => {
+        lastClientY = ev.clientY;
+        updateCardHeight();
+
+        cancelAnimationFrame(scrollRaf);
+        scrollRaf = requestAnimationFrame(scrollTick);
+
         if (actualCols > 1) {
           const targetWidth = startWidth + (ev.clientX - startX);
           const rawSpan = Math.max(1, Math.min(actualCols, Math.round(targetWidth / colWidth)));
           const newSpan = snapToValidSpan(rawSpan);
           if (newSpan !== currentSpan) {
             currentSpan = newSpan;
-            // Sync colSpan to all sibling cards in the grid during drag.
             for (const sib of allSiblings) {
               sib.style.gridColumn = `span ${newSpan}`;
             }
@@ -163,6 +197,8 @@ export default function CardResizeHandle({
       const onPointerUp = () => {
         window.removeEventListener("pointermove", onPointerMove);
         window.removeEventListener("pointerup", onPointerUp);
+        cancelAnimationFrame(scrollRaf);
+        spacer.remove();
         // Persist final height to React state (triggers one re-render).
         onHeightChange(lastH);
         if (onPerColHeightChange) {
