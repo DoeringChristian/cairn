@@ -1,7 +1,7 @@
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import type { SequenceMeta } from "../../api/types";
 import type { ComparisonSeriesRef } from "../../lib/comparisons";
-import type { CardSettingsKey } from "../../lib/card-settings";
+import { useCardSettings, type CardSettingsKey } from "../../lib/card-settings";
 import { seriesKey } from "../../lib/series-utils";
 
 export interface SeriesRef {
@@ -10,56 +10,72 @@ export interface SeriesRef {
   context_hash: string;
 }
 
-export interface CardSeriesResult {
+export interface CardSeriesResult<TSettings> {
+  /** Current merged settings (defaults + persisted overrides). */
+  settings: TSettings;
+  /** Shallow-merge a patch over current settings and persist. */
+  updateSettings: (patch: Partial<TSettings>) => void;
+  /** Clear persisted settings and revert to defaults. */
+  resetSettings: () => void;
+  /** Resolved settings key ({runId, metricName, contextHash} or the override). */
+  settingsKey: CardSettingsKey;
   /** Series to render, canonical order (sorted by seriesKey). */
   effectiveMetrics: SeriesRef[];
-  /** Defaults object fragment: `{ metrics: SeriesRef[] }` merged into card defaults. */
-  defaultMetrics: SeriesRef[];
-  /** Stable identity key for memo deps (sorted, joined). */
-  seriesIdentityKey: string;
   /** Distinct run ids across effectiveMetrics (always includes runId). */
   allRunIds: string[];
   multipleRuns: boolean;
-  /** Resolved settings key ({runId, metricName, contextHash} or the override). */
-  settingsKey: CardSettingsKey;
 }
 
 /**
- * Canonical series-merge logic shared by every series card.
+ * Canonical series-merge logic shared by every series card, owning the card's
+ * settings persistence (`useCardSettings`).
  *
  * This is the reference (ScalarPlotCard) implementation, moved verbatim:
  *
- *  - defaults      = dedupe(seed ∪ extraSeries) sorted by `seriesKey`.
- *  - effective     (controlled)   = props series first, then persisted metrics
- *                                   whose *name* is not among the prop series
- *                                   names, deduped by `seriesKey`.
- *                  (uncontrolled) = persistedMetrics as-is.
- *  - identity      = the sorted-join string of extraSeries keys (the
- *                    `JSON.stringify` dep trick is centralised here, once).
- *
- * The hook does NOT own settings persistence — the card calls `useCardSettings`
- * itself (to keep its per-card settings type) and passes `settings.metrics` in
- * as `persistedMetrics`.
+ *  - default metrics = dedupe(seed ∪ extraSeries) sorted by `seriesKey`;
+ *    the full defaults object is produced by the card's `makeDefaults`
+ *    factory (read via a ref, so an inline arrow at the call site is fine).
+ *  - settingsKey     = settingsKeyOverride ?? {runId, metricName, contextHash}.
+ *  - effective       (controlled)   = props series first, then persisted
+ *                                     metrics whose *name* is not among the
+ *                                     prop series names, deduped by `seriesKey`.
+ *                    (uncontrolled) = settings.metrics as-is.
+ *  - identity        = the sorted-join string of extraSeries keys (the
+ *                      `JSON.stringify` dep trick is centralised here, once).
  */
-export function useCardSeries(args: {
+export function useCardSeries<
+  TSettings extends { version: number; metrics: SeriesRef[] },
+>(args: {
   runId: string;
   metric: SequenceMeta;
   extraSeries?: ComparisonSeriesRef[];
   controlledSeries?: boolean;
   settingsKeyOverride?: CardSettingsKey;
-  /** The card's persisted settings.metrics (pass settings.metrics). */
-  persistedMetrics: SeriesRef[];
-}): CardSeriesResult {
+  /**
+   * Card's defaults factory: given the seed metric and the merged+sorted
+   * default metrics list, produce the full defaults object. Read via a ref
+   * internally so an inline arrow at the call site is fine.
+   */
+  makeDefaults: (
+    seed: { name: string; context_hash: string },
+    metrics: SeriesRef[],
+  ) => TSettings;
+}): CardSeriesResult<TSettings> {
   const {
     runId,
     metric,
     extraSeries,
     controlledSeries = false,
     settingsKeyOverride,
-    persistedMetrics,
+    makeDefaults,
   } = args;
 
-  const seriesIdentityKey = useMemo(
+  const seed = useMemo(
+    () => ({ name: metric.name, context_hash: metric.context_hash }),
+    [metric.name, metric.context_hash],
+  );
+
+  const extraSeriesKey = useMemo(
     () =>
       (extraSeries ?? [])
         .map((s) => `${s.runId}::${s.name}::${s.context_hash}`)
@@ -71,7 +87,7 @@ export function useCardSeries(args: {
 
   const defaultMetrics = useMemo<SeriesRef[]>(() => {
     const all: SeriesRef[] = [
-      { name: metric.name, context_hash: metric.context_hash },
+      seed,
       ...(extraSeries ?? []).map((s) => ({
         runId: s.runId,
         name: s.name,
@@ -88,7 +104,18 @@ export function useCardSeries(args: {
     unique.sort((a, b) => seriesKey(a).localeCompare(seriesKey(b)));
     return unique;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [metric.name, metric.context_hash, seriesIdentityKey]);
+  }, [seed, extraSeriesKey]);
+
+  // Read the factory via a ref so callers can pass an inline arrow without
+  // invalidating the memo every render (mirrors useCardSettings' defaultsRef).
+  const makeDefaultsRef = useRef(makeDefaults);
+  makeDefaultsRef.current = makeDefaults;
+
+  const defaults = useMemo<TSettings>(
+    () => makeDefaultsRef.current(seed, defaultMetrics),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [seed, extraSeriesKey],
+  );
 
   const settingsKey = useMemo<CardSettingsKey>(
     () =>
@@ -100,8 +127,13 @@ export function useCardSeries(args: {
     [settingsKeyOverride, runId, metric.name, metric.context_hash],
   );
 
+  const [settings, updateSettings, resetSettings] = useCardSettings<TSettings>(
+    settingsKey,
+    defaults,
+  );
+
   const effectiveMetrics = useMemo<SeriesRef[]>(() => {
-    if (!controlledSeries) return persistedMetrics;
+    if (!controlledSeries) return settings.metrics;
     const all: SeriesRef[] = [
       { name: metric.name, context_hash: metric.context_hash },
       ...(extraSeries ?? []).map((s) => ({
@@ -111,7 +143,7 @@ export function useCardSeries(args: {
       })),
     ];
     const propsTagNames = new Set(all.map((m) => m.name));
-    for (const sm of persistedMetrics) {
+    for (const sm of settings.metrics) {
       if (!propsTagNames.has(sm.name)) {
         all.push(sm);
       }
@@ -124,7 +156,7 @@ export function useCardSeries(args: {
       return true;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [controlledSeries, persistedMetrics, metric.name, metric.context_hash, seriesIdentityKey]);
+  }, [controlledSeries, settings.metrics, metric.name, metric.context_hash, extraSeriesKey]);
 
   const allRunIds = useMemo(() => {
     const set = new Set<string>([runId]);
@@ -134,11 +166,12 @@ export function useCardSeries(args: {
   const multipleRuns = allRunIds.length > 1;
 
   return {
+    settings,
+    updateSettings,
+    resetSettings,
+    settingsKey,
     effectiveMetrics,
-    defaultMetrics,
-    seriesIdentityKey,
     allRunIds,
     multipleRuns,
-    settingsKey,
   };
 }

@@ -5,7 +5,7 @@ import {
   useState,
 } from "react";
 import { useSequencesForRuns, useRunsDetails } from "../api/hooks";
-import { useCardSettings, type CardSettingsKey } from "../lib/card-settings";
+import type { CardSettingsKey } from "../lib/card-settings";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { useCardDrop } from "../lib/use-series-drop";
 import { useCardSeries, type BaseCardSettings } from "./card-kit";
@@ -123,56 +123,23 @@ export default function ScalarPlotCard({
   onRemove,
   settingsKeyOverride,
 }: Props) {
-  const seedMetric = useMemo(
-    () => ({ name: metric.name, context_hash: metric.context_hash }),
-    [metric.name, metric.context_hash],
-  );
-
-  const extraSeriesKey = useMemo(
-    () => (extraSeries ?? []).map((s) => `${s.runId}::${s.name}::${s.context_hash}`).sort().join("|"),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [JSON.stringify((extraSeries ?? []).map((s) => [s.runId, s.name, s.context_hash]).sort())],
-  );
-
-  const defaults = useMemo<ScalarSettings>(() => {
-    const all: Array<{
-      runId?: string;
-      name: string;
-      context_hash: string;
-    }> = [
-      seedMetric,
-      ...(extraSeries ?? []).map((s) => ({
-        runId: s.runId,
-        name: s.name,
-        context_hash: s.context_hash,
-      })),
-    ];
-    const seen = new Set<string>();
-    const unique = all.filter((m) => {
-      const k = seriesKey(m);
-      if (seen.has(k)) return false;
-      seen.add(k);
-      return true;
-    });
-    unique.sort((a, b) => seriesKey(a).localeCompare(seriesKey(b)));
-    return { ...DEFAULT_SCALAR_SETTINGS(seedMetric), metrics: unique };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seedMetric, extraSeriesKey]);
-
-  const settingsKey = useMemo<CardSettingsKey>(
-    () =>
-      settingsKeyOverride ?? {
-        runId,
-        metricName: metric.name,
-        contextHash: metric.context_hash,
-      },
-    [settingsKeyOverride, runId, metric.name, metric.context_hash],
-  );
-
-  const [settings, rawUpdateSettings] = useCardSettings(
-    settingsKey,
-    defaults,
-  );
+  const {
+    settings,
+    updateSettings: rawUpdateSettings,
+    effectiveMetrics,
+    allRunIds,
+    multipleRuns,
+  } = useCardSeries<ScalarSettings>({
+    runId,
+    metric,
+    extraSeries,
+    controlledSeries,
+    settingsKeyOverride,
+    makeDefaults: (seed, metrics) => ({
+      ...DEFAULT_SCALAR_SETTINGS(seed),
+      metrics,
+    }),
+  });
 
   const updateSettings = useCallback(
     (patch: Partial<ScalarSettings>) => {
@@ -188,15 +155,6 @@ export default function ScalarPlotCard({
     },
     [rawUpdateSettings],
   );
-
-  const { effectiveMetrics, allRunIds, multipleRuns } = useCardSeries({
-    runId,
-    metric,
-    extraSeries,
-    controlledSeries,
-    settingsKeyOverride,
-    persistedMetrics: settings.metrics,
-  });
 
   // -------------------------------------------------------------------------
   // Run meta
