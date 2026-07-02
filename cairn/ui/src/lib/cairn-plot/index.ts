@@ -70,3 +70,4 @@ export { ScatterPlot, type ScatterPlotProps } from "./renderers";
 export { ParallelCoords, type ParallelCoordsProps } from "./renderers";
 export { ScalarPlot, type ScalarPlotProps } from "./renderers";
 export { ImagePane, type ImagePaneProps, type ImageProcessingProps } from "./renderers";
+export { CompareImagePane, type CompareImagePaneProps } from "./renderers";

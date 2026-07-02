@@ -9,3 +9,7 @@ export {
   type ImagePaneProps,
   type ImageProcessingProps,
 } from "./ImagePane";
+export {
+  default as CompareImagePane,
+  type CompareImagePaneProps,
+} from "./CompareImagePane";

@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Colormap, DiffMode, Interpolation } from "../types";
+import { useGammaFilter, GammaFilterSvg } from "./gamma-filter";
 import {
   computeDiff,
   loadImageData,
@@ -84,23 +85,10 @@ export default function ImagePane({
   } | null>(null);
 
   // -----------------------------------------------------------------------
-  // SVG gamma filter (local to this component)
+  // SVG gamma filter + CSS filter string (shared helper)
   // -----------------------------------------------------------------------
-  const rawId = useId();
-  const gammaFilterId = `cairn-gamma-${rawId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
-
-  const { brightness, contrast, gamma, exposure, offset, flipSign } = processing;
-
-  const filterStr = useMemo(
-    () =>
-      [
-        `url(#${gammaFilterId})`,
-        `brightness(${(1 + brightness) * Math.pow(2, exposure)})`,
-        `contrast(${1 + contrast})`,
-        ...(flipSign ? ["invert(1)"] : []),
-      ].join(" "),
-    [gammaFilterId, brightness, contrast, exposure, flipSign],
-  );
+  const { flipSign } = processing;
+  const { gammaFilterId, filterStr, gamma, offset } = useGammaFilter(processing);
 
   // -----------------------------------------------------------------------
   // CSS transform (computed locally from zoom + pan)
@@ -327,18 +315,7 @@ export default function ImagePane({
   return (
     <div className="relative flex flex-col h-full">
       {/* SVG gamma filter — scoped to this component via unique ID */}
-      <svg
-        aria-hidden="true"
-        style={{ position: "absolute", width: 0, height: 0 }}
-      >
-        <filter id={gammaFilterId} colorInterpolationFilters="sRGB">
-          <feComponentTransfer>
-            <feFuncR type="gamma" amplitude={1} exponent={1 / gamma} offset={offset} />
-            <feFuncG type="gamma" amplitude={1} exponent={1 / gamma} offset={offset} />
-            <feFuncB type="gamma" amplitude={1} exponent={1 / gamma} offset={offset} />
-          </feComponentTransfer>
-        </filter>
-      </svg>
+      <GammaFilterSvg id={gammaFilterId} gamma={gamma} offset={offset} />
 
       <div
         ref={paneRef}

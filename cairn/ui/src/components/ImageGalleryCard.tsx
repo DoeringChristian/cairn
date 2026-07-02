@@ -1,7 +1,6 @@
 import {
   useCallback,
   useEffect,
-  useId,
   useMemo,
   useRef,
   useState,
@@ -22,6 +21,7 @@ import {
   DIVERGING_COLORMAPS,
   getColormapLUT,
   ImagePane,
+  CompareImagePane,
   Colorbar,
   ColormapSwatch,
   useContainerSize,
@@ -264,243 +264,6 @@ function ExternalBaselinePicker({
 }
 
 // ---------------------------------------------------------------------------
-// OverlayComparePane — self-contained split/blend comparison
-// ---------------------------------------------------------------------------
-
-const MIN_ZOOM = 0.25;
-const MAX_ZOOM = 16;
-
-function OverlayComparePane({
-  predUrl,
-  refUrl,
-  label,
-  mode,
-  splitPos,
-  blendAlpha,
-  processing,
-  zoom: zoomProp,
-  pan: panProp,
-  onViewportChange,
-  interpolation,
-  isDraggable,
-  onDragStart,
-  onSplitPositionChange,
-}: {
-  predUrl: string;
-  refUrl: string;
-  label: string;
-  mode: "split" | "blend";
-  splitPos: number;
-  blendAlpha: number;
-  processing: ImageProcessingProps;
-  zoom: number;
-  pan: { x: number; y: number };
-  onViewportChange: (patch: { zoom?: number; pan?: { x: number; y: number } }) => void;
-  interpolation: Interpolation;
-  isDraggable: boolean;
-  onDragStart: (e: React.DragEvent) => void;
-  onSplitPositionChange: (pos: number) => void;
-}) {
-  const paneRef = useRef<HTMLDivElement>(null);
-
-  const rawId = useId();
-  const gammaFilterId = `cairn-gamma-overlay-${rawId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
-
-  const { brightness, contrast, gamma, exposure, offset, flipSign } = processing;
-  const filterStr = useMemo(
-    () =>
-      [
-        `url(#${gammaFilterId})`,
-        `brightness(${(1 + brightness) * Math.pow(2, exposure)})`,
-        `contrast(${1 + contrast})`,
-        ...(flipSign ? ["invert(1)"] : []),
-      ].join(" "),
-    [gammaFilterId, brightness, contrast, exposure, flipSign],
-  );
-  const transformStr = `translate(${panProp.x}px, ${panProp.y}px) scale(${zoomProp})`;
-  const imgRendering = interpolation === "auto" ? undefined : interpolation;
-
-  const [altDown, setAltDown] = useState(false);
-  const altDownRef = useRef(false);
-  altDownRef.current = altDown;
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Alt" || e.key === "Control" || e.key === "Meta")
-        setAltDown(e.type === "keydown");
-    };
-    const onBlur = () => setAltDown(false);
-    window.addEventListener("keydown", onKey);
-    window.addEventListener("keyup", onKey);
-    window.addEventListener("blur", onBlur);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("keyup", onKey);
-      window.removeEventListener("blur", onBlur);
-    };
-  }, []);
-
-  const viewportRef = useRef({ zoom: zoomProp, pan: panProp });
-  viewportRef.current = { zoom: zoomProp, pan: panProp };
-
-  const onVpChangeRef = useRef(onViewportChange);
-  onVpChangeRef.current = onViewportChange;
-
-  useEffect(() => {
-    const el = paneRef.current;
-    if (!el) return;
-    const handler = (e: WheelEvent) => {
-      if (!altDownRef.current) return;
-      e.preventDefault();
-      e.stopPropagation();
-      const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
-      const s = viewportRef.current;
-      const nextZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, s.zoom * factor));
-      if (s.zoom === nextZoom) return;
-      const rect = el.getBoundingClientRect();
-      const cx = e.clientX - rect.left;
-      const cy = e.clientY - rect.top;
-      const newPanX = cx - ((cx - s.pan.x) / s.zoom) * nextZoom;
-      const newPanY = cy - ((cy - s.pan.y) / s.zoom) * nextZoom;
-      onVpChangeRef.current({ zoom: nextZoom, pan: { x: newPanX, y: newPanY } });
-    };
-    el.addEventListener("wheel", handler, { passive: false });
-    return () => el.removeEventListener("wheel", handler);
-  }, []);
-
-  const dragStateRef = useRef<{
-    pointerId: number;
-    startX: number;
-    startY: number;
-    panX: number;
-    panY: number;
-  } | null>(null);
-
-  const onPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if (!altDownRef.current) return;
-    (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
-    dragStateRef.current = {
-      pointerId: e.pointerId,
-      startX: e.clientX,
-      startY: e.clientY,
-      panX: viewportRef.current.pan.x,
-      panY: viewportRef.current.pan.y,
-    };
-  }, []);
-
-  const onPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    const s = dragStateRef.current;
-    if (!s || s.pointerId !== e.pointerId) return;
-    onVpChangeRef.current({ pan: { x: s.panX + (e.clientX - s.startX), y: s.panY + (e.clientY - s.startY) } });
-  }, []);
-
-  const onPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    const s = dragStateRef.current;
-    if (!s || s.pointerId !== e.pointerId) return;
-    try { (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
-    dragStateRef.current = null;
-  }, []);
-
-  return (
-    <div className="relative flex flex-col h-full">
-      <svg aria-hidden="true" style={{ position: "absolute", width: 0, height: 0 }}>
-        <filter id={gammaFilterId} colorInterpolationFilters="sRGB">
-          <feComponentTransfer>
-            <feFuncR type="gamma" amplitude={1} exponent={1 / gamma} offset={offset} />
-            <feFuncG type="gamma" amplitude={1} exponent={1 / gamma} offset={offset} />
-            <feFuncB type="gamma" amplitude={1} exponent={1 / gamma} offset={offset} />
-          </feComponentTransfer>
-        </filter>
-      </svg>
-
-      <div
-        ref={paneRef}
-        className="flex-1 min-h-0 min-w-0 flex items-center justify-center overflow-hidden rounded cairn-checkerboard"
-        style={{
-          padding: "4px",
-          cursor: altDown ? "move" : undefined,
-          touchAction: altDown ? "none" : undefined,
-        }}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
-      >
-        <div className="relative w-full h-full">
-          <div className="w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
-            <img
-              src={predUrl}
-              alt="pred"
-              className="w-full h-full object-contain block"
-              draggable={false}
-              style={{
-                filter: filterStr,
-                imageRendering: imgRendering,
-                ...(mode === "blend" ? { opacity: blendAlpha } : {}),
-              }}
-            />
-          </div>
-          <div
-            className="absolute inset-0 overflow-hidden"
-            style={mode === "split" ? { clipPath: `inset(0 ${(1 - splitPos) * 100}% 0 0)` } : undefined}
-          >
-            <div className="w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
-              <img
-                src={refUrl}
-                alt="ref"
-                className="w-full h-full object-contain block"
-                draggable={false}
-                style={{
-                  filter: filterStr,
-                  imageRendering: imgRendering,
-                  ...(mode === "blend" ? { opacity: 1 - blendAlpha } : {}),
-                }}
-              />
-            </div>
-          </div>
-          {mode === "split" && (
-            <div
-              className="absolute top-0 bottom-0 z-20 flex items-center"
-              style={{ left: `${splitPos * 100}%`, transform: "translateX(-50%)", cursor: "col-resize" }}
-              onDoubleClick={() => onSplitPositionChange(0.5)}
-              onPointerDown={(ev) => {
-                ev.stopPropagation();
-                ev.preventDefault();
-                const container = ev.currentTarget.parentElement!;
-                const rect = container.getBoundingClientRect();
-                const onMoveEvt = (me: PointerEvent) => {
-                  onSplitPositionChange(Math.max(0, Math.min(1, (me.clientX - rect.left) / rect.width)));
-                };
-                const onUpEvt = () => {
-                  window.removeEventListener("pointermove", onMoveEvt);
-                  window.removeEventListener("pointerup", onUpEvt);
-                };
-                window.addEventListener("pointermove", onMoveEvt);
-                window.addEventListener("pointerup", onUpEvt);
-              }}
-            >
-              <div className="w-1 h-full bg-accent/80 rounded-full" />
-            </div>
-          )}
-        </div>
-      </div>
-      <span className="absolute top-1 left-1 z-10 rounded bg-accent/20 px-1 py-0.5 text-[10px] text-accent backdrop-blur-sm">
-        REF
-      </span>
-      <span
-        className={`absolute bottom-1 right-1 z-10 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm flex items-center gap-1${isDraggable && !altDown ? " cairn-drag-grip" : ""}`}
-        draggable={isDraggable && !altDown}
-        onDragStart={onDragStart}
-        style={{ cursor: isDraggable && !altDown ? "grab" : undefined }}
-      >
-        <i className="fa-solid fa-grip-vertical text-[8px] opacity-50" />
-        {label}
-      </span>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // ImageGalleryCard
 // ---------------------------------------------------------------------------
 
@@ -591,7 +354,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
   );
 
   // -----------------------------------------------------------------------
-  // Processing props (passed to self-contained ImagePane / OverlayComparePane)
+  // Processing props (passed to self-contained ImagePane / CompareImagePane)
   // -----------------------------------------------------------------------
   const processing: ImageProcessingProps = useMemo(() => ({
     brightness: settings.brightness,
@@ -846,12 +609,12 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     splitPos: number,
     blendAlpha: number,
   ) => (
-    <OverlayComparePane
-      predUrl={predUrl}
-      refUrl={refUrl}
+    <CompareImagePane
+      imageUrl={predUrl}
+      baselineUrl={refUrl}
       label={label}
       mode={mode}
-      splitPos={splitPos}
+      splitPosition={splitPos}
       blendAlpha={blendAlpha}
       processing={processing}
       zoom={settings.zoom}
