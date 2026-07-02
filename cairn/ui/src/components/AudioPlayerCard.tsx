@@ -11,6 +11,7 @@ import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import { seriesKey } from "../lib/series-utils";
 import type { SequenceMeta, SequenceResponse } from "../api/types";
+import type { BaseCardSettings } from "./card-kit";
 import AddToComparisonButton from "./AddToComparisonButton";
 import CardShell from "./CardShell";
 import CardDetailModal from "./CardDetailModal";
@@ -38,17 +39,10 @@ interface AudioMeta {
   num_samples: number;
 }
 
-interface AudioSettings {
-  version: 1;
+interface AudioSettings extends BaseCardSettings {
   metrics: Array<{ runId?: string; name: string; context_hash: string }>;
   paneWidths?: number[];
-  title?: string;
-  collapsed?: boolean;
   sliderStep?: number;
-  height?: number;
-  height1?: number;
-  height2?: number;
-  colSpan?: number;
   autoplay: boolean;
   xAxis?: "step" | "relative_time" | "wall_time";
 }

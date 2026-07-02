@@ -15,6 +15,7 @@ import { useCardSettings, resolveCardHeight, type CardSettingsKey } from "../lib
 import { useCardDrop } from "../lib/use-series-drop";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { downloadArtifact, exportImagesAsComposite, safeName, type CompositePane } from "../lib/download";
+import type { BaseCardSettings } from "./card-kit";
 import {
   type DiffMode,
   type ImageProcessingProps,
@@ -58,10 +59,7 @@ interface Props {
 type Interpolation = "auto" | "pixelated" | "crisp-edges";
 type Colormap = "none" | "viridis" | "red-green" | "red-blue";
 
-interface ImageSettings {
-  version: 1;
-  title?: string;
-  collapsed?: boolean;
+interface ImageSettings extends BaseCardSettings {
   metrics: Array<{ runId?: string; name: string; context_hash: string }>;
   paneWidths?: number[];
   brightness: number;
@@ -79,11 +77,7 @@ interface ImageSettings {
   colormap: Colormap;
   showAxes: boolean;
   sliderStep?: number;
-  height?: number;
-  height1?: number;
-  height2?: number;
   imageColumns?: 1 | 2;
-  colSpan?: number;
   missingImageMode?: "nothing" | "last_available";
   xAxis?: "step" | "relative_time" | "wall_time";
   referenceMode?: "global" | "per-run";

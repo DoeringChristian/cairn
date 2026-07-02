@@ -1,19 +1,12 @@
 import type { ReactNode, RefObject } from "react";
 import { resolveCardHeight } from "../lib/card-settings";
+import type { BaseCardSettings } from "./card-kit";
 import CardHeader from "./CardHeader";
 import CardResizeHandle from "./CardResizeHandle";
 
 interface Props {
   cardRef: RefObject<HTMLDivElement>;
-  settings: {
-    title?: string;
-    collapsed?: boolean;
-    height?: number;
-    height1?: number;
-    height2?: number;
-    heights?: Record<number, number>;
-    colSpan?: number;
-  };
+  settings: BaseCardSettings;
   updateSettings: (patch: Record<string, unknown>) => void;
   title: string;
   subtitle?: ReactNode;

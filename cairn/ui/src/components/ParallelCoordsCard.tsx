@@ -22,19 +22,13 @@ import CardShell from "./CardShell";
 import CardDetailModal from "./CardDetailModal";
 import SettingsSection from "./settings/SettingsSection";
 import RunSelectionPanel from "./RunSelectionPanel";
+import type { BaseCardSettings } from "./card-kit";
 
 // ---------------------------------------------------------------------------
 // Settings
 // ---------------------------------------------------------------------------
 
-interface ParallelSettings {
-  version: 1;
-  title?: string;
-  collapsed?: boolean;
-  height?: number;
-  height1?: number;
-  height2?: number;
-  colSpan?: number;
+interface ParallelSettings extends BaseCardSettings {
   columns: ParallelColumn[];
 }
 

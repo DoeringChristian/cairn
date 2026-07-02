@@ -12,6 +12,7 @@ import { useCardSettings, type CardSettingsKey } from "../lib/card-settings";
 import type { SequenceMeta } from "../api/types";
 import CardShell from "./CardShell";
 import StepSlider from "./StepSlider";
+import type { BaseCardSettings } from "./card-kit";
 
 interface Props {
   runId: string;
@@ -29,15 +30,8 @@ interface ArtifactMeta {
   [key: string]: unknown;
 }
 
-interface ArtifactSettings {
-  version: 1;
-  title?: string;
-  collapsed?: boolean;
+interface ArtifactSettings extends BaseCardSettings {
   sliderStep?: number;
-  height?: number;
-  height1?: number;
-  height2?: number;
-  colSpan?: number;
   xAxis?: "step" | "relative_time" | "wall_time";
 }
 

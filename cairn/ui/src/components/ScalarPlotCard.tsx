@@ -10,6 +10,7 @@ import { qk } from "../api/query-keys";
 import { useCardSettings, type CardSettingsKey } from "../lib/card-settings";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { useCardDrop } from "../lib/use-series-drop";
+import type { BaseCardSettings } from "./card-kit";
 import type {
   SequenceMeta,
   SequencePoint,
@@ -52,14 +53,7 @@ interface PromotedSeriesConfig {
   max: number;
 }
 
-interface ScalarSettings {
-  version: 1;
-  title?: string;
-  collapsed?: boolean;
-  height?: number;
-  height1?: number;
-  height2?: number;
-  colSpan?: number;
+interface ScalarSettings extends BaseCardSettings {
   metrics: Array<{ runId?: string; name: string; context_hash: string }>;
   xAxis: AxisSource;
   xScale: AxisScale;

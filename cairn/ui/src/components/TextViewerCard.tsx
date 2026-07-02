@@ -10,6 +10,7 @@ import CardShell from "./CardShell";
 import Select from "./settings/Select";
 import Toggle from "./settings/Toggle";
 import StepSlider from "./StepSlider";
+import type { BaseCardSettings } from "./card-kit";
 
 interface Props {
   runId: string;
@@ -18,14 +19,7 @@ interface Props {
   onRemove?: () => void;
 }
 
-interface TextSettings {
-  version: 1;
-  title?: string;
-  collapsed?: boolean;
-  height?: number;
-  height1?: number;
-  height2?: number;
-  colSpan?: number;
+interface TextSettings extends BaseCardSettings {
   fontSize: "xs" | "sm" | "base";
   wordWrap: boolean;
   xAxis?: "step" | "relative_time" | "wall_time";

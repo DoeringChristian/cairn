@@ -14,6 +14,7 @@ import { useCardSettings, type CardSettingsKey } from "../lib/card-settings";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import type { SequenceMeta, SequenceResponse, SequencePoint } from "../api/types";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
+import type { BaseCardSettings } from "./card-kit";
 import CardShell from "./CardShell";
 import SettingsPopover from "./SettingsPopover";
 import StepSlider from "./StepSlider";
@@ -49,15 +50,8 @@ interface PluginMeta {
   [key: string]: unknown;
 }
 
-interface PluginSettings {
-  version: 1;
-  title?: string;
-  collapsed?: boolean;
+interface PluginSettings extends BaseCardSettings {
   sliderStep?: number;
-  height?: number;
-  height1?: number;
-  height2?: number;
-  colSpan?: number;
   pluginValues?: Record<string, unknown>;
   xAxis?: "step" | "relative_time" | "wall_time";
 }

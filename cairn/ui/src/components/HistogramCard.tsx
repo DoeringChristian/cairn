@@ -9,6 +9,7 @@ import AddToComparisonButton from "./AddToComparisonButton";
 import CardShell from "./CardShell";
 import CardDetailModal from "./CardDetailModal";
 import StepSlider from "./StepSlider";
+import type { BaseCardSettings } from "./card-kit";
 
 interface Props {
   runId: string;
@@ -25,14 +26,7 @@ interface HistogramMeta {
   mean: number;
 }
 
-interface HistogramSettings {
-  version: 1;
-  title?: string;
-  collapsed?: boolean;
-  height?: number;
-  height1?: number;
-  height2?: number;
-  colSpan?: number;
+interface HistogramSettings extends BaseCardSettings {
   xAxis?: "step" | "relative_time" | "wall_time";
 }
 

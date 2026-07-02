@@ -15,6 +15,7 @@ import { useRunMetadataVersion } from "../lib/run-label";
 import { useRunSelection, useRunSelectionHasProvider } from "../lib/use-run-selection";
 import { seriesKey, seriesLabel } from "../lib/series-utils";
 import type { SequenceMeta, SequenceResponse } from "../api/types";
+import type { BaseCardSettings } from "./card-kit";
 import AddToComparisonButton from "./AddToComparisonButton";
 import CardShell from "./CardShell";
 import RunSelectionPanel from "./RunSelectionPanel";
@@ -50,17 +51,10 @@ interface PlotlyFigure {
 type HoverMode = "closest" | "x unified" | "y unified" | "none";
 type DragMode = "zoom" | "pan" | "select" | "lasso" | "none";
 
-interface FigureSettings {
-  version: 1;
+interface FigureSettings extends BaseCardSettings {
   metrics: Array<{ runId?: string; name: string; context_hash: string }>;
   paneWidths?: number[];
-  title?: string;
-  collapsed?: boolean;
   sliderStep?: number;
-  height?: number;
-  height1?: number;
-  height2?: number;
-  colSpan?: number;
   displayModeBar: boolean;
   scrollZoom: boolean;
   hoverMode: HoverMode;

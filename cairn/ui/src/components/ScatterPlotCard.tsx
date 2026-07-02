@@ -12,6 +12,7 @@ import CardDetailModal from "./CardDetailModal";
 import RunSelectionPanel from "./RunSelectionPanel";
 import Toggle from "./settings/Toggle";
 import Select from "./settings/Select";
+import type { BaseCardSettings } from "./card-kit";
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -22,14 +23,7 @@ interface AxisDef {
   source: "param" | "metric";
 }
 
-interface ScatterSettings {
-  version: 1;
-  title?: string;
-  collapsed?: boolean;
-  height?: number;
-  height1?: number;
-  height2?: number;
-  colSpan?: number;
+interface ScatterSettings extends BaseCardSettings {
   xAxis: AxisDef | null;
   yAxis: AxisDef | null;
   colorAxis: AxisDef | null;
