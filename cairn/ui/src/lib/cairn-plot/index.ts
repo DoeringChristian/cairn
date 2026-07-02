@@ -10,6 +10,7 @@ export type {
   Interpolation,
   ImageProcessing,
   PromotedSeriesConfig,
+  ColormapName,
 } from "./types";
 
 // Palette
@@ -17,6 +18,15 @@ export { SERIES_COLORS } from "./types";
 
 // Colormaps
 export { viridis, DIVERGING_COLORMAPS, getColormapLUT } from "./colormaps";
+
+// npy/npz parsing + histogram transforms
+export {
+  parseNpy,
+  parseNpz,
+  computeHistogram,
+  rebinHistograms,
+} from "./transforms";
+export type { NpyArray, HistogramData } from "./transforms";
 
 // Image processing
 export { getRenderMode, setRenderMode } from "./image";
@@ -44,3 +54,5 @@ export { ParallelCoords } from "./renderers";
 export { ScalarPlot } from "./renderers";
 export { ImagePane } from "./renderers";
 export { CompareImagePane } from "./renderers";
+export { Heatmap } from "./renderers";
+export { HistogramPlot } from "./renderers";

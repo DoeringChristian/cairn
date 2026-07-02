@@ -15,6 +15,7 @@ import ImageGalleryCard from "./ImageGalleryCard";
 import AudioPlayerCard from "./AudioPlayerCard";
 import VideoPlayerCard from "./VideoPlayerCard";
 import HistogramCard from "./HistogramCard";
+import TensorCard from "./TensorCard";
 import TextViewerCard from "./TextViewerCard";
 import ArtifactCard from "./ArtifactCard";
 
@@ -175,6 +176,8 @@ export default function CardRenderer(props: CardDescriptor) {
       return <VideoPlayerCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />;
     case "histogram":
       return <HistogramCard {...baseProps} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />;
+    case "tensor":
+      return <TensorCard {...baseProps} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />;
     case "text":
       return <TextViewerCard {...baseProps} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />;
     case "artifact":

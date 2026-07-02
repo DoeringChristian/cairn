@@ -6,3 +6,11 @@ export { mergeToRows } from "./merge-rows";
 export { computeParetoFront, type ParetoDirection } from "./pareto";
 export { normalizeValue } from "./normalize";
 export { resolveAxisDomain } from "./domain";
+export { parseNpy, type NpyArray } from "./parse-npy";
+export { parseNpz } from "./parse-npz";
+export {
+  computeHistogram,
+  rebinHistograms,
+  type HistogramData,
+  type RebinResult,
+} from "./histogram";
