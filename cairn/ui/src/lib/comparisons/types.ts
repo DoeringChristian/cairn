@@ -13,8 +13,23 @@ export interface ComparisonSeriesRef {
 export interface ComparisonCard {
   /** Stable uuid. Distinct from the settings storage key — see lib/card-settings.ts. */
   id: string;
-  type: "scalar" | "image" | "figure" | "audio" | "video" | "histogram" | "text" | "tensor" | "parallel" | "scatter";
+  type: "scalar" | "image" | "figure" | "audio" | "video" | "histogram" | "text" | "tensor" | "parallel" | "scatter" | "bar" | "tile";
   series: ComparisonSeriesRef[];
+}
+
+/**
+ * Card types that render as a workspace-level "multi-run" card — a *set of
+ * runs* rather than a single metric. They flow through CardRenderer's
+ * `kind: "multi-run"` union and key their settings on `card.type` (see
+ * `cardSettingsKeyFor`), unlike per-metric cards which key on `card.id`.
+ *
+ * Centralized here so every dispatch site (CardRenderer, ComparePage,
+ * AddCardModal, sync.cardSettingsKeyFor) agrees on the same list.
+ */
+export const MULTI_RUN_CARD_TYPES = ["parallel", "scatter", "bar", "tile"] as const;
+export type MultiRunCardType = (typeof MULTI_RUN_CARD_TYPES)[number];
+export function isMultiRunCardType(t: string): t is MultiRunCardType {
+  return (MULTI_RUN_CARD_TYPES as readonly string[]).includes(t);
 }
 
 export interface SmartFilterEntry {

@@ -13,6 +13,7 @@ import { useQueries } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { qk } from "../api/query-keys";
 import { useModalBehavior } from "../lib/use-modal-behavior";
+import { isMultiRunCardType, type MultiRunCardType } from "../lib/comparisons";
 const TYPE_LABELS: Record<string, string> = {
   scalar: "Scalars",
   image: "Images",
@@ -25,11 +26,15 @@ const TYPE_LABELS: Record<string, string> = {
   table: "Tables",
   html: "HTML",
   markdown: "Markdown",
+  artifact: "Artifacts",
+  plugin: "Plugins",
   parallel: "Parallel Coords",
   scatter: "Scatter Plot",
+  bar: "Bar Chart",
+  tile: "Scalar Tiles",
 };
 
-const TYPE_ORDER = ["scalar", "image", "figure", "audio", "video", "histogram", "tensor", "text", "table", "html", "markdown", "parallel", "scatter"];
+const TYPE_ORDER = ["scalar", "image", "figure", "audio", "video", "histogram", "tensor", "text", "table", "html", "markdown", "artifact", "plugin", "parallel", "scatter", "bar", "tile"];
 
 /** One entry per run that has this metric. */
 type SelectionRuns = Array<{ runId: string; context_hash: string }>;
@@ -41,7 +46,7 @@ type SelectionRuns = Array<{ runId: string; context_hash: string }>;
  */
 export type AddCardSelection =
   | { kind: "series"; name: string; object_type: string; runs: SelectionRuns }
-  | { kind: "multi-run"; cardType: "parallel" | "scatter"; name: string; runs: SelectionRuns };
+  | { kind: "multi-run"; cardType: MultiRunCardType; name: string; runs: SelectionRuns };
 
 /** Internal grouping entry (also drives the type tabs). */
 interface MetricEntry {
@@ -52,7 +57,7 @@ interface MetricEntry {
 
 /** Map a picked grouping entry to a typed selection. */
 function toSelection(m: MetricEntry): AddCardSelection {
-  if (m.object_type === "parallel" || m.object_type === "scatter") {
+  if (isMultiRunCardType(m.object_type)) {
     return { kind: "multi-run", cardType: m.object_type, name: m.name, runs: m.runs };
   }
   return { kind: "series", name: m.name, object_type: m.object_type, runs: m.runs };
@@ -141,20 +146,22 @@ export default function AddCardModal({
       arr.sort((a, b) => a.name.localeCompare(b.name));
     }
 
-    // Always show "parallel" and "scatter" as options
-    if (!byType.has("parallel")) {
-      byType.set("parallel", [{
-        name: "Parallel Coordinates",
-        object_type: "parallel",
-        runs: runIds.map((rid) => ({ runId: rid, context_hash: "" })),
-      }]);
-    }
-    if (!byType.has("scatter")) {
-      byType.set("scatter", [{
-        name: "Scatter Plot",
-        object_type: "scatter",
-        runs: runIds.map((rid) => ({ runId: rid, context_hash: "" })),
-      }]);
+    // Always show the workspace-level (multi-run) card types as options — they
+    // aren't real object_types, so they never appear from the sequence scan.
+    const multiRunDefaults: Array<{ type: string; name: string }> = [
+      { type: "parallel", name: "Parallel Coordinates" },
+      { type: "scatter", name: "Scatter Plot" },
+      { type: "bar", name: "Bar Chart" },
+      { type: "tile", name: "Scalar Tile" },
+    ];
+    for (const { type, name } of multiRunDefaults) {
+      if (!byType.has(type)) {
+        byType.set(type, [{
+          name,
+          object_type: type,
+          runs: runIds.map((rid) => ({ runId: rid, context_hash: "" })),
+        }]);
+      }
     }
 
     const types = TYPE_ORDER.filter((t) => byType.has(t));

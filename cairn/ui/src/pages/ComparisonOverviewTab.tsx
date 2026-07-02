@@ -1,9 +1,16 @@
 import { useMemo, useState } from "react";
+import { useQueries } from "@tanstack/react-query";
 import { useRunsDetails } from "../api/hooks";
+import { api } from "../api/client";
+import { qk } from "../api/query-keys";
 import type { Param, Run } from "../api/types";
 import RunStatusBadge from "../components/RunStatusBadge";
 import { formatDuration, safeJsonParse } from "../lib/format";
+import { formatNum } from "../lib/cairn-plot";
 import { disambiguateRunLabels, useRunMetadataVersion } from "../lib/run-label";
+
+/** Cap on metrics shown in the summary table (per spec). */
+const MAX_SUMMARY_METRICS = 50;
 
 interface Props {
   compRunIds: string[];
@@ -89,8 +96,22 @@ export default function ComparisonOverviewTab({ compRunIds }: Props) {
     ? paramKeys.filter((k) => differingKeys.has(k))
     : paramKeys;
 
+  const displayEnvRows = onlyDiffs ? envRows.filter((r) => r.differs) : envRows;
+
   return (
     <div className="flex flex-col gap-6">
+      {/* Global control bar */}
+      <div className="flex items-center justify-end">
+        <label className="flex items-center gap-1.5 text-xs text-fg-muted">
+          <input
+            type="checkbox"
+            checked={onlyDiffs}
+            onChange={(e) => setOnlyDiffs(e.target.checked)}
+          />
+          Only show differences
+        </label>
+      </div>
+
       {/* Run summary cards */}
       <section>
         <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-fg-muted">
@@ -113,14 +134,6 @@ export default function ComparisonOverviewTab({ compRunIds }: Props) {
           <h3 className="text-sm font-semibold uppercase tracking-wide text-fg-muted">
             Parameters ({differingKeys.size} differ{differingKeys.size === 1 ? "s" : ""})
           </h3>
-          <label className="flex items-center gap-1.5 text-xs text-fg-muted">
-            <input
-              type="checkbox"
-              checked={onlyDiffs}
-              onChange={(e) => setOnlyDiffs(e.target.checked)}
-            />
-            Only show diffs
-          </label>
         </div>
         {displayKeys.length === 0 ? (
           <p className="text-sm text-fg-subtle">
@@ -178,6 +191,11 @@ export default function ComparisonOverviewTab({ compRunIds }: Props) {
         <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-fg-muted">
           Environment
         </h3>
+        {displayEnvRows.length === 0 ? (
+          <p className="text-sm text-fg-subtle">
+            Environment is identical across runs.
+          </p>
+        ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="text-left text-xs uppercase tracking-wide text-fg-muted">
@@ -191,7 +209,7 @@ export default function ComparisonOverviewTab({ compRunIds }: Props) {
               </tr>
             </thead>
             <tbody>
-              {envRows.map((row) => (
+              {displayEnvRows.map((row) => (
                 <tr
                   key={row.key}
                   className={`border-t border-border-subtle ${
@@ -215,8 +233,182 @@ export default function ComparisonOverviewTab({ compRunIds }: Props) {
             </tbody>
           </table>
         </div>
+        )}
       </section>
+
+      {/* Summary metrics — last value of each scalar metric per run. */}
+      <MetricsSummarySection
+        runData={runData}
+        labels={labels}
+        onlyDiffs={onlyDiffs}
+      />
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Summary metrics section
+// ---------------------------------------------------------------------------
+
+interface MetricsSummaryProps {
+  runData: Array<{ run: Run; params: Param[] }>;
+  labels: Record<string, string>;
+  onlyDiffs: boolean;
+}
+
+/**
+ * Table of each scalar metric's LAST value per run (columns = runs, rows =
+ * metrics). Capped at MAX_SUMMARY_METRICS with a substring filter box; obeys
+ * the overview's "only show differences" toggle.
+ */
+function MetricsSummarySection({ runData, labels, onlyDiffs }: MetricsSummaryProps) {
+  const [filter, setFilter] = useState("");
+  const runIds = useMemo(() => runData.map((rd) => rd.run.id), [runData]);
+
+  // Scalar sequence lists per run → union of metric names.
+  const seqQueries = useQueries({
+    queries: runIds.map((rid) => ({
+      queryKey: qk.sequences(rid),
+      queryFn: () => api.sequences(rid),
+      staleTime: 10_000,
+    })),
+  });
+
+  const { metricNames, truncated } = useMemo(() => {
+    const names = new Set<string>();
+    for (const q of seqQueries) {
+      for (const seq of q.data?.sequences ?? []) {
+        if (seq.object_type === "scalar") names.add(seq.name);
+      }
+    }
+    const all = Array.from(names).sort();
+    return { metricNames: all.slice(0, MAX_SUMMARY_METRICS), truncated: all.length > MAX_SUMMARY_METRICS };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seqQueries.map((q) => q.dataUpdatedAt).join("|")]);
+
+  // Fetch last value for every (run, metric) pair.
+  const specs = useMemo(
+    () => runIds.flatMap((rid) => metricNames.map((name) => ({ rid, name }))),
+    [runIds, metricNames],
+  );
+
+  const valueQueries = useQueries({
+    queries: specs.map((s) => ({
+      queryKey: qk.sequence(s.rid, s.name, "last-summary"),
+      queryFn: () => api.sequence(s.rid, s.name, { maxPoints: 500 }),
+      staleTime: 10_000,
+    })),
+  });
+
+  // metricName → runId → last value.
+  const { rows, differing } = useMemo(() => {
+    const map = new Map<string, Map<string, number>>();
+    specs.forEach((s, i) => {
+      const pts = valueQueries[i]?.data?.points;
+      if (!pts?.length) return;
+      let last: number | null = null;
+      for (let j = pts.length - 1; j >= 0; j--) {
+        if (pts[j]!.scalar_value != null) { last = pts[j]!.scalar_value!; break; }
+      }
+      if (last == null) return;
+      let row = map.get(s.name);
+      if (!row) { row = new Map(); map.set(s.name, row); }
+      row.set(s.rid, last);
+    });
+    const diff = new Set<string>();
+    for (const [name, row] of map) {
+      const vals = runIds.map((rid) => row.get(rid));
+      const present = vals.filter((v): v is number => v != null);
+      if (present.length < runIds.length || present.some((v) => v !== present[0])) {
+        diff.add(name);
+      }
+    }
+    return { rows: map, differing: diff };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [specs, runIds, valueQueries.map((q) => q.dataUpdatedAt).join("|")]);
+
+  const anyLoading = seqQueries.some((q) => q.isLoading) || valueQueries.some((q) => q.isLoading);
+
+  const q = filter.trim().toLowerCase();
+  const displayNames = metricNames
+    .filter((name) => rows.has(name))
+    .filter((name) => (onlyDiffs ? differing.has(name) : true))
+    .filter((name) => (q ? name.toLowerCase().includes(q) : true));
+
+  return (
+    <section>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-fg-muted">
+          Metrics ({differing.size} differ{differing.size === 1 ? "s" : ""})
+        </h3>
+        <input
+          type="text"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder="Filter metrics..."
+          className="input w-40 text-xs"
+        />
+      </div>
+      {anyLoading && rows.size === 0 ? (
+        <p className="text-sm text-fg-subtle">Loading metrics...</p>
+      ) : displayNames.length === 0 ? (
+        <p className="text-sm text-fg-subtle">
+          {rows.size === 0
+            ? "No scalar metrics logged."
+            : onlyDiffs
+              ? "All metrics are identical across runs."
+              : "No matching metrics."}
+        </p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="text-left text-xs uppercase tracking-wide text-fg-muted">
+              <tr>
+                <th className="pb-1 pr-4 sticky left-0 bg-bg-surface">Metric</th>
+                {runData.map((rd) => (
+                  <th key={rd.run.id} className="pb-1 pr-4 whitespace-nowrap">
+                    {labels[rd.run.id] ?? rd.run.id.slice(0, 8)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {displayNames.map((name) => {
+                const row = rows.get(name)!;
+                const differs = differing.has(name);
+                return (
+                  <tr
+                    key={name}
+                    className={`border-t border-border-subtle ${differs ? "bg-accent/5" : ""}`}
+                  >
+                    <td
+                      className={`mono py-1 pr-4 sticky left-0 ${
+                        differs ? "bg-accent/5 border-l-2 border-accent" : "bg-bg-surface"
+                      }`}
+                    >
+                      {name}
+                    </td>
+                    {runData.map((rd) => {
+                      const v = row.get(rd.run.id);
+                      return (
+                        <td key={rd.run.id} className="mono py-1 pr-4 text-fg-muted whitespace-nowrap tabular-nums">
+                          {v != null ? formatNum(v) : "—"}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {truncated && (
+            <p className="mt-2 text-[10px] text-fg-subtle">
+              Showing first {MAX_SUMMARY_METRICS} metrics.
+            </p>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 
