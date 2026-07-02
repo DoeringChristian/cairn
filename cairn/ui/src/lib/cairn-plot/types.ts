@@ -71,22 +71,3 @@ export interface ImageProcessing {
   offset: number;
   flipSign: boolean;
 }
-
-export interface ImageViewportState {
-  zoom: number;
-  pan: { x: number; y: number };
-}
-
-// ── Events (library → card) ──
-
-export interface HoverEvent {
-  point: { x: number; y: number };
-  screen: { x: number; y: number };
-  seriesKey: string;
-}
-
-export interface ClickEvent {
-  seriesKey?: string;
-  pointId?: string;
-  point: { x: number; y: number };
-}

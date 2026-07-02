@@ -13,9 +13,6 @@ export type {
   Interpolation,
   CompareMode,
   ImageProcessing,
-  ImageViewportState,
-  HoverEvent,
-  ClickEvent,
 } from "./types";
 
 // Colormaps
@@ -33,7 +30,6 @@ export {
   computeDiff,
   loadImageData,
   DIFF_MODE_LABELS,
-  webglComputeDiff,
   webglRenderDiffToCanvas,
   isWebGL2Available,
   getRenderMode,
@@ -52,7 +48,6 @@ export {
   mergeToRows,
   computeParetoFront,
   normalizeValue,
-  computeDataExtent,
   resolveAxisDomain,
 } from "./transforms";
 export type { AxisSource, ParetoDirection } from "./transforms";

@@ -447,7 +447,6 @@ export default function ImagePane({
       <div
         ref={paneRef}
         className="flex-1 min-h-0 min-w-0 flex items-center justify-center overflow-hidden rounded cairn-checkerboard"
-        data-cairn-zoom-pane
         style={{
           padding:
             showAxes && naturalDims ? "16px 4px 4px 28px" : "4px",
@@ -461,7 +460,6 @@ export default function ImagePane({
       >
         <div
           ref={imgWrapperRef}
-          data-cairn-img-wrapper
           className="relative w-full h-full"
           style={{ transform: transformStr, transformOrigin: "0 0" }}
         >
