@@ -37,7 +37,7 @@ import { formatRelative } from "../lib/format";
 import { useRuns } from "../api/hooks";
 import { api } from "../api/client";
 
-import { setRunMetadata, disambiguateRunLabels } from "../lib/run-label";
+import { disambiguateRunLabels } from "../lib/run-label";
 import { RunSelectionContext, useRunSelectionState } from "../lib/use-run-selection";
 import RunSelectionPanel from "../components/RunSelectionPanel";
 import type { Run } from "../api/types";
@@ -49,12 +49,7 @@ export default function ComparePage() {
   const runs = runsQ.data?.runs ?? [];
   const allProjectRunIds = useMemo(() => runs.map((r) => r.id), [runs]);
 
-  // Populate run metadata cache for label formatting.
-  // Called during render (not useEffect) so the cache is ready before
-  // child cards compute their labels on the same render pass.
-  useMemo(() => {
-    if (runs.length > 0) setRunMetadata(runs);
-  }, [runs]);
+  // Run label cache is seeded centrally in `useRuns` (api/hooks.ts).
   const [searchParams, setSearchParams] = useSearchParams();
   const { comparisons, refresh } = useComparisons(projectId ?? "");
 

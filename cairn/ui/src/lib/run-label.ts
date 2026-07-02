@@ -40,12 +40,37 @@ export function useRunMetadataVersion(): number {
   return useSyncExternalStore(_subscribe, _getVersion, _getVersion);
 }
 
+/** Shallow field comparison — Run is a flat record of primitives. */
+function _runEquals(a: Run, b: Run): boolean {
+  if (a === b) return true;
+  const keys = Object.keys(a) as Array<keyof Run>;
+  for (const k of keys) {
+    if (a[k] !== b[k]) return false;
+  }
+  return true;
+}
+
+/**
+ * Seed the cache with a batch of runs. Callers (e.g. api hooks) may call
+ * this on every fetch/poll — writes and version bumps only happen for runs
+ * that are new or whose fields actually changed, so polling with unchanged
+ * data does not re-render `useRunMetadataVersion` subscribers.
+ */
 export function setRunMetadata(runs: Run[]): void {
-  for (const r of runs) runMetadataCache.set(r.id, r);
-  _notify();
+  let changed = false;
+  for (const r of runs) {
+    const existing = runMetadataCache.get(r.id);
+    if (!existing || !_runEquals(existing, r)) {
+      runMetadataCache.set(r.id, r);
+      changed = true;
+    }
+  }
+  if (changed) _notify();
 }
 
 export function addRunMetadata(run: Run): void {
+  const existing = runMetadataCache.get(run.id);
+  if (existing && _runEquals(existing, run)) return;
   runMetadataCache.set(run.id, run);
   _notify();
 }

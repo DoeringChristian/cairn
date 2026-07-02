@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import {
   useInfiniteQuery,
   useMutation,
@@ -10,6 +10,7 @@ import {
 import type { RunDetailResponse, RunsListResponse } from "./types";
 import { api } from "./client";
 import { qk } from "./query-keys";
+import { addRunMetadata, setRunMetadata } from "../lib/run-label";
 
 export function useHealth() {
   return useQuery({ queryKey: qk.health(), queryFn: api.health, refetchInterval: 5_000 });
@@ -20,7 +21,7 @@ export function useProjects() {
 }
 
 export function useRuns(params: Parameters<typeof api.runs>[0]) {
-  return useQuery({
+  const q = useQuery({
     queryKey: qk.runs(params),
     queryFn: () => api.runs(params),
     refetchInterval: (q) => {
@@ -30,12 +31,21 @@ export function useRuns(params: Parameters<typeof api.runs>[0]) {
       return data.runs.some((r) => r.status === "running") ? 3_000 : false;
     },
   });
+
+  // Seed the shared run-label cache centrally. `setRunMetadata` only bumps
+  // its version (re-rendering label consumers) when data actually changed,
+  // so this is safe to run on every fetch/poll.
+  useEffect(() => {
+    if (q.data && q.data.runs.length > 0) setRunMetadata(q.data.runs);
+  }, [q.data]);
+
+  return q;
 }
 
 const INFINITE_PAGE_SIZE = 100;
 
 export function useInfiniteRuns(params: { project?: string; status?: string }) {
-  return useInfiniteQuery<RunsListResponse>({
+  const q = useInfiniteQuery<RunsListResponse>({
     queryKey: qk.runsInfinite(params),
     queryFn: ({ pageParam }) =>
       api.runs({ ...params, limit: INFINITE_PAGE_SIZE, offset: pageParam as number }),
@@ -51,26 +61,50 @@ export function useInfiniteRuns(params: { project?: string; status?: string }) {
       return pages[0]?.runs.some((r) => r.status === "running") ? 3_000 : false;
     },
   });
+
+  useEffect(() => {
+    const pages = q.data?.pages;
+    if (!pages) return;
+    const runs = pages.flatMap((p) => p.runs);
+    if (runs.length > 0) setRunMetadata(runs);
+  }, [q.data]);
+
+  return q;
 }
 
 export function useRun(runId: string) {
-  return useQuery({
+  const q = useQuery({
     queryKey: qk.run(runId),
     queryFn: () => api.run(runId),
     refetchInterval: (q) =>
       q.state.data?.run.status === "running" ? 2_000 : false,
   });
+
+  useEffect(() => {
+    if (q.data) addRunMetadata(q.data.run);
+  }, [q.data]);
+
+  return q;
 }
 
 /** Fetch run details for a set of runs (e.g. comparison tabs). */
 export function useRunsDetails(runIds: string[]): UseQueryResult<RunDetailResponse>[] {
-  return useQueries({
+  const results = useQueries({
     queries: runIds.map((rid) => ({
       queryKey: qk.run(rid),
       queryFn: () => api.run(rid),
       staleTime: 5_000,
     })),
   });
+
+  useEffect(() => {
+    const runs = results
+      .map((r) => r.data?.run)
+      .filter((r): r is NonNullable<typeof r> => r != null);
+    if (runs.length > 0) setRunMetadata(runs);
+  });
+
+  return results;
 }
 
 export function useSequences(runId: string) {

@@ -9,7 +9,6 @@ import { addCardsToComparison, compareRunId, createComparison, useTemplates, typ
 import { saveCardSettings } from "../lib/card-settings";
 import { gcDeletedRunKeys } from "../lib/storage";
 import { api } from "../api/client";
-import { setRunMetadata } from "../lib/run-label";
 import SettingsPopover from "../components/SettingsPopover";
 import BulkTagEditor from "../components/BulkTagEditor";
 import ImportRunsDialog from "../components/ImportRunsDialog";
@@ -205,8 +204,7 @@ export default function RunsTablePage() {
     gcDeletedRunKeys(new Set(toDelete));
   }, [runs, bulkDelete]);
 
-  // Populate run label cache for formatting across the app.
-  useMemo(() => { if (runs.length > 0) setRunMetadata(runs); }, [runs]);
+  // Run label cache is seeded centrally in `useInfiniteRuns` (api/hooks.ts).
 
   const { regex: searchRegex, error: searchError } = useMemo(() => {
     const raw = search.trim();
