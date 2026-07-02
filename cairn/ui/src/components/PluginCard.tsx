@@ -92,11 +92,32 @@ async function fetchArtifactData(hash: string): Promise<ArrayBuffer> {
   return buf;
 }
 
+/**
+ * Plugin iframe postMessage protocol (canonical specification)
+ *
+ * Messages:
+ * 1. cairn:render (host → iframe)
+ *    - type: "cairn:render"
+ *    - data: ArrayBuffer (artifact data)
+ *    - metadata: object (plugin metadata)
+ *    - step: number (step index)
+ *    - runId: string (run ID)
+ *    - metricName: string (metric name)
+ *    - settings: object (plugin user settings)
+ *    - protocolVersion: number (current: 1)
+ *
+ * 2. cairn:resize (iframe → host)
+ *    - type: "cairn:resize"
+ *    - height: number (document height in pixels)
+ *    - protocolVersion: number (current: 1)
+ *
+ * Compatibility: receivers MUST ignore unknown fields.
+ */
 function buildJsIframeSrcdoc(pluginSource: string): string {
   return `<!DOCTYPE html><html><head><style>body{margin:0;background:transparent;color:#c9d1d9;font-family:system-ui}canvas{display:block}</style></head><body><script>
 window.cairn={settings:{}};
 window.addEventListener("message",function(e){if(e.data&&e.data.type==="cairn:render"){window.cairn.settings=e.data.settings||{};if(window.cairn.render){try{window.cairn.render(e.data)}catch(err){document.body.innerHTML='<pre style="color:#f85149;padding:8px">'+err.message+'</pre>'}}}});
-new ResizeObserver(function(){parent.postMessage({type:"cairn:resize",height:document.documentElement.scrollHeight},"*")}).observe(document.body);
+new ResizeObserver(function(){parent.postMessage({type:"cairn:resize",height:document.documentElement.scrollHeight,protocolVersion:1},"*")}).observe(document.body);
 ${pluginSource}
 </script></body></html>`;
 }
@@ -131,7 +152,7 @@ function handleRender(msg){if(!pyodide){pendingMsg=msg;return;}try{document.getE
 _found=None
 for _name,_obj in list(globals().items()):
  if isinstance(_obj,type) and issubclass(_obj,PythonPlugin) and _obj is not PythonPlugin:_found=_obj;break
-_found\`);}catch(e){}if(cls){try{var instance=cls.__call__();result=instance.render(pyodide.toPy(dataBytes),pyodide.toPy(msg.metadata),msg.step,pySettings);}catch(e){cls=null;}}if(!cls){var renderFn=pyodide.globals.get("render");if(!renderFn){document.getElementById("output").innerHTML='<pre style="color:#f85149">No render()</pre>';return;}result=renderFn(pyodide.toPy(dataBytes),pyodide.toPy(msg.metadata),msg.step,msg.runId,msg.metricName,pySettings);}const html=(typeof result==="string")?result:(result&&result.toString&&result.toString()!=="None")?result.toString():null;if(html){var outEl=document.getElementById("output");outEl.innerHTML="";var range=document.createRange();range.selectNode(outEl);outEl.appendChild(range.createContextualFragment(html));}setTimeout(function(){parent.postMessage({type:"cairn:resize",height:document.documentElement.scrollHeight},"*");},100);}catch(err){document.getElementById("output").innerHTML='<pre style="color:#f85149">Render error: '+err.message+'</pre>';}}
+_found\`);}catch(e){}if(cls){try{var instance=cls.__call__();result=instance.render(pyodide.toPy(dataBytes),pyodide.toPy(msg.metadata),msg.step,pySettings);}catch(e){cls=null;}}if(!cls){var renderFn=pyodide.globals.get("render");if(!renderFn){document.getElementById("output").innerHTML='<pre style="color:#f85149">No render()</pre>';return;}result=renderFn(pyodide.toPy(dataBytes),pyodide.toPy(msg.metadata),msg.step,msg.runId,msg.metricName,pySettings);}const html=(typeof result==="string")?result:(result&&result.toString&&result.toString()!=="None")?result.toString():null;if(html){var outEl=document.getElementById("output");outEl.innerHTML="";var range=document.createRange();range.selectNode(outEl);outEl.appendChild(range.createContextualFragment(html));}setTimeout(function(){parent.postMessage({type:"cairn:resize",height:document.documentElement.scrollHeight,protocolVersion:1},"*");},100);}catch(err){document.getElementById("output").innerHTML='<pre style="color:#f85149">Render error: '+err.message+'</pre>';}}
 window.addEventListener("message",function(e){if(e.data&&e.data.type==="cairn:render")handleRender(e.data);});
 initPyodide();
 </script></body></html>`;
@@ -219,7 +240,7 @@ function PluginPane({
       if (cancelled) return;
       const clone = data.slice(0);
       iframe.contentWindow?.postMessage(
-        { type: "cairn:render", data: clone, metadata: pluginMeta, step: targetStep, runId: rid, metricName: m.name, settings: pluginValues ?? {} },
+        { type: "cairn:render", data: clone, metadata: pluginMeta, step: targetStep, runId: rid, metricName: m.name, settings: pluginValues ?? {}, protocolVersion: 1 },
         "*", [clone],
       );
     }).catch((err) => { if (!cancelled) setError(String(err)); });
