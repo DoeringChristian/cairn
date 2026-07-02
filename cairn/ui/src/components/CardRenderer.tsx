@@ -28,6 +28,8 @@ const ParallelCoordsCard = lazy(() => import("./ParallelCoordsCard"));
 
 const ScatterPlotCard = lazy(() => import("./ScatterPlotCard"));
 
+const PointCloudCard = lazy(() => import("./PointCloudCard"));
+
 /**
  * Descriptor for the card CardRenderer should render.
  *
@@ -179,6 +181,22 @@ export default function CardRenderer(props: CardDescriptor) {
       return <TextViewerCard {...baseProps} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />;
     case "artifact":
       return <ArtifactCard {...baseProps} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />;
+    case "pointcloud":
+      return (
+        <Suspense
+          fallback={
+            <div data-cairn-card className="card p-4">
+              <div className="mb-2 flex items-baseline justify-between gap-2">
+                <h3 className="mono text-sm font-semibold">{metric.name}</h3>
+                <span className="text-xs text-fg-subtle">loading three.js…</span>
+              </div>
+              <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
+            </div>
+          }
+        >
+          <PointCloudCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />
+        </Suspense>
+      );
     case "plugin":
       return (
         <Suspense

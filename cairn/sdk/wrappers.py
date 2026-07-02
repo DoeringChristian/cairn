@@ -52,6 +52,29 @@ class Text(_TypeWrapper):
     object_type = "text"
 
 
+class PointCloud(_TypeWrapper):
+    """3D point cloud from an ``(N, C)`` numpy/torch array.
+
+    Accepts three channel layouts (``C`` inferred from the array):
+
+    - ``(N, 3)`` — ``xyz`` positions only.
+    - ``(N, 4)`` — ``xyz`` + an integer ``category`` id per point.
+    - ``(N, 6)`` — ``xyz`` + ``rgb`` color. Color is auto-detected as either
+      ``0-255`` or ``0-1`` and normalized to ``0-1`` at log time.
+
+    Clouds larger than 300,000 points are uniformly downsampled (seeded) at
+    log time; the original count is preserved in metadata.
+
+    Usage::
+
+        run.track(cairn.PointCloud(xyz), name="cloud", step=0)          # (N, 3)
+        run.track(cairn.PointCloud(xyz_rgb), name="scan", step=0)        # (N, 6)
+        run.track(cairn.PointCloud(xyz_cat), name="segments", step=0)    # (N, 4)
+    """
+
+    object_type = "pointcloud"
+
+
 class Artifact(_TypeWrapper):
     """Pickle-serialized Python object.
 

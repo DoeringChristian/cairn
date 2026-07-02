@@ -44,3 +44,11 @@ export { ParallelCoords } from "./renderers";
 export { ScalarPlot } from "./renderers";
 export { ImagePane } from "./renderers";
 export { CompareImagePane } from "./renderers";
+export { PointCloudViewer, resolveColorMode } from "./renderers";
+export type {
+  PointCloudViewerProps,
+  PointCloudChannels,
+  PointColorMode,
+  PointCloudBackground,
+  PointCloudBounds,
+} from "./renderers";

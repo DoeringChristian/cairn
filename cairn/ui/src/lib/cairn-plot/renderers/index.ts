@@ -9,3 +9,12 @@ export {
   default as CompareImagePane,
   type CompareImagePaneProps,
 } from "./CompareImagePane";
+export {
+  default as PointCloudViewer,
+  resolveColorMode,
+  type PointCloudViewerProps,
+  type PointCloudChannels,
+  type PointColorMode,
+  type PointCloudBackground,
+  type PointCloudBounds,
+} from "./PointCloudViewer";
