@@ -68,3 +68,11 @@ export { CompareImagePane } from "./renderers";
 export { Heatmap } from "./renderers";
 export { HistogramPlot } from "./renderers";
 export { ImageOverlay } from "./renderers";
+export { PointCloudViewer, resolveColorMode } from "./renderers";
+export type {
+  PointCloudViewerProps,
+  PointCloudChannels,
+  PointColorMode,
+  PointCloudBackground,
+  PointCloudBounds,
+} from "./renderers";

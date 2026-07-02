@@ -12,6 +12,7 @@ from .html import HtmlHandler
 from .image import ImageHandler
 from .markdown import MarkdownHandler
 from .plugin import PluginHandler
+from .pointcloud import PointCloudHandler
 from .registry import (
     HandlerRegistry,
     TypeHandler,
@@ -41,8 +42,10 @@ if not _already_registered:
     # themselves doesn't matter.
     default_registry.register(HistogramHandler())
     default_registry.register(TensorHandler())
-    # Table dispatches via the cairn.Table wrapper only.
+    # Table/PointCloud dispatch via their cairn.Table/cairn.PointCloud
+    # wrappers only, so their order among themselves doesn't matter.
     default_registry.register(TableHandler())
+    default_registry.register(PointCloudHandler())
     default_registry.register(PluginHandler())
     default_registry.register(ArtifactHandler())
     # Wrapper-only, like Histogram/Tensor — order among themselves doesn't
@@ -66,6 +69,7 @@ __all__ = [
     "HistogramHandler",
     "TensorHandler",
     "TableHandler",
+    "PointCloudHandler",
     "PluginHandler",
     "ArtifactHandler",
     "HtmlHandler",
