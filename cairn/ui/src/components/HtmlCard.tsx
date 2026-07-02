@@ -72,8 +72,21 @@ const DEFAULT_HTML_SETTINGS = (seed: {
 const MIN_HEIGHT = 80;
 const MAX_HEIGHT = 2000;
 
-/** postMessage listener shim, adapted from PluginCard's JS plugin shim. */
-const RESIZE_SHIM = `<script>(function(){function post(){try{parent.postMessage({type:"cairn:resize",height:document.documentElement.scrollHeight,protocolVersion:1},"*")}catch(e){}}try{new ResizeObserver(post).observe(document.documentElement)}catch(e){}window.addEventListener("load",post);post();})();</script>`;
+/**
+ * postMessage listener shim, adapted from PluginCard's JS plugin shim.
+ *
+ * A sandboxed `srcdoc` iframe's layout is not guaranteed to have settled by
+ * the time `load` fires or `ResizeObserver.observe()` delivers its initial
+ * callback — both can (and do) report `scrollHeight === 0` a moment before
+ * the real content lays out, with no further ResizeObserver callback ever
+ * firing afterward for static content. So on top of the (always-on, event
+ * driven) ResizeObserver/MutationObserver, re-post on a short bounded
+ * schedule of timeouts anchored to `load` to catch that late settle. The
+ * schedule is fixed-length (never an unbounded interval/poll), so content
+ * that legitimately never grows past height 0 just stops posting after the
+ * last scheduled retry instead of spinning forever.
+ */
+const RESIZE_SHIM = `<script>(function(){function post(){try{parent.postMessage({type:"cairn:resize",height:document.documentElement.scrollHeight,protocolVersion:1},"*")}catch(e){}}try{new ResizeObserver(post).observe(document.documentElement)}catch(e){}try{new MutationObserver(post).observe(document.body||document.documentElement,{childList:true,subtree:true})}catch(e){}window.addEventListener("load",function(){post();[0,100,300,1000].forEach(function(d){setTimeout(post,d)})});post();})();</script>`;
 
 function injectResizeShim(html: string): string {
   if (/<\/body>/i.test(html)) return html.replace(/<\/body>/i, `${RESIZE_SHIM}</body>`);
@@ -129,14 +142,22 @@ function HtmlPane({
   }, [current?.artifact_hash]);
 
   // Self-contained resize listener — no external hook needed to make this
-  // pane behave; it owns its own postMessage subscription.
+  // pane behave; it owns its own postMessage subscription. No timing
+  // assumptions here: the shim may post several times as the iframe's
+  // layout settles (see RESIZE_SHIM), and this listener stays subscribed
+  // for the pane's whole lifetime, so a message arriving late (or a later,
+  // larger one from legitimate content growth) is applied just like the
+  // first. A height of 0 is ignored rather than clamped down to MIN_HEIGHT
+  // — it's most often a pre-layout artifact, and even for content that
+  // legitimately renders nothing, holding at the last known/fixed height
+  // reads better than briefly collapsing to a sliver.
   useEffect(() => {
     if (!autoHeight) return;
     function onMessage(e: MessageEvent) {
       if (e.source !== iframeRef.current?.contentWindow) return;
       if (e.data?.type !== "cairn:resize") return;
       const h = Number(e.data.height);
-      if (Number.isFinite(h)) setMeasuredHeight(Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, h)));
+      if (Number.isFinite(h) && h > 0) setMeasuredHeight(Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, h)));
     }
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
