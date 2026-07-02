@@ -90,17 +90,6 @@ function gcByPredicate(shouldRemove: (runId: string) => boolean): void {
 
 /**
  * Remove per-run keys (card-settings/run-layout/collapsed-sections) for runs
- * not in `keepRunIds`. `compare:`-scoped pseudo-run ids are never touched.
- *
- * Only safe to call with the *complete* set of live run ids — if the caller
- * only has a partial/paginated view, prefer `gcDeletedRunKeys` instead.
- */
-export function gcRunScopedKeys(keepRunIds: Set<string>): void {
-  gcByPredicate((runId) => !keepRunIds.has(runId));
-}
-
-/**
- * Remove per-run keys (card-settings/run-layout/collapsed-sections) for runs
  * in `deletedRunIds`. `compare:`-scoped pseudo-run ids are never touched.
  *
  * Safe to call with a partial view of the run set (e.g. from a paginated

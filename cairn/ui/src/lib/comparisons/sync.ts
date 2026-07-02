@@ -14,16 +14,17 @@ import { loadComparisons, newId, saveComparisons } from "./store";
  *
  * Must agree with what the cards themselves read/write:
  *  - parallel/scatter cards (rendered via CardRenderer's "multi-run" kind in
- *    ComparePage) key on `{runId: compareRunId(cmp.id), metricName: card.type,
- *    contextHash: card.id}`.
- *  - every other card type keys on `{runId: compareRunId(cmp.id), metricName:
- *    card.id, contextHash: ""}` (ComparePage's settingsKeyOverride).
+ *    ComparePage) key on `{runId: compareRunId(comparisonId), metricName:
+ *    card.type, contextHash: card.id}`.
+ *  - every other card type keys on `{runId: compareRunId(comparisonId),
+ *    metricName: card.id, contextHash: ""}` (ComparePage's
+ *    settingsKeyOverride).
  */
-function cardSettingsKeyFor(cmp: Comparison, card: ComparisonCard): CardSettingsKey {
+export function cardSettingsKeyFor(comparisonId: string, card: ComparisonCard): CardSettingsKey {
   if (card.type === "parallel" || card.type === "scatter") {
-    return { runId: compareRunId(cmp.id), metricName: card.type, contextHash: card.id };
+    return { runId: compareRunId(comparisonId), metricName: card.type, contextHash: card.id };
   }
-  return { runId: compareRunId(cmp.id), metricName: card.id, contextHash: "" };
+  return { runId: compareRunId(comparisonId), metricName: card.id, contextHash: "" };
 }
 
 /** Build the payload for server storage, including card settings. */
@@ -31,7 +32,7 @@ function buildPayload(cmp: Comparison): Record<string, unknown> {
   // Gather card settings from localStorage.
   const cardSettings: Record<string, unknown> = {};
   for (const card of cmp.cards) {
-    const settings = loadCardSettings(cardSettingsKeyFor(cmp, card));
+    const settings = loadCardSettings(cardSettingsKeyFor(cmp.id, card));
     if (settings) cardSettings[card.id] = settings;
   }
   return {
@@ -104,7 +105,7 @@ export async function syncComparisonsFromServer(projectId: string): Promise<void
           if (settings && typeof settings === "object") {
             const card = cmp.cards.find((k) => k.id === cardId);
             const key: CardSettingsKey = card
-              ? cardSettingsKeyFor(cmp, card)
+              ? cardSettingsKeyFor(cmp.id, card)
               : { runId: compareRunId(cmp.id), metricName: cardId, contextHash: "" };
             try {
               localStorage.setItem(cardSettingsStorageKey(key), JSON.stringify(settings));

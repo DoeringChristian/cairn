@@ -15,10 +15,6 @@ export interface CardSeriesResult<TSettings> {
   settings: TSettings;
   /** Shallow-merge a patch over current settings and persist. */
   updateSettings: (patch: Partial<TSettings>) => void;
-  /** Clear persisted settings and revert to defaults. */
-  resetSettings: () => void;
-  /** Resolved settings key ({runId, metricName, contextHash} or the override). */
-  settingsKey: CardSettingsKey;
   /** Series to render, canonical order (sorted by seriesKey). */
   effectiveMetrics: SeriesRef[];
   /** Distinct run ids across effectiveMetrics (always includes runId). */
@@ -127,7 +123,7 @@ export function useCardSeries<
     [settingsKeyOverride, runId, metric.name, metric.context_hash],
   );
 
-  const [settings, updateSettings, resetSettings] = useCardSettings<TSettings>(
+  const [settings, updateSettings] = useCardSettings<TSettings>(
     settingsKey,
     defaults,
   );
@@ -168,8 +164,6 @@ export function useCardSeries<
   return {
     settings,
     updateSettings,
-    resetSettings,
-    settingsKey,
     effectiveMetrics,
     allRunIds,
     multipleRuns,

@@ -72,11 +72,11 @@ export type CardDescriptor =
     };
 
 /** Loading placeholder shared by the lazily-loaded card variants. */
-function LazyCardFallback({ label, title }: { label: string; title?: string }) {
+function LazyCardFallback({ label }: { label: string }) {
   return (
     <div data-cairn-card className="card p-4">
       <div className="mb-2 flex items-baseline justify-between gap-2">
-        <h3 className="mono text-sm font-semibold">{title ?? " "}</h3>
+        <h3 className="mono text-sm font-semibold">{" "}</h3>
         <span className="text-xs text-fg-subtle">{label}</span>
       </div>
       <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />

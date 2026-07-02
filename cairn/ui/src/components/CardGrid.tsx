@@ -31,7 +31,7 @@ interface Entry {
 // ---------------------------------------------------------------------------
 function loadCollapsedSections(runId: string): Set<string> {
   const raw = loadJson<string[]>(localStorage, storageKeys.collapsedSections(runId));
-  return new Set(raw ?? []);
+  return new Set(Array.isArray(raw) ? raw : []);
 }
 
 function saveCollapsedSections(runId: string, set: Set<string>): void {

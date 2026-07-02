@@ -12,6 +12,7 @@ import SmartComparisonWizard from "../components/SmartComparisonWizard";
 import {
   addCardToComparison,
   addRunsToComparison,
+  cardSettingsKeyFor,
   compareRunId,
   createComparison,
   createTemplate,
@@ -679,9 +680,10 @@ function ComparisonView({
   const [refreshing, setRefreshing] = useState(false);
 
   const collapsedKey = storageKeys.collapsedSections(compareRunId(comparison.id));
-  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(
-    () => new Set(loadJson<string[]>(localStorage, collapsedKey) ?? []),
-  );
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(() => {
+    const raw = loadJson<string[]>(localStorage, collapsedKey);
+    return new Set(Array.isArray(raw) ? raw : []);
+  });
   const toggleSection = useCallback((name: string) => {
     setCollapsedSections((prev) => {
       const next = new Set(prev);
@@ -786,11 +788,7 @@ function ComparisonView({
               const name = prompt("Template name:", comparison.name);
               if (!name) return;
               const templateCards: ComparisonTemplateCard[] = comparison.cards.map((card) => {
-                const settingsKey = {
-                  runId: compareRunId(comparison.id),
-                  metricName: card.id,
-                  contextHash: "",
-                };
+                const settingsKey = cardSettingsKeyFor(comparison.id, card);
                 const cardSettings = loadCardSettings<Record<string, unknown>>(settingsKey);
                 return {
                   type: card.type,

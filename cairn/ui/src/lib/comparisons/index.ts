@@ -44,4 +44,5 @@ export {
   syncComparisonToServer,
   deleteComparisonFromServer,
   syncComparisonsFromServer,
+  cardSettingsKeyFor,
 } from "./sync";

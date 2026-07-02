@@ -149,7 +149,7 @@ export default function CardResizeHandle({
 
         const cardTop = card.getBoundingClientRect().top;
         for (const sib of allSiblings) {
-          if (Math.abs(sib.getBoundingClientRect().top - cardTop) < 2) {
+          if (Math.abs(sib.getBoundingClientRect().top - cardTop) < ROW_TOP_EPSILON_PX) {
             sib.style.height = `${newH}px`;
             heightTouched.add(sib);
           } else if (heightTouched.has(sib)) {
