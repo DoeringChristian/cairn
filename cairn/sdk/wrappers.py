@@ -91,6 +91,29 @@ class Table(_TypeWrapper):
         self.kwargs = kwargs
 
 
+class Html(_TypeWrapper):
+    """Sandboxed HTML report string.
+
+    Rendered only inside a ``sandbox="allow-scripts"`` ``srcdoc`` iframe by
+    the UI — never inline in the host document.
+
+    Usage::
+
+        run.track(cairn.Html("<h1>Report</h1><p>...</p>"), name="report", step=0)
+    """
+    object_type = "html"
+
+
+class Markdown(_TypeWrapper):
+    """Markdown text, rendered with GitHub-flavored-markdown support.
+
+    Usage::
+
+        run.track(cairn.Markdown("# Notes\\n\\n- [x] done\\n- [ ] todo"), name="notes", step=0)
+    """
+    object_type = "markdown"
+
+
 class Artifact(_TypeWrapper):
     """Pickle-serialized Python object.
 

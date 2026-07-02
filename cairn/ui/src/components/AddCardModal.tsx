@@ -22,11 +22,13 @@ const TYPE_LABELS: Record<string, string> = {
   histogram: "Histograms",
   text: "Text",
   table: "Tables",
+  html: "HTML",
+  markdown: "Markdown",
   parallel: "Parallel Coords",
   scatter: "Scatter Plot",
 };
 
-const TYPE_ORDER = ["scalar", "image", "figure", "audio", "video", "histogram", "text", "table", "parallel", "scatter"];
+const TYPE_ORDER = ["scalar", "image", "figure", "audio", "video", "histogram", "text", "table", "html", "markdown", "parallel", "scatter"];
 
 /** One entry per run that has this metric. */
 type SelectionRuns = Array<{ runId: string; context_hash: string }>;

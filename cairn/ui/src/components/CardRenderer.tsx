@@ -30,6 +30,10 @@ const ScatterPlotCard = lazy(() => import("./ScatterPlotCard"));
 
 const TableCard = lazy(() => import("./TableCard"));
 
+const HtmlCard = lazy(() => import("./HtmlCard"));
+
+const MarkdownCard = lazy(() => import("./MarkdownCard"));
+
 /**
  * Descriptor for the card CardRenderer should render.
  *
@@ -183,6 +187,22 @@ export default function CardRenderer(props: CardDescriptor) {
       return (
         <Suspense fallback={<LazyCardFallback label="loading table…" />}>
           <TableCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />
+        </Suspense>
+      );
+    case "html":
+      return (
+        <Suspense
+          fallback={<LazyCardFallback label="loading html…" />}
+        >
+          <HtmlCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />
+        </Suspense>
+      );
+    case "markdown":
+      return (
+        <Suspense
+          fallback={<LazyCardFallback label="loading markdown…" />}
+        >
+          <MarkdownCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />
         </Suspense>
       );
     case "artifact":
