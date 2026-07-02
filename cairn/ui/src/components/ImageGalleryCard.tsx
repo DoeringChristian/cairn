@@ -27,10 +27,8 @@ import {
   useContainerSize,
 } from "../lib/cairn-plot";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
-import CardDetailModal from "./CardDetailModal";
 import AddToComparisonButton from "./AddToComparisonButton";
-import CardHeader from "./CardHeader";
-import CardResizeHandle from "./CardResizeHandle";
+import CardShell from "./CardShell";
 import { CAIRN_SERIES_MIME } from "./SeriesChip";
 import SeriesChipStrip from "./SeriesChipStrip";
 const CAIRN_IMAGE_MIME = "application/x-cairn-image";
@@ -988,108 +986,292 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
 
   const renderImageContent = () => isMulti ? renderMultiPaneGrid() : renderSingleImageView();
 
-  return (
-    <div
-      ref={cardRef}
-      className={`card p-4 flex flex-col${dropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
-      style={{
-        position: "relative",
-        height: settings.collapsed ? undefined : resolveCardHeight(settings, undefined),
-        gridColumn: `span ${settings.colSpan ?? 3}`,
-      }}
-      {...dropProps}
-    >
-      <CardHeader
-        title={settings.title ?? metric.name}
-        subtitle={subtitle}
-        onTitleChange={(t) => updateSettings({ title: t || undefined })}
-        collapsed={settings.collapsed}
-        onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
-        onSettings={() => setExpanded(true)}
-        onRemove={onRemove}
-        onDownload={firstResolved.hash ? () => downloadArtifact(api.artifactUrl(firstResolved.hash!), artifactFilename(metric.name, currentStep, "image/png")) : undefined}
-        onScreenshot={() => {
-          const panes: CompositePane[] = [];
-          const cmap = settings.colormap ?? "none";
+  const handleScreenshot = () => {
+    const panes: CompositePane[] = [];
+    const cmap = settings.colormap ?? "none";
 
-          if (isMulti) {
-            for (let pi = 0; pi < effectiveMetrics.length; pi++) {
-              const m = effectiveMetrics[pi]!;
-              const stepMap = perSeriesStepMap[pi] ?? new Map();
-              const steps = perSeriesPoints[pi]?.map((p) => p.step) ?? [];
-              const { hash } = resolveArtifact(stepMap, currentStep, steps, settings.missingImageMode);
-              const label = seriesLabel(m, runId, multipleRuns, availableRunIds);
+    if (isMulti) {
+      for (let pi = 0; pi < effectiveMetrics.length; pi++) {
+        const m = effectiveMetrics[pi]!;
+        const stepMap = perSeriesStepMap[pi] ?? new Map();
+        const steps = perSeriesPoints[pi]?.map((p) => p.step) ?? [];
+        const { hash } = resolveArtifact(stepMap, currentStep, steps, settings.missingImageMode);
+        const label = seriesLabel(m, runId, multipleRuns, availableRunIds);
 
-              const paneBaseline = refMode === "per-run"
-                ? perPaneBaselineHash?.[pi]
-                : baselineHash;
-              if (paneBaseline && hash && paneBaseline !== hash) {
-                panes.push({ url: api.artifactUrl(paneBaseline), label: `${label} (REF)`, groupWithNext: true, skipColormap: true });
-                panes.push({ url: hash ? api.artifactUrl(hash) : undefined, label });
-              } else if (hash) {
-                panes.push({ url: api.artifactUrl(hash), label });
-              }
-            }
-          } else {
-            if (firstResolved.hash) {
-              panes.push({ url: api.artifactUrl(firstResolved.hash), label: metric.name });
-            }
-          }
+        const paneBaseline = refMode === "per-run"
+          ? perPaneBaselineHash?.[pi]
+          : baselineHash;
+        if (paneBaseline && hash && paneBaseline !== hash) {
+          panes.push({ url: api.artifactUrl(paneBaseline), label: `${label} (REF)`, groupWithNext: true, skipColormap: true });
+          panes.push({ url: hash ? api.artifactUrl(hash) : undefined, label });
+        } else if (hash) {
+          panes.push({ url: api.artifactUrl(hash), label });
+        }
+      }
+    } else {
+      if (firstResolved.hash) {
+        panes.push({ url: api.artifactUrl(firstResolved.hash), label: metric.name });
+      }
+    }
 
-          const colorbar = cmap !== "none"
-            ? { lut: getColormapLUT(cmap as Exclude<Colormap, "none">), name: cmap, diverging: DIVERGING_COLORMAPS.has(cmap) }
-            : undefined;
+    const colorbar = cmap !== "none"
+      ? { lut: getColormapLUT(cmap as Exclude<Colormap, "none">), name: cmap, diverging: DIVERGING_COLORMAPS.has(cmap) }
+      : undefined;
 
-          exportImagesAsComposite(
-            panes,
-            safeName(metric.name) + `_step${currentStep}`,
-            isMulti ? (settings.imageColumns ?? 2) : 1,
-            colorbar,
-          );
-        }}
-        addToComparisonSlot={<AddToComparisonButton cardType="image" series={compSeries} />}
-      >
-        {(settings.zoom !== 1 || settings.pan.x !== 0 || settings.pan.y !== 0) && (
-          <button
-            type="button"
-            onClick={() => updateSettings({ zoom: 1, pan: { x: 0, y: 0 } })}
-            className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
-            aria-label="Reset zoom and pan"
-            title="Reset zoom and pan"
-          >
-            {"⌂"}
-          </button>
-        )}
-        {hasBaseline && (
-          <select
-            value={settings.diffMode}
-            onChange={(e) => updateSettings({ diffMode: e.target.value as ImageSettings["diffMode"] })}
-            className={`h-[22px] rounded border border-border bg-bg-elevated px-1.5 text-[10px] mono cursor-pointer ${settings.diffMode !== "none" ? "text-accent" : "text-fg-muted hover:text-fg"}`}
-            title="Diff mode"
-          >
-            <option value="none">diff: off</option>
-            <option value="absolute">absolute</option>
-            <option value="signed">signed</option>
-            <option value="squared">squared</option>
-            <option value="relative_absolute">rel. absolute</option>
-            <option value="relative_signed">rel. signed</option>
-            <option value="relative_squared">rel. squared</option>
-          </select>
-        )}
-        <select
-          value={settings.colormap ?? "none"}
-          onChange={(e) => updateSettings({ colormap: e.target.value as Colormap })}
-          className={`h-[22px] rounded border border-border bg-bg-elevated px-1.5 text-[10px] mono cursor-pointer ${(settings.colormap ?? "none") !== "none" ? "text-accent" : "text-fg-muted hover:text-fg"}`}
-          title="False color map"
+    exportImagesAsComposite(
+      panes,
+      safeName(metric.name) + `_step${currentStep}`,
+      isMulti ? (settings.imageColumns ?? 2) : 1,
+      colorbar,
+    );
+  };
+
+  const headerActions = (
+    <>
+      {(settings.zoom !== 1 || settings.pan.x !== 0 || settings.pan.y !== 0) && (
+        <button
+          type="button"
+          onClick={() => updateSettings({ zoom: 1, pan: { x: 0, y: 0 } })}
+          className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
+          aria-label="Reset zoom and pan"
+          title="Reset zoom and pan"
         >
-          <option value="none">color: off</option>
-          <option value="viridis">viridis</option>
-          <option value="red-green">red-green</option>
-          <option value="red-blue">red-blue</option>
+          {"⌂"}
+        </button>
+      )}
+      {hasBaseline && (
+        <select
+          value={settings.diffMode}
+          onChange={(e) => updateSettings({ diffMode: e.target.value as ImageSettings["diffMode"] })}
+          className={`h-[22px] rounded border border-border bg-bg-elevated px-1.5 text-[10px] mono cursor-pointer ${settings.diffMode !== "none" ? "text-accent" : "text-fg-muted hover:text-fg"}`}
+          title="Diff mode"
+        >
+          <option value="none">diff: off</option>
+          <option value="absolute">absolute</option>
+          <option value="signed">signed</option>
+          <option value="squared">squared</option>
+          <option value="relative_absolute">rel. absolute</option>
+          <option value="relative_signed">rel. signed</option>
+          <option value="relative_squared">rel. squared</option>
         </select>
-      </CardHeader>
+      )}
+      <select
+        value={settings.colormap ?? "none"}
+        onChange={(e) => updateSettings({ colormap: e.target.value as Colormap })}
+        className={`h-[22px] rounded border border-border bg-bg-elevated px-1.5 text-[10px] mono cursor-pointer ${(settings.colormap ?? "none") !== "none" ? "text-accent" : "text-fg-muted hover:text-fg"}`}
+        title="False color map"
+      >
+        <option value="none">color: off</option>
+        <option value="viridis">viridis</option>
+        <option value="red-green">red-green</option>
+        <option value="red-blue">red-blue</option>
+      </select>
+    </>
+  );
 
-      {!settings.collapsed && (<>
+  const settingsPanel = (
+    <>
+      <SettingsSection title="Image" first />
+      <Slider
+        label="Brightness"
+        value={settings.brightness}
+        onChange={(v) => updateSettings({ brightness: v })}
+        min={-1}
+        max={1}
+        step={0.01}
+        format={(v) => v.toFixed(2)}
+      />
+      <Slider
+        label="Contrast"
+        value={settings.contrast}
+        onChange={(v) => updateSettings({ contrast: v })}
+        min={-1}
+        max={1}
+        step={0.01}
+        format={(v) => v.toFixed(2)}
+      />
+      <Slider
+        label="Gamma"
+        value={settings.gamma}
+        onChange={(v) => updateSettings({ gamma: v })}
+        min={0.1}
+        max={3}
+        step={0.01}
+        format={(v) => v.toFixed(2)}
+        description="1 = no change; <1 brightens shadows, >1 darkens"
+      />
+      <Slider
+        label="Exposure"
+        value={settings.exposure}
+        onChange={(v) => updateSettings({ exposure: v })}
+        min={-3}
+        max={3}
+        step={0.01}
+        format={(v) => v.toFixed(2)}
+        description="EV stops: 0 = none, +1 = 2× brighter"
+      />
+      <Slider
+        label="Offset"
+        value={settings.offset}
+        onChange={(v) => updateSettings({ offset: v })}
+        min={-0.5}
+        max={0.5}
+        step={0.001}
+        format={(v) => v.toFixed(3)}
+        description="Uniform shift added after gamma"
+      />
+      <Toggle
+        label="Flip sign"
+        checked={settings.flipSign}
+        onChange={(v) => updateSettings({ flipSign: v })}
+        description="Invert / negate pixel values"
+      />
+      <Select<"auto" | "pixelated" | "crisp-edges">
+        label="Interpolation"
+        value={settings.interpolation ?? "auto"}
+        onChange={(v) => updateSettings({ interpolation: v })}
+        options={[
+          { value: "auto", label: "Smooth (bilinear)" },
+          { value: "pixelated", label: "Nearest (pixelated)" },
+          { value: "crisp-edges", label: "Crisp edges" },
+        ]}
+      />
+      <Select<Colormap>
+        label="False color"
+        description={DIVERGING_COLORMAPS.has(settings.colormap ?? "none") ? "Diverging: 0 = center (white)" : undefined}
+        value={settings.colormap ?? "none"}
+        onChange={(v) => updateSettings({ colormap: v })}
+        options={[
+          { value: "none", label: "None (original)" },
+          { value: "viridis", label: "Viridis" },
+          { value: "red-green", label: "Red – Green (±)" },
+          { value: "red-blue", label: "Red – Blue (±)" },
+        ]}
+      />
+      {(settings.colormap ?? "none") !== "none" && (
+        <ColormapSwatch colormap={settings.colormap as Exclude<Colormap, "none">} />
+      )}
+      <Select<"nothing" | "last_available">
+        label="Missing image"
+        value={settings.missingImageMode ?? "last_available"}
+        onChange={(v) => updateSettings({ missingImageMode: v })}
+        options={[
+          { value: "nothing", label: "Show nothing" },
+          { value: "last_available", label: "Show last available" },
+        ]}
+      />
+      <Toggle
+        label="Pixel axes"
+        checked={settings.showAxes ?? false}
+        onChange={(v) => updateSettings({ showAxes: v })}
+        description="Show pixel coordinate ticks along edges"
+      />
+      <SettingsSection title="Diff" />
+      <Select
+        label="Diff mode"
+        value={settings.diffMode}
+        onChange={(v) => updateSettings({ diffMode: v })}
+        options={[
+          { value: "none" as const, label: "None" },
+          { value: "signed" as const, label: "Signed Error" },
+          { value: "absolute" as const, label: "Absolute Error" },
+          { value: "squared" as const, label: "Squared Error" },
+          { value: "relative_signed" as const, label: "Relative Signed" },
+          { value: "relative_absolute" as const, label: "Relative Absolute" },
+          { value: "relative_squared" as const, label: "Relative Squared" },
+        ]}
+      />
+      {isMulti && extBase && (
+        <Select<"global" | "per-run">
+          label="Reference mode"
+          value={settings.referenceMode ?? "global"}
+          onChange={(v) => setReferenceMode(v)}
+          options={[
+            { value: "per-run", label: "Per-run (each run uses its own copy of the ref tag)" },
+            { value: "global", label: "Global (same ref for all runs)" },
+          ]}
+        />
+      )}
+      <div className="mt-2">
+        <label className="block text-[10px] uppercase tracking-wide text-fg-muted mb-1">
+          Reference source
+        </label>
+        {settings.externalBaseline ? (
+          <div className="flex items-center gap-1 rounded border border-accent/40 bg-accent/5 px-2 py-1 text-xs text-fg-muted">
+            <span className="mono truncate flex-1">{settings.externalBaseline.name}{settings.externalBaseline.runId && settings.externalBaseline.runId !== runId ? ` · ${shortRunLabel(settings.externalBaseline.runId)}` : ""}</span>
+            <button
+              type="button"
+              onClick={() => updateSettings({ externalBaseline: undefined, baselineIndex: undefined, diffMode: settings.diffMode === "none" ? "none" : settings.diffMode })}
+              className="text-fg-subtle hover:text-fg shrink-0"
+              title="Remove external reference"
+            >{"×"}</button>
+          </div>
+        ) : (
+          <p className="text-[10px] text-fg-subtle mb-1">
+            Drag a series chip onto the card, or select a tag below.
+          </p>
+        )}
+        <ExternalBaselinePicker
+          runId={runId}
+          currentMetricName={metric.name}
+          selected={settings.externalBaseline?.name}
+          availableRunIds={availableRunIds}
+          onSelect={(name, ctx, selectedRunId) => {
+            updateSettings({
+              externalBaseline: { runId: selectedRunId, name, context_hash: ctx },
+              baselineIndex: undefined,
+              diffMode: settings.diffMode === "none" ? "absolute" : settings.diffMode,
+            });
+          }}
+        />
+      </div>
+    </>
+  );
+
+  const modalContent = (
+    <div className="h-[calc(100vh-12rem)] flex flex-col">
+      {renderImageContent()}
+      <StepSlider
+        points={globalStepPoints}
+        currentIndex={safeIdx}
+        onChange={onSliderChange}
+        xAxis={settings.xAxis}
+        onXAxisChange={(m) => updateSettings({ xAxis: m })}
+        className="mt-3"
+      />
+      {!hasSelectionProvider && (
+        <RunSelectionPanel
+          selectedRunIds={selectedArray}
+          allRunIds={availableRunIds}
+          onClear={clear}
+          runInfo={runInfoMap}
+          label="Image selection"
+        />
+      )}
+    </div>
+  );
+
+  return (
+    <CardShell
+      cardRef={cardRef}
+      settings={settings}
+      updateSettings={updateSettings}
+      title={metric.name}
+      subtitle={subtitle}
+      onSettings={() => setExpanded(true)}
+      onRemove={onRemove}
+      onDownload={firstResolved.hash ? () => downloadArtifact(api.artifactUrl(firstResolved.hash!), artifactFilename(metric.name, currentStep, "image/png")) : undefined}
+      onScreenshot={handleScreenshot}
+      addToComparisonSlot={<AddToComparisonButton cardType="image" series={compSeries} />}
+      headerActions={headerActions}
+      dropHighlight={dropHighlight}
+      dropProps={dropProps}
+      settingsPanel={settingsPanel}
+      modalContent={modalContent}
+      modalOpen={expanded}
+      onModalClose={() => setExpanded(false)}
+    >
+      <>
       {anyLoading && globalSteps.length === 0 ? (
         <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
       ) : globalSteps.length > 0 ? (
@@ -1186,206 +1368,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
           label="Image selection"
         />
       )}
-
-      </>)}
-
-      {(() => {
-        const settingsPanel = (
-          <>
-            <SettingsSection title="Image" first />
-            <Slider
-              label="Brightness"
-              value={settings.brightness}
-              onChange={(v) => updateSettings({ brightness: v })}
-              min={-1}
-              max={1}
-              step={0.01}
-              format={(v) => v.toFixed(2)}
-            />
-            <Slider
-              label="Contrast"
-              value={settings.contrast}
-              onChange={(v) => updateSettings({ contrast: v })}
-              min={-1}
-              max={1}
-              step={0.01}
-              format={(v) => v.toFixed(2)}
-            />
-            <Slider
-              label="Gamma"
-              value={settings.gamma}
-              onChange={(v) => updateSettings({ gamma: v })}
-              min={0.1}
-              max={3}
-              step={0.01}
-              format={(v) => v.toFixed(2)}
-              description="1 = no change; <1 brightens shadows, >1 darkens"
-            />
-            <Slider
-              label="Exposure"
-              value={settings.exposure}
-              onChange={(v) => updateSettings({ exposure: v })}
-              min={-3}
-              max={3}
-              step={0.01}
-              format={(v) => v.toFixed(2)}
-              description="EV stops: 0 = none, +1 = 2× brighter"
-            />
-            <Slider
-              label="Offset"
-              value={settings.offset}
-              onChange={(v) => updateSettings({ offset: v })}
-              min={-0.5}
-              max={0.5}
-              step={0.001}
-              format={(v) => v.toFixed(3)}
-              description="Uniform shift added after gamma"
-            />
-            <Toggle
-              label="Flip sign"
-              checked={settings.flipSign}
-              onChange={(v) => updateSettings({ flipSign: v })}
-              description="Invert / negate pixel values"
-            />
-            <Select<"auto" | "pixelated" | "crisp-edges">
-              label="Interpolation"
-              value={settings.interpolation ?? "auto"}
-              onChange={(v) => updateSettings({ interpolation: v })}
-              options={[
-                { value: "auto", label: "Smooth (bilinear)" },
-                { value: "pixelated", label: "Nearest (pixelated)" },
-                { value: "crisp-edges", label: "Crisp edges" },
-              ]}
-            />
-            <Select<Colormap>
-              label="False color"
-              description={DIVERGING_COLORMAPS.has(settings.colormap ?? "none") ? "Diverging: 0 = center (white)" : undefined}
-              value={settings.colormap ?? "none"}
-              onChange={(v) => updateSettings({ colormap: v })}
-              options={[
-                { value: "none", label: "None (original)" },
-                { value: "viridis", label: "Viridis" },
-                { value: "red-green", label: "Red – Green (±)" },
-                { value: "red-blue", label: "Red – Blue (±)" },
-              ]}
-            />
-            {(settings.colormap ?? "none") !== "none" && (
-              <ColormapSwatch colormap={settings.colormap as Exclude<Colormap, "none">} />
-            )}
-            <Select<"nothing" | "last_available">
-              label="Missing image"
-              value={settings.missingImageMode ?? "last_available"}
-              onChange={(v) => updateSettings({ missingImageMode: v })}
-              options={[
-                { value: "nothing", label: "Show nothing" },
-                { value: "last_available", label: "Show last available" },
-              ]}
-            />
-            <Toggle
-              label="Pixel axes"
-              checked={settings.showAxes ?? false}
-              onChange={(v) => updateSettings({ showAxes: v })}
-              description="Show pixel coordinate ticks along edges"
-            />
-            <SettingsSection title="Diff" />
-            <Select
-              label="Diff mode"
-              value={settings.diffMode}
-              onChange={(v) => updateSettings({ diffMode: v })}
-              options={[
-                { value: "none" as const, label: "None" },
-                { value: "signed" as const, label: "Signed Error" },
-                { value: "absolute" as const, label: "Absolute Error" },
-                { value: "squared" as const, label: "Squared Error" },
-                { value: "relative_signed" as const, label: "Relative Signed" },
-                { value: "relative_absolute" as const, label: "Relative Absolute" },
-                { value: "relative_squared" as const, label: "Relative Squared" },
-              ]}
-            />
-            {isMulti && extBase && (
-              <Select<"global" | "per-run">
-                label="Reference mode"
-                value={settings.referenceMode ?? "global"}
-                onChange={(v) => setReferenceMode(v)}
-                options={[
-                  { value: "per-run", label: "Per-run (each run uses its own copy of the ref tag)" },
-                  { value: "global", label: "Global (same ref for all runs)" },
-                ]}
-              />
-            )}
-            <div className="mt-2">
-              <label className="block text-[10px] uppercase tracking-wide text-fg-muted mb-1">
-                Reference source
-              </label>
-              {settings.externalBaseline ? (
-                <div className="flex items-center gap-1 rounded border border-accent/40 bg-accent/5 px-2 py-1 text-xs text-fg-muted">
-                  <span className="mono truncate flex-1">{settings.externalBaseline.name}{settings.externalBaseline.runId && settings.externalBaseline.runId !== runId ? ` · ${shortRunLabel(settings.externalBaseline.runId)}` : ""}</span>
-                  <button
-                    type="button"
-                    onClick={() => updateSettings({ externalBaseline: undefined, baselineIndex: undefined, diffMode: settings.diffMode === "none" ? "none" : settings.diffMode })}
-                    className="text-fg-subtle hover:text-fg shrink-0"
-                    title="Remove external reference"
-                  >{"×"}</button>
-                </div>
-              ) : (
-                <p className="text-[10px] text-fg-subtle mb-1">
-                  Drag a series chip onto the card, or select a tag below.
-                </p>
-              )}
-              <ExternalBaselinePicker
-                runId={runId}
-                currentMetricName={metric.name}
-                selected={settings.externalBaseline?.name}
-                availableRunIds={availableRunIds}
-                onSelect={(name, ctx, selectedRunId) => {
-                  updateSettings({
-                    externalBaseline: { runId: selectedRunId, name, context_hash: ctx },
-                    baselineIndex: undefined,
-                    diffMode: settings.diffMode === "none" ? "absolute" : settings.diffMode,
-                  });
-                }}
-              />
-            </div>
-          </>
-        );
-        return (
-          <CardDetailModal
-            open={expanded}
-            onClose={() => setExpanded(false)}
-            title={settings.title ?? metric.name}
-            settingsContent={settingsPanel}
-          >
-            <div className="h-[calc(100vh-12rem)] flex flex-col">
-              {renderImageContent()}
-              <StepSlider
-                points={globalStepPoints}
-                currentIndex={safeIdx}
-                onChange={onSliderChange}
-                xAxis={settings.xAxis}
-                onXAxisChange={(m) => updateSettings({ xAxis: m })}
-                className="mt-3"
-              />
-              {!hasSelectionProvider && (
-                <RunSelectionPanel
-                  selectedRunIds={selectedArray}
-                  allRunIds={availableRunIds}
-                  onClear={clear}
-                  runInfo={runInfoMap}
-                  label="Image selection"
-                />
-              )}
-            </div>
-          </CardDetailModal>
-        );
-      })()}
-
-      <CardResizeHandle
-        height={settings.height}
-        onHeightChange={(h) => updateSettings({ height: h })}
-        colSpan={settings.colSpan ?? 3}
-        onColSpanChange={(s) => updateSettings({ colSpan: s })}
-        onPerColHeightChange={(p) => updateSettings(p as Partial<typeof settings>)}
-      />
-    </div>
+      </>
+    </CardShell>
   );
 }
