@@ -11,10 +11,9 @@ import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import { seriesKey } from "../lib/series-utils";
 import type { SequenceMeta, SequenceResponse } from "../api/types";
-import { useCardSeries, useStepSlider, resolveAtStep, type BaseCardSettings } from "./card-kit";
+import { useCardSeries, useStepSlider, resolveAtStep, useRunInfo, type BaseCardSettings } from "./card-kit";
 import AddToComparisonButton from "./AddToComparisonButton";
 import CardShell from "./CardShell";
-import CardDetailModal from "./CardDetailModal";
 import SplitPane from "./SplitPane";
 import SeriesChipStrip from "./SeriesChipStrip";
 import { useRunSelection, useRunSelectionHasProvider } from "../lib/use-run-selection";
@@ -198,27 +197,12 @@ export default function VideoPlayerCard({ runId, metric, extraSeries, controlled
   );
 
 
-  const runQueries = useQueries({
-    queries: allRunIds.map((rid) => ({
-      queryKey: qk.run(rid),
-      queryFn: () => api.run(rid),
-      staleTime: 5_000,
-    })),
-  });
-
   useRunMetadataVersion();
 
   const { selectedIds, selectedArray, toggle, clear } = useRunSelection();
   const hasSelectionProvider = useRunSelectionHasProvider();
 
-  const runInfoMap = useMemo(() => {
-    const m = new Map<string, { displayName?: string; projectId?: string }>();
-    allRunIds.forEach((rid, i) => {
-      const d = runQueries[i]?.data;
-      if (d) m.set(rid, { displayName: d.run.display_name || undefined, projectId: d.run.project_id });
-    });
-    return m;
-  }, [allRunIds, runQueries]);
+  const { runInfoMap } = useRunInfo(allRunIds);
 
   const subtitle =
     globalSteps.length > 0
@@ -352,43 +336,38 @@ export default function VideoPlayerCard({ runId, metric, extraSeries, controlled
       addToComparisonSlot={<AddToComparisonButton cardType="video" series={compSeries} />}
       dropHighlight={dropHighlight}
       dropProps={dropProps}
-    >
-      <>
-      {renderContent(false)}
-      <CardDetailModal
-        open={expanded}
-        onClose={() => setExpanded(false)}
-        title={settings.title ?? metric.name}
-        settingsContent={
-          <>
-            <Toggle
-              label="Autoplay"
-              checked={settings.autoplay}
-              onChange={(v) => updateSettings({ autoplay: v })}
-            />
-            <Toggle
-              label="Loop"
-              checked={settings.loop}
-              onChange={(v) => updateSettings({ loop: v })}
-            />
-            <Toggle
-              label="Muted"
-              checked={settings.muted}
-              onChange={(v) => updateSettings({ muted: v })}
-            />
-            <Select<VideoSettings["preload"]>
-              label="Preload"
-              value={settings.preload}
-              onChange={(v) => updateSettings({ preload: v })}
-              options={[
-                { value: "metadata", label: "Metadata" },
-                { value: "auto", label: "Auto (full)" },
-                { value: "none", label: "None" },
-              ]}
-            />
-          </>
-        }
-      >
+      settingsPanel={
+        <>
+          <Toggle
+            label="Autoplay"
+            checked={settings.autoplay}
+            onChange={(v) => updateSettings({ autoplay: v })}
+          />
+          <Toggle
+            label="Loop"
+            checked={settings.loop}
+            onChange={(v) => updateSettings({ loop: v })}
+          />
+          <Toggle
+            label="Muted"
+            checked={settings.muted}
+            onChange={(v) => updateSettings({ muted: v })}
+          />
+          <Select<VideoSettings["preload"]>
+            label="Preload"
+            value={settings.preload}
+            onChange={(v) => updateSettings({ preload: v })}
+            options={[
+              { value: "metadata", label: "Metadata" },
+              { value: "auto", label: "Auto (full)" },
+              { value: "none", label: "None" },
+            ]}
+          />
+        </>
+      }
+      modalOpen={expanded}
+      onModalClose={() => setExpanded(false)}
+      modalContent={
         <div className="flex flex-col h-full">
           {renderContent(true)}
           {!hasSelectionProvider && (
@@ -401,7 +380,10 @@ export default function VideoPlayerCard({ runId, metric, extraSeries, controlled
             />
           )}
         </div>
-      </CardDetailModal>
+      }
+    >
+      <>
+      {renderContent(false)}
       </>
     </CardShell>
   );

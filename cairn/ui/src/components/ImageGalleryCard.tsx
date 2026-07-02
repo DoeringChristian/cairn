@@ -15,7 +15,7 @@ import { resolveCardHeight, type CardSettingsKey } from "../lib/card-settings";
 import { useCardDrop } from "../lib/use-series-drop";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { downloadArtifact, exportImagesAsComposite, safeName, type CompositePane } from "../lib/download";
-import { useCardSeries, useStepSlider, type BaseCardSettings } from "./card-kit";
+import { useCardSeries, useStepSlider, useRunInfo, type BaseCardSettings } from "./card-kit";
 import {
   type DiffMode,
   type ImageProcessingProps,
@@ -571,25 +571,10 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
 
   const isMulti = effectiveMetrics.length > 1 || settings.externalBaseline != null;
 
-  const runQueries = useQueries({
-    queries: availableRunIds.map((rid) => ({
-      queryKey: qk.run(rid),
-      queryFn: () => api.run(rid),
-      staleTime: 5_000,
-    })),
-  });
-
   const { selectedIds, selectedArray, toggle, clear } = useRunSelection();
   const hasSelectionProvider = useRunSelectionHasProvider();
 
-  const runInfoMap = useMemo(() => {
-    const m = new Map<string, { displayName?: string; projectId?: string }>();
-    availableRunIds.forEach((rid, i) => {
-      const d = runQueries[i]?.data;
-      if (d) m.set(rid, { displayName: d.run.display_name || undefined, projectId: d.run.project_id });
-    });
-    return m;
-  }, [availableRunIds, runQueries]);
+  const { runInfoMap } = useRunInfo(availableRunIds);
 
   const settingsRef = useRef(settings);
   settingsRef.current = settings;

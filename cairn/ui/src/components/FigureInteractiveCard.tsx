@@ -15,13 +15,12 @@ import { useRunMetadataVersion } from "../lib/run-label";
 import { useRunSelection, useRunSelectionHasProvider } from "../lib/use-run-selection";
 import { seriesKey, seriesLabel } from "../lib/series-utils";
 import type { SequenceMeta, SequenceResponse } from "../api/types";
-import { useCardSeries, useStepSlider, resolveAtStep, type BaseCardSettings } from "./card-kit";
+import { useCardSeries, useStepSlider, resolveAtStep, useRunInfo, type BaseCardSettings } from "./card-kit";
 import AddToComparisonButton from "./AddToComparisonButton";
 import CardShell from "./CardShell";
 import RunSelectionPanel from "./RunSelectionPanel";
 import SplitPane from "./SplitPane";
 import SeriesChipStrip from "./SeriesChipStrip";
-import CardDetailModal from "./CardDetailModal";
 import Toggle from "./settings/Toggle";
 import Select from "./settings/Select";
 import StepSlider from "./StepSlider";
@@ -505,25 +504,10 @@ export default function FigureInteractiveCard({ runId, metric, extraSeries, cont
 
   const showPlotly = !!sourceHash && sourceQ.isSuccess && !!sourceQ.data?.data;
 
-  const runQueries = useQueries({
-    queries: allRunIds.map((rid) => ({
-      queryKey: qk.run(rid),
-      queryFn: () => api.run(rid),
-      staleTime: 5_000,
-    })),
-  });
-
   const { selectedIds, selectedArray, toggle, clear } = useRunSelection();
   const hasSelectionProvider = useRunSelectionHasProvider();
 
-  const runInfoMap = useMemo(() => {
-    const m = new Map<string, { displayName?: string; projectId?: string }>();
-    allRunIds.forEach((rid, i) => {
-      const d = runQueries[i]?.data;
-      if (d) m.set(rid, { displayName: d.run.display_name || undefined, projectId: d.run.project_id });
-    });
-    return m;
-  }, [allRunIds, runQueries]);
+  const { runInfoMap } = useRunInfo(allRunIds);
 
   // Re-render when run metadata cache is populated so labels update.
   useRunMetadataVersion();
@@ -691,6 +675,49 @@ export default function FigureInteractiveCard({ runId, metric, extraSeries, cont
     );
   };
 
+  const selectionPanel = !hasSelectionProvider && (
+    <RunSelectionPanel
+      selectedRunIds={selectedArray}
+      allRunIds={allRunIds}
+      onClear={clear}
+      runInfo={runInfoMap}
+      label="Figure selection"
+    />
+  );
+
+  const settingsPanel = (
+    <>
+      <Toggle
+        label="Show modebar"
+        checked={settings.displayModeBar}
+        onChange={(v) => updateSettings({ displayModeBar: v })}
+        description="Plotly's zoom/pan/camera/save toolbar"
+      />
+      <Toggle
+        label="Scroll to zoom"
+        checked={settings.scrollZoom}
+        onChange={(v) => updateSettings({ scrollZoom: v })}
+      />
+      <Select<HoverMode>
+        label="Hover mode"
+        value={settings.hoverMode}
+        onChange={(v) => updateSettings({ hoverMode: v })}
+        options={HOVER_OPTIONS}
+      />
+      <Select<DragMode>
+        label="Drag mode"
+        value={settings.dragMode}
+        onChange={(v) => updateSettings({ dragMode: v })}
+        options={DRAG_OPTIONS}
+      />
+      <Toggle
+        label="Show legend"
+        checked={settings.showLegend}
+        onChange={(v) => updateSettings({ showLegend: v })}
+      />
+    </>
+  );
+
   return (
     <CardShell
       cardRef={cardRef}
@@ -731,71 +758,14 @@ export default function FigureInteractiveCard({ runId, metric, extraSeries, cont
       </>}
       dropHighlight={dropHighlight}
       dropProps={dropProps}
+      selectionPanel={selectionPanel}
+      settingsPanel={settingsPanel}
+      modalOpen={expanded}
+      onModalClose={() => setExpanded(false)}
+      modalContent={renderContent(true)}
     >
       <>
       {renderContent(false)}
-      {!hasSelectionProvider && (
-        <RunSelectionPanel
-          selectedRunIds={selectedArray}
-          allRunIds={allRunIds}
-          onClear={clear}
-          runInfo={runInfoMap}
-          label="Figure selection"
-        />
-      )}
-      {(() => {
-        const settingsPanel = (
-          <>
-            <Toggle
-              label="Show modebar"
-              checked={settings.displayModeBar}
-              onChange={(v) => updateSettings({ displayModeBar: v })}
-              description="Plotly's zoom/pan/camera/save toolbar"
-            />
-            <Toggle
-              label="Scroll to zoom"
-              checked={settings.scrollZoom}
-              onChange={(v) => updateSettings({ scrollZoom: v })}
-            />
-            <Select<HoverMode>
-              label="Hover mode"
-              value={settings.hoverMode}
-              onChange={(v) => updateSettings({ hoverMode: v })}
-              options={HOVER_OPTIONS}
-            />
-            <Select<DragMode>
-              label="Drag mode"
-              value={settings.dragMode}
-              onChange={(v) => updateSettings({ dragMode: v })}
-              options={DRAG_OPTIONS}
-            />
-            <Toggle
-              label="Show legend"
-              checked={settings.showLegend}
-              onChange={(v) => updateSettings({ showLegend: v })}
-            />
-          </>
-        );
-        return (
-          <CardDetailModal
-            open={expanded}
-            onClose={() => setExpanded(false)}
-            title={settings.title ?? metric.name}
-            settingsContent={settingsPanel}
-          >
-            {renderContent(true)}
-            {!hasSelectionProvider && (
-              <RunSelectionPanel
-                selectedRunIds={selectedArray}
-                allRunIds={allRunIds}
-                onClear={clear}
-                runInfo={runInfoMap}
-                label="Figure selection"
-              />
-            )}
-          </CardDetailModal>
-        );
-      })()}
       </>
     </CardShell>
   );

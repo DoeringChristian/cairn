@@ -11,10 +11,9 @@ import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import { seriesKey } from "../lib/series-utils";
 import type { SequenceMeta, SequenceResponse } from "../api/types";
-import { useCardSeries, useStepSlider, resolveAtStep, type BaseCardSettings } from "./card-kit";
+import { useCardSeries, useStepSlider, resolveAtStep, useRunInfo, type BaseCardSettings } from "./card-kit";
 import AddToComparisonButton from "./AddToComparisonButton";
 import CardShell from "./CardShell";
-import CardDetailModal from "./CardDetailModal";
 import SplitPane from "./SplitPane";
 import SeriesChipStrip from "./SeriesChipStrip";
 import Toggle from "./settings/Toggle";
@@ -248,22 +247,7 @@ export default function AudioPlayerCard({ runId, metric, extraSeries, controlled
   const { selectedIds, selectedArray, toggle, clear } = useRunSelection();
   const hasSelectionProvider = useRunSelectionHasProvider();
 
-  const runQueries = useQueries({
-    queries: allRunIds.map((rid) => ({
-      queryKey: qk.run(rid),
-      queryFn: () => api.run(rid),
-      staleTime: 5_000,
-    })),
-  });
-
-  const runInfoMap = useMemo(() => {
-    const m = new Map<string, { displayName?: string; projectId?: string }>();
-    allRunIds.forEach((rid, i) => {
-      const d = runQueries[i]?.data;
-      if (d) m.set(rid, { displayName: d.run.display_name || undefined, projectId: d.run.project_id });
-    });
-    return m;
-  }, [allRunIds, runQueries]);
+  const { runInfoMap } = useRunInfo(allRunIds);
 
   const subtitle =
     globalSteps.length > 0
@@ -381,6 +365,16 @@ export default function AudioPlayerCard({ runId, metric, extraSeries, controlled
   const renderContent = (inModal: boolean) =>
     isMulti ? renderMultiAudio(inModal) : renderSingleAudio();
 
+  const selectionPanel = !hasSelectionProvider && (
+    <RunSelectionPanel
+      selectedRunIds={selectedArray}
+      allRunIds={allRunIds}
+      onClear={clear}
+      runInfo={runInfoMap}
+      label="Audio selection"
+    />
+  );
+
   return (
     <CardShell
       cardRef={cardRef}
@@ -394,46 +388,21 @@ export default function AudioPlayerCard({ runId, metric, extraSeries, controlled
       addToComparisonSlot={<AddToComparisonButton cardType="audio" series={compSeries} />}
       dropHighlight={dropHighlight}
       dropProps={dropProps}
+      selectionPanel={selectionPanel}
+      settingsPanel={
+        <Toggle
+          label="Autoplay"
+          checked={settings.autoplay}
+          onChange={(v) => updateSettings({ autoplay: v })}
+          description="Play the clip automatically when the card loads"
+        />
+      }
+      modalOpen={expanded}
+      onModalClose={() => setExpanded(false)}
+      modalContent={<div className="flex flex-col h-full">{renderContent(true)}</div>}
     >
       <>
       {renderContent(false)}
-      {!hasSelectionProvider && (
-        <RunSelectionPanel
-          selectedRunIds={selectedArray}
-          allRunIds={allRunIds}
-          onClear={clear}
-          runInfo={runInfoMap}
-          label="Audio selection"
-        />
-      )}
-      <CardDetailModal
-        open={expanded}
-        onClose={() => setExpanded(false)}
-        title={settings.title ?? metric.name}
-        settingsContent={
-          <>
-            <Toggle
-              label="Autoplay"
-              checked={settings.autoplay}
-              onChange={(v) => updateSettings({ autoplay: v })}
-              description="Play the clip automatically when the card loads"
-            />
-          </>
-        }
-      >
-        <div className="flex flex-col h-full">
-          {renderContent(true)}
-          {!hasSelectionProvider && (
-            <RunSelectionPanel
-              selectedRunIds={selectedArray}
-              allRunIds={allRunIds}
-              onClear={clear}
-              runInfo={runInfoMap}
-              label="Audio selection"
-            />
-          )}
-        </div>
-      </CardDetailModal>
       </>
     </CardShell>
   );

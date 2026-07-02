@@ -8,11 +8,10 @@ import { downloadCsv, exportChartFromContainer, safeName } from "../lib/download
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import { useRunSelection, useRunSelectionHasProvider } from "../lib/use-run-selection";
 import CardShell from "./CardShell";
-import CardDetailModal from "./CardDetailModal";
 import RunSelectionPanel from "./RunSelectionPanel";
 import Toggle from "./settings/Toggle";
 import Select from "./settings/Select";
-import type { BaseCardSettings } from "./card-kit";
+import { buildRunInfoMap, type BaseCardSettings } from "./card-kit";
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -159,14 +158,10 @@ export default function ScatterPlotCard({
   const { selectedIds, selectedArray, toggle, clear } = useRunSelection();
   const hasSelectionProvider = useRunSelectionHasProvider();
 
-  const runInfoMap = useMemo(() => {
-    const m = new Map<string, { displayName?: string; projectId?: string }>();
-    runIds.forEach((rid, i) => {
-      const d = runQueries[i]?.data;
-      if (d) m.set(rid, { displayName: d.run.display_name || undefined, projectId: d.run.project_id });
-    });
-    return m;
-  }, [runIds, runQueries]);
+  const runInfoMap = useMemo(
+    () => buildRunInfoMap(runIds, runQueries),
+    [runIds, runQueries],
+  );
 
   // ---------------------------------------------------------------------------
   // Settings panel
@@ -301,6 +296,21 @@ export default function ScatterPlotCard({
         downloadCsv(headers, rows, safeName(settings.title ?? "scatter_plot") + ".csv");
       }}
       onScreenshot={() => { if (cardRef.current) exportChartFromContainer(cardRef.current, safeName(settings.title ?? "scatter_plot"), "svg"); }}
+      selectionPanel={selectionPanel}
+      settingsPanel={settingsPanel}
+      modalOpen={expanded}
+      onModalClose={() => setExpanded(false)}
+      modalContent={
+        <div className="flex flex-col h-[calc(100vh-12rem)]">
+          {noAxes ? (
+            <div className="flex items-center justify-center flex-1 text-sm text-fg-muted">
+              Select X and Y axes in settings to create the scatter plot.
+            </div>
+          ) : (
+            <ScatterPlot {...plotProps} className="flex-1 min-h-0" />
+          )}
+        </div>
+      }
     >
       <>
         {noAxes ? (
@@ -310,25 +320,6 @@ export default function ScatterPlotCard({
         ) : (
           <ScatterPlot {...plotProps} className="rounded bg-bg flex-1 min-h-0" />
         )}
-        {selectionPanel}
-
-        <CardDetailModal
-          open={expanded}
-          onClose={() => setExpanded(false)}
-          title={settings.title ?? "Scatter Plot"}
-          settingsContent={settingsPanel}
-        >
-          <div className="flex flex-col h-[calc(100vh-12rem)]">
-            {noAxes ? (
-              <div className="flex items-center justify-center flex-1 text-sm text-fg-muted">
-                Select X and Y axes in settings to create the scatter plot.
-              </div>
-            ) : (
-              <ScatterPlot {...plotProps} className="flex-1 min-h-0" />
-            )}
-            {selectionPanel}
-          </div>
-        </CardDetailModal>
       </>
     </CardShell>
   );

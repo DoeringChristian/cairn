@@ -4,11 +4,11 @@ import {
   useRef,
   useState,
 } from "react";
-import { useSequencesForRuns, useRunsDetails } from "../api/hooks";
+import { useSequencesForRuns } from "../api/hooks";
 import type { CardSettingsKey } from "../lib/card-settings";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { useCardDrop } from "../lib/use-series-drop";
-import { useCardSeries, type BaseCardSettings } from "./card-kit";
+import { useCardSeries, useRunInfo, type BaseCardSettings } from "./card-kit";
 import type {
   SequenceMeta,
   SequencePoint,
@@ -17,7 +17,6 @@ import type {
 import SeriesChipStrip from "./SeriesChipStrip";
 import AddToComparisonButton from "./AddToComparisonButton";
 import CardShell from "./CardShell";
-import CardDetailModal from "./CardDetailModal";
 import { useRunSelection, useRunSelectionHasProvider } from "../lib/use-run-selection";
 import RunSelectionPanel from "./RunSelectionPanel";
 import MetricChips from "./settings/MetricChips";
@@ -159,18 +158,7 @@ export default function ScalarPlotCard({
   // -------------------------------------------------------------------------
   // Run meta
   // -------------------------------------------------------------------------
-  const runQueries = useRunsDetails(allRunIds);
-
-  const runCreatedAtByRunId = useMemo(() => {
-    const map = new Map<string, number>();
-    allRunIds.forEach((rid, i) => {
-      const raw = runQueries[i]?.data?.run.created_at;
-      if (!raw) return;
-      const t = new Date(raw).getTime();
-      if (Number.isFinite(t)) map.set(rid, t);
-    });
-    return map;
-  }, [allRunIds, runQueries]);
+  const { runInfoMap, runCreatedAtByRunId } = useRunInfo(allRunIds);
 
   // -------------------------------------------------------------------------
   // Data fetch
@@ -267,15 +255,6 @@ export default function ScalarPlotCard({
     }
     return s;
   }, [selectedIds, seriesKeyToRunId]);
-
-  const runInfoMap = useMemo(() => {
-    const m = new Map<string, { displayName?: string; projectId?: string }>();
-    allRunIds.forEach((rid, i) => {
-      const d = runQueries[i]?.data;
-      if (d) m.set(rid, { displayName: d.run.display_name || undefined, projectId: d.run.project_id });
-    });
-    return m;
-  }, [allRunIds, runQueries]);
 
   const compSeries = useMemo((): ComparisonSeriesRef[] => {
     return effectiveMetrics.map((m) => ({
@@ -546,6 +525,16 @@ export default function ScalarPlotCard({
 
   const hasData = series.some((s) => s.points.length > 0);
 
+  const selectionPanel = !hasSelectionProvider && (
+    <RunSelectionPanel
+      selectedRunIds={selectedArray}
+      allRunIds={allRunIds}
+      onClear={clear}
+      runInfo={runInfoMap}
+      label="Scalar plot selection"
+    />
+  );
+
   const plotProps = {
     series,
     xAxis: settings.xAxis,
@@ -630,6 +619,17 @@ export default function ScalarPlotCard({
       </>}
       dropHighlight={dropHighlight}
       dropProps={dropProps}
+      selectionPanel={selectionPanel}
+      settingsPanel={settingsPanel}
+      modalOpen={expanded}
+      onModalClose={() => setExpanded(false)}
+      modalContent={
+        <div className="flex flex-col h-[calc(100vh-12rem)]">
+          <div className="flex-1 min-h-0">
+            <ScalarPlot {...plotProps} className="h-full" />
+          </div>
+        </div>
+      }
     >
       <>
       {isLoading && !hasData ? (
@@ -646,38 +646,6 @@ export default function ScalarPlotCard({
         onMetricsChange={(next) => updateSettings({ metrics: next })}
         className={series.length > 12 ? "max-h-24 overflow-y-auto" : undefined}
       />
-
-      {!hasSelectionProvider && (
-        <RunSelectionPanel
-          selectedRunIds={selectedArray}
-          allRunIds={allRunIds}
-          onClear={clear}
-          runInfo={runInfoMap}
-          label="Scalar plot selection"
-        />
-      )}
-
-      <CardDetailModal
-        open={expanded}
-        onClose={() => setExpanded(false)}
-        title={settings.title ?? metric.name}
-        settingsContent={settingsPanel}
-      >
-        <div className="flex flex-col h-[calc(100vh-12rem)]">
-          <div className="flex-1 min-h-0">
-            <ScalarPlot {...plotProps} className="h-full" />
-          </div>
-          {!hasSelectionProvider && (
-            <RunSelectionPanel
-              selectedRunIds={selectedArray}
-              allRunIds={allRunIds}
-              onClear={clear}
-              runInfo={runInfoMap}
-              label="Scalar plot selection"
-            />
-          )}
-        </div>
-      </CardDetailModal>
       </>
     </CardShell>
   );

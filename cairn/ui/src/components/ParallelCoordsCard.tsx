@@ -19,10 +19,9 @@ import { downloadCsv, exportChartFromContainer, safeName } from "../lib/download
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import { useRunSelection, useRunSelectionHasProvider } from "../lib/use-run-selection";
 import CardShell from "./CardShell";
-import CardDetailModal from "./CardDetailModal";
 import SettingsSection from "./settings/SettingsSection";
 import RunSelectionPanel from "./RunSelectionPanel";
-import type { BaseCardSettings } from "./card-kit";
+import { buildRunInfoMap, type BaseCardSettings } from "./card-kit";
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -240,14 +239,10 @@ export default function ParallelCoordsCard({
   const { selectedIds, selectedArray, toggle, clear } = useRunSelection();
   const hasSelectionProvider = useRunSelectionHasProvider();
 
-  const runInfoMap = useMemo(() => {
-    const m = new Map<string, { displayName?: string; projectId?: string }>();
-    runIds.forEach((rid, i) => {
-      const d = runQueries[i]?.data;
-      if (d) m.set(rid, { displayName: d.run.display_name || undefined, projectId: d.run.project_id });
-    });
-    return m;
-  }, [runIds, runQueries]);
+  const runInfoMap = useMemo(
+    () => buildRunInfoMap(runIds, runQueries),
+    [runIds, runQueries],
+  );
 
   // ---------------------------------------------------------------------------
   // Settings panel
@@ -380,6 +375,21 @@ export default function ParallelCoordsCard({
         downloadCsv(headers, rows, safeName(settings.title ?? "parallel_coords") + ".csv");
       }}
       onScreenshot={() => { if (cardRef.current) exportChartFromContainer(cardRef.current, safeName(settings.title ?? "parallel_coords"), "svg"); }}
+      selectionPanel={selectionPanel}
+      settingsPanel={settingsPanel}
+      modalOpen={expanded}
+      onModalClose={() => setExpanded(false)}
+      modalContent={
+        <div className="flex flex-col h-[calc(100vh-12rem)]">
+          {noColumns ? (
+            <div className="flex items-center justify-center flex-1 text-sm text-fg-muted">
+              Add columns in settings to build the parallel coordinates plot.
+            </div>
+          ) : (
+            <ParallelCoords {...plotProps} className="flex-1 min-h-0" />
+          )}
+        </div>
+      }
     >
       <>
         {noColumns ? (
@@ -389,25 +399,6 @@ export default function ParallelCoordsCard({
         ) : (
           <ParallelCoords {...plotProps} className="rounded bg-bg flex-1 min-h-0" />
         )}
-        {selectionPanel}
-
-        <CardDetailModal
-          open={expanded}
-          onClose={() => setExpanded(false)}
-          title={settings.title ?? "Parallel Coordinates"}
-          settingsContent={settingsPanel}
-        >
-          <div className="flex flex-col h-[calc(100vh-12rem)]">
-            {noColumns ? (
-              <div className="flex items-center justify-center flex-1 text-sm text-fg-muted">
-                Add columns in settings to build the parallel coordinates plot.
-              </div>
-            ) : (
-              <ParallelCoords {...plotProps} className="flex-1 min-h-0" />
-            )}
-            {selectionPanel}
-          </div>
-        </CardDetailModal>
       </>
     </CardShell>
   );
