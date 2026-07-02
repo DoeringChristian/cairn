@@ -15,11 +15,10 @@ import { useRunMetadataVersion } from "../lib/run-label";
 import { useRunSelection, useRunSelectionHasProvider } from "../lib/use-run-selection";
 import { seriesKey, seriesLabel } from "../lib/series-utils";
 import type { SequenceMeta, SequenceResponse } from "../api/types";
-import { useCardSeries, useStepSlider, resolveAtStep, useRunInfo, type BaseCardSettings } from "./card-kit";
+import { useCardSeries, useStepSlider, resolveAtStep, useRunInfo, MultiPaneGrid, type BaseCardSettings } from "./card-kit";
 import AddToComparisonButton from "./AddToComparisonButton";
 import CardShell from "./CardShell";
 import RunSelectionPanel from "./RunSelectionPanel";
-import SplitPane from "./SplitPane";
 import SeriesChipStrip from "./SeriesChipStrip";
 import Toggle from "./settings/Toggle";
 import Select from "./settings/Select";
@@ -600,51 +599,49 @@ export default function FigureInteractiveCard({ runId, metric, extraSeries, cont
     );
   };
 
+  const paneKeys = useMemo(() => effectiveMetrics.map(seriesKey), [effectiveMetrics]);
+  const paneLabels = useMemo(() => {
+    const map = new Map<string, string>();
+    if (multipleRuns) {
+      for (const m of effectiveMetrics) {
+        map.set(seriesKey(m), seriesLabel(m.name, m.context_hash, m.runId ?? runId, true, allRunIds));
+      }
+    }
+    return map;
+  }, [multipleRuns, effectiveMetrics, allRunIds, runId]);
+
+  const renderPaneGrid = (inModal: boolean) => (
+    <MultiPaneGrid
+      paneKeys={paneKeys}
+      labels={paneLabels}
+      inModal={inModal}
+      paneWidths={settings.paneWidths}
+      onPaneWidthsChange={(w) => updateSettings({ paneWidths: w })}
+      renderPane={(key, i) => {
+        const m = effectiveMetrics[i]!;
+        return (
+          <FigurePane
+            key={key}
+            runId={runId}
+            m={m}
+            targetStep={currentStep}
+            settings={settings}
+            viewOverrides={sharedView}
+            onRelayout={handlePaneRelayout}
+            revision={plotRevision}
+          />
+        );
+      }}
+    />
+  );
+
   const renderMultiFigure = (inModal: boolean) => (
     <>
       {inModal ? (
-        <SplitPane
-          widths={settings.paneWidths ?? Array(effectiveMetrics.length).fill(1 / effectiveMetrics.length)}
-          onWidthsChange={(w) => updateSettings({ paneWidths: w })}
-        >
-          {effectiveMetrics.map((m) => (
-            <FigurePane
-              key={seriesKey(m)}
-              runId={runId}
-              m={m}
-              targetStep={currentStep}
-              settings={settings}
-              viewOverrides={sharedView}
-              onRelayout={handlePaneRelayout}
-              revision={plotRevision}
-            />
-          ))}
-        </SplitPane>
+        renderPaneGrid(true)
       ) : (
         <div ref={figContainerRef} className="flex-1 min-h-0 overflow-auto" style={{ height: resolveCardHeight(settings, undefined) != null ? undefined : figAutoHeight }}>
-          <div
-            className="grid gap-1 flex-1 min-h-0 overflow-auto"
-            style={{ gridTemplateColumns: `repeat(${Math.min(effectiveMetrics.length, 2)}, 1fr)` }}
-          >
-            {effectiveMetrics.map((m) => (
-              <div key={seriesKey(m)} className="relative overflow-hidden">
-                <FigurePane
-                  runId={runId}
-                  m={m}
-                  targetStep={currentStep}
-                  settings={settings}
-                  viewOverrides={sharedView}
-                  onRelayout={handlePaneRelayout}
-                  revision={plotRevision}
-                />
-                {multipleRuns && (
-                  <span className="absolute top-1 left-1 z-10 rounded bg-bg/80 px-1.5 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm">
-                    {seriesLabel(m.name, m.context_hash, m.runId ?? runId, true, allRunIds)}
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
+          {renderPaneGrid(false)}
         </div>
       )}
       <StepSlider

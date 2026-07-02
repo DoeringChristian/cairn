@@ -11,10 +11,9 @@ import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import { seriesKey } from "../lib/series-utils";
 import type { SequenceMeta, SequenceResponse } from "../api/types";
-import { useCardSeries, useStepSlider, resolveAtStep, useRunInfo, type BaseCardSettings } from "./card-kit";
+import { useCardSeries, useStepSlider, resolveAtStep, useRunInfo, MultiPaneGrid, type BaseCardSettings } from "./card-kit";
 import AddToComparisonButton from "./AddToComparisonButton";
 import CardShell from "./CardShell";
-import SplitPane from "./SplitPane";
 import SeriesChipStrip from "./SeriesChipStrip";
 import { useRunSelection, useRunSelectionHasProvider } from "../lib/use-run-selection";
 import RunSelectionPanel from "./RunSelectionPanel";
@@ -251,45 +250,38 @@ export default function VideoPlayerCard({ runId, metric, extraSeries, controlled
     );
   };
 
+  const paneKeys = useMemo(() => effectiveMetrics.map(seriesKey), [effectiveMetrics]);
+  const paneLabels = useMemo(() => {
+    const map = new Map<string, string>();
+    if (multipleRuns) {
+      for (const m of effectiveMetrics) {
+        map.set(seriesKey(m), shortRunLabel(m.runId ?? runId, allRunIds));
+      }
+    }
+    return map;
+  }, [multipleRuns, effectiveMetrics, allRunIds, runId]);
+
   const renderMultiVideo = (inModal: boolean) => (
     <>
-      {inModal ? (
-        <SplitPane
-          widths={settings.paneWidths ?? Array(effectiveMetrics.length).fill(1 / effectiveMetrics.length)}
-          onWidthsChange={(w) => updateSettings({ paneWidths: w })}
-        >
-          {effectiveMetrics.map((m) => (
+      <MultiPaneGrid
+        paneKeys={paneKeys}
+        labels={paneLabels}
+        inModal={inModal}
+        paneWidths={settings.paneWidths}
+        onPaneWidthsChange={(w) => updateSettings({ paneWidths: w })}
+        renderPane={(key, i) => {
+          const m = effectiveMetrics[i]!;
+          return (
             <VideoPane
-              key={seriesKey(m)}
+              key={key}
               runId={runId}
               m={m}
               targetStep={currentStep}
               settings={settings}
             />
-          ))}
-        </SplitPane>
-      ) : (
-        <div
-          className="grid gap-1 flex-1 min-h-0 overflow-auto"
-          style={{ gridTemplateColumns: `repeat(${Math.min(effectiveMetrics.length, 2)}, 1fr)` }}
-        >
-          {effectiveMetrics.map((m) => (
-            <div key={seriesKey(m)} className="relative overflow-hidden">
-              <VideoPane
-                runId={runId}
-                m={m}
-                targetStep={currentStep}
-                settings={settings}
-              />
-              {multipleRuns && (
-                <span className="absolute top-1 left-1 z-10 rounded bg-bg/80 px-1.5 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm">
-                  {shortRunLabel(m.runId ?? runId, allRunIds)}
-                </span>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
+          );
+        }}
+      />
       <StepSlider
         points={points}
         currentIndex={safeIdx}

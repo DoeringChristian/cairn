@@ -7,3 +7,4 @@ export { useStepSlider } from "./use-step-slider";
 export type { StepSliderState } from "./use-step-slider";
 export { useRunInfo, buildRunInfoMap } from "./use-run-info";
 export type { RunInfo } from "./use-run-info";
+export { default as MultiPaneGrid } from "./MultiPaneGrid";
