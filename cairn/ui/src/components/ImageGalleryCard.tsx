@@ -15,7 +15,7 @@ import { resolveCardHeight, type CardSettingsKey } from "../lib/card-settings";
 import { useCardDrop } from "../lib/use-series-drop";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { downloadArtifact, exportImagesAsComposite, safeName, type CompositePane } from "../lib/download";
-import { useCardSeries, type BaseCardSettings } from "./card-kit";
+import { useCardSeries, useStepSlider, type BaseCardSettings } from "./card-kit";
 import {
   type DiffMode,
   type ImageProcessingProps,
@@ -542,7 +542,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     })),
   });
 
-  const { perSeriesPoints, perSeriesStepMap, globalSteps, globalStepPoints } = useMemo(() => {
+  const { perSeriesPoints, perSeriesStepMap, globalStepPoints } = useMemo(() => {
     const psp = queries.map((q) =>
       (q.data?.points ?? []).filter((p: SequencePoint) => p.artifact_hash),
     );
@@ -557,17 +557,17 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     }
     const steps = Array.from(stepMap.keys()).sort((a, b) => a - b);
     const stepPts = steps.map((s) => ({ step: s, wall_time: stepMap.get(s) ?? null }));
-    return { perSeriesPoints: psp, perSeriesStepMap: maps, globalSteps: steps, globalStepPoints: stepPts };
+    return { perSeriesPoints: psp, perSeriesStepMap: maps, globalStepPoints: stepPts };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queries.map((q) => q.dataUpdatedAt).join("|")]);
 
-  const [idx, setIdx] = useState(settings.sliderStep ?? 0);
-  const handleSliderChange = (newIdx: number) => {
-    setIdx(newIdx);
-    updateSettings({ sliderStep: newIdx });
-  };
-  const safeIdx = Math.min(Math.max(0, idx), Math.max(0, globalSteps.length - 1));
-  const currentStep = globalSteps[safeIdx] ?? 0;
+  // Step-slider machinery is shared; artifact resolution stays specialized
+  // (resolveArtifact honors missingImageMode / per-series step maps).
+  const { globalSteps, safeIdx, currentStep, onSliderChange } = useStepSlider({
+    seriesPoints: perSeriesPoints,
+    persistedIdx: settings.sliderStep,
+    updateSettings,
+  });
 
   const isMulti = effectiveMetrics.length > 1 || settings.externalBaseline != null;
 
@@ -1171,7 +1171,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
           <StepSlider
             points={globalStepPoints}
             currentIndex={safeIdx}
-            onChange={handleSliderChange}
+            onChange={onSliderChange}
             xAxis={settings.xAxis}
             onXAxisChange={(m) => updateSettings({ xAxis: m })}
             className="mt-3"
@@ -1375,7 +1375,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
               <StepSlider
                 points={globalStepPoints}
                 currentIndex={safeIdx}
-                onChange={handleSliderChange}
+                onChange={onSliderChange}
                 xAxis={settings.xAxis}
                 onXAxisChange={(m) => updateSettings({ xAxis: m })}
                 className="mt-3"

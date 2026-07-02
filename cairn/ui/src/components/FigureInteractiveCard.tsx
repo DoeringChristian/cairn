@@ -15,7 +15,7 @@ import { useRunMetadataVersion } from "../lib/run-label";
 import { useRunSelection, useRunSelectionHasProvider } from "../lib/use-run-selection";
 import { seriesKey, seriesLabel } from "../lib/series-utils";
 import type { SequenceMeta, SequenceResponse } from "../api/types";
-import { useCardSeries, type BaseCardSettings } from "./card-kit";
+import { useCardSeries, useStepSlider, resolveAtStep, type BaseCardSettings } from "./card-kit";
 import AddToComparisonButton from "./AddToComparisonButton";
 import CardShell from "./CardShell";
 import RunSelectionPanel from "./RunSelectionPanel";
@@ -238,17 +238,7 @@ function FigurePane({
     [q.data],
   );
   // Find the point at or closest below the target step.
-  const current = useMemo(() => {
-    const exact = points.find((p) => p.step === targetStep);
-    if (exact) return exact;
-    // Fallback: closest step ≤ targetStep
-    let best: (typeof points)[number] | undefined;
-    for (const p of points) {
-      if (p.step <= targetStep) best = p;
-      else break;
-    }
-    return best;
-  }, [points, targetStep]);
+  const current = useMemo(() => resolveAtStep(points, targetStep), [points, targetStep]);
 
   const meta = useMemo(
     () => safeJsonParse<FigureMetadata>(current?.artifact_metadata ?? null),
@@ -399,28 +389,24 @@ export default function FigureInteractiveCard({ runId, metric, extraSeries, cont
       : [],
   });
 
-  // Build global steps from all series (union of step numbers).
-  const globalSteps = useMemo(() => {
-    const stepSet = new Set<number>();
-    // Single-metric path
-    for (const p of points) if (p.artifact_hash) stepSet.add(p.step);
-    // Multi-metric paths
+  // Points per series feeding the step slider: single-metric primary plus any
+  // extra multi-metric series (all pre-filtered to points with an artifact).
+  const seriesPoints = useMemo(() => {
+    const arr: Array<Array<{ step: number }>> = [points];
     if (effectiveMetrics.length > 1) {
       for (const mq of multiQueries) {
         const pts = (mq.data as SequenceResponse | undefined)?.points ?? [];
-        for (const p of pts) if (p.artifact_hash) stepSet.add(p.step);
+        arr.push(pts.filter((p) => p.artifact_hash));
       }
     }
-    return Array.from(stepSet).sort((a, b) => a - b);
+    return arr;
   }, [effectiveMetrics.length, points, multiQueries]);
 
-  const [idx, setIdx] = useState(settings.sliderStep ?? 0);
-  const handleSliderChange = (newIdx: number) => {
-    setIdx(newIdx);
-    updateSettings({ sliderStep: newIdx });
-  };
-  const safeIdx = Math.min(Math.max(0, idx), Math.max(0, globalSteps.length - 1));
-  const currentStep = globalSteps[safeIdx] ?? 0;
+  const { globalSteps, safeIdx, currentStep, onSliderChange } = useStepSlider({
+    seriesPoints,
+    persistedIdx: settings.sliderStep,
+    updateSettings,
+  });
   // For the single-metric path, find the point at the current global step.
   const current = useMemo(() => points.find((p) => p.step === currentStep && p.artifact_hash), [points, currentStep]);
 
@@ -621,7 +607,7 @@ export default function FigureInteractiveCard({ runId, metric, extraSeries, cont
         <StepSlider
           points={points}
           currentIndex={safeIdx}
-          onChange={handleSliderChange}
+          onChange={onSliderChange}
           xAxis={settings.xAxis}
           onXAxisChange={(m) => updateSettings({ xAxis: m })}
           className="mt-3"
@@ -680,7 +666,7 @@ export default function FigureInteractiveCard({ runId, metric, extraSeries, cont
       <StepSlider
         points={points}
         currentIndex={safeIdx}
-        onChange={handleSliderChange}
+        onChange={onSliderChange}
         xAxis={settings.xAxis}
         onXAxisChange={(m) => updateSettings({ xAxis: m })}
         className="mt-3"

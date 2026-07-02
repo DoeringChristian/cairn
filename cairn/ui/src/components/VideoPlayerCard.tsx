@@ -11,7 +11,7 @@ import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import { seriesKey } from "../lib/series-utils";
 import type { SequenceMeta, SequenceResponse } from "../api/types";
-import { useCardSeries, type BaseCardSettings } from "./card-kit";
+import { useCardSeries, useStepSlider, resolveAtStep, type BaseCardSettings } from "./card-kit";
 import AddToComparisonButton from "./AddToComparisonButton";
 import CardShell from "./CardShell";
 import CardDetailModal from "./CardDetailModal";
@@ -87,13 +87,7 @@ function VideoPane({
     () => (q.data?.points ?? []).filter((p) => p.artifact_hash),
     [q.data],
   );
-  const current = useMemo(() => {
-    const exact = points.find((p) => p.step === targetStep);
-    if (exact) return exact;
-    let best: (typeof points)[number] | undefined;
-    for (const p of points) { if (p.step <= targetStep) best = p; else break; }
-    return best;
-  }, [points, targetStep]);
+  const current = useMemo(() => resolveAtStep(points, targetStep), [points, targetStep]);
   const meta = safeJsonParse<VideoMetadata>(current?.artifact_metadata);
 
   if (q.isLoading) {
@@ -171,25 +165,22 @@ export default function VideoPlayerCard({ runId, metric, extraSeries, controlled
       : [],
   });
 
-  const globalSteps = useMemo(() => {
-    const stepSet = new Set<number>();
-    for (const p of points) if (p.artifact_hash) stepSet.add(p.step);
+  const seriesPoints = useMemo(() => {
+    const arr: Array<Array<{ step: number }>> = [points];
     if (effectiveMetrics.length > 1) {
       for (const mq of multiQueries) {
         const pts = (mq.data as SequenceResponse | undefined)?.points ?? [];
-        for (const p of pts) if (p.artifact_hash) stepSet.add(p.step);
+        arr.push(pts.filter((p) => p.artifact_hash));
       }
     }
-    return Array.from(stepSet).sort((a, b) => a - b);
+    return arr;
   }, [effectiveMetrics.length, points, multiQueries]);
 
-  const [idx, setIdx] = useState(settings.sliderStep ?? 0);
-  const handleSliderChange = (newIdx: number) => {
-    setIdx(newIdx);
-    updateSettings({ sliderStep: newIdx });
-  };
-  const safeIdx = Math.min(Math.max(0, idx), Math.max(0, globalSteps.length - 1));
-  const currentStep = globalSteps[safeIdx] ?? 0;
+  const { globalSteps, safeIdx, currentStep, onSliderChange } = useStepSlider({
+    seriesPoints,
+    persistedIdx: settings.sliderStep,
+    updateSettings,
+  });
   const current = useMemo(() => {
     const exact = points.find((p) => p.step === currentStep && p.artifact_hash);
     if (exact) return exact;
@@ -267,7 +258,7 @@ export default function VideoPlayerCard({ runId, metric, extraSeries, controlled
         <StepSlider
           points={points}
           currentIndex={safeIdx}
-          onChange={handleSliderChange}
+          onChange={onSliderChange}
           xAxis={settings.xAxis}
           onXAxisChange={(m) => updateSettings({ xAxis: m })}
           className="mt-3"
@@ -318,7 +309,7 @@ export default function VideoPlayerCard({ runId, metric, extraSeries, controlled
       <StepSlider
         points={points}
         currentIndex={safeIdx}
-        onChange={handleSliderChange}
+        onChange={onSliderChange}
         xAxis={settings.xAxis}
         onXAxisChange={(m) => updateSettings({ xAxis: m })}
         className="mt-3"

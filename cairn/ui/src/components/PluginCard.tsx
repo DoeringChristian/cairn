@@ -14,7 +14,7 @@ import { type CardSettingsKey } from "../lib/card-settings";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import type { SequenceMeta, SequenceResponse, SequencePoint } from "../api/types";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
-import { useCardSeries, type BaseCardSettings } from "./card-kit";
+import { useCardSeries, useStepSlider, resolveAtStep, type BaseCardSettings } from "./card-kit";
 import CardShell from "./CardShell";
 import SettingsPopover from "./SettingsPopover";
 import StepSlider from "./StepSlider";
@@ -161,15 +161,7 @@ function PluginPane({
     () => (q.data?.points ?? []).filter((p: SequencePoint) => p.artifact_hash),
     [q.data],
   );
-  const current = useMemo(() => {
-    const exact = points.find((p: SequencePoint) => p.step === targetStep);
-    if (exact) return exact;
-    let best: SequencePoint | undefined;
-    for (const p of points) {
-      if (p.step <= targetStep) best = p; else break;
-    }
-    return best;
-  }, [points, targetStep]);
+  const current = useMemo(() => resolveAtStep(points, targetStep), [points, targetStep]);
 
   const pluginMeta = useMemo(
     () => safeJsonParse<PluginMeta>(current?.artifact_metadata ?? null) ?? {},
@@ -333,21 +325,22 @@ export default function PluginCard({
       : [],
   });
 
-  const globalSteps = useMemo(() => {
-    const stepSet = new Set<number>();
-    for (const p of points) if (p.artifact_hash) stepSet.add(p.step);
+  const seriesPoints = useMemo(() => {
+    const arr: Array<Array<{ step: number }>> = [points];
     if (effectiveMetrics.length > 1) {
       for (const mq of multiQueries) {
         const pts = (mq.data as SequenceResponse | undefined)?.points ?? [];
-        for (const p of pts) if ((p as SequencePoint).artifact_hash) stepSet.add((p as SequencePoint).step);
+        arr.push(pts.filter((p) => p.artifact_hash));
       }
     }
-    return Array.from(stepSet).sort((a, b) => a - b);
+    return arr;
   }, [effectiveMetrics.length, points, multiQueries]);
 
-  const [idx, setIdx] = useState(settings.sliderStep ?? 0);
-  const safeIdx = Math.min(Math.max(0, idx), Math.max(0, globalSteps.length - 1));
-  const currentStep = globalSteps[safeIdx] ?? 0;
+  const { globalSteps, safeIdx, currentStep, onSliderChange } = useStepSlider({
+    seriesPoints,
+    persistedIdx: settings.sliderStep,
+    updateSettings,
+  });
 
   // Read pluginMeta from primary for subtitle/badge.
   const primaryCurrent = useMemo(
@@ -441,10 +434,7 @@ export default function PluginCard({
           <StepSlider
             points={points}
             currentIndex={safeIdx}
-            onChange={(v) => {
-              setIdx(v);
-              updateSettings({ sliderStep: v });
-            }}
+            onChange={onSliderChange}
             xAxis={settings.xAxis}
             onXAxisChange={(m) => updateSettings({ xAxis: m })}
             className="mt-3"
