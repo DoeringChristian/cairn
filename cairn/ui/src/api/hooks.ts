@@ -1,5 +1,13 @@
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { RunsListResponse } from "./types";
+import { useMemo } from "react";
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+  type UseQueryResult,
+} from "@tanstack/react-query";
+import type { RunDetailResponse, RunsListResponse } from "./types";
 import { api } from "./client";
 import { qk } from "./query-keys";
 
@@ -54,6 +62,17 @@ export function useRun(runId: string) {
   });
 }
 
+/** Fetch run details for a set of runs (e.g. comparison tabs). */
+export function useRunsDetails(runIds: string[]): UseQueryResult<RunDetailResponse>[] {
+  return useQueries({
+    queries: runIds.map((rid) => ({
+      queryKey: qk.run(rid),
+      queryFn: () => api.run(rid),
+      staleTime: 5_000,
+    })),
+  });
+}
+
 export function useSequences(runId: string) {
   const runQ = useQuery({
     queryKey: qk.run(runId),
@@ -85,6 +104,48 @@ export function useSequence(
     queryKey: qk.sequence(runId, name, opts),
     queryFn: () => api.sequence(runId, name, opts),
     refetchInterval: live ? 2_000 : false,
+  });
+}
+
+/**
+ * Fetch sequences for multiple (runId, name, contextHash) specs at once —
+ * e.g. a multi-run card. Mirrors `useSequence`'s status-gated polling: a
+ * single deduped run-status lookup per distinct runId drives whether each
+ * sequence query keeps polling.
+ */
+export function useSequencesForRuns(
+  specs: Array<{ runId: string; name: string; contextHash: string; maxPoints?: number }>,
+) {
+  const distinctRunIds = useMemo(
+    () => Array.from(new Set(specs.map((s) => s.runId))),
+    [specs],
+  );
+
+  const runQueries = useQueries({
+    queries: distinctRunIds.map((rid) => ({
+      queryKey: qk.run(rid),
+      queryFn: () => api.run(rid),
+      staleTime: 5_000,
+      enabled: !!rid,
+    })),
+  });
+
+  const liveByRunId = new Map<string, boolean>();
+  distinctRunIds.forEach((rid, i) => {
+    const runQ = runQueries[i];
+    liveByRunId.set(rid, runQ?.data ? runQ.data.run.status === "running" : true);
+  });
+
+  return useQueries({
+    queries: specs.map((spec) => ({
+      queryKey: qk.sequence(spec.runId, spec.name, spec.contextHash),
+      queryFn: () =>
+        api.sequence(spec.runId, spec.name, {
+          context: spec.contextHash || undefined,
+          maxPoints: spec.maxPoints,
+        }),
+      refetchInterval: (liveByRunId.get(spec.runId) ?? true) ? 2_000 : false,
+    })),
   });
 }
 
