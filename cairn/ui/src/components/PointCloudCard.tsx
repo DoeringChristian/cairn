@@ -94,7 +94,10 @@ function usePointCloudBlob(hash: string | undefined) {
     queryFn: async () => {
       const res = await fetch(api.artifactUrl(hash!));
       if (!res.ok) throw new Error(`failed to fetch point cloud (${res.status})`);
-      return parseNpy(await res.arrayBuffer());
+      const parsed = parseNpy(await res.arrayBuffer());
+      // The shared parser returns Float64Array for uniform downstream math;
+      // three.js BufferAttributes require Float32Array, so narrow once here.
+      return { ...parsed, data: Float32Array.from(parsed.data) };
     },
   });
 }
