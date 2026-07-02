@@ -1,7 +1,7 @@
 import { useNavigate } from "react-router-dom";
 import { createComparison } from "../lib/comparisons";
 import { useProjectId } from "../lib/project-context";
-import { shortRunLabel } from "../lib/run-label";
+import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 
 interface RunInfo {
   displayName?: string;
@@ -27,6 +27,9 @@ export default function RunSelectionPanel({
 }: Props) {
   const projectId = useProjectId();
   const navigate = useNavigate();
+  // Re-render when the run metadata cache is seeded — labels are computed
+  // inline below and some parents (e.g. ComparePage) don't subscribe.
+  useRunMetadataVersion();
 
   if (selectedRunIds.length === 0) return null;
 

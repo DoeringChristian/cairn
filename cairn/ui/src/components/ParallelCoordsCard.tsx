@@ -53,7 +53,7 @@ export default function ParallelCoordsCard({
   onRemove,
   autoOpenSettings,
 }: Props) {
-  useRunMetadataVersion();
+  const runMetaVersion = useRunMetadataVersion();
 
   const [settings, updateSettings] = useCardSettings(
     settingsKey,
@@ -164,6 +164,7 @@ export default function ParallelCoordsCard({
     runIds,
     runQueries.map((q) => q.dataUpdatedAt).join("|"),
     metricQueries.map((q) => q.dataUpdatedAt).join("|"),
+    runMetaVersion,
   ]);
 
   // Available columns for the picker

@@ -3,7 +3,7 @@ import { useRunsDetails } from "../api/hooks";
 import type { Param, Run } from "../api/types";
 import RunStatusBadge from "../components/RunStatusBadge";
 import { formatDuration, safeJsonParse } from "../lib/format";
-import { disambiguateRunLabels } from "../lib/run-label";
+import { disambiguateRunLabels, useRunMetadataVersion } from "../lib/run-label";
 
 interface Props {
   compRunIds: string[];
@@ -23,9 +23,11 @@ export default function ComparisonOverviewTab({ compRunIds }: Props) {
     [queries],
   );
 
+  // Recompute labels when the run metadata cache is seeded (api/hooks.ts).
+  const metaVersion = useRunMetadataVersion();
   const labels = useMemo(
     () => disambiguateRunLabels(compRunIds),
-    [compRunIds],
+    [compRunIds, metaVersion],
   );
 
   // Build param diff table: key → { runId → value }

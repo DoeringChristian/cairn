@@ -197,7 +197,7 @@ export default function VideoPlayerCard({ runId, metric, extraSeries, controlled
   );
 
 
-  useRunMetadataVersion();
+  const runMetaVersion = useRunMetadataVersion();
 
   const { selectedIds, selectedArray, toggle, clear } = useRunSelection();
   const hasSelectionProvider = useRunSelectionHasProvider();
@@ -260,7 +260,7 @@ export default function VideoPlayerCard({ runId, metric, extraSeries, controlled
       }
     }
     return map;
-  }, [multipleRuns, effectiveMetrics, allRunIds, runId]);
+  }, [multipleRuns, effectiveMetrics, allRunIds, runId, runMetaVersion]);
 
   const renderMultiVideo = (inModal: boolean) => (
     <>

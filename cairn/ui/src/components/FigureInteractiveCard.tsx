@@ -510,7 +510,7 @@ export default function FigureInteractiveCard({ runId, metric, extraSeries, cont
   const { runInfoMap } = useRunInfo(allRunIds);
 
   // Re-render when run metadata cache is populated so labels update.
-  useRunMetadataVersion();
+  const runMetaVersion = useRunMetadataVersion();
 
   const subtitle =
     globalSteps.length > 0
@@ -609,7 +609,7 @@ export default function FigureInteractiveCard({ runId, metric, extraSeries, cont
       }
     }
     return map;
-  }, [multipleRuns, effectiveMetrics, allRunIds, runId]);
+  }, [multipleRuns, effectiveMetrics, allRunIds, runId, runMetaVersion]);
 
   const renderPaneGrid = (inModal: boolean) => (
     <MultiPaneGrid

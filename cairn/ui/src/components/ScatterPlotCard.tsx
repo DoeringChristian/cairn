@@ -56,7 +56,7 @@ export default function ScatterPlotCard({
   onRemove,
   autoOpenSettings,
 }: Props) {
-  useRunMetadataVersion();
+  const runMetaVersion = useRunMetadataVersion();
 
   const [settings, updateSettings] = useCardSettings(settingsKey, DEFAULT_SETTINGS);
   const [expanded, setExpanded] = useState(autoOpenSettings ?? false);
@@ -130,6 +130,7 @@ export default function ScatterPlotCard({
     metricAxes,
     runQueries.map((q) => q.dataUpdatedAt).join("|"),
     metricQueries.map((q) => q.dataUpdatedAt).join("|"),
+    runMetaVersion,
   ]);
 
   // Available options

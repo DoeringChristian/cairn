@@ -97,12 +97,16 @@ export function useRunsDetails(runIds: string[]): UseQueryResult<RunDetailRespon
     })),
   });
 
+  // `results` is a fresh array each render, so key the seeding effect on the
+  // queries' dataUpdatedAt timestamps instead (changes iff any fetch landed).
+  const dataKey = results.map((r) => r.dataUpdatedAt).join("|");
   useEffect(() => {
     const runs = results
       .map((r) => r.data?.run)
       .filter((r): r is NonNullable<typeof r> => r != null);
     if (runs.length > 0) setRunMetadata(runs);
-  });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataKey]);
 
   return results;
 }

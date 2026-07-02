@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { diffLines } from "diff";
 import { api } from "../api/client";
 import { qk } from "../api/query-keys";
-import { disambiguateRunLabels } from "../lib/run-label";
+import { disambiguateRunLabels, useRunMetadataVersion } from "../lib/run-label";
 
 interface Props {
   compRunIds: string[];
@@ -19,9 +19,11 @@ interface MergedFile {
 }
 
 export default function ComparisonSourceTab({ compRunIds }: Props) {
+  // Recompute labels when the run metadata cache is seeded (api/hooks.ts).
+  const metaVersion = useRunMetadataVersion();
   const labels = useMemo(
     () => disambiguateRunLabels(compRunIds),
-    [compRunIds],
+    [compRunIds, metaVersion],
   );
 
   const [rawLeftId, setLeftId] = useState<string>("");

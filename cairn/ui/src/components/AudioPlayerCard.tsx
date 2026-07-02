@@ -242,7 +242,7 @@ export default function AudioPlayerCard({ runId, metric, extraSeries, controlled
     [runId, metric.name, metric.context_hash],
   );
 
-  useRunMetadataVersion();
+  const runMetaVersion = useRunMetadataVersion();
 
   const { selectedIds, selectedArray, toggle, clear } = useRunSelection();
   const hasSelectionProvider = useRunSelectionHasProvider();
@@ -312,7 +312,7 @@ export default function AudioPlayerCard({ runId, metric, extraSeries, controlled
       }
     }
     return map;
-  }, [multipleRuns, effectiveMetrics, allRunIds, runId]);
+  }, [multipleRuns, effectiveMetrics, allRunIds, runId, runMetaVersion]);
 
   const renderMultiAudio = (inModal: boolean) => (
     <>

@@ -37,7 +37,7 @@ import { formatRelative } from "../lib/format";
 import { useRuns } from "../api/hooks";
 import { api } from "../api/client";
 
-import { disambiguateRunLabels } from "../lib/run-label";
+import { disambiguateRunLabels, useRunMetadataVersion } from "../lib/run-label";
 import { RunSelectionContext, useRunSelectionState } from "../lib/use-run-selection";
 import RunSelectionPanel from "../components/RunSelectionPanel";
 import type { Run } from "../api/types";
@@ -1078,17 +1078,21 @@ function ComparisonRunsPanel({
     [compRunIds, allProjectRuns],
   );
 
+  // Re-render + recompute labels when the run metadata cache is seeded
+  // (seeding happens in a useEffect in api/hooks.ts, after first paint).
+  const metaVersion = useRunMetadataVersion();
+
   // Disambiguate chip labels (recomputed when set changes).
   const chipLabels = useMemo(
     () => disambiguateRunLabels(compRunIds),
-    [compRunIds],
+    [compRunIds, metaVersion],
   );
 
   // Disambiguate the candidate picker labels too — using ALL project runs
   // as siblings so duplicates surface clearly.
   const candidateLabels = useMemo(
     () => disambiguateRunLabels(allProjectRuns.map((r) => r.id)),
-    [allProjectRuns],
+    [allProjectRuns, metaVersion],
   );
 
   return (
