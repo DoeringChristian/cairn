@@ -54,15 +54,15 @@ export default function StepSlider({
   onXAxisChange,
   className,
 }: StepSliderProps) {
-  if (points.length <= 1) return null;
-
-  const safeIdx = Math.min(Math.max(0, currentIndex), points.length - 1);
-  const current = points[safeIdx]!;
-
   const firstWallTime = useMemo(() => {
     const first = points[0]?.wall_time;
     return first ? new Date(first).getTime() : null;
   }, [points]);
+
+  if (points.length <= 1) return null;
+
+  const safeIdx = Math.min(Math.max(0, currentIndex), points.length - 1);
+  const current = points[safeIdx]!;
 
   let label: string;
   if (xAxis === "relative_time" && current.wall_time && firstWallTime != null) {
