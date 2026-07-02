@@ -4,13 +4,11 @@ import {
   useRef,
   useState,
 } from "react";
-import { useQueries } from "@tanstack/react-query";
-import { api } from "../api/client";
-import { qk } from "../api/query-keys";
+import { useSequencesForRuns, useRunsDetails } from "../api/hooks";
 import { useCardSettings, type CardSettingsKey } from "../lib/card-settings";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { useCardDrop } from "../lib/use-series-drop";
-import type { BaseCardSettings } from "./card-kit";
+import { useCardSeries, type BaseCardSettings } from "./card-kit";
 import type {
   SequenceMeta,
   SequencePoint,
@@ -191,89 +189,49 @@ export default function ScalarPlotCard({
     [rawUpdateSettings],
   );
 
-  const effectiveMetrics = useMemo(() => {
-    if (!controlledSeries) return settings.metrics;
-    const all: Array<{ runId?: string; name: string; context_hash: string }> = [
-      { name: metric.name, context_hash: metric.context_hash },
-      ...(extraSeries ?? []).map((s) => ({
-        runId: s.runId,
-        name: s.name,
-        context_hash: s.context_hash,
-      })),
-    ];
-    const propsTagNames = new Set(all.map((m) => m.name));
-    for (const sm of settings.metrics) {
-      if (!propsTagNames.has(sm.name)) {
-        all.push(sm);
-      }
-    }
-    const seen = new Set<string>();
-    return all.filter((m) => {
-      const k = seriesKey(m);
-      if (seen.has(k)) return false;
-      seen.add(k);
-      return true;
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [controlledSeries, settings.metrics, metric.name, metric.context_hash, extraSeriesKey]);
+  const { effectiveMetrics, allRunIds, multipleRuns } = useCardSeries({
+    runId,
+    metric,
+    extraSeries,
+    controlledSeries,
+    settingsKeyOverride,
+    persistedMetrics: settings.metrics,
+  });
 
   // -------------------------------------------------------------------------
   // Run meta
   // -------------------------------------------------------------------------
-  const uniqueRunIds = useMemo(() => {
-    const set = new Set<string>([runId]);
-    for (const m of effectiveMetrics) set.add(m.runId ?? runId);
-    return Array.from(set);
-  }, [runId, effectiveMetrics]);
-
-  const runQueries = useQueries({
-    queries: uniqueRunIds.map((rid) => ({
-      queryKey: qk.run(rid),
-      queryFn: () => api.run(rid),
-      staleTime: 5_000,
-    })),
-  });
+  const runQueries = useRunsDetails(allRunIds);
 
   const runCreatedAtByRunId = useMemo(() => {
     const map = new Map<string, number>();
-    uniqueRunIds.forEach((rid, i) => {
+    allRunIds.forEach((rid, i) => {
       const raw = runQueries[i]?.data?.run.created_at;
       if (!raw) return;
       const t = new Date(raw).getTime();
       if (Number.isFinite(t)) map.set(rid, t);
     });
     return map;
-  }, [uniqueRunIds, runQueries]);
+  }, [allRunIds, runQueries]);
 
   // -------------------------------------------------------------------------
   // Data fetch
   // -------------------------------------------------------------------------
-  const queries = useQueries({
-    queries: effectiveMetrics.map((m) => {
-      const rid = m.runId ?? runId;
-      return {
-        queryKey: qk.sequence(rid, m.name, m.context_hash),
-        queryFn: () =>
-          api.sequence(rid, m.name, {
-            context: m.context_hash || undefined,
-            maxPoints: 2000,
-          }),
-        refetchInterval: 2_000,
-        staleTime: 2_000,
-      };
-    }),
-  });
+  const sequenceSpecs = useMemo(
+    () =>
+      effectiveMetrics.map((m) => ({
+        runId: m.runId ?? runId,
+        name: m.name,
+        contextHash: m.context_hash,
+        maxPoints: 2000,
+      })),
+    [effectiveMetrics, runId],
+  );
+  const queries = useSequencesForRuns(sequenceSpecs);
 
   // -------------------------------------------------------------------------
   // Build series
   // -------------------------------------------------------------------------
-  const allRunIds = useMemo(() => {
-    const seen = new Set<string>();
-    for (const m of effectiveMetrics) seen.add(m.runId ?? runId);
-    return Array.from(seen);
-  }, [effectiveMetrics, runId]);
-  const multipleRuns = allRunIds.length > 1;
-
   const runMetaVersion = useRunMetadataVersion();
 
   const { series, isLoading } = useMemo(() => {
@@ -354,12 +312,12 @@ export default function ScalarPlotCard({
 
   const runInfoMap = useMemo(() => {
     const m = new Map<string, { displayName?: string; projectId?: string }>();
-    uniqueRunIds.forEach((rid, i) => {
+    allRunIds.forEach((rid, i) => {
       const d = runQueries[i]?.data;
       if (d) m.set(rid, { displayName: d.run.display_name || undefined, projectId: d.run.project_id });
     });
     return m;
-  }, [uniqueRunIds, runQueries]);
+  }, [allRunIds, runQueries]);
 
   const compSeries = useMemo((): ComparisonSeriesRef[] => {
     return effectiveMetrics.map((m) => ({
@@ -444,7 +402,7 @@ export default function ScalarPlotCard({
                 <span className="truncate">
                   {m.name}
                   {m.context_hash ? ` · ${m.context_hash.slice(0, 6)}` : ""}
-                  {` · ${shortRunLabel(rid, uniqueRunIds)}`}
+                  {` · ${shortRunLabel(rid, allRunIds)}`}
                 </span>
                 <button
                   type="button"
@@ -734,7 +692,7 @@ export default function ScalarPlotCard({
       {!hasSelectionProvider && (
         <RunSelectionPanel
           selectedRunIds={selectedArray}
-          allRunIds={uniqueRunIds}
+          allRunIds={allRunIds}
           onClear={clear}
           runInfo={runInfoMap}
           label="Scalar plot selection"
@@ -754,7 +712,7 @@ export default function ScalarPlotCard({
           {!hasSelectionProvider && (
             <RunSelectionPanel
               selectedRunIds={selectedArray}
-              allRunIds={uniqueRunIds}
+              allRunIds={allRunIds}
               onClear={clear}
               runInfo={runInfoMap}
               label="Scalar plot selection"
