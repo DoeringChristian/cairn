@@ -9,3 +9,8 @@ export {
   default as CompareImagePane,
   type CompareImagePaneProps,
 } from "./CompareImagePane";
+export { default as Heatmap, type HeatmapProps } from "./Heatmap";
+export {
+  default as HistogramPlot,
+  type HistogramPlotProps,
+} from "./HistogramPlot";
