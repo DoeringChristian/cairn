@@ -24,17 +24,60 @@ const FigureInteractiveCard = lazy(
 
 const PluginCard = lazy(() => import("./PluginCard"));
 
-export interface CardRendererProps {
-  runId: string;
-  metric: SequenceMeta;
-  /** Extra series for cross-run overlays. */
-  extraSeries?: ComparisonSeriesRef[];
-  /** Override the settings localStorage key (used in comparisons). */
-  settingsKeyOverride?: CardSettingsKey;
-  /** Show a remove button in the card header (scalar only for now). */
-  onRemove?: () => void;
-  /** When true, ignore persisted metrics — always use props. */
-  controlledSeries?: boolean;
+const ParallelCoordsCard = lazy(() => import("./ParallelCoordsCard"));
+
+const ScatterPlotCard = lazy(() => import("./ScatterPlotCard"));
+
+/**
+ * Descriptor for the card CardRenderer should render.
+ *
+ * Two shapes:
+ * - `series` (default): a single metric's card, optionally overlaid with
+ *   extra cross-run series. This covers all 9 per-metric card types.
+ * - `multi-run`: the parallel-coordinates / scatter cards, which take a set of
+ *   run IDs rather than a single metric.
+ *
+ * `kind` is optional on the series variant so the common call sites
+ * (`<CardRenderer runId=… metric=… />`) stay terse; it defaults to "series".
+ */
+export type CardDescriptor =
+  | {
+      kind?: "series";
+      runId: string;
+      metric: SequenceMeta;
+      /** Extra series for cross-run overlays. */
+      extraSeries?: ComparisonSeriesRef[];
+      /** When true, ignore persisted metrics — always use props. */
+      controlledSeries?: boolean;
+      /** Override the settings localStorage key (used in comparisons). */
+      settingsKeyOverride?: CardSettingsKey;
+      /** Show a remove button in the card header. */
+      onRemove?: () => void;
+    }
+  | {
+      kind: "multi-run";
+      cardType: "parallel" | "scatter";
+      runIds: string[];
+      /**
+       * Settings storage key. Kept as a CardSettingsKey object (not a plain
+       * string) so the string written to localStorage via
+       * cardSettingsStorageKey() stays byte-identical to the legacy path.
+       */
+      settingsKey: CardSettingsKey;
+      onRemove?: () => void;
+    };
+
+/** Loading placeholder shared by the lazily-loaded card variants. */
+function LazyCardFallback({ label, title }: { label: string; title?: string }) {
+  return (
+    <div className="card p-4">
+      <div className="mb-2 flex items-baseline justify-between gap-2">
+        <h3 className="mono text-sm font-semibold">{title ?? " "}</h3>
+        <span className="text-xs text-fg-subtle">{label}</span>
+      </div>
+      <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
+    </div>
+  );
 }
 
 /** Fallback card for unknown object types — shows type info + download button. */
@@ -65,14 +108,31 @@ function UnknownTypeCard({ runId, metric }: { runId: string; metric: SequenceMet
   );
 }
 
-export default function CardRenderer({
-  runId,
-  metric,
-  extraSeries,
-  settingsKeyOverride,
-  onRemove,
-  controlledSeries,
-}: CardRendererProps) {
+export default function CardRenderer(props: CardDescriptor) {
+  if (props.kind === "multi-run") {
+    const { cardType, runIds, settingsKey, onRemove } = props;
+    if (cardType === "parallel") {
+      return (
+        <Suspense fallback={<LazyCardFallback label="loading parallel coords…" />}>
+          <ParallelCoordsCard runIds={runIds} settingsKey={settingsKey} onRemove={onRemove} />
+        </Suspense>
+      );
+    }
+    return (
+      <Suspense fallback={<LazyCardFallback label="loading scatter…" />}>
+        <ScatterPlotCard runIds={runIds} settingsKey={settingsKey} onRemove={onRemove} />
+      </Suspense>
+    );
+  }
+
+  const {
+    runId,
+    metric,
+    extraSeries,
+    settingsKeyOverride,
+    onRemove,
+    controlledSeries,
+  } = props;
   const baseProps = { runId, metric };
 
   switch (metric.object_type) {

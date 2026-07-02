@@ -27,11 +27,31 @@ const TYPE_LABELS: Record<string, string> = {
 
 const TYPE_ORDER = ["scalar", "image", "figure", "audio", "video", "histogram", "text", "parallel", "scatter"];
 
-export interface AddCardSelection {
+/** One entry per run that has this metric. */
+type SelectionRuns = Array<{ runId: string; context_hash: string }>;
+
+/**
+ * Result of a user picking an entry in the modal. Mirrors CardDescriptor's
+ * discriminant: `series` for a real per-metric card, `multi-run` for the
+ * parallel/scatter cards that span the comparison's runs.
+ */
+export type AddCardSelection =
+  | { kind: "series"; name: string; object_type: string; runs: SelectionRuns }
+  | { kind: "multi-run"; cardType: "parallel" | "scatter"; name: string; runs: SelectionRuns };
+
+/** Internal grouping entry (also drives the type tabs). */
+interface MetricEntry {
   name: string;
   object_type: string;
-  /** One entry per run that has this metric. */
-  runs: Array<{ runId: string; context_hash: string }>;
+  runs: SelectionRuns;
+}
+
+/** Map a picked grouping entry to a typed selection. */
+function toSelection(m: MetricEntry): AddCardSelection {
+  if (m.object_type === "parallel" || m.object_type === "scatter") {
+    return { kind: "multi-run", cardType: m.object_type, name: m.name, runs: m.runs };
+  }
+  return { kind: "series", name: m.name, object_type: m.object_type, runs: m.runs };
 }
 
 interface Props {
@@ -222,7 +242,7 @@ export default function AddCardModal({
                     key={`${m.name}::${m.object_type}::${i}`}
                     type="button"
                     onClick={() => {
-                      onAdd(m);
+                      onAdd(toSelection(m));
                       onClose();
                     }}
                     className="flex w-full items-center justify-between px-4 py-2.5 text-left text-sm text-fg hover:bg-bg-hover transition-colors"

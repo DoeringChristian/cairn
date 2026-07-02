@@ -9,8 +9,6 @@ import ReorderableCardGrid from "../components/ReorderableCardGrid";
 import { SectionBlock } from "../components/CardGrid";
 import { groupComparisonCardsIntoSections } from "../lib/sections";
 import SmartComparisonWizard from "../components/SmartComparisonWizard";
-import ParallelCoordsCard from "../components/ParallelCoordsCard";
-import ScatterPlotCard from "../components/ScatterPlotCard";
 import {
   addCardToComparison,
   addRunsToComparison,
@@ -142,8 +140,12 @@ export default function ComparePage() {
   const handleAddCard = useCallback(
     (comparisonId: string, sel: AddCardSelection) => {
       if (!projectId) return;
+      const type: ComparisonCard["type"] =
+        sel.kind === "multi-run"
+          ? sel.cardType
+          : (sel.object_type as ComparisonCard["type"]);
       addCardToComparison(projectId, comparisonId, {
-        type: sel.object_type as "scalar",
+        type,
         series: sel.runs.map((r) => ({
           runId: r.runId,
           name: sel.name,
@@ -923,27 +925,15 @@ function ComparisonCardRenderer({
     [card.series],
   );
 
-  if (card.type === "parallel") {
+  if (card.type === "parallel" || card.type === "scatter") {
     return (
-      <ParallelCoordsCard
+      <CardRenderer
+        kind="multi-run"
+        cardType={card.type}
         runIds={runIds}
         settingsKey={{
           runId: `compare:${comparisonId}`,
-          metricName: "parallel",
-          contextHash: card.id,
-        }}
-        onRemove={onRemove}
-      />
-    );
-  }
-
-  if (card.type === "scatter") {
-    return (
-      <ScatterPlotCard
-        runIds={runIds}
-        settingsKey={{
-          runId: `compare:${comparisonId}`,
-          metricName: "scatter",
+          metricName: card.type,
           contextHash: card.id,
         }}
         onRemove={onRemove}
