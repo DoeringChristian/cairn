@@ -25,6 +25,26 @@ class _TypeWrapper:
 
 
 class Image(_TypeWrapper):
+    """Image, optionally with bounding-box and/or segmentation-mask overlays.
+
+    Overlays are stored inline in the artifact metadata (no second blob).
+
+    Usage::
+
+        run.track(cairn.Image(
+            img,
+            boxes=[{
+                "position": {"minX": 0.1, "minY": 0.2, "maxX": 0.5, "maxY": 0.6},
+                "domain": "fraction",   # or "pixel"
+                "class_id": 1,
+                "label": "cat",
+                "score": 0.92,
+            }],
+            masks={"seg": class_id_array_2d},   # uint8 class ids, 0 = background
+            class_labels={0: "background", 1: "cat", 2: "dog"},
+        ), name="detections", step=step)
+    """
+
     object_type = "image"
 
 

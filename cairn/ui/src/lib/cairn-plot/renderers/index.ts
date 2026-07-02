@@ -9,3 +9,7 @@ export {
   default as CompareImagePane,
   type CompareImagePaneProps,
 } from "./CompareImagePane";
+export {
+  default as ImageOverlay,
+  type ImageOverlayProps,
+} from "./ImageOverlay";

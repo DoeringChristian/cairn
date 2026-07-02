@@ -1,4 +1,17 @@
-"""Image handler — PIL / numpy / torch → PNG."""
+"""Image handler — PIL / numpy / torch → PNG.
+
+Optionally carries **overlay annotations** (bounding boxes + segmentation
+masks) supplied via ``cairn.Image(img, boxes=..., masks=..., class_labels=...)``.
+Overlays live entirely in the artifact *metadata* (never a second blob — one
+artifact per point is a hard ingest constraint):
+
+* ``boxes`` — a list of ``{"position": {minX, minY, maxX, maxY}, "domain":
+  "pixel"|"fraction", "class_id": int, "label": str|None, "score":
+  float|None}`` (capped at 500).
+* ``masks`` — ``{name: {"png_b64", "class_labels"}}`` where each mask is a
+  grayscale (class-id-per-pixel) PNG, base64-encoded, capped at 2MB.
+* ``class_labels`` — ``{int: str}`` shared class-id → name map.
+"""
 
 from __future__ import annotations
 
@@ -11,6 +24,103 @@ from PIL import Image as PILImage
 
 from ..wrappers import _TypeWrapper
 from ._optional import try_import
+
+MAX_BOXES = 500
+MAX_MASK_B64_BYTES = 2 * 1024 * 1024
+
+
+def _normalize_class_labels(class_labels: Any) -> dict[str, str] | None:
+    """Coerce a ``{int: str}`` map into JSON-safe ``{str: str}``."""
+    if class_labels is None:
+        return None
+    if not isinstance(class_labels, dict):
+        raise TypeError("class_labels must be a dict of {int: str}")
+    out: dict[str, str] = {}
+    for k, v in class_labels.items():
+        out[str(int(k))] = str(v)
+    return out
+
+
+def _build_boxes(boxes: Any) -> list[dict[str, Any]]:
+    """Validate + normalize a list of box annotations."""
+    if not isinstance(boxes, (list, tuple)):
+        raise TypeError("boxes must be a list of box dicts")
+    if len(boxes) > MAX_BOXES:
+        raise ValueError(
+            f"too many boxes ({len(boxes)}); max is {MAX_BOXES}. "
+            "Filter before logging."
+        )
+    out: list[dict[str, Any]] = []
+    for i, box in enumerate(boxes):
+        if not isinstance(box, dict):
+            raise TypeError(f"box[{i}] must be a dict, got {type(box).__name__}")
+        pos = box.get("position")
+        if not isinstance(pos, dict):
+            raise ValueError(f"box[{i}] missing 'position' dict")
+        try:
+            norm_pos = {
+                "minX": float(pos["minX"]),
+                "minY": float(pos["minY"]),
+                "maxX": float(pos["maxX"]),
+                "maxY": float(pos["maxY"]),
+            }
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"box[{i}] position needs numeric minX/minY/maxX/maxY"
+            ) from exc
+        domain = box.get("domain", "fraction")
+        if domain not in ("pixel", "fraction"):
+            raise ValueError(
+                f"box[{i}] domain must be 'pixel' or 'fraction', got {domain!r}"
+            )
+        entry: dict[str, Any] = {
+            "position": norm_pos,
+            "domain": domain,
+            "class_id": int(box.get("class_id", 0)),
+        }
+        label = box.get("label")
+        entry["label"] = None if label is None else str(label)
+        score = box.get("score")
+        entry["score"] = None if score is None else float(score)
+        out.append(entry)
+    return out
+
+
+def _build_masks(
+    masks: Any, class_labels: dict[str, str] | None
+) -> dict[str, dict[str, Any]]:
+    """PNG-encode + base64 each mask array; enforce the 2MB cap."""
+    if not isinstance(masks, dict):
+        raise TypeError("masks must be a dict of {name: 2D ndarray of class ids}")
+    torch = try_import("torch")
+    out: dict[str, dict[str, Any]] = {}
+    for name, arr in masks.items():
+        if torch is not None and isinstance(arr, torch.Tensor):
+            arr = arr.detach().cpu().numpy()
+        arr = np.asarray(arr)
+        if arr.ndim != 2:
+            raise ValueError(
+                f"mask {name!r} must be a 2D array of class ids, got shape {arr.shape}"
+            )
+        if arr.size and (arr.min() < 0 or arr.max() > 255):
+            raise ValueError(
+                f"mask {name!r} class ids must be in [0, 255] (uint8 palette)"
+            )
+        arr_u8 = arr.astype(np.uint8)
+        buf = io.BytesIO()
+        # Grayscale, palette-free: pixel value == class id.
+        PILImage.fromarray(arr_u8, mode="L").save(buf, format="PNG")
+        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+        if len(b64) > MAX_MASK_B64_BYTES:
+            raise ValueError(
+                f"mask {name!r} is too large ({len(b64)} base64 bytes); "
+                f"max is {MAX_MASK_B64_BYTES}. Downsample the mask before logging."
+            )
+        entry: dict[str, Any] = {"png_b64": b64}
+        if class_labels is not None:
+            entry["class_labels"] = class_labels
+        out[str(name)] = entry
+    return out
 
 
 class ImageHandler:
@@ -86,7 +196,14 @@ class ImageHandler:
             return PILImage.fromarray(arr, mode="RGBA")
         raise ValueError(f"Unsupported image shape {arr.shape}")
 
-    def serialize(self, obj: Any, **kwargs: Any) -> tuple[bytes, dict[str, Any]]:
+    def serialize(
+        self,
+        obj: Any,
+        boxes: Any = None,
+        masks: Any = None,
+        class_labels: Any = None,
+        **kwargs: Any,
+    ) -> tuple[bytes, dict[str, Any]]:
         img = self._to_pil(obj)
         buf = io.BytesIO()
         img.save(buf, format="PNG")
@@ -102,13 +219,24 @@ class ImageHandler:
             + base64.b64encode(tbuf.getvalue()).decode("ascii")
         )
 
-        meta = {
+        meta: dict[str, Any] = {
             "width": img.width,
             "height": img.height,
             "channels": len(img.getbands()),
             "mode": img.mode,
             "preview": preview,
         }
+
+        # Optional overlay annotations — stored inline in metadata (the sidecar),
+        # since one artifact per point is a hard ingest constraint.
+        norm_labels = _normalize_class_labels(class_labels)
+        if boxes is not None:
+            meta["boxes"] = _build_boxes(boxes)
+            if norm_labels is not None:
+                meta["class_labels"] = norm_labels
+        if masks is not None:
+            meta["masks"] = _build_masks(masks, norm_labels)
+
         return data, meta
 
     def deserialize(self, data: bytes, metadata: dict[str, Any] | None = None) -> Any:
