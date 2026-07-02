@@ -5,7 +5,7 @@ import { useBulkRunMutation, useInfiniteRuns, useSetTags } from "../api/hooks";
 import type { Run, RunStatus } from "../api/types";
 import RunStatusBadge from "../components/RunStatusBadge";
 import { formatDuration, formatRelative, safeJsonParse } from "../lib/format";
-import { addCardsToComparison, createComparison, useTemplates, type ComparisonTemplate } from "../lib/comparisons";
+import { addCardsToComparison, compareRunId, createComparison, useTemplates, type ComparisonTemplate } from "../lib/comparisons";
 import { saveCardSettings } from "../lib/card-settings";
 import { gcDeletedRunKeys } from "../lib/storage";
 import { api } from "../api/client";
@@ -436,7 +436,7 @@ export default function RunsTablePage() {
           const card = updated.cards[baseIdx + i];
           if (card) {
             saveCardSettings(
-              { runId: `compare:${cmp.id}`, metricName: card.id, contextHash: "" },
+              { runId: compareRunId(cmp.id), metricName: card.id, contextHash: "" },
               m.tc.settings,
             );
           }

@@ -12,6 +12,7 @@ import SmartComparisonWizard from "../components/SmartComparisonWizard";
 import {
   addCardToComparison,
   addRunsToComparison,
+  compareRunId,
   createComparison,
   createTemplate,
   deleteTemplate,
@@ -682,7 +683,7 @@ function ComparisonView({
   const [addCardOpen, setAddCardOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
-  const collapsedKey = storageKeys.collapsedSections(`compare:${comparison.id}`);
+  const collapsedKey = storageKeys.collapsedSections(compareRunId(comparison.id));
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(
     () => new Set(loadJson<string[]>(localStorage, collapsedKey) ?? []),
   );
@@ -791,7 +792,7 @@ function ComparisonView({
               if (!name) return;
               const templateCards: ComparisonTemplateCard[] = comparison.cards.map((card) => {
                 const settingsKey = {
-                  runId: `compare:${comparison.id}`,
+                  runId: compareRunId(comparison.id),
                   metricName: card.id,
                   contextHash: "",
                 };
@@ -930,7 +931,7 @@ function ComparisonCardRenderer({
         cardType={card.type}
         runIds={runIds}
         settingsKey={{
-          runId: `compare:${comparisonId}`,
+          runId: compareRunId(comparisonId),
           metricName: card.type,
           contextHash: card.id,
         }}
@@ -970,7 +971,7 @@ function ComparisonCardRenderer({
         controlledSeries
         onRemove={onRemove}
         settingsKeyOverride={{
-          runId: `compare:${comparisonId}`,
+          runId: compareRunId(comparisonId),
           metricName: card.id,
           contextHash: "",
         }}
