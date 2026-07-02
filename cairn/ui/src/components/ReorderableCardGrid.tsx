@@ -25,8 +25,8 @@ function findCardUnderCursor(
   clientX: number,
   clientY: number,
 ): { el: HTMLElement; key: string } | null {
-  // Find all .card elements and check which one contains the cursor
-  const cardEls = Array.from(gridEl.querySelectorAll(".card")) as HTMLElement[];
+  // Find all [data-cairn-card] elements and check which one contains the cursor
+  const cardEls = Array.from(gridEl.querySelectorAll("[data-cairn-card]")) as HTMLElement[];
   for (const cardEl of cardEls) {
     const rect = cardEl.getBoundingClientRect();
     if (
@@ -99,6 +99,7 @@ export default function ReorderableCardGrid({
   return (
     <div
       ref={gridRef}
+      data-cairn-grid
       className={`grid grid-cols-1 gap-4 md:grid-cols-6 ${className ?? ""}`}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}

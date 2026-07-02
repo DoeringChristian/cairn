@@ -75,6 +75,7 @@ export default function CardShell({
   return (
     <div
       ref={cardRef}
+      data-cairn-card
       className={`card p-4 flex flex-col${dropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
       style={{
         height: resolveCardHeight(settings, defaultHeight),

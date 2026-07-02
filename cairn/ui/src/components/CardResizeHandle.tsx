@@ -17,6 +17,8 @@ interface Props {
 
 const MAX_HEIGHT = 2000;
 const VALID_SPANS = [1, 2, 3, 6] as const;
+/** Max px gap between two cards' top edges to still count as "same row". */
+const ROW_TOP_EPSILON_PX = 2;
 
 /** Snap a raw column-span value to the nearest valid span. */
 function snapToValidSpan(raw: number): number {
@@ -55,20 +57,20 @@ export default function CardResizeHandle({
   useEffect(() => {
     const el = handleRef.current;
     if (!el) return;
-    let grid = el.closest(".card")?.parentElement;
+    let grid = el.closest("[data-cairn-card]")?.parentElement;
     while (grid && getComputedStyle(grid).display === "contents") grid = grid.parentElement;
-    if (!grid || !grid.closest(".grid")) grid = el.closest(".grid")?.parentElement ?? grid;
-    const gridEl = (grid?.closest(".grid") ?? grid) as HTMLElement | null;
+    if (!grid || !grid.closest("[data-cairn-grid]")) grid = el.closest("[data-cairn-grid]")?.parentElement ?? grid;
+    const gridEl = (grid?.closest("[data-cairn-grid]") ?? grid) as HTMLElement | null;
     if (!gridEl) return;
     const onColSpan = (e: Event) => {
       colSpanCbRef.current((e as CustomEvent).detail.colSpan);
     };
-    const card = el.closest(".card") as HTMLElement | null;
+    const card = el.closest("[data-cairn-card]") as HTMLElement | null;
     const onHeight = (e: Event) => {
       const d = (e as CustomEvent).detail;
       if (!card) return;
       const myTop = card.getBoundingClientRect().top;
-      if (Math.abs(myTop - d.rowTop) < 2) {
+      if (Math.abs(myTop - d.rowTop) < ROW_TOP_EPSILON_PX) {
         heightCbRef.current(d.height);
       }
     };
@@ -87,7 +89,7 @@ export default function CardResizeHandle({
       const target = e.currentTarget;
       target.setPointerCapture(e.pointerId);
 
-      const card = target.closest(".card") as HTMLElement | null;
+      const card = target.closest("[data-cairn-card]") as HTMLElement | null;
       if (!card) return;
 
       const startPageY = e.clientY + window.scrollY;
@@ -101,10 +103,10 @@ export default function CardResizeHandle({
       while (grid && getComputedStyle(grid).display === "contents") {
         grid = grid.parentElement;
       }
-      if (!grid || !grid.closest(".grid")) {
-        grid = card.closest(".grid")?.parentElement ?? card.parentElement;
+      if (!grid || !grid.closest("[data-cairn-grid]")) {
+        grid = card.closest("[data-cairn-grid]")?.parentElement ?? card.parentElement;
       }
-      const gridEl = grid?.closest(".grid") ?? grid;
+      const gridEl = grid?.closest("[data-cairn-grid]") ?? grid;
       const gridWidth = gridEl?.getBoundingClientRect().width ?? startWidth * 2;
       // Detect actual column count from computed grid style
       const gridStyle = gridEl ? getComputedStyle(gridEl) : null;
@@ -116,7 +118,7 @@ export default function CardResizeHandle({
       // Collect all siblings for colSpan sync.
       const allSiblings: HTMLElement[] = [];
       if (gridEl) {
-        for (const el of gridEl.querySelectorAll(".card")) {
+        for (const el of gridEl.querySelectorAll("[data-cairn-card]")) {
           if (el !== card) allSiblings.push(el as HTMLElement);
         }
       }

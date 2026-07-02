@@ -74,7 +74,7 @@ export type CardDescriptor =
 /** Loading placeholder shared by the lazily-loaded card variants. */
 function LazyCardFallback({ label, title }: { label: string; title?: string }) {
   return (
-    <div className="card p-4">
+    <div data-cairn-card className="card p-4">
       <div className="mb-2 flex items-baseline justify-between gap-2">
         <h3 className="mono text-sm font-semibold">{title ?? " "}</h3>
         <span className="text-xs text-fg-subtle">{label}</span>
@@ -90,7 +90,7 @@ function UnknownTypeCard({ runId, metric }: { runId: string; metric: SequenceMet
   const point = useMemo(() => (q.data?.points ?? [])[0], [q.data]);
 
   return (
-    <div className="card p-4 text-sm text-fg-muted">
+    <div data-cairn-card className="card p-4 text-sm text-fg-muted">
       <div className="mb-2 flex items-baseline justify-between gap-2">
         <div className="mono font-semibold">{metric.name}</div>
         <div className="flex items-center gap-1 text-xs">
@@ -157,7 +157,7 @@ export default function CardRenderer(props: CardDescriptor) {
       return (
         <Suspense
           fallback={
-            <div className="card p-4">
+            <div data-cairn-card className="card p-4">
               <div className="mb-2 flex items-baseline justify-between gap-2">
                 <h3 className="mono text-sm font-semibold">{metric.name}</h3>
                 <span className="text-xs text-fg-subtle">loading plotly…</span>
@@ -183,7 +183,7 @@ export default function CardRenderer(props: CardDescriptor) {
       return (
         <Suspense
           fallback={
-            <div className="card p-4">
+            <div data-cairn-card className="card p-4">
               <div className="mb-2 flex items-baseline justify-between gap-2">
                 <h3 className="mono text-sm font-semibold">{metric.name}</h3>
                 <span className="text-xs text-fg-subtle">loading plugin…</span>

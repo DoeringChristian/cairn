@@ -945,7 +945,7 @@ function ComparisonCardRenderer({
   const primary = card.series[0];
   if (!primary) {
     return (
-      <div className="card p-4 text-sm text-fg-muted flex items-baseline justify-between gap-2">
+      <div data-cairn-card className="card p-4 text-sm text-fg-muted flex items-baseline justify-between gap-2">
         <span>Empty card.</span>
         <button type="button" className="btn text-xs" onClick={onRemove}>
           Remove
