@@ -28,7 +28,7 @@ const INFINITE_PAGE_SIZE = 100;
 
 export function useInfiniteRuns(params: { project?: string; status?: string }) {
   return useInfiniteQuery<RunsListResponse>({
-    queryKey: ["runs-infinite", params],
+    queryKey: qk.runsInfinite(params),
     queryFn: ({ pageParam }) =>
       api.runs({ ...params, limit: INFINITE_PAGE_SIZE, offset: pageParam as number }),
     initialPageParam: 0,
@@ -118,7 +118,7 @@ export function useSetTags(runId: string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: qk.run(runId) });
       qc.invalidateQueries({ queryKey: ["runs"] });
-      qc.invalidateQueries({ queryKey: ["runs-infinite"] });
+      qc.invalidateQueries({ queryKey: qk.runsInfinite() });
     },
   });
 }

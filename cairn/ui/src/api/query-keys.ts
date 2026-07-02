@@ -9,6 +9,7 @@ export const qk = {
   health: () => ["health"] as const,
   projects: () => ["projects"] as const,
   runs: (params?: unknown) => params != null ? ["runs", params] as const : ["runs"] as const,
+  runsInfinite: (params?: unknown) => params != null ? ["runs-infinite", params] as const : ["runs-infinite"] as const,
   run: (runId: string) => ["run", runId] as const,
   sequences: (runId: string) => ["sequences", runId] as const,
   sequence: (runId: string, name: string, opts: unknown) => ["sequence", runId, name, opts] as const,

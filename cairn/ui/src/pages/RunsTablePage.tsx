@@ -2,7 +2,8 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { useInfiniteScroll } from "../lib/use-infinite-scroll";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { useInfiniteRuns } from "../api/hooks";
+import { useInfiniteRuns, useSetTags } from "../api/hooks";
+import { qk } from "../api/query-keys";
 import type { Run, RunStatus } from "../api/types";
 import RunStatusBadge from "../components/RunStatusBadge";
 import { formatDuration, formatRelative, safeJsonParse } from "../lib/format";
@@ -134,41 +135,33 @@ export default function RunsTablePage() {
   });
   const allTags = useProjectTags(runs);
 
-  const removeTagFromRun = useCallback(async (runId: string, tag: string) => {
-    const run = runs.find((r) => r.id === runId);
-    const prev = safeJsonParse<string[]>(run?.tags ?? null) ?? [];
-    await api.setTags(runId, prev.filter((t) => t !== tag));
-    qc.invalidateQueries({ queryKey: ["runs-infinite"] });
-  }, [runs, qc]);
+  const onStartAddTag = useCallback((runId: string) => {
+    setAddingTagFor(runId);
+    setNewTagValue("");
+  }, []);
 
-  const addTagToRun = useCallback(async (runId: string, tag: string) => {
-    if (!tag.trim()) return;
-    const run = runs.find((r) => r.id === runId);
-    const prev = safeJsonParse<string[]>(run?.tags ?? null) ?? [];
-    if (prev.includes(tag.trim())) return;
-    await api.setTags(runId, [...prev, tag.trim()]);
+  const onCancelAddTag = useCallback(() => {
     setAddingTagFor(null);
     setNewTagValue("");
-    qc.invalidateQueries({ queryKey: ["runs-infinite"] });
-  }, [runs, qc]);
+  }, []);
 
   const onBulkDelete = useCallback(async () => {
     if (!confirm(`Delete ${selected.size} run(s)? This cannot be undone.`)) return;
     await Promise.all([...selected].map((id) => api.deleteRun(id)));
     setSelected(new Set());
-    qc.invalidateQueries({ queryKey: ["runs-infinite"] });
+    qc.invalidateQueries({ queryKey: qk.runsInfinite() });
   }, [selected, qc]);
 
   const onBulkArchive = useCallback(async () => {
     await Promise.all([...selected].map((id) => api.archiveRun(id)));
     setSelected(new Set());
-    qc.invalidateQueries({ queryKey: ["runs-infinite"] });
+    qc.invalidateQueries({ queryKey: qk.runsInfinite() });
   }, [selected, qc]);
 
   const onBulkUnarchive = useCallback(async () => {
     await Promise.all([...selected].map((id) => api.unarchiveRun(id)));
     setSelected(new Set());
-    qc.invalidateQueries({ queryKey: ["runs-infinite"] });
+    qc.invalidateQueries({ queryKey: qk.runsInfinite() });
   }, [selected, qc]);
 
   const onArchiveOldVersions = useCallback(async () => {
@@ -189,7 +182,7 @@ export default function RunsTablePage() {
     if (toArchive.length === 0) { alert("No old versions to archive."); return; }
     if (!confirm(`Archive ${toArchive.length} old run(s)?`)) return;
     await Promise.all(toArchive.map((id) => api.archiveRun(id)));
-    qc.invalidateQueries({ queryKey: ["runs-infinite"] });
+    qc.invalidateQueries({ queryKey: qk.runsInfinite() });
   }, [runs, qc]);
 
   const onDeleteOldVersions = useCallback(async () => {
@@ -210,7 +203,7 @@ export default function RunsTablePage() {
     if (toDelete.length === 0) { alert("No old versions to delete."); return; }
     if (!confirm(`Delete ${toDelete.length} old run(s)? This cannot be undone.`)) return;
     await Promise.all(toDelete.map((id) => api.deleteRun(id)));
-    qc.invalidateQueries({ queryKey: ["runs-infinite"] });
+    qc.invalidateQueries({ queryKey: qk.runsInfinite() });
   }, [runs, qc]);
 
   // Populate run label cache for formatting across the app.
@@ -652,7 +645,6 @@ export default function RunsTablePage() {
         <>
           <ul className="flex flex-col gap-2 md:hidden">
             {sorted.map((r) => {
-              const tags = safeJsonParse<string[]>(r.tags) ?? [];
               const isSelected = selected.has(r.id);
               return (
                 <li
@@ -690,43 +682,16 @@ export default function RunsTablePage() {
                     </span>
                   </div>
                   <div className="mt-1 flex flex-wrap items-center gap-1">
-                    {tags.map((t) => (
-                      <span
-                        key={t}
-                        className="group/tag mono inline-flex items-center gap-0.5 rounded border border-border bg-bg px-1.5 py-0.5 text-xs text-fg-muted"
-                      >
-                        {t}
-                        <button
-                          type="button"
-                          className="text-fg-subtle hover:text-status-failed -mr-0.5"
-                          onClick={() => removeTagFromRun(r.id, t)}
-                        >
-                          {"\u00D7"}
-                        </button>
-                      </span>
-                    ))}
-                    {addingTagFor === r.id ? (
-                      <TagInput
-                        className="w-20"
-                        value={newTagValue}
-                        onChange={setNewTagValue}
-                        onCommit={(tag) => addTagToRun(r.id, tag)}
-                        onCancel={() => { setAddingTagFor(null); setNewTagValue(""); }}
-                        suggestions={allTags}
-                        exclude={safeJsonParse<string[]>(r.tags) ?? []}
-                        autoFocus
-                        placeholder="tag..."
-                      />
-                    ) : (
-                      <button
-                        type="button"
-                        className="inline-flex items-center justify-center rounded border border-dashed border-border-subtle px-1 py-0.5 text-xs text-fg-subtle hover:text-fg hover:border-border"
-                        onClick={() => { setAddingTagFor(r.id); setNewTagValue(""); }}
-                        title="Add tag"
-                      >
-                        +
-                      </button>
-                    )}
+                    <RunTagCell
+                      run={r}
+                      variant="mobile"
+                      allTags={allTags}
+                      addingTagFor={addingTagFor}
+                      onStartAdd={onStartAddTag}
+                      onCancelAdd={onCancelAddTag}
+                      newTagValue={newTagValue}
+                      setNewTagValue={setNewTagValue}
+                    />
                   </div>
                 </li>
               );
@@ -784,7 +749,6 @@ export default function RunsTablePage() {
             </thead>
             <tbody>
               {sorted.map((r) => {
-                const tags = safeJsonParse<string[]>(r.tags) ?? [];
                 const isSelected = selected.has(r.id);
                 return (
                   <tr
@@ -826,44 +790,16 @@ export default function RunsTablePage() {
                     </td>
                     <td className="px-3 py-2">
                       <span className="flex flex-wrap items-center gap-1">
-                        {tags.map((t) => (
-                          <span
-                            key={t}
-                            className="group/tag mono inline-flex items-center gap-0.5 rounded border border-border bg-bg px-1.5 py-0.5 text-xs text-fg-muted"
-                          >
-                            {t}
-                            <button
-                              type="button"
-                              className="text-fg-subtle hover:text-status-failed opacity-0 group-hover/tag:opacity-100 transition-opacity -mr-0.5"
-                              onClick={(e) => { e.stopPropagation(); removeTagFromRun(r.id, t); }}
-                              title={`Remove tag "${t}"`}
-                            >
-                              {"\u00D7"}
-                            </button>
-                          </span>
-                        ))}
-                        {addingTagFor === r.id ? (
-                          <TagInput
-                            className="w-20"
-                            value={newTagValue}
-                            onChange={setNewTagValue}
-                            onCommit={(tag) => addTagToRun(r.id, tag)}
-                            onCancel={() => { setAddingTagFor(null); setNewTagValue(""); }}
-                            suggestions={allTags}
-                            exclude={safeJsonParse<string[]>(r.tags) ?? []}
-                            autoFocus
-                            placeholder="tag..."
-                          />
-                        ) : (
-                          <button
-                            type="button"
-                            className="inline-flex items-center justify-center rounded border border-dashed border-border-subtle px-1 py-0.5 text-xs text-fg-subtle hover:text-fg hover:border-border"
-                            onClick={(e) => { e.stopPropagation(); setAddingTagFor(r.id); setNewTagValue(""); }}
-                            title="Add tag"
-                          >
-                            +
-                          </button>
-                        )}
+                        <RunTagCell
+                          run={r}
+                          variant="desktop"
+                          allTags={allTags}
+                          addingTagFor={addingTagFor}
+                          onStartAdd={onStartAddTag}
+                          onCancelAdd={onCancelAddTag}
+                          newTagValue={newTagValue}
+                          setNewTagValue={setNewTagValue}
+                        />
                       </span>
                     </td>
                   </tr>
@@ -881,6 +817,100 @@ export default function RunsTablePage() {
       )}
       <ImportRunsDialog open={importOpen} onClose={() => setImportOpen(false)} />
     </div>
+  );
+}
+
+// Per-row tag editing. Each instance owns a `useSetTags` mutation scoped to
+// its own run, so tag edits invalidate that run's detail cache in addition
+// to the runs list/infinite queries (unlike the old inline-in-parent version,
+// which only invalidated the infinite list).
+function RunTagCell({
+  run,
+  variant,
+  allTags,
+  addingTagFor,
+  onStartAdd,
+  onCancelAdd,
+  newTagValue,
+  setNewTagValue,
+}: {
+  run: Run;
+  variant: "mobile" | "desktop";
+  allTags: string[];
+  addingTagFor: string | null;
+  onStartAdd: (runId: string) => void;
+  onCancelAdd: () => void;
+  newTagValue: string;
+  setNewTagValue: (v: string) => void;
+}) {
+  const setTags = useSetTags(run.id);
+  const tags = safeJsonParse<string[]>(run.tags) ?? [];
+
+  const removeTag = (tag: string) => {
+    setTags.mutate(tags.filter((t) => t !== tag));
+  };
+
+  const addTag = (tag: string) => {
+    const trimmed = tag.trim();
+    if (!trimmed || tags.includes(trimmed)) return;
+    setTags.mutate([...tags, trimmed], { onSuccess: onCancelAdd });
+  };
+
+  const removeBtnClass =
+    variant === "desktop"
+      ? "text-fg-subtle hover:text-status-failed opacity-0 group-hover/tag:opacity-100 transition-opacity -mr-0.5"
+      : "text-fg-subtle hover:text-status-failed -mr-0.5";
+
+  const onRemoveClick = (e: React.MouseEvent, tag: string) => {
+    if (variant === "desktop") e.stopPropagation();
+    removeTag(tag);
+  };
+  const onAddClick = (e: React.MouseEvent) => {
+    if (variant === "desktop") e.stopPropagation();
+    onStartAdd(run.id);
+  };
+
+  return (
+    <>
+      {tags.map((t) => (
+        <span
+          key={t}
+          className="group/tag mono inline-flex items-center gap-0.5 rounded border border-border bg-bg px-1.5 py-0.5 text-xs text-fg-muted"
+        >
+          {t}
+          <button
+            type="button"
+            className={removeBtnClass}
+            onClick={(e) => onRemoveClick(e, t)}
+            title={variant === "desktop" ? `Remove tag "${t}"` : undefined}
+          >
+            {"×"}
+          </button>
+        </span>
+      ))}
+      {addingTagFor === run.id ? (
+        <TagInput
+          className="w-20"
+          value={newTagValue}
+          onChange={setNewTagValue}
+          onCommit={addTag}
+          onCancel={onCancelAdd}
+          suggestions={allTags}
+          exclude={tags}
+          autoFocus
+          placeholder="tag..."
+        />
+      ) : (
+        <button
+          type="button"
+          className="inline-flex items-center justify-center rounded border border-dashed border-border-subtle px-1 py-0.5 text-xs text-fg-subtle hover:text-fg hover:border-border"
+          onClick={onAddClick}
+          title="Add tag"
+        >
+          +
+        </button>
+      )}
+    </>
   );
 }
 
