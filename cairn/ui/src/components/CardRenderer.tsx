@@ -5,7 +5,7 @@
 
 import { Suspense, lazy, useMemo } from "react";
 import type { SequenceMeta } from "../api/types";
-import type { ComparisonSeriesRef } from "../lib/comparisons";
+import type { ComparisonSeriesRef, MultiRunCardType } from "../lib/comparisons";
 import type { CardSettingsKey } from "../lib/card-settings";
 import { useSequence } from "../api/hooks";
 import { api } from "../api/client";
@@ -27,6 +27,10 @@ const PluginCard = lazy(() => import("./PluginCard"));
 const ParallelCoordsCard = lazy(() => import("./ParallelCoordsCard"));
 
 const ScatterPlotCard = lazy(() => import("./ScatterPlotCard"));
+
+const BarChartCard = lazy(() => import("./BarChartCard"));
+
+const ScalarTileCard = lazy(() => import("./ScalarTileCard"));
 
 /**
  * Descriptor for the card CardRenderer should render.
@@ -58,7 +62,7 @@ export type CardDescriptor =
     }
   | {
       kind: "multi-run";
-      cardType: "parallel" | "scatter";
+      cardType: MultiRunCardType;
       runIds: string[];
       /**
        * Settings storage key. Kept as a CardSettingsKey object (not a plain
@@ -119,6 +123,20 @@ export default function CardRenderer(props: CardDescriptor) {
       return (
         <Suspense fallback={<LazyCardFallback label="loading parallel coords…" />}>
           <ParallelCoordsCard runIds={runIds} settingsKey={settingsKey} onRemove={onRemove} autoOpenSettings={autoOpenSettings} />
+        </Suspense>
+      );
+    }
+    if (cardType === "bar") {
+      return (
+        <Suspense fallback={<LazyCardFallback label="loading bar chart…" />}>
+          <BarChartCard runIds={runIds} settingsKey={settingsKey} onRemove={onRemove} autoOpenSettings={autoOpenSettings} />
+        </Suspense>
+      );
+    }
+    if (cardType === "tile") {
+      return (
+        <Suspense fallback={<LazyCardFallback label="loading tile…" />}>
+          <ScalarTileCard runIds={runIds} settingsKey={settingsKey} onRemove={onRemove} autoOpenSettings={autoOpenSettings} />
         </Suspense>
       );
     }

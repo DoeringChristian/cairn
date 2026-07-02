@@ -17,6 +17,7 @@ import {
   createComparison,
   createTemplate,
   deleteTemplate,
+  isMultiRunCardType,
   reorderComparisonCards,
   deleteComparison,
   loadComparisons,
@@ -917,7 +918,7 @@ function ComparisonCardRenderer({
     [card.series],
   );
 
-  if (card.type === "parallel" || card.type === "scatter") {
+  if (isMultiRunCardType(card.type)) {
     return (
       <CardRenderer
         kind="multi-run"

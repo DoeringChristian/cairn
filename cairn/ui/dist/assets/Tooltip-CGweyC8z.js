@@ -1,0 +1,1 @@
+import{j as l}from"./index-o_0v-J_C.js";function g({x:t,y:e,containerW:s,containerH:a,width:o=220,children:r}){const p=t+o+14>s,n=e>a-100;return l.jsx("div",{className:"pointer-events-none absolute z-50 rounded border border-border bg-bg-elevated shadow-lg p-2 text-xs w-fit",style:{maxWidth:o,left:p?Math.max(4,t-o-14+10):t+14,top:n?e-80:e-8},children:r})}export{g as T};

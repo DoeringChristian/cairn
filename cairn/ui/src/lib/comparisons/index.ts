@@ -9,11 +9,12 @@
 export type {
   ComparisonSeriesRef,
   ComparisonCard,
+  MultiRunCardType,
   SmartFilterEntry,
   SmartFilters,
   Comparison,
 } from "./types";
-export { compareRunId } from "./types";
+export { compareRunId, MULTI_RUN_CARD_TYPES, isMultiRunCardType } from "./types";
 
 export {
   loadComparisons,

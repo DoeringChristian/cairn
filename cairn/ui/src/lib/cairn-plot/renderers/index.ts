@@ -1,5 +1,10 @@
 export { default as ScatterPlot, type ScatterPlotProps } from "./ScatterPlot";
 export {
+  default as BarChart,
+  type BarChartProps,
+  type BarDatum,
+} from "./BarChart";
+export {
   default as ParallelCoords,
   type ParallelCoordsProps,
 } from "./ParallelCoords";

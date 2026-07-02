@@ -31,6 +31,9 @@ export {
 } from "./transforms";
 export type { AxisSource, ParetoDirection } from "./transforms";
 
+// Formatting
+export { formatNum } from "./format";
+
 // Hooks
 export { useContainerSize } from "./hooks";
 
@@ -40,6 +43,7 @@ export { ColormapSwatch } from "./primitives";
 
 // Renderers
 export { ScatterPlot } from "./renderers";
+export { BarChart, type BarChartProps, type BarDatum } from "./renderers";
 export { ParallelCoords } from "./renderers";
 export { ScalarPlot } from "./renderers";
 export { ImagePane } from "./renderers";
