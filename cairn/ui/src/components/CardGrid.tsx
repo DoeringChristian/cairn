@@ -14,6 +14,7 @@ import {
   saveRunLayout,
 } from "../lib/run-layout";
 import type { RunLayout } from "../lib/run-layout";
+import { loadJson, saveJson, storageKeys } from "../lib/storage";
 
 interface Props {
   runId: string;
@@ -28,27 +29,13 @@ interface Entry {
 // ---------------------------------------------------------------------------
 // Section collapse persistence helpers.
 // ---------------------------------------------------------------------------
-const COLLAPSED_SECTIONS_KEY_PREFIX = "cairn:collapsed-sections:";
-
 function loadCollapsedSections(runId: string): Set<string> {
-  try {
-    const raw = localStorage.getItem(COLLAPSED_SECTIONS_KEY_PREFIX + runId);
-    if (!raw) return new Set();
-    return new Set(JSON.parse(raw) as string[]);
-  } catch {
-    return new Set();
-  }
+  const raw = loadJson<string[]>(localStorage, storageKeys.collapsedSections(runId));
+  return new Set(raw ?? []);
 }
 
 function saveCollapsedSections(runId: string, set: Set<string>): void {
-  try {
-    localStorage.setItem(
-      COLLAPSED_SECTIONS_KEY_PREFIX + runId,
-      JSON.stringify(Array.from(set)),
-    );
-  } catch {
-    /* quota exceeded or disabled storage; silently drop */
-  }
+  saveJson(localStorage, storageKeys.collapsedSections(runId), Array.from(set));
 }
 
 export default function CardGrid({ runId, sequences }: Props) {

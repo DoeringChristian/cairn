@@ -13,6 +13,7 @@
 
 import type { SequenceMeta } from "../api/types";
 import type { Section } from "./sections";
+import { loadJson, saveJson, storageKeys } from "./storage";
 
 export interface RunLayout {
   version: 1;
@@ -41,49 +42,35 @@ export function cardKeyOf(meta: SequenceMeta): string {
   return `${meta.name}::${meta.context_hash}`;
 }
 
-function storageKey(runId: string): string {
-  return `cairn:run-layout:${runId}`;
-}
-
 export function loadRunLayout(runId: string): RunLayout {
-  try {
-    const raw = localStorage.getItem(storageKey(runId));
-    if (!raw) return { ...EMPTY_LAYOUT };
-    const parsed = JSON.parse(raw) as Partial<RunLayout> | null;
-    if (!parsed || parsed.version !== 1) return { ...EMPTY_LAYOUT };
-    return {
-      version: 1,
-      sectionOrder: Array.isArray(parsed.sectionOrder) ? [...parsed.sectionOrder] : [],
-      cardSection:
-        parsed.cardSection && typeof parsed.cardSection === "object"
-          ? { ...parsed.cardSection }
-          : {},
-      sectionOrderOfCards:
-        parsed.sectionOrderOfCards && typeof parsed.sectionOrderOfCards === "object"
-          ? Object.fromEntries(
-              Object.entries(parsed.sectionOrderOfCards).map(([k, v]) => [
-                k,
-                Array.isArray(v) ? [...v] : [],
-              ]),
-            )
-          : {},
-    };
-  } catch {
-    return { ...EMPTY_LAYOUT };
-  }
+  const parsed = loadJson<Partial<RunLayout>>(localStorage, storageKeys.runLayout(runId));
+  if (!parsed || parsed.version !== 1) return { ...EMPTY_LAYOUT };
+  return {
+    version: 1,
+    sectionOrder: Array.isArray(parsed.sectionOrder) ? [...parsed.sectionOrder] : [],
+    cardSection:
+      parsed.cardSection && typeof parsed.cardSection === "object"
+        ? { ...parsed.cardSection }
+        : {},
+    sectionOrderOfCards:
+      parsed.sectionOrderOfCards && typeof parsed.sectionOrderOfCards === "object"
+        ? Object.fromEntries(
+            Object.entries(parsed.sectionOrderOfCards).map(([k, v]) => [
+              k,
+              Array.isArray(v) ? [...v] : [],
+            ]),
+          )
+        : {},
+  };
 }
 
 export function saveRunLayout(runId: string, layout: RunLayout): void {
-  try {
-    localStorage.setItem(storageKey(runId), JSON.stringify(layout));
-  } catch {
-    /* quota exceeded or disabled storage; silently drop */
-  }
+  saveJson(localStorage, storageKeys.runLayout(runId), layout);
 }
 
 export function resetRunLayout(runId: string): void {
   try {
-    localStorage.removeItem(storageKey(runId));
+    localStorage.removeItem(storageKeys.runLayout(runId));
   } catch {
     /* ignore */
   }

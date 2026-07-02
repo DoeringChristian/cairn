@@ -8,13 +8,13 @@
  * Stored in localStorage as `cairn:stream-mode`.
  */
 
-export type StreamMode = "auto" | "webrtc" | "jpeg";
+import { storageKeys } from "./storage";
 
-const STORAGE_KEY = "cairn:stream-mode";
+export type StreamMode = "auto" | "webrtc" | "jpeg";
 
 export function getStreamMode(): StreamMode {
   try {
-    const stored = localStorage.getItem(STORAGE_KEY);
+    const stored = localStorage.getItem(storageKeys.streamMode);
     if (stored === "webrtc" || stored === "jpeg" || stored === "auto") return stored;
   } catch { /* ignore */ }
   return "auto";
@@ -22,6 +22,6 @@ export function getStreamMode(): StreamMode {
 
 export function setStreamMode(mode: StreamMode): void {
   try {
-    localStorage.setItem(STORAGE_KEY, mode);
+    localStorage.setItem(storageKeys.streamMode, mode);
   } catch { /* ignore */ }
 }

@@ -8,6 +8,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { loadJson, saveJson, storageKeys } from "./storage";
 
 export type CardSettingsKey = {
   runId: string;
@@ -16,25 +17,25 @@ export type CardSettingsKey = {
 };
 
 export function cardSettingsStorageKey(key: CardSettingsKey): string {
-  return `cairn:card-settings:${key.runId}:${key.metricName}:${key.contextHash}`;
+  return storageKeys.cardSettings(key.runId, key.metricName, key.contextHash);
 }
 
+/**
+ * Load persisted card settings, discarding anything not tagged with the
+ * current `version: 1`. Every historical write includes `version: 1` (see
+ * each card's `DEFAULT_SETTINGS`, which `useCardSettings` always merges
+ * under persisted overrides before saving), so this check is a no-op for
+ * real data — it only guards against a future version bump or corrupted
+ * storage.
+ */
 export function loadCardSettings<T>(key: CardSettingsKey): T | null {
-  try {
-    const raw = localStorage.getItem(cardSettingsStorageKey(key));
-    if (!raw) return null;
-    return JSON.parse(raw) as T;
-  } catch {
-    return null;
-  }
+  const parsed = loadJson<{ version?: unknown }>(localStorage, cardSettingsStorageKey(key));
+  if (parsed === null || parsed.version !== 1) return null;
+  return parsed as T;
 }
 
 export function saveCardSettings<T>(key: CardSettingsKey, value: T): void {
-  try {
-    localStorage.setItem(cardSettingsStorageKey(key), JSON.stringify(value));
-  } catch {
-    /* quota exceeded or disabled storage; silently drop */
-  }
+  saveJson(localStorage, cardSettingsStorageKey(key), value);
 }
 
 export function resetCardSettings(key: CardSettingsKey): void {

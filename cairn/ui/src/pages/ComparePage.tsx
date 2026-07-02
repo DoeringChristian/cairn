@@ -31,6 +31,7 @@ import {
   type SmartFilters,
 } from "../lib/comparisons";
 import { loadCardSettings } from "../lib/card-settings";
+import { loadJson, saveJson, storageKeys } from "../lib/storage";
 import { formatRelative } from "../lib/format";
 import { useRuns } from "../api/hooks";
 import { api } from "../api/client";
@@ -69,7 +70,7 @@ export default function ComparePage() {
     if (!projectId) return;
     if (selectedId) return;
     if (comparisons.length === 0) return;
-    const lastKey = `cairn:last-comparison:${projectId}`;
+    const lastKey = storageKeys.lastComparison(projectId);
     const lastId = sessionStorage.getItem(lastKey);
     const target = (lastId && comparisons.find((c) => c.id === lastId))
       ? lastId
@@ -86,7 +87,7 @@ export default function ComparePage() {
 
   const selectComparison = useCallback(
     (id: string) => {
-      if (projectId) sessionStorage.setItem(`cairn:last-comparison:${projectId}`, id);
+      if (projectId) sessionStorage.setItem(storageKeys.lastComparison(projectId), id);
       const params = new URLSearchParams(searchParams);
       params.set("c", id);
       setSearchParams(params, { replace: true });
@@ -120,7 +121,7 @@ export default function ComparePage() {
     (id: string) => {
       if (!projectId) return;
       deleteComparison(projectId, id);
-      const lastKey = `cairn:last-comparison:${projectId}`;
+      const lastKey = storageKeys.lastComparison(projectId);
       if (sessionStorage.getItem(lastKey) === id) sessionStorage.removeItem(lastKey);
       if (id === selectedId) clearSelection();
       refresh();
@@ -681,18 +682,15 @@ function ComparisonView({
   const [addCardOpen, setAddCardOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
-  const collapsedKey = `cairn:collapsed-sections:compare:${comparison.id}`;
-  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(() => {
-    try {
-      const raw = localStorage.getItem(collapsedKey);
-      return raw ? new Set(JSON.parse(raw) as string[]) : new Set();
-    } catch { return new Set(); }
-  });
+  const collapsedKey = storageKeys.collapsedSections(`compare:${comparison.id}`);
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(
+    () => new Set(loadJson<string[]>(localStorage, collapsedKey) ?? []),
+  );
   const toggleSection = useCallback((name: string) => {
     setCollapsedSections((prev) => {
       const next = new Set(prev);
       if (next.has(name)) next.delete(name); else next.add(name);
-      try { localStorage.setItem(collapsedKey, JSON.stringify([...next])); } catch {}
+      saveJson(localStorage, collapsedKey, [...next]);
       return next;
     });
   }, [collapsedKey]);

@@ -7,6 +7,7 @@ import RunStatusBadge from "../components/RunStatusBadge";
 import { formatDuration, formatRelative, safeJsonParse } from "../lib/format";
 import { addCardsToComparison, createComparison, useTemplates, type ComparisonTemplate } from "../lib/comparisons";
 import { saveCardSettings } from "../lib/card-settings";
+import { gcDeletedRunKeys } from "../lib/storage";
 import { api } from "../api/client";
 import { setRunMetadata } from "../lib/run-label";
 import SettingsPopover from "../components/SettingsPopover";
@@ -145,7 +146,11 @@ export default function RunsTablePage() {
 
   const onBulkDelete = useCallback(async () => {
     if (!confirm(`Delete ${selected.size} run(s)? This cannot be undone.`)) return;
-    await bulkDelete([...selected]);
+    const ids = [...selected];
+    await bulkDelete(ids);
+    // Table data can be paginated/filtered, so it isn't a safe "keep" set —
+    // only sweep the ids we know were just deleted.
+    gcDeletedRunKeys(new Set(ids));
     setSelected(new Set());
   }, [selected, bulkDelete]);
 
@@ -197,6 +202,7 @@ export default function RunsTablePage() {
     if (toDelete.length === 0) { alert("No old versions to delete."); return; }
     if (!confirm(`Delete ${toDelete.length} old run(s)? This cannot be undone.`)) return;
     await bulkDelete(toDelete);
+    gcDeletedRunKeys(new Set(toDelete));
   }, [runs, bulkDelete]);
 
   // Populate run label cache for formatting across the app.

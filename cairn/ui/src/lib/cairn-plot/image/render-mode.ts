@@ -1,10 +1,10 @@
-export type RenderMode = "auto" | "gpu" | "cpu";
+import { storageKeys } from "../../storage";
 
-const STORAGE_KEY = "cairn:render-mode";
+export type RenderMode = "auto" | "gpu" | "cpu";
 
 export function getRenderMode(): RenderMode {
   try {
-    const stored = localStorage.getItem(STORAGE_KEY);
+    const stored = localStorage.getItem(storageKeys.renderMode);
     if (stored === "gpu" || stored === "cpu" || stored === "auto")
       return stored;
   } catch {
@@ -15,7 +15,7 @@ export function getRenderMode(): RenderMode {
 
 export function setRenderMode(mode: RenderMode): void {
   try {
-    localStorage.setItem(STORAGE_KEY, mode);
+    localStorage.setItem(storageKeys.renderMode, mode);
   } catch {
     /* ignore */
   }

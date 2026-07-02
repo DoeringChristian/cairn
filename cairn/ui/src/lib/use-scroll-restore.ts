@@ -1,10 +1,9 @@
 import { useEffect, useRef, type RefObject } from "react";
-
-const PREFIX = "cairn:scroll:";
+import { storageKeys } from "./storage";
 
 function read(key: string): number | null {
   try {
-    const raw = sessionStorage.getItem(PREFIX + key);
+    const raw = sessionStorage.getItem(storageKeys.scroll(key));
     if (raw == null) return null;
     const n = Number(raw);
     return Number.isFinite(n) ? n : null;
@@ -15,7 +14,7 @@ function read(key: string): number | null {
 
 function write(key: string, y: number): void {
   try {
-    sessionStorage.setItem(PREFIX + key, String(y));
+    sessionStorage.setItem(storageKeys.scroll(key), String(y));
   } catch {
     /* sessionStorage can be disabled — silently ignore */
   }
