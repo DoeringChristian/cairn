@@ -28,6 +28,8 @@ const ParallelCoordsCard = lazy(() => import("./ParallelCoordsCard"));
 
 const ScatterPlotCard = lazy(() => import("./ScatterPlotCard"));
 
+const TableCard = lazy(() => import("./TableCard"));
+
 /**
  * Descriptor for the card CardRenderer should render.
  *
@@ -177,6 +179,12 @@ export default function CardRenderer(props: CardDescriptor) {
       return <HistogramCard {...baseProps} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />;
     case "text":
       return <TextViewerCard {...baseProps} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />;
+    case "table":
+      return (
+        <Suspense fallback={<LazyCardFallback label="loading table…" />}>
+          <TableCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />
+        </Suspense>
+      );
     case "artifact":
       return <ArtifactCard {...baseProps} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />;
     case "plugin":

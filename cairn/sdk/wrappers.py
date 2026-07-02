@@ -52,6 +52,45 @@ class Text(_TypeWrapper):
     object_type = "text"
 
 
+class Table(_TypeWrapper):
+    """Tabular data (columns + rows), stored as a compact JSON blob.
+
+    Construct either from explicit ``columns`` + ``data``::
+
+        run.track(
+            cairn.Table(
+                columns=["epoch", "loss", "correct"],
+                data=[[0, 1.2, False], [1, 0.7, True]],
+            ),
+            name="predictions",
+            step=0,
+        )
+
+    or from a pandas ``DataFrame``::
+
+        run.track(cairn.Table(dataframe=df), name="predictions", step=0)
+
+    Column types (``number``/``string``/``bool``/``other``) are inferred at log
+    time. Rows are capped at 10,000 — larger tables are truncated (the original
+    row count is recorded in metadata). Values that are not JSON-native are
+    stringified. See ``handlers/table.py``.
+    """
+
+    object_type = "table"
+
+    def __init__(
+        self,
+        columns: Any = None,
+        data: Any = None,
+        dataframe: Any = None,
+        **kwargs: Any,
+    ):
+        # Unlike the positional-``obj`` wrappers, Table takes named tabular
+        # inputs; the handler normalises them from this dict.
+        self.obj = {"columns": columns, "data": data, "dataframe": dataframe}
+        self.kwargs = kwargs
+
+
 class Artifact(_TypeWrapper):
     """Pickle-serialized Python object.
 

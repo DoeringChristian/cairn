@@ -17,6 +17,7 @@ from .registry import (
     register_handler,
 )
 from .scalar import ScalarHandler
+from .table import TableHandler
 from .tensor import TensorHandler
 from .text import TextHandler
 from .video import VideoHandler
@@ -38,6 +39,8 @@ if not _already_registered:
     # themselves doesn't matter.
     default_registry.register(HistogramHandler())
     default_registry.register(TensorHandler())
+    # Table dispatches via the cairn.Table wrapper only.
+    default_registry.register(TableHandler())
     default_registry.register(PluginHandler())
     default_registry.register(ArtifactHandler())
     _already_registered = True
@@ -56,6 +59,7 @@ __all__ = [
     "FigureHandler",
     "HistogramHandler",
     "TensorHandler",
+    "TableHandler",
     "PluginHandler",
     "ArtifactHandler",
 ]
