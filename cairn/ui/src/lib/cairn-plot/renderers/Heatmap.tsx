@@ -73,7 +73,12 @@ export default function Heatmap({
   }, [matrix, min, max]);
 
   // Paint the cells into an offscreen-sized canvas (native cols×rows), CSS
-  // scales it to the plot rect (crisp pixelation for discrete cells).
+  // scales it to the plot rect (crisp pixelation for discrete cells). The
+  // canvas only mounts once the container has been measured (see the
+  // `plotW > 0 && plotH > 0` gate below), which happens asynchronously via
+  // ResizeObserver — so `size` must be a dependency here too, otherwise the
+  // very first paint attempt runs before the canvas exists (ref still null)
+  // and never gets retried once it mounts.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || rows === 0 || cols === 0) return;
@@ -104,7 +109,7 @@ export default function Heatmap({
       }
     }
     ctx.putImageData(img, 0, 0);
-  }, [matrix, colormap, lo, hi, logColor, originTop, rows, cols]);
+  }, [matrix, colormap, lo, hi, logColor, originTop, rows, cols, size]);
 
   const { w, h } = size;
   const plotW = Math.max(0, w - PAD.left - PAD.right);
