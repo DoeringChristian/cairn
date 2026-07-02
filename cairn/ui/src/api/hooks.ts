@@ -55,10 +55,17 @@ export function useRun(runId: string) {
 }
 
 export function useSequences(runId: string) {
+  const runQ = useQuery({
+    queryKey: qk.run(runId),
+    queryFn: () => api.run(runId),
+    staleTime: 5_000,
+    enabled: !!runId,
+  });
+  const live = runQ.data ? runQ.data.run.status === "running" : true;
   return useQuery({
     queryKey: qk.sequences(runId),
     queryFn: () => api.sequences(runId),
-    refetchInterval: 2_000,
+    refetchInterval: live ? 2_000 : false,
   });
 }
 
@@ -67,10 +74,17 @@ export function useSequence(
   name: string,
   opts: { context?: string; maxPoints?: number } = {},
 ) {
+  const runQ = useQuery({
+    queryKey: qk.run(runId),
+    queryFn: () => api.run(runId),
+    staleTime: 5_000,
+    enabled: !!runId,
+  });
+  const live = runQ.data ? runQ.data.run.status === "running" : true;
   return useQuery({
     queryKey: qk.sequence(runId, name, opts),
     queryFn: () => api.sequence(runId, name, opts),
-    refetchInterval: 2_000,
+    refetchInterval: live ? 2_000 : false,
   });
 }
 
@@ -85,10 +99,17 @@ export function useLogs(
   runId: string,
   opts: { offset?: number; limit?: number; stream?: string; search?: string },
 ) {
+  const runQ = useQuery({
+    queryKey: qk.run(runId),
+    queryFn: () => api.run(runId),
+    staleTime: 5_000,
+    enabled: !!runId,
+  });
+  const live = runQ.data ? runQ.data.run.status === "running" : true;
   return useQuery({
     queryKey: qk.logs(runId, opts),
     queryFn: () => api.logs(runId, opts),
-    refetchInterval: 3_000,
+    refetchInterval: live ? 3_000 : false,
   });
 }
 
