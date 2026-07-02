@@ -1,9 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useInfiniteScroll } from "../lib/use-infinite-scroll";
-import { useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { useInfiniteRuns, useSetTags } from "../api/hooks";
-import { qk } from "../api/query-keys";
+import { useBulkRunMutation, useInfiniteRuns, useSetTags } from "../api/hooks";
 import type { Run, RunStatus } from "../api/types";
 import RunStatusBadge from "../components/RunStatusBadge";
 import { formatDuration, formatRelative, safeJsonParse } from "../lib/format";
@@ -73,8 +71,8 @@ function compareRuns(a: Run, b: Run, col: SortColumn): number {
 export default function RunsTablePage() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
-  const qc = useQueryClient();
   const q = useInfiniteRuns({ project: projectId });
+  const { bulkDelete, bulkArchive } = useBulkRunMutation();
 
   const [statusFilter, setStatusFilter] = useState<"all" | RunStatus>("all");
   const [search, setSearch] = useState<string>("");
@@ -147,22 +145,19 @@ export default function RunsTablePage() {
 
   const onBulkDelete = useCallback(async () => {
     if (!confirm(`Delete ${selected.size} run(s)? This cannot be undone.`)) return;
-    await Promise.all([...selected].map((id) => api.deleteRun(id)));
+    await bulkDelete([...selected]);
     setSelected(new Set());
-    qc.invalidateQueries({ queryKey: qk.runsInfinite() });
-  }, [selected, qc]);
+  }, [selected, bulkDelete]);
 
   const onBulkArchive = useCallback(async () => {
-    await Promise.all([...selected].map((id) => api.archiveRun(id)));
+    await bulkArchive([...selected], true);
     setSelected(new Set());
-    qc.invalidateQueries({ queryKey: qk.runsInfinite() });
-  }, [selected, qc]);
+  }, [selected, bulkArchive]);
 
   const onBulkUnarchive = useCallback(async () => {
-    await Promise.all([...selected].map((id) => api.unarchiveRun(id)));
+    await bulkArchive([...selected], false);
     setSelected(new Set());
-    qc.invalidateQueries({ queryKey: qk.runsInfinite() });
-  }, [selected, qc]);
+  }, [selected, bulkArchive]);
 
   const onArchiveOldVersions = useCallback(async () => {
     const groups = new Map<string, Run[]>();
@@ -181,9 +176,8 @@ export default function RunsTablePage() {
     }
     if (toArchive.length === 0) { alert("No old versions to archive."); return; }
     if (!confirm(`Archive ${toArchive.length} old run(s)?`)) return;
-    await Promise.all(toArchive.map((id) => api.archiveRun(id)));
-    qc.invalidateQueries({ queryKey: qk.runsInfinite() });
-  }, [runs, qc]);
+    await bulkArchive(toArchive, true);
+  }, [runs, bulkArchive]);
 
   const onDeleteOldVersions = useCallback(async () => {
     const groups = new Map<string, Run[]>();
@@ -202,9 +196,8 @@ export default function RunsTablePage() {
     }
     if (toDelete.length === 0) { alert("No old versions to delete."); return; }
     if (!confirm(`Delete ${toDelete.length} old run(s)? This cannot be undone.`)) return;
-    await Promise.all(toDelete.map((id) => api.deleteRun(id)));
-    qc.invalidateQueries({ queryKey: qk.runsInfinite() });
-  }, [runs, qc]);
+    await bulkDelete(toDelete);
+  }, [runs, bulkDelete]);
 
   // Populate run label cache for formatting across the app.
   useMemo(() => { if (runs.length > 0) setRunMetadata(runs); }, [runs]);

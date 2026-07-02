@@ -123,6 +123,27 @@ export function useSetTags(runId: string) {
   });
 }
 
+export function useBulkRunMutation() {
+  const qc = useQueryClient();
+  const invalidate = (runIds: string[]) => {
+    qc.invalidateQueries({ queryKey: qk.runsInfinite() });
+    qc.invalidateQueries({ queryKey: ["runs"] });
+    for (const rid of runIds) qc.invalidateQueries({ queryKey: qk.run(rid) });
+  };
+  return {
+    bulkDelete: async (runIds: string[]) => {
+      await Promise.all(runIds.map((id) => api.deleteRun(id)));
+      invalidate(runIds);
+    },
+    bulkArchive: async (runIds: string[], archived: boolean) => {
+      await Promise.all(
+        runIds.map((id) => (archived ? api.archiveRun(id) : api.unarchiveRun(id))),
+      );
+      invalidate(runIds);
+    },
+  };
+}
+
 export function useSetNotes(runId: string) {
   const qc = useQueryClient();
   return useMutation({
