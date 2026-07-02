@@ -72,6 +72,54 @@ export interface ImageProcessing {
   flipSign: boolean;
 }
 
+// ── Image overlays (bounding boxes + segmentation masks) ──
+
+export interface OverlayBox {
+  position: { minX: number; minY: number; maxX: number; maxY: number };
+  /** "fraction" (0..1 of image dims) or "pixel". Defaults to "fraction". */
+  domain?: "pixel" | "fraction";
+  class_id: number;
+  label?: string | null;
+  score?: number | null;
+}
+
+export interface OverlayMask {
+  /** Mask name (used as a stable key). */
+  name: string;
+  /** base64-encoded grayscale PNG; pixel value == class id (0 = background). */
+  png_b64: string;
+  class_labels?: Record<string, string>;
+}
+
+/** Parsed overlay payload for a single image (from artifact metadata). */
+export interface ImageOverlayData {
+  boxes?: OverlayBox[];
+  masks?: OverlayMask[];
+  class_labels?: Record<string, string>;
+}
+
+/** Persisted overlay display settings (card-owned). */
+export interface ImageOverlaySettings {
+  enabled: boolean;
+  showBoxes: boolean;
+  showMasks: boolean;
+  /** Boxes with a score below this threshold are hidden (0..1). */
+  scoreThreshold: number;
+  /** Mask alpha (0..1). */
+  maskOpacity: number;
+  /** Class ids explicitly hidden. */
+  hiddenClasses: number[];
+}
+
+export const DEFAULT_OVERLAY_SETTINGS: ImageOverlaySettings = {
+  enabled: true,
+  showBoxes: true,
+  showMasks: true,
+  scoreThreshold: 0,
+  maskOpacity: 0.5,
+  hiddenClasses: [],
+};
+
 // ── Scalar plot config ──
 
 export interface PromotedSeriesConfig {
@@ -90,3 +138,9 @@ export const SERIES_COLORS = [
   "#c678dd",
   "#56d4dd",
 ];
+
+/** Stable per-class color from the shared categorical palette. */
+export function overlayClassColor(classId: number): string {
+  const n = SERIES_COLORS.length;
+  return SERIES_COLORS[((classId % n) + n) % n]!;
+}

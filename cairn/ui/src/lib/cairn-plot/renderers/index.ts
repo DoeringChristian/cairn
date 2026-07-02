@@ -19,3 +19,7 @@ export {
   default as HistogramPlot,
   type HistogramPlotProps,
 } from "./HistogramPlot";
+export {
+  default as ImageOverlay,
+  type ImageOverlayProps,
+} from "./ImageOverlay";

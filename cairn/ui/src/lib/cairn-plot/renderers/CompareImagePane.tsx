@@ -1,7 +1,14 @@
-import { useRef } from "react";
-import type { CompareMode, ImageProcessing, Interpolation } from "../types";
+import { useRef, useState } from "react";
+import type {
+  CompareMode,
+  ImageProcessing,
+  Interpolation,
+  ImageOverlayData,
+  ImageOverlaySettings,
+} from "../types";
 import { useImageViewport, type Viewport as ImageViewport } from "../hooks/use-image-viewport";
 import { useGammaFilter, GammaFilterSvg } from "./gamma-filter";
+import ImageOverlay from "./ImageOverlay";
 
 const DEFAULT_PROCESSING: ImageProcessing = {
   brightness: 0,
@@ -31,6 +38,10 @@ export interface CompareImagePaneProps {
   label?: string;
   isDraggable?: boolean;
   onDragStart?: (e: React.DragEvent) => void;
+
+  /** Overlay annotations — applied to the FOREGROUND (prediction) image only. */
+  overlay?: ImageOverlayData;
+  overlaySettings?: ImageOverlaySettings;
 }
 
 /**
@@ -54,8 +65,18 @@ export default function CompareImagePane({
   label = "",
   isDraggable = false,
   onDragStart,
+  overlay,
+  overlaySettings,
 }: CompareImagePaneProps) {
   const paneRef = useRef<HTMLDivElement>(null);
+  const [naturalDims, setNaturalDims] = useState<{ w: number; h: number } | null>(null);
+
+  const showOverlay =
+    !!overlay &&
+    !!overlaySettings?.enabled &&
+    !!naturalDims &&
+    !!imageUrl &&
+    ((overlay.boxes?.length ?? 0) > 0 || (overlay.masks?.length ?? 0) > 0);
 
   const { gammaFilterId, filterStr, gamma, offset } = useGammaFilter(processing);
   const transformStr = `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`;
@@ -82,7 +103,7 @@ export default function CompareImagePane({
         onPointerCancel={viewportProps.onPointerCancel}
       >
         <div className="relative w-full h-full">
-          <div className="w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
+          <div className="relative w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
             <img
               src={imageUrl ?? undefined}
               alt="pred"
@@ -93,7 +114,19 @@ export default function CompareImagePane({
                 imageRendering: imgRendering,
                 ...(mode === "blend" ? { opacity: blendAlpha } : {}),
               }}
+              onLoad={(e) => {
+                const img = e.currentTarget;
+                setNaturalDims({ w: img.naturalWidth, h: img.naturalHeight });
+              }}
             />
+            {showOverlay && (
+              <ImageOverlay
+                data={overlay!}
+                settings={overlaySettings!}
+                naturalWidth={naturalDims!.w}
+                naturalHeight={naturalDims!.h}
+              />
+            )}
           </div>
           <div
             className="absolute inset-0 overflow-hidden"

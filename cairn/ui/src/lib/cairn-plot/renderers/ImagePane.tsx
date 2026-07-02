@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Colormap, DiffMode, ImageProcessing, Interpolation } from "../types";
+import type {
+  Colormap,
+  DiffMode,
+  ImageProcessing,
+  Interpolation,
+  ImageOverlayData,
+  ImageOverlaySettings,
+} from "../types";
 import { useGammaFilter, GammaFilterSvg } from "./gamma-filter";
+import ImageOverlay from "./ImageOverlay";
 import {
   computeDiff,
   loadImageData,
@@ -42,6 +50,10 @@ export interface ImagePaneProps {
   isDraggable?: boolean;
   onDragStart?: (e: React.DragEvent) => void;
   className?: string;
+
+  /** Optional bounding-box / segmentation-mask annotations for this image. */
+  overlay?: ImageOverlayData;
+  overlaySettings?: ImageOverlaySettings;
 }
 
 export default function ImagePane({
@@ -60,6 +72,8 @@ export default function ImagePane({
   label,
   isDraggable = false,
   onDragStart,
+  overlay,
+  overlaySettings,
 }: ImagePaneProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const falseColorRef = useRef<HTMLCanvasElement | null>(null);
@@ -385,6 +399,19 @@ export default function ImagePane({
               containerRef={imgWrapperRef}
             />
           )}
+          {overlay &&
+            overlaySettings?.enabled &&
+            naturalDims &&
+            imageUrl &&
+            ((overlay.boxes?.length ?? 0) > 0 ||
+              (overlay.masks?.length ?? 0) > 0) && (
+              <ImageOverlay
+                data={overlay}
+                settings={overlaySettings}
+                naturalWidth={naturalDims.w}
+                naturalHeight={naturalDims.h}
+              />
+            )}
         </div>
       </div>
       <span

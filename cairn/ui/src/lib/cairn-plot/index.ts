@@ -11,10 +11,17 @@ export type {
   ImageProcessing,
   PromotedSeriesConfig,
   ColormapName,
+  OverlayBox,
+  OverlayMask,
+  ImageOverlayData,
+  ImageOverlaySettings,
 } from "./types";
 
 // Palette
-export { SERIES_COLORS } from "./types";
+export { SERIES_COLORS, overlayClassColor } from "./types";
+
+// Image overlays
+export { DEFAULT_OVERLAY_SETTINGS } from "./types";
 
 // Colormaps
 export { viridis, DIVERGING_COLORMAPS, getColormapLUT } from "./colormaps";
@@ -60,3 +67,4 @@ export { ImagePane } from "./renderers";
 export { CompareImagePane } from "./renderers";
 export { Heatmap } from "./renderers";
 export { HistogramPlot } from "./renderers";
+export { ImageOverlay } from "./renderers";

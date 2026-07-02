@@ -20,8 +20,13 @@ import {
   type ImageProcessing,
   type Interpolation,
   type Colormap,
+  type ImageOverlayData,
+  type ImageOverlaySettings,
+  type OverlayMask,
   DIVERGING_COLORMAPS,
+  DEFAULT_OVERLAY_SETTINGS,
   getColormapLUT,
+  overlayClassColor,
   ImagePane,
   CompareImagePane,
   Colorbar,
@@ -84,6 +89,7 @@ interface ImageSettings extends BaseCardSettings {
   splitPosition?: number;
   blendAlpha?: number;
   splitSynced?: boolean;
+  overlay?: ImageOverlaySettings;
 }
 
 function defaultImageSettings(seed: {
@@ -147,6 +153,38 @@ function resolveArtifact(
     }
   }
   return { hash: undefined, fallbackStep: null };
+}
+
+/** Parse box/mask overlay annotations out of a point's artifact metadata. */
+function parseOverlay(pt: SequencePoint | undefined): ImageOverlayData | null {
+  const raw = pt?.artifact_metadata;
+  if (!raw) return null;
+  let meta: Record<string, unknown>;
+  try {
+    meta = JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const boxes = Array.isArray(meta.boxes)
+    ? (meta.boxes as ImageOverlayData["boxes"])
+    : undefined;
+  const masksObj =
+    meta.masks && typeof meta.masks === "object"
+      ? (meta.masks as Record<string, { png_b64: string; class_labels?: Record<string, string> }>)
+      : undefined;
+  const masks: OverlayMask[] | undefined = masksObj
+    ? Object.entries(masksObj).map(([name, m]) => ({
+        name,
+        png_b64: m.png_b64,
+        class_labels: m.class_labels,
+      }))
+    : undefined;
+  const class_labels =
+    meta.class_labels && typeof meta.class_labels === "object"
+      ? (meta.class_labels as Record<string, string>)
+      : undefined;
+  if (!boxes?.length && !masks?.length) return null;
+  return { boxes, masks, class_labels };
 }
 
 // ---------------------------------------------------------------------------
@@ -449,6 +487,72 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     return resolveArtifact(stepMap, currentStep, steps, settings.missingImageMode);
   }, [perSeriesStepMap, perSeriesPoints, currentStep, settings.missingImageMode]);
 
+  // -----------------------------------------------------------------------
+  // Overlays (bounding boxes + segmentation masks)
+  // -----------------------------------------------------------------------
+  const ovl: ImageOverlaySettings = useMemo(
+    () => ({ ...DEFAULT_OVERLAY_SETTINGS, ...(settings.overlay ?? {}) }),
+    [settings.overlay],
+  );
+
+  // Overlay data for the foreground image currently shown in each pane.
+  const paneOverlays = useMemo(() => {
+    return effectiveMetrics.map((_, i) => {
+      const stepMap = perSeriesStepMap[i] ?? new Map();
+      const steps = perSeriesPoints[i]?.map((p) => p.step) ?? [];
+      const { hash, fallbackStep } = resolveArtifact(stepMap, currentStep, steps, settings.missingImageMode);
+      if (!hash) return null;
+      const step = fallbackStep ?? currentStep;
+      return parseOverlay(stepMap.get(step));
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveMetrics, perSeriesStepMap, perSeriesPoints, currentStep, settings.missingImageMode]);
+
+  const { hasOverlay, overlayClasses } = useMemo(() => {
+    const classes = new Map<number, string>();
+    let any = false;
+    for (const ov of paneOverlays) {
+      if (!ov) continue;
+      if ((ov.boxes?.length ?? 0) > 0 || (ov.masks?.length ?? 0) > 0) any = true;
+      for (const b of ov.boxes ?? []) {
+        if (!classes.has(b.class_id)) {
+          classes.set(b.class_id, b.label ?? ov.class_labels?.[String(b.class_id)] ?? `#${b.class_id}`);
+        }
+      }
+      for (const [k, v] of Object.entries(ov.class_labels ?? {})) {
+        const id = Number(k);
+        if (id !== 0 && !classes.has(id)) classes.set(id, v);
+      }
+      for (const m of ov.masks ?? []) {
+        for (const [k, v] of Object.entries(m.class_labels ?? {})) {
+          const id = Number(k);
+          if (id !== 0 && !classes.has(id)) classes.set(id, v);
+        }
+      }
+    }
+    return {
+      hasOverlay: any,
+      overlayClasses: [...classes.entries()].sort((a, b) => a[0] - b[0]),
+    };
+  }, [paneOverlays]);
+
+  const updateOverlay = useCallback(
+    (changes: Partial<ImageOverlaySettings>) => {
+      updateSettings({ overlay: { ...ovl, ...changes } });
+    },
+    [ovl, updateSettings],
+  );
+
+  const toggleOverlayClass = useCallback(
+    (classId: number) => {
+      const hidden = new Set(ovl.hiddenClasses);
+      if (hidden.has(classId)) hidden.delete(classId);
+      else hidden.add(classId);
+      updateOverlay({ hiddenClasses: [...hidden] });
+    },
+    [ovl.hiddenClasses, updateOverlay],
+  );
+
   const autoHeight = useMemo((): string | undefined => {
     if (resolveCardHeight(settings, undefined) != null) return undefined;
     if (!imageAspect || containerWidth <= 0) return "20rem";
@@ -560,6 +664,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     m: { runId?: string; name: string; context_hash: string },
     _paneIdx: number,
     label: string,
+    overlayData: ImageOverlayData | null,
   ) => (
     <div className="flex gap-0.5 h-full">
       <div className="relative flex-1 min-w-0 overflow-hidden border border-accent/20 rounded">
@@ -595,6 +700,8 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
           onDragStart={(e) => onImageDragStart(e, m)}
           onNaturalSize={onImageNaturalSize}
           label={label}
+          overlay={overlayData ?? undefined}
+          overlaySettings={ovl}
         />
       </div>
     </div>
@@ -608,6 +715,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     mode: "split" | "blend",
     splitPos: number,
     blendAlpha: number,
+    overlayData: ImageOverlayData | null,
   ) => (
     <CompareImagePane
       imageUrl={predUrl}
@@ -624,6 +732,8 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
       isDraggable
       onDragStart={(e) => onImageDragStart(e, m)}
       onSplitPositionChange={(pos) => updateSettings({ splitPosition: pos })}
+      overlay={overlayData ?? undefined}
+      overlaySettings={ovl}
     />
   );
 
@@ -659,15 +769,16 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
 
           const imageUrl = hash ? api.artifactUrl(hash) : null;
           const baselineUrl = paneBaseline ? api.artifactUrl(paneBaseline) : null;
+          const paneOverlay = paneOverlays[paneIdx] ?? null;
 
           let content: React.ReactNode;
           switch (layout) {
             case "side-by-side":
-              content = renderSideBySidePane(imageUrl!, baselineUrl!, m, paneIdx, label);
+              content = renderSideBySidePane(imageUrl!, baselineUrl!, m, paneIdx, label, paneOverlay);
               break;
             case "split":
             case "blend":
-              content = renderOverlayPane(imageUrl!, baselineUrl!, label, m, layout, splitPos, blendAlpha);
+              content = renderOverlayPane(imageUrl!, baselineUrl!, label, m, layout, splitPos, blendAlpha, paneOverlay);
               break;
             case "plain":
             default:
@@ -688,6 +799,8 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                   onDragStart={(e) => onImageDragStart(e, m)}
                   onNaturalSize={onImageNaturalSize}
                   label={label}
+                  overlay={paneOverlay ?? undefined}
+                  overlaySettings={ovl}
                 />
               );
               break;
@@ -744,6 +857,8 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
       onDragStart={(e) => onImageDragStart(e, effectiveMetrics[0]!)}
       onNaturalSize={onImageNaturalSize}
       label={metric.name}
+      overlay={paneOverlays[0] ?? undefined}
+      overlaySettings={ovl}
     />
   );
 
@@ -929,6 +1044,82 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
         onChange={(v) => updateSettings({ showAxes: v })}
         description="Show pixel coordinate ticks along edges"
       />
+      {hasOverlay && (
+        <>
+          <SettingsSection title="Overlays" />
+          <Toggle
+            label="Show overlays"
+            checked={ovl.enabled}
+            onChange={(v) => updateOverlay({ enabled: v })}
+            description="Bounding boxes + segmentation masks (foreground image in split/blend)"
+          />
+          {ovl.enabled && (
+            <>
+              <Toggle
+                label="Bounding boxes"
+                checked={ovl.showBoxes}
+                onChange={(v) => updateOverlay({ showBoxes: v })}
+              />
+              <Toggle
+                label="Segmentation masks"
+                checked={ovl.showMasks}
+                onChange={(v) => updateOverlay({ showMasks: v })}
+              />
+              <Slider
+                label="Score threshold"
+                value={ovl.scoreThreshold}
+                onChange={(v) => updateOverlay({ scoreThreshold: v })}
+                min={0}
+                max={1}
+                step={0.01}
+                format={(v) => v.toFixed(2)}
+                description="Hide boxes scoring below this value"
+              />
+              <Slider
+                label="Mask opacity"
+                value={ovl.maskOpacity}
+                onChange={(v) => updateOverlay({ maskOpacity: v })}
+                min={0}
+                max={1}
+                step={0.01}
+                format={(v) => v.toFixed(2)}
+              />
+              {overlayClasses.length > 0 && (
+                <div className="mt-2">
+                  <label className="block text-[10px] uppercase tracking-wide text-fg-muted mb-1">
+                    Classes
+                  </label>
+                  <div className="flex flex-col gap-1">
+                    {overlayClasses.map(([classId, name]) => {
+                      const visible = !ovl.hiddenClasses.includes(classId);
+                      return (
+                        <button
+                          key={classId}
+                          type="button"
+                          onClick={() => toggleOverlayClass(classId)}
+                          className={`flex items-center gap-2 rounded px-1.5 py-1 text-xs text-left hover:bg-bg-hover ${visible ? "text-fg" : "text-fg-subtle line-through"}`}
+                        >
+                          <span
+                            className="inline-block h-3 w-3 shrink-0 rounded-sm"
+                            style={{
+                              backgroundColor: overlayClassColor(classId),
+                              opacity: visible ? 1 : 0.3,
+                            }}
+                          />
+                          <span className="mono truncate flex-1">{name}</span>
+                          <span className="text-[10px] text-fg-subtle">
+                            {visible ? "shown" : "hidden"}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </>
+      )}
       <SettingsSection title="Diff" />
       <Select
         label="Diff mode"
