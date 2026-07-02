@@ -1,10 +1,7 @@
 // Internal satellite of ScalarPlot. Exported for ScalarPlot's use only —
 // intentionally NOT re-exported from the public cairn-plot barrels.
 
-export interface PromotedSeriesConfig {
-  min: number;
-  max: number;
-}
+import type { PromotedSeriesConfig } from "../../types";
 
 export interface LegendSeries {
   key: string;

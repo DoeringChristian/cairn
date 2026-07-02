@@ -1,10 +1,9 @@
 import { useRef } from "react";
-import type { CompareMode, Interpolation } from "../types";
-import { useImageViewport } from "../hooks/use-image-viewport";
+import type { CompareMode, ImageProcessing, Interpolation } from "../types";
+import { useImageViewport, type Viewport as ImageViewport } from "../hooks/use-image-viewport";
 import { useGammaFilter, GammaFilterSvg } from "./gamma-filter";
-import type { ImageProcessingProps } from "./ImagePane";
 
-const DEFAULT_PROCESSING: ImageProcessingProps = {
+const DEFAULT_PROCESSING: ImageProcessing = {
   brightness: 0,
   contrast: 0,
   gamma: 1,
@@ -24,9 +23,9 @@ export interface CompareImagePaneProps {
 
   zoom: number;
   pan: { x: number; y: number };
-  onViewportChange?: (v: { zoom: number; pan: { x: number; y: number } }) => void;
+  onViewportChange?: (v: ImageViewport) => void;
 
-  processing?: ImageProcessingProps;
+  processing?: ImageProcessing;
   interpolation?: Interpolation;
 
   label?: string;

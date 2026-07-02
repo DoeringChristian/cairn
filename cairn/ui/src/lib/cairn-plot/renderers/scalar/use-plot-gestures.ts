@@ -27,8 +27,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MutableRefObject, RefObject } from "react";
-import type { Viewport } from "../../types";
-import type { PromotedSeriesConfig } from "./scalar-legend";
+import type { PromotedSeriesConfig, Viewport } from "../../types";
 
 export interface PlotOffset {
   top: number;

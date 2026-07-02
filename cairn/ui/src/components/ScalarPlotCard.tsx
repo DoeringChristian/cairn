@@ -36,19 +36,14 @@ import {
   emaSmooth,
   filterOutliers,
   type AxisSource,
+  type AxisScale,
+  type PromotedSeriesConfig,
   type Series,
 } from "../lib/cairn-plot";
 
 // -----------------------------------------------------------------------------
 // Settings shape
 // -----------------------------------------------------------------------------
-
-type AxisScale = "linear" | "log";
-
-interface PromotedSeriesConfig {
-  min: number;
-  max: number;
-}
 
 interface ScalarSettings extends BaseCardSettings {
   metrics: Array<{ runId?: string; name: string; context_hash: string }>;

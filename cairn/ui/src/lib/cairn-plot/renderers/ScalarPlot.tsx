@@ -16,17 +16,15 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import type { Series, Viewport } from "../types";
+import type { AxisScale, PromotedSeriesConfig, Series, Viewport } from "../types";
 import type { AxisSource } from "../transforms/x-axis";
 import { resolveAxisDomain } from "../transforms/domain";
 import { mergeToRows } from "../transforms/merge-rows";
 import { formatXTick } from "../format";
 import { useModifierKey } from "../hooks/use-modifier-key";
-import { CustomLegend, type PromotedSeriesConfig } from "./scalar/scalar-legend";
+import { CustomLegend } from "./scalar/scalar-legend";
 import { CustomTooltip } from "./scalar/scalar-tooltip";
 import { usePlotGestures, type PlotOffset } from "./scalar/use-plot-gestures";
-
-type AxisScale = "linear" | "log";
 
 const CHART_MARGIN = { top: 4, right: 8, left: 0, bottom: 4 } as const;
 const PROMOTED_AXIS_WIDTH = 35;
@@ -256,14 +254,14 @@ export default function ScalarPlot({
           }}
           onMouseLeave={() => setHoveredSeries(null)}
         >
-          <CartesianGrid stroke="#d0d7de" strokeDasharray="2 4" />
+          <CartesianGrid stroke="var(--color-border, #d0d7de)" strokeDasharray="2 4" />
           <XAxis
             dataKey="x"
             type="number"
             scale={xScale === "log" ? "log" : "linear"}
             domain={xDomain as [number | string, number | string]}
             allowDataOverflow
-            stroke="#656d76"
+            stroke="var(--color-fg-muted, #656d76)"
             fontSize={11}
             tickFormatter={(v: number) => formatXTick(v, xAxis)}
           />
@@ -272,13 +270,13 @@ export default function ScalarPlot({
             scale={yScale === "log" ? "log" : "linear"}
             domain={yDomain as [number | string, number | string]}
             allowDataOverflow
-            stroke="#656d76"
+            stroke="var(--color-fg-muted, #656d76)"
             fontSize={11}
             width={46}
           />
           {promotedKeysOrdered.map((key) => {
             const s = series.find((x) => x.key === key);
-            const color = s?.color ?? "#656d76";
+            const color = s?.color ?? "var(--color-fg-muted, #656d76)";
             const cfg = promotedSeries[key]!;
             return (
               <YAxis
@@ -308,11 +306,11 @@ export default function ScalarPlot({
               />
             }
             contentStyle={{
-              background: "#f6f8fa",
-              border: "1px solid #d0d7de",
+              background: "var(--color-bg-elevated, #f6f8fa)",
+              border: "1px solid var(--color-border, #d0d7de)",
               fontSize: 12,
             }}
-            labelStyle={{ color: "#656d76" }}
+            labelStyle={{ color: "var(--color-fg-muted, #656d76)" }}
           />
           {showLegend && series.length > 0 && (
             <Legend

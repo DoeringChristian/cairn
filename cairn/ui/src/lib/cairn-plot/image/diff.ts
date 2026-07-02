@@ -1,5 +1,6 @@
 export type { DiffMode } from "../types";
 import type { DiffMode } from "../types";
+import { getCachedLoadedImageData, setCachedLoadedImageData } from "./cache";
 
 export const DIFF_MODE_LABELS: Record<DiffMode, string> = {
   signed: "Signed Error",
@@ -64,11 +65,8 @@ export function computeDiff(
   return result;
 }
 
-const imageDataLoadCache = new Map<string, ImageData>();
-const IMAGE_LOAD_CACHE_MAX = 100;
-
 export async function loadImageData(url: string): Promise<ImageData | null> {
-  const cached = imageDataLoadCache.get(url);
+  const cached = getCachedLoadedImageData(url);
   if (cached) return cached;
 
   return new Promise((resolve) => {
@@ -85,11 +83,7 @@ export async function loadImageData(url: string): Promise<ImageData | null> {
         }
         ctx.drawImage(img, 0, 0);
         const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        if (imageDataLoadCache.size >= IMAGE_LOAD_CACHE_MAX) {
-          const firstKey = imageDataLoadCache.keys().next().value;
-          if (firstKey !== undefined) imageDataLoadCache.delete(firstKey);
-        }
-        imageDataLoadCache.set(url, data);
+        setCachedLoadedImageData(url, data);
         resolve(data);
       } catch (err) {
         console.warn("[cairn] loadImageData failed:", err);

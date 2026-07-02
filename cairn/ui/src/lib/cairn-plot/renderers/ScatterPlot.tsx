@@ -1,19 +1,12 @@
 import { useId, useMemo, useState, type ReactNode } from "react";
-import type { ScatterPoint } from "../types";
+import { SERIES_COLORS, type ScatterPoint } from "../types";
 import type { ParetoDirection } from "../transforms/pareto";
 import { computeParetoFront } from "../transforms/pareto";
 import { viridis } from "../colormaps/viridis";
 import { useContainerSize } from "../hooks/use-container-size";
 import Tooltip from "../primitives/Tooltip";
 
-const DEFAULT_COLORS = [
-  "#0969da",
-  "#d29922",
-  "#3fb950",
-  "#f85149",
-  "#c678dd",
-  "#56d4dd",
-];
+const DEFAULT_COLORS = SERIES_COLORS;
 
 export interface ScatterPlotProps {
   points: ScatterPoint[];

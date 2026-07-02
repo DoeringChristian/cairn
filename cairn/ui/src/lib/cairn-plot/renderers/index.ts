@@ -4,11 +4,7 @@ export {
   type ParallelCoordsProps,
 } from "./ParallelCoords";
 export { default as ScalarPlot, type ScalarPlotProps } from "./ScalarPlot";
-export {
-  default as ImagePane,
-  type ImagePaneProps,
-  type ImageProcessingProps,
-} from "./ImagePane";
+export { default as ImagePane, type ImagePaneProps } from "./ImagePane";
 export {
   default as CompareImagePane,
   type CompareImagePaneProps,

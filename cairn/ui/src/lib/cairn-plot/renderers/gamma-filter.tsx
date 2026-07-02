@@ -1,5 +1,5 @@
 import { useId, useMemo } from "react";
-import type { ImageProcessingProps } from "./ImagePane";
+import type { ImageProcessing } from "../types";
 
 /**
  * Shared SVG gamma-filter + CSS `filter` string derivation used by the image
@@ -7,7 +7,7 @@ import type { ImageProcessingProps } from "./ImagePane";
  * SVG `feComponentTransfer` (scoped by a unique id), while brightness/contrast/
  * exposure/flip are composed as CSS filter functions on top.
  */
-export function useGammaFilter(processing: ImageProcessingProps): {
+export function useGammaFilter(processing: ImageProcessing): {
   gammaFilterId: string;
   filterStr: string;
   gamma: number;

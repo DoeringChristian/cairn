@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Colormap, DiffMode, Interpolation } from "../types";
+import type { Colormap, DiffMode, ImageProcessing, Interpolation } from "../types";
 import { useGammaFilter, GammaFilterSvg } from "./gamma-filter";
 import {
   computeDiff,
@@ -11,18 +11,9 @@ import {
 } from "../image";
 import { applyColormap, getColormapLUT, DIVERGING_COLORMAPS } from "../colormaps";
 import PixelAxes from "../primitives/PixelAxes";
-import { useImageViewport } from "../hooks/use-image-viewport";
+import { useImageViewport, type Viewport as ImageViewport } from "../hooks/use-image-viewport";
 
-export interface ImageProcessingProps {
-  brightness: number;
-  contrast: number;
-  gamma: number;
-  exposure: number;
-  offset: number;
-  flipSign: boolean;
-}
-
-const DEFAULT_PROCESSING: ImageProcessingProps = {
+const DEFAULT_PROCESSING: ImageProcessing = {
   brightness: 0,
   contrast: 0,
   gamma: 1,
@@ -40,14 +31,11 @@ export interface ImagePaneProps {
   colormap: Colormap;
   showAxes: boolean;
 
-  processing?: ImageProcessingProps;
+  processing?: ImageProcessing;
 
   zoom?: number;
   pan?: { x: number; y: number };
-  onViewportChange?: (patch: {
-    zoom?: number;
-    pan?: { x: number; y: number };
-  }) => void;
+  onViewportChange?: (v: ImageViewport) => void;
 
   onNaturalSize?: (w: number, h: number) => void;
   label: string;
@@ -102,8 +90,6 @@ export default function ImagePane({
     containerRef: paneRef,
     zoom: zoomProp,
     pan: panProp,
-    // Pane's public prop is patch-style; the hook emits full-replace
-    // ({ zoom, pan }), which is a valid patch — pass it through directly.
     onViewportChange,
   });
 

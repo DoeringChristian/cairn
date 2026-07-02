@@ -17,7 +17,9 @@ import { downloadArtifact, exportImagesAsComposite, safeName, type CompositePane
 import { useCardSeries, useStepSlider, useRunInfo, type BaseCardSettings } from "./card-kit";
 import {
   type DiffMode,
-  type ImageProcessingProps,
+  type ImageProcessing,
+  type Interpolation,
+  type Colormap,
   DIVERGING_COLORMAPS,
   getColormapLUT,
   ImagePane,
@@ -53,9 +55,6 @@ interface Props {
   settingsKeyOverride?: CardSettingsKey;
   onRemove?: () => void;
 }
-
-type Interpolation = "auto" | "pixelated" | "crisp-edges";
-type Colormap = "none" | "viridis" | "red-green" | "red-blue";
 
 interface ImageSettings extends BaseCardSettings {
   metrics: Array<{ runId?: string; name: string; context_hash: string }>;
@@ -356,7 +355,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
   // -----------------------------------------------------------------------
   // Processing props (passed to self-contained ImagePane / CompareImagePane)
   // -----------------------------------------------------------------------
-  const processing: ImageProcessingProps = useMemo(() => ({
+  const processing: ImageProcessing = useMemo(() => ({
     brightness: settings.brightness,
     contrast: settings.contrast,
     gamma: settings.gamma,
@@ -365,8 +364,8 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     flipSign: settings.flipSign,
   }), [settings.brightness, settings.contrast, settings.gamma, settings.exposure, settings.offset, settings.flipSign]);
 
-  const handleViewportChange = useCallback((patch: { zoom?: number; pan?: { x: number; y: number } }) => {
-    updateSettings(patch);
+  const handleViewportChange = useCallback((v: { zoom: number; pan: { x: number; y: number } }) => {
+    updateSettings(v);
   }, [updateSettings]);
 
   // -----------------------------------------------------------------------

@@ -33,8 +33,8 @@ export function CustomTooltip({
 }) {
   if (!active || !payload || payload.length === 0) return null;
   const style: CSSProperties = {
-    background: "#f6f8fa",
-    border: "1px solid #d0d7de",
+    background: "var(--color-bg-elevated, #f6f8fa)",
+    border: "1px solid var(--color-border, #d0d7de)",
     padding: "6px 8px",
     fontSize: 12,
     color: "#1f2328",
@@ -43,7 +43,7 @@ export function CustomTooltip({
   const labelNum = typeof label === "number" ? label : Number(label);
   return (
     <div style={style}>
-      <div style={{ color: "#656d76", marginBottom: 4 }}>
+      <div style={{ color: "var(--color-fg-muted, #656d76)", marginBottom: 4 }}>
         {formatXTick(labelNum, xAxis)}
       </div>
       {payload.map((entry, i) => {
@@ -56,7 +56,7 @@ export function CustomTooltip({
           (entry.payload?.[`${key}__wall`] as string | undefined) ?? null;
         return (
           <div key={`${key}-${i}`} style={{ lineHeight: 1.4 }}>
-            <div style={{ color: meta?.color ?? entry.color ?? "#656d76" }}>
+            <div style={{ color: meta?.color ?? entry.color ?? "var(--color-fg-muted, #656d76)" }}>
               <span style={{ fontFamily: "ui-monospace, monospace" }}>
                 {meta?.label ?? entry.name ?? key}
               </span>
