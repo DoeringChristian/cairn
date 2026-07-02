@@ -11,7 +11,7 @@ import { downloadArtifact, artifactFilename, exportPlotlyChart, safeName } from 
 import { useCardSettings, resolveCardHeight, type CardSettingsKey } from "../lib/card-settings";
 import { useCardDrop } from "../lib/use-series-drop";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
-import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
+import { useRunMetadataVersion } from "../lib/run-label";
 import { useRunSelection, useRunSelectionHasProvider } from "../lib/use-run-selection";
 import { seriesKey, seriesLabel } from "../lib/series-utils";
 import type { SequenceMeta, SequenceResponse } from "../api/types";
@@ -23,14 +23,13 @@ import SeriesChipStrip from "./SeriesChipStrip";
 import CardDetailModal from "./CardDetailModal";
 import Toggle from "./settings/Toggle";
 import Select from "./settings/Select";
-import StepSlider, { type XAxisMode } from "./StepSlider";
+import StepSlider from "./StepSlider";
 
 const Plot = createPlotlyComponent(Plotly);
 
 interface Props {
   runId: string;
   metric: SequenceMeta;
-  extraContexts?: SequenceMeta[];
   extraSeries?: ComparisonSeriesRef[];
   controlledSeries?: boolean;
   settingsKeyOverride?: CardSettingsKey;
@@ -361,7 +360,7 @@ function FigurePane({
   );
 }
 
-export default function FigureInteractiveCard({ runId, metric, extraContexts = [], extraSeries, controlledSeries, settingsKeyOverride, onRemove }: Props) {
+export default function FigureInteractiveCard({ runId, metric, extraSeries, controlledSeries, settingsKeyOverride, onRemove }: Props) {
   const seedMetric = useMemo(
     () => ({ name: metric.name, context_hash: metric.context_hash }),
     [metric.name, metric.context_hash],
@@ -376,10 +375,6 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
   const defaults = useMemo<FigureSettings>(() => {
     const all: Array<{ runId?: string; name: string; context_hash: string }> = [
       seedMetric,
-      ...(extraContexts ?? []).map((e) => ({
-        name: e.name,
-        context_hash: e.context_hash,
-      })),
       ...(extraSeries ?? []).map((s) => ({
         runId: s.runId,
         name: s.name,
@@ -395,14 +390,14 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
     });
     return { ...DEFAULT_FIGURE_SETTINGS(seedMetric), metrics: unique };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seedMetric, extraContexts, extraSeriesKey]);
+  }, [seedMetric, extraSeriesKey]);
 
   const settingsKey = settingsKeyOverride ?? {
     runId,
     metricName: metric.name,
     contextHash: metric.context_hash,
   };
-  const [settings, updateSettings, resetSettings] = useCardSettings(
+  const [settings, updateSettings] = useCardSettings(
     settingsKey,
     defaults,
   );
@@ -411,10 +406,6 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
     if (!controlledSeries) return settings.metrics;
     const all: Array<{ runId?: string; name: string; context_hash: string }> = [
       { name: metric.name, context_hash: metric.context_hash },
-      ...(extraContexts ?? []).map((e) => ({
-        name: e.name,
-        context_hash: e.context_hash,
-      })),
       ...(extraSeries ?? []).map((s) => ({
         runId: s.runId,
         name: s.name,
@@ -429,10 +420,7 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
       return true;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [controlledSeries, settings.metrics, metric.name, metric.context_hash, extraContexts, extraSeriesKey]);
-
-  const settingsRef = useRef(settings);
-  settingsRef.current = settings;
+  }, [controlledSeries, settings.metrics, metric.name, metric.context_hash, extraSeriesKey]);
 
   const { highlight: dropHighlight, dropProps } = useCardDrop(effectiveMetrics, updateSettings);
 
@@ -625,7 +613,7 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
 
   // Measure card width for auto-sizing figure height
   const [cardWidth, setCardWidth] = useState(0);
-  const cardRef = useRef<HTMLDivElement | null>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = cardRef.current;
     if (!el) return;
@@ -638,7 +626,7 @@ export default function FigureInteractiveCard({ runId, metric, extraContexts = [
   }, []);
 
   // Auto-height for figure containers
-  const { figAutoHeight, figRowHeight } = useMemo(() => {
+  const { figAutoHeight } = useMemo(() => {
     if (resolveCardHeight(settings, undefined) != null) return { figAutoHeight: undefined, figRowHeight: undefined };
     if (cardWidth <= 0) return { figAutoHeight: "320px", figRowHeight: undefined };
     if (!isMulti) {

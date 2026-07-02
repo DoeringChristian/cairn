@@ -556,7 +556,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     },
     [settingsKeyOverride, runId, metric.name, metric.context_hash],
   );
-  const [settings, updateSettings, resetSettings] = useCardSettings(
+  const [settings, updateSettings] = useCardSettings(
     settingsKey,
     defaults,
   );

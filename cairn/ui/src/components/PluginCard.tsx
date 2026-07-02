@@ -16,7 +16,7 @@ import type { SequenceMeta, SequenceResponse, SequencePoint } from "../api/types
 import type { ComparisonSeriesRef } from "../lib/comparisons";
 import CardShell from "./CardShell";
 import SettingsPopover from "./SettingsPopover";
-import StepSlider, { type XAxisMode } from "./StepSlider";
+import StepSlider from "./StepSlider";
 import Slider from "./settings/Slider";
 import Select from "./settings/Select";
 import Toggle from "./settings/Toggle";

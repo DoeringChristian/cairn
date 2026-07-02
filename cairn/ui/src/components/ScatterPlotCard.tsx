@@ -2,7 +2,6 @@ import { useMemo, useRef, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { qk } from "../api/query-keys";
-import type { Run } from "../api/types";
 import { useCardSettings } from "../lib/card-settings";
 import { ScatterPlot, type ScatterPoint, type ParetoDirection } from "../lib/cairn-plot";
 import { downloadCsv, exportChartFromContainer, safeName } from "../lib/download";
@@ -53,14 +52,12 @@ const DEFAULT_SETTINGS: ScatterSettings = {
 
 interface Props {
   runIds: string[];
-  runs?: Run[];
   settingsKey: { runId: string; metricName: string; contextHash: string };
   onRemove?: () => void;
 }
 
 export default function ScatterPlotCard({
   runIds,
-  runs,
   settingsKey,
   onRemove,
 }: Props) {

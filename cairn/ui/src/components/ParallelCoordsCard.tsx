@@ -14,7 +14,6 @@ import {
   type ParallelColumn,
   type ParallelRow,
 } from "../lib/cairn-plot";
-import type { Run } from "../api/types";
 import { useCardSettings } from "../lib/card-settings";
 import { downloadCsv, exportChartFromContainer, safeName } from "../lib/download";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
@@ -50,14 +49,12 @@ const DEFAULT_SETTINGS: ParallelSettings = {
 
 interface Props {
   runIds: string[];
-  runs?: Run[];
   settingsKey: { runId: string; metricName: string; contextHash: string };
   onRemove?: () => void;
 }
 
 export default function ParallelCoordsCard({
   runIds,
-  runs,
   settingsKey,
   onRemove,
 }: Props) {

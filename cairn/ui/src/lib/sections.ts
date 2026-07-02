@@ -59,7 +59,6 @@ export function groupIntoSections(meta: SequenceMeta[]): Section[] {
       return (a.context_hash ?? "").localeCompare(b.context_hash ?? "");
     });
   }
-  const order = sectionOrder;
   return sortBuckets(buckets).map(([name, items]) => ({ name, items }));
 }
 

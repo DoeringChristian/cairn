@@ -8,7 +8,7 @@ import type { SequenceMeta } from "../api/types";
 import AddToComparisonButton from "./AddToComparisonButton";
 import CardShell from "./CardShell";
 import CardDetailModal from "./CardDetailModal";
-import StepSlider, { type XAxisMode } from "./StepSlider";
+import StepSlider from "./StepSlider";
 
 interface Props {
   runId: string;

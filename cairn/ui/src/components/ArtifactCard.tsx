@@ -11,7 +11,7 @@ import { downloadArtifact, artifactFilename } from "../lib/download";
 import { useCardSettings, type CardSettingsKey } from "../lib/card-settings";
 import type { SequenceMeta } from "../api/types";
 import CardShell from "./CardShell";
-import StepSlider, { type XAxisMode } from "./StepSlider";
+import StepSlider from "./StepSlider";
 
 interface Props {
   runId: string;

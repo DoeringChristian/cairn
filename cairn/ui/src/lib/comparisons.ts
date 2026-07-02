@@ -444,7 +444,7 @@ export function useTemplates(projectId: string): {
 // ---------------------------------------------------------------------------
 
 /** Build the payload for server storage, including card settings. */
-function buildPayload(projectId: string, cmp: Comparison): Record<string, unknown> {
+function buildPayload(cmp: Comparison): Record<string, unknown> {
   // Gather card settings from localStorage.
   const cardSettings: Record<string, unknown> = {};
   for (const card of cmp.cards) {
@@ -466,7 +466,7 @@ function buildPayload(projectId: string, cmp: Comparison): Record<string, unknow
 
 /** Save a single comparison to the server (fire-and-forget). */
 export function syncComparisonToServer(projectId: string, cmp: Comparison): void {
-  const payload = buildPayload(projectId, cmp);
+  const payload = buildPayload(cmp);
   if (cmp.serverId) {
     api.updateServerComparison(projectId, cmp.serverId, { name: cmp.name, payload }).catch(() => {});
   } else {

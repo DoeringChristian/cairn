@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { useSequence } from "../api/hooks";
 import { api } from "../api/client";
@@ -18,10 +18,9 @@ import SplitPane from "./SplitPane";
 import SeriesChipStrip from "./SeriesChipStrip";
 import { useRunSelection, useRunSelectionHasProvider } from "../lib/use-run-selection";
 import RunSelectionPanel from "./RunSelectionPanel";
-import { SERIES_COLORS } from "../lib/colors";
 import Toggle from "./settings/Toggle";
 import Select from "./settings/Select";
-import StepSlider, { type XAxisMode } from "./StepSlider";
+import StepSlider from "./StepSlider";
 
 interface VideoMetadata {
   fps: number;
@@ -35,7 +34,6 @@ interface VideoMetadata {
 interface Props {
   runId: string;
   metric: SequenceMeta;
-  extraContexts?: SequenceMeta[];
   extraSeries?: ComparisonSeriesRef[];
   controlledSeries?: boolean;
   settingsKeyOverride?: CardSettingsKey;
@@ -134,7 +132,7 @@ function VideoPane({
   );
 }
 
-export default function VideoPlayerCard({ runId, metric, extraContexts = [], extraSeries, controlledSeries, settingsKeyOverride, onRemove }: Props) {
+export default function VideoPlayerCard({ runId, metric, extraSeries, controlledSeries, settingsKeyOverride, onRemove }: Props) {
   const seedMetric = useMemo(
     () => ({ name: metric.name, context_hash: metric.context_hash }),
     [metric.name, metric.context_hash],
@@ -149,10 +147,6 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
   const defaults = useMemo<VideoSettings>(() => {
     const all: Array<{ runId?: string; name: string; context_hash: string }> = [
       seedMetric,
-      ...(extraContexts ?? []).map((e) => ({
-        name: e.name,
-        context_hash: e.context_hash,
-      })),
       ...(extraSeries ?? []).map((s) => ({
         runId: s.runId,
         name: s.name,
@@ -168,9 +162,9 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
     });
     return { ...DEFAULT_VIDEO_SETTINGS(seedMetric), metrics: unique };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seedMetric, extraContexts, extraSeriesKey]);
+  }, [seedMetric, extraSeriesKey]);
 
-  const [settings, updateSettings, resetSettings] = useCardSettings<VideoSettings>(
+  const [settings, updateSettings] = useCardSettings<VideoSettings>(
     settingsKeyOverride ?? {
       runId,
       metricName: metric.name,
@@ -183,10 +177,6 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
     if (!controlledSeries) return settings.metrics;
     const all: Array<{ runId?: string; name: string; context_hash: string }> = [
       { name: metric.name, context_hash: metric.context_hash },
-      ...(extraContexts ?? []).map((e) => ({
-        name: e.name,
-        context_hash: e.context_hash,
-      })),
       ...(extraSeries ?? []).map((s) => ({
         runId: s.runId,
         name: s.name,
@@ -201,10 +191,7 @@ export default function VideoPlayerCard({ runId, metric, extraContexts = [], ext
       return true;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [controlledSeries, settings.metrics, metric.name, metric.context_hash, extraContexts, extraSeriesKey]);
-
-  const settingsRef = useRef(settings);
-  settingsRef.current = settings;
+  }, [controlledSeries, settings.metrics, metric.name, metric.context_hash, extraSeriesKey]);
 
   const { highlight: dropHighlight, dropProps } = useCardDrop(effectiveMetrics, updateSettings);
 

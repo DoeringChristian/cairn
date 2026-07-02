@@ -9,7 +9,7 @@ import AddToComparisonButton from "./AddToComparisonButton";
 import CardShell from "./CardShell";
 import Select from "./settings/Select";
 import Toggle from "./settings/Toggle";
-import StepSlider, { type XAxisMode } from "./StepSlider";
+import StepSlider from "./StepSlider";
 
 interface Props {
   runId: string;
@@ -76,7 +76,7 @@ export default function TextViewerCard({ runId, metric, settingsKeyOverride, onR
     },
     [settingsKeyOverride, runId, metric.name, metric.context_hash],
   );
-  const [settings, updateSettings, resetSettings] = useCardSettings(
+  const [settings, updateSettings] = useCardSettings(
     settingsKey,
     DEFAULT_TEXT_SETTINGS,
   );

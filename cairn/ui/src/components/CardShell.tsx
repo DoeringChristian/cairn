@@ -4,7 +4,7 @@ import CardHeader from "./CardHeader";
 import CardResizeHandle from "./CardResizeHandle";
 
 interface Props {
-  cardRef: RefObject<HTMLDivElement | null>;
+  cardRef: RefObject<HTMLDivElement>;
   settings: {
     title?: string;
     collapsed?: boolean;

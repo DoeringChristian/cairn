@@ -9,7 +9,6 @@ import { formatDuration, formatRelative, safeJsonParse } from "../lib/format";
 import { addCardsToComparison, createComparison, useTemplates, type ComparisonTemplate } from "../lib/comparisons";
 import { saveCardSettings } from "../lib/card-settings";
 import { api } from "../api/client";
-import { qk } from "../api/query-keys";
 import { setRunMetadata } from "../lib/run-label";
 import SettingsPopover from "../components/SettingsPopover";
 import BulkTagEditor from "../components/BulkTagEditor";

@@ -104,10 +104,6 @@ const DEFAULT_SCALAR_SETTINGS = (seed: {
 // Palette & helpers
 // -----------------------------------------------------------------------------
 
-function defaultsEqual(a: ScalarSettings, b: ScalarSettings): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
-}
-
 function viewportIsAuto(v: ScalarSettings["viewport"]): boolean {
   return (
     v.xMin === null && v.xMax === null && v.yMin === null && v.yMax === null
@@ -121,7 +117,6 @@ function viewportIsAuto(v: ScalarSettings["viewport"]): boolean {
 interface Props {
   runId: string;
   metric: SequenceMeta;
-  extraContexts?: SequenceMeta[];
   extraSeries?: ComparisonSeriesRef[];
   controlledSeries?: boolean;
   onRemove?: () => void;
@@ -131,7 +126,6 @@ interface Props {
 export default function ScalarPlotCard({
   runId,
   metric,
-  extraContexts = [],
   extraSeries = [],
   controlledSeries = false,
   onRemove,
@@ -142,11 +136,6 @@ export default function ScalarPlotCard({
     [metric.name, metric.context_hash],
   );
 
-  const extraContextsKey = useMemo(
-    () => (extraContexts ?? []).map((e) => `${e.name}::${e.context_hash}`).sort().join("|"),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [JSON.stringify((extraContexts ?? []).map((e) => [e.name, e.context_hash]).sort())],
-  );
   const extraSeriesKey = useMemo(
     () => (extraSeries ?? []).map((s) => `${s.runId}::${s.name}::${s.context_hash}`).sort().join("|"),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -160,10 +149,6 @@ export default function ScalarPlotCard({
       context_hash: string;
     }> = [
       seedMetric,
-      ...(extraContexts ?? []).map((e) => ({
-        name: e.name,
-        context_hash: e.context_hash,
-      })),
       ...(extraSeries ?? []).map((s) => ({
         runId: s.runId,
         name: s.name,
@@ -180,7 +165,7 @@ export default function ScalarPlotCard({
     unique.sort((a, b) => seriesKey(a).localeCompare(seriesKey(b)));
     return { ...DEFAULT_SCALAR_SETTINGS(seedMetric), metrics: unique };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seedMetric, extraContextsKey, extraSeriesKey]);
+  }, [seedMetric, extraSeriesKey]);
 
   const settingsKey = useMemo<CardSettingsKey>(
     () =>
@@ -192,7 +177,7 @@ export default function ScalarPlotCard({
     [settingsKeyOverride, runId, metric.name, metric.context_hash],
   );
 
-  const [settings, rawUpdateSettings, resetSettings] = useCardSettings(
+  const [settings, rawUpdateSettings] = useCardSettings(
     settingsKey,
     defaults,
   );
@@ -216,10 +201,6 @@ export default function ScalarPlotCard({
     if (!controlledSeries) return settings.metrics;
     const all: Array<{ runId?: string; name: string; context_hash: string }> = [
       { name: metric.name, context_hash: metric.context_hash },
-      ...(extraContexts ?? []).map((e) => ({
-        name: e.name,
-        context_hash: e.context_hash,
-      })),
       ...(extraSeries ?? []).map((s) => ({
         runId: s.runId,
         name: s.name,
@@ -240,7 +221,7 @@ export default function ScalarPlotCard({
       return true;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [controlledSeries, settings.metrics, metric.name, metric.context_hash, extraContextsKey, extraSeriesKey]);
+  }, [controlledSeries, settings.metrics, metric.name, metric.context_hash, extraSeriesKey]);
 
   // -------------------------------------------------------------------------
   // Run meta
