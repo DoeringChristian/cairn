@@ -8,7 +8,9 @@ from .artifact import ArtifactHandler
 from .audio import AudioHandler
 from .figure import FigureHandler
 from .histogram import HistogramHandler
+from .html import HtmlHandler
 from .image import ImageHandler
+from .markdown import MarkdownHandler
 from .plugin import PluginHandler
 from .registry import (
     HandlerRegistry,
@@ -40,6 +42,10 @@ if not _already_registered:
     default_registry.register(TensorHandler())
     default_registry.register(PluginHandler())
     default_registry.register(ArtifactHandler())
+    # Wrapper-only, like Histogram/Tensor — order among themselves doesn't
+    # matter since dispatch never falls through can_handle for these.
+    default_registry.register(HtmlHandler())
+    default_registry.register(MarkdownHandler())
     _already_registered = True
 
 
@@ -58,4 +64,6 @@ __all__ = [
     "TensorHandler",
     "PluginHandler",
     "ArtifactHandler",
+    "HtmlHandler",
+    "MarkdownHandler",
 ]
