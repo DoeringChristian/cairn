@@ -10,9 +10,7 @@ import {
 } from "../image";
 import { applyColormap, getColormapLUT, DIVERGING_COLORMAPS } from "../colormaps";
 import PixelAxes from "../primitives/PixelAxes";
-
-const MIN_ZOOM = 0.25;
-const MAX_ZOOM = 16;
+import { useImageViewport } from "../hooks/use-image-viewport";
 
 export interface ImageProcessingProps {
   brightness: number;
@@ -110,117 +108,16 @@ export default function ImagePane({
   const transformStr = `translate(${panProp.x}px, ${panProp.y}px) scale(${zoomProp})`;
 
   // -----------------------------------------------------------------------
-  // Modifier key tracking (Alt/Ctrl/Meta for zoom+pan)
+  // Viewport interaction (modifier-gated wheel zoom-to-cursor + pointer pan)
   // -----------------------------------------------------------------------
-  const [altDown, setAltDown] = useState(false);
-  const altDownRef = useRef(false);
-  altDownRef.current = altDown;
-
-  useEffect(() => {
-    if (!onViewportChange) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Alt" || e.key === "Control" || e.key === "Meta")
-        setAltDown(e.type === "keydown");
-    };
-    const onBlur = () => setAltDown(false);
-    window.addEventListener("keydown", onKey);
-    window.addEventListener("keyup", onKey);
-    window.addEventListener("blur", onBlur);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("keyup", onKey);
-      window.removeEventListener("blur", onBlur);
-    };
-  }, [!!onViewportChange]);
-
-  // -----------------------------------------------------------------------
-  // Wheel zoom (local — zoom to cursor position)
-  // -----------------------------------------------------------------------
-  const viewportRef = useRef({ zoom: zoomProp, pan: panProp });
-  viewportRef.current = { zoom: zoomProp, pan: panProp };
-
-  const onViewportChangeRef = useRef(onViewportChange);
-  onViewportChangeRef.current = onViewportChange;
-
-  useEffect(() => {
-    const el = paneRef.current;
-    if (!el || !onViewportChange) return;
-    const handler = (e: WheelEvent) => {
-      if (!altDownRef.current) return;
-      e.preventDefault();
-      e.stopPropagation();
-      const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
-      const s = viewportRef.current;
-      const nextZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, s.zoom * factor));
-      if (s.zoom === nextZoom) return;
-      const rect = el.getBoundingClientRect();
-      const cx = e.clientX - rect.left;
-      const cy = e.clientY - rect.top;
-      const newPanX = cx - ((cx - s.pan.x) / s.zoom) * nextZoom;
-      const newPanY = cy - ((cy - s.pan.y) / s.zoom) * nextZoom;
-      onViewportChangeRef.current?.({
-        zoom: nextZoom,
-        pan: { x: newPanX, y: newPanY },
-      });
-    };
-    el.addEventListener("wheel", handler, { passive: false });
-    return () => el.removeEventListener("wheel", handler);
-  }, [!!onViewportChange]);
-
-  // -----------------------------------------------------------------------
-  // Pointer pan (local)
-  // -----------------------------------------------------------------------
-  const dragStateRef = useRef<{
-    pointerId: number;
-    startX: number;
-    startY: number;
-    panX: number;
-    panY: number;
-  } | null>(null);
-
-  const onPointerDown = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      if (!altDownRef.current || !onViewportChangeRef.current) return;
-      (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
-      dragStateRef.current = {
-        pointerId: e.pointerId,
-        startX: e.clientX,
-        startY: e.clientY,
-        panX: viewportRef.current.pan.x,
-        panY: viewportRef.current.pan.y,
-      };
-    },
-    [],
-  );
-
-  const onPointerMove = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      const s = dragStateRef.current;
-      if (!s || s.pointerId !== e.pointerId) return;
-      const dx = e.clientX - s.startX;
-      const dy = e.clientY - s.startY;
-      onViewportChangeRef.current?.({
-        pan: { x: s.panX + dx, y: s.panY + dy },
-      });
-    },
-    [],
-  );
-
-  const onPointerUp = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      const s = dragStateRef.current;
-      if (!s || s.pointerId !== e.pointerId) return;
-      try {
-        (e.currentTarget as HTMLDivElement).releasePointerCapture(
-          e.pointerId,
-        );
-      } catch {
-        /* ignore */
-      }
-      dragStateRef.current = null;
-    },
-    [],
-  );
+  const { containerProps: viewportProps } = useImageViewport({
+    containerRef: paneRef,
+    zoom: zoomProp,
+    pan: panProp,
+    // Pane's public prop is patch-style; the hook emits full-replace
+    // ({ zoom, pan }), which is a valid patch — pass it through directly.
+    onViewportChange,
+  });
 
   // -----------------------------------------------------------------------
   // Diff / false-color rendering
@@ -426,7 +323,6 @@ export default function ImagePane({
   const imgRendering =
     interpolation === "auto" ? undefined : interpolation;
   const invertStyle = flipSign ? { filter: "invert(1)" } : {};
-  const canPan = altDown && !!onViewportChange;
 
   return (
     <div className="relative flex flex-col h-full">
@@ -450,13 +346,12 @@ export default function ImagePane({
         style={{
           padding:
             showAxes && naturalDims ? "16px 4px 4px 28px" : "4px",
-          cursor: canPan ? "move" : undefined,
-          touchAction: canPan ? "none" : undefined,
+          ...viewportProps.style,
         }}
-        onPointerDown={onViewportChange ? onPointerDown : undefined}
-        onPointerMove={onViewportChange ? onPointerMove : undefined}
-        onPointerUp={onViewportChange ? onPointerUp : undefined}
-        onPointerCancel={onViewportChange ? onPointerUp : undefined}
+        onPointerDown={viewportProps.onPointerDown}
+        onPointerMove={viewportProps.onPointerMove}
+        onPointerUp={viewportProps.onPointerUp}
+        onPointerCancel={viewportProps.onPointerCancel}
       >
         <div
           ref={imgWrapperRef}
