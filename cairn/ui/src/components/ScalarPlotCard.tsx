@@ -107,6 +107,7 @@ interface Props {
   controlledSeries?: boolean;
   onRemove?: () => void;
   settingsKeyOverride?: CardSettingsKey;
+  autoOpenSettings?: boolean;
 }
 
 export default function ScalarPlotCard({
@@ -116,6 +117,7 @@ export default function ScalarPlotCard({
   controlledSeries = false,
   onRemove,
   settingsKeyOverride,
+  autoOpenSettings,
 }: Props) {
   const {
     settings,
@@ -230,7 +232,7 @@ export default function ScalarPlotCard({
   // -------------------------------------------------------------------------
   // Selection / run info
   // -------------------------------------------------------------------------
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(autoOpenSettings ?? false);
   const { selectedIds, selectedArray, toggle, clear } = useRunSelection();
   const hasSelectionProvider = useRunSelectionHasProvider();
 
@@ -618,6 +620,7 @@ export default function ScalarPlotCard({
       settingsPanel={settingsPanel}
       modalOpen={expanded}
       onModalClose={() => setExpanded(false)}
+      scrollIntoViewOnMount={autoOpenSettings}
       modalContent={
         <div className="flex flex-col h-[calc(100vh-12rem)]">
           <div className="flex-1 min-h-0">

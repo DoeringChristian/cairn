@@ -53,6 +53,8 @@ export type CardDescriptor =
       settingsKeyOverride?: CardSettingsKey;
       /** Show a remove button in the card header. */
       onRemove?: () => void;
+      /** Open the settings modal and scroll into view once on mount (e.g. just-added card). */
+      autoOpenSettings?: boolean;
     }
   | {
       kind: "multi-run";
@@ -65,6 +67,8 @@ export type CardDescriptor =
        */
       settingsKey: CardSettingsKey;
       onRemove?: () => void;
+      /** Open the settings modal and scroll into view once on mount (e.g. just-added card). */
+      autoOpenSettings?: boolean;
     };
 
 /** Loading placeholder shared by the lazily-loaded card variants. */
@@ -110,17 +114,17 @@ function UnknownTypeCard({ runId, metric }: { runId: string; metric: SequenceMet
 
 export default function CardRenderer(props: CardDescriptor) {
   if (props.kind === "multi-run") {
-    const { cardType, runIds, settingsKey, onRemove } = props;
+    const { cardType, runIds, settingsKey, onRemove, autoOpenSettings } = props;
     if (cardType === "parallel") {
       return (
         <Suspense fallback={<LazyCardFallback label="loading parallel coords…" />}>
-          <ParallelCoordsCard runIds={runIds} settingsKey={settingsKey} onRemove={onRemove} />
+          <ParallelCoordsCard runIds={runIds} settingsKey={settingsKey} onRemove={onRemove} autoOpenSettings={autoOpenSettings} />
         </Suspense>
       );
     }
     return (
       <Suspense fallback={<LazyCardFallback label="loading scatter…" />}>
-        <ScatterPlotCard runIds={runIds} settingsKey={settingsKey} onRemove={onRemove} />
+        <ScatterPlotCard runIds={runIds} settingsKey={settingsKey} onRemove={onRemove} autoOpenSettings={autoOpenSettings} />
       </Suspense>
     );
   }
@@ -132,8 +136,9 @@ export default function CardRenderer(props: CardDescriptor) {
     settingsKeyOverride,
     onRemove,
     controlledSeries,
+    autoOpenSettings,
   } = props;
-  const baseProps = { runId, metric };
+  const baseProps = { runId, metric, autoOpenSettings };
 
   switch (metric.object_type) {
     case "scalar":

@@ -54,6 +54,7 @@ interface Props {
   controlledSeries?: boolean;
   settingsKeyOverride?: CardSettingsKey;
   onRemove?: () => void;
+  autoOpenSettings?: boolean;
 }
 
 interface ImageSettings extends BaseCardSettings {
@@ -266,7 +267,7 @@ function ExternalBaselinePicker({
 // ImageGalleryCard
 // ---------------------------------------------------------------------------
 
-export default function ImageGalleryCard({ runId, metric, extraSeries, controlledSeries, settingsKeyOverride, onRemove }: Props) {
+export default function ImageGalleryCard({ runId, metric, extraSeries, controlledSeries, settingsKeyOverride, onRemove, autoOpenSettings }: Props) {
   useRunMetadataVersion();
 
   const {
@@ -341,7 +342,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
 
   const { highlight: dropHighlight, dropProps } = useCardDrop(effectiveMetrics, updateSettings);
 
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(autoOpenSettings ?? false);
 
   const compSeries = useMemo(
     () => effectiveMetrics.map((m) => ({
@@ -1032,6 +1033,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
       modalContent={modalContent}
       modalOpen={expanded}
       onModalClose={() => setExpanded(false)}
+      scrollIntoViewOnMount={autoOpenSettings}
     >
       <>
       {anyLoading && globalSteps.length === 0 ? (

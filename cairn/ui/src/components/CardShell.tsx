@@ -1,4 +1,4 @@
-import type { ReactNode, RefObject } from "react";
+import { useEffect, type ReactNode, type RefObject } from "react";
 import { resolveCardHeight } from "../lib/card-settings";
 import type { BaseCardSettings } from "./card-kit";
 import CardHeader from "./CardHeader";
@@ -34,6 +34,8 @@ interface Props {
   modalOpen?: boolean;
   /** Close handler for the detail modal. */
   onModalClose?: () => void;
+  /** When true on mount, scroll the card into view once (e.g. just-added card). */
+  scrollIntoViewOnMount?: boolean;
   children: ReactNode;
 }
 
@@ -57,8 +59,19 @@ export default function CardShell({
   modalContent,
   modalOpen,
   onModalClose,
+  scrollIntoViewOnMount,
   children,
 }: Props) {
+  // Scroll a just-added card into view once, on mount. Deliberately runs
+  // only on the initial mount (not when the flag later flips false) so a
+  // parent can clear its transient "just added" state without re-triggering.
+  useEffect(() => {
+    if (scrollIntoViewOnMount) {
+      cardRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <div
       ref={cardRef}

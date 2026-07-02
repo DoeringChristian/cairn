@@ -44,12 +44,14 @@ interface Props {
   runIds: string[];
   settingsKey: { runId: string; metricName: string; contextHash: string };
   onRemove?: () => void;
+  autoOpenSettings?: boolean;
 }
 
 export default function ParallelCoordsCard({
   runIds,
   settingsKey,
   onRemove,
+  autoOpenSettings,
 }: Props) {
   useRunMetadataVersion();
 
@@ -57,7 +59,7 @@ export default function ParallelCoordsCard({
     settingsKey,
     DEFAULT_SETTINGS,
   );
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(autoOpenSettings ?? false);
 
   // Fetch run details (params) for all runs
   const runQueries = useQueries({
@@ -379,6 +381,7 @@ export default function ParallelCoordsCard({
       settingsPanel={settingsPanel}
       modalOpen={expanded}
       onModalClose={() => setExpanded(false)}
+      scrollIntoViewOnMount={autoOpenSettings}
       modalContent={
         <div className="flex flex-col h-[calc(100vh-12rem)]">
           {noColumns ? (

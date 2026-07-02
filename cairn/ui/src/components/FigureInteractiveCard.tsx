@@ -33,6 +33,7 @@ interface Props {
   controlledSeries?: boolean;
   settingsKeyOverride?: CardSettingsKey;
   onRemove?: () => void;
+  autoOpenSettings?: boolean;
 }
 
 interface FigureMetadata {
@@ -342,7 +343,7 @@ function FigurePane({
   );
 }
 
-export default function FigureInteractiveCard({ runId, metric, extraSeries, controlledSeries, settingsKeyOverride, onRemove }: Props) {
+export default function FigureInteractiveCard({ runId, metric, extraSeries, controlledSeries, settingsKeyOverride, onRemove, autoOpenSettings }: Props) {
   const { settings, updateSettings, effectiveMetrics, allRunIds, multipleRuns } =
     useCardSeries<FigureSettings>({
       runId,
@@ -408,7 +409,7 @@ export default function FigureInteractiveCard({ runId, metric, extraSeries, cont
   // For the single-metric path, find the point at the current global step.
   const current = useMemo(() => points.find((p) => p.step === currentStep && p.artifact_hash), [points, currentStep]);
 
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(autoOpenSettings ?? false);
 
   const compSeries = useMemo(
     () => [{ runId, name: metric.name, context_hash: metric.context_hash }],
@@ -759,6 +760,7 @@ export default function FigureInteractiveCard({ runId, metric, extraSeries, cont
       settingsPanel={settingsPanel}
       modalOpen={expanded}
       onModalClose={() => setExpanded(false)}
+      scrollIntoViewOnMount={autoOpenSettings}
       modalContent={renderContent(true)}
     >
       <>

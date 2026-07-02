@@ -47,17 +47,19 @@ interface Props {
   runIds: string[];
   settingsKey: { runId: string; metricName: string; contextHash: string };
   onRemove?: () => void;
+  autoOpenSettings?: boolean;
 }
 
 export default function ScatterPlotCard({
   runIds,
   settingsKey,
   onRemove,
+  autoOpenSettings,
 }: Props) {
   useRunMetadataVersion();
 
   const [settings, updateSettings] = useCardSettings(settingsKey, DEFAULT_SETTINGS);
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(autoOpenSettings ?? false);
 
   // Fetch run details (params)
   const runQueries = useQueries({
@@ -300,6 +302,7 @@ export default function ScatterPlotCard({
       settingsPanel={settingsPanel}
       modalOpen={expanded}
       onModalClose={() => setExpanded(false)}
+      scrollIntoViewOnMount={autoOpenSettings}
       modalContent={
         <div className="flex flex-col h-[calc(100vh-12rem)]">
           {noAxes ? (

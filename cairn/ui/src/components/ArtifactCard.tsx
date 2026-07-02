@@ -19,6 +19,7 @@ interface Props {
   metric: SequenceMeta;
   settingsKeyOverride?: CardSettingsKey;
   onRemove?: () => void;
+  autoOpenSettings?: boolean;
 }
 
 interface ArtifactMeta {
@@ -44,7 +45,7 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
-export default function ArtifactCard({ runId, metric, settingsKeyOverride, onRemove }: Props) {
+export default function ArtifactCard({ runId, metric, settingsKeyOverride, onRemove, autoOpenSettings }: Props) {
   const q = useSequence(runId, metric.name, {
     context: metric.context_hash || undefined,
     maxPoints: 200,
@@ -104,6 +105,7 @@ export default function ArtifactCard({ runId, metric, settingsKeyOverride, onRem
           artifact
         </span>
       }
+      scrollIntoViewOnMount={autoOpenSettings}
     >
         <>
           {current?.artifact_hash ? (() => {

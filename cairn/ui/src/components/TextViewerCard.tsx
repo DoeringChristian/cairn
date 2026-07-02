@@ -17,6 +17,7 @@ interface Props {
   metric: SequenceMeta;
   settingsKeyOverride?: CardSettingsKey;
   onRemove?: () => void;
+  autoOpenSettings?: boolean;
 }
 
 interface TextSettings extends BaseCardSettings {
@@ -37,7 +38,7 @@ const FONT_SIZE_CLASS: Record<TextSettings["fontSize"], string> = {
   base: "text-base",
 };
 
-export default function TextViewerCard({ runId, metric, settingsKeyOverride, onRemove }: Props) {
+export default function TextViewerCard({ runId, metric, settingsKeyOverride, onRemove, autoOpenSettings }: Props) {
   const q = useSequence(runId, metric.name, {
     context: metric.context_hash || undefined,
     maxPoints: 200,
@@ -75,7 +76,7 @@ export default function TextViewerCard({ runId, metric, settingsKeyOverride, onR
     DEFAULT_TEXT_SETTINGS,
   );
 
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(autoOpenSettings ?? false);
 
   const compSeries = useMemo(
     () => [{ runId, name: metric.name, context_hash: metric.context_hash }],
@@ -145,6 +146,7 @@ export default function TextViewerCard({ runId, metric, settingsKeyOverride, onR
       onRemove={onRemove}
       onDownload={current?.artifact_hash ? () => downloadArtifact(api.artifactUrl(current.artifact_hash!), artifactFilename(metric.name, current?.step ?? 0, "text/plain")) : undefined}
       addToComparisonSlot={<AddToComparisonButton cardType="text" series={compSeries} />}
+      scrollIntoViewOnMount={autoOpenSettings}
     >
       <>
       {renderContent()}

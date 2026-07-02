@@ -27,6 +27,7 @@ interface Props {
   controlledSeries?: boolean;
   settingsKeyOverride?: CardSettingsKey;
   onRemove?: () => void;
+  autoOpenSettings?: boolean;
 }
 
 interface AudioMeta {
@@ -160,7 +161,7 @@ function AudioPane({
   );
 }
 
-export default function AudioPlayerCard({ runId, metric, extraSeries, controlledSeries, settingsKeyOverride, onRemove }: Props) {
+export default function AudioPlayerCard({ runId, metric, extraSeries, controlledSeries, settingsKeyOverride, onRemove, autoOpenSettings }: Props) {
   const { settings, updateSettings, effectiveMetrics, allRunIds, multipleRuns } =
     useCardSeries<AudioSettings>({
       runId,
@@ -234,7 +235,7 @@ export default function AudioPlayerCard({ runId, metric, extraSeries, controlled
     [current],
   );
 
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(autoOpenSettings ?? false);
 
   const compSeries = useMemo(
     () => [{ runId, name: metric.name, context_hash: metric.context_hash }],
@@ -392,6 +393,7 @@ export default function AudioPlayerCard({ runId, metric, extraSeries, controlled
       modalOpen={expanded}
       onModalClose={() => setExpanded(false)}
       modalContent={<div className="flex flex-col h-full">{renderContent(true)}</div>}
+      scrollIntoViewOnMount={autoOpenSettings}
     >
       <>
       {renderContent(false)}

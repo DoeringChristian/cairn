@@ -16,6 +16,7 @@ interface Props {
   metric: SequenceMeta;
   settingsKeyOverride?: CardSettingsKey;
   onRemove?: () => void;
+  autoOpenSettings?: boolean;
 }
 
 interface HistogramMeta {
@@ -38,7 +39,7 @@ function fmtSig(n: number, sig = 4): string {
   return Number(n.toPrecision(sig)).toString();
 }
 
-export default function HistogramCard({ runId, metric, settingsKeyOverride, onRemove }: Props) {
+export default function HistogramCard({ runId, metric, settingsKeyOverride, onRemove, autoOpenSettings }: Props) {
   const q = useSequence(runId, metric.name, {
     context: metric.context_hash || undefined,
     maxPoints: 200,
@@ -65,7 +66,7 @@ export default function HistogramCard({ runId, metric, settingsKeyOverride, onRe
   );
   const [settings, updateSettings] = useCardSettings(settingsKey, DEFAULT_HISTOGRAM_SETTINGS);
 
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(autoOpenSettings ?? false);
 
   const compSeries = useMemo(
     () => [{ runId, name: metric.name, context_hash: metric.context_hash }],
@@ -131,6 +132,7 @@ export default function HistogramCard({ runId, metric, settingsKeyOverride, onRe
       onDownload={current?.artifact_hash ? () => downloadArtifact(api.artifactUrl(current.artifact_hash!), artifactFilename(metric.name, current.step, current.artifact_mime)) : undefined}
       onScreenshot={() => { if (cardRef.current) exportChartFromContainer(cardRef.current, safeName(settings.title ?? metric.name), "svg"); }}
       addToComparisonSlot={<AddToComparisonButton cardType="histogram" series={compSeries} />}
+      scrollIntoViewOnMount={autoOpenSettings}
     >
       <>
       {renderContent()}

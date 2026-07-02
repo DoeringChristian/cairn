@@ -37,6 +37,7 @@ interface Props {
   controlledSeries?: boolean;
   settingsKeyOverride?: CardSettingsKey;
   onRemove?: () => void;
+  autoOpenSettings?: boolean;
 }
 
 interface VideoSettings extends BaseCardSettings {
@@ -118,7 +119,7 @@ function VideoPane({
   );
 }
 
-export default function VideoPlayerCard({ runId, metric, extraSeries, controlledSeries, settingsKeyOverride, onRemove }: Props) {
+export default function VideoPlayerCard({ runId, metric, extraSeries, controlledSeries, settingsKeyOverride, onRemove, autoOpenSettings }: Props) {
   const { settings, updateSettings, effectiveMetrics, allRunIds, multipleRuns } =
     useCardSeries<VideoSettings>({
       runId,
@@ -188,7 +189,7 @@ export default function VideoPlayerCard({ runId, metric, extraSeries, controlled
   }, [points, currentStep]);
   const meta = safeJsonParse<VideoMetadata>(current?.artifact_metadata);
 
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(autoOpenSettings ?? false);
 
   const compSeries = useMemo(
     () => [{ runId, name: metric.name, context_hash: metric.context_hash }],
@@ -359,6 +360,7 @@ export default function VideoPlayerCard({ runId, metric, extraSeries, controlled
       }
       modalOpen={expanded}
       onModalClose={() => setExpanded(false)}
+      scrollIntoViewOnMount={autoOpenSettings}
       modalContent={
         <div className="flex flex-col h-full">
           {renderContent(true)}

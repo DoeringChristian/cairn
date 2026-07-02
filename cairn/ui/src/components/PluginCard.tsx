@@ -29,6 +29,7 @@ interface Props {
   controlledSeries?: boolean;
   settingsKeyOverride?: CardSettingsKey;
   onRemove?: () => void;
+  autoOpenSettings?: boolean;
 }
 
 interface PluginSettingDef {
@@ -288,6 +289,7 @@ export default function PluginCard({
   controlledSeries,
   settingsKeyOverride,
   onRemove,
+  autoOpenSettings,
 }: Props) {
   useRunMetadataVersion();
 
@@ -359,7 +361,7 @@ export default function PluginCard({
 
   const cardRef = useRef<HTMLDivElement>(null);
   const settingsBtnRef = useRef<HTMLButtonElement>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(autoOpenSettings ?? false);
 
   // Plugin-declared settings schema.
   const settingsDefs = pluginMeta.plugin_settings ?? [];
@@ -392,6 +394,7 @@ export default function PluginCard({
       onRemove={onRemove}
       onDownload={primaryCurrent?.artifact_hash ? () => downloadArtifact(api.artifactUrl(primaryCurrent.artifact_hash!), artifactFilename(metric.name, primaryCurrent.step, primaryCurrent.artifact_mime)) : undefined}
       onScreenshot={() => { if (cardRef.current) exportChartFromContainer(cardRef.current, safeName(settings.title ?? metric.name), "svg"); }}
+      scrollIntoViewOnMount={autoOpenSettings}
       headerActions={<>
         <span className="inline-flex items-center rounded bg-bg-hover px-1.5 py-0.5 text-[10px] text-fg-muted">
           {lang === "window" ? "Window" : lang === "server" ? "Server" : lang === "py" ? "Python" : "JS"}

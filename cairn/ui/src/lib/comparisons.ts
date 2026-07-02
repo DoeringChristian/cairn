@@ -171,16 +171,17 @@ export function addCardToComparison(
   projectId: string,
   comparisonId: string,
   card: Omit<ComparisonCard, "id">,
-): void {
+): string {
   const list = loadComparisons(projectId);
+  const newCard: ComparisonCard = { id: newId(), ...card };
   const next = list.map((c) => {
     if (c.id !== comparisonId) return c;
-    const newCard: ComparisonCard = { id: newId(), ...card };
     return { ...c, cards: [...c.cards, newCard] };
   });
   saveComparisons(projectId, next);
   const cmp = next.find((c) => c.id === comparisonId);
   if (cmp) syncComparisonToServer(projectId, cmp);
+  return newCard.id;
 }
 
 export function addCardsToComparison(

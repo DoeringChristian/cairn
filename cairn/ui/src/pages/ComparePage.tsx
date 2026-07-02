@@ -137,6 +137,11 @@ export default function ComparePage() {
     [projectId, refresh],
   );
 
+  // Id of the just-added card, so the section below can auto-open its
+  // settings and scroll it into view once. Transient \u2014 never persisted, so
+  // a reload never re-opens a card's settings.
+  const [autoFocusCardId, setAutoFocusCardId] = useState<string | null>(null);
+
   const handleAddCard = useCallback(
     (comparisonId: string, sel: AddCardSelection) => {
       if (!projectId) return;
@@ -144,7 +149,7 @@ export default function ComparePage() {
         sel.kind === "multi-run"
           ? sel.cardType
           : (sel.object_type as ComparisonCard["type"]);
-      addCardToComparison(projectId, comparisonId, {
+      const newCardId = addCardToComparison(projectId, comparisonId, {
         type,
         series: sel.runs.map((r) => ({
           runId: r.runId,
@@ -153,32 +158,19 @@ export default function ComparePage() {
         })),
       });
       refresh();
-      // Scroll to new card and auto-open its settings
-      requestAnimationFrame(() => {
-        setTimeout(() => {
-          const grids = document.querySelectorAll(".grid.grid-cols-1");
-          const lastGrid = grids[grids.length - 1];
-          if (lastGrid) {
-            const cards = lastGrid.children;
-            const lastCard = cards[cards.length - 1] as HTMLElement | undefined;
-            if (lastCard) {
-              lastCard.scrollIntoView({ behavior: "smooth", block: "center" });
-              setTimeout(() => {
-                const buttons = lastCard.querySelectorAll("button");
-                for (let i = buttons.length - 1; i >= 0; i--) {
-                  if (buttons[i]!.textContent?.includes("\u2699")) {
-                    buttons[i]!.click();
-                    break;
-                  }
-                }
-              }, 400);
-            }
-          }
-        }, 100);
-      });
+      setAutoFocusCardId(newCardId);
     },
     [projectId, refresh],
   );
+
+  // Clear the auto-focus flag right after it's been handed to the card grid
+  // for one render — CardShell/cards only read it on mount, so clearing it
+  // here doesn't undo the auto-open/scroll, and it keeps the flag from
+  // lingering (e.g. across an unrelated re-render of the same comparison).
+  useEffect(() => {
+    if (autoFocusCardId == null) return;
+    setAutoFocusCardId(null);
+  }, [autoFocusCardId]);
 
   const handleRefreshSmartFilters = useCallback(
     async (comparisonId: string, smartFilters: SmartFilters) => {
@@ -368,6 +360,7 @@ export default function ComparePage() {
                 allProjectRuns={runs}
                 allProjectRunIds={allProjectRunIds}
                 projectId={projectId}
+                autoFocusCardId={autoFocusCardId}
                 onRename={(name) => handleRename(selected.id, name)}
                 onDelete={() => handleDelete(selected.id)}
                 onRemoveCard={(cardId) => handleRemoveCard(selected.id, cardId)}
@@ -645,6 +638,8 @@ interface ComparisonViewProps {
   allProjectRuns: Run[];
   allProjectRunIds: string[];
   projectId: string;
+  /** Id of the just-added card to auto-open settings for and scroll to. */
+  autoFocusCardId: string | null;
   onRename: (name: string) => void;
   onDelete: () => void;
   onRemoveCard: (cardId: string) => void;
@@ -660,6 +655,7 @@ function ComparisonView({
   allProjectRuns,
   allProjectRunIds,
   projectId,
+  autoFocusCardId,
   onRename,
   onDelete,
   onRemoveCard,
@@ -890,6 +886,7 @@ function ComparisonView({
                           card={card}
                           comparisonId={comparison.id}
                           onRemove={() => onRemoveCard(card.id)}
+                          autoOpenSettings={card.id === autoFocusCardId}
                         />
                       ),
                     }))}
@@ -913,12 +910,15 @@ interface ComparisonCardRendererProps {
   card: ComparisonCard;
   comparisonId: string;
   onRemove: () => void;
+  /** Auto-open this card's settings and scroll to it once, on mount. */
+  autoOpenSettings?: boolean;
 }
 
 function ComparisonCardRenderer({
   card,
   comparisonId,
   onRemove,
+  autoOpenSettings,
 }: ComparisonCardRendererProps) {
   const runIds = useMemo(
     () => Array.from(new Set(card.series.map((s) => s.runId))),
@@ -937,6 +937,7 @@ function ComparisonCardRenderer({
           contextHash: card.id,
         }}
         onRemove={onRemove}
+        autoOpenSettings={autoOpenSettings}
       />
     );
   }
@@ -975,6 +976,7 @@ function ComparisonCardRenderer({
           metricName: card.id,
           contextHash: "",
         }}
+        autoOpenSettings={autoOpenSettings}
       />
   );
 }
