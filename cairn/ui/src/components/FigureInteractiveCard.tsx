@@ -8,14 +8,14 @@ import { api } from "../api/client";
 import { qk } from "../api/query-keys";
 import { safeJsonParse } from "../lib/format";
 import { downloadArtifact, artifactFilename, exportPlotlyChart, safeName } from "../lib/download";
-import { useCardSettings, resolveCardHeight, type CardSettingsKey } from "../lib/card-settings";
+import { resolveCardHeight, type CardSettingsKey } from "../lib/card-settings";
 import { useCardDrop } from "../lib/use-series-drop";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { useRunMetadataVersion } from "../lib/run-label";
 import { useRunSelection, useRunSelectionHasProvider } from "../lib/use-run-selection";
 import { seriesKey, seriesLabel } from "../lib/series-utils";
 import type { SequenceMeta, SequenceResponse } from "../api/types";
-import type { BaseCardSettings } from "./card-kit";
+import { useCardSeries, type BaseCardSettings } from "./card-kit";
 import AddToComparisonButton from "./AddToComparisonButton";
 import CardShell from "./CardShell";
 import RunSelectionPanel from "./RunSelectionPanel";
@@ -355,66 +355,18 @@ function FigurePane({
 }
 
 export default function FigureInteractiveCard({ runId, metric, extraSeries, controlledSeries, settingsKeyOverride, onRemove }: Props) {
-  const seedMetric = useMemo(
-    () => ({ name: metric.name, context_hash: metric.context_hash }),
-    [metric.name, metric.context_hash],
-  );
-
-  const extraSeriesKey = useMemo(
-    () => (extraSeries ?? []).map((s) => `${s.runId}::${s.name}::${s.context_hash}`).sort().join("|"),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [JSON.stringify((extraSeries ?? []).map((s) => [s.runId, s.name, s.context_hash]).sort())],
-  );
-
-  const defaults = useMemo<FigureSettings>(() => {
-    const all: Array<{ runId?: string; name: string; context_hash: string }> = [
-      seedMetric,
-      ...(extraSeries ?? []).map((s) => ({
-        runId: s.runId,
-        name: s.name,
-        context_hash: s.context_hash,
-      })),
-    ];
-    const seen = new Set<string>();
-    const unique = all.filter((m) => {
-      const k = seriesKey(m);
-      if (seen.has(k)) return false;
-      seen.add(k);
-      return true;
+  const { settings, updateSettings, effectiveMetrics, allRunIds, multipleRuns } =
+    useCardSeries<FigureSettings>({
+      runId,
+      metric,
+      extraSeries,
+      controlledSeries,
+      settingsKeyOverride,
+      makeDefaults: (seed, metrics) => ({
+        ...DEFAULT_FIGURE_SETTINGS(seed),
+        metrics,
+      }),
     });
-    return { ...DEFAULT_FIGURE_SETTINGS(seedMetric), metrics: unique };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seedMetric, extraSeriesKey]);
-
-  const settingsKey = settingsKeyOverride ?? {
-    runId,
-    metricName: metric.name,
-    contextHash: metric.context_hash,
-  };
-  const [settings, updateSettings] = useCardSettings(
-    settingsKey,
-    defaults,
-  );
-
-  const effectiveMetrics = useMemo(() => {
-    if (!controlledSeries) return settings.metrics;
-    const all: Array<{ runId?: string; name: string; context_hash: string }> = [
-      { name: metric.name, context_hash: metric.context_hash },
-      ...(extraSeries ?? []).map((s) => ({
-        runId: s.runId,
-        name: s.name,
-        context_hash: s.context_hash,
-      })),
-    ];
-    const seen = new Set<string>();
-    return all.filter((m) => {
-      const k = seriesKey(m);
-      if (seen.has(k)) return false;
-      seen.add(k);
-      return true;
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [controlledSeries, settings.metrics, metric.name, metric.context_hash, extraSeriesKey]);
 
   const { highlight: dropHighlight, dropProps } = useCardDrop(effectiveMetrics, updateSettings);
 
@@ -566,13 +518,6 @@ export default function FigureInteractiveCard({ runId, metric, extraSeries, cont
   );
 
   const showPlotly = !!sourceHash && sourceQ.isSuccess && !!sourceQ.data?.data;
-  const allRunIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const m of effectiveMetrics) ids.add(m.runId ?? runId);
-    return [...ids];
-  }, [effectiveMetrics, runId]);
-
-  const multipleRuns = allRunIds.length > 1;
 
   const runQueries = useQueries({
     queries: allRunIds.map((rid) => ({

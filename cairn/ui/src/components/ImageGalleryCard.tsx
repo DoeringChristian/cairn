@@ -11,11 +11,11 @@ import { api } from "../api/client";
 import { qk } from "../api/query-keys";
 import { useSequence, useSequences } from "../api/hooks";
 import type { SequenceMeta, SequencePoint } from "../api/types";
-import { useCardSettings, resolveCardHeight, type CardSettingsKey } from "../lib/card-settings";
+import { resolveCardHeight, type CardSettingsKey } from "../lib/card-settings";
 import { useCardDrop } from "../lib/use-series-drop";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { downloadArtifact, exportImagesAsComposite, safeName, type CompositePane } from "../lib/download";
-import type { BaseCardSettings } from "./card-kit";
+import { useCardSeries, type BaseCardSettings } from "./card-kit";
 import {
   type DiffMode,
   type ImageProcessingProps,
@@ -509,71 +509,23 @@ function OverlayComparePane({
 export default function ImageGalleryCard({ runId, metric, extraSeries, controlledSeries, settingsKeyOverride, onRemove }: Props) {
   useRunMetadataVersion();
 
-  const extraSeriesKey = useMemo(
-    () => (extraSeries ?? []).map((s) => `${s.runId}::${s.name}::${s.context_hash}`).sort().join("|"),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [JSON.stringify((extraSeries ?? []).map((s) => [s.runId, s.name, s.context_hash]).sort())],
-  );
-
-  const defaults = useMemo(
-    () => {
-      const base = defaultImageSettings({
-        name: metric.name,
-        context_hash: metric.context_hash,
-      });
-      const all: Array<{ runId?: string; name: string; context_hash: string }> = [
-        { name: metric.name, context_hash: metric.context_hash },
-        ...(extraSeries ?? []).map((s) => ({
-          runId: s.runId,
-          name: s.name,
-          context_hash: s.context_hash,
-        })),
-      ];
-      const seen = new Set<string>();
-      const unique = all.filter((m) => {
-        const k = seriesKey(m);
-        if (seen.has(k)) return false;
-        seen.add(k);
-        return true;
-      });
-      return { ...base, metrics: unique };
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [metric.name, metric.context_hash, extraSeriesKey],
-  );
-
-  const settingsKey = useMemo(
-    () => settingsKeyOverride ?? {
-      runId,
-      metricName: metric.name,
-      contextHash: metric.context_hash,
-    },
-    [settingsKeyOverride, runId, metric.name, metric.context_hash],
-  );
-  const [settings, updateSettings] = useCardSettings(
-    settingsKey,
-    defaults,
-  );
-
-  const effectiveMetrics = useMemo(() => {
-    if (!controlledSeries) return settings.metrics;
-    const all: Array<{ runId?: string; name: string; context_hash: string }> = [
-      { name: metric.name, context_hash: metric.context_hash },
-      ...(extraSeries ?? []).map((s) => ({
-        runId: s.runId,
-        name: s.name,
-        context_hash: s.context_hash,
-      })),
-    ];
-    const seen = new Set<string>();
-    return all.filter((m) => {
-      const k = seriesKey(m);
-      if (seen.has(k)) return false;
-      seen.add(k);
-      return true;
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [controlledSeries, settings.metrics, metric.name, metric.context_hash, extraSeriesKey]);
+  const {
+    settings,
+    updateSettings,
+    effectiveMetrics,
+    allRunIds: availableRunIds,
+    multipleRuns,
+  } = useCardSeries<ImageSettings>({
+    runId,
+    metric,
+    extraSeries,
+    controlledSeries,
+    settingsKeyOverride,
+    makeDefaults: (seed, metrics) => ({
+      ...defaultImageSettings(seed),
+      metrics,
+    }),
+  });
 
   // -----------------------------------------------------------------------
   // Multi-series fetch
@@ -618,18 +570,6 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
   const currentStep = globalSteps[safeIdx] ?? 0;
 
   const isMulti = effectiveMetrics.length > 1 || settings.externalBaseline != null;
-
-  const multipleRuns = useMemo(() => {
-    const seen = new Set<string>();
-    for (const m of effectiveMetrics) seen.add(m.runId ?? runId);
-    return seen.size > 1;
-  }, [effectiveMetrics, runId]);
-
-  const availableRunIds = useMemo(() => {
-    const seen = new Set<string>();
-    for (const m of effectiveMetrics) seen.add(m.runId ?? runId);
-    return Array.from(seen);
-  }, [effectiveMetrics, runId]);
 
   const runQueries = useQueries({
     queries: availableRunIds.map((rid) => ({

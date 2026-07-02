@@ -144,6 +144,7 @@ export function useSequencesForRuns(
           context: spec.contextHash || undefined,
           maxPoints: spec.maxPoints,
         }),
+      staleTime: 2_000,
       refetchInterval: (liveByRunId.get(spec.runId) ?? true) ? 2_000 : false,
     })),
   });

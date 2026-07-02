@@ -10,11 +10,11 @@ import { api } from "../api/client";
 import { qk } from "../api/query-keys";
 import { safeJsonParse } from "../lib/format";
 import { downloadArtifact, artifactFilename, exportChartFromContainer, safeName } from "../lib/download";
-import { useCardSettings, type CardSettingsKey } from "../lib/card-settings";
+import { type CardSettingsKey } from "../lib/card-settings";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import type { SequenceMeta, SequenceResponse, SequencePoint } from "../api/types";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
-import type { BaseCardSettings } from "./card-kit";
+import { useCardSeries, type BaseCardSettings } from "./card-kit";
 import CardShell from "./CardShell";
 import SettingsPopover from "./SettingsPopover";
 import StepSlider from "./StepSlider";
@@ -51,12 +51,13 @@ interface PluginMeta {
 }
 
 interface PluginSettings extends BaseCardSettings {
+  metrics: Array<{ runId?: string; name: string; context_hash: string }>;
   sliderStep?: number;
   pluginValues?: Record<string, unknown>;
   xAxis?: "step" | "relative_time" | "wall_time";
 }
 
-const DEFAULT_SETTINGS: PluginSettings = { version: 1 };
+const DEFAULT_SETTINGS: Omit<PluginSettings, "metrics"> = { version: 1 };
 const PYODIDE_CDN = "https://cdn.jsdelivr.net/pyodide/v0.27.0/full/";
 
 const sourceCache = new Map<string, string>();
@@ -292,37 +293,23 @@ export default function PluginCard({
   runId,
   metric,
   extraSeries,
+  controlledSeries,
   settingsKeyOverride,
   onRemove,
 }: Props) {
   useRunMetadataVersion();
 
-  const effectiveMetrics = useMemo(() => {
-    const all: Array<{ runId?: string; name: string; context_hash: string }> = [
-      { name: metric.name, context_hash: metric.context_hash },
-      ...(extraSeries ?? []).map((s) => ({ runId: s.runId, name: s.name, context_hash: s.context_hash })),
-    ];
-    const seen = new Set<string>();
-    return all.filter((m) => {
-      const k = `${m.runId ?? ""}::${m.name}::${m.context_hash}`;
-      if (seen.has(k)) return false;
-      seen.add(k);
-      return true;
+  const { settings, updateSettings, effectiveMetrics, allRunIds } =
+    useCardSeries<PluginSettings>({
+      runId,
+      metric,
+      extraSeries,
+      controlledSeries,
+      settingsKeyOverride,
+      makeDefaults: (_seed, metrics) => ({ ...DEFAULT_SETTINGS, metrics }),
     });
-  }, [metric.name, metric.context_hash, extraSeries]);
 
   const isMulti = effectiveMetrics.length > 1;
-
-  const allRunIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const m of effectiveMetrics) ids.add(m.runId ?? runId);
-    return [...ids];
-  }, [effectiveMetrics, runId]);
-
-  const [settings, updateSettings] = useCardSettings(
-    settingsKeyOverride ?? { runId, metricName: metric.name, contextHash: metric.context_hash },
-    DEFAULT_SETTINGS,
-  );
 
   // Primary run data for step computation.
   const q = useSequence(runId, metric.name, {
