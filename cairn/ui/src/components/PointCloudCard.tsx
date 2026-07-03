@@ -420,7 +420,7 @@ export default function PointCloudCard({
           ? () =>
               downloadArtifact(
                 api.artifactUrl(current.artifact_hash!),
-                artifactFilename(metric.name, current.step, current.artifact_mime ?? "application/octet-stream"),
+                artifactFilename(metric.name, current.step, current.artifact_mime, ".npy"),
               )
           : undefined
       }
