@@ -15,6 +15,7 @@ import {
 } from "../lib/run-layout";
 import type { RunLayout } from "../lib/run-layout";
 import { loadJson, saveJson, storageKeys } from "../lib/storage";
+import { CameraSyncContext, DEFAULT_CAMERA_SYNC_GROUP } from "../lib/camera-sync";
 
 interface Props {
   runId: string;
@@ -98,47 +99,49 @@ export default function CardGrid({ runId, sequences }: Props) {
   const showReset = !isEmptyLayout(layout);
 
   return (
-    <div className="space-y-8">
-      {showReset && (
-        <div className="flex justify-end">
-          <button
-            type="button"
-            onClick={handleReset}
-            className="text-xs text-fg-muted underline underline-offset-2 hover:text-fg"
-            title="Clear persisted card layout for this run"
-          >
-            reset layout
-          </button>
-        </div>
-      )}
-      {sections.map((section) => {
-        const entries = toEntries(section.items);
-        // cardKey per rendered entry. Use the same convention `run-layout`
-        // uses so drag payloads and layout lookups stay in sync.
-        const entryKeys = entries.map((e) => cardKeyOf(e.primary));
-        return (
-          <SectionBlock
-            key={section.name}
-            sectionName={section.name}
-            itemCount={entries.length}
-            collapsed={collapsedSections.has(section.name)}
-            onToggleCollapse={() => toggleSectionCollapse(section.name)}
-          >
-            <ReorderableCardGrid
-              cards={entries.map((entry) => ({
-                key: cardKeyOf(entry.primary),
-                content: <CardFor runId={runId} entry={entry} />,
-              }))}
-              onReorder={(fromKey, toKey) => {
-                const src = { cardKey: fromKey, section: section.name };
-                const toIdx = entryKeys.indexOf(toKey);
-                commitMove(fromKey, src.section, section.name, toIdx >= 0 ? toIdx : null);
-              }}
-            />
-          </SectionBlock>
-        );
-      })}
-    </div>
+    <CameraSyncContext.Provider value={DEFAULT_CAMERA_SYNC_GROUP}>
+      <div className="space-y-8">
+        {showReset && (
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={handleReset}
+              className="text-xs text-fg-muted underline underline-offset-2 hover:text-fg"
+              title="Clear persisted card layout for this run"
+            >
+              reset layout
+            </button>
+          </div>
+        )}
+        {sections.map((section) => {
+          const entries = toEntries(section.items);
+          // cardKey per rendered entry. Use the same convention `run-layout`
+          // uses so drag payloads and layout lookups stay in sync.
+          const entryKeys = entries.map((e) => cardKeyOf(e.primary));
+          return (
+            <SectionBlock
+              key={section.name}
+              sectionName={section.name}
+              itemCount={entries.length}
+              collapsed={collapsedSections.has(section.name)}
+              onToggleCollapse={() => toggleSectionCollapse(section.name)}
+            >
+              <ReorderableCardGrid
+                cards={entries.map((entry) => ({
+                  key: cardKeyOf(entry.primary),
+                  content: <CardFor runId={runId} entry={entry} />,
+                }))}
+                onReorder={(fromKey, toKey) => {
+                  const src = { cardKey: fromKey, section: section.name };
+                  const toIdx = entryKeys.indexOf(toKey);
+                  commitMove(fromKey, src.section, section.name, toIdx >= 0 ? toIdx : null);
+                }}
+              />
+            </SectionBlock>
+          );
+        })}
+      </div>
+    </CameraSyncContext.Provider>
   );
 }
 

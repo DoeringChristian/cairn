@@ -2,12 +2,48 @@ import { useEffect, useRef } from "react";
 import type { ColormapName } from "../types";
 import { getColormapLUT } from "../colormaps";
 
+// Historical hardcoded tick tables (byte range / signed-diff range), kept
+// verbatim so existing call sites (ImageGalleryCard) render byte-for-byte
+// unchanged when `min`/`max` are not supplied.
+const BYTE_TICKS = [
+  { pos: 0, label: "255" },
+  { pos: 25, label: "192" },
+  { pos: 50, label: "128" },
+  { pos: 75, label: "64" },
+  { pos: 100, label: "0" },
+];
+const DIFF_TICKS = [
+  { pos: 0, label: "1.0" },
+  { pos: 25, label: "0.5" },
+  { pos: 50, label: "0.0" },
+  { pos: 75, label: "−0.5" },
+  { pos: 100, label: "−1.0" },
+];
+
+function defaultFormat(v: number): string {
+  const rounded = Math.round(v * 100) / 100;
+  const s = Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2);
+  return s.replace("-", "−");
+}
+
 export default function Colorbar({
   colormap,
   isDiff,
+  min,
+  max,
+  format,
 }: {
   colormap: ColormapName;
   isDiff?: boolean;
+  /**
+   * Explicit tick-label domain (e.g. a mesh/volume/pointcloud value range).
+   * When omitted, falls back to the historical byte range [0,255] (or
+   * [-1,1] when `isDiff`) so existing call sites render unchanged.
+   */
+  min?: number;
+  max?: number;
+  /** Custom tick-label formatter, used only when `min`/`max` are supplied. */
+  format?: (v: number) => string;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -31,21 +67,17 @@ export default function Colorbar({
     ctx.putImageData(img, 0, 0);
   }, [colormap]);
 
-  const ticks = isDiff
-    ? [
-        { pos: 0, label: "1.0" },
-        { pos: 25, label: "0.5" },
-        { pos: 50, label: "0.0" },
-        { pos: 75, label: "−0.5" },
-        { pos: 100, label: "−1.0" },
-      ]
-    : [
-        { pos: 0, label: "255" },
-        { pos: 25, label: "192" },
-        { pos: 50, label: "128" },
-        { pos: 75, label: "64" },
-        { pos: 100, label: "0" },
-      ];
+  const hasDomain = min != null || max != null;
+  const ticks = hasDomain
+    ? [0, 25, 50, 75, 100].map((pos) => {
+        const lo = min ?? 0;
+        const hi = max ?? 1;
+        const v = hi - (pos / 100) * (hi - lo);
+        return { pos, label: (format ?? defaultFormat)(v) };
+      })
+    : isDiff
+      ? DIFF_TICKS
+      : BYTE_TICKS;
 
   return (
     <div className="flex shrink-0 pl-1 w-14 py-1" style={{ height: "100%" }}>

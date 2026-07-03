@@ -31,7 +31,9 @@ import CardShell from "./CardShell";
 import SeriesChipStrip from "./SeriesChipStrip";
 import Select from "./settings/Select";
 import Slider from "./settings/Slider";
+import Toggle from "./settings/Toggle";
 import { useRunSelection, useRunSelectionHasProvider } from "../lib/use-run-selection";
+import { useCameraSync } from "../lib/camera-sync";
 import RunSelectionPanel from "./RunSelectionPanel";
 import StepSlider from "./StepSlider";
 
@@ -61,6 +63,12 @@ interface PointCloudSettings extends BaseCardSettings {
   pointSize: number;
   colorMode: PointColorMode;
   background: PointCloudBackground;
+  /**
+   * Live camera sync across this card's panes and any other sync-enabled 3D
+   * card on the page. Optional/absent = false (unchanged default behavior)
+   * — see `lib/camera-sync.ts`.
+   */
+  syncViews?: boolean;
 }
 
 const DEFAULT_SETTINGS = (seed: { name: string; context_hash: string }): PointCloudSettings => ({
@@ -106,6 +114,8 @@ interface ViewConfig {
   pointSize: number;
   colorMode: PointColorMode;
   background: PointCloudBackground;
+  /** Resolved live camera-sync group, or `null` when sync is off for this card. */
+  sync: { groupId: string } | null;
 }
 
 /** Renders a single resolved point-cloud point (blob + metadata). */
@@ -142,6 +152,7 @@ function PointCloudBody({
           colorMode={view.colorMode}
           pointSize={view.pointSize}
           background={view.background}
+          sync={view.sync}
         />
       </div>
       <div className="mono mt-1 text-xs text-fg-subtle">
@@ -219,10 +230,15 @@ export default function PointCloudCard({
 
   const { highlight: dropHighlight, dropProps } = useCardDrop(effectiveMetrics, updateSettings);
 
+  // Resolved once per card so every pane (single or multi) shares the same
+  // sync group; `null` when the toggle is off.
+  const cameraGroupId = useCameraSync(!!settings.syncViews);
+
   const view: ViewConfig = {
     pointSize: settings.pointSize,
     colorMode: settings.colorMode,
     background: settings.background,
+    sync: cameraGroupId ? { groupId: cameraGroupId } : null,
   };
 
   // Single-metric path: fetch points for the step slider.
@@ -452,6 +468,12 @@ export default function PointCloudCard({
             value={settings.background}
             onChange={(v) => updateSettings({ background: v })}
             options={BACKGROUND_OPTIONS}
+          />
+          <Toggle
+            label="Sync 3D views"
+            checked={!!settings.syncViews}
+            onChange={(v) => updateSettings({ syncViews: v })}
+            description="Share orbit/zoom/pan live with this card's other panes and any other sync-enabled 3D card on this page"
           />
         </>
       }

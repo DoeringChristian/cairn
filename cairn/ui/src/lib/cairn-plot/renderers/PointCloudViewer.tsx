@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { useContainerSize } from "../hooks/use-container-size";
-import { getColormapLUT } from "../colormaps";
-import { SERIES_COLORS } from "../types";
+import { useScene3D, type Scene3DSyncOptions } from "../three/use-scene3d";
+import { valuesToColors, categoriesToColors, packRgbColors } from "../three/value-colors";
 
 export type PointCloudChannels = "xyz" | "xyzc" | "xyzrgb";
 export type PointColorMode = "auto" | "rgb" | "category" | "height";
@@ -25,6 +23,12 @@ export interface PointCloudViewerProps {
   pointSize: number;
   background: PointCloudBackground;
   className?: string;
+  /**
+   * Opt-in live camera sync group: viewers sharing a `groupId` mirror each
+   * other's orbit/zoom/pan in real time. `null`/absent (default) disables
+   * sync — see `lib/camera-sync.ts` for how cards resolve a group id.
+   */
+  sync?: Scene3DSyncOptions | null;
 }
 
 const CHANNEL_STRIDE: Record<PointCloudChannels, number> = {
@@ -52,11 +56,6 @@ export function resolveColorMode(
   return "height";
 }
 
-function hexToRgb01(hex: string): [number, number, number] {
-  const n = parseInt(hex.replace("#", ""), 16);
-  return [((n >> 16) & 0xff) / 255, ((n >> 8) & 0xff) / 255, (n & 0xff) / 255];
-}
-
 function extractPositions(data: Float32Array, channels: PointCloudChannels, nPoints: number): Float32Array {
   const stride = CHANNEL_STRIDE[channels];
   if (stride === 3) return data.subarray(0, nPoints * 3);
@@ -77,52 +76,30 @@ function computeColors(
   mode: PointColorMode,
 ): Float32Array {
   const stride = CHANNEL_STRIDE[channels];
-  const colors = new Float32Array(nPoints * 3);
   const effective = resolveColorMode(mode, channels);
 
   if (effective === "rgb") {
-    for (let i = 0; i < nPoints; i++) {
-      colors[i * 3] = data[i * stride + 3]!;
-      colors[i * 3 + 1] = data[i * stride + 4]!;
-      colors[i * 3 + 2] = data[i * stride + 5]!;
-    }
-    return colors;
+    return packRgbColors(data, nPoints, stride, 3);
   }
 
   if (effective === "category") {
-    const palette = SERIES_COLORS.map(hexToRgb01);
-    for (let i = 0; i < nPoints; i++) {
-      const cat = Math.max(0, Math.round(data[i * stride + 3]!));
-      const [r, g, b] = palette[cat % palette.length]!;
-      colors[i * 3] = r;
-      colors[i * 3 + 1] = g;
-      colors[i * 3 + 2] = b;
-    }
-    return colors;
+    return categoriesToColors(data, nPoints, { stride, offset: 3 });
   }
 
   // height → viridis over z
-  const lut = getColormapLUT("viridis");
-  const zMin = bounds.min[2];
-  const zMax = bounds.max[2];
-  const span = zMax - zMin || 1;
-  for (let i = 0; i < nPoints; i++) {
-    const z = data[i * stride + 2]!;
-    const t = Math.max(0, Math.min(1, (z - zMin) / span));
-    const idx = Math.min(255, Math.max(0, Math.round(t * 255)));
-    colors[i * 3] = lut[idx * 3]! / 255;
-    colors[i * 3 + 1] = lut[idx * 3 + 1]! / 255;
-    colors[i * 3 + 2] = lut[idx * 3 + 2]! / 255;
-  }
-  return colors;
+  return valuesToColors(data, nPoints, [bounds.min[2], bounds.max[2]], "viridis", {
+    stride,
+    offset: 2,
+  });
 }
 
 /**
- * Self-contained three.js point-cloud viewer. Owns its resize (ResizeObserver
- * via useContainerSize), orbit/zoom/pan (three's OrbitControls, which binds to
- * the canvas internally), and renders on demand (no permanent rAF loop, so
- * several comparison panes stay cheap). Disposes geometry, material, controls
- * and the WebGL context on unmount. No external React hooks required.
+ * Self-contained three.js point-cloud viewer, built on the shared
+ * `useScene3D` lifecycle (resize, on-demand render, dblclick-refit,
+ * background, disposal, optional camera sync). Owns only its own geometry
+ * and material — several comparison panes stay cheap since rendering is
+ * on-demand, not a permanent rAF loop. No external React hooks required
+ * (`sync` is opt-in and works standalone).
  */
 export default function PointCloudViewer({
   data,
@@ -133,14 +110,13 @@ export default function PointCloudViewer({
   pointSize,
   background,
   className,
+  sync = null,
 }: PointCloudViewerProps) {
-  const { ref: containerRef, size } = useContainerSize<HTMLDivElement>();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const { containerRef, canvasRef, requestRender, fitToBounds, refs } = useScene3D({
+    background: BG_COLORS[background],
+    sync,
+  });
 
-  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
-  const sceneRef = useRef<THREE.Scene | null>(null);
-  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
-  const controlsRef = useRef<OrbitControls | null>(null);
   const pointsRef = useRef<THREE.Points | null>(null);
   const geometryRef = useRef<THREE.BufferGeometry | null>(null);
   const materialRef = useRef<THREE.PointsMaterial | null>(null);
@@ -150,103 +126,9 @@ export default function PointCloudViewer({
     [data, channels, nPoints],
   );
 
-  // ── Fit camera to the cloud bounds ─────────────────────────────────────
-  const fitToBounds = () => {
-    const camera = cameraRef.current;
-    const controls = controlsRef.current;
-    if (!camera || !controls) return;
-    const min = new THREE.Vector3(...bounds.min);
-    const max = new THREE.Vector3(...bounds.max);
-    const center = min.clone().add(max).multiplyScalar(0.5);
-    const radius = Math.max(max.clone().sub(min).length() * 0.5, 1e-3);
-    const fov = (camera.fov * Math.PI) / 180;
-    const dist = (radius / Math.sin(fov / 2)) * 1.15;
-    camera.near = Math.max(dist / 1000, 1e-4);
-    camera.far = dist * 10 + radius * 10;
-    camera.up.set(0, 1, 0);
-    camera.position
-      .copy(center)
-      .add(new THREE.Vector3(1, 0.75, 1).normalize().multiplyScalar(dist));
-    camera.lookAt(center);
-    camera.updateProjectionMatrix();
-    controls.target.copy(center);
-    controls.update();
-    renderOnce();
-  };
-
-  const renderOnce = () => {
-    const r = rendererRef.current;
-    const s = sceneRef.current;
-    const c = cameraRef.current;
-    if (r && s && c) r.render(s, c);
-  };
-
-  // ── Mount: renderer + scene + camera + controls (once) ─────────────────
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    rendererRef.current = renderer;
-
-    const scene = new THREE.Scene();
-    sceneRef.current = scene;
-
-    const camera = new THREE.PerspectiveCamera(50, 1, 0.01, 1000);
-    cameraRef.current = camera;
-
-    const controls = new OrbitControls(camera, canvas);
-    controls.enableDamping = false;
-    controls.addEventListener("change", renderOnce);
-    controlsRef.current = controls;
-
-    const onDblClick = () => fitToBounds();
-    canvas.addEventListener("dblclick", onDblClick);
-
-    return () => {
-      canvas.removeEventListener("dblclick", onDblClick);
-      controls.removeEventListener("change", renderOnce);
-      controls.dispose();
-      geometryRef.current?.dispose();
-      materialRef.current?.dispose();
-      renderer.dispose();
-      renderer.forceContextLoss();
-      rendererRef.current = null;
-      sceneRef.current = null;
-      cameraRef.current = null;
-      controlsRef.current = null;
-      pointsRef.current = null;
-      geometryRef.current = null;
-      materialRef.current = null;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // ── Background ─────────────────────────────────────────────────────────
-  useEffect(() => {
-    const renderer = rendererRef.current;
-    if (!renderer) return;
-    renderer.setClearColor(BG_COLORS[background], 1);
-    renderOnce();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [background]);
-
-  // ── Resize ─────────────────────────────────────────────────────────────
-  useEffect(() => {
-    const renderer = rendererRef.current;
-    const camera = cameraRef.current;
-    if (!renderer || !camera || size.w === 0 || size.h === 0) return;
-    renderer.setSize(size.w, size.h, false);
-    camera.aspect = size.w / size.h;
-    camera.updateProjectionMatrix();
-    renderOnce();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [size.w, size.h]);
-
   // ── Geometry (new cloud) + fit ─────────────────────────────────────────
   useEffect(() => {
-    const scene = sceneRef.current;
+    const scene = refs.scene.current;
     if (!scene) return;
 
     // Remove & dispose any previous cloud.
@@ -273,7 +155,7 @@ export default function PointCloudViewer({
     materialRef.current = material;
     pointsRef.current = points;
 
-    fitToBounds();
+    fitToBounds(bounds);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [positions, data, channels, nPoints]);
 
@@ -285,7 +167,7 @@ export default function PointCloudViewer({
     const attr = geometry.getAttribute("color") as THREE.BufferAttribute;
     attr.copyArray(colors);
     attr.needsUpdate = true;
-    renderOnce();
+    requestRender();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [colorMode]);
 
@@ -295,9 +177,18 @@ export default function PointCloudViewer({
     if (!material) return;
     material.size = pointSize;
     material.needsUpdate = true;
-    renderOnce();
+    requestRender();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pointSize]);
+
+  // ── Dispose this viewer's own geometry/material on unmount (the renderer
+  // / controls / WebGL context lifecycle is owned by useScene3D) ─────────
+  useEffect(() => {
+    return () => {
+      geometryRef.current?.dispose();
+      materialRef.current?.dispose();
+    };
+  }, []);
 
   return (
     <div ref={containerRef} className={className ?? "relative h-full w-full"}>
