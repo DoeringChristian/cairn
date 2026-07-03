@@ -4,7 +4,10 @@ Logs, for two runs:
 - an HTML mini-report every step: inline SVG sparkline of the running loss +
   a styled table of per-step stats — via ``cairn.Html``. Exercises the
   sandboxed-iframe renderer and its auto-height "cairn:resize" shim (the
-  report grows a little every step so the height keeps changing).
+  report grows a little every step so the height keeps changing; milestone
+  steps 7/15/23 embed the full loss history and are clearly taller than the
+  card's 300px default, while step 0 is clearly shorter — so scrubbing
+  exercises both auto-height grow and shrink).
 - markdown training notes every few steps: headings, a GFM table, a GFM
   task-list (checkboxes), bold/italic/strikethrough, a fenced code block,
   and a link — via ``cairn.Markdown``. Exercises react-markdown + remark-gfm.
@@ -56,12 +59,31 @@ def make_html_report(step: int, run_name: str, losses: list[float]) -> str:
 
     Grows slightly each step (more table rows) so the iframe's content
     height keeps changing — a good exercise for the auto-height shim.
+
+    Auto-height acceptance anchors: "milestone" steps (7, 15, 23)
+    additionally embed the FULL loss-history table, making their content
+    clearly taller than the card's 300px default (~450px at step 7, up to
+    roughly 700-800px at step 23), while step 0 stays clearly short
+    (~130px). Scrubbing the slider between step 0 and a milestone step
+    therefore exercises BOTH the grow and the shrink direction of the
+    auto-height "cairn:resize" shim.
     """
     spark = make_sparkline_svg(losses)
     rows = "".join(
         f"<tr><td>{i}</td><td>{v:.4f}</td></tr>"
         for i, v in enumerate(losses[-(5 + step % 6) :])
     )
+    milestone = ""
+    if step % 8 == 7:
+        history = "".join(
+            f"<tr><td>{i}</td><td>{v:.4f}</td></tr>" for i, v in enumerate(losses)
+        )
+        milestone = f"""
+<h2 style="margin-top:14px">milestone — full loss history ({len(losses)} steps)</h2>
+<table>
+<tr><th>step</th><th>loss</th></tr>
+{history}
+</table>"""
     return f"""<!DOCTYPE html>
 <html>
 <head>
@@ -79,7 +101,7 @@ def make_html_report(step: int, run_name: str, losses: list[float]) -> str:
 <table>
 <tr><th>recent step</th><th>loss</th></tr>
 {rows}
-</table>
+</table>{milestone}
 </body>
 </html>"""
 
