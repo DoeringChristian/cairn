@@ -55,6 +55,34 @@ def test_write_and_read_roundtrip(tmp_path):
     assert config.load_config_file() == data
 
 
+def test_config_file_written_0600(tmp_path):
+    """The config file may hold a plaintext bearer token — it must be
+    owner-only readable, and its parent dir owner-only, on POSIX hosts."""
+    import os
+    import stat
+
+    cfg = tmp_path / "cfgdir" / "config.toml"
+    config.write_config_file({"server": "http://x:4300", "token": "secret"}, path=cfg)
+    mode = stat.S_IMODE(os.stat(cfg).st_mode)
+    assert mode == 0o600, oct(mode)
+    parent_mode = stat.S_IMODE(os.stat(cfg.parent).st_mode)
+    assert parent_mode == 0o700, oct(parent_mode)
+
+
+def test_config_file_rewrite_tightens_existing_loose_perms(tmp_path):
+    """A pre-existing world-readable config gets tightened on the next write
+    (O_CREAT keeps an existing file's old mode, so we chmod explicitly)."""
+    import os
+    import stat
+
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("server = 'http://old'\n")
+    os.chmod(cfg, 0o644)
+    config.write_config_file({"server": "http://new", "token": "secret"}, path=cfg)
+    mode = stat.S_IMODE(os.stat(cfg).st_mode)
+    assert mode == 0o600, oct(mode)
+
+
 def test_load_missing_returns_empty(tmp_path):
     assert config.load_config_file() == {}
 

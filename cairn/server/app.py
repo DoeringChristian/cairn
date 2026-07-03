@@ -243,7 +243,12 @@ def _mount_spa_or_placeholder(app: FastAPI) -> None:
         async def _spa_fallback(path: str) -> Response:
             from fastapi.responses import JSONResponse, Response
 
-            if path == "api" or path.startswith("api/"):
+            # Case-insensitive: refuse /API/... too. No route matches an
+            # uppercased /API/* today so there's no live data leak, but this
+            # keeps the "shell never serves under the api namespace" invariant
+            # airtight regardless of path casing.
+            lowered = path.lower()
+            if lowered == "api" or lowered.startswith("api/"):
                 return JSONResponse({"detail": "not found"}, status_code=404)
             return Response(content=index_html, media_type="text/html")
     else:

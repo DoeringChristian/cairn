@@ -93,6 +93,43 @@ def test_expired_token_rejected(tmp_path):
         db.close()
 
 
+def test_session_rejected_when_backing_token_expired(tmp_path):
+    """A short-lived (--expires) token must not yield a session cookie that
+    outlives it. Regression for the verify_session token-expiry gap."""
+    dd = DataDir(tmp_path / "cairn")
+    db = Database.open(dd.db_path)
+    try:
+        future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+        token_id, _plain = auth_core.create_token(
+            db, name="shortlived", role="read", expires_at=future
+        )
+        session_id = auth_core.create_session(db, token_id)
+        # Still valid while the token is unexpired.
+        assert auth_core.verify_session(db, session_id) is not None
+        # Force-expire the backing token (session's own expiry is untouched).
+        past = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+        db.write("UPDATE tokens SET expires_at = ? WHERE id = ?", [past, token_id])
+        assert auth_core.verify_session(db, session_id) is None
+    finally:
+        db.close()
+
+
+def test_otp_rejected_when_backing_token_expired(tmp_path):
+    """The OTP path must honor the backing token's expiry too. Regression
+    for the consume_otp token-expiry gap."""
+    dd = DataDir(tmp_path / "cairn")
+    db = Database.open(dd.db_path)
+    try:
+        past = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+        token_id, _plain = auth_core.create_token(
+            db, name="shortlived-otp", role="read", expires_at=past
+        )
+        otp = auth_core.create_otp(db, token_id)
+        assert auth_core.consume_otp(db, otp) is None
+    finally:
+        db.close()
+
+
 def test_revoke_drops_live_sessions(auth_env):
     app, _c, tokens = auth_env
     db = app.state.db
@@ -180,6 +217,15 @@ def test_resolve_artifact_ref_stays_read_despite_post(auth_env):
 def test_unknown_api_path_404s_not_spa(auth_env):
     _app, c, _tokens = auth_env
     resp = c.get("/api/this-route-does-not-exist")
+    assert resp.status_code == 404
+    assert "text/html" not in resp.headers.get("content-type", "")
+
+
+def test_uppercase_api_path_also_refused_by_spa(auth_env):
+    """The SPA catch-all guard is case-insensitive: /API/... never serves
+    the HTML shell either."""
+    _app, c, _tokens = auth_env
+    resp = c.get("/API/this-route-does-not-exist")
     assert resp.status_code == 404
     assert "text/html" not in resp.headers.get("content-type", "")
 

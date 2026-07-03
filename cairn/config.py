@@ -71,11 +71,32 @@ def load_config_file(path: Path | None = None) -> dict[str, Any]:
 
 
 def write_config_file(data: dict[str, Any], path: Path | None = None) -> None:
-    """Write ``data`` as TOML, creating parent dirs as needed."""
+    """Write ``data`` as TOML, creating parent dirs as needed.
+
+    The config file may hold a plaintext bearer ``token`` (written by
+    ``cairn login --ssh`` — explicitly the multi-user-host scenario), so it
+    is created 0o600 and its parent dir 0o700 unconditionally (regardless of
+    whether a token is present right now) so a later token add is safe on a
+    shared host. On Windows these POSIX modes are a no-op; document
+    filesystem ACLs there.
+    """
     path = path or config_file_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("wb") as fh:
+    try:
+        os.chmod(path.parent, 0o700)
+    except OSError:
+        pass  # e.g. parent not owned by us, or non-POSIX FS
+    # Open with O_CREAT|O_WRONLY|O_TRUNC and mode 0o600 so the file is never
+    # even briefly world-readable between creation and a post-hoc chmod.
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as fh:
         tomli_w.dump(data, fh)
+    # An existing file keeps its old mode through O_CREAT, so tighten
+    # explicitly in case it predated this hardening.
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
 
 
 def configure(**kwargs: Any) -> None:

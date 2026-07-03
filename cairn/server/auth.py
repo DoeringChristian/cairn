@@ -175,7 +175,23 @@ def verify_bearer_token(db: Database, plaintext: str) -> Principal | None:
 # ---------------------------------------------------------------------------
 
 
+def sweep_expired(db: Database) -> None:
+    """Opportunistic, bounded best-effort GC of expired sessions/otp/nonce
+    rows. Called from the (relatively rare) credential-minting paths so the
+    tables don't accumulate dead rows forever; a full periodic sweep is out
+    of scope. Never raises — housekeeping must not break the caller."""
+    try:
+        now = _now_iso()
+        with db.transaction() as con:
+            con.execute("DELETE FROM sessions WHERE expires_at <= ?", [now])
+            con.execute("DELETE FROM auth_otp WHERE expires_at <= ?", [now])
+            con.execute("DELETE FROM auth_nonces WHERE expires_at <= ?", [now])
+    except Exception:  # noqa: BLE001 - best-effort housekeeping
+        pass
+
+
 def create_session(db: Database, token_id: str) -> str:
+    sweep_expired(db)
     session_id = generate_secret(32)
     now = _now_iso()
     expires = _iso_in(SESSION_TTL_SECONDS)
@@ -187,23 +203,36 @@ def create_session(db: Database, token_id: str) -> str:
 
 
 def verify_session(db: Database, session_id: str) -> Principal | None:
-    """Validate a session cookie value and slide its expiry forward."""
+    """Validate a session cookie value and slide its expiry forward.
+
+    Enforces BOTH the session's own sliding expiry AND the backing token's
+    ``expires_at`` — otherwise a short-lived (``--expires``) token could be
+    exchanged for a session cookie that outlives it by up to
+    ``SESSION_TTL_DAYS``.
+    """
     if not session_id:
         return None
     row = db.read_one(
-        """SELECT s.id, s.token_id, s.expires_at, t.name, t.role, t.disabled
+        """SELECT s.id, s.token_id, s.expires_at, t.name, t.role, t.disabled,
+                  t.expires_at
            FROM sessions s JOIN tokens t ON t.id = s.token_id
            WHERE s.id = ?""",
         [session_id],
     )
     if row is None:
         return None
-    sid, token_id, expires_at, name, role, disabled = row
+    sid, token_id, expires_at, name, role, disabled, token_expires_at = row
     if not secrets_equal(sid, session_id):
         return None
     if disabled:
         return None
-    if expires_at <= _now_iso():
+    now = _now_iso()
+    if expires_at <= now:
+        db.write("DELETE FROM sessions WHERE id = ?", [sid])
+        return None
+    # Backing token expiry (same check as verify_bearer_token). Drop the
+    # session too — the token that authorized it is no longer valid.
+    if token_expires_at and token_expires_at <= now:
         db.write("DELETE FROM sessions WHERE id = ?", [sid])
         return None
     # Sliding expiry: extend on every successful use.
@@ -246,14 +275,19 @@ def consume_otp(db: Database, otp: str) -> Principal | None:
         otp_hash, token_id, expires_at = row
         if not secrets_equal(otp_hash, h):
             return None
-        if expires_at <= _now_iso():
+        now = _now_iso()
+        if expires_at <= now:
             return None
         trow = con.execute(
-            "SELECT name, role, disabled FROM tokens WHERE id = ?", [token_id]
+            "SELECT name, role, disabled, expires_at FROM tokens WHERE id = ?", [token_id]
         ).fetchone()
     if trow is None or trow[2]:
         return None
-    name, role, _disabled = trow
+    name, role, _disabled, token_expires_at = trow
+    # Backing token expiry — a short-lived token must not yield a session
+    # via the OTP path any more than via the login path.
+    if token_expires_at and token_expires_at <= now:
+        return None
     return Principal(token_id=token_id, name=name, role=role)
 
 
