@@ -85,8 +85,27 @@ const MAX_HEIGHT = 2000;
  * schedule is fixed-length (never an unbounded interval/poll), so content
  * that legitimately never grows past height 0 just stops posting after the
  * last scheduled retry instead of spinning forever.
+ *
+ * Measurement: the height is taken from `document.body`, NOT from
+ * `document.documentElement.scrollHeight` — the latter is clamped by the
+ * browser to be at least the iframe's current viewport height, so once the
+ * host makes the iframe tall the reported height can never go back down
+ * (it ratchets: whatever height the host applies becomes the floor the
+ * shim reports back, and the card can grow but never shrink).
+ * `body.scrollHeight` has no such clamp; we take
+ * max(body.scrollHeight, body.offsetHeight) — scrollHeight wins when
+ * content overflows the body's box, offsetHeight when the body has
+ * explicit height/borders — and add the body's top/bottom margins (8px
+ * each by default) so content isn't clipped by them. Fallback for a
+ * document with no body: the html element's own border-box rect height
+ * (its box tracks content when `height` is auto, and is not viewport
+ * clamped, unlike its scrollHeight). Known limitation: absolutely
+ * positioned content that escapes the body's scrollable overflow
+ * (positioned against the initial containing block) isn't counted — the
+ * only measure that would catch it is the clamped
+ * documentElement.scrollHeight, which would reintroduce the ratchet.
  */
-const RESIZE_SHIM = `<script>(function(){function post(){try{parent.postMessage({type:"cairn:resize",height:document.documentElement.scrollHeight,protocolVersion:1},"*")}catch(e){}}try{new ResizeObserver(post).observe(document.documentElement)}catch(e){}try{new MutationObserver(post).observe(document.body||document.documentElement,{childList:true,subtree:true})}catch(e){}window.addEventListener("load",function(){post();[0,100,300,1000].forEach(function(d){setTimeout(post,d)})});post();})();</script>`;
+const RESIZE_SHIM = `<script>(function(){function height(){var b=document.body;if(!b)return Math.ceil(document.documentElement.getBoundingClientRect().height);var m=0;try{var s=getComputedStyle(b);m=(parseFloat(s.marginTop)||0)+(parseFloat(s.marginBottom)||0)}catch(e){}return Math.ceil(Math.max(b.scrollHeight,b.offsetHeight)+m)}function post(){try{parent.postMessage({type:"cairn:resize",height:height(),protocolVersion:1},"*")}catch(e){}}try{new ResizeObserver(post).observe(document.body||document.documentElement)}catch(e){}try{new MutationObserver(post).observe(document.body||document.documentElement,{childList:true,subtree:true})}catch(e){}window.addEventListener("load",function(){post();[0,100,300,1000].forEach(function(d){setTimeout(post,d)})});post();})();</script>`;
 
 function injectResizeShim(html: string): string {
   if (/<\/body>/i.test(html)) return html.replace(/<\/body>/i, `${RESIZE_SHIM}</body>`);
