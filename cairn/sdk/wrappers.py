@@ -199,6 +199,57 @@ class Mesh(_TypeWrapper):
         self.kwargs = kwargs
 
 
+class Boxes3D(_TypeWrapper):
+    """Axis-aligned box hierarchy (octree/BVH) from ``mins``/``maxs`` arrays.
+
+    Both an octree's cells and a BVH's node bounds are just axis-aligned
+    boxes with a depth level and an optional per-box scalar value — the
+    renderer treats them identically, so ``Boxes3D``/``Octree``/``BVH`` all
+    serialize to the same ``boxes3d`` object type. ``kind`` is metadata-only
+    (drives labeling in the UI); the array contract is shared.
+
+    - ``mins``/``maxs``: ``(N, 3)`` numpy/torch arrays, one row per box.
+      Every box must satisfy ``mins <= maxs`` elementwise.
+    - ``depth``: optional ``(N,)`` integer array (defaults to all zeros —
+      a flat, unstructured box set).
+    - ``values``: optional ``(N,)`` float array for value-based coloring.
+
+    Box sets larger than 200,000 rows raise (no silent truncation).
+
+    Usage::
+
+        run.track(cairn.Boxes3D(mins, maxs), name="boxes", step=0)
+        run.track(cairn.Octree(mins, maxs, depth=depth), name="octree", step=0)
+        run.track(cairn.BVH(mins, maxs, values=node_cost), name="bvh", step=0)
+    """
+
+    object_type = "boxes3d"
+    kind = "boxes"
+
+    def __init__(
+        self,
+        mins: Any,
+        maxs: Any,
+        depth: Any = None,
+        values: Any = None,
+        **kwargs: Any,
+    ):
+        self.obj = {"mins": mins, "maxs": maxs, "depth": depth, "values": values}
+        self.kwargs = {**kwargs, "kind": self.kind}
+
+
+class Octree(Boxes3D):
+    """``Boxes3D`` with ``kind="octree"`` metadata (nested cell boxes)."""
+
+    kind = "octree"
+
+
+class BVH(Boxes3D):
+    """``Boxes3D`` with ``kind="bvh"`` metadata (bounding-volume-hierarchy node boxes)."""
+
+    kind = "bvh"
+
+
 class Artifact(_TypeWrapper):
     """Pickle-serialized Python object.
 
