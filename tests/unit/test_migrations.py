@@ -43,6 +43,15 @@ def test_fresh_schema_creates_all_tables(conn):
     assert expected.issubset(_tables(conn))
 
 
+def test_comparison_templates_table_created(conn):
+    apply_migrations(conn)
+    assert "comparison_templates" in _tables(conn)
+    rows = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'"
+    ).fetchall()
+    assert "idx_comparison_templates_project" in {r[0] for r in rows}
+
+
 def test_version_row_written(conn):
     apply_migrations(conn)
     (version,) = conn.execute("SELECT version FROM schema_version").fetchone()
