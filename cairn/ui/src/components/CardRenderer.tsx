@@ -41,6 +41,8 @@ const ScalarTileCard = lazy(() => import("./ScalarTileCard"));
 
 const PointCloudCard = lazy(() => import("./PointCloudCard"));
 
+const MeshCard = lazy(() => import("./MeshCard"));
+
 /**
  * Descriptor for the card CardRenderer should render.
  *
@@ -244,6 +246,22 @@ export default function CardRenderer(props: CardDescriptor) {
           }
         >
           <PointCloudCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />
+        </Suspense>
+      );
+    case "mesh":
+      return (
+        <Suspense
+          fallback={
+            <div data-cairn-card className="card p-4">
+              <div className="mb-2 flex items-baseline justify-between gap-2">
+                <h3 className="mono text-sm font-semibold">{metric.name}</h3>
+                <span className="text-xs text-fg-subtle">loading three.js…</span>
+              </div>
+              <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
+            </div>
+          }
+        >
+          <MeshCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />
         </Suspense>
       );
     case "plugin":

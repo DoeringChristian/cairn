@@ -157,6 +157,48 @@ class PointCloud(_TypeWrapper):
     object_type = "pointcloud"
 
 
+class Mesh(_TypeWrapper):
+    """3D indexed triangle mesh from vertex/face numpy/torch arrays.
+
+    ``vertices`` is an ``(N, 3)`` array of positions; ``faces`` is an
+    ``(M, 3)`` array of triangle vertex indices (validated ``< N``). Optional
+    per-vertex attributes:
+
+    - ``values``: a length-``N`` scalar array, colored via a colormap in the
+      UI (e.g. curvature, temperature, a training signal).
+    - ``colors``: an ``(N, 3)`` RGB array. Color is auto-detected as either
+      ``0-255`` or ``0-1`` and normalized to ``0-1`` at log time.
+    - ``normals``: an ``(N, 3)`` array; the UI computes smooth-shading
+      normals itself when omitted.
+
+    Usage::
+
+        run.track(cairn.Mesh(vertices, faces), name="mesh", step=0)
+        run.track(cairn.Mesh(vertices, faces, values=curvature), name="mesh", step=0)
+        run.track(cairn.Mesh(vertices, faces, colors=vertex_rgb), name="mesh", step=0)
+    """
+
+    object_type = "mesh"
+
+    def __init__(
+        self,
+        vertices: Any,
+        faces: Any,
+        values: Any = None,
+        colors: Any = None,
+        normals: Any = None,
+        **kwargs: Any,
+    ):
+        self.obj = {
+            "vertices": vertices,
+            "faces": faces,
+            "values": values,
+            "colors": colors,
+            "normals": normals,
+        }
+        self.kwargs = kwargs
+
+
 class Artifact(_TypeWrapper):
     """Pickle-serialized Python object.
 
