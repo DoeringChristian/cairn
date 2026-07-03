@@ -144,8 +144,7 @@ function buildLutTexture(colormap: ColormapName): THREE.DataTexture {
  * `projectionMatrix`, `cameraPosition`) every frame, we just have to
  * declare them ourselves.
  */
-const VERTEX_SHADER = `#version 300 es
-precision highp float;
+const VERTEX_SHADER = `precision highp float;
 
 in vec3 position;
 
@@ -184,8 +183,7 @@ void main() {
  * zero density, so it contributes to neither MIP's max nor ISO's crossing
  * search — carving a visible cut into the volume.
  */
-const FRAGMENT_SHADER = `#version 300 es
-precision highp float;
+const FRAGMENT_SHADER = `precision highp float;
 precision highp sampler3D;
 
 in vec3 vOrigin;
