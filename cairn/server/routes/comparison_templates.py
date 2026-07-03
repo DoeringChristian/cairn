@@ -10,12 +10,14 @@ import json
 import secrets
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
+from .. import auth
 from ._common import get_db, utc_now
 
 router = APIRouter(prefix="/api", tags=["comparison-templates"])
+_write = Depends(auth.require_role("write"))
 
 
 class ComparisonTemplateCreate(BaseModel):
@@ -79,7 +81,7 @@ def get_comparison_template(project_id: str, template_id: str, request: Request)
     }
 
 
-@router.post("/projects/{project_id}/comparison-templates")
+@router.post("/projects/{project_id}/comparison-templates", dependencies=[_write])
 def create_comparison_template(
     project_id: str, body: ComparisonTemplateCreate, request: Request,
 ) -> dict[str, Any]:
@@ -94,7 +96,7 @@ def create_comparison_template(
     return {"id": tid, "name": body.name, "created_at": now}
 
 
-@router.put("/projects/{project_id}/comparison-templates/{template_id}")
+@router.put("/projects/{project_id}/comparison-templates/{template_id}", dependencies=[_write])
 def update_comparison_template(
     project_id: str, template_id: str, body: ComparisonTemplateUpdate, request: Request,
 ) -> dict[str, Any]:
@@ -120,7 +122,7 @@ def update_comparison_template(
     return {"id": template_id, "updated_at": now}
 
 
-@router.delete("/projects/{project_id}/comparison-templates/{template_id}")
+@router.delete("/projects/{project_id}/comparison-templates/{template_id}", dependencies=[_write])
 def delete_comparison_template(project_id: str, template_id: str, request: Request) -> dict[str, Any]:
     db = get_db(request)
     rows = db.read_columns(

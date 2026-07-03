@@ -11,10 +11,16 @@ from ._common import get_blobs, get_data_dir, get_db
 
 router = APIRouter(prefix="/api", tags=["health"])
 
+# ``public_router`` is registered WITHOUT the require_role dependency (see
+# app.py) — /api/health is a liveness probe and must work unauthenticated,
+# even when auth is enabled. Everything else in this module (info,
+# workspace layout) leaks data and stays behind require_role("read").
+public_router = APIRouter(prefix="/api", tags=["health"])
+
 _STARTED_AT = time.time()
 
 
-@router.get("/health")
+@public_router.get("/health")
 def health() -> dict[str, Any]:
     from cairn import __version__
 

@@ -94,7 +94,14 @@ def test_cairn_server_starts_both_ports(fresh_repo: Path):
 
 @pytest.mark.slow
 def test_cairn_ui_standalone(fresh_repo: Path):
-    """`cairn ui` with no server running opens the repo and serves /api."""
+    """`cairn ui` with no server running opens the repo and serves /api.
+
+    ``--no-auth``: this test exercises startup/routing mechanics, not auth
+    (covered separately in tests/unit/test_auth.py) — auth is ON by default
+    as of the AUTH epic, so this must opt out explicitly, matching the
+    documented dev/agent-workflow guidance (always launch test/dev servers
+    with --no-auth).
+    """
     ui_port = _free_port()
     proc = subprocess.Popen(
         [
@@ -108,6 +115,7 @@ def test_cairn_ui_standalone(fresh_repo: Path):
             "127.0.0.1",
             "--port",
             str(ui_port),
+            "--no-auth",
         ],
         cwd=str(REPO_ROOT),
         stdout=subprocess.PIPE,

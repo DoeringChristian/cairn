@@ -190,6 +190,47 @@ SCHEMA_SQL: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_artifact_versions_family ON artifact_versions(family_id, version DESC)",
     "CREATE INDEX IF NOT EXISTS idx_artifact_versions_producer ON artifact_versions(created_by_run)",
     "CREATE INDEX IF NOT EXISTS idx_run_inputs_artifact ON run_inputs(artifact_version_id)",
+    # ── Auth tables (workstream AUTH) ──────────────────────────────────
+    # Plaintext secrets (tokens, session ids, OTPs, nonces) are never
+    # persisted — only sha256 hex digests. See cairn/server/auth.py.
+    """
+    CREATE TABLE IF NOT EXISTS tokens (
+        id            TEXT PRIMARY KEY,
+        name          TEXT NOT NULL UNIQUE,
+        token_hash    TEXT NOT NULL UNIQUE,
+        role          TEXT NOT NULL CHECK(role IN ('admin','write','read')),
+        created_at    TEXT NOT NULL,
+        last_used_at  TEXT,
+        expires_at    TEXT,
+        disabled      INTEGER NOT NULL DEFAULT 0
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_tokens_hash ON tokens(token_hash)",
+    """
+    CREATE TABLE IF NOT EXISTS sessions (
+        id            TEXT PRIMARY KEY,
+        token_id      TEXT NOT NULL REFERENCES tokens(id),
+        created_at    TEXT NOT NULL,
+        expires_at    TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token_id)",
+    """
+    CREATE TABLE IF NOT EXISTS auth_otp (
+        otp_hash      TEXT PRIMARY KEY,
+        token_id      TEXT NOT NULL REFERENCES tokens(id),
+        created_at    TEXT NOT NULL,
+        expires_at    TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS auth_nonces (
+        nonce_hash    TEXT PRIMARY KEY,
+        namespace     TEXT NOT NULL,
+        created_at    TEXT NOT NULL,
+        expires_at    TEXT NOT NULL
+    )
+    """,
 ]
 
 

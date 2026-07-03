@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
+from .. import auth
 from ._common import get_db, slugify, utc_now
 
 router = APIRouter(prefix="/api", tags=["projects"])
@@ -41,7 +42,7 @@ class CreateProjectRequest(BaseModel):
     name: str
 
 
-@router.post("/projects")
+@router.post("/projects", dependencies=[Depends(auth.require_role("write"))])
 def create_project(body: CreateProjectRequest, request: Request) -> dict[str, Any]:
     db = get_db(request)
     project_id = slugify(body.name)
