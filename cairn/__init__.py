@@ -36,6 +36,7 @@ from .sdk.wrappers import (  # noqa: E402
     Tensor,
     Text,
     Video,
+    Volume,
 )
 
 __all__ = [
@@ -59,6 +60,7 @@ __all__ = [
     "Boxes3D",
     "BVH",
     "Octree",
+    "Volume",
     "Text",
     "Html",
     "Markdown",

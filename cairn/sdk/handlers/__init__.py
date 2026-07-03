@@ -26,6 +26,7 @@ from .table import TableHandler
 from .tensor import TensorHandler
 from .text import TextHandler
 from .video import VideoHandler
+from .volume import VolumeHandler
 
 # Register built-ins. Order is important for ``can_handle`` dispatch — later
 # wins. We register scalar/text first (cheap, common), then media types.
@@ -50,6 +51,8 @@ if not _already_registered:
     default_registry.register(PointCloudHandler())
     default_registry.register(MeshHandler())
     default_registry.register(Boxes3DHandler())
+    # Wrapper-only, like PointCloud — order among themselves doesn't matter.
+    default_registry.register(VolumeHandler())
     default_registry.register(PluginHandler())
     default_registry.register(ArtifactHandler())
     # Wrapper-only, like Histogram/Tensor — order among themselves doesn't
@@ -76,6 +79,7 @@ __all__ = [
     "PointCloudHandler",
     "MeshHandler",
     "Boxes3DHandler",
+    "VolumeHandler",
     "PluginHandler",
     "ArtifactHandler",
     "HtmlHandler",

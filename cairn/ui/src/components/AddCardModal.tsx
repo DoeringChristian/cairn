@@ -30,6 +30,7 @@ const TYPE_LABELS: Record<string, string> = {
   pointcloud: "Point Clouds",
   mesh: "3D Mesh",
   boxes3d: "Octree / BVH",
+  volume: "Volumes",
   artifact: "Artifacts",
   plugin: "Plugins",
   parallel: "Parallel Coords",
@@ -38,7 +39,7 @@ const TYPE_LABELS: Record<string, string> = {
   tile: "Scalar Tiles",
 };
 
-const TYPE_ORDER = ["scalar", "image", "figure", "audio", "video", "histogram", "tensor", "text", "table", "html", "markdown", "pointcloud", "mesh", "boxes3d", "artifact", "plugin", "parallel", "scatter", "bar", "tile"];
+const TYPE_ORDER = ["scalar", "image", "figure", "audio", "video", "histogram", "tensor", "text", "table", "html", "markdown", "pointcloud", "mesh", "boxes3d", "volume", "artifact", "plugin", "parallel", "scatter", "bar", "tile"];
 
 /** One entry per run that has this metric. */
 type SelectionRuns = Array<{ runId: string; context_hash: string }>;
