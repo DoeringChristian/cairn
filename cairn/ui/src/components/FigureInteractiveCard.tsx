@@ -11,11 +11,17 @@ import { downloadArtifact, artifactFilename, exportPlotlyChart, safeName } from 
 import { resolveCardHeight, type CardSettingsKey } from "../lib/card-settings";
 import { useCardDrop } from "../lib/use-series-drop";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
-import { useRunMetadataVersion } from "../lib/run-label";
+import { useRunMetadataVersion, shortRunLabel } from "../lib/run-label";
 import { useRunSelection, useRunSelectionHasProvider } from "../lib/use-run-selection";
 import { seriesKey, seriesLabel } from "../lib/series-utils";
 import type { SequenceMeta, SequenceResponse } from "../api/types";
 import { useCardSeries, useStepSlider, resolveAtStep, useRunInfo, MultiPaneGrid, type BaseCardSettings } from "./card-kit";
+import {
+  checkFigureMergeable,
+  mergeFigures,
+  type PlotlyFigureLike,
+  type FigureMergeEntry,
+} from "../lib/cairn-plot";
 import AddToComparisonButton from "./AddToComparisonButton";
 import CardShell from "./CardShell";
 import RunSelectionPanel from "./RunSelectionPanel";
@@ -42,13 +48,26 @@ interface FigureMetadata {
   source_hash?: string | null;
 }
 
-interface PlotlyFigure {
-  data?: unknown[];
-  layout?: Record<string, unknown>;
-}
+// Structural alias: the card-local name for cairn-plot's minimal Plotly
+// figure JSON shape (kept so the rest of this file's `PlotlyFigure` usages
+// stay unchanged).
+type PlotlyFigure = PlotlyFigureLike;
 
 type HoverMode = "closest" | "x unified" | "y unified" | "none";
 type DragMode = "zoom" | "pan" | "select" | "lasso" | "none";
+
+/**
+ * Multi-run figure display mode:
+ * - "panes": one figure per (run, metric) side by side (default, unchanged).
+ * - "overlay": every run's figure traces merged into a single plot — only
+ *   available when `checkFigureMergeable` passes (see figure-merge.ts).
+ */
+type FigureCompareMode = "panes" | "overlay";
+
+const FIGURE_COMPARE_OPTIONS: Array<{ value: FigureCompareMode; label: string }> = [
+  { value: "panes", label: "Panes (side by side)" },
+  { value: "overlay", label: "Overlay (merged)" },
+];
 
 interface FigureSettings extends BaseCardSettings {
   metrics: Array<{ runId?: string; name: string; context_hash: string }>;
@@ -60,6 +79,8 @@ interface FigureSettings extends BaseCardSettings {
   dragMode: DragMode;
   showLegend: boolean;
   xAxis?: "step" | "relative_time" | "wall_time";
+  /** Multi-run display mode. Defaults to "panes" — behavior-preserving. */
+  figureCompare?: FigureCompareMode;
 }
 
 const DEFAULT_FIGURE_SETTINGS = (seed: {
@@ -409,6 +430,121 @@ export default function FigureInteractiveCard({ runId, metric, extraSeries, cont
   // For the single-metric path, find the point at the current global step.
   const current = useMemo(() => points.find((p) => p.step === currentStep && p.artifact_hash), [points, currentStep]);
 
+  // -------------------------------------------------------------------------
+  // Overlay merge (multi-run "overlay" compare mode).
+  //
+  // For each effective metric, resolve the Plotly source at the *current*
+  // step (reusing multiQueries' already-fetched sequence points, which are
+  // in the same order as effectiveMetrics) and fetch its plotly-source JSON
+  // via the same `qk.plotlySource` query key FigurePane uses, so react-query
+  // dedupes the network fetch when panes mode is also mounted.
+  // -------------------------------------------------------------------------
+  const paneCurrents = useMemo(() => {
+    if (effectiveMetrics.length <= 1) return [];
+    return effectiveMetrics.map((m, idx) => {
+      const rid = m.runId ?? runId;
+      const pts = (multiQueries[idx]?.data as SequenceResponse | undefined)?.points ?? [];
+      const filtered = pts.filter((p) => p.artifact_hash);
+      const paneCurrent = resolveAtStep(filtered, currentStep);
+      const paneMeta = safeJsonParse<FigureMetadata>(paneCurrent?.artifact_metadata ?? null);
+      const paneSourceHash =
+        paneMeta?.has_source && paneMeta?.source_format === "plotly_json"
+          ? paneMeta.source_hash ?? null
+          : null;
+      return { m, runId: rid, sourceHash: paneSourceHash };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    effectiveMetrics,
+    currentStep,
+    runId,
+    multiQueries.map((q) => q.dataUpdatedAt).join("|"),
+  ]);
+
+  const overlaySourceQueries = useQueries({
+    queries: paneCurrents.map((p) => ({
+      queryKey: qk.plotlySource(p.sourceHash),
+      queryFn: async (): Promise<PlotlyFigure> => {
+        const res = await fetch(api.artifactUrl(p.sourceHash as string));
+        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+        return (await res.json()) as PlotlyFigure;
+      },
+      enabled: !!p.sourceHash,
+      staleTime: 60_000,
+      retry: false,
+    })),
+  });
+
+  // Every pane has a resolved Plotly source and its fetch has settled
+  // (success or error) — the point at which mergeability can be evaluated
+  // instead of transiently reporting "unavailable" while sources load.
+  const overlaySourcesSettled =
+    paneCurrents.length > 1 &&
+    paneCurrents.every((p) => !!p.sourceHash) &&
+    overlaySourceQueries.every((q) => q.isSuccess || q.isError);
+
+  const overlayMergeEntries = useMemo<FigureMergeEntry[]>(() => {
+    if (!overlaySourcesSettled) return [];
+    const entries: FigureMergeEntry[] = [];
+    paneCurrents.forEach((p, idx) => {
+      const fig = overlaySourceQueries[idx]?.data;
+      if (fig) entries.push({ runId: p.runId, runLabel: shortRunLabel(p.runId, allRunIds), figure: fig });
+    });
+    return entries;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    overlaySourcesSettled,
+    paneCurrents,
+    allRunIds,
+    overlaySourceQueries.map((q) => q.dataUpdatedAt).join("|"),
+  ]);
+
+  const figureMergeCheck = useMemo(() => {
+    if (paneCurrents.length < 2) {
+      return { mergeable: false, reason: "need at least 2 series" };
+    }
+    // Distinguish a permanent gap (some run's current-step figure has no
+    // interactive plotly_json source — e.g. an artifact-only image) from a
+    // transient one (sources are still being fetched), so the settings-panel
+    // note doesn't get stuck on "loading…" forever.
+    if (!paneCurrents.every((p) => !!p.sourceHash)) {
+      return { mergeable: false, reason: "not every run has an interactive Plotly source" };
+    }
+    if (!overlaySourcesSettled) return { mergeable: false, reason: "loading…" };
+    if (overlayMergeEntries.length < 2) {
+      return { mergeable: false, reason: "not every run has an interactive Plotly source" };
+    }
+    return checkFigureMergeable(overlayMergeEntries.map((e) => e.figure));
+  }, [paneCurrents, overlaySourcesSettled, overlayMergeEntries]);
+
+  // (effectiveMetrics.length > 1, i.e. `isMulti` below — spelled out here
+  // since `isMulti` isn't declared until later in this component.)
+  const overlayActive =
+    effectiveMetrics.length > 1 &&
+    (settings.figureCompare ?? "panes") === "overlay" &&
+    figureMergeCheck.mergeable;
+
+  const mergedFigure = useMemo(
+    () => (overlayActive ? mergeFigures(overlayMergeEntries) : null),
+    [overlayActive, overlayMergeEntries],
+  );
+
+  const overlayBaseLayout = useMemo(() => {
+    if (!mergedFigure) return null;
+    const base = mergedFigure.layout ?? {};
+    const layout: Record<string, unknown> = {
+      ...base,
+      ...DARK_LAYOUT,
+      font: { ...((base.font as object) ?? {}), ...(DARK_LAYOUT.font as object) },
+      hovermode: settings.hoverMode === "none" ? false : settings.hoverMode,
+      dragmode: settings.dragMode === "none" ? false : settings.dragMode,
+      showlegend: settings.showLegend,
+    };
+    delete layout.width;
+    delete layout.height;
+    return layout;
+  }, [mergedFigure, settings.hoverMode, settings.dragMode, settings.showLegend]);
+
   const [expanded, setExpanded] = useState(autoOpenSettings ?? false);
 
   const compSeries = useMemo(
@@ -491,6 +627,17 @@ export default function FigureInteractiveCard({ runId, metric, extraSeries, cont
       ? applyViewOverrides(mainBaseLayout, sharedView)
       : mainBaseLayout,
     [mainBaseLayout, sharedView],
+  );
+
+  // Same shared-view sync applied to the merged overlay figure (see
+  // `overlayBaseLayout` above), so zoom/pan and the header "reset view"
+  // button behave the same whether the card is showing one pane or the
+  // merged overlay plot.
+  const overlayViewLayout = useMemo(
+    () => overlayBaseLayout && Object.keys(sharedView).length > 0
+      ? applyViewOverrides(overlayBaseLayout, sharedView)
+      : overlayBaseLayout,
+    [overlayBaseLayout, sharedView],
   );
 
   const plotlyConfig = useMemo(
@@ -636,13 +783,33 @@ export default function FigureInteractiveCard({ runId, metric, extraSeries, cont
     />
   );
 
+  // Single merged plot for the "overlay" compare mode — every run's traces
+  // in one figure, layout from the first run with fixed ranges dropped (see
+  // mergeFigures/checkFigureMergeable in lib/cairn-plot).
+  const renderOverlayPlot = () => (
+    <div className="rounded bg-bg h-full">
+      <Plot
+        data={(mergedFigure?.data ?? []) as Plotly.Data[]}
+        layout={(overlayViewLayout ?? {}) as Partial<Plotly.Layout>}
+        config={plotlyConfig}
+        useResizeHandler
+        style={{ width: "100%", height: "100%" }}
+        onRelayout={(e) => {
+          const view = extractViewState(e as unknown as Record<string, unknown>);
+          if (view) handlePaneRelayout(view);
+        }}
+        revision={plotRevision}
+      />
+    </div>
+  );
+
   const renderMultiFigure = (inModal: boolean) => (
     <>
       {inModal ? (
-        renderPaneGrid(true)
+        overlayActive ? renderOverlayPlot() : renderPaneGrid(true)
       ) : (
         <div ref={figContainerRef} className="flex-1 min-h-0 overflow-auto" style={{ height: resolveCardHeight(settings, undefined) != null ? undefined : figAutoHeight }}>
-          {renderPaneGrid(false)}
+          {overlayActive ? renderOverlayPlot() : renderPaneGrid(false)}
         </div>
       )}
       <StepSlider
@@ -685,6 +852,19 @@ export default function FigureInteractiveCard({ runId, metric, extraSeries, cont
 
   const settingsPanel = (
     <>
+      {isMulti && (
+        <Select<FigureCompareMode>
+          label="Compare mode"
+          value={settings.figureCompare ?? "panes"}
+          onChange={(v) => updateSettings({ figureCompare: v })}
+          options={FIGURE_COMPARE_OPTIONS}
+          description={
+            (settings.figureCompare ?? "panes") === "overlay" && !figureMergeCheck.mergeable
+              ? `Overlay unavailable for this figure type${figureMergeCheck.reason ? ` (${figureMergeCheck.reason})` : ""} — showing panes.`
+              : "Overlay merges every run's figure into one plot; panes show them side by side."
+          }
+        />
+      )}
       <Toggle
         label="Show modebar"
         checked={settings.displayModeBar}

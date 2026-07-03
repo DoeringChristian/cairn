@@ -15,6 +15,7 @@ export type {
   OverlayMask,
   ImageOverlayData,
   ImageOverlaySettings,
+  PlotlyFigureLike,
 } from "./types";
 
 // Palette
@@ -45,8 +46,15 @@ export {
   strideDownsample,
   emaSmooth,
   filterOutliers,
+  checkFigureMergeable,
+  mergeFigures,
 } from "./transforms";
-export type { AxisSource, ParetoDirection } from "./transforms";
+export type {
+  AxisSource,
+  ParetoDirection,
+  FigureMergeabilityResult,
+  FigureMergeEntry,
+} from "./transforms";
 
 // Formatting
 export { formatNum } from "./format";

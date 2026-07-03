@@ -14,3 +14,9 @@ export {
   type HistogramData,
   type RebinResult,
 } from "./histogram";
+export {
+  checkFigureMergeable,
+  mergeFigures,
+  type FigureMergeabilityResult,
+  type FigureMergeEntry,
+} from "./figure-merge";

@@ -145,6 +145,17 @@ export default function ComparePage() {
   const handleAddCard = useCallback(
     (comparisonId: string, sel: AddCardSelection) => {
       if (!projectId) return;
+      if (sel.kind === "manual-series") {
+        // Custom overlay: series already carry their own (runId, name,
+        // context_hash) — no shared `name` to fan out across runs.
+        const newCardId = addCardToComparison(projectId, comparisonId, {
+          type: sel.object_type as ComparisonCard["type"],
+          series: sel.series,
+        });
+        refresh();
+        setAutoFocusCardId(newCardId);
+        return;
+      }
       const type: ComparisonCard["type"] =
         sel.kind === "multi-run"
           ? sel.cardType

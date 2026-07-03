@@ -127,6 +127,21 @@ export interface PromotedSeriesConfig {
   max: number;
 }
 
+// ── Plotly figure types ──
+
+/**
+ * Minimal shape of a Plotly figure JSON (`data` + `layout`), as returned by
+ * the `figure` card's plotly-source artifact fetch. Kept structural/loose
+ * (traces as `Record<string, unknown>`) since cairn-plot's figure transforms
+ * only need to inspect a handful of well-known keys (type, xaxis/yaxis,
+ * name, marker/line) — full Plotly typings live in `@types/react-plotly.js`
+ * / `plotly.js-dist-min` and are only needed at the render boundary.
+ */
+export interface PlotlyFigureLike {
+  data?: Array<Record<string, unknown>>;
+  layout?: Record<string, unknown>;
+}
+
 // ── Palette ──
 
 /** Shared categorical color palette used across all multi-series card components. */
