@@ -8,13 +8,13 @@ import {
 import { useQueries } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { qk } from "../api/query-keys";
-import { useSequence, useSequences } from "../api/hooks";
+import { useSequences } from "../api/hooks";
 import type { SequenceMeta, SequencePoint } from "../api/types";
 import { resolveCardHeight, type CardSettingsKey } from "../lib/card-settings";
 import { useCardDrop } from "../lib/use-series-drop";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { downloadArtifact, exportImagesAsComposite, safeName, type CompositePane } from "../lib/download";
-import { useCardSeries, useStepSlider, useRunInfo, type BaseCardSettings } from "./card-kit";
+import { useCardSeries, useStepSlider, useRunInfo, useMediaReference, type BaseCardSettings } from "./card-kit";
 import {
   type DiffMode,
   type ImageProcessing,
@@ -23,12 +23,16 @@ import {
   type ImageOverlayData,
   type ImageOverlaySettings,
   type OverlayMask,
+  type MediaCompareModeKind,
   DIVERGING_COLORMAPS,
   DEFAULT_OVERLAY_SETTINGS,
+  MEDIA_COMPARE_MODE_KINDS,
   getColormapLUT,
   overlayClassColor,
+  resolveArtifactAtStep,
+  migrateLegacyMode,
+  CompositeMediaPane,
   ImagePane,
-  CompareImagePane,
   Colorbar,
   ColormapSwatch,
   useContainerSize,
@@ -75,6 +79,16 @@ interface ImageSettings extends BaseCardSettings {
   pan: { x: number; y: number };
   baselineIndex?: number;
   externalBaseline?: { runId?: string; name: string; context_hash: string };
+  /**
+   * The single exclusive media-compare mode (normal|side|split|blend|diff).
+   * When unset, `migrateLegacyMode` derives it from the legacy fields below
+   * on every read — see media-compare/migrate-legacy-mode.ts. Legacy fields
+   * are NEVER deleted on write (rollback safety); once `mode` is present it
+   * is authoritative and the legacy combo is ignored.
+   */
+  mode?: MediaCompareModeKind;
+  /** Legacy exclusive-mode axis #1 (kept for rollback + reused as the "diff"
+   *  mode's sub-mode selector: signed/absolute/squared/relative*). */
   diffMode: "none" | DiffMode;
   interpolation: Interpolation;
   colormap: Colormap;
@@ -85,6 +99,7 @@ interface ImageSettings extends BaseCardSettings {
   xAxis?: "step" | "relative_time" | "wall_time";
   referenceMode?: "global" | "per-run";
   perRunBaselineStep?: number;
+  /** Legacy exclusive-mode axis #2 (kept for rollback). */
   compareMode?: "side-by-side" | "split" | "blend";
   splitPosition?: number;
   blendAlpha?: number;
@@ -136,25 +151,6 @@ function seriesKey(m: {
   return `${m.runId ?? ""}::${m.name}::${m.context_hash}`;
 }
 
-function resolveArtifact(
-  stepMap: Map<number, SequencePoint>,
-  targetStep: number,
-  sortedSteps: number[],
-  mode?: "nothing" | "last_available",
-): { hash: string | undefined; fallbackStep: number | null } {
-  const exact = stepMap.get(targetStep);
-  if (exact?.artifact_hash) return { hash: exact.artifact_hash, fallbackStep: null };
-  if (mode === "nothing") return { hash: undefined, fallbackStep: null };
-  for (let i = sortedSteps.length - 1; i >= 0; i--) {
-    if (sortedSteps[i]! > targetStep) continue;
-    const pt = stepMap.get(sortedSteps[i]!);
-    if (pt?.artifact_hash) {
-      return { hash: pt.artifact_hash, fallbackStep: pt.step };
-    }
-  }
-  return { hash: undefined, fallbackStep: null };
-}
-
 /** Parse box/mask overlay annotations out of a point's artifact metadata. */
 function parseOverlay(pt: SequencePoint | undefined): ImageOverlayData | null {
   const raw = pt?.artifact_metadata;
@@ -186,6 +182,14 @@ function parseOverlay(pt: SequencePoint | undefined): ImageOverlayData | null {
   if (!boxes?.length && !masks?.length) return null;
   return { boxes, masks, class_labels };
 }
+
+const MEDIA_COMPARE_MODE_LABELS: Record<MediaCompareModeKind, string> = {
+  normal: "normal",
+  side: "side",
+  split: "split",
+  blend: "blend",
+  diff: "diff",
+};
 
 // ---------------------------------------------------------------------------
 // ExternalBaselinePicker
@@ -326,6 +330,29 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     }),
   });
 
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+
+  // The unified exclusive mode — `settings.mode` is authoritative once
+  // present; otherwise derived from the legacy {diffMode, compareMode,
+  // referenceMode} combo (spec-visual-compare.md: settings migration on
+  // read, one table-driven utility — see media-compare/migrate-legacy-mode.ts).
+  const effectiveMode: MediaCompareModeKind =
+    settings.mode ??
+    migrateLegacyMode({
+      diffMode: settings.diffMode,
+      compareMode: settings.compareMode,
+      referenceMode: settings.referenceMode,
+    });
+
+  const setMode = useCallback((mode: MediaCompareModeKind) => {
+    const updates: Partial<ImageSettings> = { mode };
+    if (mode === "diff" && settingsRef.current.diffMode === "none") {
+      updates.diffMode = "absolute";
+    }
+    updateSettings(updates);
+  }, [updateSettings]);
+
   // -----------------------------------------------------------------------
   // Multi-series fetch
   // -----------------------------------------------------------------------
@@ -361,7 +388,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
   }, [queries.map((q) => q.dataUpdatedAt).join("|")]);
 
   // Step-slider machinery is shared; artifact resolution stays specialized
-  // (resolveArtifact honors missingImageMode / per-series step maps).
+  // (resolveArtifactAtStep honors missingImageMode / per-series step maps).
   const { globalSteps, safeIdx, currentStep, onSliderChange } = useStepSlider({
     seriesPoints: perSeriesPoints,
     persistedIdx: settings.sliderStep,
@@ -374,9 +401,6 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
   const hasSelectionProvider = useRunSelectionHasProvider();
 
   const { runInfoMap } = useRunInfo(availableRunIds);
-
-  const settingsRef = useRef(settings);
-  settingsRef.current = settings;
 
   const { highlight: dropHighlight, dropProps } = useCardDrop(effectiveMetrics, updateSettings);
 
@@ -392,7 +416,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
   );
 
   // -----------------------------------------------------------------------
-  // Processing props (passed to self-contained ImagePane / CompareImagePane)
+  // Processing props (passed to self-contained ImagePane / compositor)
   // -----------------------------------------------------------------------
   const processing: ImageProcessing = useMemo(() => ({
     brightness: settings.brightness,
@@ -433,6 +457,9 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
   const onRefDrop = useCallback((e: React.DragEvent) => {
     setRefDropHighlight(false);
 
+    // Dropping a reference always lands on "diff" — the exclusive-mode
+    // equivalent of the pre-refactor behavior (auto-enable diff coloring on
+    // drop; see spec-visual-compare.md's "map combinable states to diff").
     const chipData = e.dataTransfer.getData(CAIRN_SERIES_MIME);
     if (chipData) {
       e.stopPropagation();
@@ -443,6 +470,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
           baselineIndex: undefined,
           referenceMode: "per-run",
           diffMode: settingsRef.current.diffMode === "none" ? "absolute" : settingsRef.current.diffMode,
+          mode: "diff",
         });
       } catch { /* ignore */ }
       return;
@@ -453,16 +481,13 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
       e.stopPropagation();
       try {
         const ref = JSON.parse(imageData) as { runId: string; name: string; context_hash: string };
-        const updates: Partial<ImageSettings> = {
+        updateSettings({
           externalBaseline: { runId: ref.runId, name: ref.name, context_hash: ref.context_hash },
           baselineIndex: undefined,
           referenceMode: "global",
           diffMode: settingsRef.current.diffMode === "none" ? "absolute" : settingsRef.current.diffMode,
-        };
-        if ((settingsRef.current.compareMode ?? "side-by-side") === "side-by-side") {
-          updates.compareMode = "split";
-        }
-        updateSettings(updates);
+          mode: "diff",
+        });
       } catch { /* ignore */ }
       return;
     }
@@ -484,7 +509,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
   const firstResolved = useMemo(() => {
     const stepMap = perSeriesStepMap[0] ?? new Map();
     const steps = perSeriesPoints[0]?.map((p) => p.step) ?? [];
-    return resolveArtifact(stepMap, currentStep, steps, settings.missingImageMode);
+    return resolveArtifactAtStep(stepMap, currentStep, steps, settings.missingImageMode);
   }, [perSeriesStepMap, perSeriesPoints, currentStep, settings.missingImageMode]);
 
   // -----------------------------------------------------------------------
@@ -500,7 +525,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     return effectiveMetrics.map((_, i) => {
       const stepMap = perSeriesStepMap[i] ?? new Map();
       const steps = perSeriesPoints[i]?.map((p) => p.step) ?? [];
-      const { hash, fallbackStep } = resolveArtifact(stepMap, currentStep, steps, settings.missingImageMode);
+      const { hash, fallbackStep } = resolveArtifactAtStep(stepMap, currentStep, steps, settings.missingImageMode);
       if (!hash) return null;
       const step = fallbackStep ?? currentStep;
       return parseOverlay(stepMap.get(step));
@@ -574,176 +599,45 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
 
   // External baseline
   const extBase = settings.externalBaseline;
-  const extBaseRid = extBase?.runId ?? runId;
-  const extBaseName = extBase?.name ?? "";
-  const extBaseCtx = extBase?.context_hash ?? "";
   const refMode = settings.referenceMode ?? "global";
 
   const setReferenceMode = useCallback((mode: "global" | "per-run") => {
-    const updates: Partial<ImageSettings> = { referenceMode: mode };
-    if (mode === "global" && (settingsRef.current.compareMode ?? "side-by-side") === "side-by-side") {
-      updates.compareMode = "split";
-    }
-    updateSettings(updates);
+    updateSettings({ referenceMode: mode });
   }, [updateSettings]);
 
-  const extBaseQuery = useSequence(extBaseRid, extBaseName, {
-    context: extBaseCtx || undefined,
-    maxPoints: 500,
+  // Reference resolution — the one hook/function family (see
+  // card-kit/use-media-reference.ts + lib/cairn-plot/media-compare/reference.ts).
+  const { globalHash: baselineHash, perPaneHash } = useMediaReference({
+    runId,
+    perSeriesStepMap,
+    perSeriesPoints,
+    seriesBaselineIndex: settings.baselineIndex,
+    external: extBase,
+    externalScope: refMode,
+    panes: effectiveMetrics,
+    currentStep,
+    safeIdx,
+    missingImageMode: settings.missingImageMode,
   });
-  const extBasePoints = useMemo(() => {
-    if (!extBase || !extBaseQuery.data) return [];
-    return (extBaseQuery.data.points ?? []).filter((p: SequencePoint) => p.artifact_hash);
-  }, [extBase, extBaseQuery.data]);
-
-  const perRunRefQueries = useQueries({
-    queries: extBase && refMode === "per-run"
-      ? effectiveMetrics.map((m) => ({
-          queryKey: qk.refSeries(m.runId ?? runId, extBase.name, extBase.context_hash),
-          queryFn: () => api.sequence(m.runId ?? runId, extBase.name, {
-            context: extBase.context_hash || undefined,
-            maxPoints: 500,
-          }),
-          refetchInterval: 2000,
-        }))
-      : [],
-  });
+  // `baselineHash` is exposed by the hook (the "global" resolution) for
+  // parity with the pre-refactor API; per-pane rendering below always goes
+  // through `perPaneHash`, which already encodes the global/per-run
+  // dispatch, so this alias only documents the shape — silence unused-var.
+  void baselineHash;
 
   const baselineIdx = settings.baselineIndex;
-  const baselineHash = extBase && refMode === "global"
-    ? extBasePoints[Math.min(safeIdx, Math.max(0, extBasePoints.length - 1))]?.artifact_hash ?? undefined
-    : baselineIdx != null
-      ? resolveArtifact(
-          perSeriesStepMap[baselineIdx] ?? new Map(),
-          currentStep,
-          perSeriesPoints[baselineIdx]?.map((p) => p.step) ?? [],
-          settings.missingImageMode,
-        ).hash
-      : undefined;
-
-  const perPaneBaselineHash = useMemo(() => {
-    if (refMode !== "per-run" || !extBase) return null;
-    return effectiveMetrics.map((_, paneIdx) => {
-      const points: SequencePoint[] = (perRunRefQueries[paneIdx]?.data?.points ?? [])
-        .filter((p: SequencePoint) => p.artifact_hash);
-      if (points.length === 0) return undefined;
-      const stepMap = new Map<number, SequencePoint>();
-      for (const p of points) stepMap.set(p.step, p);
-      const seriesSteps = points.map((p) => p.step);
-      return resolveArtifact(stepMap, currentStep, seriesSteps, settings.missingImageMode).hash;
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refMode, extBase, effectiveMetrics, perRunRefQueries.map((q) => q.dataUpdatedAt).join("|"), currentStep, settings.missingImageMode]);
-
   const hasBaseline = baselineIdx != null || extBase != null;
 
   const cardRef = useRef<HTMLDivElement>(null);
 
   // -----------------------------------------------------------------------
-  // Pane layout resolution
-  // -----------------------------------------------------------------------
-  type PaneLayout = "plain" | "side-by-side" | "split" | "blend";
-
-  function resolvePaneLayout(
-    hasRef: boolean,
-    rm: "global" | "per-run",
-    cm: "side-by-side" | "split" | "blend",
-  ): PaneLayout {
-    if (!hasRef) return "plain";
-    if (cm === "split") return "split";
-    if (cm === "blend") return "blend";
-    return rm === "per-run" ? "side-by-side" : "plain";
-  }
-
-  // -----------------------------------------------------------------------
-  // Per-pane render helpers
-  // -----------------------------------------------------------------------
-  const renderSideBySidePane = (
-    predUrl: string,
-    refUrl: string,
-    m: { runId?: string; name: string; context_hash: string },
-    _paneIdx: number,
-    label: string,
-    overlayData: ImageOverlayData | null,
-  ) => (
-    <div className="flex gap-0.5 h-full">
-      <div className="relative flex-1 min-w-0 overflow-hidden border border-accent/20 rounded">
-        <ImagePane
-          imageUrl={refUrl}
-          baselineUrl={null}
-          isBaseline={true}
-          diffMode="none"
-          interpolation={(settings.interpolation ?? "auto") as Interpolation}
-          colormap={"none"}
-          showAxes={false}
-          processing={processing}
-          zoom={settings.zoom}
-          pan={settings.pan}
-          onViewportChange={handleViewportChange}
-          label="REF"
-        />
-      </div>
-      <div className="relative flex-1 min-w-0 overflow-hidden">
-        <ImagePane
-          imageUrl={predUrl}
-          baselineUrl={refUrl}
-          isBaseline={false}
-          diffMode={settings.diffMode}
-          interpolation={(settings.interpolation ?? "auto") as Interpolation}
-          colormap={settings.colormap ?? "none"}
-          showAxes={settings.showAxes ?? false}
-          processing={processing}
-          zoom={settings.zoom}
-          pan={settings.pan}
-          onViewportChange={handleViewportChange}
-          isDraggable
-          onDragStart={(e) => onImageDragStart(e, m)}
-          onNaturalSize={onImageNaturalSize}
-          label={label}
-          overlay={overlayData ?? undefined}
-          overlaySettings={ovl}
-        />
-      </div>
-    </div>
-  );
-
-  const renderOverlayPane = (
-    predUrl: string,
-    refUrl: string,
-    label: string,
-    m: { runId?: string; name: string; context_hash: string },
-    mode: "split" | "blend",
-    splitPos: number,
-    blendAlpha: number,
-    overlayData: ImageOverlayData | null,
-  ) => (
-    <CompareImagePane
-      imageUrl={predUrl}
-      baselineUrl={refUrl}
-      label={label}
-      mode={mode}
-      splitPosition={splitPos}
-      blendAlpha={blendAlpha}
-      processing={processing}
-      zoom={settings.zoom}
-      pan={settings.pan}
-      onViewportChange={handleViewportChange}
-      interpolation={(settings.interpolation ?? "auto") as Interpolation}
-      isDraggable
-      onDragStart={(e) => onImageDragStart(e, m)}
-      onSplitPositionChange={(pos) => updateSettings({ splitPosition: pos })}
-      overlay={overlayData ?? undefined}
-      overlaySettings={ovl}
-    />
-  );
-
-  // -----------------------------------------------------------------------
   // Multi-pane grid
   // -----------------------------------------------------------------------
   const renderMultiPaneGrid = () => {
-    const compareMode = settings.compareMode ?? "side-by-side";
     const splitPos = settings.splitPosition ?? 0.5;
     const blendAlpha = settings.blendAlpha ?? 0.5;
+    const diffSubmode: DiffMode = settings.diffMode === "none" ? "absolute" : settings.diffMode;
+    const isOverlayMode = effectiveMode === "split" || effectiveMode === "blend";
 
     return (
       <div
@@ -754,94 +648,51 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
           if (refMode === "global" && settings.externalBaseline && m.name === settings.externalBaseline.name && (m.runId ?? runId) === (settings.externalBaseline.runId ?? runId)) return null;
           const stepMap = perSeriesStepMap[paneIdx] ?? new Map();
           const steps = perSeriesPoints[paneIdx]?.map((p) => p.step) ?? [];
-          const { hash, fallbackStep } = resolveArtifact(stepMap, currentStep, steps, settings.missingImageMode);
+          const { hash, fallbackStep } = resolveArtifactAtStep(stepMap, currentStep, steps, settings.missingImageMode);
           const label = seriesLabel(m, runId, multipleRuns, availableRunIds)
             + (fallbackStep != null ? ` (step ${fallbackStep})` : "");
-          const paneBaseline = refMode === "per-run"
-            ? perPaneBaselineHash?.[paneIdx]
-            : baselineHash;
+          const paneBaseline = perPaneHash(paneIdx);
 
           // Split/blend are explicit user choices — honor them whenever a
           // reference resolves, even when the content-addressed store deduped
           // a byte-identical prediction and reference to the same artifact
           // hash (e.g. an undistorted baseline run). Otherwise the pane
-          // silently falls back to "plain" and the split handle / blend
-          // slider have no visible effect. Side-by-side keeps the inequality
-          // so its fallback behavior is unchanged.
-          const isCompareOverlay = compareMode === "split" || compareMode === "blend";
-          const layout = resolvePaneLayout(
-            !!(paneBaseline && hash && (isCompareOverlay || paneBaseline !== hash)),
-            refMode,
-            compareMode,
-          );
-
+          // silently falls back to "normal" and the split handle / blend
+          // slider have no visible effect. Other modes keep the inequality
+          // so their fallback behavior is unchanged.
+          const hasRef = !!(paneBaseline && hash && (isOverlayMode || paneBaseline !== hash));
           const imageUrl = hash ? api.artifactUrl(hash) : null;
-          const baselineUrl = paneBaseline ? api.artifactUrl(paneBaseline) : null;
+          const baselineUrl = hasRef ? api.artifactUrl(paneBaseline!) : null;
           const paneOverlay = paneOverlays[paneIdx] ?? null;
-
-          let content: React.ReactNode;
-          switch (layout) {
-            case "side-by-side":
-              content = renderSideBySidePane(imageUrl!, baselineUrl!, m, paneIdx, label, paneOverlay);
-              break;
-            case "split":
-            case "blend":
-              content = renderOverlayPane(imageUrl!, baselineUrl!, label, m, layout, splitPos, blendAlpha, paneOverlay);
-              break;
-            case "plain":
-            default:
-              content = (
-                <ImagePane
-                  imageUrl={imageUrl}
-                  baselineUrl={baselineUrl}
-                  isBaseline={refMode === "global" && baselineIdx === paneIdx}
-                  diffMode={settings.diffMode}
-                  interpolation={(settings.interpolation ?? "auto") as Interpolation}
-                  colormap={settings.colormap ?? "none"}
-                  showAxes={settings.showAxes ?? false}
-                  processing={processing}
-                  zoom={settings.zoom}
-                  pan={settings.pan}
-                  onViewportChange={handleViewportChange}
-                  isDraggable
-                  onDragStart={(e) => onImageDragStart(e, m)}
-                  onNaturalSize={onImageNaturalSize}
-                  label={label}
-                  overlay={paneOverlay ?? undefined}
-                  overlaySettings={ovl}
-                />
-              );
-              break;
-          }
 
           return (
             <div key={seriesKey(m)} className="relative overflow-hidden">
-              {content}
-            </div>
-          );
-        })}
-        {compareMode === "side-by-side" && refMode === "global" && settings.externalBaseline && extBasePoints.length > 0 && (() => {
-          const refPt = extBasePoints[Math.min(safeIdx, extBasePoints.length - 1)];
-          const refHash = refPt?.artifact_hash ?? undefined;
-          return (
-            <div className="relative overflow-hidden">
-              <ImagePane
-                imageUrl={refHash ? api.artifactUrl(refHash) : null}
-                baselineUrl={null}
-                isBaseline={true}
-                diffMode="none"
+              <CompositeMediaPane
+                mode={effectiveMode}
+                imageUrl={imageUrl}
+                baselineUrl={baselineUrl}
+                isReferencePane={refMode === "global" && baselineIdx === paneIdx}
+                diffSubmode={diffSubmode}
+                colormap={settings.colormap ?? "none"}
                 interpolation={(settings.interpolation ?? "auto") as Interpolation}
-                colormap={"none"}
                 showAxes={settings.showAxes ?? false}
                 processing={processing}
                 zoom={settings.zoom}
                 pan={settings.pan}
                 onViewportChange={handleViewportChange}
-                label={`ref: ${settings.externalBaseline!.name}`}
+                splitPosition={splitPos}
+                blendAlpha={blendAlpha}
+                onSplitPositionChange={(pos) => updateSettings({ splitPosition: pos })}
+                label={label}
+                isDraggable
+                onDragStart={(e) => onImageDragStart(e, m)}
+                onNaturalSize={onImageNaturalSize}
+                overlay={paneOverlay ?? undefined}
+                overlaySettings={ovl}
               />
             </div>
           );
-        })()}
+        })}
       </div>
     );
   };
@@ -881,12 +732,10 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
         const m = effectiveMetrics[pi]!;
         const stepMap = perSeriesStepMap[pi] ?? new Map();
         const steps = perSeriesPoints[pi]?.map((p) => p.step) ?? [];
-        const { hash } = resolveArtifact(stepMap, currentStep, steps, settings.missingImageMode);
+        const { hash } = resolveArtifactAtStep(stepMap, currentStep, steps, settings.missingImageMode);
         const label = seriesLabel(m, runId, multipleRuns, availableRunIds);
 
-        const paneBaseline = refMode === "per-run"
-          ? perPaneBaselineHash?.[pi]
-          : baselineHash;
+        const paneBaseline = perPaneHash(pi);
         if (paneBaseline && hash && paneBaseline !== hash) {
           panes.push({ url: api.artifactUrl(paneBaseline), label: `${label} (REF)`, groupWithNext: true, skipColormap: true });
           panes.push({ url: hash ? api.artifactUrl(hash) : undefined, label });
@@ -927,12 +776,23 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
       )}
       {hasBaseline && (
         <select
-          value={settings.diffMode}
-          onChange={(e) => updateSettings({ diffMode: e.target.value as ImageSettings["diffMode"] })}
-          className={`h-[22px] rounded border border-border bg-bg-elevated px-1.5 text-[10px] mono cursor-pointer ${settings.diffMode !== "none" ? "text-accent" : "text-fg-muted hover:text-fg"}`}
-          title="Diff mode"
+          value={effectiveMode}
+          onChange={(e) => setMode(e.target.value as MediaCompareModeKind)}
+          className={`h-[22px] rounded border border-border bg-bg-elevated px-1.5 text-[10px] mono cursor-pointer ${effectiveMode !== "normal" ? "text-accent" : "text-fg-muted hover:text-fg"}`}
+          title="Compare mode"
         >
-          <option value="none">diff: off</option>
+          {MEDIA_COMPARE_MODE_KINDS.map((m) => (
+            <option key={m} value={m}>{MEDIA_COMPARE_MODE_LABELS[m]}</option>
+          ))}
+        </select>
+      )}
+      {hasBaseline && effectiveMode === "diff" && (
+        <select
+          value={settings.diffMode === "none" ? "absolute" : settings.diffMode}
+          onChange={(e) => updateSettings({ diffMode: e.target.value as ImageSettings["diffMode"] })}
+          className="h-[22px] rounded border border-border bg-bg-elevated px-1.5 text-[10px] mono cursor-pointer text-accent"
+          title="Diff sub-mode"
+        >
           <option value="absolute">absolute</option>
           <option value="signed">signed</option>
           <option value="squared">squared</option>
@@ -1128,21 +988,28 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
           )}
         </>
       )}
-      <SettingsSection title="Diff" />
-      <Select
-        label="Diff mode"
-        value={settings.diffMode}
-        onChange={(v) => updateSettings({ diffMode: v })}
-        options={[
-          { value: "none" as const, label: "None" },
-          { value: "signed" as const, label: "Signed Error" },
-          { value: "absolute" as const, label: "Absolute Error" },
-          { value: "squared" as const, label: "Squared Error" },
-          { value: "relative_signed" as const, label: "Relative Signed" },
-          { value: "relative_absolute" as const, label: "Relative Absolute" },
-          { value: "relative_squared" as const, label: "Relative Squared" },
-        ]}
+      <SettingsSection title="Compare" />
+      <Select<MediaCompareModeKind>
+        label="Mode"
+        value={effectiveMode}
+        onChange={(v) => setMode(v)}
+        options={MEDIA_COMPARE_MODE_KINDS.map((m) => ({ value: m, label: MEDIA_COMPARE_MODE_LABELS[m] }))}
       />
+      {effectiveMode === "diff" && (
+        <Select
+          label="Diff sub-mode"
+          value={settings.diffMode === "none" ? "absolute" : settings.diffMode}
+          onChange={(v) => updateSettings({ diffMode: v })}
+          options={[
+            { value: "signed" as const, label: "Signed Error" },
+            { value: "absolute" as const, label: "Absolute Error" },
+            { value: "squared" as const, label: "Squared Error" },
+            { value: "relative_signed" as const, label: "Relative Signed" },
+            { value: "relative_absolute" as const, label: "Relative Absolute" },
+            { value: "relative_squared" as const, label: "Relative Squared" },
+          ]}
+        />
+      )}
       {isMulti && extBase && (
         <Select<"global" | "per-run">
           label="Reference mode"
@@ -1163,7 +1030,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
             <span className="mono truncate flex-1">{settings.externalBaseline.name}{settings.externalBaseline.runId && settings.externalBaseline.runId !== runId ? ` · ${shortRunLabel(settings.externalBaseline.runId)}` : ""}</span>
             <button
               type="button"
-              onClick={() => updateSettings({ externalBaseline: undefined, baselineIndex: undefined, diffMode: settings.diffMode === "none" ? "none" : settings.diffMode })}
+              onClick={() => updateSettings({ externalBaseline: undefined, baselineIndex: undefined })}
               className="text-fg-subtle hover:text-fg shrink-0"
               title="Remove external reference"
             >{"×"}</button>
@@ -1183,6 +1050,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
               externalBaseline: { runId: selectedRunId, name, context_hash: ctx },
               baselineIndex: undefined,
               diffMode: settings.diffMode === "none" ? "absolute" : settings.diffMode,
+              mode: "diff",
             });
           }}
         />
@@ -1254,24 +1122,24 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
           {renderImageContent()}
           </div>
           {(settings.colormap ?? "none") !== "none" && (
-            <Colorbar colormap={settings.colormap as Exclude<Colormap, "none">} isDiff={settings.diffMode !== "none" && (settings.baselineIndex != null || settings.externalBaseline != null)} />
+            <Colorbar colormap={settings.colormap as Exclude<Colormap, "none">} isDiff={effectiveMode === "diff"} />
           )}
           </div>
           </div>
 
           {isMulti && hasBaseline && (
             <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px]">
-              {(["side-by-side", "split", "blend"] as const).map((mode) => (
+              {MEDIA_COMPARE_MODE_KINDS.map((mode) => (
                 <button
                   key={mode}
                   type="button"
-                  onClick={() => updateSettings({ compareMode: mode })}
-                  className={`rounded px-1.5 py-0.5 ${(settings.compareMode ?? "side-by-side") === mode ? "bg-accent/15 text-accent" : "text-fg-muted hover:bg-bg-hover hover:text-fg"}`}
+                  onClick={() => setMode(mode)}
+                  className={`rounded px-1.5 py-0.5 ${effectiveMode === mode ? "bg-accent/15 text-accent" : "text-fg-muted hover:bg-bg-hover hover:text-fg"}`}
                 >
-                  {mode === "side-by-side" ? (refMode === "global" ? "normal" : "side") : mode}
+                  {MEDIA_COMPARE_MODE_LABELS[mode]}
                 </button>
               ))}
-              {(settings.compareMode ?? "side-by-side") === "split" && (
+              {effectiveMode === "split" && (
                 <input
                   type="range"
                   min={0}
@@ -1283,7 +1151,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                   title="Split position"
                 />
               )}
-              {(settings.compareMode ?? "side-by-side") === "blend" && (
+              {effectiveMode === "blend" && (
                 <input
                   type="range"
                   min={0}
