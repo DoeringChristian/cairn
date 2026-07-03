@@ -98,15 +98,22 @@ export default function ReportEditorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [blocks, name, hydrated]);
 
+  // Keep a ref to the latest doSave so the unmount-only effect below (empty
+  // deps, so it can't re-subscribe on every edit) never calls a stale
+  // closure over blocks/name.
+  const doSaveRef = useRef(doSave);
+  useEffect(() => {
+    doSaveRef.current = doSave;
+  }, [doSave]);
+
   // Flush a pending autosave on unmount so navigating away doesn't drop it.
   useEffect(() => {
     return () => {
       if (saveTimerRef.current != null) {
         window.clearTimeout(saveTimerRef.current);
-        doSave();
+        doSaveRef.current();
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleSaveNow = () => {

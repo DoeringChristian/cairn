@@ -12,11 +12,9 @@ import AddCardModal, { type AddCardSelection } from "../AddCardModal";
 import CardRenderer from "../CardRenderer";
 import ReorderableCardGrid from "../ReorderableCardGrid";
 import { isMultiRunCardType, type ComparisonCard } from "../../lib/comparisons";
-import { cardSettingsKeyForReport, newId } from "../../lib/reports";
-import type { CardsBlock } from "../../lib/reports";
+import { cardSettingsKeyForReport, newId, type CardsBlock } from "../../lib/reports";
 import { disambiguateRunLabels, useRunMetadataVersion } from "../../lib/run-label";
-import type { SequenceMeta } from "../../api/types";
-import type { Run } from "../../api/types";
+import type { Run, SequenceMeta } from "../../api/types";
 
 interface Props {
   reportId: string;

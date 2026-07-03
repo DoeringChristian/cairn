@@ -163,11 +163,6 @@ function ReportRow({
         <Link
           to={`/p/${projectId}/reports/${report.id}`}
           className="min-w-0 flex-1 hover:bg-bg-hover -mx-1 px-1 rounded"
-          onDoubleClick={(e) => {
-            e.preventDefault();
-            setEditing(true);
-          }}
-          title="Double-click to rename"
         >
           <div className="truncate font-medium text-fg">{report.name}</div>
           <div className="text-xs text-fg-subtle">
