@@ -207,6 +207,28 @@ export const api = {
   deleteReport: (projectId: string, id: string) =>
     del_<{ deleted: string }>(`/api/projects/${projectId}/reports/${id}`),
 
+  // Report templates (server-persisted)
+  reportTemplates: (projectId: string) =>
+    get<{ report_templates: Array<{ id: string; name: string; created_at: string; updated_at: string; card_count: number }> }>(
+      `/api/projects/${projectId}/report-templates`,
+    ),
+  reportTemplate: (projectId: string, id: string) =>
+    get<{ id: string; project_id: string; name: string; created_at: string; updated_at: string; payload: Record<string, unknown> }>(
+      `/api/projects/${projectId}/report-templates/${id}`,
+    ),
+  createServerReportTemplate: (projectId: string, name: string, payload: Record<string, unknown>) =>
+    post<{ id: string; name: string; created_at: string }>(
+      `/api/projects/${projectId}/report-templates`,
+      { name, payload },
+    ),
+  updateServerReportTemplate: (projectId: string, id: string, body: { name?: string; payload?: Record<string, unknown> }) =>
+    put<{ id: string; updated_at: string }>(
+      `/api/projects/${projectId}/report-templates/${id}`,
+      body,
+    ),
+  deleteServerReportTemplate: (projectId: string, id: string) =>
+    del_<{ deleted: string }>(`/api/projects/${projectId}/report-templates/${id}`),
+
   // Artifact registry
   artifactFamilies: (projectId: string) =>
     get<{ families: import("./types").ArtifactFamily[] }>(

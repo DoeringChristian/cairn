@@ -19,6 +19,7 @@ export const storageKeys = {
   collapsedSections: (scope: string) => `cairn:collapsed-sections:${scope}`,
   comparisons: (projectId: string) => `cairn:comparisons:${projectId}`,
   comparisonTemplates: (projectId: string) => `cairn:comparison-templates:${projectId}`,
+  reportTemplates: (projectId: string) => `cairn:report-templates:${projectId}`,
   streamMode: "cairn:stream-mode",
   renderMode: "cairn:render-mode",
   scroll: (key: string) => `cairn:scroll:${key}`, // sessionStorage

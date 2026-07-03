@@ -2,14 +2,13 @@
  * Types for report documents (wandb-style reports: a vertical list of
  * markdown/cards blocks, persisted server-side).
  *
- * Forward-compat with WS-RX (dynamic run selectors + from-comparison flow):
- * `CardsBlock.runSelector` and `ReportPayload.runSelector` are typed but
- * never produced or interpreted by this workstream — they round-trip
- * unchanged through load/edit/save so a report authored by a later
- * workstream doesn't lose data when opened here.
+ * WS-RX: `CardsBlock.runSelector` is now a real `RunSelector` (see
+ * lib/run-selector.ts) — when present, the block's effective run set is
+ * resolved live instead of read from `runIds` (see ReportCardsBlock.tsx).
  */
 
 import type { ComparisonCard } from "../comparisons";
+import type { RunSelector } from "../run-selector";
 
 export interface MarkdownBlock {
   id: string;
@@ -21,10 +20,10 @@ export interface CardsBlock {
   id: string;
   type: "cards";
   title?: string;
-  /** Static run ids this block's cards are bound to (WS-RC scope). */
+  /** Static run ids this block's cards are bound to (used when `runSelector` is absent). */
   runIds?: string[];
-  /** Dynamic run selector (WS-RX) — carried through unchanged, not resolved here. */
-  runSelector?: unknown;
+  /** Dynamic run selector (WS-RX) — when present, takes precedence over `runIds`. */
+  runSelector?: RunSelector;
   cards: ComparisonCard[];
 }
 
@@ -34,8 +33,8 @@ export interface ReportPayload {
   blocks: ReportBlock[];
   /** Per-card settings, keyed by card.id — see lib/reports/payload.ts. */
   cardSettings?: Record<string, unknown>;
-  /** Report-level dynamic run selector (WS-RX) — carried through unchanged. */
-  runSelector?: unknown;
+  /** Report-level dynamic run selector — currently unused (per-block `CardsBlock.runSelector` is what's resolved); carried through unchanged. */
+  runSelector?: RunSelector;
 }
 
 export function isMarkdownBlock(b: ReportBlock): b is MarkdownBlock {

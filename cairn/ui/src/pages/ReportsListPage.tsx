@@ -1,13 +1,23 @@
 /**
  * Reports list page — /p/:projectId/reports
  *
- * Create/rename/delete reports; click through to the editor/viewer.
+ * Create/rename/delete reports; click through to the editor/viewer; apply a
+ * saved report template to a picked run set (mirrors ComparePage's
+ * TemplateSidebar "New from template" picker).
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { useCreateReport, useDeleteReport, useReports, useUpdateReport } from "../api/hooks";
+import { useCreateReport, useDeleteReport, useReports, useRuns, useUpdateReport } from "../api/hooks";
 import { formatRelative } from "../lib/format";
+import { disambiguateRunLabels, useRunMetadataVersion } from "../lib/run-label";
+import {
+  applyReportTemplateToRuns,
+  deleteReportTemplate,
+  useReportTemplates,
+  type ApplyReportTemplateResult,
+  type ReportTemplate,
+} from "../lib/reports";
 
 const PAGE_SIZE = 50;
 
@@ -15,10 +25,13 @@ export default function ReportsListPage() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
   const [offset, setOffset] = useState(0);
+  const [applyBanner, setApplyBanner] = useState<string | null>(null);
 
   const q = useReports(projectId ?? "", { limit: PAGE_SIZE, offset });
   const createMut = useCreateReport(projectId ?? "");
   const deleteMut = useDeleteReport(projectId ?? "");
+  const runsQ = useRuns({ project: projectId, limit: 200 });
+  const allRuns = runsQ.data?.runs ?? [];
 
   if (!projectId) return null;
 
@@ -40,19 +53,49 @@ export default function ReportsListPage() {
     deleteMut.mutate(id);
   };
 
+  const handleApplied = (result: ApplyReportTemplateResult, templateName: string) => {
+    if (!result.reportId) {
+      setApplyBanner(`"${templateName}" has no cards matching the selected run(s) — no report created.`);
+      return;
+    }
+    const feedback =
+      result.matchedCount === result.totalCount
+        ? `Applied "${templateName}" — all ${result.totalCount} card(s) restored.`
+        : `Applied "${templateName}" — restored ${result.matchedCount} of ${result.totalCount} card(s).`;
+    navigate(`/p/${projectId}/reports/${result.reportId}`, { state: { templateApplyFeedback: feedback } });
+  };
+
   return (
     <div>
-      <div className="mb-6 flex items-baseline justify-between gap-4">
+      <div className="mb-6 flex flex-wrap items-baseline justify-between gap-4">
         <h1 className="mono text-xl font-semibold">{projectId} / reports</h1>
-        <button
-          type="button"
-          onClick={handleCreate}
-          disabled={createMut.isPending}
-          className="btn text-xs"
-        >
-          + New report
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleCreate}
+            disabled={createMut.isPending}
+            className="btn text-xs"
+          >
+            + New report
+          </button>
+        </div>
       </div>
+
+      {applyBanner && (
+        <div className="mb-4 flex items-center justify-between gap-2 rounded border border-accent/40 bg-accent/10 px-3 py-2 text-xs text-fg">
+          <span>{applyBanner}</span>
+          <button
+            type="button"
+            onClick={() => setApplyBanner(null)}
+            className="shrink-0 text-fg-subtle hover:text-fg"
+            aria-label="Dismiss"
+          >
+            {"×"}
+          </button>
+        </div>
+      )}
+
+      <TemplatePanel projectId={projectId} allRuns={allRuns} onApplied={handleApplied} />
 
       {q.isLoading ? (
         <p className="text-fg-muted">Loading...</p>
@@ -171,10 +214,12 @@ function ReportRow({
           </div>
         </Link>
       )}
+      {/* Always visible (not hover-only) — RC follow-up fix: a hover-only
+          affordance is undiscoverable on touch devices. */}
       <button
         type="button"
         onClick={() => setEditing(true)}
-        className="shrink-0 text-xs text-fg-subtle opacity-0 group-hover:opacity-100 hover:text-fg transition-opacity"
+        className="shrink-0 text-xs text-fg-subtle hover:text-fg"
         title="Rename"
       >
         rename
@@ -182,11 +227,147 @@ function ReportRow({
       <button
         type="button"
         onClick={onDelete}
-        className="shrink-0 text-xs text-fg-subtle opacity-0 group-hover:opacity-100 hover:text-status-failed transition-opacity"
+        className="shrink-0 text-xs text-fg-subtle hover:text-status-failed"
         title="Delete"
       >
         delete
       </button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Template panel — list saved report templates; apply one to a picked run set.
+// ---------------------------------------------------------------------------
+
+interface TemplatePanelProps {
+  projectId: string;
+  allRuns: Array<{ id: string; display_name: string | null }>;
+  onApplied: (result: ApplyReportTemplateResult, templateName: string) => void;
+}
+
+function TemplatePanel({ projectId, allRuns, onApplied }: TemplatePanelProps) {
+  const { templates, refresh } = useReportTemplates(projectId);
+  const [pendingTemplate, setPendingTemplate] = useState<ReportTemplate | null>(null);
+  const [pickedRunIds, setPickedRunIds] = useState<Set<string>>(new Set());
+  const [applyingId, setApplyingId] = useState<string | null>(null);
+  const metaVersion = useRunMetadataVersion();
+  const runIds = useMemo(() => allRuns.map((r) => r.id), [allRuns]);
+  const runLabels = useMemo(() => disambiguateRunLabels(runIds), [runIds, metaVersion]);
+
+  if (templates.length === 0) return null;
+
+  const applyWithRuns = async (t: ReportTemplate, runIds: string[]) => {
+    if (runIds.length === 0) return;
+    setApplyingId(t.id);
+    try {
+      const result = await applyReportTemplateToRuns(projectId, t, runIds);
+      onApplied(result, t.name);
+      setPendingTemplate(null);
+      setPickedRunIds(new Set());
+    } finally {
+      setApplyingId(null);
+    }
+  };
+
+  return (
+    <div className="mb-6 card p-3">
+      <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-fg-muted">
+        Report templates
+      </h2>
+      <ul className="flex flex-col gap-1">
+        {templates.map((t) => (
+          <li
+            key={t.id}
+            className="flex items-center justify-between rounded px-2 py-1.5 text-xs text-fg-muted hover:bg-bg-hover"
+          >
+            <div className="min-w-0">
+              <div className="truncate">{t.name}</div>
+              <div className="text-[10px] text-fg-subtle">{t.cards.length} card(s)</div>
+            </div>
+            <div className="ml-2 flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setPendingTemplate(t);
+                  setPickedRunIds(new Set());
+                }}
+                disabled={applyingId === t.id}
+                className="text-[10px] text-accent hover:underline disabled:opacity-50"
+                title="New report from template — pick runs"
+              >
+                {applyingId === t.id ? "Applying…" : "New from template"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  deleteReportTemplate(projectId, t.id);
+                  refresh();
+                }}
+                className="text-[10px] text-fg-subtle hover:text-status-failed"
+                title="Delete template"
+              >
+                {"×"}
+              </button>
+            </div>
+          </li>
+        ))}
+      </ul>
+
+      {pendingTemplate && (
+        <div className="mt-2 rounded border border-border p-2">
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <span className="truncate text-[10px] font-medium text-fg-muted">
+              Pick runs for "{pendingTemplate.name}"
+            </span>
+            <button
+              type="button"
+              onClick={() => setPendingTemplate(null)}
+              className="shrink-0 text-[10px] text-fg-subtle hover:text-fg"
+            >
+              Cancel
+            </button>
+          </div>
+          {allRuns.length === 0 ? (
+            <p className="text-[10px] text-fg-subtle">No runs in this project yet.</p>
+          ) : (
+            <ul className="flex max-h-40 flex-col gap-0.5 overflow-y-auto">
+              {allRuns.map((r) => {
+                const label = runLabels[r.id] ?? r.id;
+                return (
+                  <li key={r.id}>
+                    <label className="flex cursor-pointer items-center gap-1.5 text-[10px] text-fg-muted hover:text-fg">
+                      <input
+                        type="checkbox"
+                        checked={pickedRunIds.has(r.id)}
+                        onChange={() => {
+                          setPickedRunIds((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(r.id)) next.delete(r.id);
+                            else next.add(r.id);
+                            return next;
+                          });
+                        }}
+                      />
+                      <span className="truncate">{label}</span>
+                    </label>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          <button
+            type="button"
+            onClick={() => void applyWithRuns(pendingTemplate, Array.from(pickedRunIds))}
+            disabled={pickedRunIds.size === 0 || applyingId === pendingTemplate.id}
+            className="btn mt-2 w-full text-[10px] disabled:opacity-50"
+          >
+            {applyingId === pendingTemplate.id
+              ? "Applying…"
+              : `Apply to ${pickedRunIds.size} run${pickedRunIds.size === 1 ? "" : "s"}`}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

@@ -143,6 +143,17 @@ SCHEMA_SQL: list[str] = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_reports_project ON reports(project_id)",
+    """
+    CREATE TABLE IF NOT EXISTS report_templates (
+        id            TEXT PRIMARY KEY,
+        project_id    TEXT NOT NULL REFERENCES projects(id),
+        name          TEXT NOT NULL,
+        created_at    TEXT NOT NULL,
+        updated_at    TEXT NOT NULL,
+        payload       TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_report_templates_project ON report_templates(project_id)",
     # ── Artifact registry tables ──────────────────────────────────────
     """
     CREATE TABLE IF NOT EXISTS artifact_families (

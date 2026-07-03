@@ -17,3 +17,21 @@ export { isMarkdownBlock, isCardsBlock, allReportCards } from "./types";
 export { reportRunId, cardSettingsKeyForReport } from "./scope";
 export { buildReportPayload, restoreReportCardSettings } from "./payload";
 export { newId } from "./ids";
+
+export type { ReportTemplate, ReportTemplateCard } from "./templates";
+export {
+  loadReportTemplates,
+  saveReportTemplates,
+  createReportTemplate,
+  deleteReportTemplate,
+  useReportTemplates,
+} from "./templates";
+
+export {
+  syncReportTemplateToServer,
+  deleteReportTemplateFromServer,
+  syncReportTemplatesFromServer,
+} from "./template-sync";
+
+export type { ApplyReportTemplateResult } from "./apply-template";
+export { applyReportTemplateToRuns } from "./apply-template";

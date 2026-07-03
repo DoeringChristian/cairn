@@ -1,22 +1,31 @@
 /**
- * Cards block editor/viewer for a report — bound to a static set of runIds,
- * holding a list of ComparisonCard[] that render live via CardRenderer.
+ * Cards block editor/viewer for a report — bound to either a static set of
+ * runIds or a dynamic `RunSelector` (see lib/run-selector.ts), holding a
+ * list of ComparisonCard[] that render live via CardRenderer.
  *
- * Mirrors ComparePage's ComparisonCardRenderer dispatch (ComparePage.tsx:
- * 913-978) and its runs-picker affordance (ComparisonRunsPanel), but scopes
- * card settings under `reportRunId(reportId)` instead of `compareRunId`.
+ * Mirrors ComparePage's ComparisonCardRenderer dispatch and its runs-picker
+ * affordance (ComparisonRunsPanel), but scopes card settings under
+ * `reportRunId(reportId)` instead of `compareRunId`. The RunSelector form +
+ * "auto" badge/refresh mirror ComparePage's own `ComparisonRunsPanel`
+ * RunSelector UI — same mechanism (RunSelectorBadge, rebuildCardsFromRuns),
+ * same look, different binding target (a block's cards vs. a whole
+ * comparison).
  */
 
 import { useMemo, useState } from "react";
 import AddCardModal, { type AddCardSelection } from "../AddCardModal";
 import CardRenderer from "../CardRenderer";
 import ReorderableCardGrid from "../ReorderableCardGrid";
-import { isMultiRunCardType, type ComparisonCard } from "../../lib/comparisons";
+import RunSelectorBadge from "../RunSelectorBadge";
+import { isMultiRunCardType, rebuildCardsFromRuns, type ComparisonCard } from "../../lib/comparisons";
 import { cardSettingsKeyForReport, newId, type CardsBlock } from "../../lib/reports";
+import { describeRunSelector, DEFAULT_RUN_SELECTOR_N, type QueryRunSelector } from "../../lib/run-selector";
+import { useRunSelectorResolution } from "../../api/hooks";
 import { disambiguateRunLabels, useRunMetadataVersion } from "../../lib/run-label";
 import type { Run, SequenceMeta } from "../../api/types";
 
 interface Props {
+  projectId: string;
   reportId: string;
   block: CardsBlock;
   editMode: boolean;
@@ -24,10 +33,24 @@ interface Props {
   onChange: (next: CardsBlock) => void;
 }
 
-export default function ReportCardsBlock({ reportId, block, editMode, allProjectRuns, onChange }: Props) {
+const DEFAULT_QUERY_SELECTOR: QueryRunSelector = { kind: "query", mode: "newest-per-name", n: DEFAULT_RUN_SELECTOR_N };
+
+export default function ReportCardsBlock({ projectId, reportId, block, editMode, allProjectRuns, onChange }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [addCardOpen, setAddCardOpen] = useState(false);
-  const runIds = block.runIds ?? [];
+  const [rebuilding, setRebuilding] = useState(false);
+
+  const staticRunIds = block.runIds ?? [];
+  // A CardsBlock's runSelector, when present, is always a query selector in
+  // this UI (the "static" case is expressed via `runIds` with no
+  // runSelector at all) — narrow so the form below can read/patch
+  // query-only fields without a union check at every access.
+  const selector: QueryRunSelector | undefined =
+    block.runSelector?.kind === "query" ? block.runSelector : undefined;
+
+  const resolution = useRunSelectorResolution(projectId, selector);
+  const runIds = selector ? resolution.runIds : staticRunIds;
+
   const includedSet = useMemo(() => new Set(runIds), [runIds]);
   const candidates = useMemo(
     () => allProjectRuns.filter((r) => !includedSet.has(r.id)),
@@ -46,15 +69,40 @@ export default function ReportCardsBlock({ reportId, block, editMode, allProject
   );
 
   const addRuns = (ids: string[]) => {
-    const next = Array.from(new Set([...runIds, ...ids]));
+    const next = Array.from(new Set([...staticRunIds, ...ids]));
     onChange({ ...block, runIds: next });
   };
   const removeRun = (id: string) => {
     onChange({
       ...block,
-      runIds: runIds.filter((r) => r !== id),
+      runIds: staticRunIds.filter((r) => r !== id),
       cards: block.cards.map((c) => ({ ...c, series: c.series.filter((s) => s.runId !== id) })),
     });
+  };
+
+  const toggleAutoMode = () => {
+    if (selector) {
+      // Switch back to static: keep whatever runs are currently resolved.
+      onChange({ ...block, runSelector: undefined, runIds: resolution.runIds });
+    } else {
+      onChange({ ...block, runSelector: { ...DEFAULT_QUERY_SELECTOR } });
+    }
+  };
+
+  const updateSelector = (patch: Partial<QueryRunSelector>) => {
+    if (!selector) return;
+    onChange({ ...block, runSelector: { ...selector, ...patch } });
+  };
+
+  const handleRefresh = async () => {
+    setRebuilding(true);
+    try {
+      const freshRunIds = await resolution.refresh();
+      const cards = freshRunIds.length > 0 ? await rebuildCardsFromRuns(freshRunIds) : [];
+      onChange({ ...block, cards });
+    } finally {
+      setRebuilding(false);
+    }
   };
 
   const onAddCard = (sel: AddCardSelection) => {
@@ -94,70 +142,165 @@ export default function ReportCardsBlock({ reportId, block, editMode, allProject
 
   return (
     <div>
-      {editMode && (
+      {(editMode || selector) && (
         <div className="mb-3 card p-3">
           <div className="mb-2 flex items-center justify-between gap-2">
             <span className="text-xs uppercase tracking-wide text-fg-muted">
               Runs in this block ({runIds.length})
             </span>
-            <button
-              type="button"
-              onClick={() => setPickerOpen((v) => !v)}
-              className="inline-flex h-6 items-center justify-center rounded border border-border bg-bg px-2 text-[10px] text-fg-muted hover:border-accent hover:text-fg"
-            >
-              {pickerOpen ? "Done" : `+ Add runs (${candidates.length} available)`}
-            </button>
+            <div className="flex items-center gap-2">
+              {selector && (
+                <RunSelectorBadge
+                  title={describeRunSelector(selector)}
+                  count={resolution.runIds.length}
+                  isRefreshing={rebuilding || resolution.isFetching}
+                  onRefresh={() => void handleRefresh()}
+                />
+              )}
+              {editMode && (
+                <button
+                  type="button"
+                  onClick={toggleAutoMode}
+                  className="inline-flex h-6 items-center justify-center rounded border border-border bg-bg px-2 text-[10px] text-fg-muted hover:border-accent hover:text-fg"
+                  title={selector ? "Switch to a fixed run list" : "Switch to a dynamic run selector"}
+                >
+                  {selector ? "Use static runs" : "Use auto (query)"}
+                </button>
+              )}
+              {editMode && !selector && (
+                <button
+                  type="button"
+                  onClick={() => setPickerOpen((v) => !v)}
+                  className="inline-flex h-6 items-center justify-center rounded border border-border bg-bg px-2 text-[10px] text-fg-muted hover:border-accent hover:text-fg"
+                >
+                  {pickerOpen ? "Done" : `+ Add runs (${candidates.length} available)`}
+                </button>
+              )}
+            </div>
           </div>
 
-          {runIds.length === 0 ? (
-            <p className="text-xs text-fg-subtle">No runs yet. Click "Add runs" to pick some.</p>
-          ) : (
-            <div className="flex flex-wrap gap-1.5">
-              {includedRuns.map((r) => {
-                const label = chipLabels[r.id] ?? r.id.slice(0, 6);
-                return (
-                  <span
-                    key={r.id}
-                    className="group/chip inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-hover px-1.5 py-0.5 text-[11px] mono"
-                    title={r.id}
-                  >
-                    <span className="text-fg">{label}</span>
-                    <button
-                      type="button"
-                      onClick={() => removeRun(r.id)}
-                      className="text-fg-subtle hover:text-status-failed"
-                      aria-label={`Remove ${label}`}
-                      title={`Remove ${label}`}
-                    >
-                      {"×"}
-                    </button>
-                  </span>
-                );
-              })}
+          {editMode && selector && (
+            <div className="mb-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <label className="text-[10px] text-fg-muted">
+                Name pattern
+                <input
+                  type="text"
+                  value={selector.namePattern ?? ""}
+                  onChange={(e) => updateSelector({ namePattern: e.target.value || undefined })}
+                  placeholder="e.g. training-*"
+                  className="input mt-0.5 w-full text-xs"
+                />
+              </label>
+              <label className="text-[10px] text-fg-muted">
+                Tags (comma-sep)
+                <input
+                  type="text"
+                  value={(selector.tags ?? []).join(", ")}
+                  onChange={(e) =>
+                    updateSelector({
+                      tags: e.target.value
+                        .split(",")
+                        .map((t) => t.trim())
+                        .filter(Boolean),
+                    })
+                  }
+                  placeholder="e.g. prod, nightly"
+                  className="input mt-0.5 w-full text-xs"
+                />
+              </label>
+              <label className="text-[10px] text-fg-muted">
+                Mode
+                <select
+                  value={selector.mode}
+                  onChange={(e) => updateSelector({ mode: e.target.value as QueryRunSelector["mode"] })}
+                  className="input mt-0.5 w-full text-xs"
+                >
+                  <option value="latest-n">Latest N</option>
+                  <option value="newest-per-name">Newest per name</option>
+                </select>
+              </label>
+              <label className="text-[10px] text-fg-muted">
+                N
+                <input
+                  type="number"
+                  min={1}
+                  value={selector.n ?? DEFAULT_RUN_SELECTOR_N}
+                  onChange={(e) => updateSelector({ n: Math.max(1, Number(e.target.value) || 1) })}
+                  className="input mt-0.5 w-full text-xs"
+                />
+              </label>
             </div>
           )}
 
-          {pickerOpen && (
-            <div className="mt-2 border-t border-border-subtle pt-2">
-              {candidates.length === 0 ? (
-                <p className="text-xs text-fg-subtle">All project runs already included.</p>
+          {selector ? (
+            runIds.length === 0 ? (
+              <p className="text-xs text-fg-subtle">No runs currently match this selector.</p>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {includedRuns.map((r) => (
+                  <span
+                    key={r.id}
+                    className="inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-hover px-1.5 py-0.5 text-[11px] mono text-fg"
+                    title={r.id}
+                  >
+                    {chipLabels[r.id] ?? r.id.slice(0, 6)}
+                  </span>
+                ))}
+              </div>
+            )
+          ) : (
+            <>
+              {staticRunIds.length === 0 ? (
+                <p className="text-xs text-fg-subtle">No runs yet. Click "Add runs" to pick some.</p>
               ) : (
-                <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto">
-                  {candidates.map((r) => (
-                    <button
-                      key={r.id}
-                      type="button"
-                      onClick={() => addRuns([r.id])}
-                      className="inline-flex items-center gap-1 rounded border border-border-subtle bg-bg px-1.5 py-0.5 text-[11px] mono text-fg-muted hover:border-accent hover:text-fg"
-                      title={r.id}
-                    >
-                      <span aria-hidden="true">+</span>
-                      {candidateLabels[r.id] ?? r.id.slice(0, 6)}
-                    </button>
-                  ))}
+                <div className="flex flex-wrap gap-1.5">
+                  {includedRuns.map((r) => {
+                    const label = chipLabels[r.id] ?? r.id.slice(0, 6);
+                    return (
+                      <span
+                        key={r.id}
+                        className="group/chip inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-hover px-1.5 py-0.5 text-[11px] mono"
+                        title={r.id}
+                      >
+                        <span className="text-fg">{label}</span>
+                        <button
+                          type="button"
+                          onClick={() => removeRun(r.id)}
+                          className="text-fg-subtle hover:text-status-failed"
+                          aria-label={`Remove ${label}`}
+                          title={`Remove ${label}`}
+                        >
+                          {"×"}
+                        </button>
+                      </span>
+                    );
+                  })}
                 </div>
               )}
-            </div>
+
+              {pickerOpen && (
+                <div className="mt-2 border-t border-border-subtle pt-2">
+                  {candidates.length === 0 ? (
+                    <p className="text-xs text-fg-subtle">All project runs already included.</p>
+                  ) : (
+                    <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto">
+                      {candidates.map((r) => (
+                        <button
+                          key={r.id}
+                          type="button"
+                          onClick={() => addRuns([r.id])}
+                          className="inline-flex items-center gap-1 rounded border border-border-subtle bg-bg px-1.5 py-0.5 text-[11px] mono text-fg-muted hover:border-accent hover:text-fg"
+                          title={r.id}
+                        >
+                          <span aria-hidden="true">+</span>
+                          {candidateLabels[r.id] ?? r.id.slice(0, 6)}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
           )}
         </div>
       )}

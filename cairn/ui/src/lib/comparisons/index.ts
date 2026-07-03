@@ -34,7 +34,10 @@ export {
   removeRunFromComparison,
   reorderComparisonCards,
   removeCardFromComparison,
+  setComparisonRunSelector,
 } from "./store";
+
+export { rebuildCardsFromRuns } from "./rebuild-cards";
 
 export { useComparisons } from "./events";
 
