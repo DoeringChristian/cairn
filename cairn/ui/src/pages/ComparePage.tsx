@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
+import { useLocation, useParams, useSearchParams } from "react-router-dom";
 import { useElementScrollRestore } from "../lib/use-scroll-restore";
 import ComparisonOverviewTab from "./ComparisonOverviewTab";
 import ComparisonSourceTab from "./ComparisonSourceTab";
@@ -12,6 +12,7 @@ import SmartComparisonWizard from "../components/SmartComparisonWizard";
 import {
   addCardToComparison,
   addRunsToComparison,
+  applyTemplateToRuns,
   cardSettingsKeyFor,
   compareRunId,
   createComparison,
@@ -28,8 +29,10 @@ import {
   syncComparisonsFromServer,
   useComparisons,
   useTemplates,
+  type ApplyTemplateResult,
   type Comparison,
   type ComparisonCard,
+  type ComparisonTemplate,
   type ComparisonTemplateCard,
   type SmartFilters,
 } from "../lib/comparisons";
@@ -61,6 +64,23 @@ export default function ComparePage() {
     if (!projectId) return;
     syncComparisonsFromServer(projectId).then(refresh);
   }, [projectId, refresh]);
+
+  // Transient "restored N of M cards" feedback for a template apply. Two
+  // sources: RunsTablePage's "From template" hands it over via router state
+  // (it navigates here right after applying); the sidebar's own "New
+  // comparison from template" sets it directly (see applyBanner below).
+  const location = useLocation();
+  const [applyBanner, setApplyBanner] = useState<string | null>(
+    (location.state as { templateApplyFeedback?: string } | null)?.templateApplyFeedback ?? null,
+  );
+  useEffect(() => {
+    const feedback = (location.state as { templateApplyFeedback?: string } | null)?.templateApplyFeedback;
+    if (!feedback) return;
+    setApplyBanner(feedback);
+    // Clear the router state so a refresh/back-navigation doesn't re-show it.
+    window.history.replaceState({}, "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state]);
 
   const selectedId = searchParams.get("c") ?? "";
 
@@ -323,6 +343,20 @@ export default function ComparePage() {
           Compare
         </h1>
 
+        {applyBanner && (
+          <div className="mb-4 flex items-center justify-between gap-2 rounded border border-accent/40 bg-accent/10 px-3 py-2 text-xs text-fg">
+            <span>{applyBanner}</span>
+            <button
+              type="button"
+              onClick={() => setApplyBanner(null)}
+              className="shrink-0 text-fg-subtle hover:text-fg"
+              aria-label="Dismiss"
+            >
+              {"×"}
+            </button>
+          </div>
+        )}
+
         {/* Mobile sidebar toggle */}
         <div className="mb-3 md:hidden">
           <button
@@ -349,7 +383,25 @@ export default function ComparePage() {
               onRename={handleRename}
               onDelete={handleDelete}
             />
-            <TemplateSidebar projectId={projectId} />
+            <TemplateSidebar
+              projectId={projectId}
+              currentRunIds={compRunIds}
+              allRunIds={allProjectRunIds}
+              runInfo={runInfoMap}
+              onApplied={(result, name) => {
+                if (!result.comparisonId) {
+                  setApplyBanner(`"${name}" has no cards matching the selected run(s) — no comparison created.`);
+                  return;
+                }
+                refresh();
+                selectComparison(result.comparisonId);
+                setApplyBanner(
+                  result.matchedCount === result.totalCount
+                    ? `Applied "${name}" — all ${result.totalCount} card(s) restored.`
+                    : `Applied "${name}" — restored ${result.matchedCount} of ${result.totalCount} card(s).`,
+                );
+              }}
+            />
             {selectionState.selectedArray.length > 0 && (
               <div className="mt-4 border-t border-border-subtle pt-3">
                 <h2 className="mb-1 text-xs font-semibold uppercase tracking-wide text-fg-muted">
@@ -805,9 +857,15 @@ function ComparisonView({
               const templateCards: ComparisonTemplateCard[] = comparison.cards.map((card) => {
                 const settingsKey = cardSettingsKeyFor(comparison.id, card);
                 const cardSettings = loadCardSettings<Record<string, unknown>>(settingsKey);
+                // Multi-run cards (parallel/scatter/bar/tile) don't correspond to
+                // a metric name — key them by type so onApplyTemplate/
+                // applyTemplateToRuns can find them regardless of what label
+                // (if any) their synthetic series happened to carry.
+                const isMultiRun = isMultiRunCardType(card.type);
                 return {
                   type: card.type,
-                  metricName: card.series[0]?.name ?? card.id,
+                  metricName: isMultiRun ? card.type : (card.series[0]?.name ?? card.id),
+                  contextHash: isMultiRun ? undefined : card.series[0]?.context_hash,
                   settings: cardSettings ?? undefined,
                 };
               });
@@ -1026,9 +1084,39 @@ function EmptyMainPane({
 // Template sidebar section
 // ---------------------------------------------------------------------------
 
-function TemplateSidebar({ projectId }: { projectId: string }) {
+interface TemplateSidebarProps {
+  projectId: string;
+  /** Run IDs of the currently selected comparison (empty when none is selected). */
+  currentRunIds: string[];
+  /** Fallback pool of run IDs for the minimal picker when there's no current comparison. */
+  allRunIds: string[];
+  runInfo: Map<string, { displayName?: string; projectId?: string }>;
+  onApplied: (result: ApplyTemplateResult, templateName: string) => void;
+}
+
+function TemplateSidebar({ projectId, currentRunIds, allRunIds, runInfo, onApplied }: TemplateSidebarProps) {
   const { templates } = useTemplates(projectId);
+  // The template a run picker is currently open for (no current comparison
+  // to draw runs from), and the runs checked in that picker.
+  const [pendingTemplate, setPendingTemplate] = useState<ComparisonTemplate | null>(null);
+  const [pickedRunIds, setPickedRunIds] = useState<Set<string>>(new Set());
+  const [applyingId, setApplyingId] = useState<string | null>(null);
+
   if (templates.length === 0) return null;
+
+  const applyWithRuns = async (t: ComparisonTemplate, runIds: string[]) => {
+    if (runIds.length === 0) return;
+    setApplyingId(t.id);
+    try {
+      const result = await applyTemplateToRuns(projectId, t, runIds);
+      onApplied(result, t.name);
+      setPendingTemplate(null);
+      setPickedRunIds(new Set());
+    } finally {
+      setApplyingId(null);
+    }
+  };
+
   return (
     <div className="mt-4 border-t border-border-subtle pt-3">
       <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-fg-muted">
@@ -1044,17 +1132,94 @@ function TemplateSidebar({ projectId }: { projectId: string }) {
               <div className="truncate">{t.name}</div>
               <div className="text-[10px] text-fg-subtle">{t.cards.length} card(s)</div>
             </div>
-            <button
-              type="button"
-              onClick={() => deleteTemplate(projectId, t.id)}
-              className="ml-2 shrink-0 text-[10px] text-fg-subtle hover:text-status-failed"
-              title="Delete template"
-            >
-              {"\u00D7"}
-            </button>
+            <div className="ml-2 flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (currentRunIds.length > 0) {
+                    void applyWithRuns(t, currentRunIds);
+                  } else {
+                    setPendingTemplate(t);
+                    setPickedRunIds(new Set());
+                  }
+                }}
+                disabled={applyingId === t.id}
+                className="text-[10px] text-accent hover:underline disabled:opacity-50"
+                title={
+                  currentRunIds.length > 0
+                    ? "New comparison from template, using this comparison's runs"
+                    : "New comparison from template \u2014 pick runs"
+                }
+              >
+                {applyingId === t.id ? "Applying\u2026" : "New from template"}
+              </button>
+              <button
+                type="button"
+                onClick={() => deleteTemplate(projectId, t.id)}
+                className="text-[10px] text-fg-subtle hover:text-status-failed"
+                title="Delete template"
+              >
+                {"\u00D7"}
+              </button>
+            </div>
           </li>
         ))}
       </ul>
+
+      {pendingTemplate && (
+        <div className="mt-2 rounded border border-border p-2">
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <span className="truncate text-[10px] font-medium text-fg-muted">
+              Pick runs for "{pendingTemplate.name}"
+            </span>
+            <button
+              type="button"
+              onClick={() => setPendingTemplate(null)}
+              className="shrink-0 text-[10px] text-fg-subtle hover:text-fg"
+            >
+              Cancel
+            </button>
+          </div>
+          {allRunIds.length === 0 ? (
+            <p className="text-[10px] text-fg-subtle">No runs in this project yet.</p>
+          ) : (
+            <ul className="flex max-h-40 flex-col gap-0.5 overflow-y-auto">
+              {allRunIds.map((runId) => {
+                const label = runInfo.get(runId)?.displayName || runId;
+                return (
+                  <li key={runId}>
+                    <label className="flex cursor-pointer items-center gap-1.5 text-[10px] text-fg-muted hover:text-fg">
+                      <input
+                        type="checkbox"
+                        checked={pickedRunIds.has(runId)}
+                        onChange={() => {
+                          setPickedRunIds((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(runId)) next.delete(runId);
+                            else next.add(runId);
+                            return next;
+                          });
+                        }}
+                      />
+                      <span className="truncate">{label}</span>
+                    </label>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          <button
+            type="button"
+            onClick={() => void applyWithRuns(pendingTemplate, Array.from(pickedRunIds))}
+            disabled={pickedRunIds.size === 0 || applyingId === pendingTemplate.id}
+            className="btn mt-2 w-full text-[10px] disabled:opacity-50"
+          >
+            {applyingId === pendingTemplate.id
+              ? "Applying\u2026"
+              : `Apply to ${pickedRunIds.size} run${pickedRunIds.size === 1 ? "" : "s"}`}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

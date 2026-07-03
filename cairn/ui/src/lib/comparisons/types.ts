@@ -32,6 +32,19 @@ export function isMultiRunCardType(t: string): t is MultiRunCardType {
   return (MULTI_RUN_CARD_TYPES as readonly string[]).includes(t);
 }
 
+/**
+ * Human label per multi-run card type — mirrors AddCardModal's
+ * `multiRunDefaults` fallback entries. Used when reconstructing a
+ * multi-run card's series (e.g. applying a comparison template), where
+ * there's no real metric name to draw from.
+ */
+export const MULTI_RUN_CARD_LABELS: Record<MultiRunCardType, string> = {
+  parallel: "Parallel Coordinates",
+  scatter: "Scatter Plot",
+  bar: "Bar Chart",
+  tile: "Scalar Tile",
+};
+
 export interface SmartFilterEntry {
   key: string;
   mode: "values" | "regex";
