@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from .artifact import ArtifactHandler
 from .audio import AudioHandler
+from .boxes3d import Boxes3DHandler
 from .figure import FigureHandler
 from .histogram import HistogramHandler
 from .html import HtmlHandler
@@ -46,6 +47,7 @@ if not _already_registered:
     # wrappers only, so their order among themselves doesn't matter.
     default_registry.register(TableHandler())
     default_registry.register(PointCloudHandler())
+    default_registry.register(Boxes3DHandler())
     default_registry.register(PluginHandler())
     default_registry.register(ArtifactHandler())
     # Wrapper-only, like Histogram/Tensor — order among themselves doesn't
@@ -70,6 +72,7 @@ __all__ = [
     "TensorHandler",
     "TableHandler",
     "PointCloudHandler",
+    "Boxes3DHandler",
     "PluginHandler",
     "ArtifactHandler",
     "HtmlHandler",
