@@ -3,6 +3,7 @@ export {
   default as BarChart,
   type BarChartProps,
   type BarDatum,
+  type BarCompareMode,
 } from "./BarChart";
 export {
   default as ParallelCoords,
