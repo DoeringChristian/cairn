@@ -14,7 +14,13 @@ export type {
   SmartFilters,
   Comparison,
 } from "./types";
-export { compareRunId, MULTI_RUN_CARD_TYPES, MULTI_RUN_CARD_LABELS, isMultiRunCardType } from "./types";
+export {
+  compareRunId,
+  cardSettingsKeyForScope,
+  MULTI_RUN_CARD_TYPES,
+  MULTI_RUN_CARD_LABELS,
+  isMultiRunCardType,
+} from "./types";
 
 export {
   loadComparisons,
