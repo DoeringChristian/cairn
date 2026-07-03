@@ -33,7 +33,7 @@ def list_sequences(run_id: str, request: Request) -> dict[str, Any]:
     return {"sequences": rows}
 
 
-@router.get("/runs/{run_id}/sequences/{name}")
+@router.get("/runs/{run_id}/sequences/{name:path}")
 def get_sequence(
     run_id: str,
     name: str,

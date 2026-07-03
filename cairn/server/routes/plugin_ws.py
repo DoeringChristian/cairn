@@ -352,7 +352,7 @@ async def _handle_window_plugin(
         # No per-event screenshot — periodic stream handles updates.
 
 
-@router.websocket("/ws/plugin/{run_id}/{metric_name}")
+@router.websocket("/ws/plugin/{run_id}/{metric_name:path}")
 async def plugin_ws(
     websocket: WebSocket,
     run_id: str,

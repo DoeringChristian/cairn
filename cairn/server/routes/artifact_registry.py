@@ -70,7 +70,7 @@ def create_family(
     return family
 
 
-@router.get("/projects/{project_id}/artifact-families/by-name/{name}")
+@router.get("/projects/{project_id}/artifact-families/by-name/{name:path}")
 def get_family_by_name(
     project_id: str, name: str, request: Request,
 ) -> dict[str, Any]:
