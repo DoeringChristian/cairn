@@ -64,15 +64,23 @@ class FigureHandler:
                 import plotly.graph_objects as go
 
                 if isinstance(obj, go.Figure):
+                    source_json = obj.to_json().encode("utf-8")
                     # Native Plotly: rasterize via kaleido if present, else a
                     # tiny fallback PNG.
                     try:
                         png = obj.to_image(format="png")
                     except Exception:  # noqa: BLE001
                         # kaleido not installed; emit a minimal PNG so the
-                        # artifact table always has primary bytes.
-                        png = _blank_png()
-                    source_json = obj.to_json().encode("utf-8")
+                        # artifact table always has primary bytes. Content-
+                        # address it against this figure's source JSON
+                        # (rather than a fixed constant) so distinct figures
+                        # don't rasterize to byte-identical placeholders —
+                        # the artifacts table dedups by content hash with
+                        # ON CONFLICT (hash) DO UPDATE that keeps only the
+                        # first row's metadata, so a shared placeholder hash
+                        # would silently clobber every subsequent figure's
+                        # source_hash onto the first figure's.
+                        png = _blank_png(source_json)
                     meta["has_source"] = True
                     meta["source_format"] = "plotly_json"
                     meta["_source_blob"] = source_json
@@ -115,10 +123,36 @@ class FigureHandler:
         return PILImage.open(_io.BytesIO(data))
 
 
-def _blank_png() -> bytes:
-    """1x1 transparent PNG — placeholder when no rasterizer is available."""
-    import base64
+def _png_chunk(chunk_type: bytes, data: bytes) -> bytes:
+    import struct
+    import zlib
 
-    return base64.b64decode(
+    return (
+        struct.pack(">I", len(data))
+        + chunk_type
+        + data
+        + struct.pack(">I", zlib.crc32(chunk_type + data) & 0xFFFFFFFF)
+    )
+
+
+def _blank_png(unique_seed: bytes | None = None) -> bytes:
+    """1x1 transparent PNG — placeholder when no rasterizer is available.
+
+    When ``unique_seed`` is given (e.g. a figure's source JSON bytes), a
+    small ancillary ``tEXt`` chunk derived from it is embedded before
+    ``IEND`` so distinct figures don't collapse onto the same content
+    hash — decoders ignore unrecognized text chunks, so the image still
+    renders identically as a blank placeholder.
+    """
+    import base64
+    import hashlib
+
+    base = base64.b64decode(
         b"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
     )
+    if not unique_seed:
+        return base
+    digest = hashlib.sha256(unique_seed).hexdigest().encode("ascii")
+    text_chunk = _png_chunk(b"tEXt", b"cairn:src\x00" + digest)
+    # IEND is the trailing 12-byte chunk (4 length + 4 type + 0 data + 4 CRC).
+    return base[:-12] + text_chunk + base[-12:]

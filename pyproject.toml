@@ -38,6 +38,7 @@ dependencies = [
 media = [
     "matplotlib>=3.7",
     "plotly>=5.18",
+    "kaleido>=0.2.1",
     "imageio>=2.34",
     "imageio-ffmpeg>=0.4.9",
     "soundfile>=0.12",

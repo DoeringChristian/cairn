@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from cairn.sdk.handlers.figure import FigureHandler
+from cairn.sdk.handlers.figure import FigureHandler, _blank_png
 
 
 @pytest.mark.media
@@ -49,3 +49,25 @@ def test_can_handle_requires_matplotlib_or_plotly():
     # Plain numbers can't be figures.
     assert not h.can_handle(1)
     assert not h.can_handle("x")
+
+
+def test_blank_png_is_content_unique_per_seed():
+    # Regression: without a seed, the placeholder used to be a fixed
+    # constant, so every kaleido-less figure content-addressed to the same
+    # artifacts-table row and clobbered each other's source_hash metadata
+    # via the store's ON CONFLICT (hash) DO UPDATE.
+    p_no_seed = _blank_png()
+    p_a1 = _blank_png(b"figure-a-source-json")
+    p_a2 = _blank_png(b"figure-a-source-json")
+    p_b = _blank_png(b"figure-b-source-json")
+
+    assert p_a1 != p_no_seed
+    assert p_a1 != p_b
+    assert p_a1 == p_a2  # same source -> same bytes (still content-addressed)
+
+    # Still a valid, decodable PNG.
+    from PIL import Image
+    import io
+
+    img = Image.open(io.BytesIO(p_a1))
+    img.load()
