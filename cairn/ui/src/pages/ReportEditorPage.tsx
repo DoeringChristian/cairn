@@ -9,11 +9,16 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useLocation, useParams } from "react-router-dom";
 import { useReport, useRuns, useUpdateReport } from "../api/hooks";
 import { formatRelative } from "../lib/format";
+import { loadCardSettings } from "../lib/card-settings";
+import { isMultiRunCardType, type ComparisonTemplateCard } from "../lib/comparisons";
 import {
+  allReportCards,
   buildReportPayload,
+  cardSettingsKeyForReport,
+  createReportTemplate,
   isCardsBlock,
   isMarkdownBlock,
   newId,
@@ -27,6 +32,7 @@ import ReportMarkdownBlock from "../components/reports/ReportMarkdownBlock";
 import ReportCardsBlock from "../components/reports/ReportCardsBlock";
 
 const AUTOSAVE_DELAY_MS = 1500;
+const DEFAULT_REPORT_NAME = "Untitled report";
 
 type SaveState = "idle" | "saving" | "saved" | "error";
 
@@ -42,6 +48,21 @@ export default function ReportEditorPage() {
   const [blocks, setBlocks] = useState<ReportBlock[]>([]);
   const [hydrated, setHydrated] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>("idle");
+
+  // Transient "restored N of M cards" feedback handed over from
+  // ReportsListPage's "New from template" apply (mirrors ComparePage's
+  // templateApplyFeedback router-state handling).
+  const location = useLocation();
+  const [applyBanner, setApplyBanner] = useState<string | null>(
+    (location.state as { templateApplyFeedback?: string } | null)?.templateApplyFeedback ?? null,
+  );
+  useEffect(() => {
+    const feedback = (location.state as { templateApplyFeedback?: string } | null)?.templateApplyFeedback;
+    if (!feedback) return;
+    setApplyBanner(feedback);
+    window.history.replaceState({}, "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state]);
   const [lastSavedAt, setLastSavedAt] = useState<string | undefined>(undefined);
 
   const justHydratedRef = useRef(false);
@@ -66,10 +87,17 @@ export default function ReportEditorPage() {
 
   const doSave = useCallback(() => {
     if (!hydrated || !reportId) return;
+    // Blank-name guard: never persist an empty name (RC follow-up fix) —
+    // fall back to the same default the list page's create-time prompt()
+    // uses, and reflect the fallback in the input so it doesn't silently
+    // diverge from what was actually saved.
+    const trimmed = name.trim();
+    const effectiveName = trimmed || DEFAULT_REPORT_NAME;
+    if (effectiveName !== name) setName(effectiveName);
     setSaveState("saving");
     const payload = buildReportPayload(reportId, blocks);
     updateMut.mutate(
-      { name, payload: payload as unknown as Record<string, unknown> },
+      { name: effectiveName, payload: payload as unknown as Record<string, unknown> },
       {
         onSuccess: (res) => {
           setSaveState("saved");
@@ -153,6 +181,28 @@ export default function ReportEditorPage() {
     });
   };
 
+  // Save every cards-block card across this report as a reusable report
+  // template — mirrors ComparePage's "Save template" (ComparePage.tsx),
+  // scoped under `cardSettingsKeyForReport` instead of `cardSettingsKeyFor`.
+  const handleSaveAsTemplate = () => {
+    if (!reportId || !projectId) return;
+    const templateName = prompt("Template name:", name);
+    if (!templateName) return;
+    const cards = allReportCards(blocks);
+    const templateCards: ComparisonTemplateCard[] = cards.map((card) => {
+      const settingsKey = cardSettingsKeyForReport(reportId, card);
+      const cardSettings = loadCardSettings<Record<string, unknown>>(settingsKey);
+      const isMultiRun = isMultiRunCardType(card.type);
+      return {
+        type: card.type,
+        metricName: isMultiRun ? card.type : (card.series[0]?.name ?? card.id),
+        contextHash: isMultiRun ? undefined : card.series[0]?.context_hash,
+        settings: cardSettings ?? undefined,
+      };
+    });
+    createReportTemplate(projectId, templateName, templateCards);
+  };
+
   if (!projectId || !reportId) return null;
 
   if (q.isLoading) return <p className="text-fg-muted">Loading...</p>;
@@ -175,6 +225,20 @@ export default function ReportEditorPage() {
         </Link>
       </div>
 
+      {applyBanner && (
+        <div className="mb-4 flex items-center justify-between gap-2 rounded border border-accent/40 bg-accent/10 px-3 py-2 text-xs text-fg">
+          <span>{applyBanner}</span>
+          <button
+            type="button"
+            onClick={() => setApplyBanner(null)}
+            className="shrink-0 text-fg-subtle hover:text-fg"
+            aria-label="Dismiss"
+          >
+            {"×"}
+          </button>
+        </div>
+      )}
+
       <div className="mb-6 flex flex-wrap items-baseline justify-between gap-3">
         {editMode ? (
           <input
@@ -194,6 +258,16 @@ export default function ReportEditorPage() {
           {editMode && (
             <button type="button" onClick={handleSaveNow} className="btn text-xs" disabled={updateMut.isPending}>
               Save
+            </button>
+          )}
+          {editMode && (
+            <button
+              type="button"
+              onClick={handleSaveAsTemplate}
+              className="btn text-xs"
+              title="Save this report's cards as a reusable template"
+            >
+              Save as template
             </button>
           )}
           <button type="button" onClick={() => setEditMode((v) => !v)} className="btn text-xs">
@@ -259,6 +333,7 @@ export default function ReportEditorPage() {
                 />
               ) : isCardsBlock(block) ? (
                 <ReportCardsBlock
+                  projectId={projectId}
                   reportId={reportId}
                   block={block}
                   editMode={editMode}
