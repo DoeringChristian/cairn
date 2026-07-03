@@ -5,8 +5,7 @@ import { useBulkRunMutation, useInfiniteRuns, useSetTags } from "../api/hooks";
 import type { Run, RunStatus } from "../api/types";
 import RunStatusBadge from "../components/RunStatusBadge";
 import { formatDuration, formatRelative, safeJsonParse } from "../lib/format";
-import { addCardsToComparison, cardSettingsKeyFor, createComparison, useTemplates, type ComparisonTemplate } from "../lib/comparisons";
-import { saveCardSettings } from "../lib/card-settings";
+import { addCardsToComparison, applyTemplateToRuns, createComparison, useTemplates, type ComparisonTemplate } from "../lib/comparisons";
 import { gcDeletedRunKeys } from "../lib/storage";
 import { api } from "../api/client";
 import SettingsPopover from "../components/SettingsPopover";
@@ -82,6 +81,7 @@ export default function RunsTablePage() {
   });
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [templatePopoverOpen, setTemplatePopoverOpen] = useState(false);
+  const [templateApplyMessage, setTemplateApplyMessage] = useState<string | null>(null);
   const templateBtnRef = useRef<HTMLButtonElement | null>(null);
   const [tagPopoverOpen, setTagPopoverOpen] = useState(false);
   const tagBtnRef = useRef<HTMLButtonElement | null>(null);
@@ -389,60 +389,31 @@ export default function RunsTablePage() {
     if (!projectId) return;
     setTemplatePopoverOpen(false);
     const selectedIds = Array.from(selected);
-    const cmp = createComparison(projectId!, template.name);
 
-    // Fetch sequences for selected runs.
-    const seqResults = await Promise.all(
-      selectedIds.map((rid) => api.sequences(rid)),
-    );
+    // Matching happens before any comparison is created (applyTemplateToRuns
+    // returns comparisonId: null on a zero-match apply) — so a template that
+    // shares no metrics with the selected runs never leaves behind an empty
+    // comparison; it just reports why below.
+    const result = await applyTemplateToRuns(projectId, template, selectedIds);
 
-    // Build a map of metric name → available sequences across runs.
-    const seqMap = new Map<string, Array<{ runId: string; name: string; context_hash: string }>>();
-    seqResults.forEach((result, idx) => {
-      const runId = selectedIds[idx]!;
-      for (const seq of result.sequences) {
-        const existing = seqMap.get(seq.name);
-        if (existing) {
-          if (!existing.some((s) => s.runId === runId)) {
-            existing.push({ runId, name: seq.name, context_hash: seq.context_hash });
-          }
-        } else {
-          seqMap.set(seq.name, [{ runId, name: seq.name, context_hash: seq.context_hash }]);
-        }
-      }
-    });
-
-    // Collect all matched template cards, then add in one batch.
-    const matched = template.cards
-      .filter((tc) => !tc.metricName.startsWith("system."))
-      .map((tc) => ({ tc, series: seqMap.get(tc.metricName) }))
-      .filter((m): m is { tc: typeof template.cards[number]; series: NonNullable<typeof m.series> } => !!m.series?.length);
-
-    addCardsToComparison(
-      projectId!,
-      cmp.id,
-      matched.map((m) => ({ type: m.tc.type, series: m.series })),
-    );
-
-    // Restore saved settings from template.
-    const { loadComparisons } = await import("../lib/comparisons");
-    const updated = loadComparisons(projectId).find((c) => c.id === cmp.id);
-    if (updated) {
-      const baseIdx = updated.cards.length - matched.length;
-      matched.forEach((m, i) => {
-        if (m.tc.settings) {
-          const card = updated.cards[baseIdx + i];
-          if (card) {
-            saveCardSettings(
-              cardSettingsKeyFor(cmp.id, card),
-              m.tc.settings,
-            );
-          }
-        }
-      });
+    if (!result.comparisonId) {
+      setTemplateApplyMessage(
+        `"${template.name}" has no cards matching the selected run(s) — no comparison created.`,
+      );
+      return;
     }
 
-    navigate(`/p/${projectId}/compare?c=${encodeURIComponent(cmp.id)}`);
+    // Hand the restore feedback to ComparePage via router state, since we're
+    // navigating away right after this (a banner set here would just flash
+    // and unmount before the user can read it).
+    navigate(`/p/${projectId}/compare?c=${encodeURIComponent(result.comparisonId)}`, {
+      state: {
+        templateApplyFeedback:
+          result.matchedCount === result.totalCount
+            ? `Applied "${template.name}" — all ${result.totalCount} card(s) restored.`
+            : `Applied "${template.name}" — restored ${result.matchedCount} of ${result.totalCount} card(s).`,
+      },
+    });
   }, [projectId, selected, navigate]);
 
   useWindowScrollRestore(
@@ -463,6 +434,20 @@ export default function RunsTablePage() {
           {sorted.length} of {serverTotal} run{serverTotal === 1 ? "" : "s"}
         </p>
       </div>
+
+      {templateApplyMessage && (
+        <div className="mb-4 flex items-center justify-between gap-2 rounded border border-status-failed/40 bg-status-failed/10 px-3 py-2 text-xs text-status-failed">
+          <span>{templateApplyMessage}</span>
+          <button
+            type="button"
+            onClick={() => setTemplateApplyMessage(null)}
+            className="shrink-0 text-fg-subtle hover:text-fg"
+            aria-label="Dismiss"
+          >
+            {"×"}
+          </button>
+        </div>
+      )}
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <label className="flex items-center gap-1 text-xs text-fg-muted">
