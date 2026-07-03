@@ -13,7 +13,8 @@ import { useQueries } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { qk } from "../api/query-keys";
 import { useModalBehavior } from "../lib/use-modal-behavior";
-import { isMultiRunCardType, type MultiRunCardType } from "../lib/comparisons";
+import { isMultiRunCardType, type ComparisonSeriesRef, type MultiRunCardType } from "../lib/comparisons";
+import { shortRunLabel } from "../lib/run-label";
 const TYPE_LABELS: Record<string, string> = {
   scalar: "Scalars",
   image: "Images",
@@ -44,10 +45,18 @@ type SelectionRuns = Array<{ runId: string; context_hash: string }>;
  * Result of a user picking an entry in the modal. Mirrors CardDescriptor's
  * discriminant: `series` for a real per-metric card, `multi-run` for the
  * parallel/scatter cards that span the comparison's runs.
+ *
+ * `manual-series` is the "custom overlay" escape hatch: an explicit list of
+ * (run, metric) pairs picked one at a time via checkboxes, rather than one
+ * metric name applied across every run — the two can carry *different*
+ * metric names (e.g. run-a's `loss` overlaid with run-b's `accuracy`).
+ * `ComparisonCard.series` already supports this shape end to end (each
+ * entry carries its own name); this is purely a UI affordance to build one.
  */
 export type AddCardSelection =
   | { kind: "series"; name: string; object_type: string; runs: SelectionRuns }
-  | { kind: "multi-run"; cardType: MultiRunCardType; name: string; runs: SelectionRuns };
+  | { kind: "multi-run"; cardType: MultiRunCardType; name: string; runs: SelectionRuns }
+  | { kind: "manual-series"; object_type: string; series: ComparisonSeriesRef[] };
 
 /** Internal grouping entry (also drives the type tabs). */
 interface MetricEntry {
@@ -81,12 +90,18 @@ export default function AddCardModal({
 }: Props) {
   const [filter, setFilter] = useState("");
   const [selectedType, setSelectedType] = useState<string | null>(null);
+  // "Custom overlay" picker: build a scalar card from arbitrary (run, metric)
+  // checkboxes instead of one metric name applied across every run.
+  const [manualPickerOpen, setManualPickerOpen] = useState(false);
+  const [manualSelected, setManualSelected] = useState<Set<string>>(new Set());
 
   // Reset state when opening
   useEffect(() => {
     if (open) {
       setFilter("");
       setSelectedType(null);
+      setManualPickerOpen(false);
+      setManualSelected(new Set());
     }
   }, [open]);
 
@@ -182,6 +197,54 @@ export default function AddCardModal({
 
   const anyLoading = seqQueries.some((sq) => sq.isLoading);
 
+  // Flatten the scalar metric groups into one (run, metric) combo per
+  // checkbox — the custom-overlay picker's unit of selection.
+  const scalarEntries = grouped.get("scalar") ?? [];
+  const scalarCombos = useMemo(() => {
+    const combos: Array<{
+      key: string;
+      runId: string;
+      name: string;
+      context_hash: string;
+      label: string;
+    }> = [];
+    for (const entry of scalarEntries) {
+      for (const r of entry.runs) {
+        combos.push({
+          key: `${r.runId}::${entry.name}::${r.context_hash}`,
+          runId: r.runId,
+          name: entry.name,
+          context_hash: r.context_hash,
+          label: `${shortRunLabel(r.runId, runIds)} · ${entry.name}`,
+        });
+      }
+    }
+    combos.sort((a, b) => a.label.localeCompare(b.label));
+    return combos;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scalarEntries, runIds]);
+  const filteredScalarCombos = q
+    ? scalarCombos.filter((c) => c.label.toLowerCase().includes(q))
+    : scalarCombos;
+
+  const toggleManualCombo = (key: string) => {
+    setManualSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const handleAddManual = () => {
+    const series: ComparisonSeriesRef[] = scalarCombos
+      .filter((c) => manualSelected.has(c.key))
+      .map((c) => ({ runId: c.runId, name: c.name, context_hash: c.context_hash }));
+    if (series.length === 0) return;
+    onAdd({ kind: "manual-series", object_type: "scalar", series });
+    onClose();
+  };
+
   if (!open) return null;
 
   return (
@@ -214,7 +277,10 @@ export default function AddCardModal({
               <button
                 key={type}
                 type="button"
-                onClick={() => setSelectedType(type)}
+                onClick={() => {
+                  setSelectedType(type);
+                  setManualPickerOpen(false);
+                }}
                 className={`shrink-0 rounded px-3 py-1 text-xs font-medium transition-colors ${
                   activeType === type
                     ? "bg-accent text-white"
@@ -228,49 +294,110 @@ export default function AddCardModal({
         </div>
 
         {/* Search */}
-        <div className="border-b border-border px-4 py-2">
+        <div className="flex items-center gap-2 border-b border-border px-4 py-2">
           <input
             type="text"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            placeholder="Filter metrics..."
+            placeholder={manualPickerOpen ? "Filter run · metric..." : "Filter metrics..."}
             className="input w-full"
             autoFocus
           />
-        </div>
-
-        {/* Metric list */}
-        <div className="flex-1 min-h-0 overflow-y-auto">
-          {anyLoading && metrics.length === 0 ? (
-            <div className="p-4 text-sm text-fg-muted">Loading metrics...</div>
-          ) : filtered.length === 0 ? (
-            <div className="p-4 text-sm text-fg-muted">
-              {q ? "No matching metrics." : "No metrics of this type."}
-            </div>
-          ) : (
-            <div className="divide-y divide-border-subtle">
-              {filtered.map((m, i) => (
-                  <button
-                    key={`${m.name}::${m.object_type}::${i}`}
-                    type="button"
-                    onClick={() => {
-                      onAdd(toSelection(m));
-                      onClose();
-                    }}
-                    className="flex w-full items-center justify-between px-4 py-2.5 text-left text-sm text-fg hover:bg-bg-hover transition-colors"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div className="mono truncate">{m.name}</div>
-                      <div className="text-xs text-fg-muted mt-0.5">
-                        {m.runs.length} run{m.runs.length !== 1 ? "s" : ""}
-                      </div>
-                    </div>
-                    <span className="ml-2 shrink-0 text-xs text-accent">+ Add</span>
-                  </button>
-              ))}
-            </div>
+          {activeType === "scalar" && (
+            <button
+              type="button"
+              onClick={() => setManualPickerOpen((v) => !v)}
+              className={`shrink-0 rounded px-2 py-1 text-xs font-medium whitespace-nowrap transition-colors ${
+                manualPickerOpen
+                  ? "bg-accent text-white"
+                  : "border border-border-subtle text-fg-muted hover:bg-bg-hover hover:text-fg"
+              }`}
+            >
+              {manualPickerOpen ? "Back to metrics" : "Build custom overlay…"}
+            </button>
           )}
         </div>
+
+        {manualPickerOpen ? (
+          <>
+            {/* Custom overlay picker: arbitrary (run, metric) checkboxes —
+                unlike the metric list above, entries may have different
+                names (e.g. run-a's loss overlaid with run-b's accuracy). */}
+            <p className="px-4 pt-2 text-xs text-fg-muted">
+              Pick any combination of run × scalar metric — names don't need to match.
+            </p>
+            <div className="flex-1 min-h-0 overflow-y-auto px-4 py-2">
+              {anyLoading && scalarCombos.length === 0 ? (
+                <div className="p-4 text-sm text-fg-muted">Loading metrics...</div>
+              ) : filteredScalarCombos.length === 0 ? (
+                <div className="p-4 text-sm text-fg-muted">
+                  {q ? "No matching run/metric combinations." : "No scalar metrics available."}
+                </div>
+              ) : (
+                <div className="flex flex-col gap-0.5">
+                  {filteredScalarCombos.map((c) => (
+                    <label
+                      key={c.key}
+                      className="flex items-center gap-2 rounded px-2 py-1.5 text-sm text-fg hover:bg-bg-hover cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={manualSelected.has(c.key)}
+                        onChange={() => toggleManualCombo(c.key)}
+                      />
+                      <span className="mono truncate">{c.label}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="flex items-center justify-between border-t border-border px-4 py-3">
+              <span className="text-xs text-fg-muted">
+                {manualSelected.size} series selected
+              </span>
+              <button
+                type="button"
+                onClick={handleAddManual}
+                disabled={manualSelected.size === 0}
+                className="btn text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                + Add overlay card
+              </button>
+            </div>
+          </>
+        ) : (
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            {anyLoading && metrics.length === 0 ? (
+              <div className="p-4 text-sm text-fg-muted">Loading metrics...</div>
+            ) : filtered.length === 0 ? (
+              <div className="p-4 text-sm text-fg-muted">
+                {q ? "No matching metrics." : "No metrics of this type."}
+              </div>
+            ) : (
+              <div className="divide-y divide-border-subtle">
+                {filtered.map((m, i) => (
+                    <button
+                      key={`${m.name}::${m.object_type}::${i}`}
+                      type="button"
+                      onClick={() => {
+                        onAdd(toSelection(m));
+                        onClose();
+                      }}
+                      className="flex w-full items-center justify-between px-4 py-2.5 text-left text-sm text-fg hover:bg-bg-hover transition-colors"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="mono truncate">{m.name}</div>
+                        <div className="text-xs text-fg-muted mt-0.5">
+                          {m.runs.length} run{m.runs.length !== 1 ? "s" : ""}
+                        </div>
+                      </div>
+                      <span className="ml-2 shrink-0 text-xs text-accent">+ Add</span>
+                    </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
