@@ -8,6 +8,7 @@ import RunStatusBadge from "../components/RunStatusBadge";
 import { formatDuration, safeJsonParse } from "../lib/format";
 import { formatNum } from "../lib/cairn-plot";
 import { disambiguateRunLabels, useRunMetadataVersion } from "../lib/run-label";
+import { computeCellStatuses, diffCellClassName, isNumericSeries, toNumeric } from "../lib/table-diff";
 
 /** Cap on metrics shown in the summary table (per spec). */
 const MAX_SUMMARY_METRICS = 50;
@@ -158,6 +159,11 @@ export default function ComparisonOverviewTab({ compRunIds }: Props) {
                 {displayKeys.map((key) => {
                   const row = paramMap.get(key)!;
                   const differs = differingKeys.has(key);
+                  const rawValues = runData.map((rd) => row.get(rd.run.id) ?? null);
+                  const numeric = isNumericSeries(rawValues);
+                  const statuses = numeric
+                    ? computeCellStatuses(rawValues.map(toNumeric))
+                    : null;
                   return (
                     <tr
                       key={key}
@@ -172,11 +178,19 @@ export default function ComparisonOverviewTab({ compRunIds }: Props) {
                       >
                         {key}
                       </td>
-                      {runData.map((rd) => (
-                        <td key={rd.run.id} className="mono py-1 pr-4 text-fg-muted whitespace-nowrap">
-                          {row.get(rd.run.id) ?? "—"}
-                        </td>
-                      ))}
+                      {runData.map((rd, i) => {
+                        const diffCls = statuses ? diffCellClassName(statuses[i]!) : "";
+                        return (
+                          <td
+                            key={rd.run.id}
+                            className={`mono py-1 pr-4 whitespace-nowrap ${
+                              diffCls || "text-fg-muted"
+                            }`}
+                          >
+                            {row.get(rd.run.id) ?? "—"}
+                          </td>
+                        );
+                      })}
                     </tr>
                   );
                 })}
@@ -376,6 +390,7 @@ function MetricsSummarySection({ runData, labels, onlyDiffs }: MetricsSummaryPro
               {displayNames.map((name) => {
                 const row = rows.get(name)!;
                 const differs = differing.has(name);
+                const statuses = computeCellStatuses(runIds.map((rid) => row.get(rid) ?? null));
                 return (
                   <tr
                     key={name}
@@ -388,10 +403,16 @@ function MetricsSummarySection({ runData, labels, onlyDiffs }: MetricsSummaryPro
                     >
                       {name}
                     </td>
-                    {runData.map((rd) => {
+                    {runData.map((rd, i) => {
                       const v = row.get(rd.run.id);
+                      const diffCls = v != null ? diffCellClassName(statuses[i]!) : "";
                       return (
-                        <td key={rd.run.id} className="mono py-1 pr-4 text-fg-muted whitespace-nowrap tabular-nums">
+                        <td
+                          key={rd.run.id}
+                          className={`mono py-1 pr-4 whitespace-nowrap tabular-nums ${
+                            diffCls || "text-fg-muted"
+                          }`}
+                        >
                           {v != null ? formatNum(v) : "—"}
                         </td>
                       );

@@ -28,6 +28,12 @@ import Toggle from "./settings/Toggle";
 import { useRunSelection, useRunSelectionHasProvider } from "../lib/use-run-selection";
 import RunSelectionPanel from "./RunSelectionPanel";
 import StepSlider from "./StepSlider";
+import {
+  computeTableDiff,
+  diffCellClassName,
+  type CellComparison,
+  type DiffTable,
+} from "../lib/table-diff";
 
 // Out of scope for v1 (noted per spec): media-in-cells, cross-table joins,
 // derived columns. The grid is intentionally hand-rolled — no grid dependency.
@@ -73,6 +79,14 @@ interface TableSettings extends BaseCardSettings {
   rowsPerPage: number;
   /** Column names hidden by the visibility toggles. */
   hiddenColumns: string[];
+  /**
+   * Show red/green diff colors on numeric cells vs the other compared runs.
+   * Optional — defaults (computed at render time, not persisted until the
+   * user touches the toggle) to ON when exactly 2 runs are compared.
+   */
+  diffMode?: boolean;
+  /** Flip which direction (higher/lower) renders green vs red. */
+  invertDiffColors?: boolean;
 }
 
 const DEFAULT_ROWS_PER_PAGE = 100;
@@ -103,6 +117,27 @@ function useTableBlob(hash?: string | null) {
   });
 }
 
+/**
+ * Same query key/fn as `useTableBlob`, fanned out over N hashes — used at
+ * the TableCard level to compute the cross-pane diff. Shares the react-query
+ * cache with each pane's own `useTableBlob` call (identical query keys), so
+ * this does not cause duplicate network fetches.
+ */
+function useTableBlobs(hashes: Array<string | null | undefined>) {
+  return useQueries({
+    queries: hashes.map((hash) => ({
+      queryKey: ["table-blob", hash],
+      enabled: !!hash,
+      staleTime: Infinity,
+      queryFn: async () => {
+        const r = await fetch(api.artifactUrl(hash!));
+        if (!r.ok) throw new Error(`fetch failed (${r.status})`);
+        return (await r.json()) as TableData;
+      },
+    })),
+  });
+}
+
 /** Render a cell value; numbers get mono alignment via the caller. */
 function formatCell(v: unknown): string {
   if (v === null || v === undefined) return "";
@@ -125,10 +160,15 @@ function TableGrid({
   table,
   rowsPerPage,
   hiddenColumns,
+  diffStatuses,
+  invertDiff = false,
 }: {
   table: TableData;
   rowsPerPage: number;
   hiddenColumns: string[];
+  /** [rowIdx][colIdx] status, same row/col order as `table`. Optional — no diff coloring when omitted. */
+  diffStatuses?: CellComparison[][];
+  invertDiff?: boolean;
 }) {
   const [sort, setSort] = useState<{ col: number; dir: "asc" | "desc" } | null>(null);
   const [filter, setFilter] = useState("");
@@ -142,13 +182,18 @@ function TableGrid({
     [columns, hiddenColumns],
   );
 
+  // Track ORIGINAL row indices through filter/sort/page so diff colors
+  // (keyed by original row index) stay attached to the correct row
+  // regardless of visual position.
+  const rowIdxs = useMemo(() => rows.map((_, i) => i), [rows]);
+
   const filtered = useMemo(() => {
     const needle = filter.trim().toLowerCase();
-    if (!needle) return rows;
-    return rows.filter((row) =>
-      visibleCols.some((c) => formatCell(row[c]).toLowerCase().includes(needle)),
+    if (!needle) return rowIdxs;
+    return rowIdxs.filter((i) =>
+      visibleCols.some((c) => formatCell(rows[i]![c]).toLowerCase().includes(needle)),
     );
-  }, [rows, filter, visibleCols]);
+  }, [rowIdxs, rows, filter, visibleCols]);
 
   const sorted = useMemo(() => {
     if (!sort) return filtered;
@@ -156,9 +201,9 @@ function TableGrid({
     const numeric = columns[col]?.type === "number";
     const factor = dir === "asc" ? 1 : -1;
     const copy = filtered.slice();
-    copy.sort((ra, rb) => {
-      const a = ra[col];
-      const b = rb[col];
+    copy.sort((ia, ib) => {
+      const a = rows[ia]![col];
+      const b = rows[ib]![col];
       // Nulls always sort last regardless of direction.
       const aNull = a === null || a === undefined;
       const bNull = b === null || b === undefined;
@@ -174,7 +219,7 @@ function TableGrid({
       }) * factor;
     });
     return copy;
-  }, [filtered, sort, columns]);
+  }, [filtered, sort, columns, rows]);
 
   const perPage = Math.max(1, rowsPerPage);
   const pageCount = Math.max(1, Math.ceil(sorted.length / perPage));
@@ -183,7 +228,7 @@ function TableGrid({
     setPage((p) => Math.min(p, pageCount - 1));
   }, [pageCount]);
   const safePage = Math.min(page, pageCount - 1);
-  const pageRows = useMemo(
+  const pageRowIdxs = useMemo(
     () => sorted.slice(safePage * perPage, safePage * perPage + perPage),
     [sorted, safePage, perPage],
   );
@@ -242,26 +287,36 @@ function TableGrid({
             </tr>
           </thead>
           <tbody>
-            {pageRows.map((row, ri) => (
-              <tr key={ri} className="odd:bg-bg even:bg-bg-hover/40">
-                {visibleCols.map((c) => {
-                  const numeric = columns[c]?.type === "number";
-                  const text = formatCell(row[c]);
-                  return (
-                    <td
-                      key={c}
-                      title={text}
-                      className={`max-w-[16rem] truncate border-b border-border px-2 py-1 text-fg ${
-                        numeric ? "mono text-right" : ""
-                      }`}
-                    >
-                      {text}
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
-            {pageRows.length === 0 && (
+            {pageRowIdxs.map((ri) => {
+              const row = rows[ri]!;
+              return (
+                <tr key={ri} className="odd:bg-bg even:bg-bg-hover/40">
+                  {visibleCols.map((c) => {
+                    const numeric = columns[c]?.type === "number";
+                    const text = formatCell(row[c]);
+                    const status = diffStatuses?.[ri]?.[c];
+                    const diffCls = status ? diffCellClassName(status, invertDiff) : "";
+                    // Diff coloring and the default text color both set
+                    // `color` — keep them mutually exclusive rather than
+                    // stacking both classes, since Tailwind's cascade order
+                    // (not class-string order) would otherwise decide which
+                    // one wins.
+                    return (
+                      <td
+                        key={c}
+                        title={text}
+                        className={`max-w-[16rem] truncate border-b border-border px-2 py-1 ${
+                          numeric ? "mono text-right" : ""
+                        } ${diffCls || "text-fg"}`}
+                      >
+                        {text}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+            {pageRowIdxs.length === 0 && (
               <tr>
                 <td
                   colSpan={visibleCols.length}
@@ -317,12 +372,16 @@ function TablePane({
   targetStep,
   rowsPerPage,
   hiddenColumns,
+  diffStatuses,
+  invertDiff,
 }: {
   runId: string;
   m: SeriesRef;
   targetStep: number;
   rowsPerPage: number;
   hiddenColumns: string[];
+  diffStatuses?: CellComparison[][];
+  invertDiff?: boolean;
 }) {
   const rid = m.runId ?? runId;
   const q = useSequence(rid, m.name, {
@@ -349,7 +408,13 @@ function TablePane({
     return <div className="text-sm text-fg-muted">failed to load table</div>;
   }
   return (
-    <TableGrid table={blob.data} rowsPerPage={rowsPerPage} hiddenColumns={hiddenColumns} />
+    <TableGrid
+      table={blob.data}
+      rowsPerPage={rowsPerPage}
+      hiddenColumns={hiddenColumns}
+      diffStatuses={diffStatuses}
+      invertDiff={invertDiff}
+    />
   );
 }
 
@@ -467,6 +532,49 @@ export default function TableCard({
 
   const isMulti = effectiveMetrics.length > 1;
 
+  // ---------------------------------------------------------------------
+  // Cross-pane diff (multi-run comparison only). Reuses `multiQueries`
+  // (already fetched for the step slider) to resolve each pane's current
+  // artifact hash, fetches those blobs (cache-shared with each TablePane's
+  // own fetch), and computes per-pane/row/column diff status.
+  // ---------------------------------------------------------------------
+  const diffMode = settings.diffMode ?? effectiveMetrics.length === 2;
+  const invertDiffColors = settings.invertDiffColors ?? false;
+  const diffEnabled = isMulti && diffMode;
+
+  const panePointsList = useMemo(() => {
+    if (!isMulti) return [];
+    return multiQueries.map((mq) =>
+      ((mq.data as SequenceResponse | undefined)?.points ?? []).filter((p) => p.artifact_hash),
+    );
+  }, [isMulti, multiQueries]);
+
+  const paneCurrentHashes = useMemo(
+    () =>
+      panePointsList.map((pts) => (resolveAtStep(pts, currentStep) ?? pts[0])?.artifact_hash),
+    [panePointsList, currentStep],
+  );
+
+  const paneBlobQueries = useTableBlobs(diffEnabled ? paneCurrentHashes : []);
+
+  const paneDiffStatuses = useMemo<Array<CellComparison[][] | undefined>>(() => {
+    if (!diffEnabled) return [];
+    const entries = paneBlobQueries
+      .map((q, i) => ({ i, data: q.data }))
+      .filter((e): e is { i: number; data: TableData } => !!e.data);
+    if (entries.length < 2) return [];
+    const diffTables: DiffTable[] = entries.map((e) => e.data);
+    const result = computeTableDiff(diffTables);
+    const byPane: Array<CellComparison[][] | undefined> = new Array(paneBlobQueries.length).fill(
+      undefined,
+    );
+    entries.forEach((e, idx) => {
+      byPane[e.i] = result[idx];
+    });
+    return byPane;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [diffEnabled, paneBlobQueries.map((q) => q.dataUpdatedAt).join("|")]);
+
   const downloadCurrentCsv = () => {
     const table = seedBlob.data;
     if (!table) return;
@@ -537,6 +645,8 @@ export default function TableCard({
               targetStep={currentStep}
               rowsPerPage={settings.rowsPerPage}
               hiddenColumns={settings.hiddenColumns}
+              diffStatuses={paneDiffStatuses[i]}
+              invertDiff={invertDiffColors}
             />
           );
         }}
@@ -585,6 +695,23 @@ export default function TableCard({
         placeholder="100"
         description="Client-side pagination size."
       />
+      {isMulti && (
+        <div className="py-1">
+          <div className="mb-1 text-sm text-fg">Diff</div>
+          <Toggle
+            label="Diff colors"
+            checked={diffMode}
+            onChange={(v) => updateSettings({ diffMode: v })}
+            description="Highlight numeric cells red/green vs the other compared runs. Defaults on for 2-run comparisons."
+          />
+          <Toggle
+            label="Invert colors"
+            checked={invertDiffColors}
+            onChange={(v) => updateSettings({ invertDiffColors: v })}
+            description="Flip which direction is green vs red (e.g. for lower-is-better metrics)."
+          />
+        </div>
+      )}
       {allColumnNames.length > 0 && (
         <div className="py-1">
           <div className="mb-1 text-sm text-fg">Columns</div>
