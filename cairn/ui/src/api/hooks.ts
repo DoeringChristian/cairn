@@ -11,6 +11,7 @@ import type { RunDetailResponse, RunsListResponse } from "./types";
 import { api } from "./client";
 import { qk } from "./query-keys";
 import { addRunMetadata, setRunMetadata } from "../lib/run-label";
+import { resolveRunSelectorFromRuns, type RunSelector } from "../lib/run-selector";
 
 export function useHealth() {
   return useQuery({ queryKey: qk.health(), queryFn: api.health, refetchInterval: 5_000 });
@@ -360,4 +361,63 @@ export function useDeleteReport(projectId: string) {
     mutationFn: (reportId: string) => api.deleteReport(projectId, reportId),
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.reports(projectId) }),
   });
+}
+
+// ---------------------------------------------------------------------------
+// Dynamic run selectors (see lib/run-selector.ts) — shared by comparisons'
+// `runSelector` field and reports' cards-block `runSelector` field.
+// ---------------------------------------------------------------------------
+
+/** Bounded pool size fetched to resolve a "query" run selector against. */
+const RUN_SELECTOR_FETCH_LIMIT = 500;
+/** Short staleTime so a newly logged run shows up on the next focus/refresh
+ *  without requiring a full page reload. */
+const RUN_SELECTOR_STALE_MS = 10_000;
+
+/**
+ * Resolve a `RunSelector` against the project's runs, live.
+ *
+ * For `{kind: "static"}` this is a synchronous passthrough (no fetch). For
+ * `{kind: "query"}` it fetches a bounded, recency-sorted pool of the
+ * project's runs with a short `staleTime` and `refetchOnWindowFocus`, so a
+ * freshly logged run naturally re-enters the resolved set — `refresh()` (or
+ * simply refocusing the tab) is enough to pick it up. Callers should show
+ * the `active` flag as an "auto" badge (see components/RunSelectorBadge.tsx)
+ * with `refresh` wired to a manual refresh affordance.
+ */
+export function useRunSelectorResolution(
+  projectId: string,
+  selector: RunSelector | undefined,
+): { runIds: string[]; active: boolean; isFetching: boolean; refresh: () => Promise<string[]> } {
+  const enabled = !!projectId && selector?.kind === "query";
+  const q = useQuery({
+    queryKey: qk.runs({ project: projectId, limit: RUN_SELECTOR_FETCH_LIMIT, runSelector: true }),
+    queryFn: () => api.runs({ project: projectId, limit: RUN_SELECTOR_FETCH_LIMIT }),
+    enabled,
+    staleTime: RUN_SELECTOR_STALE_MS,
+    refetchOnWindowFocus: true,
+  });
+
+  const runIds = useMemo(() => {
+    if (!selector) return [];
+    if (selector.kind === "static") return selector.runIds;
+    if (!q.data) return [];
+    return resolveRunSelectorFromRuns(selector, q.data.runs);
+  }, [selector, q.data]);
+
+  return {
+    runIds,
+    active: selector?.kind === "query",
+    isFetching: q.isFetching,
+    // Re-fetches and returns the freshly-resolved run ids (rather than the
+    // possibly-stale `runIds` from before the call) — callers that rebuild
+    // cards from the resolved set (see rebuildCardsFromRuns) should await
+    // this instead of reading `runIds` right after calling it.
+    refresh: async () => {
+      if (!selector) return [];
+      if (selector.kind === "static") return selector.runIds;
+      const res = await q.refetch();
+      return res.data ? resolveRunSelectorFromRuns(selector, res.data.runs) : [];
+    },
+  };
 }
