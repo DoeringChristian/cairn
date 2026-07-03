@@ -761,8 +761,16 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
             ? perPaneBaselineHash?.[paneIdx]
             : baselineHash;
 
+          // Split/blend are explicit user choices — honor them whenever a
+          // reference resolves, even when the content-addressed store deduped
+          // a byte-identical prediction and reference to the same artifact
+          // hash (e.g. an undistorted baseline run). Otherwise the pane
+          // silently falls back to "plain" and the split handle / blend
+          // slider have no visible effect. Side-by-side keeps the inequality
+          // so its fallback behavior is unchanged.
+          const isCompareOverlay = compareMode === "split" || compareMode === "blend";
           const layout = resolvePaneLayout(
-            !!(paneBaseline && hash && paneBaseline !== hash),
+            !!(paneBaseline && hash && (isCompareOverlay || paneBaseline !== hash)),
             refMode,
             compareMode,
           );

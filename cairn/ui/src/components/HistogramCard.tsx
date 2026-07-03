@@ -294,7 +294,7 @@ export default function HistogramCard({
           ? () =>
               downloadArtifact(
                 api.artifactUrl(current.artifact_hash!),
-                artifactFilename(metric.name, current.step, current.artifact_mime),
+                artifactFilename(metric.name, current.step, current.artifact_mime, ".npz"),
               )
           : undefined
       }

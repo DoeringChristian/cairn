@@ -25,14 +25,23 @@ export function downloadArtifact(url: string, filename: string): void {
   a.click();
 }
 
-/** Build a safe download filename from metric name, step, and MIME type. */
+/**
+ * Build a safe download filename from metric name, step, and MIME type.
+ *
+ * `application/octet-stream` covers several distinct binary artifact shapes
+ * (npy tensors, npz histograms, ...), so it can't be resolved from MIME alone.
+ * Callers that know their own on-disk format (typed cards) can pass
+ * `extOverride` to bypass the MIME table entirely; generic callers (that only
+ * know the MIME type) keep falling back to `.bin` for octet-stream.
+ */
 export function artifactFilename(
   metricName: string,
   step: number,
   mime?: string | null,
+  extOverride?: string,
 ): string {
   const safe = metricName.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const ext = (mime && MIME_EXT[mime]) ?? ".bin";
+  const ext = extOverride ?? (mime && MIME_EXT[mime]) ?? ".bin";
   return `${safe}_step${step}${ext}`;
 }
 
