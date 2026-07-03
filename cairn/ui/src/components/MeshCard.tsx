@@ -80,7 +80,7 @@ const DEFAULT_SETTINGS = (seed: { name: string; context_hash: string }): MeshSet
   colorMode: "solid",
   shading: "smooth",
   wireframe: false,
-  doubleSided: false,
+  doubleSided: true,
   background: "dark",
 });
 
