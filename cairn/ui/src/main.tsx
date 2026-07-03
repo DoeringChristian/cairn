@@ -18,6 +18,7 @@ import ArtifactDetailPage from "./pages/ArtifactDetailPage";
 import LineagePage from "./pages/LineagePage";
 import ReportsListPage from "./pages/ReportsListPage";
 import ReportEditorPage from "./pages/ReportEditorPage";
+import LoginPage from "./pages/LoginPage";
 import "./index.css";
 
 const queryClient = new QueryClient({
@@ -31,6 +32,9 @@ const queryClient = new QueryClient({
 });
 
 const router = createBrowserRouter([
+  // Outside <App>'s Outlet on purpose: it must render usefully even when
+  // every /api/* route except /api/auth/* and /api/health 401s.
+  { path: "/login", element: <LoginPage /> },
   {
     path: "/",
     element: <App />,

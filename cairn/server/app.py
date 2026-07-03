@@ -18,14 +18,16 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from . import auth as auth_core
 from .routes import (
     artifact_registry,
     artifacts,
+    auth as auth_routes,
     compare,
     comparison_templates,
     comparisons,
@@ -56,6 +58,7 @@ def create_app(
     blobs: BlobStore | None = None,
     data_dir_obj: DataDir | None = None,
     mount_ui: bool = True,
+    auth_enabled: bool = False,
 ) -> FastAPI:
     """Build a FastAPI app.
 
@@ -71,6 +74,12 @@ def create_app(
         mount_ui: When True (default), mount the React SPA at ``/``. Set
             False on the ingest-only server in a dual-port deployment so the
             SPA is served exclusively by the UI app.
+        auth_enabled: When True, every ``/api/*`` route except
+            ``/api/health`` and ``/api/auth/*`` requires a Bearer token or
+            session cookie (see ``cairn/server/auth.py``). Defaults to
+            False so existing test fixtures (``tests/conftest.py``) and
+            library callers of ``create_app()`` are unaffected; the CLI
+            (``cairn server`` / ``cairn ui``) opts in unless ``--no-auth``.
     """
     owns_db = db is None
     if (db is None) != (blobs is None) or (db is None) != (data_dir_obj is None):
@@ -127,19 +136,46 @@ def create_app(
         version="0.1.0",
         lifespan=lifespan,
     )
+    # Read by the auth dependency family (auth_core.require_role) and the
+    # WS handshake gate (plugin_ws.py) on every request/connection. Set
+    # before any router registration so it's never accessed unset.
+    app.state.auth_enabled = auth_enabled
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        # Auth-enabled mode: same-origin posture only. The SPA is served by
+        # this same app, so the UI never needs cross-origin API access; an
+        # empty allow_origins list blocks it outright (no wildcard+credentials
+        # combination, ever). Auth-off mode keeps the pre-auth wildcard
+        # default so today's dev/CI workflows (and existing tests) are
+        # unaffected.
+        allow_origins=[] if auth_enabled else ["*"],
         allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
         expose_headers=["Content-Range", "Content-Length", "Accept-Ranges"],
     )
 
+    require = auth_core.require_role
+
+    # Exempt: no dependency attached. /api/health is a liveness probe;
+    # /api/auth/* is how you obtain credentials in the first place.
+    app.include_router(health.public_router)
+    app.include_router(auth_routes.router)
+
+    # Read-role routers. A handful of these also carry individual
+    # write-role overrides on their mutating routes (POST/PUT/PATCH/DELETE)
+    # declared directly on the route decorator in the route module itself
+    # (projects, comparisons, comparison_templates, reports, report_templates,
+    # artifact_registry) — role hierarchy (admin > write > read) means a
+    # write/admin token still satisfies the router-level read dependency, so
+    # stacking both dependencies on the same route correctly requires
+    # write-or-above. ``report_templates`` landed on main (feature/reports-extras)
+    # after this branch's cut point and gets its write-role overrides added
+    # here at merge time (see report_templates.py), mirroring
+    # comparison_templates.py exactly.
     for router in (
         health.router,
-        ingest.router,
         projects.router,
         runs.router,
         sequences.router,
@@ -151,11 +187,19 @@ def create_app(
         comparison_templates.router,
         reports.router,
         report_templates.router,
-        import_export.router,
-        plugin_ws.router,
         artifact_registry.router,
     ):
-        app.include_router(router)
+        app.include_router(router, dependencies=[Depends(require("read"))])
+
+    # Write-role routers (uniformly mutating — no read-only routes inside).
+    for router in (ingest.router, import_export.router):
+        app.include_router(router, dependencies=[Depends(require("write"))])
+
+    # WebSocket: gates itself (session cookie only, checked before accept()
+    # — see plugin_ws.py). A FastAPI Depends() can't run before accept() for
+    # a websocket route, so this one is deliberately excluded from the
+    # dependencies= loops above.
+    app.include_router(plugin_ws.router)
 
     if mount_ui:
         _mount_spa_or_placeholder(app)
@@ -195,10 +239,23 @@ def _mount_spa_or_placeholder(app: FastAPI) -> None:
         )
 
         # SPA catch-all: serve index.html for any non-API, non-asset path.
+        # Explicitly refuse anything under /api/ instead of falling through
+        # to index.html — registration order alone (API routers registered
+        # first) already prevents this for *known* /api/* routes, but a
+        # typo'd or unregistered /api/* path would otherwise silently 200
+        # with the HTML shell instead of a clean 404. All data lives behind
+        # /api/*, so this path must never serve the SPA.
         @app.get("/{path:path}", include_in_schema=False)
         async def _spa_fallback(path: str) -> Response:
-            from fastapi.responses import Response
+            from fastapi.responses import JSONResponse, Response
 
+            # Case-insensitive: refuse /API/... too. No route matches an
+            # uppercased /API/* today so there's no live data leak, but this
+            # keeps the "shell never serves under the api namespace" invariant
+            # airtight regardless of path casing.
+            lowered = path.lower()
+            if lowered == "api" or lowered.startswith("api/"):
+                return JSONResponse({"detail": "not found"}, status_code=404)
             return Response(content=index_html, media_type="text/html")
     else:
         @app.get("/", include_in_schema=False)

@@ -15,12 +15,14 @@ import json
 import secrets
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
+from .. import auth
 from ._common import get_db, utc_now
 
 router = APIRouter(prefix="/api", tags=["report-templates"])
+_write = Depends(auth.require_role("write"))
 
 
 class ReportTemplateCreate(BaseModel):
@@ -84,7 +86,7 @@ def get_report_template(project_id: str, template_id: str, request: Request) -> 
     }
 
 
-@router.post("/projects/{project_id}/report-templates")
+@router.post("/projects/{project_id}/report-templates", dependencies=[_write])
 def create_report_template(
     project_id: str, body: ReportTemplateCreate, request: Request,
 ) -> dict[str, Any]:
@@ -99,7 +101,7 @@ def create_report_template(
     return {"id": tid, "name": body.name, "created_at": now}
 
 
-@router.put("/projects/{project_id}/report-templates/{template_id}")
+@router.put("/projects/{project_id}/report-templates/{template_id}", dependencies=[_write])
 def update_report_template(
     project_id: str, template_id: str, body: ReportTemplateUpdate, request: Request,
 ) -> dict[str, Any]:
@@ -125,7 +127,7 @@ def update_report_template(
     return {"id": template_id, "updated_at": now}
 
 
-@router.delete("/projects/{project_id}/report-templates/{template_id}")
+@router.delete("/projects/{project_id}/report-templates/{template_id}", dependencies=[_write])
 def delete_report_template(project_id: str, template_id: str, request: Request) -> dict[str, Any]:
     db = get_db(request)
     rows = db.read_columns(

@@ -17,6 +17,12 @@ export function useHealth() {
   return useQuery({ queryKey: qk.health(), queryFn: api.health, refetchInterval: 5_000 });
 }
 
+/** Who-am-I. Always resolves (server never 401s /api/auth/session) — check
+ * `.data.authenticated` / `.data.auth_enabled` rather than `.isError`. */
+export function useSession() {
+  return useQuery({ queryKey: qk.session(), queryFn: api.session, staleTime: 30_000 });
+}
+
 export function useProjects() {
   return useQuery({ queryKey: qk.projects(), queryFn: api.projects });
 }

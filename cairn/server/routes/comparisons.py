@@ -6,12 +6,14 @@ import json
 import secrets
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
+from .. import auth
 from ._common import get_db, utc_now
 
 router = APIRouter(prefix="/api", tags=["comparisons"])
+_write = Depends(auth.require_role("write"))
 
 
 class ComparisonCreate(BaseModel):
@@ -75,7 +77,7 @@ def get_comparison(project_id: str, comparison_id: str, request: Request) -> dic
     }
 
 
-@router.post("/projects/{project_id}/comparisons")
+@router.post("/projects/{project_id}/comparisons", dependencies=[_write])
 def create_comparison(project_id: str, body: ComparisonCreate, request: Request) -> dict[str, Any]:
     db = get_db(request)
     cid = secrets.token_hex(8)
@@ -88,7 +90,7 @@ def create_comparison(project_id: str, body: ComparisonCreate, request: Request)
     return {"id": cid, "name": body.name, "created_at": now}
 
 
-@router.put("/projects/{project_id}/comparisons/{comparison_id}")
+@router.put("/projects/{project_id}/comparisons/{comparison_id}", dependencies=[_write])
 def update_comparison(
     project_id: str, comparison_id: str, body: ComparisonUpdate, request: Request,
 ) -> dict[str, Any]:
@@ -114,7 +116,7 @@ def update_comparison(
     return {"id": comparison_id, "updated_at": now}
 
 
-@router.delete("/projects/{project_id}/comparisons/{comparison_id}")
+@router.delete("/projects/{project_id}/comparisons/{comparison_id}", dependencies=[_write])
 def delete_comparison(project_id: str, comparison_id: str, request: Request) -> dict[str, Any]:
     db = get_db(request)
     db.write(

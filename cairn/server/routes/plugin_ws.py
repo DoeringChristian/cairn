@@ -34,6 +34,7 @@ from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from .. import auth
 from ._common import get_blobs, get_db
 
 log = logging.getLogger(__name__)
@@ -358,6 +359,17 @@ async def plugin_ws(
     run_id: str,
     metric_name: str,
 ) -> None:
+    # Auth gate BEFORE accept(): this is the exec()-shaped surface (plugin
+    # source is exec'd server-side to render frames) — the session cookie
+    # check here is the trust boundary. Browsers can't set arbitrary WS
+    # headers, so this is cookie-only (no Bearer support), matching the
+    # browser-only nature of this endpoint. Close(4401) without ever
+    # accepting when auth is enabled and the cookie is missing/invalid.
+    if getattr(websocket.app.state, "auth_enabled", False):
+        principal = auth.authenticate_ws(websocket, min_role="read")
+        if principal is None:
+            await websocket.close(code=4401)
+            return
     await websocket.accept()
     print(f"[plugin_ws] Connected: {run_id}/{metric_name}", flush=True)
     blobs = get_blobs(websocket)

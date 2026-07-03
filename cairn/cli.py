@@ -16,11 +16,16 @@ talk to a running server over HTTP.
 from __future__ import annotations
 
 import json
+import re
+import shutil
 import signal
 import socket
+import subprocess
 import sys
+import tempfile
 import threading
 import webbrowser
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +33,7 @@ import click
 
 from . import config as _config
 from .sdk.transport import Transport, default_spill_dir
+from .server import auth as _auth
 from .server.app import create_app
 from .server.storage.blobs import BlobStore
 from .server.storage.datadir import DataDir, RepoLockedError, default_data_dir
@@ -123,6 +129,37 @@ def _ensure_repo(repo: Path) -> Path:
     return repo
 
 
+def _print_bootstrap_banner(db: Database, *, ui_url: str | None) -> None:
+    """On first auth-enabled start with zero tokens, mint + print an admin
+    token (shown once — the sanctioned exception to "no tokens in logs").
+    ``ui_url`` (if given) also gets a one-time login link built from a
+    single-use OTP."""
+    boot = _auth.bootstrap_if_needed(db)
+    if boot is None:
+        return
+    _token_id, token_plain, otp = boot
+    lines = [
+        "",
+        "  ================================================================",
+        "  Auth is ON. Created a bootstrap admin token (shown once — save it):",
+        f"    {token_plain}",
+        "",
+        "  SDK/CLI:  CAIRN_TOKEN=<token above>  (or `cairn configure` + config.toml)",
+    ]
+    if ui_url is not None:
+        lines += [
+            "  Browser (one-time login link, single-use, expires in 15 min):",
+            f"    {ui_url}/login?otp={otp}",
+            "  ...or open the UI and paste the token into the login form.",
+        ]
+    lines += [
+        "  Manage tokens later with `cairn token create|list|revoke`.",
+        "  ================================================================",
+        "",
+    ]
+    click.echo("\n".join(lines))
+
+
 @main.command("server")
 @click.option("--host", default="0.0.0.0", show_default=True)
 @click.option("--port", default=4300, show_default=True, type=int,
@@ -146,6 +183,11 @@ def _ensure_repo(repo: Path) -> Path:
     is_flag=True,
     help="Broadcast the ingest server on the LAN via zeroconf/mDNS.",
 )
+@click.option(
+    "--no-auth",
+    is_flag=True,
+    help="Disable authentication (local/debugging only — auth is ON by default).",
+)
 def server_cmd(
     host: str,
     port: int,
@@ -154,9 +196,18 @@ def server_cmd(
     open_browser: bool,
     no_ui: bool,
     advertise: bool,
+    no_auth: bool,
 ) -> None:
     """Start the Cairn tracking server (and its paired UI viewer)."""
     import uvicorn
+
+    if advertise and no_auth:
+        click.echo(
+            "WARN: --advertise + --no-auth broadcasts an UNAUTHENTICATED "
+            "server on the LAN — anyone on the network can read/write your "
+            "data. Use this only on trusted networks.",
+            err=True,
+        )
 
     repo = _ensure_repo(repo or _default_repo())
     port = _find_free_port(host, port)
@@ -180,15 +231,17 @@ def server_cmd(
     db = Database.open(dd.db_path)
     blobs = BlobStore(dd.artifacts_dir)
 
+    auth_enabled = not no_auth
+
     # Ingest-only app (no SPA mount).
     ingest_app = create_app(
-        db=db, blobs=blobs, data_dir_obj=dd, mount_ui=False
+        db=db, blobs=blobs, data_dir_obj=dd, mount_ui=False, auth_enabled=auth_enabled,
     )
     # UI app (ingest + read + SPA). Only built if UI is enabled.
     ui_app = (
         None
         if no_ui
-        else create_app(db=db, blobs=blobs, data_dir_obj=dd, mount_ui=True)
+        else create_app(db=db, blobs=blobs, data_dir_obj=dd, mount_ui=True, auth_enabled=auth_enabled)
     )
 
     advertiser = None
@@ -220,10 +273,15 @@ def server_cmd(
         ]
     banner_lines += [
         f"  Repo: {dd.root}",
+        f"  Auth: {'ON' if auth_enabled else 'OFF (--no-auth)'}",
         "  Press Ctrl+C to stop.",
         "",
     ]
     click.echo("\n".join(banner_lines))
+
+    if auth_enabled:
+        ui_url = f"http://localhost:{ui_port}" if ui_app is not None else None
+        _print_bootstrap_banner(db, ui_url=ui_url)
 
     if open_browser and ui_app is not None and host in ("0.0.0.0", "127.0.0.1", "localhost"):
         try:
@@ -292,8 +350,13 @@ def server_cmd(
     is_flag=True,
     help="Open the UI in a browser tab after startup (off by default).",
 )
+@click.option(
+    "--no-auth",
+    is_flag=True,
+    help="Disable authentication (local/debugging only — auth is ON by default).",
+)
 def ui_cmd(
-    host: str, port: int, repo: Path | None, open_browser: bool
+    host: str, port: int, repo: Path | None, open_browser: bool, no_auth: bool,
 ) -> None:
     """Serve the Cairn viewer over a local repo (no tracking server).
 
@@ -329,14 +392,19 @@ def ui_cmd(
 
     db = Database.open(dd.db_path)
     blobs = BlobStore(dd.artifacts_dir)
-    app = create_app(db=db, blobs=blobs, data_dir_obj=dd, mount_ui=True)
+    auth_enabled = not no_auth
+    app = create_app(db=db, blobs=blobs, data_dir_obj=dd, mount_ui=True, auth_enabled=auth_enabled)
 
+    ui_url = f"http://localhost:{port}"
     click.echo(
         f"\n  Cairn UI:\n"
-        f"    Local:   http://localhost:{port}\n"
+        f"    Local:   {ui_url}\n"
         f"  Repo: {dd.root}\n"
+        f"  Auth: {'ON' if auth_enabled else 'OFF (--no-auth)'}\n"
         f"  Press Ctrl+C to stop.\n"
     )
+    if auth_enabled:
+        _print_bootstrap_banner(db, ui_url=ui_url)
     if open_browser and host in ("0.0.0.0", "127.0.0.1", "localhost"):
         try:
             webbrowser.open(f"http://localhost:{port}/")
@@ -638,3 +706,199 @@ def configure_cmd(server: str | None) -> None:
     existing["server"] = server
     _config.write_config_file(existing)
     click.echo(f"wrote {_config.config_file_path()}")
+
+
+# ---------- token management (operator, direct-DB, local host only) --------
+
+
+def _parse_expiry(value: str) -> str:
+    """Accept a relative duration (``30d``, ``12h``, ``90m``, ``60s``) or a
+    full ISO8601 timestamp; return an ISO8601 UTC string."""
+    m = re.fullmatch(r"(\d+)([smhd])", value.strip())
+    if m:
+        n, unit = int(m[1]), m[2]
+        seconds = n * {"s": 1, "m": 60, "h": 3600, "d": 86400}[unit]
+        return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        raise click.ClickException(
+            f"invalid --expires value {value!r} (use e.g. '30d', '12h', or ISO8601)"
+        ) from None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.isoformat()
+
+
+def _token_db(repo: Path | None) -> tuple[DataDir, Database]:
+    """Open the token DB directly (operator on the server host — no remote
+    admin API in v1)."""
+    resolved = _ensure_repo(repo or _default_repo())
+    dd = DataDir(resolved)
+    return dd, Database.open(dd.db_path)
+
+
+@main.group("token")
+def token_group() -> None:
+    """Manage auth tokens — operates directly on the local data dir's DB.
+
+    Run this on the machine hosting the repo (there is no remote token-admin
+    API in v1); pair with ``--repo`` when it isn't ``./.cairn``.
+    """
+
+
+@token_group.command("create")
+@click.option("--name", required=True, help="Unique, human-readable token name.")
+@click.option(
+    "--role", type=click.Choice(_auth.ROLES), default="write", show_default=True,
+)
+@click.option(
+    "--expires", default=None,
+    help="Expiry: relative ('30d', '12h', '90m') or ISO8601. Default: never.",
+)
+@click.option(
+    "--repo", default=None,
+    type=click.Path(dir_okay=True, file_okay=False, path_type=Path),
+    help="Path to the .cairn/ directory. Default: ./.cairn.",
+)
+def token_create_cmd(name: str, role: str, expires: str | None, repo: Path | None) -> None:
+    """Create a token. The plaintext is shown exactly once — save it now."""
+    dd, db = _token_db(repo)
+    try:
+        if _auth.get_token(db, name) is not None:
+            raise click.ClickException(f"a token named {name!r} already exists")
+        expires_at = _parse_expiry(expires) if expires else None
+        _token_id, plaintext = _auth.create_token(db, name=name, role=role, expires_at=expires_at)
+        click.echo(f"Created token {name!r} (role={role}) in {dd.root}")
+        click.echo(f"Token (copy now, shown once): {plaintext}")
+    finally:
+        db.close()
+
+
+@token_group.command("list")
+@click.option(
+    "--repo", default=None,
+    type=click.Path(dir_okay=True, file_okay=False, path_type=Path),
+    help="Path to the .cairn/ directory. Default: ./.cairn.",
+)
+def token_list_cmd(repo: Path | None) -> None:
+    """List tokens (never prints hashes or plaintext)."""
+    _dd, db = _token_db(repo)
+    try:
+        rows = _auth.list_tokens(db)
+        if not rows:
+            click.echo("(no tokens)")
+            return
+        click.echo(f"{'NAME':<24} {'ROLE':<8} {'STATUS':<10} {'CREATED':<26} LAST_USED")
+        for r in rows:
+            status = "disabled" if r["disabled"] else ("expired" if r["expires_at"] and r["expires_at"] <= datetime.now(timezone.utc).isoformat() else "active")
+            click.echo(
+                f"{r['name']:<24} {r['role']:<8} {status:<10} {r['created_at']:<26} "
+                f"{r['last_used_at'] or '-'}"
+            )
+    finally:
+        db.close()
+
+
+@token_group.command("revoke")
+@click.argument("ident")
+@click.option(
+    "--repo", default=None,
+    type=click.Path(dir_okay=True, file_okay=False, path_type=Path),
+    help="Path to the .cairn/ directory. Default: ./.cairn.",
+)
+def token_revoke_cmd(ident: str, repo: Path | None) -> None:
+    """Revoke a token by name or id (also drops any live sessions from it)."""
+    _dd, db = _token_db(repo)
+    try:
+        if not _auth.revoke_token(db, ident):
+            raise click.ClickException(f"no token found matching {ident!r}")
+        click.echo(f"revoked {ident}")
+    finally:
+        db.close()
+
+
+# ---------- login (SSH-key challenge/response) ------------------------------
+
+
+def _find_default_ssh_key() -> Path | None:
+    ssh_dir = Path.home() / ".ssh"
+    for candidate in ("id_ed25519.pub", "id_ecdsa.pub", "id_rsa.pub"):
+        p = ssh_dir / candidate
+        if p.exists():
+            return p
+    return None
+
+
+@main.command("login")
+@click.option("--ssh", "use_ssh", is_flag=True, help="Authenticate via SSH key signature.")
+@click.option("--server", default=None, help="Server URL. Default: configured server.")
+@click.option(
+    "--key", "key_path", default=None,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Path to an SSH public key file. Default: auto-detect in ~/.ssh/.",
+)
+@click.option("--name", default=None, help="Name for the minted token (default: auto-generated).")
+def login_cmd(use_ssh: bool, server: str | None, key_path: Path | None, name: str | None) -> None:
+    """Log in and save a token to config.toml. Currently supports ``--ssh``."""
+    if not use_ssh:
+        raise click.ClickException("no login method selected; pass --ssh")
+
+    ssh_keygen = shutil.which("ssh-keygen")
+    if not ssh_keygen:
+        raise click.ClickException(
+            "ssh-keygen not found on PATH; install OpenSSH client tools to use `cairn login --ssh`."
+        )
+
+    pub_path = key_path or _find_default_ssh_key()
+    if pub_path is None:
+        raise click.ClickException(
+            "no SSH public key found in ~/.ssh/; pass --key /path/to/id_ed25519.pub"
+        )
+    pubkey_line = pub_path.read_text().strip()
+
+    server_url = _config.resolve_server(server)
+    # /api/auth/ssh/* is exempt from auth (you're not logged in yet), so any
+    # already-configured token is simply ignored by the server here.
+    t = Transport(server_url)
+    try:
+        try:
+            challenge = t.get("/api/auth/ssh/challenge").json()
+        except Exception as exc:  # noqa: BLE001
+            raise click.ClickException(f"could not reach {server_url}: {exc}") from None
+        nonce, namespace = challenge["nonce"], challenge["namespace"]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            message_path = Path(tmp) / "message"
+            message_path.write_text(nonce)
+            sig_path = Path(tmp) / "message.sig"
+            proc = subprocess.run(
+                [ssh_keygen, "-Y", "sign", "-f", str(pub_path), "-n", namespace, str(message_path)],
+                capture_output=True, text=True, timeout=30,
+            )
+            if proc.returncode != 0 or not sig_path.exists():
+                raise click.ClickException(f"ssh-keygen sign failed: {proc.stderr.strip()}")
+            signature = sig_path.read_text()
+
+        try:
+            resp = t.post_json(
+                "/api/auth/ssh/verify",
+                {
+                    "nonce": nonce, "namespace": namespace, "pubkey": pubkey_line,
+                    "signature": signature, "name": name,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise click.ClickException(f"login failed: {exc}") from None
+        result = resp.json()
+    finally:
+        t.close()
+
+    existing = _config.load_config_file()
+    existing["server"] = server_url
+    existing["token"] = result["token"]
+    _config.write_config_file(existing)
+    click.echo(
+        f"Logged in as {result['name']!r} (role={result['role']}). "
+        f"Token saved to {_config.config_file_path()}."
+    )

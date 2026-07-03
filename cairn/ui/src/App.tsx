@@ -1,13 +1,24 @@
 import { useState } from "react";
-import { Link, Outlet } from "react-router-dom";
-import { useHealth } from "./api/hooks";
+import { Link, Outlet, useNavigate } from "react-router-dom";
+import { useHealth, useSession } from "./api/hooks";
+import { api } from "./api/client";
 import ServerStatus from "./components/ServerStatus";
 import { getRenderMode, setRenderMode, type RenderMode } from "./lib/cairn-plot";
 import { getStreamMode, setStreamMode, type StreamMode } from "./lib/stream-mode";
 
 export default function App() {
   const health = useHealth();
+  const session = useSession();
+  const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
+
+  async function handleLogout() {
+    try {
+      await api.logout();
+    } finally {
+      navigate("/login", { replace: true });
+    }
+  }
   return (
     <div className="min-h-full flex flex-col">
       <header className="sticky top-0 z-10 border-b border-border bg-bg/80 backdrop-blur">
@@ -79,10 +90,27 @@ export default function App() {
       <main className="mx-auto w-full w-full flex-1 px-4 py-6">
         <Outlet />
       </main>
-      <footer className="border-t border-border px-4 py-3 text-center text-xs text-fg-subtle">
-        {health.data
-          ? `Cairn ${health.data.version} · ${Math.round(health.data.uptime_sec)}s uptime`
-          : "Cairn"}
+      <footer className="flex items-center justify-center gap-2 border-t border-border px-4 py-3 text-center text-xs text-fg-subtle">
+        <span>
+          {health.data
+            ? `Cairn ${health.data.version} · ${Math.round(health.data.uptime_sec)}s uptime`
+            : "Cairn"}
+        </span>
+        {session.data?.auth_enabled && session.data.authenticated && (
+          <>
+            <span aria-hidden>·</span>
+            <span>
+              {session.data.name} ({session.data.role})
+            </span>
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="text-fg-subtle underline decoration-dotted hover:text-fg-muted"
+            >
+              Log out
+            </button>
+          </>
+        )}
       </footer>
     </div>
   );

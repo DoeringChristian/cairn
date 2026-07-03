@@ -5,13 +5,15 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Form
 from pydantic import BaseModel
 
 from ._common import get_blobs, get_db
 from .. import artifact_registry_ops as ops
+from .. import auth
 
 router = APIRouter(prefix="/api", tags=["artifact-registry"])
+_write = Depends(auth.require_role("write"))
 
 
 # ---------------------------------------------------------------------------
@@ -55,7 +57,7 @@ def list_families(
     return {"families": families}
 
 
-@router.post("/projects/{project_id}/artifact-families")
+@router.post("/projects/{project_id}/artifact-families", dependencies=[_write])
 def create_family(
     project_id: str, body: FamilyCreate, request: Request,
 ) -> dict[str, Any]:
@@ -107,7 +109,7 @@ def get_family(family_id: str, request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail=str(exc))
 
 
-@router.patch("/artifact-families/{family_id}")
+@router.patch("/artifact-families/{family_id}", dependencies=[_write])
 def update_family(
     family_id: str, body: FamilyUpdate, request: Request,
 ) -> dict[str, Any]:
@@ -119,7 +121,7 @@ def update_family(
     return {"updated": family_id}
 
 
-@router.delete("/artifact-families/{family_id}")
+@router.delete("/artifact-families/{family_id}", dependencies=[_write])
 def delete_family(family_id: str, request: Request) -> dict[str, Any]:
     db = get_db(request)
     try:
@@ -140,7 +142,7 @@ def list_versions(family_id: str, request: Request) -> dict[str, Any]:
     return {"versions": versions}
 
 
-@router.post("/artifact-families/{family_id}/versions")
+@router.post("/artifact-families/{family_id}/versions", dependencies=[_write])
 async def create_version(
     family_id: str,
     request: Request,
@@ -196,7 +198,7 @@ def get_version_by_number(
 # Aliases
 # ---------------------------------------------------------------------------
 
-@router.put("/artifact-families/{family_id}/aliases")
+@router.put("/artifact-families/{family_id}/aliases", dependencies=[_write])
 def set_alias(
     family_id: str, body: AliasSet, request: Request,
 ) -> dict[str, Any]:
@@ -208,7 +210,7 @@ def set_alias(
     return {"family_id": family_id, "alias": body.alias, "version_id": body.version_id}
 
 
-@router.delete("/artifact-families/{family_id}/aliases/{alias}")
+@router.delete("/artifact-families/{family_id}/aliases/{alias}", dependencies=[_write])
 def delete_alias(
     family_id: str, alias: str, request: Request,
 ) -> dict[str, Any]:
@@ -236,7 +238,7 @@ def resolve_ref(
 # Run inputs / outputs / lineage
 # ---------------------------------------------------------------------------
 
-@router.post("/runs/{run_id}/inputs")
+@router.post("/runs/{run_id}/inputs", dependencies=[_write])
 def record_input(
     run_id: str, body: RecordInputBody, request: Request,
 ) -> dict[str, Any]:
