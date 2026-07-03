@@ -183,9 +183,7 @@ export default function ComparisonOverviewTab({ compRunIds }: Props) {
                         return (
                           <td
                             key={rd.run.id}
-                            className={`mono py-1 pr-4 whitespace-nowrap ${
-                              diffCls || "text-fg-muted"
-                            }`}
+                            className={`mono py-1 pr-4 whitespace-nowrap text-fg-muted ${diffCls}`}
                           >
                             {row.get(rd.run.id) ?? "—"}
                           </td>
@@ -409,9 +407,7 @@ function MetricsSummarySection({ runData, labels, onlyDiffs }: MetricsSummaryPro
                       return (
                         <td
                           key={rd.run.id}
-                          className={`mono py-1 pr-4 whitespace-nowrap tabular-nums ${
-                            diffCls || "text-fg-muted"
-                          }`}
+                          className={`mono py-1 pr-4 whitespace-nowrap tabular-nums text-fg-muted ${diffCls}`}
                         >
                           {v != null ? formatNum(v) : "—"}
                         </td>

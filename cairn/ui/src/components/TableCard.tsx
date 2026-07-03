@@ -296,18 +296,16 @@ function TableGrid({
                     const text = formatCell(row[c]);
                     const status = diffStatuses?.[ri]?.[c];
                     const diffCls = status ? diffCellClassName(status, invertDiff) : "";
-                    // Diff coloring and the default text color both set
-                    // `color` — keep them mutually exclusive rather than
-                    // stacking both classes, since Tailwind's cascade order
-                    // (not class-string order) would otherwise decide which
-                    // one wins.
+                    // Diff class is background-only (see table-diff.ts), so
+                    // the default text color always applies regardless of
+                    // diff status — no more mutual exclusivity needed.
                     return (
                       <td
                         key={c}
                         title={text}
-                        className={`max-w-[16rem] truncate border-b border-border px-2 py-1 ${
+                        className={`max-w-[16rem] truncate border-b border-border px-2 py-1 text-fg ${
                           numeric ? "mono text-right" : ""
-                        } ${diffCls || "text-fg"}`}
+                        } ${diffCls}`}
                       >
                         {text}
                       </td>
