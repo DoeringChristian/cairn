@@ -99,12 +99,21 @@ export function computeCellStatuses(values: Array<number | null>): CellCompariso
  * lower-is-better metrics like loss (higher is NOT always better).
  * "equal"/"missing" render with no extra classes (neutral, non-numeric, and
  * single-run cells all fall through to the caller's default styling).
+ *
+ * Background-only: this intentionally does NOT touch text color. The signal
+ * is carried entirely by the tint, so cells keep their normal foreground
+ * (text-fg / text-fg-muted, whatever the caller's non-diffed cells use) —
+ * callers should apply their default text-color class unconditionally and
+ * layer this class on top, rather than treating the two as mutually
+ * exclusive. Opacity is bumped a notch from the original (900/20 with
+ * colored text) to 900/30 so the tint stays clearly visible now that text
+ * color no longer helps carry the signal.
  */
 export function diffCellClassName(status: CellComparison, invert = false): string {
   if (status === "equal" || status === "missing") return "";
   const isHigher = status === "higher";
   const showGreen = invert ? !isHigher : isHigher;
-  return showGreen ? "bg-green-900/20 text-green-300" : "bg-red-900/20 text-red-300";
+  return showGreen ? "bg-green-900/30" : "bg-red-900/30";
 }
 
 // ---------------------------------------------------------------------------
