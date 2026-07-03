@@ -1,4 +1,4 @@
-"""Auth routes: login (token or one-time otp), logout, session.
+"""Auth routes: login (token or one-time otp), logout, session, SSH login.
 
 Entire ``/api/auth/*`` prefix is EXEMPT from the ``require_role`` dependency
 family (see ``app.py`` registration) — you can't require auth to log in.
@@ -7,13 +7,18 @@ Each handler does its own (optional) session lookup where relevant.
 
 from __future__ import annotations
 
+import secrets
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from .. import auth
-from ._common import get_db
+from ._common import get_data_dir, get_db
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -98,3 +103,85 @@ def session_info(request: Request) -> dict[str, Any]:
                 "role": principal.role,
             }
     return {"authenticated": False, "auth_enabled": True, "name": None, "role": None}
+
+
+# ---------------------------------------------------------------------------
+# SSH login: GET challenge -> client signs with ssh-keygen -Y sign -> POST verify
+# ---------------------------------------------------------------------------
+
+
+@router.get("/ssh/challenge")
+def ssh_challenge(request: Request) -> dict[str, str]:
+    db = get_db(request)
+    # Server-generated namespace: binds the signature to this login context
+    # so it can't be replayed against a different verifier/protocol.
+    namespace = f"cairn-login-{secrets.token_hex(8)}"
+    nonce = auth.create_nonce(db, namespace)
+    return {"nonce": nonce, "namespace": namespace}
+
+
+class SSHVerifyRequest(BaseModel):
+    nonce: str
+    namespace: str
+    pubkey: str
+    signature: str
+    name: str | None = None
+
+
+@router.post("/ssh/verify")
+def ssh_verify(body: SSHVerifyRequest, request: Request) -> dict[str, Any]:
+    db = get_db(request)
+    dd = get_data_dir(request)
+
+    ssh_keygen = shutil.which("ssh-keygen")
+    if ssh_keygen is None:
+        raise HTTPException(status_code=501, detail="ssh-keygen not available on server")
+
+    # Single-use + namespace-bound: consumed regardless of outcome below.
+    if not auth.consume_nonce(db, body.nonce, body.namespace):
+        raise HTTPException(status_code=401, detail="invalid, expired, or already-used challenge")
+
+    parsed = auth.parse_authorized_key_line(body.pubkey)
+    if parsed is None:
+        raise HTTPException(status_code=400, detail="unrecognized public key format")
+    keytype, keyblob, _client_comment = parsed
+
+    entry = auth.find_authorized_key(dd, keytype, keyblob)
+    if entry is None:
+        raise HTTPException(status_code=401, detail="key not authorized")
+    role = entry["role"]
+
+    identity = "cairn-login"
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        message_path = tmp_path / "message"
+        message_path.write_text(body.nonce)
+        sig_path = tmp_path / "message.sig"
+        sig_path.write_text(body.signature)
+        allowed_signers_path = tmp_path / "allowed_signers"
+        allowed_signers_path.write_text(f"{identity} {keytype} {keyblob}\n")
+
+        proc = subprocess.run(
+            [
+                ssh_keygen, "-Y", "verify",
+                "-f", str(allowed_signers_path),
+                "-I", identity,
+                "-n", body.namespace,
+                "-s", str(sig_path),
+            ],
+            input=message_path.read_bytes(),
+            capture_output=True,
+            timeout=10,
+        )
+    if proc.returncode != 0:
+        raise HTTPException(status_code=401, detail="signature verification failed")
+
+    name = (body.name or f"ssh-{secrets.token_hex(4)}").strip() or f"ssh-{secrets.token_hex(4)}"
+    base_name = name
+    suffix = 1
+    while db.read_columns("SELECT id FROM tokens WHERE name = ?", [name]):
+        suffix += 1
+        name = f"{base_name}-{suffix}"
+
+    _token_id, plaintext = auth.create_token(db, name=name, role=role)
+    return {"token": plaintext, "name": name, "role": role}

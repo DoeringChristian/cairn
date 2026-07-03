@@ -1,48 +1,77 @@
 // Thin fetch wrapper around the Cairn /api/* surface.
 // All paths are relative so the same client works in dev (with Vite proxy)
 // and prod (served by the UI server).
+//
+// Auth: the server authenticates the browser via an HttpOnly session
+// cookie (see /login), which `fetch`'s default `credentials: "same-origin"`
+// already attaches — no header wiring needed here. What IS needed is a
+// central 401 handler: any authenticated-route response that comes back
+// 401 means "no/expired session" (never "wrong role" — that's 403, which
+// callers handle themselves), so every wrapper below funnels through
+// `checkOk`, which redirects to /login?return=<path> before the caller's
+// `.catch`/error boundary ever sees it.
 
-async function get<T>(path: string): Promise<T> {
-  const res = await fetch(path);
+function redirectToLogin(): void {
+  if (typeof window === "undefined") return;
+  if (window.location.pathname === "/login") return; // avoid a redirect loop
+  const returnTo = window.location.pathname + window.location.search;
+  window.location.assign(`/login?return=${encodeURIComponent(returnTo)}`);
+}
+
+async function checkOk(res: Response, path: string): Promise<Response> {
+  if (res.status === 401) {
+    redirectToLogin();
+    throw new Error(`401 Unauthorized: ${path}`);
+  }
   if (!res.ok) {
     throw new Error(`${res.status} ${res.statusText}: ${path}`);
   }
+  return res;
+}
+
+async function get<T>(path: string): Promise<T> {
+  const res = await checkOk(await fetch(path), path);
   return (await res.json()) as T;
 }
 
 async function post<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${path}`);
+  const res = await checkOk(
+    await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+    path,
+  );
   return (await res.json()) as T;
 }
 
 async function put<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(path, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${path}`);
+  const res = await checkOk(
+    await fetch(path, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+    path,
+  );
   return (await res.json()) as T;
 }
 
 async function patch<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(path, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${path}`);
+  const res = await checkOk(
+    await fetch(path, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+    path,
+  );
   return (await res.json()) as T;
 }
 
 async function del_<T>(path: string): Promise<T> {
-  const res = await fetch(path, { method: "DELETE" });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${path}`);
+  const res = await checkOk(await fetch(path, { method: "DELETE" }), path);
   return (await res.json()) as T;
 }
 
@@ -117,21 +146,36 @@ export const api = {
   unarchiveRun: (runId: string) =>
     post<{ run_id: string; status: string }>(`/api/runs/${runId}/unarchive`, {}),
   exportRuns: async (runIds: string[]): Promise<Blob> => {
-    const resp = await fetch("/api/export", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ run_ids: runIds }),
-    });
-    if (!resp.ok) throw new Error(`Export failed: ${resp.status}`);
+    const resp = await checkOk(
+      await fetch("/api/export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ run_ids: runIds }),
+      }),
+      "/api/export",
+    );
     return resp.blob();
   },
   importRuns: async (file: File): Promise<{ imported: Array<{ original_id: string; new_id: string; name: string }> }> => {
     const form = new FormData();
     form.append("file", file);
-    const resp = await fetch("/api/import", { method: "POST", body: form });
-    if (!resp.ok) throw new Error(`Import failed: ${resp.status}`);
+    const resp = await checkOk(
+      await fetch("/api/import", { method: "POST", body: form }),
+      "/api/import",
+    );
     return resp.json();
   },
+
+  // Auth
+  session: () =>
+    get<{ authenticated: boolean; auth_enabled: boolean; name: string | null; role: string | null }>(
+      "/api/auth/session",
+    ),
+  login: (token: string) =>
+    post<{ name: string; role: string }>("/api/auth/login", { token }),
+  loginWithOtp: (otp: string) =>
+    post<{ name: string; role: string }>("/api/auth/otp", { otp }),
+  logout: () => post<{ ok: boolean }>("/api/auth/logout", {}),
 
   // Comparisons (server-persisted)
   comparisons: (projectId: string) =>

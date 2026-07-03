@@ -1,7 +1,9 @@
-"""Auth: tokens, sessions, OTP, WS gating, role enforcement."""
+"""Auth: tokens, sessions, OTP, WS gating, SSH login, role enforcement."""
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -12,6 +14,8 @@ from cairn.server import auth as auth_core
 from cairn.server.app import create_app
 from cairn.server.storage.datadir import DataDir
 from cairn.server.storage.db import Database
+
+HAS_SSH_KEYGEN = shutil.which("ssh-keygen") is not None
 
 
 # ---------------------------------------------------------------------------
@@ -333,3 +337,125 @@ def test_cors_wildcard_when_auth_disabled(tmp_path):
     )
     assert cors.kwargs["allow_origins"] == ["*"]
 
+
+# ---------------------------------------------------------------------------
+# Nonces (SSH login primitives)
+# ---------------------------------------------------------------------------
+
+
+def test_nonce_single_use_and_namespace_bound(tmp_path):
+    dd = DataDir(tmp_path / "cairn")
+    db = Database.open(dd.db_path)
+    try:
+        nonce = auth_core.create_nonce(db, "ns-a")
+        # Wrong namespace fails without consuming...
+        assert auth_core.consume_nonce(db, nonce, "ns-b") is False
+        # ...but the nonce is single-use regardless of pass/fail outcome:
+        # the row was deleted on the first lookup, so a *correct* namespace
+        # on a second attempt also fails.
+        assert auth_core.consume_nonce(db, nonce, "ns-a") is False
+
+        nonce2 = auth_core.create_nonce(db, "ns-c")
+        assert auth_core.consume_nonce(db, nonce2, "ns-c") is True
+        assert auth_core.consume_nonce(db, nonce2, "ns-c") is False
+    finally:
+        db.close()
+
+
+def test_authorized_key_parsing():
+    parsed = auth_core.parse_authorized_key_line(
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBogus alice role=admin"
+    )
+    assert parsed == ("ssh-ed25519", "AAAAC3NzaC1lZDI1NTE5AAAAIBogus", "alice role=admin")
+    assert auth_core.parse_authorized_key_line("not a key line") is None
+
+
+def test_find_authorized_key_default_role_write(tmp_path):
+    dd = DataDir(tmp_path / "cairn")
+    auth_dir = dd.root / "auth"
+    auth_dir.mkdir(parents=True, exist_ok=True)
+    (auth_dir / "authorized_keys").write_text(
+        "# comment\nssh-ed25519 AAAAKEY1 no-role-here\nssh-ed25519 AAAAKEY2 bob role=admin\n"
+    )
+    entry = auth_core.find_authorized_key(dd, "ssh-ed25519", "AAAAKEY1")
+    assert entry is not None
+    assert entry["role"] == "write"
+    entry2 = auth_core.find_authorized_key(dd, "ssh-ed25519", "AAAAKEY2")
+    assert entry2["role"] == "admin"
+    assert auth_core.find_authorized_key(dd, "ssh-ed25519", "NOPE") is None
+
+
+def test_ssh_challenge_endpoint(auth_env):
+    _app, c, _tokens = auth_env
+    resp = c.get("/api/auth/ssh/challenge")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["nonce"] and body["namespace"].startswith("cairn-login-")
+
+
+def test_ssh_verify_rejects_unknown_key(auth_env):
+    _app, c, _tokens = auth_env
+    challenge = c.get("/api/auth/ssh/challenge").json()
+    resp = c.post(
+        "/api/auth/ssh/verify",
+        json={
+            "nonce": challenge["nonce"],
+            "namespace": challenge["namespace"],
+            "pubkey": "ssh-ed25519 AAAAUNKNOWNKEY comment",
+            "signature": "not-a-real-signature",
+        },
+    )
+    assert resp.status_code == 401
+
+
+@pytest.mark.skipif(not HAS_SSH_KEYGEN, reason="ssh-keygen not available")
+def test_ssh_login_full_round_trip(auth_env, tmp_path):
+    app, c, _tokens = auth_env
+    dd = app.state.data_dir
+    keyfile = tmp_path / "id_test"
+    subprocess.run(
+        ["ssh-keygen", "-t", "ed25519", "-N", "", "-f", str(keyfile), "-C", "tester"],
+        check=True, capture_output=True,
+    )
+    pubkey_line = (tmp_path / "id_test.pub").read_text().strip()
+
+    auth_dir = dd.root / "auth"
+    auth_dir.mkdir(parents=True, exist_ok=True)
+    (auth_dir / "authorized_keys").write_text(pubkey_line + " role=admin\n")
+
+    challenge = c.get("/api/auth/ssh/challenge").json()
+    nonce, namespace = challenge["nonce"], challenge["namespace"]
+
+    message_path = tmp_path / "message"
+    message_path.write_text(nonce)
+    subprocess.run(
+        ["ssh-keygen", "-Y", "sign", "-f", str(keyfile) + ".pub", "-n", namespace, str(message_path)],
+        check=True, capture_output=True,
+    )
+    signature = (tmp_path / "message.sig").read_text()
+
+    resp = c.post(
+        "/api/auth/ssh/verify",
+        json={
+            "nonce": nonce, "namespace": namespace, "pubkey": pubkey_line,
+            "signature": signature, "name": "ssh-tester",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["role"] == "admin"
+    assert body["name"] == "ssh-tester"
+
+    # The nonce is single-use — replaying the same challenge must fail.
+    resp2 = c.post(
+        "/api/auth/ssh/verify",
+        json={
+            "nonce": nonce, "namespace": namespace, "pubkey": pubkey_line,
+            "signature": signature, "name": "ssh-tester-2",
+        },
+    )
+    assert resp2.status_code == 401
+
+    # The minted token actually works.
+    resp3 = c.get("/api/projects", headers=_bearer(body["token"]))
+    assert resp3.status_code == 200

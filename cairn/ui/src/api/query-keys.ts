@@ -7,6 +7,7 @@
 
 export const qk = {
   health: () => ["health"] as const,
+  session: () => ["auth-session"] as const,
   projects: () => ["projects"] as const,
   runs: (params?: unknown) => params != null ? ["runs", params] as const : ["runs"] as const,
   runsInfinite: (params?: unknown) => params != null ? ["runs-infinite", params] as const : ["runs-infinite"] as const,

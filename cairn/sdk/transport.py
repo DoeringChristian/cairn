@@ -15,6 +15,7 @@ from typing import Any, Callable, TypeVar
 import httpx
 import platformdirs
 
+from .. import config as _config
 from .wal import WriteAheadLog
 
 log = logging.getLogger(__name__)
@@ -52,6 +53,7 @@ class Transport:
         backoff_cap: float = DEFAULT_BACKOFF_CAP,
         client: httpx.Client | None = None,
         wal: WriteAheadLog | None = None,
+        token: str | None = None,
     ):
         self.server_url = server_url.rstrip("/")
         self.timeout = timeout
@@ -59,7 +61,15 @@ class Transport:
         self.max_retries = max_retries
         self.backoff_base = backoff_base
         self.backoff_cap = backoff_cap
-        self._client = client or httpx.Client(base_url=self.server_url, timeout=timeout)
+        # Resolution order: explicit ctor arg > CAIRN_TOKEN env > config.toml
+        # `token` key (see cairn.config.resolve_token). No token configured
+        # -> no Authorization header, which is fine against an --no-auth
+        # server and correctly 401s against an auth-enabled one.
+        self.token = _config.resolve_token(token) if client is None else token
+        headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
+        self._client = client or httpx.Client(
+            base_url=self.server_url, timeout=timeout, headers=headers
+        )
         self._owns_client = client is None
         self._wal = wal
 

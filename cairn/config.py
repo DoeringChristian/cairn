@@ -131,6 +131,26 @@ def resolve_server(explicit: str | None = None) -> str:
     return DEFAULT_SERVER
 
 
+def resolve_token(explicit: str | None = None) -> str | None:
+    """Resolve the Bearer token per the auth spec's priority chain:
+
+        1. explicit arg (e.g. ``Transport(..., token=...)``, ``--token``)
+        2. ``CAIRN_TOKEN`` env var
+        3. config file ``token`` key
+
+    Returns ``None`` (not an error) when no token is configured — auth-off
+    servers work with no token at all.
+    """
+    if explicit is not None:
+        return explicit
+    env = os.environ.get("CAIRN_TOKEN")
+    if env:
+        return env
+    cfg = load_config_file()
+    token = cfg.get("token")
+    return str(token) if token else None
+
+
 def resolve_target(
     repo: str | Path | None = None,
 ) -> RunTarget:

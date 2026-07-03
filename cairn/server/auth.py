@@ -1,4 +1,4 @@
-"""Authentication core: tokens, sessions, one-time login.
+"""Authentication core: tokens, sessions, one-time login, SSH nonces.
 
 Design (see ``.superpowers/sdd/spec-auth.md``):
 
@@ -13,15 +13,16 @@ Design (see ``.superpowers/sdd/spec-auth.md``):
   ``secrets.compare_digest`` before trusting the row — defense in depth
   against any future change to the lookup query (e.g. a collation quirk)
   and against subtle timing side-channels.
-* OTPs are single-use: consumption happens by deleting the row *inside*
-  the same locked transaction that reads it (``Database.transaction()``
-  serializes via the DB's internal RLock), so there is no read-then-delete
-  TOCTOU window.
+* OTPs and SSH login nonces are single-use: consumption happens by
+  deleting the row *inside* the same locked transaction that reads it
+  (``Database.transaction()`` serializes via the DB's internal RLock), so
+  there is no read-then-delete TOCTOU window.
 """
 
 from __future__ import annotations
 
 import hashlib
+import re
 import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -29,6 +30,7 @@ from typing import Any, Callable
 
 from fastapi import HTTPException, Request, WebSocket
 
+from .storage.datadir import DataDir
 from .storage.db import Database
 
 # ---------------------------------------------------------------------------
@@ -42,6 +44,7 @@ SESSION_COOKIE = "cairn_session"
 SESSION_TTL_DAYS = 30
 SESSION_TTL_SECONDS = SESSION_TTL_DAYS * 86400
 OTP_TTL_MINUTES = 15
+NONCE_TTL_MINUTES = 5
 
 
 @dataclass(frozen=True)
@@ -252,6 +255,96 @@ def consume_otp(db: Database, otp: str) -> Principal | None:
         return None
     name, role, _disabled = trow
     return Principal(token_id=token_id, name=name, role=role)
+
+
+# ---------------------------------------------------------------------------
+# SSH login nonces (namespace-bound, single-use, 5 min)
+# ---------------------------------------------------------------------------
+
+
+def create_nonce(db: Database, namespace: str) -> str:
+    nonce = generate_secret(24)
+    db.write(
+        "INSERT INTO auth_nonces (nonce_hash, namespace, created_at, expires_at) VALUES (?, ?, ?, ?)",
+        [hash_secret(nonce), namespace, _now_iso(), _iso_in(NONCE_TTL_MINUTES * 60)],
+    )
+    return nonce
+
+
+def consume_nonce(db: Database, nonce: str, namespace: str) -> bool:
+    """Single-use + namespace-bound (prevents cross-context signature replay)."""
+    if not nonce or not namespace:
+        return False
+    h = hash_secret(nonce)
+    with db.transaction() as con:
+        row = con.execute(
+            "SELECT nonce_hash, namespace, expires_at FROM auth_nonces WHERE nonce_hash = ?", [h]
+        ).fetchone()
+        if row is None:
+            return False
+        con.execute("DELETE FROM auth_nonces WHERE nonce_hash = ?", [h])
+        nonce_hash, stored_ns, expires_at = row
+    if not secrets_equal(nonce_hash, h):
+        return False
+    if not secrets_equal(stored_ns, namespace):
+        return False
+    if expires_at <= _now_iso():
+        return False
+    return True
+
+
+# ---------------------------------------------------------------------------
+# authorized_keys (SSH login)
+# ---------------------------------------------------------------------------
+
+_KEYTYPE_RE = re.compile(r"^(ssh-(ed25519|rsa|dss)|ecdsa-sha2-[\w-]+|sk-ssh-ed25519@openssh\.com)$")
+_ROLE_COMMENT_RE = re.compile(r"\brole=(admin|write|read)\b")
+
+
+def parse_authorized_key_line(line: str) -> tuple[str, str, str] | None:
+    """Parse one ``authorized_keys``-style line (or a bare pubkey a client
+    submits): ``[options] keytype base64key [comment...]``.
+
+    Returns ``(keytype, base64key, comment)`` or ``None`` if unparseable.
+    Note: leading SSH ``options=`` prefixes (``command=...,no-pty``, etc.)
+    are not supported — only the ``keytype base64key [comment]`` form.
+    """
+    fields = line.strip().split()
+    for i, field in enumerate(fields):
+        if _KEYTYPE_RE.match(field) and i + 1 < len(fields):
+            keytype = field
+            keyblob = fields[i + 1]
+            comment = " ".join(fields[i + 2 :])
+            return keytype, keyblob, comment
+    return None
+
+
+def find_authorized_key(dd: DataDir, keytype: str, keyblob: str) -> dict[str, str] | None:
+    """Look up ``(keytype, keyblob)`` in ``DATA_DIR/auth/authorized_keys``.
+
+    Operator-managed file, standard ``authorized_keys`` line format. Role is
+    read from a ``role=<admin|write|read>`` token in the comment field;
+    absent that, the default role is ``write``.
+    """
+    path = dd.root / "auth" / "authorized_keys"
+    if not path.exists():
+        return None
+    for raw_line in path.read_text().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parsed = parse_authorized_key_line(line)
+        if parsed is None:
+            continue
+        line_keytype, line_keyblob, comment = parsed
+        if line_keytype != keytype:
+            continue
+        if not secrets_equal(line_keyblob, keyblob):
+            continue
+        m = _ROLE_COMMENT_RE.search(comment)
+        role = m.group(1) if m else "write"
+        return {"role": role, "comment": comment}
+    return None
 
 
 # ---------------------------------------------------------------------------

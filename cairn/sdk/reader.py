@@ -918,10 +918,13 @@ class _HttpBackend:
         *,
         cache: bool = True,
         cache_dir: Path | None = None,
+        token: str | None = None,
     ) -> None:
         import httpx
         self._base = server_url.rstrip("/")
-        self._client = httpx.Client(base_url=self._base, timeout=30.0)
+        resolved_token = _config.resolve_token(token)
+        headers = {"Authorization": f"Bearer {resolved_token}"} if resolved_token else {}
+        self._client = httpx.Client(base_url=self._base, timeout=30.0, headers=headers)
         self._cache_dir = _resolve_cache_dir(cache_dir) if cache else None
 
     def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:

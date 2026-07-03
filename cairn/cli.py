@@ -17,9 +17,12 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import signal
 import socket
+import subprocess
 import sys
+import tempfile
 import threading
 import webbrowser
 from datetime import datetime, timedelta, timezone
@@ -814,3 +817,88 @@ def token_revoke_cmd(ident: str, repo: Path | None) -> None:
     finally:
         db.close()
 
+
+# ---------- login (SSH-key challenge/response) ------------------------------
+
+
+def _find_default_ssh_key() -> Path | None:
+    ssh_dir = Path.home() / ".ssh"
+    for candidate in ("id_ed25519.pub", "id_ecdsa.pub", "id_rsa.pub"):
+        p = ssh_dir / candidate
+        if p.exists():
+            return p
+    return None
+
+
+@main.command("login")
+@click.option("--ssh", "use_ssh", is_flag=True, help="Authenticate via SSH key signature.")
+@click.option("--server", default=None, help="Server URL. Default: configured server.")
+@click.option(
+    "--key", "key_path", default=None,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Path to an SSH public key file. Default: auto-detect in ~/.ssh/.",
+)
+@click.option("--name", default=None, help="Name for the minted token (default: auto-generated).")
+def login_cmd(use_ssh: bool, server: str | None, key_path: Path | None, name: str | None) -> None:
+    """Log in and save a token to config.toml. Currently supports ``--ssh``."""
+    if not use_ssh:
+        raise click.ClickException("no login method selected; pass --ssh")
+
+    ssh_keygen = shutil.which("ssh-keygen")
+    if not ssh_keygen:
+        raise click.ClickException(
+            "ssh-keygen not found on PATH; install OpenSSH client tools to use `cairn login --ssh`."
+        )
+
+    pub_path = key_path or _find_default_ssh_key()
+    if pub_path is None:
+        raise click.ClickException(
+            "no SSH public key found in ~/.ssh/; pass --key /path/to/id_ed25519.pub"
+        )
+    pubkey_line = pub_path.read_text().strip()
+
+    server_url = _config.resolve_server(server)
+    # /api/auth/ssh/* is exempt from auth (you're not logged in yet), so any
+    # already-configured token is simply ignored by the server here.
+    t = Transport(server_url)
+    try:
+        try:
+            challenge = t.get("/api/auth/ssh/challenge").json()
+        except Exception as exc:  # noqa: BLE001
+            raise click.ClickException(f"could not reach {server_url}: {exc}") from None
+        nonce, namespace = challenge["nonce"], challenge["namespace"]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            message_path = Path(tmp) / "message"
+            message_path.write_text(nonce)
+            sig_path = Path(tmp) / "message.sig"
+            proc = subprocess.run(
+                [ssh_keygen, "-Y", "sign", "-f", str(pub_path), "-n", namespace, str(message_path)],
+                capture_output=True, text=True, timeout=30,
+            )
+            if proc.returncode != 0 or not sig_path.exists():
+                raise click.ClickException(f"ssh-keygen sign failed: {proc.stderr.strip()}")
+            signature = sig_path.read_text()
+
+        try:
+            resp = t.post_json(
+                "/api/auth/ssh/verify",
+                {
+                    "nonce": nonce, "namespace": namespace, "pubkey": pubkey_line,
+                    "signature": signature, "name": name,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise click.ClickException(f"login failed: {exc}") from None
+        result = resp.json()
+    finally:
+        t.close()
+
+    existing = _config.load_config_file()
+    existing["server"] = server_url
+    existing["token"] = result["token"]
+    _config.write_config_file(existing)
+    click.echo(
+        f"Logged in as {result['name']!r} (role={result['role']}). "
+        f"Token saved to {_config.config_file_path()}."
+    )
