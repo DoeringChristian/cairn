@@ -155,6 +155,28 @@ export const api = {
   deleteServerComparison: (projectId: string, id: string) =>
     del_<{ deleted: string }>(`/api/projects/${projectId}/comparisons/${id}`),
 
+  // Comparison templates (server-persisted)
+  comparisonTemplates: (projectId: string) =>
+    get<{ comparison_templates: Array<{ id: string; name: string; created_at: string; updated_at: string; card_count: number }> }>(
+      `/api/projects/${projectId}/comparison-templates`,
+    ),
+  comparisonTemplate: (projectId: string, id: string) =>
+    get<{ id: string; project_id: string; name: string; created_at: string; updated_at: string; payload: Record<string, unknown> }>(
+      `/api/projects/${projectId}/comparison-templates/${id}`,
+    ),
+  createServerComparisonTemplate: (projectId: string, name: string, payload: Record<string, unknown>) =>
+    post<{ id: string; name: string; created_at: string }>(
+      `/api/projects/${projectId}/comparison-templates`,
+      { name, payload },
+    ),
+  updateServerComparisonTemplate: (projectId: string, id: string, body: { name?: string; payload?: Record<string, unknown> }) =>
+    put<{ id: string; updated_at: string }>(
+      `/api/projects/${projectId}/comparison-templates/${id}`,
+      body,
+    ),
+  deleteServerComparisonTemplate: (projectId: string, id: string) =>
+    del_<{ deleted: string }>(`/api/projects/${projectId}/comparison-templates/${id}`),
+
   // Artifact registry
   artifactFamilies: (projectId: string) =>
     get<{ families: import("./types").ArtifactFamily[] }>(

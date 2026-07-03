@@ -14,7 +14,7 @@ export type {
   SmartFilters,
   Comparison,
 } from "./types";
-export { compareRunId, MULTI_RUN_CARD_TYPES, isMultiRunCardType } from "./types";
+export { compareRunId, MULTI_RUN_CARD_TYPES, MULTI_RUN_CARD_LABELS, isMultiRunCardType } from "./types";
 
 export {
   loadComparisons,
@@ -47,3 +47,17 @@ export {
   syncComparisonsFromServer,
   cardSettingsKeyFor,
 } from "./sync";
+
+export {
+  syncTemplateToServer,
+  deleteTemplateFromServer,
+  syncTemplatesFromServer,
+} from "./template-sync";
+
+export type {
+  SeriesEntry,
+  MatchedTemplateCard,
+  SeqMap,
+  ApplyTemplateResult,
+} from "./apply-template";
+export { buildSeqMap, matchTemplateCards, applyTemplateToRuns } from "./apply-template";
