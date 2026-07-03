@@ -86,6 +86,23 @@ export function renameComparison(
   updateComparison(projectId, comparisonId, (c) => ({ ...c, name }));
 }
 
+/**
+ * Set (or clear, with `undefined`) a comparison's dynamic run selector.
+ * Mutually exclusive with `smartFilters` in the UI — clears it when setting
+ * a selector, so a comparison never carries both at once.
+ */
+export function setComparisonRunSelector(
+  projectId: string,
+  comparisonId: string,
+  runSelector: Comparison["runSelector"],
+): void {
+  updateComparison(projectId, comparisonId, (c) => ({
+    ...c,
+    runSelector,
+    smartFilters: runSelector ? undefined : c.smartFilters,
+  }));
+}
+
 // deleteComparison removes an entry from the list rather than mapping one in
 // place, so it doesn't fit updateComparison's (load→map→save) shape — kept
 // as its own implementation.

@@ -5,6 +5,8 @@
 import { api } from "../../api/client";
 import { cardSettingsStorageKey, loadCardSettings, type CardSettingsKey } from "../card-settings";
 import { storageKeys } from "../storage";
+import type { RunSelector } from "../run-selector";
+import { isRunSelector } from "../run-selector";
 import type { Comparison, ComparisonCard, SmartFilters } from "./types";
 import { cardSettingsKeyForScope, compareRunId } from "./types";
 import { loadComparisons, newId, saveComparisons } from "./store";
@@ -30,6 +32,7 @@ function buildPayload(cmp: Comparison): Record<string, unknown> {
     cards: cmp.cards,
     runIds: cmp.runIds,
     smartFilters: cmp.smartFilters,
+    runSelector: cmp.runSelector,
     cardSettings,
   };
 }
@@ -86,6 +89,7 @@ export async function syncComparisonsFromServer(projectId: string): Promise<void
           cards,
           runIds: payload.runIds as string[] | undefined,
           smartFilters: payload.smartFilters as SmartFilters | undefined,
+          runSelector: isRunSelector(payload.runSelector) ? (payload.runSelector as RunSelector) : undefined,
         };
         local.push(cmp);
         changed = true;

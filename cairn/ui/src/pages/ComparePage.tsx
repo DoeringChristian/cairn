@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useLocation, useParams, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useElementScrollRestore } from "../lib/use-scroll-restore";
 import ComparisonOverviewTab from "./ComparisonOverviewTab";
 import ComparisonSourceTab from "./ComparisonSourceTab";
 import AddCardModal, { type AddCardSelection } from "../components/AddCardModal";
 import CardRenderer from "../components/CardRenderer";
 import ReorderableCardGrid from "../components/ReorderableCardGrid";
+import RunSelectorBadge from "../components/RunSelectorBadge";
 import { SectionBlock } from "../components/CardGrid";
 import { groupComparisonCardsIntoSections } from "../lib/sections";
 import SmartComparisonWizard from "../components/SmartComparisonWizard";
@@ -19,6 +20,7 @@ import {
   createTemplate,
   deleteTemplate,
   isMultiRunCardType,
+  rebuildCardsFromRuns,
   reorderComparisonCards,
   deleteComparison,
   loadComparisons,
@@ -26,6 +28,7 @@ import {
   removeRunFromComparison,
   renameComparison,
   saveComparisons,
+  setComparisonRunSelector,
   syncComparisonsFromServer,
   useComparisons,
   useTemplates,
@@ -36,10 +39,20 @@ import {
   type ComparisonTemplateCard,
   type SmartFilters,
 } from "../lib/comparisons";
-import { loadCardSettings } from "../lib/card-settings";
+import {
+  buildReportPayload,
+  cardSettingsKeyForReport,
+  newId as newReportEntityId,
+} from "../lib/reports";
+import {
+  describeRunSelector,
+  DEFAULT_RUN_SELECTOR_N,
+  type QueryRunSelector,
+} from "../lib/run-selector";
+import { loadCardSettings, saveCardSettings } from "../lib/card-settings";
 import { loadJson, saveJson, storageKeys } from "../lib/storage";
 import { formatRelative } from "../lib/format";
-import { useRuns } from "../api/hooks";
+import { useRuns, useRunSelectorResolution } from "../api/hooks";
 import { api } from "../api/client";
 
 import { disambiguateRunLabels, useRunMetadataVersion } from "../lib/run-label";
@@ -256,44 +269,36 @@ export default function ComparePage() {
 
       matched.sort((a, b) => b.created_at.localeCompare(a.created_at));
 
-      // Rebuild cards from matched runs
+      // Rebuild cards from matched runs (shared with the RunSelector refresh
+      // path below — see lib/comparisons/rebuild-cards.ts).
       const selectedIds = matched.map((r) => r.id);
-      const seqResults = await Promise.all(selectedIds.map((rid) => api.sequences(rid)));
-
-      const cardMap = new Map<
-        string,
-        { name: string; object_type: string; series: Array<{ runId: string; name: string; context_hash: string }> }
-      >();
-      seqResults.forEach((result, idx) => {
-        const runId = selectedIds[idx]!;
-        for (const seq of result.sequences) {
-          const key = `${seq.name}::${seq.object_type}`;
-          const existing = cardMap.get(key);
-          if (existing) {
-            if (!existing.series.some((s) => s.runId === runId && s.name === seq.name)) {
-              existing.series.push({ runId, name: seq.name, context_hash: seq.context_hash });
-            }
-          } else {
-            cardMap.set(key, {
-              name: seq.name,
-              object_type: seq.object_type,
-              series: [{ runId, name: seq.name, context_hash: seq.context_hash }],
-            });
-          }
-        }
-      });
+      const newCards = await rebuildCardsFromRuns(selectedIds);
 
       // Replace all cards on the comparison
       const allComps = loadComparisons(projectId);
-      const updatedComps = allComps.map((c) => {
-        if (c.id !== comparisonId) return c;
-        const newCards = Array.from(cardMap.values()).map((card) => ({
-          id: crypto.randomUUID(),
-          type: card.object_type as "scalar",
-          series: card.series,
-        }));
-        return { ...c, cards: newCards };
-      });
+      const updatedComps = allComps.map((c) => (c.id === comparisonId ? { ...c, cards: newCards } : c));
+      saveComparisons(projectId, updatedComps);
+      refresh();
+    },
+    [projectId, refresh],
+  );
+
+  /**
+   * Refresh a `runSelector`-bound comparison's cards from its currently
+   * resolved run set — the RunSelector analogue of `handleRefreshSmartFilters`
+   * above (same `rebuildCardsFromRuns` rebuild step, different "which runs
+   * currently match" resolution). `runIds` is passed in already resolved
+   * (via `useRunSelectorResolution`'s `refresh()` in ComparisonView) so this
+   * stays a pure "rebuild + persist" step.
+   */
+  const handleRefreshRunSelector = useCallback(
+    async (comparisonId: string, runIds: string[]) => {
+      if (!projectId) return;
+      const newCards = await rebuildCardsFromRuns(runIds);
+      const allComps = loadComparisons(projectId);
+      const updatedComps = allComps.map((c) =>
+        c.id === comparisonId ? { ...c, cards: newCards, runIds } : c,
+      );
       saveComparisons(projectId, updatedComps);
       refresh();
     },
@@ -442,6 +447,13 @@ export default function ComparePage() {
                   }
                 }}
                 onRefreshSmartFilters={handleRefreshSmartFilters}
+                onRefreshRunSelector={handleRefreshRunSelector}
+                onSetRunSelector={(sel) => {
+                  if (projectId) {
+                    setComparisonRunSelector(projectId, selected.id, sel);
+                    refresh();
+                  }
+                }}
                 onReorderCards={(fromId, toId) => {
                   if (projectId) {
                     reorderComparisonCards(projectId, selected.id, fromId, toId);
@@ -712,6 +724,10 @@ interface ComparisonViewProps {
   onAddRuns: (runIds: string[]) => void;
   onRemoveRun: (runId: string) => void;
   onRefreshSmartFilters: (comparisonId: string, smartFilters: SmartFilters) => Promise<void>;
+  /** Rebuild cards from an already-resolved RunSelector run set (see lib/run-selector.ts). */
+  onRefreshRunSelector: (comparisonId: string, runIds: string[]) => Promise<void>;
+  /** Set (or clear, with undefined) this comparison's dynamic run selector. */
+  onSetRunSelector: (sel: Comparison["runSelector"]) => void;
   onReorderCards: (fromId: string, toId: string) => void;
 }
 
@@ -728,8 +744,11 @@ function ComparisonView({
   onAddRuns,
   onRemoveRun,
   onRefreshSmartFilters,
+  onRefreshRunSelector,
+  onSetRunSelector,
   onReorderCards,
 }: ComparisonViewProps) {
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = searchParams.get("tab") ?? "overview";
   const setTab = useCallback(
@@ -745,6 +764,19 @@ function ComparisonView({
   const [draft, setDraft] = useState(comparison.name);
   const [addCardOpen, setAddCardOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [selectorRefreshing, setSelectorRefreshing] = useState(false);
+  const [creatingReport, setCreatingReport] = useState(false);
+
+  const runSelectorResolution = useRunSelectorResolution(projectId, comparison.runSelector);
+  const handleRefreshRunSelector = useCallback(async () => {
+    setSelectorRefreshing(true);
+    try {
+      const freshRunIds = await runSelectorResolution.refresh();
+      await onRefreshRunSelector(comparison.id, freshRunIds);
+    } finally {
+      setSelectorRefreshing(false);
+    }
+  }, [comparison.id, onRefreshRunSelector, runSelectorResolution]);
 
   const collapsedKey = storageKeys.collapsedSections(compareRunId(comparison.id));
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(() => {
@@ -785,6 +817,56 @@ function ComparisonView({
     return Array.from(ids);
   }, [comparison.cards, comparison.runIds]);
 
+  const metaVersion = useRunMetadataVersion();
+  const runLabels = useMemo(() => disambiguateRunLabels(compRunIds), [compRunIds, metaVersion]);
+
+  // From-comparison: snapshot this comparison into a brand-new report —
+  // header markdown block (name + run list) + one cards block carrying
+  // deep-copied cards (new ids) + runIds + settings copied into the
+  // report's own settings scope via cardSettingsKeyForReport/
+  // saveCardSettings (reading the originals via cardSettingsKeyFor/
+  // loadCardSettings). The comparison itself is left untouched.
+  const handleCreateReport = useCallback(async () => {
+    setCreatingReport(true);
+    try {
+      const cardIdMap = new Map<string, string>();
+      const newCards: ComparisonCard[] = comparison.cards.map((card) => {
+        const id = newReportEntityId();
+        cardIdMap.set(card.id, id);
+        return { ...card, id };
+      });
+      const runList = compRunIds.map((id) => runLabels[id] ?? id).join(", ");
+      const headerBlock = {
+        id: newReportEntityId(),
+        type: "markdown" as const,
+        text: `# ${comparison.name}\n\nFrom comparison "${comparison.name}". Runs: ${runList || "(none)"}`,
+      };
+      const cardsBlock = {
+        id: newReportEntityId(),
+        type: "cards" as const,
+        runIds: compRunIds,
+        cards: newCards,
+      };
+      const blocks = [headerBlock, cardsBlock];
+
+      const created = await api.createReport(projectId, comparison.name, { blocks });
+
+      // Copy each card's settings from the comparison's scope into the
+      // new report's scope.
+      for (const card of comparison.cards) {
+        const settings = loadCardSettings<Record<string, unknown>>(cardSettingsKeyFor(comparison.id, card));
+        if (!settings) continue;
+        const newCard = newCards.find((c) => c.id === cardIdMap.get(card.id));
+        if (newCard) saveCardSettings(cardSettingsKeyForReport(created.id, newCard), settings);
+      }
+      const fullPayload = buildReportPayload(created.id, blocks);
+      await api.updateReport(projectId, created.id, { payload: fullPayload as unknown as Record<string, unknown> });
+
+      navigate(`/p/${projectId}/reports/${created.id}`);
+    } finally {
+      setCreatingReport(false);
+    }
+  }, [comparison, compRunIds, runLabels, projectId, navigate]);
 
   useEffect(() => {
     if (!editingName) setDraft(comparison.name);
@@ -829,6 +911,14 @@ function ComparisonView({
           </h2>
         )}
         <div className="flex items-center gap-2">
+          {comparison.runSelector && (
+            <RunSelectorBadge
+              title={describeRunSelector(comparison.runSelector)}
+              count={runSelectorResolution.runIds.length}
+              isRefreshing={selectorRefreshing || runSelectorResolution.isFetching}
+              onRefresh={() => void handleRefreshRunSelector()}
+            />
+          )}
           {comparison.smartFilters && (
             <button
               type="button"
@@ -840,6 +930,15 @@ function ComparisonView({
               {refreshing ? "Refreshing..." : "Refresh"}
             </button>
           )}
+          <button
+            type="button"
+            onClick={() => void handleCreateReport()}
+            disabled={creatingReport}
+            className="btn text-xs disabled:opacity-50"
+            title="Snapshot this comparison's cards + settings into a new report"
+          >
+            {creatingReport ? "Creating…" : "Create report"}
+          </button>
           <button
             type="button"
             onClick={() => {
@@ -910,6 +1009,9 @@ function ComparisonView({
             allProjectRuns={allProjectRuns}
             onAddRuns={onAddRuns}
             onRemoveRun={onRemoveRun}
+            runSelector={comparison.runSelector}
+            hasSmartFilters={!!comparison.smartFilters}
+            onSetRunSelector={onSetRunSelector}
           />
 
           <AddCardModal
@@ -1233,13 +1335,28 @@ interface ComparisonRunsPanelProps {
   allProjectRuns: Run[];
   onAddRuns: (runIds: string[]) => void;
   onRemoveRun: (runId: string) => void;
+  /** Dynamic run selector, if this comparison uses one instead of a static run list. */
+  runSelector: Comparison["runSelector"];
+  /** True when this comparison was built by the Smart Wizard — switching to
+   *  a RunSelector clears `smartFilters` (mutually exclusive), so confirm. */
+  hasSmartFilters: boolean;
+  onSetRunSelector: (sel: Comparison["runSelector"]) => void;
 }
+
+const DEFAULT_COMPARISON_QUERY_SELECTOR: QueryRunSelector = {
+  kind: "query",
+  mode: "newest-per-name",
+  n: DEFAULT_RUN_SELECTOR_N,
+};
 
 function ComparisonRunsPanel({
   compRunIds,
   allProjectRuns,
   onAddRuns,
   onRemoveRun,
+  runSelector,
+  hasSmartFilters,
+  onSetRunSelector,
 }: ComparisonRunsPanelProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const includedSet = useMemo(() => new Set(compRunIds), [compRunIds]);
@@ -1279,25 +1396,115 @@ function ComparisonRunsPanel({
         <span className="text-xs uppercase tracking-wide text-fg-muted">
           Runs in comparison ({compRunIds.length})
         </span>
-        <button
-          type="button"
-          onClick={() => setPickerOpen((v) => !v)}
-          className="inline-flex h-6 items-center justify-center rounded border border-border bg-bg px-2 text-[10px] text-fg-muted hover:border-accent hover:text-fg"
-        >
-          {pickerOpen ? "Done" : `+ Add runs (${candidates.length} available)`}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              if (!runSelector && hasSmartFilters) {
+                if (!confirm("This comparison was built with Smart Filters. Switching to a run selector replaces that binding — continue?")) {
+                  return;
+                }
+              }
+              onSetRunSelector(runSelector ? undefined : { ...DEFAULT_COMPARISON_QUERY_SELECTOR });
+            }}
+            className="inline-flex h-6 items-center justify-center rounded border border-border bg-bg px-2 text-[10px] text-fg-muted hover:border-accent hover:text-fg"
+            title={
+              runSelector
+                ? "Switch to a fixed run list"
+                : "Switch to a dynamic run selector (always tracks matching runs)"
+            }
+          >
+            {runSelector ? "Use static runs" : "Use auto (query)"}
+          </button>
+          {!runSelector && (
+            <button
+              type="button"
+              onClick={() => setPickerOpen((v) => !v)}
+              className="inline-flex h-6 items-center justify-center rounded border border-border bg-bg px-2 text-[10px] text-fg-muted hover:border-accent hover:text-fg"
+            >
+              {pickerOpen ? "Done" : `+ Add runs (${candidates.length} available)`}
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* Included runs as removable chips */}
+      {runSelector && runSelector.kind === "query" && (
+        <div className="mb-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <label className="text-[10px] text-fg-muted">
+            Name pattern
+            <input
+              type="text"
+              value={runSelector.namePattern ?? ""}
+              onChange={(e) =>
+                onSetRunSelector({ ...runSelector, namePattern: e.target.value || undefined })
+              }
+              placeholder="e.g. training-*"
+              className="input mt-0.5 w-full text-xs"
+            />
+          </label>
+          <label className="text-[10px] text-fg-muted">
+            Tags (comma-sep)
+            <input
+              type="text"
+              value={(runSelector.tags ?? []).join(", ")}
+              onChange={(e) =>
+                onSetRunSelector({
+                  ...runSelector,
+                  tags: e.target.value.split(",").map((t) => t.trim()).filter(Boolean),
+                })
+              }
+              placeholder="e.g. prod, nightly"
+              className="input mt-0.5 w-full text-xs"
+            />
+          </label>
+          <label className="text-[10px] text-fg-muted">
+            Mode
+            <select
+              value={runSelector.mode}
+              onChange={(e) =>
+                onSetRunSelector({ ...runSelector, mode: e.target.value as QueryRunSelector["mode"] })
+              }
+              className="input mt-0.5 w-full text-xs"
+            >
+              <option value="latest-n">Latest N</option>
+              <option value="newest-per-name">Newest per name</option>
+            </select>
+          </label>
+          <label className="text-[10px] text-fg-muted">
+            N
+            <input
+              type="number"
+              min={1}
+              value={runSelector.n ?? DEFAULT_RUN_SELECTOR_N}
+              onChange={(e) =>
+                onSetRunSelector({ ...runSelector, n: Math.max(1, Number(e.target.value) || 1) })
+              }
+              className="input mt-0.5 w-full text-xs"
+            />
+          </label>
+        </div>
+      )}
+
+      {/* Included runs — removable chips (static) or read-only (auto) */}
       {compRunIds.length === 0 ? (
         <p className="text-xs text-fg-subtle">
-          No runs yet. Click "Add runs" or drag a series chip into a card.
+          {runSelector
+            ? "No runs currently match this selector. Click the header “refresh” once matching runs exist."
+            : 'No runs yet. Click "Add runs" or drag a series chip into a card.'}
         </p>
       ) : (
         <div className="flex flex-wrap gap-1.5">
           {includedRuns.map((r) => {
             const label = chipLabels[r.id] ?? r.id.slice(0, 6);
-            return (
+            return runSelector ? (
+              <span
+                key={r.id}
+                className="inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-hover px-1.5 py-0.5 text-[11px] mono text-fg"
+                title={r.id}
+              >
+                {label}
+              </span>
+            ) : (
               <span
                 key={r.id}
                 className="group/chip inline-flex items-center gap-1 rounded border border-border-subtle bg-bg-hover px-1.5 py-0.5 text-[11px] mono"
@@ -1319,8 +1526,8 @@ function ComparisonRunsPanel({
         </div>
       )}
 
-      {/* Picker — list of candidate runs, click to add */}
-      {pickerOpen && (
+      {/* Picker — list of candidate runs, click to add (static mode only) */}
+      {!runSelector && pickerOpen && (
         <div className="mt-2 border-t border-border-subtle pt-2">
           {candidates.length === 0 ? (
             <p className="text-xs text-fg-subtle">All runs already in this comparison.</p>

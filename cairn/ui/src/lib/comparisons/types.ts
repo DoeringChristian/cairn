@@ -3,6 +3,7 @@
  */
 
 import type { CardSettingsKey } from "../card-settings";
+import type { RunSelector } from "../run-selector";
 
 export interface ComparisonSeriesRef {
   runId: string;
@@ -71,6 +72,13 @@ export interface Comparison {
   runIds?: string[];
   /** When present, the comparison was created by the Smart Wizard and can be refreshed. */
   smartFilters?: SmartFilters;
+  /**
+   * When present, this comparison's run set is dynamically resolved (see
+   * lib/run-selector.ts) instead of pinned. Mutually exclusive with
+   * `smartFilters` in the UI — a comparison uses at most one dynamic-set
+   * mechanism at a time (see ComparePage.tsx).
+   */
+  runSelector?: RunSelector;
   /** Server-side ID (set after first save to server). */
   serverId?: string;
 }
