@@ -157,6 +157,28 @@ class PointCloud(_TypeWrapper):
     object_type = "pointcloud"
 
 
+class Volume(_TypeWrapper):
+    """Dense scalar 3D volume from a ``(D, H, W)`` numpy/torch array.
+
+    Rendered in the UI via WebGL2 raymarching (maximum-intensity-projection
+    or isosurface modes, with a colormap transfer function and per-axis box
+    clipping for slicing). Optional ``spacing``/``origin`` (each length-3,
+    matching the ``[D, H, W]`` axis order) place the grid in physical space;
+    both default to ``[1, 1, 1]`` / ``[0, 0, 0]`` (a unit-per-voxel grid at
+    the origin) when omitted.
+
+    Capped at 128MB pre-compression (as float32) — larger volumes raise
+    ``ValueError`` at log time rather than being silently truncated.
+
+    Usage::
+
+        run.track(cairn.Volume(density), name="blob", step=0)
+        run.track(cairn.Volume(density, spacing=[2.0, 1.0, 1.0]), name="scan", step=0)
+    """
+
+    object_type = "volume"
+
+
 class Artifact(_TypeWrapper):
     """Pickle-serialized Python object.
 

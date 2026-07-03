@@ -27,6 +27,7 @@ const TYPE_LABELS: Record<string, string> = {
   html: "HTML",
   markdown: "Markdown",
   pointcloud: "Point Clouds",
+  volume: "Volumes",
   artifact: "Artifacts",
   plugin: "Plugins",
   parallel: "Parallel Coords",
@@ -35,7 +36,7 @@ const TYPE_LABELS: Record<string, string> = {
   tile: "Scalar Tiles",
 };
 
-const TYPE_ORDER = ["scalar", "image", "figure", "audio", "video", "histogram", "tensor", "text", "table", "html", "markdown", "pointcloud", "artifact", "plugin", "parallel", "scatter", "bar", "tile"];
+const TYPE_ORDER = ["scalar", "image", "figure", "audio", "video", "histogram", "tensor", "text", "table", "html", "markdown", "pointcloud", "volume", "artifact", "plugin", "parallel", "scatter", "bar", "tile"];
 
 /** One entry per run that has this metric. */
 type SelectionRuns = Array<{ runId: string; context_hash: string }>;

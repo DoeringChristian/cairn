@@ -32,6 +32,7 @@ from .sdk.wrappers import (  # noqa: E402
     Tensor,
     Text,
     Video,
+    Volume,
 )
 
 __all__ = [
@@ -51,6 +52,7 @@ __all__ = [
     "Table",
     "Tensor",
     "PointCloud",
+    "Volume",
     "Text",
     "Html",
     "Markdown",
