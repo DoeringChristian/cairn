@@ -9,6 +9,14 @@ steps, exercising every card feature:
   "vertex-colors")
 - a faceted cube with explicit per-vertex ``normals`` (flat shading via the
   provided normals; no ``computeVertexNormals`` needed)
+- a sphere with a random half of its faces flipped to the wrong winding —
+  a permanent regression case for the server-side winding normalization in
+  ``cairn/sdk/handlers/mesh.py`` (``serialize()`` must repair it to render
+  hole-free and solid)
+
+``uv_sphere``/``torus`` are constructed genuinely CCW-from-outside at the
+source below (not relying on winding normalization to mask a wrong
+generator) — see the task-#32 mesh-render-fix investigation.
 
 Two runs are logged so the merge agent can build a 2-run comparison (panes).
 
@@ -32,7 +40,7 @@ NUM_STEPS = 10
 
 
 def uv_sphere(n_lat: int, n_lon: int) -> tuple[np.ndarray, np.ndarray]:
-    """Base unit UV-sphere: ``(vertices (N,3), faces (M,3))``."""
+    """Base unit UV-sphere: ``(vertices (N,3), faces (M,3))``, CCW-from-outside."""
     verts = []
     for i in range(n_lat + 1):
         theta = math.pi * i / n_lat  # 0..pi
@@ -51,9 +59,29 @@ def uv_sphere(n_lat: int, n_lon: int) -> tuple[np.ndarray, np.ndarray]:
             b = i * n_lon + (j + 1) % n_lon
             c = (i + 1) * n_lon + j
             d = (i + 1) * n_lon + (j + 1) % n_lon
-            faces.append((a, b, c))
-            faces.append((b, d, c))
+            # (a, c, b) / (b, c, d): verified CCW-from-outside numerically
+            # (cross(v1-v0, v2-v0) . (face_centroid - origin) > 0 for every
+            # non-degenerate face) — see task-#32 investigation.
+            faces.append((a, c, b))
+            faces.append((b, c, d))
     return vertices, np.array(faces, dtype=np.int64)
+
+
+def mixed_winding_sphere(
+    n_lat: int, n_lon: int, seed: int = 0
+) -> tuple[np.ndarray, np.ndarray]:
+    """A correctly-wound ``uv_sphere`` with a random half of its faces flipped.
+
+    Permanent regression case for the SDK's per-face winding normalization
+    (``cairn/sdk/handlers/mesh.py::serialize``) — a mesh no single global
+    flip could repair, only a per-face fix.
+    """
+    vertices, faces = uv_sphere(n_lat, n_lon)
+    rng = np.random.default_rng(seed)
+    flip = rng.random(len(faces)) < 0.5
+    faces = faces.copy()
+    faces[flip] = faces[flip][:, [0, 2, 1]]
+    return vertices, faces
 
 
 def blob_sphere(base: np.ndarray, theta: float, freq: float) -> tuple[np.ndarray, np.ndarray]:
@@ -69,6 +97,15 @@ def blob_sphere(base: np.ndarray, theta: float, freq: float) -> tuple[np.ndarray
 
 
 def torus(n_u: int, n_v: int, big_r: float = 1.0, tube_r: float = 0.35) -> tuple[np.ndarray, np.ndarray]:
+    """CCW-from-outside torus.
+
+    Note: a torus is NOT star-shaped around its own centroid (the origin
+    sits in the empty hole, not the solid) — the SDK's centroid-heuristic
+    winding normalization is only approximate for shapes like this one,
+    which is exactly why this generator is fixed to be correctly wound at
+    the source rather than relying on that normalization (see task-#32
+    investigation and the ``cairn.Mesh`` docstring).
+    """
     verts = []
     for i in range(n_u):
         u = 2 * math.pi * i / n_u
@@ -87,9 +124,31 @@ def torus(n_u: int, n_v: int, big_r: float = 1.0, tube_r: float = 0.35) -> tuple
             b = i * n_v + (j + 1) % n_v
             c = ((i + 1) % n_u) * n_v + j
             d = ((i + 1) % n_u) * n_v + (j + 1) % n_v
-            faces.append((a, b, c))
-            faces.append((b, d, c))
+            # (a, c, b) / (b, c, d): verified CCW-from-outside numerically
+            # against the analytic torus surface normal
+            # (cos(v)cos(u), cos(v)sin(u), sin(v)) at every vertex.
+            faces.append((a, c, b))
+            faces.append((b, c, d))
     return vertices, np.array(faces, dtype=np.int64)
+
+
+def torus_normals(vertices: np.ndarray, big_r: float = 1.0) -> np.ndarray:
+    """Analytic per-vertex outward normals for a ``torus(...)`` mesh.
+
+    A torus isn't star-shaped around its centroid (see ``torus()``'s
+    docstring), so the SDK's centroid-heuristic winding normalization only
+    *approximately* repairs its faces — some end up genuinely mixed-wound,
+    which would make ``computeVertexNormals`` (used when no normals are
+    supplied) produce visibly wrong/averaged-across-the-seam shading. Supply
+    normals explicitly instead: they're per-vertex data untouched by winding
+    normalization (see the ``cairn.Mesh`` docstring), so shading is exactly
+    correct regardless of any individual face's index order.
+    """
+    x, y, z = vertices[:, 0], vertices[:, 1], vertices[:, 2]
+    rho = np.hypot(x, y)
+    normal = np.stack([(rho - big_r) * x / rho, (rho - big_r) * y / rho, z], axis=1)
+    normal = normal / np.linalg.norm(normal, axis=1, keepdims=True)
+    return normal.astype(np.float32)
 
 
 def torus_colors(vertices: np.ndarray, theta: float) -> np.ndarray:
@@ -138,7 +197,9 @@ def log_run(name: str, seed: int, phase: float) -> None:
 
     base_sphere, sphere_faces = uv_sphere(24, 36)
     torus_v, torus_f = torus(28, 14)
+    torus_n = torus_normals(torus_v)
     cube_v, cube_n, cube_f = faceted_cube()
+    mixed_v, mixed_f = mixed_winding_sphere(16, 24, seed=seed)
 
     for step in range(NUM_STEPS):
         theta = phase * step * (2 * math.pi / NUM_STEPS)
@@ -146,11 +207,23 @@ def log_run(name: str, seed: int, phase: float) -> None:
         deformed, values = blob_sphere(base_sphere, theta, freq=5.0)
         run.track(cairn.Mesh(deformed, sphere_faces, values=values), name="blob_sphere", step=step)
 
+        # Explicit analytic normals (see torus_normals docstring): a torus
+        # isn't star-shaped, so the SDK's winding normalization is only
+        # approximate for it — supplying normals directly keeps shading
+        # correct regardless.
         colors = torus_colors(torus_v, theta)
-        run.track(cairn.Mesh(torus_v, torus_f, colors=colors), name="rainbow_torus", step=step)
+        run.track(
+            cairn.Mesh(torus_v, torus_f, colors=colors, normals=torus_n),
+            name="rainbow_torus",
+            step=step,
+        )
 
         # Static shape, but logged every step too so it shares the slider.
         run.track(cairn.Mesh(cube_v, cube_f, normals=cube_n), name="faceted_cube", step=step)
+
+        # Static regression mesh (deliberately mixed winding) — must render
+        # hole-free and solid once the SDK's serialize() normalizes it.
+        run.track(cairn.Mesh(mixed_v, mixed_f), name="mixed_winding_sphere", step=step)
 
         run.track(0.9 ** step, name="loss", step=step)
 
@@ -167,7 +240,8 @@ def main() -> None:
     log_run("run-b", seed=7, phase=-1.5)
     print(
         "\nAll done. Open the UI, add a 3D Mesh card (blob_sphere / "
-        "rainbow_torus / faceted_cube), and build a 2-run comparison."
+        "rainbow_torus / faceted_cube / mixed_winding_sphere), and build a "
+        "2-run comparison."
     )
 
 

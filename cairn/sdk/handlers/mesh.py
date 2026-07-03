@@ -14,7 +14,14 @@ npz arrays:
   or ``0-1`` and auto-normalizes to ``0-1`` (same convention as
   ``PointCloud``'s ``xyzrgb``).
 - ``normals`` f4 ``(N, 3)`` — optional per-vertex normals; the UI computes
-  smooth-shading normals itself when absent.
+  smooth-shading normals itself when absent (after winding normalization —
+  see below — so it never inherits a bad face orientation).
+
+Faces are re-wound to be consistently CCW-from-outside at log time (a
+per-face centroid-direction heuristic — see the comment in ``serialize()``);
+metadata records how many faces were flipped as ``winding_normalized``. Any
+supplied ``normals`` are per-vertex data left untouched by this — winding
+only reorders each face's own index triple.
 
 Meshes whose total array size (pre-compression) exceeds ``MAX_BYTES`` are
 rejected at log time with a ``ValueError`` (no silent truncation/degradation
@@ -103,6 +110,41 @@ class MeshHandler:
                 f"{tuple(normals.shape)}"
             )
 
+        # Winding normalization: the UI (and computeVertexNormals when no
+        # normals are supplied) assumes CCW-from-outside faces. We don't trust
+        # callers to get this right, and can't just require a single global
+        # flip — a mesh can be MIXED-wound (e.g. after boolean ops or naive
+        # concatenation of sub-meshes) — so every face is independently
+        # re-oriented here.
+        #
+        # Heuristic: a face's expected outward direction is the vector from
+        # the mesh centroid to the face's own centroid; if the face normal
+        # (implied by the current index order) points against that vector,
+        # the last two indices are swapped to flip it. This is exact for
+        # star-shaped/convex/closed surfaces (spheres, cubes — any mesh where
+        # every surface point is visible from the centroid). It degrades on
+        # highly concave or non-star-shaped surfaces (e.g. a torus, whose
+        # centroid sits in the empty hole, not the solid) where it can
+        # under- or over-correct individual faces. That's an accepted
+        # limitation here: demo/typical generator meshes are fixed to be
+        # correctly wound at the source instead of relying on this pass, and
+        # the UI's double-sided default (MeshCard.tsx) covers any residual
+        # inside-out faces this heuristic misses.
+        n_flipped = 0
+        if n_faces:
+            v0 = vertices[faces_i[:, 0]]
+            v1 = vertices[faces_i[:, 1]]
+            v2 = vertices[faces_i[:, 2]]
+            mesh_centroid = vertices.mean(axis=0)
+            face_normal = np.cross(v1 - v0, v2 - v0)
+            face_centroid = (v0 + v1 + v2) / 3.0
+            outward = face_centroid - mesh_centroid
+            flip = np.einsum("ij,ij->i", face_normal, outward) < 0.0
+            n_flipped = int(np.count_nonzero(flip))
+            if n_flipped:
+                faces_i = faces_i.copy()
+                faces_i[flip] = faces_i[flip][:, [0, 2, 1]]
+
         positions = np.ascontiguousarray(vertices, dtype=np.float32)
         faces_u4 = np.ascontiguousarray(faces_i, dtype=np.uint32)
 
@@ -160,6 +202,7 @@ class MeshHandler:
             "has_colors": has_colors,
             "has_normals": has_normals,
             "size_bytes": int(total_bytes),
+            "winding_normalized": n_flipped,
         }
         if value_range is not None:
             meta["value_range"] = value_range
