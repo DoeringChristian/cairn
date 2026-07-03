@@ -7,7 +7,7 @@ import type {
   ImageOverlayData,
   ImageOverlaySettings,
 } from "../types";
-import { useGammaFilter, GammaFilterSvg } from "./gamma-filter";
+import { useGammaFilter, GammaFilterSvg } from "../media-compare/post-processing";
 import ImageOverlay from "./ImageOverlay";
 import {
   computeDiff,

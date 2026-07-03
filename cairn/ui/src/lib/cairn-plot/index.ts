@@ -77,7 +77,6 @@ export {
 export { ParallelCoords } from "./renderers";
 export { ScalarPlot } from "./renderers";
 export { ImagePane } from "./renderers";
-export { CompareImagePane } from "./renderers";
 export { Heatmap } from "./renderers";
 export { HistogramPlot } from "./renderers";
 export { ImageOverlay } from "./renderers";
@@ -89,3 +88,27 @@ export type {
   PointCloudBackground,
   PointCloudBounds,
 } from "./renderers";
+
+// media-compare — unified visual-media comparison core (see media-compare/index.ts)
+export {
+  MEDIA_COMPARE_MODE_KINDS,
+  isCoreCompareMode,
+  resolveArtifactAtStep,
+  resolveGlobalPositionalReference,
+  CompositeMediaPane,
+  migrateLegacyMode,
+  LEGACY_MODE_MIGRATION_TABLE,
+} from "./media-compare";
+export type {
+  MediaCompareModeKind,
+  MediaCompareMode,
+  SplitConfig,
+  BlendConfig,
+  DiffConfig,
+  StepArtifactPoint,
+  MissingArtifactMode,
+  ReferenceSource,
+  ReferenceSelection,
+  CompositeMediaPaneProps,
+  LegacyModeInputs,
+} from "./media-compare";

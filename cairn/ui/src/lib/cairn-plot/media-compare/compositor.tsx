@@ -1,14 +1,17 @@
 import { useRef, useState } from "react";
 import type {
-  CompareMode,
-  ImageProcessing,
-  Interpolation,
+  Colormap,
+  DiffMode,
   ImageOverlayData,
   ImageOverlaySettings,
+  ImageProcessing,
+  Interpolation,
 } from "../types";
 import { useImageViewport, type Viewport as ImageViewport } from "../hooks/use-image-viewport";
-import { useGammaFilter, GammaFilterSvg } from "./gamma-filter";
-import ImageOverlay from "./ImageOverlay";
+import { useGammaFilter, GammaFilterSvg } from "./post-processing";
+import ImageOverlay from "../renderers/ImageOverlay";
+import ImagePane from "../renderers/ImagePane";
+import type { MediaCompareModeKind } from "./mode";
 
 const DEFAULT_PROCESSING: ImageProcessing = {
   brightness: 0,
@@ -19,11 +22,19 @@ const DEFAULT_PROCESSING: ImageProcessing = {
   flipSign: false,
 };
 
-export interface CompareImagePaneProps {
+// ---------------------------------------------------------------------------
+// MediaComparePane — the split/blend compositor.
+//
+// Absorbed from renderers/CompareImagePane.tsx verbatim (mechanics
+// unchanged: clip-path drag handle for split, opacity cross-fade for blend).
+// This is now the ONE split/blend implementation; CompareImagePane.tsx is
+// deleted (spec-visual-compare.md quality bar #2).
+// ---------------------------------------------------------------------------
+
+export interface MediaComparePaneProps {
   imageUrl: string | null;
   baselineUrl: string | null;
-  /** split | blend — side-by-side is handled by two plain ImagePanes. */
-  mode: Exclude<CompareMode, "side-by-side">;
+  mode: Extract<MediaCompareModeKind, "split" | "blend">;
   splitPosition: number;
   blendAlpha: number;
   onSplitPositionChange?: (p: number) => void;
@@ -50,7 +61,7 @@ export interface CompareImagePaneProps {
  * Self-contained: zoom/pan interaction runs through `useImageViewport`; the
  * gamma filter comes from the shared `useGammaFilter` helper.
  */
-export default function CompareImagePane({
+export function MediaComparePane({
   imageUrl,
   baselineUrl,
   mode,
@@ -67,7 +78,7 @@ export default function CompareImagePane({
   onDragStart,
   overlay,
   overlaySettings,
-}: CompareImagePaneProps) {
+}: MediaComparePaneProps) {
   const paneRef = useRef<HTMLDivElement>(null);
   const [naturalDims, setNaturalDims] = useState<{ w: number; h: number } | null>(null);
 
@@ -185,5 +196,176 @@ export default function CompareImagePane({
         {label}
       </span>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CompositeMediaPane — the single compositor entry point.
+//
+// Given a foreground (prediction) source and a reference (baseline) source,
+// renders whichever of the five core modes is active: normal (single pane,
+// reference tracked but not shown) | side (two plain panes) | split/blend
+// (MediaComparePane above) | diff (delegates to ImagePane's existing
+// pixel-diff pipeline — cairn-plot/image/diff.ts + webgl-diff.ts, NOT
+// duplicated here). This is what ImageGalleryCard's per-pane rendering now
+// calls instead of its own renderSideBySidePane/renderOverlayPane/plain
+// switch (spec-visual-compare.md quality bar #2 — one compositor, written
+// once).
+//
+// `baselineUrl == null` always forces "normal" regardless of `mode` — a mode
+// selection with no resolved reference has nothing to compare against. The
+// caller decides *whether* a reference resolves for this pane (including
+// card-specific nuances like "hide split/blend against a content-addressed
+// duplicate of itself") and passes `baselineUrl: null` to opt a pane out.
+// ---------------------------------------------------------------------------
+
+export interface CompositeMediaPaneProps {
+  mode: MediaCompareModeKind;
+  imageUrl: string | null;
+  baselineUrl: string | null;
+  /** True when this pane's own image IS the resolved reference series
+   *  (the "series-same-step" baseline pane rendered alongside its peers). */
+  isReferencePane?: boolean;
+
+  /** Used only when the effective mode is "diff". */
+  diffSubmode: DiffMode;
+  colormap: Colormap;
+  interpolation: Interpolation;
+  showAxes?: boolean;
+  processing?: ImageProcessing;
+
+  zoom: number;
+  pan: { x: number; y: number };
+  onViewportChange?: (v: ImageViewport) => void;
+
+  /** Used only when the effective mode is "split" | "blend". */
+  splitPosition?: number;
+  blendAlpha?: number;
+  onSplitPositionChange?: (p: number) => void;
+
+  label: string;
+  isDraggable?: boolean;
+  onDragStart?: (e: React.DragEvent) => void;
+  onNaturalSize?: (w: number, h: number) => void;
+
+  overlay?: ImageOverlayData;
+  overlaySettings?: ImageOverlaySettings;
+}
+
+export function CompositeMediaPane({
+  mode,
+  imageUrl,
+  baselineUrl,
+  isReferencePane,
+  diffSubmode,
+  colormap,
+  interpolation,
+  showAxes,
+  processing,
+  zoom,
+  pan,
+  onViewportChange,
+  splitPosition,
+  blendAlpha,
+  onSplitPositionChange,
+  label,
+  isDraggable,
+  onDragStart,
+  onNaturalSize,
+  overlay,
+  overlaySettings,
+}: CompositeMediaPaneProps) {
+  const effectiveMode: MediaCompareModeKind = baselineUrl == null ? "normal" : mode;
+
+  if (effectiveMode === "side") {
+    return (
+      <div className="flex gap-0.5 h-full">
+        <div className="relative flex-1 min-w-0 overflow-hidden border border-accent/20 rounded">
+          <ImagePane
+            imageUrl={baselineUrl}
+            baselineUrl={null}
+            isBaseline
+            diffMode="none"
+            interpolation={interpolation}
+            colormap="none"
+            showAxes={false}
+            processing={processing}
+            zoom={zoom}
+            pan={pan}
+            onViewportChange={onViewportChange}
+            label="REF"
+          />
+        </div>
+        <div className="relative flex-1 min-w-0 overflow-hidden">
+          <ImagePane
+            imageUrl={imageUrl}
+            baselineUrl={baselineUrl}
+            isBaseline={false}
+            diffMode="none"
+            interpolation={interpolation}
+            colormap={colormap}
+            showAxes={showAxes ?? false}
+            processing={processing}
+            zoom={zoom}
+            pan={pan}
+            onViewportChange={onViewportChange}
+            isDraggable={isDraggable}
+            onDragStart={onDragStart}
+            onNaturalSize={onNaturalSize}
+            label={label}
+            overlay={overlay}
+            overlaySettings={overlaySettings}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  if (effectiveMode === "split" || effectiveMode === "blend") {
+    return (
+      <MediaComparePane
+        imageUrl={imageUrl}
+        baselineUrl={baselineUrl}
+        mode={effectiveMode}
+        splitPosition={splitPosition ?? 0.5}
+        blendAlpha={blendAlpha ?? 0.5}
+        onSplitPositionChange={onSplitPositionChange}
+        zoom={zoom}
+        pan={pan}
+        onViewportChange={onViewportChange}
+        processing={processing}
+        interpolation={interpolation}
+        label={label}
+        isDraggable={isDraggable}
+        onDragStart={onDragStart}
+        overlay={overlay}
+        overlaySettings={overlaySettings}
+      />
+    );
+  }
+
+  // "normal" | "diff" — one pane; ImagePane already owns the pixel-diff
+  // pipeline (cache, GPU/CPU dispatch) and the false-color path, so "diff"
+  // is simply passing its diffMode through, not a separate implementation.
+  return (
+    <ImagePane
+      imageUrl={imageUrl}
+      baselineUrl={baselineUrl}
+      isBaseline={isReferencePane}
+      diffMode={effectiveMode === "diff" ? diffSubmode : "none"}
+      interpolation={interpolation}
+      colormap={colormap}
+      showAxes={showAxes ?? false}
+      processing={processing}
+      zoom={zoom}
+      pan={pan}
+      onViewportChange={onViewportChange}
+      isDraggable={isDraggable}
+      onDragStart={onDragStart}
+      onNaturalSize={onNaturalSize}
+      label={label}
+      overlay={overlay}
+      overlaySettings={overlaySettings}
+    />
   );
 }
