@@ -155,6 +155,36 @@ export const api = {
   deleteServerComparison: (projectId: string, id: string) =>
     del_<{ deleted: string }>(`/api/projects/${projectId}/comparisons/${id}`),
 
+  // Reports (server-persisted)
+  reports: (projectId: string, params: { limit?: number; offset?: number } = {}) => {
+    const q = new URLSearchParams();
+    if (params.limit != null) q.set("limit", String(params.limit));
+    if (params.offset != null) q.set("offset", String(params.offset));
+    const qs = q.toString();
+    return get<{
+      reports: Array<{ id: string; name: string; updated_at: string; block_count: number }>;
+      total: number;
+      limit: number;
+      offset: number;
+    }>(`/api/projects/${projectId}/reports${qs ? `?${qs}` : ""}`);
+  },
+  report: (projectId: string, id: string) =>
+    get<{ id: string; project_id: string; name: string; created_at: string; updated_at: string; payload: Record<string, unknown> }>(
+      `/api/projects/${projectId}/reports/${id}`,
+    ),
+  createReport: (projectId: string, name: string, payload: Record<string, unknown>) =>
+    post<{ id: string; name: string; created_at: string }>(
+      `/api/projects/${projectId}/reports`,
+      { name, payload },
+    ),
+  updateReport: (projectId: string, id: string, body: { name?: string; payload?: Record<string, unknown> }) =>
+    put<{ id: string; updated_at: string }>(
+      `/api/projects/${projectId}/reports/${id}`,
+      body,
+    ),
+  deleteReport: (projectId: string, id: string) =>
+    del_<{ deleted: string }>(`/api/projects/${projectId}/reports/${id}`),
+
   // Artifact registry
   artifactFamilies: (projectId: string) =>
     get<{ families: import("./types").ArtifactFamily[] }>(

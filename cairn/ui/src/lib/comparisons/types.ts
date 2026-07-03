@@ -2,6 +2,8 @@
  * Types and validation guards for named, persisted comparisons.
  */
 
+import type { CardSettingsKey } from "../card-settings";
+
 export interface ComparisonSeriesRef {
   runId: string;
   /** Metric name. */
@@ -68,6 +70,28 @@ export interface Comparison {
  */
 export function compareRunId(comparisonId: string): string {
   return `compare:${comparisonId}`;
+}
+
+/**
+ * The CardSettingsKey shape a card's settings live under, given the
+ * pseudo-run id of its scope (a comparison via `compareRunId`, or a report
+ * via `reportRunId` in lib/reports).
+ *
+ * Multi-run cards (parallel/scatter/bar/tile, rendered via CardRenderer's
+ * "multi-run" kind) key on `{runId: scopeRunId, metricName: card.type,
+ * contextHash: card.id}`; every other card type keys on `{runId: scopeRunId,
+ * metricName: card.id, contextHash: ""}` (the `settingsKeyOverride` shape).
+ *
+ * Single source of truth for this key-shape so every scope (comparisons,
+ * reports, future scopes) agrees on the same convention — see
+ * `comparisons/sync.ts`'s `cardSettingsKeyFor` and `lib/reports`'s
+ * `cardSettingsKeyForReport`, both thin wrappers around this function.
+ */
+export function cardSettingsKeyForScope(scopeRunId: string, card: ComparisonCard): CardSettingsKey {
+  if (isMultiRunCardType(card.type)) {
+    return { runId: scopeRunId, metricName: card.type, contextHash: card.id };
+  }
+  return { runId: scopeRunId, metricName: card.id, contextHash: "" };
 }
 
 export function isComparisonCard(x: unknown): x is ComparisonCard {

@@ -312,3 +312,52 @@ export function useLineage(projectId: string) {
     enabled: !!projectId,
   });
 }
+
+// ---------------------------------------------------------------------------
+// Reports (server-persisted; see api/client.ts's Reports section)
+// ---------------------------------------------------------------------------
+
+export function useReports(projectId: string, params?: Parameters<typeof api.reports>[1]) {
+  return useQuery({
+    queryKey: qk.reports(projectId, params),
+    queryFn: () => api.reports(projectId, params),
+    enabled: !!projectId,
+  });
+}
+
+export function useReport(projectId: string, reportId: string) {
+  return useQuery({
+    queryKey: qk.report(projectId, reportId),
+    queryFn: () => api.report(projectId, reportId),
+    enabled: !!projectId && !!reportId,
+  });
+}
+
+export function useCreateReport(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { name: string; payload: Record<string, unknown> }) =>
+      api.createReport(projectId, vars.name, vars.payload),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.reports(projectId) }),
+  });
+}
+
+export function useUpdateReport(projectId: string, reportId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { name?: string; payload?: Record<string, unknown> }) =>
+      api.updateReport(projectId, reportId, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.report(projectId, reportId) });
+      qc.invalidateQueries({ queryKey: qk.reports(projectId) });
+    },
+  });
+}
+
+export function useDeleteReport(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (reportId: string) => api.deleteReport(projectId, reportId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.reports(projectId) }),
+  });
+}

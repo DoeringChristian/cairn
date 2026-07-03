@@ -9,8 +9,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import Markdown from "../lib/markdown";
 import { useSequence } from "../api/hooks";
 import { api } from "../api/client";
 import { qk } from "../api/query-keys";
@@ -63,48 +62,6 @@ const FONT_SIZE_CLASS: Record<MarkdownSettings["fontSize"], string> = {
   base: "text-base",
 };
 
-/** `components` override map for react-markdown — theme tokens, no raw HTML. */
-const MD_COMPONENTS = {
-  h1: (p: React.ComponentProps<"h1">) => <h1 className="mt-3 mb-2 text-lg font-semibold text-fg first:mt-0" {...p} />,
-  h2: (p: React.ComponentProps<"h2">) => <h2 className="mt-3 mb-1.5 text-base font-semibold text-fg first:mt-0" {...p} />,
-  h3: (p: React.ComponentProps<"h3">) => <h3 className="mt-2 mb-1 text-sm font-semibold text-fg first:mt-0" {...p} />,
-  h4: (p: React.ComponentProps<"h4">) => <h4 className="mt-2 mb-1 text-sm font-semibold text-fg-muted first:mt-0" {...p} />,
-  p: (p: React.ComponentProps<"p">) => <p className="my-1.5 leading-relaxed text-fg" {...p} />,
-  a: (p: React.ComponentProps<"a">) => <a className="text-accent hover:underline" target="_blank" rel="noreferrer noopener" {...p} />,
-  ul: (p: React.ComponentProps<"ul">) => <ul className="my-1.5 ml-5 list-disc space-y-0.5" {...p} />,
-  ol: (p: React.ComponentProps<"ol">) => <ol className="my-1.5 ml-5 list-decimal space-y-0.5" {...p} />,
-  li: (p: React.ComponentProps<"li">) => <li className="text-fg" {...p} />,
-  blockquote: (p: React.ComponentProps<"blockquote">) => (
-    <blockquote className="my-2 border-l-2 border-border pl-3 text-fg-muted" {...p} />
-  ),
-  hr: (p: React.ComponentProps<"hr">) => <hr className="my-3 border-border" {...p} />,
-  strong: (p: React.ComponentProps<"strong">) => <strong className="font-semibold text-fg" {...p} />,
-  em: (p: React.ComponentProps<"em">) => <em className="italic" {...p} />,
-  del: (p: React.ComponentProps<"del">) => <del className="text-fg-subtle" {...p} />,
-  code: (p: React.ComponentProps<"code">) => (
-    <code className="mono rounded bg-bg-hover px-1 py-0.5 text-[0.85em] text-fg" {...p} />
-  ),
-  pre: (p: React.ComponentProps<"pre">) => (
-    <pre
-      className="mono my-2 overflow-auto rounded bg-bg p-3 text-xs text-fg-muted [&>code]:rounded-none [&>code]:bg-transparent [&>code]:p-0"
-      {...p}
-    />
-  ),
-  table: (p: React.ComponentProps<"table">) => (
-    <div className="my-2 overflow-x-auto">
-      <table className="w-full border-collapse text-xs" {...p} />
-    </div>
-  ),
-  thead: (p: React.ComponentProps<"thead">) => <thead className="bg-bg-hover" {...p} />,
-  th: (p: React.ComponentProps<"th">) => (
-    <th className="border border-border px-2 py-1 text-left font-semibold text-fg" {...p} />
-  ),
-  td: (p: React.ComponentProps<"td">) => <td className="border border-border px-2 py-1 text-fg-muted" {...p} />,
-  input: (p: React.ComponentProps<"input">) => (
-    <input {...p} disabled className="mr-1 accent-accent align-middle" />
-  ),
-};
-
 // ---------------------------------------------------------------------------
 // Single markdown pane (used in multi-series split view).
 // ---------------------------------------------------------------------------
@@ -155,9 +112,7 @@ function MarkdownPane({
   }
   return (
     <div className={`rounded bg-bg p-3 overflow-auto ${FONT_SIZE_CLASS[fontSize]}`}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>
-        {content}
-      </ReactMarkdown>
+      <Markdown>{content}</Markdown>
     </div>
   );
 }
@@ -289,9 +244,7 @@ export default function MarkdownCard({ runId, metric, extraSeries, controlledSer
     return (
       <>
         <div className={`flex-1 min-h-0 overflow-auto rounded bg-bg p-3 ${FONT_SIZE_CLASS[settings.fontSize]}`}>
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>
-            {content}
-          </ReactMarkdown>
+          <Markdown>{content}</Markdown>
         </div>
         <StepSlider
           points={points}

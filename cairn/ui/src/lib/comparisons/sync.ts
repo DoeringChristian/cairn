@@ -6,25 +6,16 @@ import { api } from "../../api/client";
 import { cardSettingsStorageKey, loadCardSettings, type CardSettingsKey } from "../card-settings";
 import { storageKeys } from "../storage";
 import type { Comparison, ComparisonCard, SmartFilters } from "./types";
-import { compareRunId, isMultiRunCardType } from "./types";
+import { cardSettingsKeyForScope, compareRunId } from "./types";
 import { loadComparisons, newId, saveComparisons } from "./store";
 
 /**
  * The CardSettingsKey a comparison card's settings actually live under.
- *
- * Must agree with what the cards themselves read/write:
- *  - multi-run cards (parallel/scatter/bar/tile, rendered via CardRenderer's
- *    "multi-run" kind in ComparePage) key on `{runId: compareRunId(comparisonId),
- *    metricName: card.type, contextHash: card.id}`.
- *  - every other card type keys on `{runId: compareRunId(comparisonId),
- *    metricName: card.id, contextHash: ""}` (ComparePage's
- *    settingsKeyOverride).
+ * Thin wrapper around the shared `cardSettingsKeyForScope` — see its doc
+ * comment in types.ts for the key-shape rules.
  */
 export function cardSettingsKeyFor(comparisonId: string, card: ComparisonCard): CardSettingsKey {
-  if (isMultiRunCardType(card.type)) {
-    return { runId: compareRunId(comparisonId), metricName: card.type, contextHash: card.id };
-  }
-  return { runId: compareRunId(comparisonId), metricName: card.id, contextHash: "" };
+  return cardSettingsKeyForScope(compareRunId(comparisonId), card);
 }
 
 /** Build the payload for server storage, including card settings. */

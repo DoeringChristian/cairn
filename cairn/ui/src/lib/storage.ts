@@ -4,8 +4,8 @@
  * Centralizing key construction here means renaming or adding a storage key
  * only ever touches this file, and prevents typo drift between call sites
  * that must agree on the same key (e.g. card-settings keys are built both
- * in `card-settings.ts` and, for `compare:`-scoped pseudo runs, in
- * `comparisons.ts`).
+ * in `card-settings.ts` and, for `compare:`/`report:`-scoped pseudo runs, in
+ * `comparisons.ts`/`reports.ts`).
  *
  * All key strings below are byte-identical to their pre-refactor literals —
  * do not change the interpolation shape without a migration plan for
@@ -56,17 +56,21 @@ const RUN_SCOPED_PREFIXES = [
   "cairn:collapsed-sections:",
 ] as const;
 
+/** Pseudo-run id prefixes that are never real runs — see compareRunId/reportRunId. */
+const PSEUDO_SCOPE_PREFIXES = ["compare:", "report:"] as const;
+
 /**
  * Extract the runId segment from a run-scoped key given its prefix.
  *
  * Returns `null` when the key doesn't start with `prefix`, or when the
- * segment is a `compare:`-prefixed pseudo-run id — comparisons are not runs
- * and their card settings must never be swept by run-id membership checks.
+ * segment is a `compare:`/`report:`-prefixed pseudo-run id — comparisons and
+ * reports are not runs and their card settings must never be swept by run-id
+ * membership checks.
  */
 function extractRunScopedId(key: string, prefix: string): string | null {
   if (!key.startsWith(prefix)) return null;
   const rest = key.slice(prefix.length);
-  if (rest.startsWith("compare:")) return null;
+  if (PSEUDO_SCOPE_PREFIXES.some((p) => rest.startsWith(p))) return null;
   const sep = rest.indexOf(":");
   return sep === -1 ? rest : rest.slice(0, sep);
 }
@@ -90,7 +94,8 @@ function gcByPredicate(shouldRemove: (runId: string) => boolean): void {
 
 /**
  * Remove per-run keys (card-settings/run-layout/collapsed-sections) for runs
- * in `deletedRunIds`. `compare:`-scoped pseudo-run ids are never touched.
+ * in `deletedRunIds`. `compare:`/`report:`-scoped pseudo-run ids are never
+ * touched.
  *
  * Safe to call with a partial view of the run set (e.g. from a paginated
  * table), since it only ever removes keys for ids explicitly known to have
