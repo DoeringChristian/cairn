@@ -16,6 +16,8 @@ import RunEnvTab from "./pages/RunEnvTab";
 import ArtifactsPage from "./pages/ArtifactsPage";
 import ArtifactDetailPage from "./pages/ArtifactDetailPage";
 import LineagePage from "./pages/LineagePage";
+import ReportsListPage from "./pages/ReportsListPage";
+import ReportEditorPage from "./pages/ReportEditorPage";
 import "./index.css";
 
 const queryClient = new QueryClient({
@@ -43,6 +45,8 @@ const router = createBrowserRouter([
           { path: "artifacts", element: <ArtifactsPage /> },
           { path: "artifacts/:familyId", element: <ArtifactDetailPage /> },
           { path: "lineage", element: <LineagePage /> },
+          { path: "reports", element: <ReportsListPage /> },
+          { path: "reports/:reportId", element: <ReportEditorPage /> },
           {
             path: "r/:runId",
             element: <RunDetailPage />,

@@ -61,6 +61,19 @@ const NAV_ITEMS = [
       </svg>
     ),
   },
+  {
+    path: "reports",
+    end: false,
+    label: "Reports",
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="2" width="12" height="14" rx="1" />
+        <line x1="6" y1="6" x2="12" y2="6" />
+        <line x1="6" y1="9" x2="12" y2="9" />
+        <line x1="6" y1="12" x2="10" y2="12" />
+      </svg>
+    ),
+  },
 ];
 
 export default function ProjectLayout() {
