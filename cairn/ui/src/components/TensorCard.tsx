@@ -149,7 +149,7 @@ export default function TensorCard({
     DEFAULT_TENSOR_SETTINGS,
   );
 
-  const { safeIdx, currentStep } = useStepSlider({
+  const { safeIdx, currentStep, onSliderChange } = useStepSlider({
     seriesPoints: [points],
     persistedIdx: settings.sliderStep,
     updateSettings,
@@ -306,7 +306,7 @@ export default function TensorCard({
         <StepSlider
           points={points}
           currentIndex={safeIdx}
-          onChange={(i) => updateSettings({ sliderStep: i })}
+          onChange={onSliderChange}
           xAxis={settings.xAxis}
           onXAxisChange={(m) => updateSettings({ xAxis: m })}
           className="mt-3"

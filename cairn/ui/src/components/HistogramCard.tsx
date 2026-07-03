@@ -112,7 +112,7 @@ export default function HistogramCard({
     DEFAULT_HISTOGRAM_SETTINGS,
   );
 
-  const { safeIdx, currentStep } = useStepSlider({
+  const { safeIdx, currentStep, onSliderChange } = useStepSlider({
     seriesPoints: [points],
     persistedIdx: settings.sliderStep,
     updateSettings,
@@ -222,7 +222,7 @@ export default function HistogramCard({
         <StepSlider
           points={points}
           currentIndex={safeIdx}
-          onChange={(i) => updateSettings({ sliderStep: i })}
+          onChange={onSliderChange}
           xAxis={settings.xAxis}
           onXAxisChange={(m) => updateSettings({ xAxis: m })}
           className="mt-3"
