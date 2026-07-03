@@ -3,7 +3,12 @@ import { useQueries } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { qk } from "../api/query-keys";
 import { useCardSettings } from "../lib/card-settings";
-import { BarChart, SERIES_COLORS, type BarDatum } from "../lib/cairn-plot";
+import {
+  BarChart,
+  SERIES_COLORS,
+  type BarDatum,
+  type BarCompareMode,
+} from "../lib/cairn-plot";
 import { downloadCsv, exportChartFromContainer, safeName } from "../lib/download";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import { useRunSelection, useRunSelectionHasProvider } from "../lib/use-run-selection";
@@ -31,6 +36,14 @@ interface BarSettings extends BaseCardSettings {
   sortBy: SortBy;
   sortDesc?: boolean;
   logX?: boolean;
+  /**
+   * How to compose multiple runs' bars against each other. Only surfaced in
+   * settings (and only affects rendering) when the card has more than one
+   * run; single-run cards always render a single bar regardless of this
+   * setting. Undefined == "grouped" (today's one-row-per-run layout), so
+   * existing persisted cards are unaffected by this key's introduction.
+   */
+  compareMode?: BarCompareMode;
 }
 
 const DEFAULT_SETTINGS: BarSettings = {
@@ -138,6 +151,14 @@ export default function BarChartCard({
       });
     }
 
+    // This card only ever plots one metric (one "category" in the
+    // grouped/stacked/overlay sense — see BarChart's compareMode doc), so
+    // sorting the runs directly here *is* "sort by [the metric's] value":
+    // the degenerate case of "sort categories by first run's value" when
+    // there's exactly one category. Grouped mode renders `bars` in this
+    // order; stacked mode ignores it deliberately (segments stack in
+    // `runOrderIds`/original run order instead, per spec) and overlay mode
+    // uses it for z-order (last drawn = on top).
     out.sort((a, b) => {
       if (settings.sortBy === "name") return a.label.localeCompare(b.label);
       return a.value - b.value;
@@ -156,6 +177,14 @@ export default function BarChartCard({
     metricQueries.map((q) => q.dataUpdatedAt).join("|"),
     runMetaVersion,
   ]);
+
+  // Stack segment order is intentionally independent of the sort setting
+  // (spec: "stacked ... in run order") — this is the original runIds order,
+  // filtered down to runs that actually resolved a value.
+  const runOrderIds = useMemo(() => {
+    const present = new Set(bars.map((b) => b.id));
+    return runIds.filter((rid) => present.has(rid));
+  }, [runIds, bars]);
 
   // Available axes for the picker.
   const availableParams = useMemo(() => {
@@ -256,6 +285,33 @@ export default function BarChartCard({
           onChange={(v) => updateSettings({ logX: v })}
         />
       </div>
+      {/* Comparison mode only makes sense with more than one run — a
+          single-run card always has exactly one bar. */}
+      {runIds.length > 1 && (
+        <Select<BarCompareMode>
+          label="Compare runs"
+          value={settings.compareMode ?? "grouped"}
+          onChange={(v) => updateSettings({ compareMode: v })}
+          options={[
+            { value: "grouped", label: "Grouped (one row per run)" },
+            {
+              value: "stacked",
+              label: "Stacked (summed total)",
+              disabled: !!settings.logX,
+            },
+            { value: "overlay", label: "Overlay (translucent, superimposed)" },
+          ]}
+          description={
+            settings.logX
+              ? "Stacked totals are misleading on a log axis, so it's disabled while log axis is on."
+              : (settings.compareMode ?? "grouped") === "stacked"
+                ? "Bars stack in run order (not the sort setting); tooltip shows each run's share of the total."
+                : (settings.compareMode ?? "grouped") === "overlay"
+                  ? "Bars are superimposed with transparency, drawn in sorted order (last drawn is on top)."
+                  : undefined
+          }
+        />
+      )}
     </>
   );
 
@@ -269,6 +325,8 @@ export default function BarChartCard({
     bars,
     valueLabel: metric?.key,
     logX: settings.logX,
+    compareMode: settings.compareMode ?? "grouped",
+    runOrder: runOrderIds,
     selectedIds,
     onClick: (id: string) => toggle(id),
     onBackgroundClick: clear,

@@ -4,7 +4,7 @@ interface Props<T extends string> {
   label: string;
   value: T;
   onChange: (next: T) => void;
-  options: Array<{ value: T; label: string }>;
+  options: Array<{ value: T; label: string; disabled?: boolean }>;
   description?: string;
 }
 
@@ -28,7 +28,7 @@ export default function Select<T extends string>({
         onChange={(e) => onChange(e.target.value as T)}
       >
         {options.map((opt) => (
-          <option key={opt.value} value={opt.value}>
+          <option key={opt.value} value={opt.value} disabled={opt.disabled}>
             {opt.label}
           </option>
         ))}

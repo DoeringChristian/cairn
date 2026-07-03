@@ -60,7 +60,12 @@ export { ColormapSwatch } from "./primitives";
 
 // Renderers
 export { ScatterPlot } from "./renderers";
-export { BarChart, type BarChartProps, type BarDatum } from "./renderers";
+export {
+  BarChart,
+  type BarChartProps,
+  type BarDatum,
+  type BarCompareMode,
+} from "./renderers";
 export { ParallelCoords } from "./renderers";
 export { ScalarPlot } from "./renderers";
 export { ImagePane } from "./renderers";
