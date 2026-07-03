@@ -99,12 +99,11 @@ def blob_sphere(base: np.ndarray, theta: float, freq: float) -> tuple[np.ndarray
 def torus(n_u: int, n_v: int, big_r: float = 1.0, tube_r: float = 0.35) -> tuple[np.ndarray, np.ndarray]:
     """CCW-from-outside torus.
 
-    Note: a torus is NOT star-shaped around its own centroid (the origin
-    sits in the empty hole, not the solid) — the SDK's centroid-heuristic
-    winding normalization is only approximate for shapes like this one,
-    which is exactly why this generator is fixed to be correctly wound at
-    the source rather than relying on that normalization (see task-#32
-    investigation and the ``cairn.Mesh`` docstring).
+    Deliberately correct at the source (see task-#32 investigation) so the
+    demo doesn't rely on the SDK's winding normalization to mask a wrong
+    generator — though that normalization handles a torus exactly anyway
+    (closed manifold → signed-volume orientation; see
+    ``cairn/sdk/handlers/mesh.py::_normalize_winding``).
     """
     verts = []
     for i in range(n_u):
@@ -135,14 +134,13 @@ def torus(n_u: int, n_v: int, big_r: float = 1.0, tube_r: float = 0.35) -> tuple
 def torus_normals(vertices: np.ndarray, big_r: float = 1.0) -> np.ndarray:
     """Analytic per-vertex outward normals for a ``torus(...)`` mesh.
 
-    A torus isn't star-shaped around its centroid (see ``torus()``'s
-    docstring), so the SDK's centroid-heuristic winding normalization only
-    *approximately* repairs its faces — some end up genuinely mixed-wound,
-    which would make ``computeVertexNormals`` (used when no normals are
-    supplied) produce visibly wrong/averaged-across-the-seam shading. Supply
-    normals explicitly instead: they're per-vertex data untouched by winding
-    normalization (see the ``cairn.Mesh`` docstring), so shading is exactly
-    correct regardless of any individual face's index order.
+    Not load-bearing: winding normalization orients a torus exactly (it's a
+    closed manifold), so ``computeVertexNormals`` in the UI would already
+    produce correct outward shading without these. Supplying exact analytic
+    normals is simply good practice for parametric surfaces — smoother
+    shading than face-averaged normals at coarse tessellations, and they're
+    per-vertex data never modified by winding normalization (see the
+    ``cairn.Mesh`` docstring).
     """
     x, y, z = vertices[:, 0], vertices[:, 1], vertices[:, 2]
     rho = np.hypot(x, y)
@@ -207,10 +205,8 @@ def log_run(name: str, seed: int, phase: float) -> None:
         deformed, values = blob_sphere(base_sphere, theta, freq=5.0)
         run.track(cairn.Mesh(deformed, sphere_faces, values=values), name="blob_sphere", step=step)
 
-        # Explicit analytic normals (see torus_normals docstring): a torus
-        # isn't star-shaped, so the SDK's winding normalization is only
-        # approximate for it — supplying normals directly keeps shading
-        # correct regardless.
+        # Explicit analytic normals — good practice for parametric surfaces,
+        # not load-bearing (see torus_normals docstring).
         colors = torus_colors(torus_v, theta)
         run.track(
             cairn.Mesh(torus_v, torus_f, colors=colors, normals=torus_n),

@@ -149,10 +149,11 @@ def test_can_handle_only_via_wrapper():
 
 # ── Winding normalization ────────────────────────────────────────────────
 #
-# Fixture: a regular octahedron (6 vertices on the axes, 8 faces — one per
-# octant). It's convex/star-shaped around its own centroid (the origin), so
-# the centroid-direction heuristic in `serialize()` is *exact* here, not
-# just approximate — a solid ground truth to test against.
+# Fixture 1: a regular octahedron (6 vertices on the axes, 8 faces — one per
+# octant). Closed convex manifold: `_normalize_winding` takes the
+# orientation-propagation + signed-volume path (exact), and convexity also
+# makes the per-face cross-product-vs-centroid check an exact ground truth
+# for the assertions.
 _OCTA_VERTICES = np.array(
     [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]],
     dtype=np.float64,
@@ -230,3 +231,145 @@ def test_winding_flip_leaves_user_normals_untouched():
     # Normals are per-vertex; winding only reorders each face's own indices,
     # so the supplied normals must round-trip untouched (aside from dtype).
     np.testing.assert_allclose(back["normals"], normals.astype(np.float32))
+
+
+# Fixture 2: a torus — a closed manifold that is NOT star-shaped around its
+# own centroid (the origin sits in the empty hole). A per-face centroid
+# heuristic would silently corrupt ~43% of its faces at log time; the
+# topological normalization (orientation propagation + signed volume) must
+# handle it exactly. Ground truth is the analytic torus surface normal
+# (cos v cos u, cos v sin u, sin v), independent of the mesh's own topology.
+def _torus(
+    n_u: int = 12, n_v: int = 8, big_r: float = 1.0, tube_r: float = 0.35
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """CCW-from-outside torus: ``(vertices, faces, analytic_normals)``."""
+    u = 2 * np.pi * np.arange(n_u) / n_u
+    v = 2 * np.pi * np.arange(n_v) / n_v
+    uu, vv = np.meshgrid(u, v, indexing="ij")
+    vertices = np.stack(
+        [
+            (big_r + tube_r * np.cos(vv)) * np.cos(uu),
+            (big_r + tube_r * np.cos(vv)) * np.sin(uu),
+            tube_r * np.sin(vv),
+        ],
+        axis=-1,
+    ).reshape(-1, 3)
+    analytic = np.stack(
+        [np.cos(vv) * np.cos(uu), np.cos(vv) * np.sin(uu), np.sin(vv)], axis=-1
+    ).reshape(-1, 3)
+    faces = []
+    for i in range(n_u):
+        for j in range(n_v):
+            a = i * n_v + j
+            b = i * n_v + (j + 1) % n_v
+            c = ((i + 1) % n_u) * n_v + j
+            d = ((i + 1) % n_u) * n_v + (j + 1) % n_v
+            faces.append((a, c, b))
+            faces.append((b, c, d))
+    return vertices, np.array(faces, dtype=np.int64), analytic
+
+
+def _assert_all_ccw_analytic(
+    vertices: np.ndarray, faces: np.ndarray, analytic_normals: np.ndarray
+) -> None:
+    """Every face's cross-product normal agrees with the true surface normal."""
+    v0, v1, v2 = vertices[faces[:, 0]], vertices[faces[:, 1]], vertices[faces[:, 2]]
+    normal = np.cross(v1 - v0, v2 - v0)
+    dot = np.einsum("ij,ij->i", normal, analytic_normals[faces[:, 0]])
+    assert np.all(dot > 0), (
+        f"{int(np.sum(dot <= 0))}/{len(faces)} faces wound against the "
+        "analytic surface normal"
+    )
+
+
+def test_winding_torus_ccw_roundtrips_with_zero_flips():
+    # The regression the centroid heuristic failed: a correctly-wound torus
+    # must come back byte-identical (0 flips), so the UI's
+    # computeVertexNormals produces outward normals without any user help.
+    h = MeshHandler()
+    vertices, faces, analytic = _torus()
+    data, meta = h.serialize({"vertices": vertices, "faces": faces})
+    assert meta["winding_normalized"] == 0
+    back = _load(data)
+    np.testing.assert_array_equal(back["faces"], faces.astype(np.uint32))
+    _assert_all_ccw_analytic(vertices, back["faces"].astype(np.int64), analytic)
+
+
+def test_winding_torus_all_cw_repaired():
+    h = MeshHandler()
+    vertices, faces, analytic = _torus()
+    all_flipped = _flip(faces, np.ones(len(faces), dtype=bool))
+    data, meta = h.serialize({"vertices": vertices, "faces": all_flipped})
+    assert meta["winding_normalized"] == len(faces)
+    back = _load(data)
+    _assert_all_ccw_analytic(vertices, back["faces"].astype(np.int64), analytic)
+
+
+def test_winding_torus_mixed_repaired():
+    h = MeshHandler()
+    vertices, faces, analytic = _torus()
+    mask = np.random.default_rng(1).random(len(faces)) < 0.5
+    mixed = _flip(faces, mask)
+    data, meta = h.serialize({"vertices": vertices, "faces": mixed})
+    assert meta["winding_normalized"] == int(mask.sum())
+    back = _load(data)
+    _assert_all_ccw_analytic(vertices, back["faces"].astype(np.int64), analytic)
+    np.testing.assert_array_equal(back["faces"], faces.astype(np.uint32))
+
+
+def test_winding_open_surface_mixed_repaired():
+    # Open surface (a UV hemisphere without a bottom cap): exercises the
+    # boundary-edge/majority-vote path rather than signed volume.
+    n_lat, n_lon = 6, 12
+    theta = np.pi / 2 * np.arange(n_lat + 1)[:, None] / n_lat  # 0..pi/2
+    phi = 2 * np.pi * np.arange(n_lon)[None, :] / n_lon
+    vertices = np.stack(
+        [
+            (np.sin(theta) * np.cos(phi)).ravel(),
+            (np.sin(theta) * np.sin(phi)).ravel(),
+            np.broadcast_to(np.cos(theta), (n_lat + 1, n_lon)).ravel(),
+        ],
+        axis=-1,
+    )
+    faces = []
+    for i in range(n_lat):
+        for j in range(n_lon):
+            a = i * n_lon + j
+            b = i * n_lon + (j + 1) % n_lon
+            c = (i + 1) * n_lon + j
+            d = (i + 1) * n_lon + (j + 1) % n_lon
+            faces.append((a, c, b))
+            faces.append((b, c, d))
+    faces = np.array(faces, dtype=np.int64)
+    mask = np.random.default_rng(2).random(len(faces)) < 0.5
+    mixed = _flip(faces, mask)
+
+    h = MeshHandler()
+    data, meta = h.serialize({"vertices": vertices, "faces": mixed})
+    assert meta["winding_normalized"] == int(mask.sum())
+    back = _load(data)
+    faces_out = back["faces"].astype(np.int64)
+    # Ground truth: outward = radial (unit hemisphere centered at origin).
+    v0, v1, v2 = vertices[faces_out[:, 0]], vertices[faces_out[:, 1]], vertices[faces_out[:, 2]]
+    normal = np.cross(v1 - v0, v2 - v0)
+    dot = np.einsum("ij,ij->i", normal, (v0 + v1 + v2) / 3.0)
+    # Pole-row faces are zero-area (dot == 0); every real face must be CCW.
+    assert np.all(dot >= 0) and int(np.sum(dot > 0)) == len(faces) - n_lon
+
+
+def test_winding_non_manifold_left_untouched():
+    # Three faces sharing one edge (a "fin"): no consistent orientation
+    # exists, so the faces must be stored byte-identical, with metadata
+    # flagging the winding as unnormalized (the UI's double-sided default
+    # covers rendering).
+    vertices = np.array(
+        [[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1]],
+        dtype=np.float64,
+    )
+    faces = np.array([[0, 1, 2], [1, 0, 3], [0, 1, 4]], dtype=np.int64)
+    h = MeshHandler()
+    data, meta = h.serialize({"vertices": vertices, "faces": faces})
+    assert meta["winding"] == "unnormalized"
+    assert "winding_normalized" not in meta
+    back = _load(data)
+    np.testing.assert_array_equal(back["faces"], faces.astype(np.uint32))

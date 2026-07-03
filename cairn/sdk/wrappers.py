@@ -165,14 +165,17 @@ class Mesh(_TypeWrapper):
     are expected to be wound counter-clockwise as seen from outside the
     surface (the right-hand-rule convention: ``cross(v1-v0, v2-v0)`` points
     outward). You don't have to get this perfect — at log time ``serialize``
-    re-orients any face whose winding disagrees with the direction from the
-    mesh centroid to that face's own centroid, including per-face for
-    meshes with MIXED winding (e.g. after boolean ops or concatenating
-    sub-meshes with inconsistent orientation). This centroid heuristic is
-    exact for star-shaped/convex/closed surfaces and only approximate for
-    highly concave or non-star-shaped ones (e.g. a torus); the UI also
-    defaults to double-sided rendering, so any residual misorientation from
-    the approximation is still visible. Optional per-vertex attributes:
+    normalizes winding topologically: orientation is propagated across
+    shared edges within each connected component (repairing MIXED winding —
+    e.g. after boolean ops or concatenating inconsistently-wound sub-meshes
+    — exactly, for any manifold shape), then each component is globally
+    oriented outward by signed volume when closed (exact for any closed
+    manifold, torus/concave shapes included) or by a centroid-direction
+    majority vote when open (approximate; see ``handlers/mesh.py``).
+    Non-manifold meshes (an edge shared by >2 faces) are stored with their
+    winding completely untouched and flagged ``winding: "unnormalized"`` in
+    metadata; the UI's double-sided rendering default keeps those (and any
+    open-surface residuals) displayable. Optional per-vertex attributes:
 
     - ``values``: a length-``N`` scalar array, colored via a colormap in the
       UI (e.g. curvature, temperature, a training signal).
