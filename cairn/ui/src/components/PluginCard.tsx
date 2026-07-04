@@ -60,6 +60,9 @@ interface PluginSettings extends BaseCardSettings {
 
 const DEFAULT_SETTINGS: Omit<PluginSettings, "metrics"> = { version: 1 };
 const PYODIDE_CDN = "https://cdn.jsdelivr.net/pyodide/v0.27.0/full/";
+// Auto-height bounds for the plugin iframe (mirrors HtmlCard's HtmlPane).
+const PLUGIN_MIN_HEIGHT = 100;
+const PLUGIN_MAX_HEIGHT = 2000;
 
 const sourceCache = new Map<string, string>();
 
@@ -198,6 +201,7 @@ function PluginPane({
   const wsRef = useRef<WebSocket | null>(null);
   const [serverFrameUrl, setServerFrameUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [measuredHeight, setMeasuredHeight] = useState<number | undefined>(undefined);
 
   // Cleanup blob URLs.
   useEffect(() => () => { if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current); }, []);
@@ -247,6 +251,25 @@ function PluginPane({
     return () => { cancelled = true; };
   }, [iframeReady, current, pluginMeta, targetStep, rid, m.name, pluginValues]);
 
+  // Host-side listener for the iframe shim's "cairn:resize" postMessage
+  // (mirrors HtmlCard's HtmlPane). The shim already posts on every content
+  // resize; the host previously never listened, so the iframe just filled
+  // its flex-1 slot. A height of 0 is ignored (pre-layout artifact) rather
+  // than collapsing the card, same lesson as HtmlPane.
+  useEffect(() => {
+    if (lang === "server" || lang === "window") return;
+    function onMessage(e: MessageEvent) {
+      if (e.source !== iframeRef.current?.contentWindow) return;
+      if (e.data?.type !== "cairn:resize") return;
+      const h = Number(e.data.height);
+      if (Number.isFinite(h) && h > 0) {
+        setMeasuredHeight(Math.min(PLUGIN_MAX_HEIGHT, Math.max(PLUGIN_MIN_HEIGHT, h)));
+      }
+    }
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [lang]);
+
   // Server/Window plugin: WebSocket.
   useEffect(() => {
     if ((lang !== "server" && lang !== "window") || !current?.artifact_hash || !pluginMeta.plugin_hash) return;
@@ -292,8 +315,8 @@ function PluginPane({
     <iframe
       ref={iframeRef}
       {...(lang === "js" ? { sandbox: "allow-scripts" } : {})}
-      className="flex-1 w-full rounded border-0"
-      style={{ minHeight: 100 }}
+      className={`w-full rounded border-0${measuredHeight == null ? " flex-1" : ""}`}
+      style={measuredHeight != null ? { height: measuredHeight } : { minHeight: PLUGIN_MIN_HEIGHT }}
       title={`Plugin: ${pluginMeta.plugin_name ?? m.name}`}
     />
   );

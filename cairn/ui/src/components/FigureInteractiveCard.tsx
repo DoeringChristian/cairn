@@ -19,6 +19,7 @@ import { useCardSeries, useStepSlider, resolveAtStep, useRunInfo, MultiPaneGrid,
 import {
   checkFigureMergeable,
   mergeFigures,
+  useContainerSize,
   type PlotlyFigureLike,
   type FigureMergeEntry,
 } from "../lib/cairn-plot";
@@ -667,19 +668,13 @@ export default function FigureInteractiveCard({ runId, metric, extraSeries, cont
   const isMulti = effectiveMetrics.length > 1;
   const figContainerRef = useRef<HTMLDivElement | null>(null);
 
-  // Measure card width for auto-sizing figure height
-  const [cardWidth, setCardWidth] = useState(0);
+  // Measure card width for auto-sizing figure height. cardRef is also the
+  // CardShell root (used for scrollIntoView + screenshot export below), so
+  // this observes it directly rather than standing up a second observer on
+  // a wrapper div — one ResizeObserver per card (see card-kit/index.ts).
   const cardRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const el = cardRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver((entries) => {
-      for (const entry of entries) setCardWidth(entry.contentRect.width);
-    });
-    ro.observe(el);
-    setCardWidth(el.getBoundingClientRect().width);
-    return () => ro.disconnect();
-  }, []);
+  const { size: cardSize } = useContainerSize<HTMLDivElement>(cardRef);
+  const cardWidth = cardSize.w;
 
   // Auto-height for figure containers
   const { figAutoHeight } = useMemo(() => {
