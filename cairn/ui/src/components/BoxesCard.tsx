@@ -750,7 +750,7 @@ export default function BoxesCard({
   const curValMax = settings.valueMax ?? valHi;
 
   return (
-    <CardShell
+    <CardShell cardKind="boxes3d"
       cardRef={cardRef}
       settings={settings}
       updateSettings={updateSettings}

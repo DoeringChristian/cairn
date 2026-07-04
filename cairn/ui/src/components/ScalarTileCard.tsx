@@ -268,7 +268,7 @@ export default function ScalarTileCard({
   );
 
   return (
-    <CardShell
+    <CardShell cardKind="tile"
       cardRef={cardRef}
       settings={settings}
       updateSettings={updateSettings}

@@ -135,7 +135,7 @@ export default function TextViewerCard({ runId, metric, settingsKeyOverride, onR
   );
 
   return (
-    <CardShell
+    <CardShell cardKind="text"
       cardRef={cardRef}
       settings={settings}
       updateSettings={updateSettings}

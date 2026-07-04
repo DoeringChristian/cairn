@@ -280,7 +280,7 @@ export default function HistogramCard({
   );
 
   return (
-    <CardShell
+    <CardShell cardKind="histogram"
       cardRef={cardRef}
       settings={settings}
       updateSettings={updateSettings}

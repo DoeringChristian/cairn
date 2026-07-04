@@ -349,7 +349,7 @@ export default function BarChartCard({
   );
 
   return (
-    <CardShell
+    <CardShell cardKind="bar"
       cardRef={cardRef}
       settings={settings}
       updateSettings={updateSettings}

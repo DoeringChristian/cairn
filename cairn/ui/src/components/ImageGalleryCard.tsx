@@ -1082,7 +1082,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
   );
 
   return (
-    <CardShell
+    <CardShell cardKind="image"
       cardRef={cardRef}
       settings={settings}
       updateSettings={updateSettings}

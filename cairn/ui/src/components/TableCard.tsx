@@ -734,7 +734,7 @@ export default function TableCard({
   );
 
   return (
-    <CardShell
+    <CardShell cardKind="table"
       cardRef={cardRef}
       settings={settings}
       updateSettings={updateSettings}

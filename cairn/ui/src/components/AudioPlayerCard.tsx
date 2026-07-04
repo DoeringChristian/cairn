@@ -369,7 +369,7 @@ export default function AudioPlayerCard({ runId, metric, extraSeries, controlled
   );
 
   return (
-    <CardShell
+    <CardShell cardKind="audio"
       cardRef={cardRef}
       settings={settings}
       updateSettings={updateSettings}

@@ -777,7 +777,7 @@ export default function MeshCard({
   );
 
   return (
-    <CardShell
+    <CardShell cardKind="mesh"
       cardRef={cardRef}
       settings={settings}
       updateSettings={updateSettings}

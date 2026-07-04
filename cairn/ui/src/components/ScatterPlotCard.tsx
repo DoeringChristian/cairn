@@ -279,7 +279,7 @@ export default function ScatterPlotCard({
   );
 
   return (
-    <CardShell
+    <CardShell cardKind="scatter"
       cardRef={cardRef}
       settings={settings}
       updateSettings={updateSettings}

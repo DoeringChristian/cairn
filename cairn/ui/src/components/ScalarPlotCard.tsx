@@ -556,7 +556,7 @@ export default function ScalarPlotCard({
   };
 
   return (
-    <CardShell
+    <CardShell cardKind="scalar"
       cardRef={cardRef}
       settings={settings}
       updateSettings={updateSettings}

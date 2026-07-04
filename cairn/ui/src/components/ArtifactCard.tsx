@@ -92,7 +92,7 @@ export default function ArtifactCard({ runId, metric, settingsKeyOverride, onRem
   const cardRef = useRef<HTMLDivElement>(null);
 
   return (
-    <CardShell
+    <CardShell cardKind="artifact"
       cardRef={cardRef}
       settings={settings}
       updateSettings={updateSettings}

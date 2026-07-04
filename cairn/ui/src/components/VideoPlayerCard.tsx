@@ -316,7 +316,7 @@ export default function VideoPlayerCard({ runId, metric, extraSeries, controlled
     isMulti ? renderMultiVideo(inModal) : renderSingleVideo(inModal ? "max-h-[70vh]" : "max-h-64");
 
   return (
-    <CardShell
+    <CardShell cardKind="video"
       cardRef={cardRef}
       settings={settings}
       updateSettings={updateSettings}

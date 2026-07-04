@@ -325,7 +325,7 @@ export default function MarkdownCard({ runId, metric, extraSeries, controlledSer
   );
 
   return (
-    <CardShell
+    <CardShell cardKind="markdown"
       cardRef={cardRef}
       settings={settings}
       updateSettings={updateSettings}

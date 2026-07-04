@@ -361,7 +361,7 @@ export default function ParallelCoordsCard({
   );
 
   return (
-    <CardShell
+    <CardShell cardKind="parallel"
       cardRef={cardRef}
       settings={settings}
       updateSettings={updateSettings}

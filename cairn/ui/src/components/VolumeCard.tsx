@@ -717,7 +717,7 @@ export default function VolumeCard({
   };
 
   return (
-    <CardShell
+    <CardShell cardKind="volume"
       cardRef={cardRef}
       settings={settings}
       updateSettings={updateSettings}

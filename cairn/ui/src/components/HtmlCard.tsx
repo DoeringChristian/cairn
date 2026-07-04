@@ -404,7 +404,7 @@ export default function HtmlCard({ runId, metric, extraSeries, controlledSeries,
   );
 
   return (
-    <CardShell
+    <CardShell cardKind="html"
       cardRef={cardRef}
       settings={settings}
       updateSettings={updateSettings}

@@ -1,5 +1,6 @@
 import { useEffect, type ReactNode, type RefObject } from "react";
 import { resolveCardHeight } from "../lib/card-settings";
+import { cardMinSize } from "./card-kit/card-min-sizes";
 import type { BaseCardSettings } from "./card-kit";
 import CardHeader from "./CardHeader";
 import CardResizeHandle from "./CardResizeHandle";
@@ -12,6 +13,8 @@ interface Props {
   title: string;
   subtitle?: ReactNode;
   defaultHeight?: number;
+  /** Card type key for per-type minimum sizes (see card-kit/card-min-sizes). */
+  cardKind?: string;
   onRemove?: () => void;
   onSettings?: () => void;
   onDownload?: () => void;
@@ -46,6 +49,7 @@ export default function CardShell({
   title,
   subtitle,
   defaultHeight,
+  cardKind,
   onRemove,
   onSettings,
   onDownload,
@@ -72,13 +76,21 @@ export default function CardShell({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const minSize = cardMinSize(cardKind);
+  const resolvedHeight = resolveCardHeight(settings, defaultHeight);
+  // Own-min read-time clamp: guard against a stale/undersized persisted height.
+  const clampedHeight =
+    resolvedHeight == null ? resolvedHeight : Math.max(resolvedHeight, minSize.minHeight);
+
   return (
     <div
       ref={cardRef}
       data-cairn-card
+      data-cairn-min-h={minSize.minHeight}
+      data-cairn-min-span={minSize.minSpan}
       className={`card p-4 flex flex-col${dropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
       style={{
-        height: resolveCardHeight(settings, defaultHeight),
+        height: clampedHeight,
         position: "relative",
         gridColumn: `span ${settings.colSpan ?? 3}`,
       }}
@@ -119,6 +131,7 @@ export default function CardShell({
         onHeightChange={(h) => updateSettings({ height: h })}
         colSpan={settings.colSpan ?? 3}
         onColSpanChange={(s) => updateSettings({ colSpan: s })}
+        minHeight={minSize.minHeight}
         onPerColHeightChange={(p) => updateSettings(p)}
       />
     </div>

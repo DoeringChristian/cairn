@@ -405,7 +405,7 @@ export default function PluginCard({
   );
 
   return (
-    <CardShell
+    <CardShell cardKind="plugin"
       cardRef={cardRef}
       settings={settings}
       updateSettings={updateSettings}

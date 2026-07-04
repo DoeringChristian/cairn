@@ -378,7 +378,7 @@ export default function TensorCard({
   );
 
   return (
-    <CardShell
+    <CardShell cardKind="tensor"
       cardRef={cardRef}
       settings={settings}
       updateSettings={updateSettings}

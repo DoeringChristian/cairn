@@ -701,7 +701,7 @@ export default function PointCloudCard({
   );
 
   return (
-    <CardShell
+    <CardShell cardKind="pointcloud"
       cardRef={cardRef}
       settings={settings}
       updateSettings={updateSettings}

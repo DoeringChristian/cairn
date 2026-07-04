@@ -897,7 +897,7 @@ export default function FigureInteractiveCard({ runId, metric, extraSeries, cont
   );
 
   return (
-    <CardShell
+    <CardShell cardKind="figure"
       cardRef={cardRef}
       settings={settings}
       updateSettings={updateSettings}

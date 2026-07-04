@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from "react";
+import { ownMinHeight, ownMinSpan, rowMinHeight, sectionMinSpan } from "./card-kit/card-min-sizes";
 
 interface Props {
   /** Current persisted height in px; undefined = auto/default. */
@@ -62,16 +63,18 @@ export default function CardResizeHandle({
     if (!grid || !grid.closest("[data-cairn-grid]")) grid = el.closest("[data-cairn-grid]")?.parentElement ?? grid;
     const gridEl = (grid?.closest("[data-cairn-grid]") ?? grid) as HTMLElement | null;
     if (!gridEl) return;
-    const onColSpan = (e: Event) => {
-      colSpanCbRef.current((e as CustomEvent).detail.colSpan);
-    };
     const card = el.closest("[data-cairn-card]") as HTMLElement | null;
+    const onColSpan = (e: Event) => {
+      // Never adopt a span below this card's own minimum.
+      colSpanCbRef.current(Math.max((e as CustomEvent).detail.colSpan, ownMinSpan(card)));
+    };
     const onHeight = (e: Event) => {
       const d = (e as CustomEvent).detail;
       if (!card) return;
       const myTop = card.getBoundingClientRect().top;
       if (Math.abs(myTop - d.rowTop) < ROW_TOP_EPSILON_PX) {
-        heightCbRef.current(d.height);
+        // Never adopt a height below this card's own minimum.
+        heightCbRef.current(Math.max(d.height, ownMinHeight(card)));
       }
     };
     gridEl.addEventListener("cairn:colSpanChange", onColSpan);
@@ -123,6 +126,12 @@ export default function CardResizeHandle({
         }
       }
 
+      // Collection-aware floors: a shared row can't shrink below its tallest
+      // member's minimum; a section's span can't drop below its widest member's.
+      const gridElHtml = gridEl as HTMLElement | null;
+      const rowFloor = gridElHtml ? Math.max(minHeight, rowMinHeight(card, gridElHtml)) : minHeight;
+      const spanFloor = gridElHtml ? sectionMinSpan(gridElHtml) : 1;
+
       let currentSpan = colSpan;
       let lastH = startHeight;
       const heightTouched = new Set<HTMLElement>();
@@ -142,7 +151,7 @@ export default function CardResizeHandle({
       const updateCardHeight = () => {
         const pageY = lastClientY + window.scrollY;
         const newH = Math.round(
-          Math.min(MAX_HEIGHT, Math.max(minHeight, startHeight + (pageY - startPageY))),
+          Math.min(MAX_HEIGHT, Math.max(rowFloor, startHeight + (pageY - startPageY))),
         );
         lastH = newH;
         card.style.height = `${newH}px`;
@@ -185,7 +194,7 @@ export default function CardResizeHandle({
         if (actualCols > 1) {
           const targetWidth = startWidth + (ev.clientX - startX);
           const rawSpan = Math.max(1, Math.min(actualCols, Math.round(targetWidth / colWidth)));
-          const newSpan = snapToValidSpan(rawSpan);
+          const newSpan = Math.max(spanFloor, snapToValidSpan(rawSpan));
           if (newSpan !== currentSpan) {
             currentSpan = newSpan;
             for (const sib of allSiblings) {
