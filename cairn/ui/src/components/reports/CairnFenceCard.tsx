@@ -80,15 +80,21 @@ export default function CairnFenceCard({ projectId, reportId, allProjectRuns, so
 
   const { index: metricIndex } = useMetricIndex(runIds);
 
+  // While a selector is still resolving its first batch of runs, `runIds` is
+  // transiently empty — compiling now would surface a misleading "cannot
+  // infer type"/empty-card error instead of a loading state. Skip compiling
+  // until resolution has settled at least once.
+  const selectorResolving = !!selector && resolution.isFetching && runIds.length === 0;
+
   const compiled = useMemo(() => {
-    if (!spec) return null;
+    if (!spec || selectorResolving) return null;
     try {
-      return compileCairnBlock(spec, metricIndex, { id: fallbackId.current });
+      return compileCairnBlock(spec, metricIndex, { id: fallbackId.current, resolvedRunIds: runIds });
     } catch (e) {
       return { error: e instanceof CairnBlockError ? e.message : `Unexpected error: ${(e as Error).message}` };
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, runIds.join("|"), metricIndex]);
+  }, [source, runIds.join("|"), metricIndex, selectorResolving]);
 
   const compileError = compiled && "error" in compiled ? compiled.error : null;
   const block = compiled && "block" in compiled ? compiled.block : null;
@@ -116,6 +122,13 @@ export default function CairnFenceCard({ projectId, reportId, allProjectRuns, so
       >
         <div className="mb-1 font-semibold">```cairn block error</div>
         <pre className="mono whitespace-pre-wrap">{error}</pre>
+      </div>
+    );
+  }
+  if (selectorResolving) {
+    return (
+      <div data-cairn-card className="my-2 rounded border border-border-subtle p-3 text-xs text-fg-muted">
+        Resolving runs…
       </div>
     );
   }

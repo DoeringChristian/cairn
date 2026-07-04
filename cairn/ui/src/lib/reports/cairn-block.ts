@@ -243,10 +243,20 @@ function selectionForCard(c: CairnCardInput, index: number, metricIndex: MetricI
  * `metricIndex` should already be scoped to the block's *resolved* runIds
  * (static `runs.ids`, or the live-resolved ids of `runs.selector` — see the
  * ```cairn render component, which does the resolution before calling this).
+ *
+ * `opts.resolvedRunIds`, when given, is the live-resolved run id set for a
+ * `runs.selector` block (computed by the caller via
+ * `useRunSelectorResolution` — this function stays pure and does no
+ * resolution itself). It's only consulted when the spec uses `runs.selector`;
+ * a static `runs.ids` block always uses its own ids verbatim.
  */
-export function compileCairnBlock(spec: CairnSpec, metricIndex: MetricIndex, opts?: { id?: string }): CompiledCairnBlock {
+export function compileCairnBlock(
+  spec: CairnSpec,
+  metricIndex: MetricIndex,
+  opts?: { id?: string; resolvedRunIds?: string[] },
+): CompiledCairnBlock {
   const { runIds, runSelector } = resolveRuns(spec);
-  const effectiveRunIds = runIds ?? [];
+  const effectiveRunIds = runIds ?? (runSelector ? (opts?.resolvedRunIds ?? []) : []);
 
   const cards: ComparisonCard[] = [];
   const settings: Record<string, unknown> = {};

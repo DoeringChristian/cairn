@@ -24,6 +24,13 @@ import { compileCairnBlock, parseCairnSpec, serializeCairnSpec, stringifyCairnSp
 import { buildMetricIndex } from "./metric-index";
 import type { CardsBlock } from "./types";
 
+function seqFixture(runId: string, name: string): { runId: string; sequences: SequenceMeta[] } {
+  return {
+    runId,
+    sequences: [{ name, object_type: "scalar", context: null, context_hash: "", min_step: 0, max_step: 10, count: 11 }],
+  };
+}
+
 interface Case {
   name: string;
   runIds: string[];
@@ -171,4 +178,103 @@ export function runCairnBlockRoundTripChecks(): RoundTripResult[] {
         : `settingsMatch=${settingsMatch} typeMatch=${typeMatch} seriesMatch=${seriesMatch} runsMatch=${runsMatch}\n---yaml---\n${yamlText}\n---got settings---\n${JSON.stringify(newSettings)}`,
     };
   });
+}
+
+/**
+ * Regression coverage for the `runs.selector` empty-series bug (AR1
+ * verification finding): `compileCairnBlock` used to always compile a
+ * `runs.selector` block's cards against `effectiveRunIds = []`, since only
+ * the static `runs.ids` branch of `resolveRuns` fed `effectiveRunIds`. The
+ * live-resolved ids (from `useRunSelectorResolution` in `CairnFenceCard`)
+ * were never threaded through, so every selector-based `metric:` card
+ * compiled with a hardcoded-empty `series: []` — "Empty card." forever,
+ * regardless of what the selector actually resolved to.
+ *
+ * These checks exercise `compileCairnBlock`'s new `opts.resolvedRunIds`
+ * param directly (no React/hooks involved — the resolution itself stays in
+ * the component; this only checks the pure compile function consumes it).
+ */
+const SELECTOR_YAML = `
+runs:
+  selector:
+    mode: newest-per-name
+cards:
+  - metric: train/loss
+    type: scalar
+`;
+
+export function runCairnBlockSelectorChecks(): RoundTripResult[] {
+  const results: RoundTripResult[] = [];
+
+  // 1) resolvedRunIds given → selector block compiles a non-empty series
+  //    over exactly the resolved run ids (the bug fix).
+  {
+    const resolvedRunIds = ["run_x", "run_y"];
+    const metricIndex = buildMetricIndex([seqFixture("run_x", "train/loss"), seqFixture("run_y", "train/loss")]);
+    let detail: string | undefined;
+    let pass = false;
+    try {
+      const spec = parseCairnSpec(SELECTOR_YAML);
+      const compiled = compileCairnBlock(spec, metricIndex, { resolvedRunIds });
+      const card = compiled.block.cards[0];
+      const hasRunSelector = !!compiled.block.runSelector && compiled.block.runIds === undefined;
+      const seriesRunIds = card ? [...new Set(card.series.map((s) => s.runId))].sort() : [];
+      const seriesMatch = deepEqual(seriesRunIds, [...resolvedRunIds].sort());
+      pass = !!card && card.series.length > 0 && hasRunSelector && seriesMatch;
+      if (!pass) {
+        detail = `hasRunSelector=${hasRunSelector} seriesMatch=${seriesMatch} series=${JSON.stringify(card?.series)}`;
+      }
+    } catch (e) {
+      detail = `compile failed: ${(e as Error).message}`;
+    }
+    results.push({ name: "runs.selector + resolvedRunIds → non-empty series over resolved runs", pass, detail });
+  }
+
+  // 2) No resolvedRunIds given (e.g. resolution not yet available) →
+  //    compiles gracefully to an empty series, not a crash — the loading
+  //    state a caller can detect and render around, not a hard failure.
+  {
+    const metricIndex = buildMetricIndex([]);
+    let detail: string | undefined;
+    let pass = false;
+    try {
+      const spec = parseCairnSpec(SELECTOR_YAML);
+      const compiled = compileCairnBlock(spec, metricIndex);
+      const card = compiled.block.cards[0];
+      pass = !!card && card.series.length === 0;
+      if (!pass) detail = `expected empty series, got ${JSON.stringify(card?.series)}`;
+    } catch (e) {
+      detail = `compile failed: ${(e as Error).message}`;
+    }
+    results.push({ name: "runs.selector without resolvedRunIds → graceful empty series (no crash)", pass, detail });
+  }
+
+  // 3) Static `runs.ids` is unaffected by the new opts param — passing an
+  //    unrelated `resolvedRunIds` must not leak into a static block's
+  //    effective run set.
+  {
+    const staticYaml = `
+runs:
+  ids: [run_a, run_b]
+cards:
+  - metric: train/loss
+    type: scalar
+`;
+    const metricIndex = buildMetricIndex([seqFixture("run_a", "train/loss"), seqFixture("run_b", "train/loss")]);
+    let detail: string | undefined;
+    let pass = false;
+    try {
+      const spec = parseCairnSpec(staticYaml);
+      const compiled = compileCairnBlock(spec, metricIndex, { resolvedRunIds: ["run_x", "run_y"] });
+      const card = compiled.block.cards[0];
+      const seriesRunIds = card ? [...new Set(card.series.map((s) => s.runId))].sort() : [];
+      pass = deepEqual(seriesRunIds, ["run_a", "run_b"]);
+      if (!pass) detail = `expected [run_a, run_b], got ${JSON.stringify(seriesRunIds)}`;
+    } catch (e) {
+      detail = `compile failed: ${(e as Error).message}`;
+    }
+    results.push({ name: "runs.ids (static) ignores resolvedRunIds — unaffected by the selector fix", pass, detail });
+  }
+
+  return results;
 }
