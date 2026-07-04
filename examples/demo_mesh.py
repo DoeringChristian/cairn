@@ -3,8 +3,12 @@
 Logs deforming/colored/faceted meshes as ``cairn.Mesh`` sequences across
 steps, exercising every card feature:
 
-- a deforming "blob" sphere with per-vertex ``values`` (color mode
-  "values", Colorbar with a real [min, max] range) that changes each step
+- a deforming "blob" sphere with TWO named per-vertex properties
+  (``bump``/``curvature``, via ``values={...}``) — the Property selector,
+  colormap + Colorbar over the selected property's real range, and (since
+  ``run-a``/``run-b`` share the same base sphere topology every step, only
+  ``phase`` differs) the mesh card's ``diff-property``/``diff-geometry``
+  native comparison modes on genuinely differing same-topology data
 - a rotating torus with explicit per-vertex ``colors`` (color mode
   "vertex-colors")
 - a faceted cube with explicit per-vertex ``normals`` (flat shading via the
@@ -84,16 +88,23 @@ def mixed_winding_sphere(
     return vertices, faces
 
 
-def blob_sphere(base: np.ndarray, theta: float, freq: float) -> tuple[np.ndarray, np.ndarray]:
+def blob_sphere(base: np.ndarray, theta: float, freq: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Radially deform a unit sphere by a per-vertex sine bump.
 
-    Returns ``(deformed vertices, per-vertex bump value)``.
+    Returns ``(deformed vertices, per-vertex bump value, per-vertex |lat|
+    "curvature" proxy)`` — two NAMED properties on the same mesh (spec-3dx
+    §B named-multi-property demo requirement). ``run-a``/``run-b`` share the
+    base ``uv_sphere`` topology (same ``sphere_faces``, logged with the same
+    step count) but ``phase`` differs per run, so ``bump`` differs at every
+    step — real data for the mesh's ``diff-property``/``diff-geometry``
+    native modes.
     """
     lat = np.arccos(np.clip(base[:, 2], -1.0, 1.0))
     lon = np.arctan2(base[:, 1], base[:, 0])
     bump = 0.25 * np.sin(freq * lat + theta) * np.cos(2 * lon + theta)
     deformed = base * (1.0 + bump)[:, None]
-    return deformed.astype(np.float32), bump.astype(np.float32)
+    curvature = np.abs(lat - lat.mean())
+    return deformed.astype(np.float32), bump.astype(np.float32), curvature.astype(np.float32)
 
 
 def torus(n_u: int, n_v: int, big_r: float = 1.0, tube_r: float = 0.35) -> tuple[np.ndarray, np.ndarray]:
@@ -202,8 +213,12 @@ def log_run(name: str, seed: int, phase: float) -> None:
     for step in range(NUM_STEPS):
         theta = phase * step * (2 * math.pi / NUM_STEPS)
 
-        deformed, values = blob_sphere(base_sphere, theta, freq=5.0)
-        run.track(cairn.Mesh(deformed, sphere_faces, values=values), name="blob_sphere", step=step)
+        deformed, bump, curvature = blob_sphere(base_sphere, theta, freq=5.0)
+        run.track(
+            cairn.Mesh(deformed, sphere_faces, values={"bump": bump, "curvature": curvature}),
+            name="blob_sphere",
+            step=step,
+        )
 
         # Explicit analytic normals — good practice for parametric surfaces,
         # not load-bearing (see torus_normals docstring).

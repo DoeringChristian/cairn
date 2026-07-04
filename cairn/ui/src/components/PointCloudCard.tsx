@@ -17,15 +17,35 @@ import {
   resolveAtStep,
   useRunInfo,
   MultiPaneGrid,
+  PropertySelector,
+  useTwoSeriesCompare,
+  OffscreenComparePanes,
   type BaseCardSettings,
 } from "./card-kit";
 import {
-  PointCloudViewer,
+  Colorbar,
+  isCoreCompareMode,
+  type MediaCompareMode,
+  type DiffMode,
+  type Colormap,
+} from "../lib/cairn-plot";
+import PointCloudViewer, {
   type PointCloudChannels,
   type PointColorMode,
   type PointCloudBackground,
-} from "../lib/cairn-plot";
+  extractPositions,
+} from "../lib/cairn-plot/renderers/PointCloudViewer";
+import type { Scene3DSyncOptions } from "../lib/cairn-plot/three/use-scene3d";
 import { parseNpy } from "../lib/cairn-plot/transforms/parse-npy";
+import { parseNpz } from "../lib/cairn-plot/transforms/parse-npz";
+import {
+  extractProperties,
+  resolveActiveProperty,
+  propertyNames,
+  type PropertyMap,
+  type PropertyMeta,
+} from "../lib/cairn-plot/three/properties";
+import { diffColors, computeDelta, computeDisplacementMagnitude, type DiffColormap } from "../lib/cairn-plot/three/diff";
 import AddToComparisonButton from "./AddToComparisonButton";
 import CardShell from "./CardShell";
 import SeriesChipStrip from "./SeriesChipStrip";
@@ -53,7 +73,13 @@ interface PointCloudMeta {
   bounds: { min: [number, number, number]; max: [number, number, number] };
   original_count: number;
   downsampled?: boolean;
+  value_range?: { min: number; max: number; mean: number };
+  properties?: PropertyMeta[];
 }
+
+/** Extension point usage: pointcloud's two native modes, appended via
+ *  `MediaCompareMode<TExtra>` — see spec-visual-compare.md / ws-VC1-report.md. */
+type PointCloudCompareMode = MediaCompareMode<"diff-property" | "diff-position">;
 
 interface PointCloudSettings extends BaseCardSettings {
   metrics: Array<{ runId?: string; name: string; context_hash: string }>;
@@ -69,6 +95,16 @@ interface PointCloudSettings extends BaseCardSettings {
    * — see `lib/camera-sync.ts`.
    */
   syncViews?: boolean;
+  /** Selected named property (Property selector); undefined = first available. */
+  property?: string;
+  /** 2-series compare mode (spec-visual-compare.md WS-VC2). Absent/"side" =
+   *  today's default multi-pane grid, UNCHANGED. */
+  compareMode?: PointCloudCompareMode;
+  diffColormap?: DiffColormap;
+  diffSubmode?: DiffMode;
+  splitPosition?: number;
+  blendAlpha?: number;
+  refFixedStep?: number;
 }
 
 const DEFAULT_SETTINGS = (seed: { name: string; context_hash: string }): PointCloudSettings => ({
@@ -93,19 +129,68 @@ const BACKGROUND_OPTIONS: Array<{ value: PointCloudBackground; label: string }> 
   { value: "light", label: "Light" },
 ];
 
-/** Fetch + parse the .npy point-cloud blob for a given artifact hash. */
+const DIFF_COLORMAP_OPTIONS: Array<{ value: DiffColormap; label: string }> = [
+  { value: "red-green", label: "Red–green (signed)" },
+  { value: "viridis", label: "Viridis (magnitude)" },
+];
+
+const DIFF_SUBMODE_OPTIONS: Array<{ value: DiffMode; label: string }> = [
+  { value: "signed", label: "Signed" },
+  { value: "absolute", label: "Absolute" },
+  { value: "squared", label: "Squared" },
+  { value: "relative_signed", label: "Relative signed" },
+  { value: "relative_absolute", label: "Relative absolute" },
+  { value: "relative_squared", label: "Relative squared" },
+];
+
+function compareModeOptions(topologyOk: boolean): Array<{ value: PointCloudCompareMode; label: string; disabled?: boolean }> {
+  return [
+    { value: "side", label: "Side by side (default)" },
+    { value: "normal", label: "Normal (primary only)" },
+    { value: "split", label: "Split (image-space)" },
+    { value: "blend", label: "Blend (image-space)" },
+    { value: "diff", label: "Pixel diff (image-space)" },
+    { value: "diff-property", label: "Diff: property (native)", disabled: !topologyOk },
+    { value: "diff-position", label: "Diff: position (native)", disabled: !topologyOk },
+  ];
+}
+
+function looksLikeNpz(buf: ArrayBuffer): boolean {
+  if (buf.byteLength < 2) return false;
+  const view = new Uint8Array(buf, 0, 2);
+  return view[0] === 0x50 && view[1] === 0x4b; // "PK\x03\x04"
+}
+
+interface PointCloudArrays {
+  /** Flat `(nPoints * channelCount)` float32 data. */
+  data: Float32Array;
+  properties: PropertyMap;
+}
+
+/** Fetch + parse the point-cloud blob for a given artifact hash — plain
+ *  `.npy` (no named properties) or `.npz` (named properties present),
+ *  content-sniffed (see `cairn/sdk/handlers/pointcloud.py::deserialize`). */
 function usePointCloudBlob(hash: string | undefined) {
   return useQuery({
-    queryKey: ["pointcloud-npy", hash],
+    queryKey: ["pointcloud-blob", hash],
     enabled: !!hash,
     staleTime: Infinity,
-    queryFn: async () => {
+    queryFn: async (): Promise<PointCloudArrays> => {
       const res = await fetch(api.artifactUrl(hash!));
       if (!res.ok) throw new Error(`failed to fetch point cloud (${res.status})`);
-      const parsed = parseNpy(await res.arrayBuffer());
+      const buf = await res.arrayBuffer();
+      if (looksLikeNpz(buf)) {
+        const npz = await parseNpz(buf);
+        if (!npz.points) throw new Error("point cloud npz missing 'points'");
+        return {
+          data: Float32Array.from(npz.points.data),
+          properties: extractProperties(npz),
+        };
+      }
+      const parsed = parseNpy(buf);
       // The shared parser returns Float64Array for uniform downstream math;
       // three.js BufferAttributes require Float32Array, so narrow once here.
-      return { ...parsed, data: Float32Array.from(parsed.data) };
+      return { data: Float32Array.from(parsed.data), properties: {} };
     },
   });
 }
@@ -115,7 +200,8 @@ interface ViewConfig {
   colorMode: PointColorMode;
   background: PointCloudBackground;
   /** Resolved live camera-sync group, or `null` when sync is off for this card. */
-  sync: { groupId: string } | null;
+  sync: Scene3DSyncOptions | null;
+  property: string | null;
 }
 
 /** Renders a single resolved point-cloud point (blob + metadata). */
@@ -140,20 +226,26 @@ function PointCloudBody({
     return <div className="text-sm text-fg-muted">failed to load point cloud</div>;
   }
 
-  const nPoints = meta.n_points ?? blob.data.shape[0] ?? 0;
+  const nPoints = meta.n_points;
+  const active = resolveActiveProperty(blob.data.properties, view.property, meta.properties ?? null);
   return (
     <div className="flex flex-col">
-      <div className="h-64 overflow-hidden rounded bg-bg">
-        <PointCloudViewer
-          data={blob.data.data}
-          channels={meta.channels}
-          nPoints={nPoints}
-          bounds={meta.bounds}
-          colorMode={view.colorMode}
-          pointSize={view.pointSize}
-          background={view.background}
-          sync={view.sync}
-        />
+      <div className="flex h-64 overflow-hidden rounded bg-bg">
+        <div className="min-w-0 flex-1">
+          <PointCloudViewer
+            data={blob.data.data}
+            channels={meta.channels}
+            nPoints={nPoints}
+            bounds={meta.bounds}
+            colorMode={view.colorMode}
+            pointSize={view.pointSize}
+            background={view.background}
+            sync={view.sync}
+          />
+        </div>
+        {active.range && active.values && (
+          <Colorbar colormap="viridis" min={active.range[0]} max={active.range[1]} />
+        )}
       </div>
       <div className="mono mt-1 text-xs text-fg-subtle">
         {`${nPoints.toLocaleString()} pts · ${meta.channels}`}
@@ -206,6 +298,161 @@ function PointCloudPane({
   );
 }
 
+/** 2-series compare panel — see MeshCard's `MeshComparePanel` for the full
+ *  pattern writeup (identical mechanics, pointcloud-specific diff math). */
+function PointCloudComparePanel({
+  runId,
+  primaryMetric,
+  referenceMetric,
+  currentStep,
+  view,
+  settings,
+  updateSettings,
+}: {
+  runId: string;
+  primaryMetric: { runId?: string; name: string; context_hash: string };
+  referenceMetric: { runId?: string; name: string; context_hash: string };
+  currentStep: number;
+  view: ViewConfig;
+  settings: PointCloudSettings;
+  updateSettings: (patch: Partial<PointCloudSettings>) => void;
+}) {
+  const primaryQ = useSequence(primaryMetric.runId ?? runId, primaryMetric.name, {
+    context: primaryMetric.context_hash || undefined,
+    maxPoints: 500,
+  });
+  const referenceQ = useSequence(referenceMetric.runId ?? runId, referenceMetric.name, {
+    context: referenceMetric.context_hash || undefined,
+    maxPoints: 500,
+  });
+  const primaryPoints = useMemo(() => (primaryQ.data?.points ?? []).filter((p) => p.artifact_hash), [primaryQ.data]);
+  const referencePoints = useMemo(() => (referenceQ.data?.points ?? []).filter((p) => p.artifact_hash), [referenceQ.data]);
+
+  const { primaryHash, referenceHash } = useTwoSeriesCompare({
+    primaryPoints,
+    referencePoints,
+    currentStep,
+    refFixedStep: settings.refFixedStep,
+  });
+
+  const primaryPoint = useMemo(() => primaryPoints.find((p) => p.artifact_hash === primaryHash), [primaryPoints, primaryHash]);
+  const referencePoint = useMemo(() => referencePoints.find((p) => p.artifact_hash === referenceHash), [referencePoints, referenceHash]);
+  const primaryMeta = useMemo(() => safeJsonParse<PointCloudMeta>(primaryPoint?.artifact_metadata), [primaryPoint]);
+  const referenceMeta = useMemo(() => safeJsonParse<PointCloudMeta>(referencePoint?.artifact_metadata), [referencePoint]);
+
+  const primaryBlob = usePointCloudBlob(primaryHash);
+  const referenceBlob = usePointCloudBlob(referenceHash);
+
+  const mode: PointCloudCompareMode = settings.compareMode ?? "side";
+
+  if (mode === "normal") {
+    return <PointCloudBody hash={primaryHash} meta={primaryMeta} view={view} />;
+  }
+
+  if (!primaryBlob.data || !referenceBlob.data || !primaryMeta || !referenceMeta) {
+    return <div className="h-64 motion-safe:animate-pulse rounded bg-bg-hover" />;
+  }
+
+  if (isCoreCompareMode(mode) && (mode === "split" || mode === "blend" || mode === "diff")) {
+    return (
+      <div className="h-64 overflow-hidden rounded bg-bg">
+        <OffscreenComparePanes
+          mode={mode}
+          renderPrimary={(onFrame, sync) => (
+            <PointCloudViewer
+              data={primaryBlob.data!.data}
+              channels={primaryMeta.channels}
+              nPoints={primaryMeta.n_points}
+              bounds={primaryMeta.bounds}
+              colorMode={view.colorMode}
+              pointSize={view.pointSize}
+              background={view.background}
+              sync={sync}
+              onFrame={onFrame}
+            />
+          )}
+          renderReference={(onFrame, sync) => (
+            <PointCloudViewer
+              data={referenceBlob.data!.data}
+              channels={referenceMeta.channels}
+              nPoints={referenceMeta.n_points}
+              bounds={referenceMeta.bounds}
+              colorMode={view.colorMode}
+              pointSize={view.pointSize}
+              background={view.background}
+              sync={sync}
+              onFrame={onFrame}
+            />
+          )}
+          diffSubmode={settings.diffSubmode ?? "signed"}
+          colormap={(settings.diffColormap ?? "viridis") as Colormap}
+          splitPosition={settings.splitPosition ?? 0.5}
+          onSplitPositionChange={(p) => updateSettings({ splitPosition: p })}
+          blendAlpha={settings.blendAlpha ?? 0.5}
+          primaryLabel={primaryMetric.name}
+        />
+      </div>
+    );
+  }
+
+  // Native modes: diff-property | diff-position — same point COUNT required
+  // (index-corresponding, per spec-3dx-superseded §C — no nearest-neighbor
+  // matching).
+  const topologyOk = primaryMeta.n_points === referenceMeta.n_points;
+  if (!topologyOk) {
+    return (
+      <div className="flex h-64 items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
+        Point-count mismatch: {primaryMeta.n_points.toLocaleString()} vs{" "}
+        {referenceMeta.n_points.toLocaleString()} points — native diff modes need the same point
+        count (index-corresponding).
+      </div>
+    );
+  }
+
+  const diffColormap: DiffColormap = settings.diffColormap ?? "viridis";
+  let deltaValues: Float32Array | null = null;
+  if (mode === "diff-position") {
+    const posA = extractPositions(primaryBlob.data.data, primaryMeta.channels, primaryMeta.n_points);
+    const posB = extractPositions(referenceBlob.data.data, referenceMeta.channels, referenceMeta.n_points);
+    deltaValues = computeDisplacementMagnitude(posA, posB, primaryMeta.n_points);
+  } else {
+    const activeA = resolveActiveProperty(primaryBlob.data.properties, view.property, primaryMeta.properties ?? null);
+    const activeB = resolveActiveProperty(referenceBlob.data.properties, view.property, referenceMeta.properties ?? null);
+    if (activeA.values && activeB.values) {
+      deltaValues = computeDelta(activeA.values, activeB.values, primaryMeta.n_points);
+    }
+  }
+
+  if (!deltaValues) {
+    return (
+      <div className="flex h-64 items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
+        No property values logged on this cloud to diff — pick a property, or use "Diff: position" instead.
+      </div>
+    );
+  }
+
+  const { colors, domain } = diffColors(deltaValues, primaryMeta.n_points, diffColormap);
+
+  return (
+    <div className="flex h-64 overflow-hidden rounded bg-bg">
+      <div className="min-w-0 flex-1">
+        <PointCloudViewer
+          data={primaryBlob.data.data}
+          channels={primaryMeta.channels}
+          nPoints={primaryMeta.n_points}
+          bounds={primaryMeta.bounds}
+          colorMode={view.colorMode}
+          pointSize={view.pointSize}
+          background={view.background}
+          sync={view.sync}
+          overrideColors={colors}
+        />
+      </div>
+      <Colorbar colormap={diffColormap} min={domain[0]} max={domain[1]} />
+    </div>
+  );
+}
+
 export default function PointCloudCard({
   runId,
   metric,
@@ -239,6 +486,7 @@ export default function PointCloudCard({
     colorMode: settings.colorMode,
     background: settings.background,
     sync: cameraGroupId ? { groupId: cameraGroupId } : null,
+    property: settings.property ?? null,
   };
 
   // Single-metric path: fetch points for the step slider.
@@ -304,6 +552,9 @@ export default function PointCloudCard({
     [current],
   );
 
+  const topBlob = usePointCloudBlob(current?.artifact_hash ?? undefined);
+  const propertyOptions = useMemo(() => propertyNames(topBlob.data?.properties), [topBlob.data]);
+
   const [expanded, setExpanded] = useState(autoOpenSettings ?? false);
 
   const compSeries = useMemo(
@@ -325,6 +576,7 @@ export default function PointCloudCard({
         : `${metric.count} pts`;
 
   const isMulti = effectiveMetrics.length > 1;
+  const isCompareEligible = effectiveMetrics.length === 2;
   const cardRef = useRef<HTMLDivElement>(null);
 
   // Cap panes (each is its own WebGL context).
@@ -343,6 +595,21 @@ export default function PointCloudCard({
     return map;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [multipleRuns, shownMetrics, allRunIds, runId, runMetaVersion]);
+
+  const referenceRawPoints = useMemo(
+    () => (isCompareEligible ? ((multiQueries[1]?.data as SequenceResponse | undefined)?.points ?? []).filter((p) => p.artifact_hash) : []),
+    [isCompareEligible, multiQueries],
+  );
+  const referenceStepForCompare = settings.refFixedStep ?? currentStep;
+  const referenceCurrentForCompare = useMemo(
+    () => resolveAtStep(referenceRawPoints, referenceStepForCompare) ?? referenceRawPoints[0],
+    [referenceRawPoints, referenceStepForCompare],
+  );
+  const referenceMetaForCompare = useMemo(
+    () => safeJsonParse<PointCloudMeta>(referenceCurrentForCompare?.artifact_metadata),
+    [referenceCurrentForCompare],
+  );
+  const compareTopologyOk = !!meta && !!referenceMetaForCompare && meta.n_points === referenceMetaForCompare.n_points;
 
   const renderSingle = () => {
     if (q.isLoading) {
@@ -409,8 +676,44 @@ export default function PointCloudCard({
     </>
   );
 
-  const renderContent = (inModal: boolean) =>
-    isMulti ? renderMulti(inModal) : renderSingle();
+  const renderCompare = () => (
+    <>
+      <PointCloudComparePanel
+        runId={runId}
+        primaryMetric={shownMetrics[0]!}
+        referenceMetric={shownMetrics[1]!}
+        currentStep={currentStep}
+        view={view}
+        settings={settings}
+        updateSettings={updateSettings}
+      />
+      <StepSlider
+        points={points}
+        currentIndex={safeIdx}
+        onChange={onSliderChange}
+        xAxis={settings.xAxis}
+        onXAxisChange={(m) => updateSettings({ xAxis: m })}
+        className="mt-3"
+      />
+      <SeriesChipStrip
+        metrics={effectiveMetrics}
+        controlledSeries={controlledSeries}
+        runId={runId}
+        allRunIds={allRunIds}
+        onMetricsChange={(next) => updateSettings({ metrics: next })}
+        onClick={multipleRuns ? toggle : undefined}
+        selectedIds={selectedIds}
+      />
+    </>
+  );
+
+  const usingCompareMode = isCompareEligible && !!settings.compareMode && settings.compareMode !== "side";
+
+  const renderContent = (inModal: boolean) => {
+    if (!isMulti) return renderSingle();
+    if (usingCompareMode) return renderCompare();
+    return renderMulti(inModal);
+  };
 
   const selectionPanel = !hasSelectionProvider && (
     <RunSelectionPanel
@@ -463,6 +766,11 @@ export default function PointCloudCard({
             options={COLOR_MODE_OPTIONS}
             description="Falls back to an available channel when the chosen one is absent"
           />
+          <PropertySelector
+            properties={propertyOptions}
+            value={settings.property ?? null}
+            onChange={(p) => updateSettings({ property: p })}
+          />
           <Select
             label="Background"
             value={settings.background}
@@ -475,6 +783,93 @@ export default function PointCloudCard({
             onChange={(v) => updateSettings({ syncViews: v })}
             description="Share orbit/zoom/pan live with this card's other panes and any other sync-enabled 3D card on this page"
           />
+          {isCompareEligible && (
+            <div className="mt-2 border-t border-border-subtle pt-2">
+              <div className="mb-1 text-xs font-semibold text-fg-muted">Compare (2 series)</div>
+              <Select
+                label="Compare mode"
+                value={(settings.compareMode ?? "side") as PointCloudCompareMode}
+                onChange={(v) => updateSettings({ compareMode: v as PointCloudCompareMode })}
+                options={compareModeOptions(compareTopologyOk)}
+                description={
+                  compareTopologyOk
+                    ? undefined
+                    : "Native diff modes need the same point count — disabled for this pair"
+                }
+              />
+              {usingCompareMode && (
+                <>
+                  {(settings.compareMode === "diff-property" || settings.compareMode === "diff-position") && (
+                    <Select
+                      label="Diff colormap"
+                      value={settings.diffColormap ?? "viridis"}
+                      onChange={(v) => updateSettings({ diffColormap: v })}
+                      options={DIFF_COLORMAP_OPTIONS}
+                    />
+                  )}
+                  {settings.compareMode === "diff" && (
+                    <>
+                      <Select
+                        label="Pixel-diff submode"
+                        value={settings.diffSubmode ?? "signed"}
+                        onChange={(v) => updateSettings({ diffSubmode: v })}
+                        options={DIFF_SUBMODE_OPTIONS}
+                      />
+                      <Select
+                        label="Pixel-diff colormap"
+                        value={(settings.diffColormap ?? "viridis") as Colormap}
+                        onChange={(v) => updateSettings({ diffColormap: v as DiffColormap })}
+                        options={[
+                          { value: "viridis" as Colormap, label: "Viridis" },
+                          { value: "red-green" as Colormap, label: "Red-green" },
+                          { value: "red-blue" as Colormap, label: "Red-blue" },
+                        ]}
+                      />
+                    </>
+                  )}
+                  {settings.compareMode === "split" && (
+                    <Slider
+                      label="Split position"
+                      value={settings.splitPosition ?? 0.5}
+                      onChange={(v) => updateSettings({ splitPosition: v })}
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      format={(v) => v.toFixed(2)}
+                    />
+                  )}
+                  {settings.compareMode === "blend" && (
+                    <Slider
+                      label="Blend alpha"
+                      value={settings.blendAlpha ?? 0.5}
+                      onChange={(v) => updateSettings({ blendAlpha: v })}
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      format={(v) => v.toFixed(2)}
+                    />
+                  )}
+                  <Toggle
+                    label="Pin reference to a fixed step"
+                    checked={settings.refFixedStep != null}
+                    onChange={(v) => updateSettings({ refFixedStep: v ? currentStep : undefined })}
+                    description="Off = per-iteration (reference tracks the same step as the primary series)"
+                  />
+                  {settings.refFixedStep != null && (
+                    <Slider
+                      label="Reference step"
+                      value={settings.refFixedStep}
+                      onChange={(v) => updateSettings({ refFixedStep: Math.round(v) })}
+                      min={0}
+                      max={Math.max(...globalSteps, settings.refFixedStep, 1)}
+                      step={1}
+                      format={(v) => v.toFixed(0)}
+                    />
+                  )}
+                </>
+              )}
+            </div>
+          )}
         </>
       }
       modalOpen={expanded}

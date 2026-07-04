@@ -7,6 +7,10 @@ exercising every card feature:
 - ``xyzc``  clouds (a categorical torus scan) → color mode "category"
 - ``xyz``   clouds (height-only helix)        → color mode "height" (viridis)
 - a >300k cloud                               → log-time downsample + note
+- a deterministic ``grid_scan`` cloud with a named per-point ``values=``
+  "signal" property (same index/count across steps and across runs — only
+  ``theta`` differs) → Property selector + the card's ``diff-property``/
+  ``diff-position`` native comparison modes on genuinely same-topology data
 
 Two runs are logged so the merge agent can build a 2-run comparison (panes).
 
@@ -67,6 +71,24 @@ def helix_xyz(n: int, theta: float) -> np.ndarray:
     return np.stack([x, y, z], axis=1).astype(np.float32)
 
 
+def grid_scan(n_side: int, theta: float) -> tuple[np.ndarray, np.ndarray]:
+    """Deterministic ``(n_side**3, 3)`` grid + a per-point "signal" property.
+
+    Unlike the rng-driven clouds above, point *index i* denotes the SAME
+    physical grid cell across every call (no resampling) — a genuine
+    same-topology, same-count series across steps AND across ``run-a``/
+    ``run-b`` (only ``theta`` differs), so the point-cloud card's
+    ``diff-property`` (this ``signal``) and ``diff-position`` (points are
+    static here, so that mode reads as all-zero — still exercises the code
+    path) native comparison modes have real, index-corresponding data.
+    """
+    lin = np.linspace(-1.0, 1.0, n_side, dtype=np.float32)
+    xx, yy, zz = np.meshgrid(lin, lin, lin, indexing="ij")
+    xyz = np.stack([xx.ravel(), yy.ravel(), zz.ravel()], axis=1)
+    signal = np.sin(3.0 * xyz[:, 0] + theta) * np.cos(3.0 * xyz[:, 1] + theta)
+    return xyz.astype(np.float32), signal.astype(np.float32)
+
+
 def log_run(name: str, seed: int, spin: float) -> None:
     rng = np.random.default_rng(seed)
     run = cairn.Run(project=PROJECT, name=name, tags=["pointcloud"])
@@ -77,6 +99,9 @@ def log_run(name: str, seed: int, spin: float) -> None:
         run.track(cairn.PointCloud(sphere_rgb(8000, theta, rng)), name="sphere_rgb", step=step)
         run.track(cairn.PointCloud(torus_category(8000, theta, rng)), name="torus_category", step=step)
         run.track(cairn.PointCloud(helix_xyz(4000, theta)), name="helix_height", step=step)
+
+        xyz, signal = grid_scan(14, theta)
+        run.track(cairn.PointCloud(xyz, values=signal), name="grid_scan", step=step)
         # a couple of scalar metrics so the run has non-media context too
         run.track(0.9 ** step, name="loss", step=step)
 

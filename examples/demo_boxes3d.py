@@ -9,6 +9,12 @@ feature:
 - ``bvh``      — ``cairn.BVH`` built top-down over a random triangle set,
   each node's ``value`` = the number of triangles it contains (a cost
   proxy) → "value" color mode + Colorbar with a real min/max range.
+- ``grid_boxes`` — a DETERMINISTIC uniform box grid (same ``n_boxes``/depth
+  every step and across ``run-a``/``run-b``; only the per-box "cost" value
+  differs) → the boxes3d card's ``diff-property`` native comparison mode on
+  genuinely matched-topology data (``octree``/``bvh`` above are rng-driven
+  and so do NOT share topology across runs — they exercise the "mismatched
+  topology, mode disabled with reason" path instead).
 
 A plain scalar metric is logged too (``loss``), and two runs (`run-a`/
 `run-b`) are written so the merge agent can build a 2-run comparison.
@@ -126,6 +132,37 @@ def build_bvh(
     )
 
 
+def fixed_grid_boxes(
+    n_side: int = 4, half: float = 2.0
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """A deterministic uniform ``n_side**3`` box grid (mins, maxs, depth=1).
+
+    Unlike ``build_octree``/``build_bvh`` above (which are rng-driven and so
+    produce a DIFFERENT ``n_boxes``/topology per run — no matched-topology
+    pair to diff), this grid has an identical box layout every call: a
+    genuine same-``n_boxes``-and-``depth`` pair across ``run-a``/``run-b``
+    for the boxes3d card's ``diff-property`` native comparison mode.
+    """
+    edges = np.linspace(-half, half, n_side + 1, dtype=np.float32)
+    mins = []
+    maxs = []
+    for i in range(n_side):
+        for j in range(n_side):
+            for k in range(n_side):
+                mins.append([edges[i], edges[j], edges[k]])
+                maxs.append([edges[i + 1], edges[j + 1], edges[k + 1]])
+    mins_arr = np.array(mins, dtype=np.float32)
+    maxs_arr = np.array(maxs, dtype=np.float32)
+    depth = np.ones(len(mins_arr), dtype=np.uint16)
+    return mins_arr, maxs_arr, depth
+
+
+def grid_box_values(mins: np.ndarray, maxs: np.ndarray, center: np.ndarray) -> np.ndarray:
+    """Per-box "cost" = distance from each box's center to a moving ``center``."""
+    box_centers = (mins + maxs) / 2.0
+    return np.linalg.norm(box_centers - center[None, :], axis=1).astype(np.float32)
+
+
 def log_run(name: str, seed: int, orbit_radius: float) -> None:
     rng = np.random.default_rng(seed)
     run = cairn.Run(project=PROJECT, name=name, tags=["boxes3d"])
@@ -133,6 +170,7 @@ def log_run(name: str, seed: int, orbit_radius: float) -> None:
 
     root_min = np.array([-2.0, -2.0, -2.0], dtype=np.float32)
     root_max = np.array([2.0, 2.0, 2.0], dtype=np.float32)
+    grid_mins, grid_maxs, grid_depth = fixed_grid_boxes()
 
     for step in range(NUM_STEPS):
         theta = step * (2 * math.pi / NUM_STEPS)
@@ -141,6 +179,16 @@ def log_run(name: str, seed: int, orbit_radius: float) -> None:
         )
         mins, maxs, depth = build_octree(root_min, root_max, center, max_depth=4, rng=rng)
         run.track(cairn.Octree(mins, maxs, depth=depth), name="octree", step=step)
+
+        # Deterministic same-topology grid (see fixed_grid_boxes docstring) —
+        # only the per-box "cost" value differs, real data for
+        # boxes3d's diff-property native comparison mode across run-a/run-b.
+        grid_values = grid_box_values(grid_mins, grid_maxs, center)
+        run.track(
+            cairn.Boxes3D(grid_mins, grid_maxs, depth=grid_depth, values=grid_values),
+            name="grid_boxes",
+            step=step,
+        )
 
         # BVH over a triangle set that grows slightly over steps.
         n_tris = 80 + step * 10

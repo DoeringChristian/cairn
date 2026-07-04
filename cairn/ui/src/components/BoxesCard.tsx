@@ -17,13 +17,31 @@ import {
   resolveAtStep,
   useRunInfo,
   MultiPaneGrid,
+  PropertySelector,
+  useTwoSeriesCompare,
+  OffscreenComparePanes,
   type BaseCardSettings,
 } from "./card-kit";
-import { parseNpz, Colorbar } from "../lib/cairn-plot";
+import {
+  parseNpz,
+  Colorbar,
+  isCoreCompareMode,
+  type MediaCompareMode,
+  type DiffMode,
+  type Colormap,
+} from "../lib/cairn-plot";
 import BoxesViewer, {
   type BoxesColorMode,
   type BoxesBackground,
 } from "../lib/cairn-plot/three/BoxesViewer";
+import type { Scene3DSyncOptions } from "../lib/cairn-plot/three/use-scene3d";
+import {
+  extractProperties,
+  resolveActiveProperty,
+  propertyNames,
+  type PropertyMeta,
+} from "../lib/cairn-plot/three/properties";
+import { diffColors, computeDelta, type DiffColormap } from "../lib/cairn-plot/three/diff";
 import AddToComparisonButton from "./AddToComparisonButton";
 import CardShell from "./CardShell";
 import SeriesChipStrip from "./SeriesChipStrip";
@@ -51,8 +69,13 @@ interface Boxes3DMeta {
   kind: "boxes" | "octree" | "bvh";
   bounds: { min: [number, number, number]; max: [number, number, number] };
   value_range?: { min: number; max: number; mean: number };
+  properties?: PropertyMeta[];
   size_bytes: number;
 }
+
+/** Extension point usage: boxes3d's one native mode, appended via
+ *  `MediaCompareMode<TExtra>` (spec-visual-compare.md / ws-VC1-report.md). */
+type BoxesCompareMode = MediaCompareMode<"diff-property">;
 
 interface Boxes3DSettings extends BaseCardSettings {
   metrics: Array<{ runId?: string; name: string; context_hash: string }>;
@@ -68,6 +91,16 @@ interface Boxes3DSettings extends BaseCardSettings {
   valueMax?: number;
   /** See PointCloudCard's syncViews — shared live camera-sync toggle. */
   syncViews?: boolean;
+  /** Selected named property (Property selector); undefined = first available. */
+  property?: string;
+  /** 2-series compare mode. Absent/"side" = today's default multi-pane
+   *  grid, UNCHANGED. */
+  compareMode?: BoxesCompareMode;
+  diffColormap?: DiffColormap;
+  diffSubmode?: DiffMode;
+  splitPosition?: number;
+  blendAlpha?: number;
+  refFixedStep?: number;
 }
 
 const DEFAULT_SETTINGS = (seed: { name: string; context_hash: string }): Boxes3DSettings => ({
@@ -89,6 +122,31 @@ const BACKGROUND_OPTIONS: Array<{ value: BoxesBackground; label: string }> = [
   { value: "dark", label: "Dark" },
   { value: "light", label: "Light" },
 ];
+
+const DIFF_COLORMAP_OPTIONS: Array<{ value: DiffColormap; label: string }> = [
+  { value: "red-green", label: "Red–green (signed)" },
+  { value: "viridis", label: "Viridis (magnitude)" },
+];
+
+const DIFF_SUBMODE_OPTIONS: Array<{ value: DiffMode; label: string }> = [
+  { value: "signed", label: "Signed" },
+  { value: "absolute", label: "Absolute" },
+  { value: "squared", label: "Squared" },
+  { value: "relative_signed", label: "Relative signed" },
+  { value: "relative_absolute", label: "Relative absolute" },
+  { value: "relative_squared", label: "Relative squared" },
+];
+
+function compareModeOptions(topologyOk: boolean): Array<{ value: BoxesCompareMode; label: string; disabled?: boolean }> {
+  return [
+    { value: "side", label: "Side by side (default)" },
+    { value: "normal", label: "Normal (primary only)" },
+    { value: "split", label: "Split (image-space)" },
+    { value: "blend", label: "Blend (image-space)" },
+    { value: "diff", label: "Pixel diff (image-space)" },
+    { value: "diff-property", label: "Diff: property (native)", disabled: !topologyOk },
+  ];
+}
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.min(Math.max(v, lo), hi);
@@ -117,7 +175,8 @@ interface ViewConfig {
   valueMin?: number;
   valueMax?: number;
   /** Resolved live camera-sync group, or `null` when sync is off for this card. */
-  sync: { groupId: string } | null;
+  sync: Scene3DSyncOptions | null;
+  property: string | null;
 }
 
 /** Renders a single resolved box hierarchy (blob + metadata). */
@@ -147,26 +206,24 @@ function BoxesBody({
     return <div className="text-sm text-fg-muted">failed to load boxes</div>;
   }
 
-  const values = npz.values?.data ?? null;
-  const hasValues = !!values && !!meta.value_range;
+  const properties = extractProperties(npz);
+  const active = resolveActiveProperty(properties, view.property, meta.properties ?? null);
+  const hasValues = !!active.values && !!active.range;
   const maxDepth = meta.max_depth;
   const depthMin = clamp(view.depthMin ?? 0, 0, maxDepth);
   const depthMax = clamp(view.depthMax ?? maxDepth, depthMin, maxDepth);
-  const valueRange: [number, number] | null = meta.value_range
-    ? [meta.value_range.min, meta.value_range.max]
-    : null;
   const valueThreshold: [number, number] | null =
-    hasValues && view.valueFilterEnabled && valueRange
+    hasValues && view.valueFilterEnabled && active.range
       ? [
-          clamp(view.valueMin ?? valueRange[0], valueRange[0], valueRange[1]),
-          clamp(view.valueMax ?? valueRange[1], valueRange[0], valueRange[1]),
+          clamp(view.valueMin ?? active.range[0], active.range[0], active.range[1]),
+          clamp(view.valueMax ?? active.range[1], active.range[0], active.range[1]),
         ]
       : null;
 
   const effectiveColorMode = view.colorMode === "value" && !hasValues ? "depth" : view.colorMode;
   const showColorbar = effectiveColorMode !== "solid";
   const colorbarDomain: [number, number] =
-    effectiveColorMode === "value" && valueRange ? valueRange : [0, Math.max(maxDepth, 1)];
+    effectiveColorMode === "value" && active.range ? active.range : [0, Math.max(maxDepth, 1)];
 
   return (
     <div className="flex flex-col">
@@ -176,11 +233,11 @@ function BoxesBody({
             mins={mins}
             maxs={maxs}
             depth={depth}
-            values={values}
+            values={active.values}
             nBoxes={meta.n_boxes}
             bounds={meta.bounds}
             maxDepth={maxDepth}
-            valueRange={valueRange}
+            valueRange={active.range}
             colorMode={view.colorMode}
             depthRange={[depthMin, depthMax]}
             valueThreshold={valueThreshold}
@@ -245,6 +302,183 @@ function BoxesPane({
   );
 }
 
+/** 2-series compare panel — see MeshCard's `MeshComparePanel` for the full
+ *  pattern writeup (identical mechanics, boxes3d-specific diff math). */
+function BoxesComparePanel({
+  runId,
+  primaryMetric,
+  referenceMetric,
+  currentStep,
+  view,
+  settings,
+  updateSettings,
+}: {
+  runId: string;
+  primaryMetric: { runId?: string; name: string; context_hash: string };
+  referenceMetric: { runId?: string; name: string; context_hash: string };
+  currentStep: number;
+  view: ViewConfig;
+  settings: Boxes3DSettings;
+  updateSettings: (patch: Partial<Boxes3DSettings>) => void;
+}) {
+  const primaryQ = useSequence(primaryMetric.runId ?? runId, primaryMetric.name, {
+    context: primaryMetric.context_hash || undefined,
+    maxPoints: 500,
+  });
+  const referenceQ = useSequence(referenceMetric.runId ?? runId, referenceMetric.name, {
+    context: referenceMetric.context_hash || undefined,
+    maxPoints: 500,
+  });
+  const primaryPoints = useMemo(() => (primaryQ.data?.points ?? []).filter((p) => p.artifact_hash), [primaryQ.data]);
+  const referencePoints = useMemo(() => (referenceQ.data?.points ?? []).filter((p) => p.artifact_hash), [referenceQ.data]);
+
+  const { primaryHash, referenceHash } = useTwoSeriesCompare({
+    primaryPoints,
+    referencePoints,
+    currentStep,
+    refFixedStep: settings.refFixedStep,
+  });
+
+  const primaryPoint = useMemo(() => primaryPoints.find((p) => p.artifact_hash === primaryHash), [primaryPoints, primaryHash]);
+  const referencePoint = useMemo(() => referencePoints.find((p) => p.artifact_hash === referenceHash), [referencePoints, referenceHash]);
+  const primaryMeta = useMemo(() => safeJsonParse<Boxes3DMeta>(primaryPoint?.artifact_metadata), [primaryPoint]);
+  const referenceMeta = useMemo(() => safeJsonParse<Boxes3DMeta>(referencePoint?.artifact_metadata), [referencePoint]);
+
+  const primaryBlob = useBoxesBlob(primaryHash);
+  const referenceBlob = useBoxesBlob(referenceHash);
+
+  const mode: BoxesCompareMode = settings.compareMode ?? "side";
+
+  if (mode === "normal") {
+    return <BoxesBody hash={primaryHash} meta={primaryMeta} view={view} />;
+  }
+
+  if (!primaryBlob.data || !referenceBlob.data || !primaryMeta || !referenceMeta) {
+    return <div className="h-64 motion-safe:animate-pulse rounded bg-bg-hover" />;
+  }
+  const primaryMins = primaryBlob.data.mins?.data;
+  const primaryMaxs = primaryBlob.data.maxs?.data;
+  const primaryDepth = primaryBlob.data.depth?.data;
+  const referenceDepth = referenceBlob.data.depth?.data;
+  if (!primaryMins || !primaryMaxs || !primaryDepth || !referenceDepth) {
+    return <div className="text-sm text-fg-muted">failed to load boxes</div>;
+  }
+
+  if (isCoreCompareMode(mode) && (mode === "split" || mode === "blend" || mode === "diff")) {
+    return (
+      <div className="h-64 overflow-hidden rounded bg-bg">
+        <OffscreenComparePanes
+          mode={mode}
+          renderPrimary={(onFrame, sync) => {
+            const props = extractProperties(primaryBlob.data!);
+            const active = resolveActiveProperty(props, view.property, primaryMeta.properties ?? null);
+            return (
+              <BoxesViewer
+                mins={primaryMins}
+                maxs={primaryMaxs}
+                depth={primaryDepth}
+                values={active.values}
+                nBoxes={primaryMeta.n_boxes}
+                bounds={primaryMeta.bounds}
+                maxDepth={primaryMeta.max_depth}
+                valueRange={active.range}
+                colorMode={view.colorMode}
+                depthRange={[0, primaryMeta.max_depth]}
+                background={view.background}
+                sync={sync}
+                onFrame={onFrame}
+              />
+            );
+          }}
+          renderReference={(onFrame, sync) => {
+            const refMins = referenceBlob.data!.mins?.data;
+            const refMaxs = referenceBlob.data!.maxs?.data;
+            const props = extractProperties(referenceBlob.data!);
+            const active = resolveActiveProperty(props, view.property, referenceMeta.properties ?? null);
+            return (
+              <BoxesViewer
+                mins={refMins!}
+                maxs={refMaxs!}
+                depth={referenceDepth}
+                values={active.values}
+                nBoxes={referenceMeta.n_boxes}
+                bounds={referenceMeta.bounds}
+                maxDepth={referenceMeta.max_depth}
+                valueRange={active.range}
+                colorMode={view.colorMode}
+                depthRange={[0, referenceMeta.max_depth]}
+                background={view.background}
+                sync={sync}
+                onFrame={onFrame}
+              />
+            );
+          }}
+          diffSubmode={settings.diffSubmode ?? "signed"}
+          colormap={(settings.diffColormap ?? "viridis") as Colormap}
+          splitPosition={settings.splitPosition ?? 0.5}
+          onSplitPositionChange={(p) => updateSettings({ splitPosition: p })}
+          blendAlpha={settings.blendAlpha ?? 0.5}
+          primaryLabel={primaryMetric.name}
+        />
+      </div>
+    );
+  }
+
+  // Native mode: diff-property — same n_boxes AND matching depth per box
+  // (index correspondence) required.
+  const topologyOk =
+    primaryMeta.n_boxes === referenceMeta.n_boxes &&
+    primaryDepth.length === referenceDepth.length &&
+    Array.from(primaryDepth).every((d, i) => d === referenceDepth[i]);
+  if (!topologyOk) {
+    return (
+      <div className="flex h-64 items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
+        Topology mismatch: {primaryMeta.n_boxes.toLocaleString()} vs{" "}
+        {referenceMeta.n_boxes.toLocaleString()} boxes (or differing per-box depth) — native diff
+        needs matched box count + depth.
+      </div>
+    );
+  }
+
+  const diffColormap: DiffColormap = settings.diffColormap ?? "viridis";
+  const primaryProps = extractProperties(primaryBlob.data);
+  const referenceProps = extractProperties(referenceBlob.data);
+  const activeA = resolveActiveProperty(primaryProps, view.property, primaryMeta.properties ?? null);
+  const activeB = resolveActiveProperty(referenceProps, view.property, referenceMeta.properties ?? null);
+
+  if (!activeA.values || !activeB.values) {
+    return (
+      <div className="flex h-64 items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
+        No property values logged on these boxes to diff — pick a property with values on both series.
+      </div>
+    );
+  }
+
+  const deltaValues = computeDelta(activeA.values, activeB.values, primaryMeta.n_boxes);
+  const { colors, domain } = diffColors(deltaValues, primaryMeta.n_boxes, diffColormap);
+
+  return (
+    <div className="flex h-64 overflow-hidden rounded bg-bg">
+      <div className="min-w-0 flex-1">
+        <BoxesViewer
+          mins={primaryMins}
+          maxs={primaryMaxs}
+          depth={primaryDepth}
+          nBoxes={primaryMeta.n_boxes}
+          bounds={primaryMeta.bounds}
+          maxDepth={primaryMeta.max_depth}
+          colorMode="value"
+          depthRange={[0, primaryMeta.max_depth]}
+          background={view.background}
+          sync={view.sync}
+          overrideColors={colors}
+        />
+      </div>
+      <Colorbar colormap={diffColormap} min={domain[0]} max={domain[1]} />
+    </div>
+  );
+}
+
 export default function BoxesCard({
   runId,
   metric,
@@ -282,6 +516,7 @@ export default function BoxesCard({
     valueMin: settings.valueMin,
     valueMax: settings.valueMax,
     sync: cameraGroupId ? { groupId: cameraGroupId } : null,
+    property: settings.property ?? null,
   };
 
   // Single-metric path: fetch points for the step slider.
@@ -347,6 +582,12 @@ export default function BoxesCard({
     [current],
   );
 
+  const topBlob = useBoxesBlob(current?.artifact_hash ?? undefined);
+  const propertyOptions = useMemo(
+    () => propertyNames(topBlob.data ? extractProperties(topBlob.data) : null),
+    [topBlob.data],
+  );
+
   const [expanded, setExpanded] = useState(autoOpenSettings ?? false);
 
   const compSeries = useMemo(
@@ -371,6 +612,7 @@ export default function BoxesCard({
       : (metaSubtitle ?? `${metric.count} pts`);
 
   const isMulti = effectiveMetrics.length > 1;
+  const isCompareEligible = effectiveMetrics.length === 2;
   const cardRef = useRef<HTMLDivElement>(null);
 
   // Cap panes (each is its own WebGL context).
@@ -389,6 +631,24 @@ export default function BoxesCard({
     return map;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [multipleRuns, shownMetrics, allRunIds, runId, runMetaVersion]);
+
+  const referenceRawPoints = useMemo(
+    () => (isCompareEligible ? ((multiQueries[1]?.data as SequenceResponse | undefined)?.points ?? []).filter((p) => p.artifact_hash) : []),
+    [isCompareEligible, multiQueries],
+  );
+  const referenceStepForCompare = settings.refFixedStep ?? currentStep;
+  const referenceCurrentForCompare = useMemo(
+    () => resolveAtStep(referenceRawPoints, referenceStepForCompare) ?? referenceRawPoints[0],
+    [referenceRawPoints, referenceStepForCompare],
+  );
+  const referenceMetaForCompare = useMemo(
+    () => safeJsonParse<Boxes3DMeta>(referenceCurrentForCompare?.artifact_metadata),
+    [referenceCurrentForCompare],
+  );
+  // Cheap proxy check for the Select's disabled state (n_boxes only — the
+  // exact per-box depth-array comparison happens once both blobs are
+  // loaded, inside BoxesComparePanel, before actually rendering the mode).
+  const compareTopologyOk = !!meta && !!referenceMetaForCompare && meta.n_boxes === referenceMetaForCompare.n_boxes;
 
   const renderSingle = () => {
     if (q.isLoading) {
@@ -455,8 +715,44 @@ export default function BoxesCard({
     </>
   );
 
-  const renderContent = (inModal: boolean) =>
-    isMulti ? renderMulti(inModal) : renderSingle();
+  const renderCompare = () => (
+    <>
+      <BoxesComparePanel
+        runId={runId}
+        primaryMetric={shownMetrics[0]!}
+        referenceMetric={shownMetrics[1]!}
+        currentStep={currentStep}
+        view={view}
+        settings={settings}
+        updateSettings={updateSettings}
+      />
+      <StepSlider
+        points={points}
+        currentIndex={safeIdx}
+        onChange={onSliderChange}
+        xAxis={settings.xAxis}
+        onXAxisChange={(m) => updateSettings({ xAxis: m })}
+        className="mt-3"
+      />
+      <SeriesChipStrip
+        metrics={effectiveMetrics}
+        controlledSeries={controlledSeries}
+        runId={runId}
+        allRunIds={allRunIds}
+        onMetricsChange={(next) => updateSettings({ metrics: next })}
+        onClick={multipleRuns ? toggle : undefined}
+        selectedIds={selectedIds}
+      />
+    </>
+  );
+
+  const usingCompareMode = isCompareEligible && !!settings.compareMode && settings.compareMode !== "side";
+
+  const renderContent = (inModal: boolean) => {
+    if (!isMulti) return renderSingle();
+    if (usingCompareMode) return renderCompare();
+    return renderMulti(inModal);
+  };
 
   const selectionPanel = !hasSelectionProvider && (
     <RunSelectionPanel
@@ -508,6 +804,11 @@ export default function BoxesCard({
             onChange={(v) => updateSettings({ colorMode: v })}
             options={COLOR_MODE_OPTIONS}
             description="Depth uses a LUT over 0..max depth; Value needs per-box values logged"
+          />
+          <PropertySelector
+            properties={propertyOptions}
+            value={settings.property ?? null}
+            onChange={(p) => updateSettings({ property: p })}
           />
           <Select
             label="Background"
@@ -571,6 +872,93 @@ export default function BoxesCard({
             onChange={(v) => updateSettings({ syncViews: v })}
             description="Share orbit/zoom/pan live with this card's other panes and any other sync-enabled 3D card on this page"
           />
+          {isCompareEligible && (
+            <div className="mt-2 border-t border-border-subtle pt-2">
+              <div className="mb-1 text-xs font-semibold text-fg-muted">Compare (2 series)</div>
+              <Select
+                label="Compare mode"
+                value={(settings.compareMode ?? "side") as BoxesCompareMode}
+                onChange={(v) => updateSettings({ compareMode: v as BoxesCompareMode })}
+                options={compareModeOptions(compareTopologyOk)}
+                description={
+                  compareTopologyOk
+                    ? undefined
+                    : "Native diff needs the same box count (+ matching depth) — disabled for this pair"
+                }
+              />
+              {usingCompareMode && (
+                <>
+                  {settings.compareMode === "diff-property" && (
+                    <Select
+                      label="Diff colormap"
+                      value={settings.diffColormap ?? "viridis"}
+                      onChange={(v) => updateSettings({ diffColormap: v })}
+                      options={DIFF_COLORMAP_OPTIONS}
+                    />
+                  )}
+                  {settings.compareMode === "diff" && (
+                    <>
+                      <Select
+                        label="Pixel-diff submode"
+                        value={settings.diffSubmode ?? "signed"}
+                        onChange={(v) => updateSettings({ diffSubmode: v })}
+                        options={DIFF_SUBMODE_OPTIONS}
+                      />
+                      <Select
+                        label="Pixel-diff colormap"
+                        value={(settings.diffColormap ?? "viridis") as Colormap}
+                        onChange={(v) => updateSettings({ diffColormap: v as DiffColormap })}
+                        options={[
+                          { value: "viridis" as Colormap, label: "Viridis" },
+                          { value: "red-green" as Colormap, label: "Red-green" },
+                          { value: "red-blue" as Colormap, label: "Red-blue" },
+                        ]}
+                      />
+                    </>
+                  )}
+                  {settings.compareMode === "split" && (
+                    <Slider
+                      label="Split position"
+                      value={settings.splitPosition ?? 0.5}
+                      onChange={(v) => updateSettings({ splitPosition: v })}
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      format={(v) => v.toFixed(2)}
+                    />
+                  )}
+                  {settings.compareMode === "blend" && (
+                    <Slider
+                      label="Blend alpha"
+                      value={settings.blendAlpha ?? 0.5}
+                      onChange={(v) => updateSettings({ blendAlpha: v })}
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      format={(v) => v.toFixed(2)}
+                    />
+                  )}
+                  <Toggle
+                    label="Pin reference to a fixed step"
+                    checked={settings.refFixedStep != null}
+                    onChange={(v) => updateSettings({ refFixedStep: v ? currentStep : undefined })}
+                    description="Off = per-iteration (reference tracks the same step as the primary series)"
+                  />
+                  {settings.refFixedStep != null && (
+                    <Slider
+                      label="Reference step"
+                      value={settings.refFixedStep}
+                      onChange={(v) => updateSettings({ refFixedStep: Math.round(v) })}
+                      min={0}
+                      max={Math.max(...globalSteps, settings.refFixedStep, 1)}
+                      step={1}
+                      format={(v) => v.toFixed(0)}
+                    />
+                  )}
+                </>
+              )}
+            </div>
+          )}
         </>
       }
       modalOpen={expanded}

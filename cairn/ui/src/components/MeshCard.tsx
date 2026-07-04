@@ -17,9 +17,19 @@ import {
   resolveAtStep,
   useRunInfo,
   MultiPaneGrid,
+  PropertySelector,
+  useTwoSeriesCompare,
+  OffscreenComparePanes,
   type BaseCardSettings,
 } from "./card-kit";
-import { parseNpz, Colorbar } from "../lib/cairn-plot";
+import {
+  parseNpz,
+  Colorbar,
+  isCoreCompareMode,
+  type MediaCompareMode,
+  type DiffMode,
+  type Colormap,
+} from "../lib/cairn-plot";
 import MeshViewer, {
   resolveMeshColorMode,
   type MeshColorMode,
@@ -27,10 +37,19 @@ import MeshViewer, {
   type MeshBackground,
 } from "../lib/cairn-plot/three/MeshViewer";
 import type { Scene3DSyncOptions } from "../lib/cairn-plot/three/use-scene3d";
+import {
+  extractProperties,
+  resolveActiveProperty,
+  propertyNames,
+  type PropertyMap,
+  type PropertyMeta,
+} from "../lib/cairn-plot/three/properties";
+import { diffColors, computeDelta, computeDisplacementMagnitude, type DiffColormap } from "../lib/cairn-plot/three/diff";
 import AddToComparisonButton from "./AddToComparisonButton";
 import CardShell from "./CardShell";
 import SeriesChipStrip from "./SeriesChipStrip";
 import Select from "./settings/Select";
+import Slider from "./settings/Slider";
 import Toggle from "./settings/Toggle";
 import { useRunSelection, useRunSelectionHasProvider } from "../lib/use-run-selection";
 import { useCameraSync } from "../lib/camera-sync";
@@ -54,8 +73,15 @@ interface MeshMeta {
   has_colors: boolean;
   has_normals: boolean;
   value_range?: { min: number; max: number; mean: number };
+  properties?: PropertyMeta[];
   size_bytes: number;
 }
+
+// Extension point usage (spec-visual-compare.md): mesh appends two NATIVE
+// modes to the shared media-compare enum via `MediaCompareMode<TExtra>` —
+// no parallel enum. The core kinds (normal/side/split/blend/diff) are the
+// image-space modes (§B); the native kinds are per-type (§C).
+type MeshCompareMode = MediaCompareMode<"diff-property" | "diff-geometry">;
 
 interface MeshSettings extends BaseCardSettings {
   metrics: Array<{ runId?: string; name: string; context_hash: string }>;
@@ -72,6 +98,20 @@ interface MeshSettings extends BaseCardSettings {
    * card on the page. Optional/absent = false — see `lib/camera-sync.ts`.
    */
   syncViews?: boolean;
+  /** Selected named property (Property selector); undefined = first available. */
+  property?: string;
+  /**
+   * 2-series compare mode (spec-visual-compare.md WS-VC2). Absent/"side" =
+   * today's default multi-pane grid, UNCHANGED — this is purely additive.
+   */
+  compareMode?: MeshCompareMode;
+  diffColormap?: DiffColormap;
+  diffSubmode?: DiffMode;
+  splitPosition?: number;
+  blendAlpha?: number;
+  /** Pins the reference (series[1]) to one step instead of tracking the
+   *  primary's current step 1:1 ("global/fixed" reference semantics). */
+  refFixedStep?: number;
 }
 
 const DEFAULT_SETTINGS = (seed: { name: string; context_hash: string }): MeshSettings => ({
@@ -102,10 +142,52 @@ const BACKGROUND_OPTIONS: Array<{ value: MeshBackground; label: string }> = [
   { value: "light", label: "Light" },
 ];
 
+const DIFF_COLORMAP_OPTIONS: Array<{ value: DiffColormap; label: string }> = [
+  { value: "red-green", label: "Red–green (signed)" },
+  { value: "viridis", label: "Viridis (magnitude)" },
+];
+
+const DIFF_SUBMODE_OPTIONS: Array<{ value: DiffMode; label: string }> = [
+  { value: "signed", label: "Signed" },
+  { value: "absolute", label: "Absolute" },
+  { value: "squared", label: "Squared" },
+  { value: "relative_signed", label: "Relative signed" },
+  { value: "relative_absolute", label: "Relative absolute" },
+  { value: "relative_squared", label: "Relative squared" },
+];
+
+/**
+ * Compare-mode Select options: the five core media-compare kinds (image-
+ * space; "normal"/"side" need no offscreen work, "split"/"blend"/"diff" go
+ * through `OffscreenComparePanes`) plus mesh's two native kinds. The
+ * media-compare extension point is type-only (no shared label/config
+ * registry across cards — see ws-VC1-report.md), so — like every 3D card —
+ * this card hand-rolls its own label list.
+ */
+function compareModeOptions(topologyOk: boolean): Array<{ value: MeshCompareMode; label: string; disabled?: boolean }> {
+  return [
+    { value: "side", label: "Side by side (default)" },
+    { value: "normal", label: "Normal (primary only)" },
+    { value: "split", label: "Split (image-space)" },
+    { value: "blend", label: "Blend (image-space)" },
+    { value: "diff", label: "Pixel diff (image-space)" },
+    {
+      value: "diff-property",
+      label: "Diff: property (native)",
+      disabled: !topologyOk,
+    },
+    {
+      value: "diff-geometry",
+      label: "Diff: geometry (native)",
+      disabled: !topologyOk,
+    },
+  ];
+}
+
 interface MeshArrays {
   positions: Float32Array;
   faces: Uint32Array;
-  values: Float32Array | null;
+  properties: PropertyMap;
   colors: Float32Array | null;
   normals: Float32Array | null;
 }
@@ -126,7 +208,7 @@ function useMeshBlob(hash: string | undefined) {
       return {
         positions: Float32Array.from(npz.positions.data),
         faces: Uint32Array.from(npz.faces.data),
-        values: npz.values ? Float32Array.from(npz.values.data) : null,
+        properties: extractProperties(npz),
         colors: npz.colors ? Float32Array.from(npz.colors.data) : null,
         normals: npz.normals ? Float32Array.from(npz.normals.data) : null,
       };
@@ -142,6 +224,8 @@ interface ViewConfig {
   background: MeshBackground;
   /** Resolved live camera-sync group, or `null` when sync is off for this card. */
   sync: Scene3DSyncOptions | null;
+  /** Selected property name (Property selector); `null` picks the first available. */
+  property: string | null;
 }
 
 /** Renders a single resolved mesh point (blob + metadata). */
@@ -168,7 +252,8 @@ function MeshBody({
 
   const nVertices = meta.n_vertices ?? blob.data.positions.length / 3;
   const nFaces = meta.n_faces ?? blob.data.faces.length / 3;
-  const resolvedMode = resolveMeshColorMode(view.colorMode, !!blob.data.colors, !!blob.data.values);
+  const active = resolveActiveProperty(blob.data.properties, view.property, meta.properties ?? null);
+  const resolvedMode = resolveMeshColorMode(view.colorMode, !!blob.data.colors, !!active.values);
 
   return (
     <div className="flex flex-col">
@@ -179,8 +264,8 @@ function MeshBody({
             faces={blob.data.faces}
             nVertices={nVertices}
             nFaces={nFaces}
-            values={blob.data.values}
-            valueRange={meta.value_range ? [meta.value_range.min, meta.value_range.max] : null}
+            values={active.values}
+            valueRange={active.range}
             colors={blob.data.colors}
             normals={blob.data.normals}
             bounds={meta.bounds}
@@ -192,12 +277,13 @@ function MeshBody({
             sync={view.sync}
           />
         </div>
-        {resolvedMode === "values" && meta.value_range && (
-          <Colorbar colormap="viridis" min={meta.value_range.min} max={meta.value_range.max} />
+        {resolvedMode === "values" && active.range && (
+          <Colorbar colormap="viridis" min={active.range[0]} max={active.range[1]} />
         )}
       </div>
       <div className="mono mt-1 text-xs text-fg-subtle">
         {`${nVertices.toLocaleString()} verts · ${nFaces.toLocaleString()} faces`}
+        {active.name ? ` · ${active.name}` : ""}
         {" · double-click to re-fit"}
       </div>
     </div>
@@ -244,6 +330,207 @@ function MeshPane({
   );
 }
 
+/**
+ * 2-series compare panel: image-space core modes (side handled by the
+ * caller via the existing multi-pane grid; normal/split/blend/diff here)
+ * plus mesh's native diff-property/diff-geometry modes. Reference
+ * resolution reuses `useTwoSeriesCompare` (built on the media-compare
+ * module's extracted `resolveArtifactAtStep` — see card-kit); the
+ * split/blend/pixel-diff modes reuse `OffscreenComparePanes`, which itself
+ * reuses the SAME `CompositeMediaPane` compositor the image card uses — no
+ * per-card compositor fork.
+ */
+function MeshComparePanel({
+  runId,
+  primaryMetric,
+  referenceMetric,
+  currentStep,
+  view,
+  settings,
+  updateSettings,
+}: {
+  runId: string;
+  primaryMetric: { runId?: string; name: string; context_hash: string };
+  referenceMetric: { runId?: string; name: string; context_hash: string };
+  currentStep: number;
+  view: ViewConfig;
+  settings: MeshSettings;
+  updateSettings: (patch: Partial<MeshSettings>) => void;
+}) {
+  const primaryQ = useSequence(primaryMetric.runId ?? runId, primaryMetric.name, {
+    context: primaryMetric.context_hash || undefined,
+    maxPoints: 500,
+  });
+  const referenceQ = useSequence(referenceMetric.runId ?? runId, referenceMetric.name, {
+    context: referenceMetric.context_hash || undefined,
+    maxPoints: 500,
+  });
+  const primaryPoints = useMemo(
+    () => (primaryQ.data?.points ?? []).filter((p) => p.artifact_hash),
+    [primaryQ.data],
+  );
+  const referencePoints = useMemo(
+    () => (referenceQ.data?.points ?? []).filter((p) => p.artifact_hash),
+    [referenceQ.data],
+  );
+
+  const { primaryHash, referenceHash } = useTwoSeriesCompare({
+    primaryPoints,
+    referencePoints,
+    currentStep,
+    refFixedStep: settings.refFixedStep,
+  });
+
+  const primaryPoint = useMemo(
+    () => primaryPoints.find((p) => p.artifact_hash === primaryHash),
+    [primaryPoints, primaryHash],
+  );
+  const referencePoint = useMemo(
+    () => referencePoints.find((p) => p.artifact_hash === referenceHash),
+    [referencePoints, referenceHash],
+  );
+  const primaryMeta = useMemo(() => safeJsonParse<MeshMeta>(primaryPoint?.artifact_metadata), [primaryPoint]);
+  const referenceMeta = useMemo(() => safeJsonParse<MeshMeta>(referencePoint?.artifact_metadata), [referencePoint]);
+
+  const primaryBlob = useMeshBlob(primaryHash);
+  const referenceBlob = useMeshBlob(referenceHash);
+
+  const mode: MeshCompareMode = settings.compareMode ?? "side";
+
+  if (mode === "normal") {
+    return <MeshBody hash={primaryHash} meta={primaryMeta} view={view} />;
+  }
+
+  if (!primaryBlob.data || !referenceBlob.data || !primaryMeta || !referenceMeta) {
+    return <div className="h-64 motion-safe:animate-pulse rounded bg-bg-hover" />;
+  }
+
+  if (isCoreCompareMode(mode) && (mode === "split" || mode === "blend" || mode === "diff")) {
+    return (
+      <div className="h-64 overflow-hidden rounded bg-bg">
+        <OffscreenComparePanes
+          mode={mode}
+          renderPrimary={(onFrame, sync) => {
+            const active = resolveActiveProperty(primaryBlob.data!.properties, view.property, primaryMeta.properties ?? null);
+            return (
+              <MeshViewer
+                positions={primaryBlob.data!.positions}
+                faces={primaryBlob.data!.faces}
+                nVertices={primaryMeta.n_vertices}
+                nFaces={primaryMeta.n_faces}
+                values={active.values}
+                valueRange={active.range}
+                colors={primaryBlob.data!.colors}
+                normals={primaryBlob.data!.normals}
+                bounds={primaryMeta.bounds}
+                colorMode={view.colorMode}
+                shading={view.shading}
+                wireframe={view.wireframe}
+                doubleSided={view.doubleSided}
+                background={view.background}
+                sync={sync}
+                onFrame={onFrame}
+              />
+            );
+          }}
+          renderReference={(onFrame, sync) => {
+            const active = resolveActiveProperty(referenceBlob.data!.properties, view.property, referenceMeta.properties ?? null);
+            return (
+              <MeshViewer
+                positions={referenceBlob.data!.positions}
+                faces={referenceBlob.data!.faces}
+                nVertices={referenceMeta.n_vertices}
+                nFaces={referenceMeta.n_faces}
+                values={active.values}
+                valueRange={active.range}
+                colors={referenceBlob.data!.colors}
+                normals={referenceBlob.data!.normals}
+                bounds={referenceMeta.bounds}
+                colorMode={view.colorMode}
+                shading={view.shading}
+                wireframe={view.wireframe}
+                doubleSided={view.doubleSided}
+                background={view.background}
+                sync={sync}
+                onFrame={onFrame}
+              />
+            );
+          }}
+          diffSubmode={settings.diffSubmode ?? "signed"}
+          colormap={(settings.diffColormap ?? "viridis") as Colormap}
+          splitPosition={settings.splitPosition ?? 0.5}
+          onSplitPositionChange={(p) => updateSettings({ splitPosition: p })}
+          blendAlpha={settings.blendAlpha ?? 0.5}
+          primaryLabel={primaryMetric.name}
+        />
+      </div>
+    );
+  }
+
+  // Native modes: diff-property | diff-geometry — same-topology required.
+  const topologyOk =
+    primaryMeta.n_vertices === referenceMeta.n_vertices && primaryMeta.n_faces === referenceMeta.n_faces;
+  if (!topologyOk) {
+    return (
+      <div className="flex h-64 items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
+        Topology mismatch: {primaryMeta.n_vertices.toLocaleString()} vs{" "}
+        {referenceMeta.n_vertices.toLocaleString()} vertices,{" "}
+        {primaryMeta.n_faces.toLocaleString()} vs {referenceMeta.n_faces.toLocaleString()} faces — native diff
+        modes need matching mesh topology (same vertex/face counts).
+      </div>
+    );
+  }
+
+  const diffColormap: DiffColormap = settings.diffColormap ?? "viridis";
+  let deltaValues: Float32Array | null = null;
+  if (mode === "diff-geometry") {
+    deltaValues = computeDisplacementMagnitude(
+      primaryBlob.data.positions,
+      referenceBlob.data.positions,
+      primaryMeta.n_vertices,
+    );
+  } else {
+    const activeA = resolveActiveProperty(primaryBlob.data.properties, view.property, primaryMeta.properties ?? null);
+    const activeB = resolveActiveProperty(referenceBlob.data.properties, view.property, referenceMeta.properties ?? null);
+    if (activeA.values && activeB.values) {
+      deltaValues = computeDelta(activeA.values, activeB.values, primaryMeta.n_vertices);
+    }
+  }
+
+  if (!deltaValues) {
+    return (
+      <div className="flex h-64 items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
+        No property values logged on this mesh to diff — pick a property, or use "Diff: geometry" instead.
+      </div>
+    );
+  }
+
+  const { colors, domain } = diffColors(deltaValues, primaryMeta.n_vertices, diffColormap);
+
+  return (
+    <div className="flex h-64 overflow-hidden rounded bg-bg">
+      <div className="min-w-0 flex-1">
+        <MeshViewer
+          positions={primaryBlob.data.positions}
+          faces={primaryBlob.data.faces}
+          nVertices={primaryMeta.n_vertices}
+          nFaces={primaryMeta.n_faces}
+          colors={colors}
+          colorMode="vertex-colors"
+          normals={primaryBlob.data.normals}
+          bounds={primaryMeta.bounds}
+          shading={view.shading}
+          wireframe={view.wireframe}
+          doubleSided={view.doubleSided}
+          background={view.background}
+          sync={view.sync}
+        />
+      </div>
+      <Colorbar colormap={diffColormap} min={domain[0]} max={domain[1]} />
+    </div>
+  );
+}
+
 export default function MeshCard({
   runId,
   metric,
@@ -279,6 +566,7 @@ export default function MeshCard({
     doubleSided: settings.doubleSided,
     background: settings.background,
     sync: cameraGroupId ? { groupId: cameraGroupId } : null,
+    property: settings.property ?? null,
   };
 
   // Single-metric path: fetch points for the step slider.
@@ -344,6 +632,12 @@ export default function MeshCard({
     [current],
   );
 
+  // Property options for the settings-panel selector — piggybacks the same
+  // cache key `MeshBody`/`MeshPane` already populate for `current`, so this
+  // is a free cache read, not a second fetch.
+  const topBlob = useMeshBlob(current?.artifact_hash ?? undefined);
+  const propertyOptions = useMemo(() => propertyNames(topBlob.data?.properties), [topBlob.data]);
+
   const [expanded, setExpanded] = useState(autoOpenSettings ?? false);
 
   const compSeries = useMemo(
@@ -365,6 +659,7 @@ export default function MeshCard({
         : `${metric.count} pts`;
 
   const isMulti = effectiveMetrics.length > 1;
+  const isCompareEligible = effectiveMetrics.length === 2;
   const cardRef = useRef<HTMLDivElement>(null);
 
   // Cap panes (each is its own WebGL context).
@@ -383,6 +678,28 @@ export default function MeshCard({
     return map;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [multipleRuns, shownMetrics, allRunIds, runId, runMetaVersion]);
+
+  // Topology-match check for the compare-mode selector's native-mode
+  // disabling (reuses the already-fetched multi-run sequence data — no
+  // extra fetch layer just to decide whether to grey out an option).
+  const referenceRawPoints = useMemo(
+    () => (isCompareEligible ? ((multiQueries[1]?.data as SequenceResponse | undefined)?.points ?? []).filter((p) => p.artifact_hash) : []),
+    [isCompareEligible, multiQueries],
+  );
+  const referenceStepForCompare = settings.refFixedStep ?? currentStep;
+  const referenceCurrentForCompare = useMemo(
+    () => resolveAtStep(referenceRawPoints, referenceStepForCompare) ?? referenceRawPoints[0],
+    [referenceRawPoints, referenceStepForCompare],
+  );
+  const referenceMetaForCompare = useMemo(
+    () => safeJsonParse<MeshMeta>(referenceCurrentForCompare?.artifact_metadata),
+    [referenceCurrentForCompare],
+  );
+  const compareTopologyOk =
+    !!meta &&
+    !!referenceMetaForCompare &&
+    meta.n_vertices === referenceMetaForCompare.n_vertices &&
+    meta.n_faces === referenceMetaForCompare.n_faces;
 
   const renderSingle = () => {
     if (q.isLoading) {
@@ -449,8 +766,45 @@ export default function MeshCard({
     </>
   );
 
-  const renderContent = (inModal: boolean) =>
-    isMulti ? renderMulti(inModal) : renderSingle();
+  const renderCompare = (inModal: boolean) => (
+    <>
+      <MeshComparePanel
+        runId={runId}
+        primaryMetric={shownMetrics[0]!}
+        referenceMetric={shownMetrics[1]!}
+        currentStep={currentStep}
+        view={view}
+        settings={settings}
+        updateSettings={updateSettings}
+      />
+      <StepSlider
+        points={points}
+        currentIndex={safeIdx}
+        onChange={onSliderChange}
+        xAxis={settings.xAxis}
+        onXAxisChange={(m) => updateSettings({ xAxis: m })}
+        className="mt-3"
+      />
+      <SeriesChipStrip
+        metrics={effectiveMetrics}
+        controlledSeries={controlledSeries}
+        runId={runId}
+        allRunIds={allRunIds}
+        onMetricsChange={(next) => updateSettings({ metrics: next })}
+        onClick={multipleRuns ? toggle : undefined}
+        selectedIds={selectedIds}
+      />
+      {inModal ? null : null}
+    </>
+  );
+
+  const usingCompareMode = isCompareEligible && !!settings.compareMode && settings.compareMode !== "side";
+
+  const renderContent = (inModal: boolean) => {
+    if (!isMulti) return renderSingle();
+    if (usingCompareMode) return renderCompare(inModal);
+    return renderMulti(inModal);
+  };
 
   const selectionPanel = !hasSelectionProvider && (
     <RunSelectionPanel
@@ -493,6 +847,11 @@ export default function MeshCard({
             options={COLOR_MODE_OPTIONS}
             description="Falls back to an available attribute when the chosen one is absent"
           />
+          <PropertySelector
+            properties={propertyOptions}
+            value={settings.property ?? null}
+            onChange={(p) => updateSettings({ property: p })}
+          />
           <Select
             label="Shading"
             value={settings.shading}
@@ -523,6 +882,93 @@ export default function MeshCard({
             onChange={(v) => updateSettings({ syncViews: v })}
             description="Share orbit/zoom/pan live with this card's other panes and any other sync-enabled 3D card on this page"
           />
+          {isCompareEligible && (
+            <div className="mt-2 border-t border-border-subtle pt-2">
+              <div className="mb-1 text-xs font-semibold text-fg-muted">Compare (2 series)</div>
+              <Select
+                label="Compare mode"
+                value={(settings.compareMode ?? "side") as MeshCompareMode}
+                onChange={(v) => updateSettings({ compareMode: v as MeshCompareMode })}
+                options={compareModeOptions(compareTopologyOk)}
+                description={
+                  compareTopologyOk
+                    ? undefined
+                    : "Native diff modes need matching mesh topology (same vertex/face counts) — disabled for this pair"
+                }
+              />
+              {usingCompareMode && (
+                <>
+                  {(settings.compareMode === "diff-property" || settings.compareMode === "diff-geometry") && (
+                    <Select
+                      label="Diff colormap"
+                      value={settings.diffColormap ?? "viridis"}
+                      onChange={(v) => updateSettings({ diffColormap: v })}
+                      options={DIFF_COLORMAP_OPTIONS}
+                    />
+                  )}
+                  {settings.compareMode === "diff" && (
+                    <Select
+                      label="Pixel-diff submode"
+                      value={settings.diffSubmode ?? "signed"}
+                      onChange={(v) => updateSettings({ diffSubmode: v })}
+                      options={DIFF_SUBMODE_OPTIONS}
+                    />
+                  )}
+                  {settings.compareMode === "diff" && (
+                    <Select
+                      label="Pixel-diff colormap"
+                      value={(settings.diffColormap ?? "viridis") as Colormap}
+                      onChange={(v) => updateSettings({ diffColormap: v as DiffColormap })}
+                      options={[
+                        { value: "viridis" as Colormap, label: "Viridis" },
+                        { value: "red-green" as Colormap, label: "Red-green" },
+                        { value: "red-blue" as Colormap, label: "Red-blue" },
+                      ]}
+                    />
+                  )}
+                  {settings.compareMode === "split" && (
+                    <Slider
+                      label="Split position"
+                      value={settings.splitPosition ?? 0.5}
+                      onChange={(v) => updateSettings({ splitPosition: v })}
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      format={(v) => v.toFixed(2)}
+                    />
+                  )}
+                  {settings.compareMode === "blend" && (
+                    <Slider
+                      label="Blend alpha"
+                      value={settings.blendAlpha ?? 0.5}
+                      onChange={(v) => updateSettings({ blendAlpha: v })}
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      format={(v) => v.toFixed(2)}
+                    />
+                  )}
+                  <Toggle
+                    label="Pin reference to a fixed step"
+                    checked={settings.refFixedStep != null}
+                    onChange={(v) => updateSettings({ refFixedStep: v ? currentStep : undefined })}
+                    description="Off = per-iteration (reference tracks the same step as the primary series)"
+                  />
+                  {settings.refFixedStep != null && (
+                    <Slider
+                      label="Reference step"
+                      value={settings.refFixedStep}
+                      onChange={(v) => updateSettings({ refFixedStep: Math.round(v) })}
+                      min={0}
+                      max={Math.max(...globalSteps, settings.refFixedStep, 1)}
+                      step={1}
+                      format={(v) => v.toFixed(0)}
+                    />
+                  )}
+                </>
+              )}
+            </div>
+          )}
         </>
       }
       modalOpen={expanded}
