@@ -35,6 +35,7 @@ interface CameraStateDetail {
 const EVENT_TYPE = "camera-state";
 
 const buses = new Map<string, EventTarget>();
+const lastStates = new Map<string, CameraState>();
 
 function busFor(groupId: string): EventTarget {
   let bus = buses.get(groupId);
@@ -47,9 +48,22 @@ function busFor(groupId: string): EventTarget {
 
 /** Broadcasts `state` to every other subscriber of `groupId`. */
 export function publishCameraState(groupId: string, sourceId: string, state: CameraState): void {
+  lastStates.set(groupId, state);
   busFor(groupId).dispatchEvent(
     new CustomEvent<CameraStateDetail>(EVENT_TYPE, { detail: { state, sourceId } }),
   );
+}
+
+/**
+ * The most recent camera state published on `groupId`, or `undefined` if none
+ * has been published yet. Lets a viewer/controller that JOINS a group late
+ * (after peers have already framed the scene) adopt the current camera on
+ * mount instead of starting at a default pose — e.g. WS-VC2's compare-mode
+ * interaction controller, which mounts as a third peer alongside two already-
+ * fitted offscreen mirror viewers and must not jump on the first drag.
+ */
+export function getLastCameraState(groupId: string): CameraState | undefined {
+  return lastStates.get(groupId);
 }
 
 /**

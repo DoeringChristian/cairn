@@ -12,5 +12,8 @@ export { useOffscreenSnapshot } from "./use-offscreen-snapshot";
 export type { UseOffscreenSnapshotResult } from "./use-offscreen-snapshot";
 export { useTwoSeriesCompare } from "./use-two-series-compare";
 export type { TwoSeriesCompareArgs, TwoSeriesCompareResult } from "./use-two-series-compare";
+export { useCompareReferenceMeta } from "./use-compare-reference-meta";
 export { OffscreenComparePanes } from "./OffscreenComparePanes";
 export type { OffscreenComparePanesProps } from "./OffscreenComparePanes";
+export { CompareSettingsPanel } from "./CompareSettingsPanel";
+export type { CompareSettingsPanelProps } from "./CompareSettingsPanel";

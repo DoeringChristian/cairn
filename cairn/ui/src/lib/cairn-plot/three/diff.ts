@@ -144,6 +144,25 @@ function assertDiffMathInvariants(): void {
   if (Math.abs(zeroColors[0]! - 1) > 0.02 || Math.abs(zeroColors[1]! - 1) > 0.02 || Math.abs(zeroColors[2]! - 1) > 0.02) {
     throw new Error("diff.ts: red-green zero must map to white (neutral)");
   }
+  // Sign-clamp regression guard: under "viridis" (a [0, maxAbs] MAGNITUDE
+  // domain) a SIGNED delta must be absolute-valued first, so +v and -v color
+  // IDENTICALLY (equal magnitude) and both differ from 0. Without the
+  // absArray() step in diffColors, -3 would clamp to the LUT's zero end and
+  // read the SAME as 0 — the exact bug this workstream fixed.
+  const signed = diffColors(new Float32Array([-3, 0, 3]), 3, "viridis").colors;
+  const negEqPos =
+    Math.abs(signed[0]! - signed[6]!) < 1e-6 &&
+    Math.abs(signed[1]! - signed[7]!) < 1e-6 &&
+    Math.abs(signed[2]! - signed[8]!) < 1e-6;
+  const negDiffersFromZero =
+    Math.abs(signed[0]! - signed[3]!) > 1e-3 ||
+    Math.abs(signed[1]! - signed[4]!) > 1e-3 ||
+    Math.abs(signed[2]! - signed[5]!) > 1e-3;
+  if (!negEqPos || !negDiffersFromZero) {
+    throw new Error(
+      "diff.ts: viridis magnitude must color ±v identically and distinctly from 0 (sign-clamp regression)",
+    );
+  }
 }
 
 assertDiffMathInvariants();

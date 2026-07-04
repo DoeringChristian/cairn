@@ -19,7 +19,9 @@ import {
   MultiPaneGrid,
   PropertySelector,
   useTwoSeriesCompare,
+  useCompareReferenceMeta,
   OffscreenComparePanes,
+  CompareSettingsPanel,
   type BaseCardSettings,
 } from "./card-kit";
 import {
@@ -129,31 +131,12 @@ const BACKGROUND_OPTIONS: Array<{ value: PointCloudBackground; label: string }> 
   { value: "light", label: "Light" },
 ];
 
-const DIFF_COLORMAP_OPTIONS: Array<{ value: DiffColormap; label: string }> = [
-  { value: "red-green", label: "Red–green (signed)" },
-  { value: "viridis", label: "Viridis (magnitude)" },
+// Point cloud's native per-type compare kinds (core kinds + shared
+// diff-colormap/submode/slider controls live in CompareSettingsPanel).
+const NATIVE_COMPARE_MODES: Array<{ value: PointCloudCompareMode; label: string }> = [
+  { value: "diff-property", label: "Diff: property (native)" },
+  { value: "diff-position", label: "Diff: position (native)" },
 ];
-
-const DIFF_SUBMODE_OPTIONS: Array<{ value: DiffMode; label: string }> = [
-  { value: "signed", label: "Signed" },
-  { value: "absolute", label: "Absolute" },
-  { value: "squared", label: "Squared" },
-  { value: "relative_signed", label: "Relative signed" },
-  { value: "relative_absolute", label: "Relative absolute" },
-  { value: "relative_squared", label: "Relative squared" },
-];
-
-function compareModeOptions(topologyOk: boolean): Array<{ value: PointCloudCompareMode; label: string; disabled?: boolean }> {
-  return [
-    { value: "side", label: "Side by side (default)" },
-    { value: "normal", label: "Normal (primary only)" },
-    { value: "split", label: "Split (image-space)" },
-    { value: "blend", label: "Blend (image-space)" },
-    { value: "diff", label: "Pixel diff (image-space)" },
-    { value: "diff-property", label: "Diff: property (native)", disabled: !topologyOk },
-    { value: "diff-position", label: "Diff: position (native)", disabled: !topologyOk },
-  ];
-}
 
 function looksLikeNpz(buf: ArrayBuffer): boolean {
   if (buf.byteLength < 2) return false;
@@ -596,18 +579,10 @@ export default function PointCloudCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [multipleRuns, shownMetrics, allRunIds, runId, runMetaVersion]);
 
-  const referenceRawPoints = useMemo(
-    () => (isCompareEligible ? ((multiQueries[1]?.data as SequenceResponse | undefined)?.points ?? []).filter((p) => p.artifact_hash) : []),
-    [isCompareEligible, multiQueries],
-  );
-  const referenceStepForCompare = settings.refFixedStep ?? currentStep;
-  const referenceCurrentForCompare = useMemo(
-    () => resolveAtStep(referenceRawPoints, referenceStepForCompare) ?? referenceRawPoints[0],
-    [referenceRawPoints, referenceStepForCompare],
-  );
-  const referenceMetaForCompare = useMemo(
-    () => safeJsonParse<PointCloudMeta>(referenceCurrentForCompare?.artifact_metadata),
-    [referenceCurrentForCompare],
+  const referenceMetaForCompare = useCompareReferenceMeta<PointCloudMeta>(
+    isCompareEligible ? (multiQueries[1]?.data as SequenceResponse | undefined) : undefined,
+    settings.refFixedStep,
+    currentStep,
   );
   const compareTopologyOk = !!meta && !!referenceMetaForCompare && meta.n_points === referenceMetaForCompare.n_points;
 
@@ -784,91 +759,25 @@ export default function PointCloudCard({
             description="Share orbit/zoom/pan live with this card's other panes and any other sync-enabled 3D card on this page"
           />
           {isCompareEligible && (
-            <div className="mt-2 border-t border-border-subtle pt-2">
-              <div className="mb-1 text-xs font-semibold text-fg-muted">Compare (2 series)</div>
-              <Select
-                label="Compare mode"
-                value={(settings.compareMode ?? "side") as PointCloudCompareMode}
-                onChange={(v) => updateSettings({ compareMode: v as PointCloudCompareMode })}
-                options={compareModeOptions(compareTopologyOk)}
-                description={
-                  compareTopologyOk
-                    ? undefined
-                    : "Native diff modes need the same point count — disabled for this pair"
-                }
-              />
-              {usingCompareMode && (
-                <>
-                  {(settings.compareMode === "diff-property" || settings.compareMode === "diff-position") && (
-                    <Select
-                      label="Diff colormap"
-                      value={settings.diffColormap ?? "viridis"}
-                      onChange={(v) => updateSettings({ diffColormap: v })}
-                      options={DIFF_COLORMAP_OPTIONS}
-                    />
-                  )}
-                  {settings.compareMode === "diff" && (
-                    <>
-                      <Select
-                        label="Pixel-diff submode"
-                        value={settings.diffSubmode ?? "signed"}
-                        onChange={(v) => updateSettings({ diffSubmode: v })}
-                        options={DIFF_SUBMODE_OPTIONS}
-                      />
-                      <Select
-                        label="Pixel-diff colormap"
-                        value={(settings.diffColormap ?? "viridis") as Colormap}
-                        onChange={(v) => updateSettings({ diffColormap: v as DiffColormap })}
-                        options={[
-                          { value: "viridis" as Colormap, label: "Viridis" },
-                          { value: "red-green" as Colormap, label: "Red-green" },
-                          { value: "red-blue" as Colormap, label: "Red-blue" },
-                        ]}
-                      />
-                    </>
-                  )}
-                  {settings.compareMode === "split" && (
-                    <Slider
-                      label="Split position"
-                      value={settings.splitPosition ?? 0.5}
-                      onChange={(v) => updateSettings({ splitPosition: v })}
-                      min={0}
-                      max={1}
-                      step={0.01}
-                      format={(v) => v.toFixed(2)}
-                    />
-                  )}
-                  {settings.compareMode === "blend" && (
-                    <Slider
-                      label="Blend alpha"
-                      value={settings.blendAlpha ?? 0.5}
-                      onChange={(v) => updateSettings({ blendAlpha: v })}
-                      min={0}
-                      max={1}
-                      step={0.01}
-                      format={(v) => v.toFixed(2)}
-                    />
-                  )}
-                  <Toggle
-                    label="Pin reference to a fixed step"
-                    checked={settings.refFixedStep != null}
-                    onChange={(v) => updateSettings({ refFixedStep: v ? currentStep : undefined })}
-                    description="Off = per-iteration (reference tracks the same step as the primary series)"
-                  />
-                  {settings.refFixedStep != null && (
-                    <Slider
-                      label="Reference step"
-                      value={settings.refFixedStep}
-                      onChange={(v) => updateSettings({ refFixedStep: Math.round(v) })}
-                      min={0}
-                      max={Math.max(...globalSteps, settings.refFixedStep, 1)}
-                      step={1}
-                      format={(v) => v.toFixed(0)}
-                    />
-                  )}
-                </>
-              )}
-            </div>
+            <CompareSettingsPanel<PointCloudCompareMode>
+              mode={(settings.compareMode ?? "side") as PointCloudCompareMode}
+              onModeChange={(v) => updateSettings({ compareMode: v })}
+              nativeModes={NATIVE_COMPARE_MODES}
+              topologyOk={compareTopologyOk}
+              topologyHint="Native diff modes need the same point count — disabled for this pair"
+              diffColormap={settings.diffColormap ?? "viridis"}
+              onDiffColormapChange={(v) => updateSettings({ diffColormap: v })}
+              diffSubmode={settings.diffSubmode ?? "signed"}
+              onDiffSubmodeChange={(v) => updateSettings({ diffSubmode: v })}
+              splitPosition={settings.splitPosition ?? 0.5}
+              onSplitPositionChange={(v) => updateSettings({ splitPosition: v })}
+              blendAlpha={settings.blendAlpha ?? 0.5}
+              onBlendAlphaChange={(v) => updateSettings({ blendAlpha: v })}
+              refFixedStep={settings.refFixedStep}
+              onRefFixedStepChange={(v) => updateSettings({ refFixedStep: v })}
+              currentStep={currentStep}
+              maxStep={Math.max(...globalSteps, 1)}
+            />
           )}
         </>
       }

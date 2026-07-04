@@ -19,7 +19,9 @@ import {
   MultiPaneGrid,
   PropertySelector,
   useTwoSeriesCompare,
+  useCompareReferenceMeta,
   OffscreenComparePanes,
+  CompareSettingsPanel,
   type BaseCardSettings,
 } from "./card-kit";
 import {
@@ -49,7 +51,6 @@ import AddToComparisonButton from "./AddToComparisonButton";
 import CardShell from "./CardShell";
 import SeriesChipStrip from "./SeriesChipStrip";
 import Select from "./settings/Select";
-import Slider from "./settings/Slider";
 import Toggle from "./settings/Toggle";
 import { useRunSelection, useRunSelectionHasProvider } from "../lib/use-run-selection";
 import { useCameraSync } from "../lib/camera-sync";
@@ -142,47 +143,13 @@ const BACKGROUND_OPTIONS: Array<{ value: MeshBackground; label: string }> = [
   { value: "light", label: "Light" },
 ];
 
-const DIFF_COLORMAP_OPTIONS: Array<{ value: DiffColormap; label: string }> = [
-  { value: "red-green", label: "Red–green (signed)" },
-  { value: "viridis", label: "Viridis (magnitude)" },
+// Mesh's native per-type compare kinds (appended after the shared core
+// kinds by CompareSettingsPanel). Only the per-type native modes live here;
+// the core kinds + all diff-colormap/submode/slider controls are shared.
+const NATIVE_COMPARE_MODES: Array<{ value: MeshCompareMode; label: string }> = [
+  { value: "diff-property", label: "Diff: property (native)" },
+  { value: "diff-geometry", label: "Diff: geometry (native)" },
 ];
-
-const DIFF_SUBMODE_OPTIONS: Array<{ value: DiffMode; label: string }> = [
-  { value: "signed", label: "Signed" },
-  { value: "absolute", label: "Absolute" },
-  { value: "squared", label: "Squared" },
-  { value: "relative_signed", label: "Relative signed" },
-  { value: "relative_absolute", label: "Relative absolute" },
-  { value: "relative_squared", label: "Relative squared" },
-];
-
-/**
- * Compare-mode Select options: the five core media-compare kinds (image-
- * space; "normal"/"side" need no offscreen work, "split"/"blend"/"diff" go
- * through `OffscreenComparePanes`) plus mesh's two native kinds. The
- * media-compare extension point is type-only (no shared label/config
- * registry across cards — see ws-VC1-report.md), so — like every 3D card —
- * this card hand-rolls its own label list.
- */
-function compareModeOptions(topologyOk: boolean): Array<{ value: MeshCompareMode; label: string; disabled?: boolean }> {
-  return [
-    { value: "side", label: "Side by side (default)" },
-    { value: "normal", label: "Normal (primary only)" },
-    { value: "split", label: "Split (image-space)" },
-    { value: "blend", label: "Blend (image-space)" },
-    { value: "diff", label: "Pixel diff (image-space)" },
-    {
-      value: "diff-property",
-      label: "Diff: property (native)",
-      disabled: !topologyOk,
-    },
-    {
-      value: "diff-geometry",
-      label: "Diff: geometry (native)",
-      disabled: !topologyOk,
-    },
-  ];
-}
 
 interface MeshArrays {
   positions: Float32Array;
@@ -680,20 +647,13 @@ export default function MeshCard({
   }, [multipleRuns, shownMetrics, allRunIds, runId, runMetaVersion]);
 
   // Topology-match check for the compare-mode selector's native-mode
-  // disabling (reuses the already-fetched multi-run sequence data — no
-  // extra fetch layer just to decide whether to grey out an option).
-  const referenceRawPoints = useMemo(
-    () => (isCompareEligible ? ((multiQueries[1]?.data as SequenceResponse | undefined)?.points ?? []).filter((p) => p.artifact_hash) : []),
-    [isCompareEligible, multiQueries],
-  );
-  const referenceStepForCompare = settings.refFixedStep ?? currentStep;
-  const referenceCurrentForCompare = useMemo(
-    () => resolveAtStep(referenceRawPoints, referenceStepForCompare) ?? referenceRawPoints[0],
-    [referenceRawPoints, referenceStepForCompare],
-  );
-  const referenceMetaForCompare = useMemo(
-    () => safeJsonParse<MeshMeta>(referenceCurrentForCompare?.artifact_metadata),
-    [referenceCurrentForCompare],
+  // disabling (reuses the already-fetched multi-run sequence data via the
+  // shared useCompareReferenceMeta — no extra fetch just to grey out an
+  // option). Only the equality predicate is mesh-specific.
+  const referenceMetaForCompare = useCompareReferenceMeta<MeshMeta>(
+    isCompareEligible ? (multiQueries[1]?.data as SequenceResponse | undefined) : undefined,
+    settings.refFixedStep,
+    currentStep,
   );
   const compareTopologyOk =
     !!meta &&
@@ -883,91 +843,25 @@ export default function MeshCard({
             description="Share orbit/zoom/pan live with this card's other panes and any other sync-enabled 3D card on this page"
           />
           {isCompareEligible && (
-            <div className="mt-2 border-t border-border-subtle pt-2">
-              <div className="mb-1 text-xs font-semibold text-fg-muted">Compare (2 series)</div>
-              <Select
-                label="Compare mode"
-                value={(settings.compareMode ?? "side") as MeshCompareMode}
-                onChange={(v) => updateSettings({ compareMode: v as MeshCompareMode })}
-                options={compareModeOptions(compareTopologyOk)}
-                description={
-                  compareTopologyOk
-                    ? undefined
-                    : "Native diff modes need matching mesh topology (same vertex/face counts) — disabled for this pair"
-                }
-              />
-              {usingCompareMode && (
-                <>
-                  {(settings.compareMode === "diff-property" || settings.compareMode === "diff-geometry") && (
-                    <Select
-                      label="Diff colormap"
-                      value={settings.diffColormap ?? "viridis"}
-                      onChange={(v) => updateSettings({ diffColormap: v })}
-                      options={DIFF_COLORMAP_OPTIONS}
-                    />
-                  )}
-                  {settings.compareMode === "diff" && (
-                    <Select
-                      label="Pixel-diff submode"
-                      value={settings.diffSubmode ?? "signed"}
-                      onChange={(v) => updateSettings({ diffSubmode: v })}
-                      options={DIFF_SUBMODE_OPTIONS}
-                    />
-                  )}
-                  {settings.compareMode === "diff" && (
-                    <Select
-                      label="Pixel-diff colormap"
-                      value={(settings.diffColormap ?? "viridis") as Colormap}
-                      onChange={(v) => updateSettings({ diffColormap: v as DiffColormap })}
-                      options={[
-                        { value: "viridis" as Colormap, label: "Viridis" },
-                        { value: "red-green" as Colormap, label: "Red-green" },
-                        { value: "red-blue" as Colormap, label: "Red-blue" },
-                      ]}
-                    />
-                  )}
-                  {settings.compareMode === "split" && (
-                    <Slider
-                      label="Split position"
-                      value={settings.splitPosition ?? 0.5}
-                      onChange={(v) => updateSettings({ splitPosition: v })}
-                      min={0}
-                      max={1}
-                      step={0.01}
-                      format={(v) => v.toFixed(2)}
-                    />
-                  )}
-                  {settings.compareMode === "blend" && (
-                    <Slider
-                      label="Blend alpha"
-                      value={settings.blendAlpha ?? 0.5}
-                      onChange={(v) => updateSettings({ blendAlpha: v })}
-                      min={0}
-                      max={1}
-                      step={0.01}
-                      format={(v) => v.toFixed(2)}
-                    />
-                  )}
-                  <Toggle
-                    label="Pin reference to a fixed step"
-                    checked={settings.refFixedStep != null}
-                    onChange={(v) => updateSettings({ refFixedStep: v ? currentStep : undefined })}
-                    description="Off = per-iteration (reference tracks the same step as the primary series)"
-                  />
-                  {settings.refFixedStep != null && (
-                    <Slider
-                      label="Reference step"
-                      value={settings.refFixedStep}
-                      onChange={(v) => updateSettings({ refFixedStep: Math.round(v) })}
-                      min={0}
-                      max={Math.max(...globalSteps, settings.refFixedStep, 1)}
-                      step={1}
-                      format={(v) => v.toFixed(0)}
-                    />
-                  )}
-                </>
-              )}
-            </div>
+            <CompareSettingsPanel<MeshCompareMode>
+              mode={(settings.compareMode ?? "side") as MeshCompareMode}
+              onModeChange={(v) => updateSettings({ compareMode: v })}
+              nativeModes={NATIVE_COMPARE_MODES}
+              topologyOk={compareTopologyOk}
+              topologyHint="Native diff modes need matching mesh topology (same vertex/face counts) — disabled for this pair"
+              diffColormap={settings.diffColormap ?? "viridis"}
+              onDiffColormapChange={(v) => updateSettings({ diffColormap: v })}
+              diffSubmode={settings.diffSubmode ?? "signed"}
+              onDiffSubmodeChange={(v) => updateSettings({ diffSubmode: v })}
+              splitPosition={settings.splitPosition ?? 0.5}
+              onSplitPositionChange={(v) => updateSettings({ splitPosition: v })}
+              blendAlpha={settings.blendAlpha ?? 0.5}
+              onBlendAlphaChange={(v) => updateSettings({ blendAlpha: v })}
+              refFixedStep={settings.refFixedStep}
+              onRefFixedStepChange={(v) => updateSettings({ refFixedStep: v })}
+              currentStep={currentStep}
+              maxStep={Math.max(...globalSteps, 1)}
+            />
           )}
         </>
       }
