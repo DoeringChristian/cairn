@@ -25,6 +25,13 @@ export interface UseMediaReferenceArgs {
   perSeriesPoints: SequencePoint[][];
   /** source: "series-same-step" — index into the card's own series list. */
   seriesBaselineIndex?: number;
+  /** source: "fixed-step" (reference.ts's `ReferenceSelection` third source)
+   *  — pins the `seriesBaselineIndex` series to this explicit step instead
+   *  of tracking `currentStep` 1:1. Undefined = plain "series-same-step"
+   *  (per-iteration). Used by 3D cards' "pin reference to a fixed step"
+   *  toggle — the general-N-panes form of the pre-unification
+   *  `useTwoSeriesCompare`'s `refFixedStep`. */
+  seriesBaselineFixedStep?: number;
   /** source: "external" — a tag not among the card's own series (e.g. a
    *  dragged-in reference image/series). Undefined = no external reference. */
   external?: MediaReferenceTag;
@@ -71,6 +78,7 @@ export function useMediaReference(args: UseMediaReferenceArgs): UseMediaReferenc
     perSeriesStepMap,
     perSeriesPoints,
     seriesBaselineIndex,
+    seriesBaselineFixedStep,
     external,
     externalScope,
     panes,
@@ -110,7 +118,7 @@ export function useMediaReference(args: UseMediaReferenceArgs): UseMediaReferenc
     if (seriesBaselineIndex != null) {
       return resolveArtifactAtStep(
         perSeriesStepMap[seriesBaselineIndex] ?? new Map(),
-        currentStep,
+        seriesBaselineFixedStep ?? currentStep,
         perSeriesPoints[seriesBaselineIndex]?.map((p) => p.step) ?? [],
         missingImageMode,
       ).hash;
@@ -122,6 +130,7 @@ export function useMediaReference(args: UseMediaReferenceArgs): UseMediaReferenc
     externalPoints,
     safeIdx,
     seriesBaselineIndex,
+    seriesBaselineFixedStep,
     perSeriesStepMap,
     perSeriesPoints,
     currentStep,
@@ -143,8 +152,17 @@ export function useMediaReference(args: UseMediaReferenceArgs): UseMediaReferenc
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [external, externalScope, panes, perRunRefQueries.map((q) => q.dataUpdatedAt).join("|"), currentStep, missingImageMode]);
 
+  // Gate on `external` too (not just `externalScope`): `externalScope` is a
+  // persisted setting that can outlive the reference it was chosen for
+  // (e.g. the user clears `externalBaseline` via the "×" button, which only
+  // resets that field — see ImageGalleryCard's + every 3D card's clear
+  // button). Without this guard, a stale externalScope==="per-run" would
+  // make every pane's hash resolve to `perPaneHashes?.[paneIdx]` === always
+  // undefined (perPaneHashes itself is `null` whenever `external` is unset),
+  // permanently hiding the fallback `globalHash` (e.g. the "series-same-
+  // step" default) even though a perfectly good reference is available.
   const perPaneHash = (paneIdx: number): string | undefined =>
-    externalScope === "per-run" ? perPaneHashes?.[paneIdx] : globalHash;
+    external && externalScope === "per-run" ? perPaneHashes?.[paneIdx] : globalHash;
 
   return { globalHash, perPaneHash, externalPoints };
 }

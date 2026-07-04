@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { useSequence } from "../api/hooks";
 import { api } from "../api/client";
@@ -10,7 +10,7 @@ import { useCardDrop } from "../lib/use-series-drop";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import { seriesKey } from "../lib/series-utils";
-import type { SequenceMeta, SequenceResponse } from "../api/types";
+import type { SequenceMeta, SequencePoint, SequenceResponse } from "../api/types";
 import {
   useCardSeries,
   useStepSlider,
@@ -18,7 +18,8 @@ import {
   useRunInfo,
   MultiPaneGrid,
   PropertySelector,
-  useTwoSeriesCompare,
+  useMediaReference,
+  useReferenceDrop,
   useCompareReferenceMeta,
   OffscreenComparePanes,
   CompareSettingsPanel,
@@ -28,6 +29,7 @@ import {
   parseNpz,
   Colorbar,
   isCoreCompareMode,
+  resolveArtifactAtStep,
   type MediaCompareMode,
   type DiffMode,
   type Colormap,
@@ -46,6 +48,7 @@ import {
 import { diffColors, computeDelta, type DiffColormap } from "../lib/cairn-plot/three/diff";
 import AddToComparisonButton from "./AddToComparisonButton";
 import CardShell from "./CardShell";
+import type { SeriesRef } from "./SeriesChip";
 import SeriesChipStrip from "./SeriesChipStrip";
 import Select from "./settings/Select";
 import Slider from "./settings/Slider";
@@ -102,7 +105,15 @@ interface Boxes3DSettings extends BaseCardSettings {
   diffSubmode?: DiffMode;
   splitPosition?: number;
   blendAlpha?: number;
+  /** Pins the default (no external reference) series[1] baseline to one
+   *  step instead of tracking the primary's current step 1:1 — ignored
+   *  once `externalBaseline` is set. */
   refFixedStep?: number;
+  /** A reference dragged in from elsewhere — see MeshSettings'
+   *  `externalBaseline` for the full writeup (identical mechanics). */
+  externalBaseline?: { runId?: string; name: string; context_hash: string };
+  /** "per-run" (drag a series chip) vs "global" (drag a viewport). */
+  referenceMode?: "global" | "per-run";
 }
 
 const DEFAULT_SETTINGS = (seed: { name: string; context_hash: string }): Boxes3DSettings => ({
@@ -291,52 +302,45 @@ function BoxesPane({
   );
 }
 
-/** 2-series compare panel — see MeshCard's `MeshComparePanel` for the full
- *  pattern writeup (identical mechanics, boxes3d-specific diff math). */
-function BoxesComparePanel({
+/** ONE non-baseline pane's comparison — see MeshCard's `MeshComparePane`
+ *  for the full pattern writeup (identical mechanics, boxes3d-specific
+ *  diff math). `primaryHash`/`primaryMeta` are resolved by the
+ *  orchestrator (`BoxesComparePanel`, below). */
+function BoxesComparePane({
   runId,
-  primaryMetric,
-  referenceMetric,
-  currentStep,
+  primaryHash,
+  primaryMeta,
+  referenceTag,
+  referenceHash,
+  mode,
   view,
   settings,
   updateSettings,
+  paneLabel,
 }: {
   runId: string;
-  primaryMetric: { runId?: string; name: string; context_hash: string };
-  referenceMetric: { runId?: string; name: string; context_hash: string };
-  currentStep: number;
+  primaryHash: string | undefined;
+  primaryMeta: Boxes3DMeta | null | undefined;
+  referenceTag: { runId?: string; name: string; context_hash: string };
+  referenceHash: string | undefined;
+  mode: BoxesCompareMode;
   view: ViewConfig;
   settings: Boxes3DSettings;
   updateSettings: (patch: Partial<Boxes3DSettings>) => void;
+  paneLabel: string;
 }) {
-  const primaryQ = useSequence(primaryMetric.runId ?? runId, primaryMetric.name, {
-    context: primaryMetric.context_hash || undefined,
+  const referenceQ = useSequence(referenceTag.runId ?? runId, referenceTag.name, {
+    context: referenceTag.context_hash || undefined,
     maxPoints: 500,
   });
-  const referenceQ = useSequence(referenceMetric.runId ?? runId, referenceMetric.name, {
-    context: referenceMetric.context_hash || undefined,
-    maxPoints: 500,
-  });
-  const primaryPoints = useMemo(() => (primaryQ.data?.points ?? []).filter((p) => p.artifact_hash), [primaryQ.data]);
-  const referencePoints = useMemo(() => (referenceQ.data?.points ?? []).filter((p) => p.artifact_hash), [referenceQ.data]);
-
-  const { primaryHash, referenceHash } = useTwoSeriesCompare({
-    primaryPoints,
-    referencePoints,
-    currentStep,
-    refFixedStep: settings.refFixedStep,
-  });
-
-  const primaryPoint = useMemo(() => primaryPoints.find((p) => p.artifact_hash === primaryHash), [primaryPoints, primaryHash]);
-  const referencePoint = useMemo(() => referencePoints.find((p) => p.artifact_hash === referenceHash), [referencePoints, referenceHash]);
-  const primaryMeta = useMemo(() => safeJsonParse<Boxes3DMeta>(primaryPoint?.artifact_metadata), [primaryPoint]);
+  const referencePoint = useMemo(
+    () => (referenceQ.data?.points ?? []).find((p) => p.artifact_hash === referenceHash),
+    [referenceQ.data, referenceHash],
+  );
   const referenceMeta = useMemo(() => safeJsonParse<Boxes3DMeta>(referencePoint?.artifact_metadata), [referencePoint]);
 
   const primaryBlob = useBoxesBlob(primaryHash);
   const referenceBlob = useBoxesBlob(referenceHash);
-
-  const mode: BoxesCompareMode = settings.compareMode ?? "side";
 
   if (mode === "normal") {
     return <BoxesBody hash={primaryHash} meta={primaryMeta} view={view} fill />;
@@ -407,7 +411,7 @@ function BoxesComparePanel({
           splitPosition={settings.splitPosition ?? 0.5}
           onSplitPositionChange={(p) => updateSettings({ splitPosition: p })}
           blendAlpha={settings.blendAlpha ?? 0.5}
-          primaryLabel={primaryMetric.name}
+          primaryLabel={paneLabel}
         />
       </div>
     );
@@ -468,6 +472,112 @@ function BoxesComparePanel({
   );
 }
 
+/** N-run compare orchestrator — see MeshCard's `MeshComparePanel` for the
+ *  full pattern writeup (identical mechanics, boxes3d-specific pane). */
+function BoxesComparePanel({
+  runId,
+  panes,
+  paneKeys,
+  paneLabels,
+  perSeriesStepMap,
+  perSeriesPoints,
+  currentStep,
+  safeIdx,
+  view,
+  settings,
+  updateSettings,
+  inModal,
+}: {
+  runId: string;
+  panes: Array<{ runId?: string; name: string; context_hash: string }>;
+  paneKeys: string[];
+  paneLabels: Map<string, string>;
+  perSeriesStepMap: Map<number, SequencePoint>[];
+  perSeriesPoints: SequencePoint[][];
+  currentStep: number;
+  safeIdx: number;
+  view: ViewConfig;
+  settings: Boxes3DSettings;
+  updateSettings: (patch: Partial<Boxes3DSettings>) => void;
+  inModal: boolean;
+}) {
+  const extBase = settings.externalBaseline;
+  const refMode = settings.referenceMode ?? "global";
+  const hasExternalRef = extBase != null;
+
+  const { perPaneHash } = useMediaReference({
+    runId,
+    perSeriesStepMap,
+    perSeriesPoints,
+    seriesBaselineIndex: hasExternalRef ? undefined : (panes.length >= 2 ? 1 : undefined),
+    seriesBaselineFixedStep: settings.refFixedStep,
+    external: extBase,
+    externalScope: refMode,
+    panes,
+    currentStep,
+    safeIdx,
+  });
+
+  const comparedIdx = panes
+    .map((_, idx) => idx)
+    .filter((idx) => {
+      if (hasExternalRef && refMode === "global" && extBase &&
+          panes[idx]!.name === extBase.name && (panes[idx]!.runId ?? runId) === (extBase.runId ?? runId)) {
+        return false;
+      }
+      if (!hasExternalRef && idx === 1) return false;
+      return true;
+    });
+
+  const mode: BoxesCompareMode = settings.compareMode ?? "side";
+  const comparePaneKeys = comparedIdx.map((idx) => paneKeys[idx]!);
+  const dragTags = new Map(
+    comparedIdx.map((idx) => [
+      paneKeys[idx]!,
+      { runId: panes[idx]!.runId ?? runId, name: panes[idx]!.name, context_hash: panes[idx]!.context_hash },
+    ]),
+  );
+
+  return (
+    <MultiPaneGrid
+      paneKeys={comparePaneKeys}
+      labels={paneLabels}
+      inModal={inModal}
+      onPaneWidthsChange={() => { /* compare-pane widths not persisted (equal split) */ }}
+      dragTags={dragTags}
+      renderPane={(_key, i) => {
+        const idx = comparedIdx[i]!;
+        const primaryStepMap = perSeriesStepMap[idx] ?? new Map();
+        const primarySteps = (perSeriesPoints[idx] ?? []).map((p) => p.step);
+        const { hash: primaryHash } = resolveArtifactAtStep(primaryStepMap, currentStep, primarySteps);
+        const primaryPoint = (perSeriesPoints[idx] ?? []).find((p) => p.artifact_hash === primaryHash);
+        const primaryMeta = safeJsonParse<Boxes3DMeta>(primaryPoint?.artifact_metadata);
+        const referenceHash = perPaneHash(idx);
+        const referenceTag = hasExternalRef
+          ? (refMode === "per-run"
+              ? { runId: panes[idx]!.runId ?? runId, name: extBase!.name, context_hash: extBase!.context_hash }
+              : { runId: extBase!.runId ?? runId, name: extBase!.name, context_hash: extBase!.context_hash })
+          : { runId: panes[1]!.runId ?? runId, name: panes[1]!.name, context_hash: panes[1]!.context_hash };
+        return (
+          <BoxesComparePane
+            key={paneKeys[idx]}
+            runId={runId}
+            primaryHash={primaryHash}
+            primaryMeta={primaryMeta}
+            referenceTag={referenceTag}
+            referenceHash={referenceHash}
+            mode={mode}
+            view={view}
+            settings={settings}
+            updateSettings={updateSettings}
+            paneLabel={panes[idx]!.name}
+          />
+        );
+      }}
+    />
+  );
+}
+
 export default function BoxesCard({
   runId,
   metric,
@@ -491,6 +601,21 @@ export default function BoxesCard({
     });
 
   const { highlight: dropHighlight, dropProps } = useCardDrop(effectiveMetrics, updateSettings);
+
+  // Reference drop target — see MeshCard's identical wiring for the full
+  // writeup. Dropping a series chip -> per-run; dropping a viewport label
+  // -> global. Always lands on "diff".
+  const applyReference = useCallback((ref: SeriesRef, mode: "global" | "per-run") => {
+    updateSettings({
+      externalBaseline: { runId: ref.runId, name: ref.name, context_hash: ref.context_hash },
+      referenceMode: mode,
+      compareMode: "diff",
+    });
+  }, [updateSettings]);
+  const { highlight: refDropHighlight, dropProps: refDropProps } = useReferenceDrop({
+    onSeriesDrop: (ref) => applyReference(ref, "per-run"),
+    onViewportDrop: (ref) => applyReference(ref, "global"),
+  });
 
   // Resolved once per card so every pane (single or multi) shares the same
   // sync group; `null` when the toggle is off.
@@ -549,6 +674,24 @@ export default function BoxesCard({
     return arr;
   }, [effectiveMetrics.length, points, multiQueries]);
 
+  // Per-series full points/step-maps, index-aligned with `effectiveMetrics`/
+  // `shownMetrics` — see MeshCard's identical derivation for the writeup.
+  const perSeriesPoints = useMemo<SequencePoint[][]>(() => {
+    if (effectiveMetrics.length <= 1) return [points];
+    return multiQueries.map((mq) =>
+      ((mq.data as SequenceResponse | undefined)?.points ?? []).filter((p) => p.artifact_hash),
+    );
+  }, [effectiveMetrics.length, points, multiQueries]);
+  const perSeriesStepMap = useMemo(
+    () =>
+      perSeriesPoints.map((pts) => {
+        const m = new Map<number, SequencePoint>();
+        for (const p of pts) m.set(p.step, p);
+        return m;
+      }),
+    [perSeriesPoints],
+  );
+
   const { globalSteps, safeIdx, currentStep, onSliderChange } = useStepSlider({
     seriesPoints,
     persistedIdx: settings.sliderStep,
@@ -600,8 +743,9 @@ export default function BoxesCard({
         : `step ${currentStep} (${safeIdx + 1}/${globalSteps.length})`
       : (metaSubtitle ?? `${metric.count} pts`);
 
-  const isMulti = effectiveMetrics.length > 1;
-  const isCompareEligible = effectiveMetrics.length === 2;
+  const hasExternalRef = settings.externalBaseline != null;
+  const isMulti = effectiveMetrics.length > 1 || hasExternalRef;
+  const isCompareEligible = hasExternalRef || effectiveMetrics.length >= 2;
   const cardRef = useRef<HTMLDivElement>(null);
 
   // Cap panes (each is its own WebGL context).
@@ -621,15 +765,33 @@ export default function BoxesCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [multipleRuns, shownMetrics, allRunIds, runId, runMetaVersion]);
 
+  // "Viewport label" drag source for every labelled pane — see MeshCard's
+  // identical derivation for the writeup.
+  const paneDragTags = useMemo(() => {
+    const map = new Map<string, SeriesRef>();
+    for (const m of shownMetrics) {
+      const key = seriesKey(m);
+      if (paneLabels.has(key)) {
+        map.set(key, { runId: m.runId ?? runId, name: m.name, context_hash: m.context_hash });
+      }
+    }
+    return map;
+  }, [shownMetrics, paneLabels, runId]);
+
   // Cheap proxy check for the Select's disabled state (n_boxes only — the
   // exact per-box depth-array comparison happens once both blobs are
-  // loaded, inside BoxesComparePanel, before actually rendering the mode).
+  // loaded, inside BoxesComparePane, before actually rendering the mode).
+  // When a reference was DRAGGED IN (external), assume OK — the render
+  // path is authoritative (same disclosed pattern, now also covering the
+  // external-reference case).
   const referenceMetaForCompare = useCompareReferenceMeta<Boxes3DMeta>(
-    isCompareEligible ? (multiQueries[1]?.data as SequenceResponse | undefined) : undefined,
+    !hasExternalRef && isCompareEligible ? (multiQueries[1]?.data as SequenceResponse | undefined) : undefined,
     settings.refFixedStep,
     currentStep,
   );
-  const compareTopologyOk = !!meta && !!referenceMetaForCompare && meta.n_boxes === referenceMetaForCompare.n_boxes;
+  const compareTopologyOk =
+    hasExternalRef ||
+    (!!meta && !!referenceMetaForCompare && meta.n_boxes === referenceMetaForCompare.n_boxes);
 
   const renderSingle = () => {
     if (q.isLoading) {
@@ -663,6 +825,7 @@ export default function BoxesCard({
         inModal={inModal}
         paneWidths={settings.paneWidths}
         onPaneWidthsChange={(w) => updateSettings({ paneWidths: w })}
+        dragTags={paneDragTags}
         renderPane={(key, i) => {
           const m = shownMetrics[i]!;
           return (
@@ -696,16 +859,21 @@ export default function BoxesCard({
     </>
   );
 
-  const renderCompare = () => (
+  const renderCompare = (inModal: boolean) => (
     <>
       <BoxesComparePanel
         runId={runId}
-        primaryMetric={shownMetrics[0]!}
-        referenceMetric={shownMetrics[1]!}
+        panes={shownMetrics}
+        paneKeys={paneKeys}
+        paneLabels={paneLabels}
+        perSeriesStepMap={perSeriesStepMap}
+        perSeriesPoints={perSeriesPoints}
         currentStep={currentStep}
+        safeIdx={safeIdx}
         view={view}
         settings={settings}
         updateSettings={updateSettings}
+        inModal={inModal}
       />
       <StepSlider
         points={points}
@@ -731,7 +899,7 @@ export default function BoxesCard({
 
   const renderContent = (inModal: boolean) => {
     if (!isMulti) return renderSingle();
-    if (usingCompareMode) return renderCompare();
+    if (usingCompareMode) return renderCompare(inModal);
     return renderMulti(inModal);
   };
 
@@ -879,14 +1047,66 @@ export default function BoxesCard({
               maxStep={Math.max(...globalSteps, 1)}
             />
           )}
+          {isMulti && hasExternalRef && (
+            <Select<"global" | "per-run">
+              label="Reference mode"
+              value={settings.referenceMode ?? "global"}
+              onChange={(v) => updateSettings({ referenceMode: v })}
+              options={[
+                { value: "per-run", label: "Per-run (each run uses its own copy of the ref tag)" },
+                { value: "global", label: "Global (same ref for all runs)" },
+              ]}
+            />
+          )}
+          <div className="mt-2">
+            <label className="block text-[10px] uppercase tracking-wide text-fg-muted mb-1">
+              Reference source
+            </label>
+            {settings.externalBaseline ? (
+              <div className="flex items-center gap-1 rounded border border-accent/40 bg-accent/5 px-2 py-1 text-xs text-fg-muted">
+                <span className="mono truncate flex-1">
+                  {settings.externalBaseline.name}
+                  {settings.externalBaseline.runId && settings.externalBaseline.runId !== runId
+                    ? ` · ${shortRunLabel(settings.externalBaseline.runId, allRunIds)}`
+                    : ""}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => updateSettings({ externalBaseline: undefined, referenceMode: undefined })}
+                  className="text-fg-subtle hover:text-fg shrink-0"
+                  title="Remove external reference"
+                >{"×"}</button>
+              </div>
+            ) : (
+              <p className="text-[10px] text-fg-subtle mb-1">
+                Drag a series chip onto the card (per-run), or drag a pane's viewport label onto it (global).
+              </p>
+            )}
+          </div>
         </>
       }
       modalOpen={expanded}
       onModalClose={() => setExpanded(false)}
-      modalContent={<div className="flex flex-col h-full">{renderContent(true)}</div>}
+      modalContent={
+        <div
+          className={`flex flex-col h-full${refDropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
+          onDragOver={refDropProps.onDragOver}
+          onDragLeave={refDropProps.onDragLeave}
+          onDrop={refDropProps.onDrop}
+        >
+          {renderContent(true)}
+        </div>
+      }
       scrollIntoViewOnMount={autoOpenSettings}
     >
-      <>{renderContent(false)}</>
+      <div
+        className={`flex flex-1 min-h-0 flex-col${refDropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
+        onDragOver={refDropProps.onDragOver}
+        onDragLeave={refDropProps.onDragLeave}
+        onDrop={refDropProps.onDrop}
+      >
+        {renderContent(false)}
+      </div>
     </CardShell>
   );
 }

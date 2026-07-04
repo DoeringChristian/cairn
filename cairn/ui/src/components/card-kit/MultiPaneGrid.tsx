@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import SplitPane from "../SplitPane";
+import { startViewportDrag, type SeriesRef } from "../SeriesChip";
 
 interface Props {
   /** One key per pane (series), used for React keys and to look up labels. */
@@ -14,6 +15,16 @@ interface Props {
   onPaneWidthsChange: (widths: number[]) => void;
   /** Renders the content for one pane, given its key and index. */
   renderPane: (key: string, index: number) => ReactNode;
+  /**
+   * When provided, each labelled pane's badge becomes a "viewport label"
+   * drag source (`startViewportDrag`, `CAIRN_IMAGE_MIME`) — the SAME
+   * mechanic `ImagePane`/`CompositeMediaPane` use for image panes, so
+   * dragging a 3D card's own pane onto another card's reference drop
+   * target (`card-kit/use-reference-drop.ts`) initiates a GLOBAL reference
+   * exactly like dragging an image pane does. Absent = non-draggable badge
+   * (today's behavior, unchanged).
+   */
+  dragTags?: Map<string, SeriesRef>;
 }
 
 /**
@@ -30,6 +41,7 @@ export default function MultiPaneGrid({
   paneWidths,
   onPaneWidthsChange,
   renderPane,
+  dragTags,
 }: Props) {
   if (inModal) {
     return (
@@ -51,7 +63,16 @@ export default function MultiPaneGrid({
         <div key={key} className="relative overflow-hidden">
           {renderPane(key, i)}
           {labels.has(key) && (
-            <span className="absolute top-1 left-1 z-10 rounded bg-bg/80 px-1.5 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm">
+            <span
+              className="absolute top-1 left-1 z-10 rounded bg-bg/80 px-1.5 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm"
+              draggable={dragTags?.has(key) ?? false}
+              onDragStart={
+                dragTags?.has(key)
+                  ? (e) => startViewportDrag(e, dragTags.get(key)!, labels.get(key) ?? key)
+                  : undefined
+              }
+              style={dragTags?.has(key) ? { cursor: "grab" } : undefined}
+            >
               {labels.get(key)}
             </span>
           )}
