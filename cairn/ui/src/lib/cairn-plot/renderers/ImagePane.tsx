@@ -19,6 +19,7 @@ import {
 } from "../image";
 import { applyColormap, getColormapLUT, DIVERGING_COLORMAPS } from "../colormaps";
 import PixelAxes from "../primitives/PixelAxes";
+import LabelChip from "../primitives/LabelChip";
 import { useImageViewport, type Viewport as ImageViewport } from "../hooks/use-image-viewport";
 
 const DEFAULT_PROCESSING: ImageProcessing = {
@@ -414,20 +415,7 @@ export default function ImagePane({
             )}
         </div>
       </div>
-      <span
-        className={`absolute bottom-1 left-1 z-10 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm flex items-center gap-1${isDraggable ? " cairn-drag-grip" : ""}`}
-        draggable={isDraggable}
-        onDragStart={onDragStart}
-        style={{ cursor: isDraggable ? "grab" : undefined }}
-      >
-        {isDraggable && (
-          <i
-            className="fa-solid fa-grip-vertical text-[8px] opacity-50"
-            aria-hidden="true"
-          />
-        )}
-        {label}
-      </span>
+      <LabelChip label={label} isDraggable={isDraggable} onDragStart={onDragStart} />
     </div>
   );
 }

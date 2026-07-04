@@ -17,7 +17,7 @@ import {
   type PropertyMap,
   type PropertyMeta,
 } from "../three/properties";
-import { Colorbar } from "../primitives";
+import { Colorbar, LabelChip } from "../primitives";
 import type { ViewportCapabilities, ViewportPaneProps, ViewState } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -126,37 +126,6 @@ function resolveViewConfig(settings: PointCloudViewportSettings): PointCloudView
     background: settings.background,
     property: settings.property ?? null,
   };
-}
-
-/** The bottom-left draggable label chip — verbatim CSS/markup from
- *  `ImagePane.tsx`'s chip (see spec §7 appendix: "3D inherits it for free"),
- *  duplicated ONCE here rather than imported from `ImagePane` (which lives
- *  behind the image-only `renderers/` module and is not itself factored out
- *  as a standalone chip component today — a good extraction target for
- *  VC5 once mesh/boxes/volume need the identical chip too, at which point
- *  this + ImagePane's copy should collapse into one shared component). */
-function LabelChip({
-  label,
-  isDraggable,
-  onDragStart,
-}: {
-  label: string;
-  isDraggable?: boolean;
-  onDragStart?: (e: React.DragEvent) => void;
-}) {
-  return (
-    <span
-      className={`absolute bottom-1 left-1 z-10 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm flex items-center gap-1${isDraggable ? " cairn-drag-grip" : ""}`}
-      draggable={isDraggable}
-      onDragStart={onDragStart}
-      style={{ cursor: isDraggable ? "grab" : undefined }}
-    >
-      {isDraggable && (
-        <i className="fa-solid fa-grip-vertical text-[8px] opacity-50" aria-hidden="true" />
-      )}
-      {label}
-    </span>
-  );
 }
 
 /** mode "normal" — one live viewer, moved verbatim from the pre-refactor

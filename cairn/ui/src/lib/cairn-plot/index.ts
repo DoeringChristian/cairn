@@ -65,6 +65,7 @@ export { useContainerSize } from "./hooks";
 // Primitives
 export { Colorbar } from "./primitives";
 export { ColormapSwatch } from "./primitives";
+export { LabelChip } from "./primitives";
 
 // Renderers
 export { ScatterPlot } from "./renderers";
