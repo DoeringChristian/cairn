@@ -372,16 +372,24 @@ function MeshComparePane({
   const referenceBlob = useMeshBlob(referenceHash);
 
   if (mode === "normal") {
-    return <MeshBody hash={primaryHash} meta={primaryMeta} view={view} fill />;
+    // Rendered inside MultiPaneGrid's `relative overflow-hidden` cell (not a
+    // flex container), so `fill`'s flex-1/min-h-0 chain has no ancestor to
+    // resolve against — anchor with `absolute inset-0` instead (matches the
+    // grid cell's own `relative` positioning context).
+    return (
+      <div className="absolute inset-0 flex flex-col">
+        <MeshBody hash={primaryHash} meta={primaryMeta} view={view} fill />
+      </div>
+    );
   }
 
   if (!primaryBlob.data || !referenceBlob.data || !primaryMeta || !referenceMeta) {
-    return <div className="flex-1 min-h-0 motion-safe:animate-pulse rounded bg-bg-hover" />;
+    return <div className="absolute inset-0 motion-safe:animate-pulse rounded bg-bg-hover" />;
   }
 
   if (isCoreCompareMode(mode) && (mode === "split" || mode === "blend" || mode === "diff")) {
     return (
-      <div className="flex-1 min-h-0 overflow-hidden rounded bg-bg">
+      <div className="absolute inset-0 flex overflow-hidden rounded bg-bg">
         <OffscreenComparePanes
           mode={mode}
           renderPrimary={(onFrame, sync) => {
@@ -446,7 +454,7 @@ function MeshComparePane({
     primaryMeta.n_vertices === referenceMeta.n_vertices && primaryMeta.n_faces === referenceMeta.n_faces;
   if (!topologyOk) {
     return (
-      <div className="flex flex-1 min-h-0 items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
+      <div className="absolute inset-0 flex items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
         Topology mismatch: {primaryMeta.n_vertices.toLocaleString()} vs{" "}
         {referenceMeta.n_vertices.toLocaleString()} vertices,{" "}
         {primaryMeta.n_faces.toLocaleString()} vs {referenceMeta.n_faces.toLocaleString()} faces — native diff
@@ -473,7 +481,7 @@ function MeshComparePane({
 
   if (!deltaValues) {
     return (
-      <div className="flex flex-1 min-h-0 items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
+      <div className="absolute inset-0 flex items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
         No property values logged on this mesh to diff — pick a property, or use "Diff: geometry" instead.
       </div>
     );
@@ -482,7 +490,7 @@ function MeshComparePane({
   const { colors, domain } = diffColors(deltaValues, primaryMeta.n_vertices, diffColormap);
 
   return (
-    <div className="flex flex-1 min-h-0 overflow-hidden rounded bg-bg">
+    <div className="absolute inset-0 flex overflow-hidden rounded bg-bg">
       <div className="min-w-0 flex-1">
         <MeshViewer
           positions={primaryBlob.data.positions}

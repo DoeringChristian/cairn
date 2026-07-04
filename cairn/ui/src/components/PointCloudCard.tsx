@@ -341,16 +341,24 @@ function PointCloudComparePane({
   const referenceBlob = usePointCloudBlob(referenceHash);
 
   if (mode === "normal") {
-    return <PointCloudBody hash={primaryHash} meta={primaryMeta} view={view} fill />;
+    // Rendered inside MultiPaneGrid's `relative overflow-hidden` cell (not a
+    // flex container), so `fill`'s flex-1/min-h-0 chain has no ancestor to
+    // resolve against — anchor with `absolute inset-0` instead (matches the
+    // grid cell's own `relative` positioning context).
+    return (
+      <div className="absolute inset-0 flex flex-col">
+        <PointCloudBody hash={primaryHash} meta={primaryMeta} view={view} fill />
+      </div>
+    );
   }
 
   if (!primaryBlob.data || !referenceBlob.data || !primaryMeta || !referenceMeta) {
-    return <div className="flex-1 min-h-0 motion-safe:animate-pulse rounded bg-bg-hover" />;
+    return <div className="absolute inset-0 motion-safe:animate-pulse rounded bg-bg-hover" />;
   }
 
   if (isCoreCompareMode(mode) && (mode === "split" || mode === "blend" || mode === "diff")) {
     return (
-      <div className="flex-1 min-h-0 overflow-hidden rounded bg-bg">
+      <div className="absolute inset-0 flex overflow-hidden rounded bg-bg">
         <OffscreenComparePanes
           mode={mode}
           renderPrimary={(onFrame, sync) => (
@@ -396,7 +404,7 @@ function PointCloudComparePane({
   const topologyOk = primaryMeta.n_points === referenceMeta.n_points;
   if (!topologyOk) {
     return (
-      <div className="flex flex-1 min-h-0 items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
+      <div className="absolute inset-0 flex items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
         Point-count mismatch: {primaryMeta.n_points.toLocaleString()} vs{" "}
         {referenceMeta.n_points.toLocaleString()} points — native diff modes need the same point
         count (index-corresponding).
@@ -420,7 +428,7 @@ function PointCloudComparePane({
 
   if (!deltaValues) {
     return (
-      <div className="flex flex-1 min-h-0 items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
+      <div className="absolute inset-0 flex items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
         No property values logged on this cloud to diff — pick a property, or use "Diff: position" instead.
       </div>
     );
@@ -429,7 +437,7 @@ function PointCloudComparePane({
   const { colors, domain } = diffColors(deltaValues, primaryMeta.n_points, diffColormap);
 
   return (
-    <div className="flex flex-1 min-h-0 overflow-hidden rounded bg-bg">
+    <div className="absolute inset-0 flex overflow-hidden rounded bg-bg">
       <div className="min-w-0 flex-1">
         <PointCloudViewer
           data={primaryBlob.data.data}

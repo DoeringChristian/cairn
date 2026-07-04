@@ -337,16 +337,24 @@ function VolumeComparePane({
   const referenceBlob = useVolumeBlob(referenceHash);
 
   if (mode === "normal") {
-    return <VolumeBody hash={primaryHash} meta={primaryMeta} view={view} fill />;
+    // Rendered inside MultiPaneGrid's `relative overflow-hidden` cell (not a
+    // flex container), so `fill`'s flex-1/min-h-0 chain has no ancestor to
+    // resolve against — anchor with `absolute inset-0` instead (matches the
+    // grid cell's own `relative` positioning context).
+    return (
+      <div className="absolute inset-0 flex flex-col">
+        <VolumeBody hash={primaryHash} meta={primaryMeta} view={view} fill />
+      </div>
+    );
   }
 
   if (!primaryBlob.data || !referenceBlob.data || !primaryMeta || !referenceMeta) {
-    return <div className="flex-1 min-h-0 motion-safe:animate-pulse rounded bg-bg-hover" />;
+    return <div className="absolute inset-0 motion-safe:animate-pulse rounded bg-bg-hover" />;
   }
 
   if (isCoreCompareMode(mode) && (mode === "split" || mode === "blend" || mode === "diff")) {
     return (
-      <div className="flex-1 min-h-0 overflow-hidden rounded bg-bg">
+      <div className="absolute inset-0 flex overflow-hidden rounded bg-bg">
         <OffscreenComparePanes
           mode={mode}
           renderPrimary={(onFrame, sync) => (
@@ -403,7 +411,7 @@ function VolumeComparePane({
     primaryMeta.shape[2] === referenceMeta.shape[2];
   if (!topologyOk) {
     return (
-      <div className="flex flex-1 min-h-0 items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
+      <div className="absolute inset-0 flex items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
         Shape mismatch: {primaryMeta.shape.join("×")} vs {referenceMeta.shape.join("×")} — native
         diff needs matching voxel grid shape.
       </div>
@@ -417,7 +425,7 @@ function VolumeComparePane({
   const diffData = diffColormap === "viridis" ? absArray(delta) : delta;
 
   return (
-    <div className="flex flex-1 min-h-0 overflow-hidden rounded bg-bg">
+    <div className="absolute inset-0 flex overflow-hidden rounded bg-bg">
       <div className="min-w-0 flex-1 overflow-hidden rounded bg-bg">
         <VolumeViewer
           data={diffData}

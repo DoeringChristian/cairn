@@ -343,11 +343,19 @@ function BoxesComparePane({
   const referenceBlob = useBoxesBlob(referenceHash);
 
   if (mode === "normal") {
-    return <BoxesBody hash={primaryHash} meta={primaryMeta} view={view} fill />;
+    // Rendered inside MultiPaneGrid's `relative overflow-hidden` cell (not a
+    // flex container), so `fill`'s flex-1/min-h-0 chain has no ancestor to
+    // resolve against — anchor with `absolute inset-0` instead (matches the
+    // grid cell's own `relative` positioning context).
+    return (
+      <div className="absolute inset-0 flex flex-col">
+        <BoxesBody hash={primaryHash} meta={primaryMeta} view={view} fill />
+      </div>
+    );
   }
 
   if (!primaryBlob.data || !referenceBlob.data || !primaryMeta || !referenceMeta) {
-    return <div className="flex-1 min-h-0 motion-safe:animate-pulse rounded bg-bg-hover" />;
+    return <div className="absolute inset-0 motion-safe:animate-pulse rounded bg-bg-hover" />;
   }
   const primaryMins = primaryBlob.data.mins?.data;
   const primaryMaxs = primaryBlob.data.maxs?.data;
@@ -359,7 +367,7 @@ function BoxesComparePane({
 
   if (isCoreCompareMode(mode) && (mode === "split" || mode === "blend" || mode === "diff")) {
     return (
-      <div className="flex-1 min-h-0 overflow-hidden rounded bg-bg">
+      <div className="absolute inset-0 flex overflow-hidden rounded bg-bg">
         <OffscreenComparePanes
           mode={mode}
           renderPrimary={(onFrame, sync) => {
@@ -425,7 +433,7 @@ function BoxesComparePane({
     Array.from(primaryDepth).every((d, i) => d === referenceDepth[i]);
   if (!topologyOk) {
     return (
-      <div className="flex flex-1 min-h-0 items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
+      <div className="absolute inset-0 flex items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
         Topology mismatch: {primaryMeta.n_boxes.toLocaleString()} vs{" "}
         {referenceMeta.n_boxes.toLocaleString()} boxes (or differing per-box depth) — native diff
         needs matched box count + depth.
@@ -441,7 +449,7 @@ function BoxesComparePane({
 
   if (!activeA.values || !activeB.values) {
     return (
-      <div className="flex flex-1 min-h-0 items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
+      <div className="absolute inset-0 flex items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
         No property values logged on these boxes to diff — pick a property with values on both series.
       </div>
     );
@@ -451,7 +459,7 @@ function BoxesComparePane({
   const { colors, domain } = diffColors(deltaValues, primaryMeta.n_boxes, diffColormap);
 
   return (
-    <div className="flex flex-1 min-h-0 overflow-hidden rounded bg-bg">
+    <div className="absolute inset-0 flex overflow-hidden rounded bg-bg">
       <div className="min-w-0 flex-1">
         <BoxesViewer
           mins={primaryMins}
