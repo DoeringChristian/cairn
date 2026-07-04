@@ -29,12 +29,14 @@ import {
   overlayClassColor,
   resolveArtifactAtStep,
   migrateLegacyMode,
+  isCoreCompareMode,
   Colorbar,
   ColormapSwatch,
   useContainerSize,
 } from "../lib/cairn-plot";
 import { parseOverlay } from "./viewport-registry";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
+import { useCameraSync } from "../lib/camera-sync";
 import AddToComparisonButton from "./AddToComparisonButton";
 import CardShell from "./CardShell";
 import { startViewportDrag, type SeriesRef } from "./SeriesChip";
@@ -234,7 +236,7 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
   const MIN_HEIGHT = cardMinSize(viewport.objectType).minHeight;
 
   const {
-    settings,
+    settings: rawSettings,
     updateSettings,
     effectiveMetrics,
     allRunIds: availableRunIds,
@@ -252,6 +254,11 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
     }),
   });
 
+  // Per-module settings read migration (WS-VC4) — see `ViewportModule.
+  // migrateSettings`'s doc comment. Non-destructive (never rewrites
+  // storage); absent for image (identity), so this is a no-op there.
+  const settings = viewport.migrateSettings ? viewport.migrateSettings(rawSettings) : rawSettings;
+
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
@@ -267,12 +274,21 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
       referenceMode: settings.referenceMode,
     });
 
+  // The active CARD-NATIVE mode (WS-VC4 — e.g. a 3D geometry diff), when one
+  // of `capabilities.nativeModes` is selected in place of a core mode. `[]`
+  // for image, so this is always undefined there.
+  const activeNativeMode: string | undefined = settings.nativeMode ?? undefined;
+
   const setMode = useCallback((mode: MediaCompareModeKind) => {
-    const updates: Partial<ImageSettings> = { mode };
+    const updates: Partial<ImageSettings> = { mode, nativeMode: undefined };
     if (mode === "diff" && settingsRef.current.diffMode === "none") {
       updates.diffMode = "absolute";
     }
     updateSettings(updates);
+  }, [updateSettings]);
+
+  const setNativeMode = useCallback((nativeMode: string) => {
+    updateSettings({ nativeMode });
   }, [updateSettings]);
 
   // -----------------------------------------------------------------------
@@ -421,6 +437,18 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
     return resolveArtifactAtStep(stepMap, currentStep, steps, settings.missingImageMode);
   }, [perSeriesStepMap, perSeriesPoints, currentStep, settings.missingImageMode]);
 
+  // The pane-0 point actually resolved (for its `artifact_mime` — the
+  // download filename's extension source; WS-VC4 generalizes this off the
+  // real resolved mime instead of assuming "image/png", so a non-image
+  // type's own artifact mime (e.g. pointcloud's npy/npz) downloads with the
+  // right extension. Falls back to "image/png" only when no mime is known
+  // at all, matching the pre-refactor image card's hardcoded default.
+  const firstPoint = useMemo(() => {
+    const step = firstResolved.fallbackStep ?? currentStep;
+    return perSeriesStepMap[0]?.get(step) ?? null;
+  }, [perSeriesStepMap, firstResolved.fallbackStep, currentStep]);
+  const downloadMime = firstPoint?.artifact_mime ?? "image/png";
+
   // -----------------------------------------------------------------------
   // Overlays (bounding boxes + segmentation masks)
   // -----------------------------------------------------------------------
@@ -513,11 +541,12 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
 
   // Reference resolution — the one hook/function family (see
   // card-kit/use-media-reference.ts + lib/cairn-plot/media-compare/reference.ts).
-  const { globalHash: baselineHash, perPaneHash } = useMediaReference({
+  const { globalHash: baselineHash, perPaneHash, externalPoints, perRunPoints } = useMediaReference({
     runId,
     perSeriesStepMap,
     perSeriesPoints,
     seriesBaselineIndex: settings.baselineIndex,
+    seriesBaselineFixedStep: settings.refFixedStep,
     external: extBase,
     externalScope: refMode,
     panes: effectiveMetrics,
@@ -551,10 +580,49 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
     const hasRef = !!(paneBaseline && hash && (isOverlayMode || paneBaseline !== hash));
     return hasRef ? paneBaseline! : null;
   });
+
+  // The resolved reference's OWN metadata per pane (WS-VC4) — a 3D module's
+  // reference blob needs its own point-count/channels/bounds to render or
+  // diff against the foreground (image never reads this; `useImageData`
+  // ignores `referenceMetadata`). Looked up from whichever source
+  // `useMediaReference` actually resolved the hash from: the external
+  // reference's own points (global scope), its per-run points, or — the
+  // "series-same-step" baseline — the card's own `perSeriesPoints`.
+  const paneReferenceMetadata = useMemo(
+    () => effectiveMetrics.map((_, i) => {
+      const refHash = paneRefHashArr[i];
+      if (!refHash) return null;
+      if (extBase) {
+        const pts = refMode === "per-run" ? perRunPoints(i) : externalPoints;
+        return pts.find((p) => p.artifact_hash === refHash)?.artifact_metadata ?? null;
+      }
+      if (settings.baselineIndex != null) {
+        const pts = perSeriesPoints[settings.baselineIndex] ?? [];
+        return pts.find((p) => p.artifact_hash === refHash)?.artifact_metadata ?? null;
+      }
+      return null;
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [effectiveMetrics, paneRefHashArr, extBase, refMode, externalPoints, perRunPoints, perSeriesPoints, settings.baselineIndex],
+  );
+  // Cap simultaneously-rendered panes per the descriptor (WS-VC4 — D9 in the
+  // design doc: "preserve per-type maxPanes... card enforces"). Image's
+  // `caps.maxPanes` is +Infinity (unenforced), so `shownMetrics` is always
+  // `=== effectiveMetrics` there — this is a total no-op for the image path.
+  // 3D types cap at 4 (MAX_PANES parity, WebGL budget). Only the RENDERED/
+  // FETCHED pane set is capped; series management (SeriesChipStrip, the
+  // step slider's step range) still spans every `effectiveMetrics` entry,
+  // matching the pre-refactor 3D cards (fetch-all, render-capped).
+  const shownMetrics = useMemo(
+    () => (Number.isFinite(caps.maxPanes) ? effectiveMetrics.slice(0, caps.maxPanes) : effectiveMetrics),
+    [effectiveMetrics, caps.maxPanes],
+  );
+
   const viewData = viewport.useData({
-    hashes: paneHashArr,
-    referenceHashes: paneRefHashArr,
-    metadata: paneMetadata,
+    hashes: paneHashArr.slice(0, shownMetrics.length),
+    referenceHashes: paneRefHashArr.slice(0, shownMetrics.length),
+    metadata: paneMetadata.slice(0, shownMetrics.length),
+    referenceMetadata: paneReferenceMetadata.slice(0, shownMetrics.length),
   });
 
   // Settings handed to each Pane: identical to persisted settings, but with
@@ -566,6 +634,25 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
   );
 
   const Pane = viewport.Pane;
+
+  // Live camera-sync group (WS-VC4, capability: `cameraSync`) — resolved
+  // ONCE per card (never per pane, see `lib/camera-sync.ts`'s doc comment)
+  // and threaded to every pane below. `caps.cameraSync` is false for image,
+  // so `enabled` is always false there and this returns `null` — inert.
+  const cameraSyncGroupId = useCameraSync(caps.cameraSync && !!settings.syncViews);
+
+  // The selected native (card-rendered, non-compositor) mode, if any is both
+  // chosen AND currently enabled (`enabledFor`, evaluated against the first
+  // pane's resolved content/reference as a representative pair — mirrors the
+  // pre-refactor 3D cards' single topology check rather than a per-pane one).
+  // `caps.nativeModes` is `[]` for image, so this is always undefined there.
+  const activeNativeSpec = activeNativeMode
+    ? caps.nativeModes.find((nm) => nm.mode === activeNativeMode)
+    : undefined;
+  const nativeEnabled =
+    !!activeNativeSpec && activeNativeSpec.enabledFor(viewData.items[0] ?? null, viewData.referenceItems[0] ?? null);
+  const useNativeRender = nativeEnabled && !!viewport.nativeDiff;
+  const RenderPane = useNativeRender ? viewport.nativeDiff!.render : Pane;
 
   const cardRef = useRef<HTMLDivElement>(null);
 
@@ -582,7 +669,12 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
         className="grid gap-1 flex-1 min-h-0 overflow-auto"
         style={{ gridTemplateColumns: `repeat(${settings.imageColumns ?? 2}, 1fr)` }}
       >
-        {effectiveMetrics.map((m, paneIdx) => {
+        {shownMetrics.length < effectiveMetrics.length && (
+          <div className="col-span-full mono text-xs text-fg-subtle">
+            {`showing ${shownMetrics.length} of ${effectiveMetrics.length}`}
+          </div>
+        )}
+        {shownMetrics.map((m, paneIdx) => {
           if (refMode === "global" && settings.externalBaseline && m.name === settings.externalBaseline.name && (m.runId ?? runId) === (settings.externalBaseline.runId ?? runId)) return null;
           const fallbackStep = paneResolved[paneIdx]?.fallbackStep ?? null;
           const label = seriesLabel(m, runId, multipleRuns, availableRunIds)
@@ -590,7 +682,7 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
 
           return (
             <div key={seriesKey(m)} className="relative overflow-hidden">
-              <Pane
+              <RenderPane
                 data={viewData.items[paneIdx] ?? null}
                 reference={viewData.referenceItems[paneIdx] ?? null}
                 settings={paneSettings}
@@ -598,6 +690,8 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
                 onViewChange={onPaneViewChange}
                 mode={effectiveMode}
                 diffMode={diffSubmode}
+                nativeMode={activeNativeMode}
+                cameraSyncGroupId={cameraSyncGroupId}
                 isBaseline={refMode === "global" && baselineIdx === paneIdx}
                 splitPosition={splitPos}
                 blendAlpha={blendAlpha}
@@ -626,6 +720,7 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
       onViewChange={onPaneViewChange}
       mode="normal"
       diffMode="absolute"
+      cameraSyncGroupId={cameraSyncGroupId}
       isDraggable
       onDragStart={(e) => onImageDragStart(e, effectiveMetrics[0]!)}
       onNaturalSize={onImageNaturalSize}
@@ -677,28 +772,48 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
   // vs "always" (3D, VC5). `imageViewModified` reads the image2d view fields.
   const imageViewModified = settings.zoom !== 1 || settings.pan.x !== 0 || settings.pan.y !== 0;
   const viewModified = caps.resetView === "tracked" ? imageViewModified : true;
-  const resetImageView = () => updateSettings(viewport.viewToSettingsPatch(viewport.defaultView()));
+  // `viewport.onResetView` (WS-VC4) is the imperative alternative for types
+  // whose view isn't settings-roundtripped (3D — see its doc comment);
+  // absent (image) falls back to the original settings-based reset.
+  const resetImageView = () =>
+    viewport.onResetView
+      ? viewport.onResetView(cardRef.current)
+      : updateSettings(viewport.viewToSettingsPatch(viewport.defaultView()));
 
   // The mode selector iterates the descriptor's core modes (+ native modes,
   // gated by their `enabledFor`) instead of a hardcoded enum — so a viewport
   // type declaring fewer/native modes gets the right selector for free.
+  // `caps.nativeModes` is `[]` for image, so `modeSelectorEntries` there is
+  // exactly `coreModeEntries` (byte-identical selector).
   const coreModeEntries = caps.coreModes;
+  const modeSelectorEntries: Array<{ value: string; label: string; disabled: boolean; title?: string }> = [
+    ...coreModeEntries.map((m) => ({ value: m as string, label: MEDIA_COMPARE_MODE_LABELS[m], disabled: false, title: undefined })),
+    ...caps.nativeModes.map((nm) => {
+      const enabled = nm.enabledFor(viewData.items[0] ?? null, viewData.referenceItems[0] ?? null);
+      return { value: nm.mode as string, label: nm.label, disabled: !enabled, title: enabled ? undefined : nm.disabledReason };
+    }),
+  ];
+  const selectedModeValue: string = activeNativeMode ?? effectiveMode;
+  const handleModeSelect = useCallback((value: string) => {
+    if (isCoreCompareMode(value)) setMode(value);
+    else setNativeMode(value);
+  }, [setMode, setNativeMode]);
 
   const headerActions = (
     <>
       {hasBaseline && (
         <select
-          value={effectiveMode}
-          onChange={(e) => setMode(e.target.value as MediaCompareModeKind)}
-          className={`h-[22px] rounded border border-border bg-bg-elevated px-1.5 text-[10px] mono cursor-pointer ${effectiveMode !== "normal" ? "text-accent" : "text-fg-muted hover:text-fg"}`}
+          value={selectedModeValue}
+          onChange={(e) => handleModeSelect(e.target.value)}
+          className={`h-[22px] rounded border border-border bg-bg-elevated px-1.5 text-[10px] mono cursor-pointer ${selectedModeValue !== "normal" ? "text-accent" : "text-fg-muted hover:text-fg"}`}
           title="Compare mode"
         >
-          {coreModeEntries.map((m) => (
-            <option key={m} value={m}>{MEDIA_COMPARE_MODE_LABELS[m]}</option>
+          {modeSelectorEntries.map((m) => (
+            <option key={m.value} value={m.value} disabled={m.disabled} title={m.title}>{m.label}</option>
           ))}
         </select>
       )}
-      {hasBaseline && effectiveMode === "diff" && (
+      {hasBaseline && effectiveMode === "diff" && !activeNativeMode && (
         <select
           value={settings.diffMode === "none" ? "absolute" : settings.diffMode}
           onChange={(e) => updateSettings({ diffMode: e.target.value as ImageSettings["diffMode"] })}
@@ -906,17 +1021,25 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
           )}
         </>
       )}
+      {caps.cameraSync && (
+        <Toggle
+          label="Sync 3D views"
+          checked={!!settings.syncViews}
+          onChange={(v) => updateSettings({ syncViews: v })}
+          description="Share orbit/zoom/pan live with this card's other panes and any other sync-enabled 3D card on this page"
+        />
+      )}
       {viewport.SettingsControls && (
-        <viewport.SettingsControls settings={settings} update={updateSettings} meta={null} />
+        <viewport.SettingsControls settings={settings} update={updateSettings} meta={viewData.items[0] ?? null} />
       )}
       <SettingsSection title="Compare" />
-      <Select<MediaCompareModeKind>
+      <Select<string>
         label="Mode"
-        value={effectiveMode}
-        onChange={(v) => setMode(v)}
-        options={coreModeEntries.map((m) => ({ value: m, label: MEDIA_COMPARE_MODE_LABELS[m] }))}
+        value={selectedModeValue}
+        onChange={(v) => handleModeSelect(v)}
+        options={modeSelectorEntries}
       />
-      {effectiveMode === "diff" && (
+      {effectiveMode === "diff" && !activeNativeMode && (
         <Select
           label="Diff sub-mode"
           value={settings.diffMode === "none" ? "absolute" : settings.diffMode}
@@ -983,14 +1106,16 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
   const modalContent = (
     <div className="h-[calc(100vh-12rem)] flex flex-col">
       {renderImageContent()}
-      <StepSlider
-        points={globalStepPoints}
-        currentIndex={safeIdx}
-        onChange={onSliderChange}
-        xAxis={settings.xAxis}
-        onXAxisChange={(m) => updateSettings({ xAxis: m })}
-        className="mt-3"
-      />
+      {caps.hasSteps && (
+        <StepSlider
+          points={globalStepPoints}
+          currentIndex={safeIdx}
+          onChange={onSliderChange}
+          xAxis={settings.xAxis}
+          onXAxisChange={(m) => updateSettings({ xAxis: m })}
+          className="mt-3"
+        />
+      )}
       {!hasSelectionProvider && (
         <RunSelectionPanel
           selectedRunIds={selectedArray}
@@ -1012,8 +1137,8 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
       subtitle={subtitle}
       onSettings={() => setExpanded(true)}
       onRemove={onRemove}
-      onDownload={firstResolved.hash ? () => downloadArtifact(api.artifactUrl(firstResolved.hash!), artifactFilename(metric.name, currentStep, "image/png")) : undefined}
-      onScreenshot={handleScreenshot}
+      onDownload={firstResolved.hash ? () => downloadArtifact(api.artifactUrl(firstResolved.hash!), artifactFilename(metric.name, currentStep, downloadMime)) : undefined}
+      onScreenshot={caps.postProcessing ? handleScreenshot : undefined}
       addToComparisonSlot={<AddToComparisonButton cardType={viewport.objectType} series={compSeries} />}
       onResetView={resetImageView}
       viewModified={viewModified}
@@ -1053,17 +1178,19 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
 
           {isMulti && hasBaseline && (
             <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px]">
-              {coreModeEntries.map((mode) => (
+              {modeSelectorEntries.map((m) => (
                 <button
-                  key={mode}
+                  key={m.value}
                   type="button"
-                  onClick={() => setMode(mode)}
-                  className={`rounded px-1.5 py-0.5 ${effectiveMode === mode ? "bg-accent/15 text-accent" : "text-fg-muted hover:bg-bg-hover hover:text-fg"}`}
+                  disabled={m.disabled}
+                  title={m.title}
+                  onClick={() => handleModeSelect(m.value)}
+                  className={`rounded px-1.5 py-0.5 ${selectedModeValue === m.value ? "bg-accent/15 text-accent" : m.disabled ? "text-fg-subtle/50 cursor-not-allowed" : "text-fg-muted hover:bg-bg-hover hover:text-fg"}`}
                 >
-                  {MEDIA_COMPARE_MODE_LABELS[mode]}
+                  {m.label}
                 </button>
               ))}
-              {effectiveMode === "split" && (
+              {effectiveMode === "split" && !activeNativeMode && (
                 <input
                   type="range"
                   min={0}
@@ -1075,7 +1202,7 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
                   title="Split position"
                 />
               )}
-              {effectiveMode === "blend" && (
+              {effectiveMode === "blend" && !activeNativeMode && (
                 <input
                   type="range"
                   min={0}
@@ -1090,14 +1217,16 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
             </div>
           )}
 
-          <StepSlider
-            points={globalStepPoints}
-            currentIndex={safeIdx}
-            onChange={onSliderChange}
-            xAxis={settings.xAxis}
-            onXAxisChange={(m) => updateSettings({ xAxis: m })}
-            className="mt-3"
-          />
+          {caps.hasSteps && (
+            <StepSlider
+              points={globalStepPoints}
+              currentIndex={safeIdx}
+              onChange={onSliderChange}
+              xAxis={settings.xAxis}
+              onXAxisChange={(m) => updateSettings({ xAxis: m })}
+              className="mt-3"
+            />
+          )}
         </>
       ) : (
         <div className="text-sm text-fg-muted">no image logged yet</div>

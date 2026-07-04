@@ -40,7 +40,7 @@ const BarChartCard = lazy(() => import("./BarChartCard"));
 
 const ScalarTileCard = lazy(() => import("./ScalarTileCard"));
 
-const PointCloudCard = lazy(() => import("./PointCloudCard"));
+const PointCloudVisualCard = lazy(() => import("./PointCloudVisualCard"));
 
 const MeshCard = lazy(() => import("./MeshCard"));
 
@@ -250,7 +250,7 @@ export default function CardRenderer(props: CardDescriptor) {
             </div>
           }
         >
-          <PointCloudCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />
+          <PointCloudVisualCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />
         </Suspense>
       );
     case "mesh":
