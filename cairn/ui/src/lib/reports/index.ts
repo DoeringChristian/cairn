@@ -21,6 +21,12 @@ export { newId } from "./ids";
 export type { AddCardSelection, SelectionRuns } from "./card-from-spec";
 export { cardFromSpec } from "./card-from-spec";
 
+export type { MetricIndex, MetricIndexEntry } from "./metric-index";
+export { buildMetricIndex, metricEntriesByName } from "./metric-index";
+
+export type { CairnSpec, CompiledCairnBlock } from "./cairn-block";
+export { CairnBlockError, parseCairnSpec, compileCairnBlock, serializeCairnSpec, stringifyCairnSpec } from "./cairn-block";
+
 export type { ReportTemplate, ReportTemplateCard } from "./templates";
 export {
   loadReportTemplates,
