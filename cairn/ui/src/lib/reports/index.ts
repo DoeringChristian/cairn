@@ -27,6 +27,9 @@ export { buildMetricIndex, metricEntriesByName } from "./metric-index";
 export type { CairnSpec, CompiledCairnBlock } from "./cairn-block";
 export { CairnBlockError, parseCairnSpec, compileCairnBlock, serializeCairnSpec, stringifyCairnSpec } from "./cairn-block";
 
+export type { ParsedReportMarkdown } from "./markdown-source";
+export { CAIRN_FENCE_LANG, parseReportMarkdown, serializeReportToMarkdown } from "./markdown-source";
+
 export type { ReportTemplate, ReportTemplateCard } from "./templates";
 export {
   loadReportTemplates,
