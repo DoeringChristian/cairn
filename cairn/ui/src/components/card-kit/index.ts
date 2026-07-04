@@ -28,3 +28,4 @@ export { OffscreenComparePanes } from "./OffscreenComparePanes";
 export type { OffscreenComparePanesProps } from "./OffscreenComparePanes";
 export { CompareSettingsPanel } from "./CompareSettingsPanel";
 export type { CompareSettingsPanelProps } from "./CompareSettingsPanel";
+export type { VisualCompareSettings } from "./visual-compare-settings";

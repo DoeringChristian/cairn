@@ -112,3 +112,24 @@ export type {
   CompositeMediaPaneProps,
   LegacyModeInputs,
 } from "./media-compare";
+
+// Viewport — the pluggable-rendering contract behind VisualContentCard
+// (see viewport/types.ts).
+export {
+  ImageViewportPane,
+  imageViewportCapabilities,
+} from "./viewport";
+export type {
+  FrameSource,
+  ViewState,
+  NativeModeSpec,
+  ViewportCapabilities,
+  ViewportSeriesRef,
+  ViewportDataArgs,
+  ViewportDataResult,
+  ViewportPaneProps,
+  ViewportModule,
+  ImageViewportItem,
+  ImageViewState,
+  ImageViewportSettings,
+} from "./viewport";
