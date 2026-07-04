@@ -160,6 +160,14 @@ export interface ViewportDataArgs {
    *  `parseOverlay`). `undefined`/`null` entries mean "no metadata for this
    *  pane"; a type that has no use for it simply ignores this field. */
   metadata?: (string | null | undefined)[];
+  /** Raw `artifact_metadata` JSON string of the RESOLVED REFERENCE point per
+   *  pane (index-aligned with `referenceHashes`), when known — added in
+   *  WS-VC4 for 3D types whose reference blob needs its own metadata (point
+   *  count/channels/bounds) to render or diff against the foreground, unlike
+   *  image which never reads metadata for its reference. `undefined` (the
+   *  default) means "not resolved by the card"; a type that has no use for
+   *  it (image) simply ignores this field. */
+  referenceMetadata?: (string | null | undefined)[];
 }
 
 /** Result of `ViewportModule.useData` — `items`/`referenceItems` are
@@ -227,6 +235,13 @@ export interface ViewportPaneProps<TData, TView extends ViewState, TSettings> {
    *  reserved for grid-layout variance across viewport types; ImageViewport
    *  always fills (matches today's behavior). */
   fill?: boolean;
+  /** Live camera-sync group id ("Sync 3D views"), resolved ONCE per card
+   *  (never per pane — see `lib/camera-sync.ts`'s `useCameraSync` doc
+   *  comment) and threaded to every pane so orbit/zoom/pan mirrors across
+   *  this card's panes (and any other sync-enabled 3D card on the page).
+   *  `null` = sync off or `capabilities.cameraSync` is false; ImageViewport
+   *  ignores this (image has no camera). Added in WS-VC4. */
+  cameraSyncGroupId?: string | null;
 }
 
 /**
@@ -254,6 +269,29 @@ export interface ViewportModule<
    *  card via `useCardSeries`) and the `BaseCardSettings` fields (assembled
    *  by the card's settings persistence). */
   defaultSettings(): Omit<TSettings, "metrics" | "version">;
+  /**
+   * Optional per-module settings READ MIGRATION (WS-VC4): normalizes a
+   * legacy persisted field name/shape into this module's current shape, on
+   * every read — non-destructive (returns a new object; never rewrites
+   * storage), exactly mirroring how `migrateLegacyMode` derives image's
+   * `effectiveMode` from its own legacy fields without mutating settings.
+   * Runs ONCE, in `VisualContentCard`, before the settings object is used
+   * for anything else. Absent (undefined, image's case) = identity — no
+   * legacy shape to migrate. A 3D module whose pre-VisualContentCard card
+   * persisted its exclusive compare mode under its own field name (e.g.
+   * pointcloud's old `compareMode`) implements this to fold that value into
+   * the shared `mode`/`nativeMode` fields so old cards keep loading. */
+  migrateSettings?(settings: TSettings): TSettings;
+  /**
+   * Optional imperative "reset view" (WS-VC4): when present, the card calls
+   * THIS instead of `updateSettings(viewToSettingsPatch(defaultView()))` —
+   * for 3D, view state is not settings-roundtripped (the camera pose lives
+   * only in the live `OrbitControls`/`use-scene3d` instance), so resetting
+   * it means reaching into the card's own DOM subtree and calling each
+   * live viewer's imperative fit/reset (`resetScene3DViews`), not persisting
+   * a value. Absent (undefined, image's case) = the settings-based reset.
+   */
+  onResetView?(container: HTMLElement | null): void;
   /**
    * View state (zoom/pan or camera pose) is PERSISTED — it lives inside
    * `TSettings`, not as separate card state (image: `settings.zoom`/`pan`,

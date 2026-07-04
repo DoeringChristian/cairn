@@ -60,6 +60,13 @@ export interface UseMediaReferenceResult {
   /** The external reference series' own points, keyed off its own step
    *  axis (used to render an explicit REF pane in "global" scope). */
   externalPoints: SequencePoint[];
+  /** The external reference's own points for ONE pane in "per-run" scope
+   *  (mirrors `perPaneHash`'s per-run branch) — added in WS-VC4 so a caller
+   *  that needs the reference's own metadata (not just its resolved hash;
+   *  e.g. pointcloud's point-count/channels for a per-pane reference blob)
+   *  can look up the matching `SequencePoint` itself. Empty array when scope
+   *  isn't "per-run" or no external reference is set. */
+  perRunPoints: (paneIdx: number) => SequencePoint[];
 }
 
 /**
@@ -164,5 +171,10 @@ export function useMediaReference(args: UseMediaReferenceArgs): UseMediaReferenc
   const perPaneHash = (paneIdx: number): string | undefined =>
     external && externalScope === "per-run" ? perPaneHashes?.[paneIdx] : globalHash;
 
-  return { globalHash, perPaneHash, externalPoints };
+  const perRunPoints = (paneIdx: number): SequencePoint[] =>
+    external && externalScope === "per-run"
+      ? (perRunRefQueries[paneIdx]?.data?.points ?? []).filter((p: SequencePoint) => p.artifact_hash)
+      : [];
+
+  return { globalHash, perPaneHash, externalPoints, perRunPoints };
 }

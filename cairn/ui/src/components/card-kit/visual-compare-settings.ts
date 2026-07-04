@@ -46,11 +46,29 @@ export interface VisualCompareSettings extends BaseCardSettings {
   /** The single exclusive media-compare mode. When unset, derived from the
    *  legacy fields below via `migrateLegacyMode` on every read. */
   mode?: MediaCompareModeKind;
+  /** The active CARD-NATIVE mode (WS-VC4 — e.g. a 3D geometry diff), when
+   *  one of `capabilities.nativeModes` is selected instead of a core mode.
+   *  Mutually exclusive with `mode` in effect (selecting a native mode does
+   *  not clear `mode`, so switching back to a core mode is a plain toggle);
+   *  `undefined` for every type with `nativeModes: []` (image never sets or
+   *  reads this). */
+  nativeMode?: string;
   /** Legacy exclusive-mode axis #1 (kept for rollback; also doubles as the
    *  "diff" mode's sub-mode selector: signed/absolute/squared/relative*). */
   diffMode: "none" | DiffMode;
   referenceMode?: "global" | "per-run";
   perRunBaselineStep?: number;
+  /** Pins the "series-same-step" baseline (`seriesBaselineIndex`) to one
+   *  fixed step instead of tracking the primary's current step 1:1 — the
+   *  general-N-panes form of the pre-unification 3D cards' `refFixedStep`
+   *  toggle. Optional/absent (undefined) = unchanged default (track
+   *  current step); image never sets this today (no UI wired to it yet). */
+  refFixedStep?: number;
+  /** "Sync 3D views" camera-lockstep toggle (capability: `cameraSync`).
+   *  Image: never set (`cameraSync` is false, the shared toggle never
+   *  renders). Resolved once per card via `lib/camera-sync.ts`'s
+   *  `useCameraSync`, not per pane. */
+  syncViews?: boolean;
   /** Legacy exclusive-mode axis #2 (kept for rollback). */
   compareMode?: "side-by-side" | "split" | "blend";
   splitPosition?: number;

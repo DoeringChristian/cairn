@@ -1,0 +1,424 @@
+import PointCloudViewer, {
+  type PointCloudBackground,
+  type PointCloudBounds,
+  type PointCloudChannels,
+  type PointColorMode,
+  extractPositions,
+} from "../renderers/PointCloudViewer";
+import type { Scene3DSyncOptions } from "../three/use-scene3d";
+import {
+  computeDelta,
+  computeDisplacementMagnitude,
+  diffColors,
+  type DiffColormap,
+} from "../three/diff";
+import {
+  resolveActiveProperty,
+  type PropertyMap,
+  type PropertyMeta,
+} from "../three/properties";
+import { Colorbar } from "../primitives";
+import type { ViewportCapabilities, ViewportPaneProps, ViewState } from "./types";
+
+// ---------------------------------------------------------------------------
+// PointCloudViewport — the pointcloud object_type's PURE Viewport pieces
+// (WS-VC4, first 3D instantiation of the Viewport contract — see
+// docs/superpowers/specs/2026-07-04-visual-content-card.md §2.2 and
+// image-viewport.tsx for the reference pattern this mirrors).
+//
+// Wraps the EXISTING point-cloud rendering (`PointCloudViewer`, built on
+// `useScene3D`) — no rendering or diff math is rewritten here, only adapted
+// to the Viewport Pane/nativeDiff contract. Three pieces are exported:
+//
+//   - `PointCloudSingleView`   — mode "normal": one live viewer.
+//   - `PointCloudSideBySideView` — mode "side": reference | foreground,
+//     two live viewers (mirrors `CompositeMediaPane`'s "side" branch, which
+//     renders two `ImagePane`s the same way for the image type).
+//   - `PointCloudNativeDiffPane` — the card-native geometry diffs
+//     (diff-property/diff-position), moved verbatim from the pre-refactor
+//     `PointCloudCard`'s `PointCloudComparePane` native branch. This is
+//     `ViewportModule.nativeDiff.render` — rendered by the card INSTEAD of
+//     `Pane` when a native mode is selected (Decision D6: native diffs are
+//     card-rendered, not run through the image-space compositor).
+//
+// mode "split"/"blend"/"diff" (the three CORE compositor modes that need
+// pixel-space compositing) are NOT implemented here: they need
+// `OffscreenComparePanes` (snapshot -> the shared `CompositeMediaPane`),
+// which lives in `components/card-kit/` (app layer, since the broader
+// card-kit boundary keeps every React-Query-adjacent 3D-compare wiring
+// there even where a given file happens not to import react-query itself).
+// The actual `ViewportModule.Pane` registered for pointcloud therefore lives
+// at the app layer (`components/PointCloudVisualCard.tsx`): it dispatches
+// "normal"/"side" to the two pure components below and "split"/"blend"/
+// "diff" to `OffscreenComparePanes`, exactly mirroring the pre-refactor
+// `PointCloudComparePane`'s own three-way dispatch (see that file's history
+// for the original, now-superseded shape).
+// ---------------------------------------------------------------------------
+
+/** Point-cloud metadata (`artifact_metadata` JSON), parsed at the app layer
+ *  and passed through untouched — same shape the pre-refactor `PointCloudCard`
+ *  used (`PointCloudMeta`), just relocated. */
+export interface PointCloudMeta {
+  n_points: number;
+  channels: PointCloudChannels;
+  bounds: PointCloudBounds;
+  original_count: number;
+  downsampled?: boolean;
+  value_range?: { min: number; max: number; mean: number };
+  properties?: PropertyMeta[];
+}
+
+/** PointCloudViewport's `TData`: one pane's resolved blob + its metadata,
+ *  bundled together (mirrors `ImageViewportItem` bundling url+overlay from
+ *  the same artifact/step). */
+export interface PointCloudViewportItem {
+  arrays: { data: Float32Array; properties: PropertyMap };
+  meta: PointCloudMeta;
+}
+
+/** PointCloudViewport's `TView` — reserved `camera3d` shape (see
+ *  `viewport/types.ts`'s `ViewState`). Not prop-driven today: the camera
+ *  pose lives entirely in the live `OrbitControls`/`useScene3D` instance
+ *  (matching the pre-refactor cards' "always-on reset, no tracked
+ *  zoom/pan" model — `capabilities.resetView: "always"`), so
+ *  `viewFromSettings`/`viewToSettingsPatch` are inert stubs (see the app
+ *  layer's module assembly) rather than a real settings roundtrip. */
+export type PointCloudViewState = Extract<ViewState, { kind: "camera3d" }>;
+
+/** Card-native compare kinds this type appends to the shared core five —
+ *  see `NativeModeSpec`. */
+export type PointCloudNativeMode = "diff-property" | "diff-position";
+
+/**
+ * PointCloudViewport's `TSettings` requirement — the NARROW subset of the
+ * full app-layer settings shape this file's pure components actually read.
+ * Declared narrowly (rather than importing `VisualCompareSettings`, an
+ * app-layer type, into cairn-plot) so this file stays app-agnostic, exactly
+ * like `ImageViewportSettings` — the app layer's wider settings type
+ * (`VisualCompareSettings & {...}`) structurally satisfies this. Fields the
+ * shared card already threads as their OWN `ViewportPaneProps` (mode,
+ * diffMode, splitPosition, blendAlpha, cameraSyncGroupId, nativeMode) are
+ * NOT duplicated here.
+ */
+export interface PointCloudViewportSettings {
+  pointSize: number;
+  colorMode: PointColorMode;
+  background: PointCloudBackground;
+  /** Selected named property (Property selector); undefined = first available. */
+  property?: string;
+  /** Native-diff (diff-property/diff-position) color mapping — separate
+   *  from image's `colormap` (false-color post-processing, unused here:
+   *  `capabilities.postProcessing` is false for pointcloud). */
+  diffColormap?: DiffColormap;
+}
+
+interface PointCloudViewConfig {
+  pointSize: number;
+  colorMode: PointColorMode;
+  background: PointCloudBackground;
+  property: string | null;
+}
+
+function resolveViewConfig(settings: PointCloudViewportSettings): PointCloudViewConfig {
+  return {
+    pointSize: settings.pointSize,
+    colorMode: settings.colorMode,
+    background: settings.background,
+    property: settings.property ?? null,
+  };
+}
+
+/** The bottom-left draggable label chip — verbatim CSS/markup from
+ *  `ImagePane.tsx`'s chip (see spec §7 appendix: "3D inherits it for free"),
+ *  duplicated ONCE here rather than imported from `ImagePane` (which lives
+ *  behind the image-only `renderers/` module and is not itself factored out
+ *  as a standalone chip component today — a good extraction target for
+ *  VC5 once mesh/boxes/volume need the identical chip too, at which point
+ *  this + ImagePane's copy should collapse into one shared component). */
+function LabelChip({
+  label,
+  isDraggable,
+  onDragStart,
+}: {
+  label: string;
+  isDraggable?: boolean;
+  onDragStart?: (e: React.DragEvent) => void;
+}) {
+  return (
+    <span
+      className={`absolute bottom-1 left-1 z-10 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm flex items-center gap-1${isDraggable ? " cairn-drag-grip" : ""}`}
+      draggable={isDraggable}
+      onDragStart={onDragStart}
+      style={{ cursor: isDraggable ? "grab" : undefined }}
+    >
+      {isDraggable && (
+        <i className="fa-solid fa-grip-vertical text-[8px] opacity-50" aria-hidden="true" />
+      )}
+      {label}
+    </span>
+  );
+}
+
+/** mode "normal" — one live viewer, moved verbatim from the pre-refactor
+ *  `PointCloudCard`'s `PointCloudBody` (rendering only; the loading/error
+ *  states are handled by the card via `data == null`, matching how
+ *  `ImageViewportPane` receives already-resolved data). */
+export function PointCloudSingleView({
+  item,
+  view,
+  sync,
+  label,
+  isDraggable,
+  onDragStart,
+  onFrame,
+}: {
+  item: PointCloudViewportItem | null;
+  view: PointCloudViewConfig;
+  sync: Scene3DSyncOptions | null;
+  label: string;
+  isDraggable?: boolean;
+  onDragStart?: (e: React.DragEvent) => void;
+  onFrame?: (canvas: HTMLCanvasElement) => void;
+}) {
+  if (!item) {
+    return (
+      <div className="flex h-full w-full items-center justify-center text-sm text-fg-muted">
+        no point cloud logged yet
+      </div>
+    );
+  }
+  const { arrays, meta } = item;
+  const active = resolveActiveProperty(arrays.properties, view.property, meta.properties ?? null);
+  return (
+    <div className="relative flex h-full w-full overflow-hidden rounded bg-bg">
+      <div className="min-w-0 flex-1">
+        <PointCloudViewer
+          data={arrays.data}
+          channels={meta.channels}
+          nPoints={meta.n_points}
+          bounds={meta.bounds}
+          colorMode={view.colorMode}
+          pointSize={view.pointSize}
+          background={view.background}
+          sync={sync}
+          onFrame={onFrame}
+        />
+      </div>
+      {active.range && active.values && (
+        <Colorbar colormap="viridis" min={active.range[0]} max={active.range[1]} />
+      )}
+      <LabelChip label={label} isDraggable={isDraggable} onDragStart={onDragStart} />
+    </div>
+  );
+}
+
+/** mode "side" — reference (left) | foreground (right), two live viewers
+ *  sharing the same `sync` group so orbiting one moves both when "Sync 3D
+ *  views" is on. Mirrors `CompositeMediaPane`'s "side" branch (two
+ *  `ImagePane`s) for the pointcloud type — falls back to the single view
+ *  when no reference has resolved yet. */
+export function PointCloudSideBySideView({
+  item,
+  reference,
+  view,
+  sync,
+  label,
+  isDraggable,
+  onDragStart,
+}: {
+  item: PointCloudViewportItem | null;
+  reference: PointCloudViewportItem | null;
+  view: PointCloudViewConfig;
+  sync: Scene3DSyncOptions | null;
+  label: string;
+  isDraggable?: boolean;
+  onDragStart?: (e: React.DragEvent) => void;
+}) {
+  if (!reference) {
+    return (
+      <PointCloudSingleView
+        item={item}
+        view={view}
+        sync={sync}
+        label={label}
+        isDraggable={isDraggable}
+        onDragStart={onDragStart}
+      />
+    );
+  }
+  return (
+    <div className="flex h-full w-full gap-0.5">
+      <div className="relative flex-1 min-w-0 overflow-hidden rounded border border-accent/20 bg-bg">
+        <PointCloudViewer
+          data={reference.arrays.data}
+          channels={reference.meta.channels}
+          nPoints={reference.meta.n_points}
+          bounds={reference.meta.bounds}
+          colorMode={view.colorMode}
+          pointSize={view.pointSize}
+          background={view.background}
+          sync={sync}
+        />
+        <LabelChip label="REF" />
+      </div>
+      <div className="relative flex-1 min-w-0 overflow-hidden rounded bg-bg">
+        {item ? (
+          <PointCloudViewer
+            data={item.arrays.data}
+            channels={item.meta.channels}
+            nPoints={item.meta.n_points}
+            bounds={item.meta.bounds}
+            colorMode={view.colorMode}
+            pointSize={view.pointSize}
+            background={view.background}
+            sync={sync}
+          />
+        ) : (
+          <div className="flex h-full items-center justify-center text-sm text-fg-muted">
+            no point cloud logged yet
+          </div>
+        )}
+        <LabelChip label={label} isDraggable={isDraggable} onDragStart={onDragStart} />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * `ViewportModule.nativeDiff.render` — the two card-native geometry diffs
+ * (diff-property/diff-position), moved verbatim (math + topology-mismatch
+ * messaging) from the pre-refactor `PointCloudCard`'s `PointCloudComparePane`
+ * native branch. Fully pure (no offscreen-snapshot bridge needed: unlike
+ * split/blend/diff, a native diff colors ONE live viewer directly via
+ * `overrideColors`, it never composites two rendered frames).
+ */
+export function PointCloudNativeDiffPane({
+  data,
+  reference,
+  settings,
+  nativeMode,
+  cameraSyncGroupId,
+  label,
+  isDraggable,
+  onDragStart,
+}: ViewportPaneProps<PointCloudViewportItem, PointCloudViewState, PointCloudViewportSettings>) {
+  const sync: Scene3DSyncOptions | null = cameraSyncGroupId ? { groupId: cameraSyncGroupId } : null;
+  const view = resolveViewConfig(settings);
+
+  if (!data || !reference) {
+    return (
+      <div className="flex h-full w-full items-center justify-center text-sm text-fg-muted motion-safe:animate-pulse">
+        loading…
+      </div>
+    );
+  }
+
+  const topologyOk = data.meta.n_points === reference.meta.n_points;
+  if (!topologyOk) {
+    return (
+      <div className="flex h-full w-full items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
+        Point-count mismatch: {data.meta.n_points.toLocaleString()} vs{" "}
+        {reference.meta.n_points.toLocaleString()} points — native diff modes need the same point
+        count (index-corresponding).
+      </div>
+    );
+  }
+
+  const diffColormap: DiffColormap = settings.diffColormap ?? "viridis";
+  let deltaValues: Float32Array | null = null;
+  if (nativeMode === "diff-position") {
+    const posA = extractPositions(data.arrays.data, data.meta.channels, data.meta.n_points);
+    const posB = extractPositions(reference.arrays.data, reference.meta.channels, reference.meta.n_points);
+    deltaValues = computeDisplacementMagnitude(posA, posB, data.meta.n_points);
+  } else {
+    const activeA = resolveActiveProperty(data.arrays.properties, view.property, data.meta.properties ?? null);
+    const activeB = resolveActiveProperty(
+      reference.arrays.properties,
+      view.property,
+      reference.meta.properties ?? null,
+    );
+    if (activeA.values && activeB.values) {
+      deltaValues = computeDelta(activeA.values, activeB.values, data.meta.n_points);
+    }
+  }
+
+  if (!deltaValues) {
+    return (
+      <div className="flex h-full w-full items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
+        No property values logged on this cloud to diff — pick a property, or use "Diff: position"
+        instead.
+      </div>
+    );
+  }
+
+  const { colors, domain } = diffColors(deltaValues, data.meta.n_points, diffColormap);
+
+  return (
+    <div className="relative flex h-full w-full overflow-hidden rounded bg-bg">
+      <div className="min-w-0 flex-1">
+        <PointCloudViewer
+          data={data.arrays.data}
+          channels={data.meta.channels}
+          nPoints={data.meta.n_points}
+          bounds={data.meta.bounds}
+          colorMode={view.colorMode}
+          pointSize={view.pointSize}
+          background={view.background}
+          sync={sync}
+          overrideColors={colors}
+        />
+      </div>
+      <Colorbar colormap={diffColormap} min={domain[0]} max={domain[1]} />
+      <LabelChip label={label} isDraggable={isDraggable} onDragStart={onDragStart} />
+    </div>
+  );
+}
+
+function topologyMatches(content: unknown, reference: unknown): boolean {
+  const a = content as PointCloudViewportItem | null;
+  const b = reference as PointCloudViewportItem | null;
+  if (!a || !b) return false;
+  return a.meta.n_points === b.meta.n_points;
+}
+
+/**
+ * PointCloudViewport's capability descriptor. All five core modes (via the
+ * app-layer Pane's split/blend/diff -> `OffscreenComparePanes` bridge, same
+ * as every 3D type), plus the two native geometry diffs. No post-processing/
+ * overlays (no per-pixel pipeline on a live 3D render); camera sync on;
+ * always-on reset (no tracked "modified" signal, matching the pre-refactor
+ * cards); `colorbar: "never"` for the SHARED false-color mechanism (that
+ * mechanism is `settings.colormap`-driven and image-specific — pointcloud
+ * has no false-color post-processing knob) — the Pane renders its own
+ * contextual colorbar (active property / diff domain) directly instead, see
+ * `PointCloudSingleView`/`PointCloudNativeDiffPane` above. `maxPanes: 4` +
+ * `webglContextsPerPane: 1` preserve the pre-refactor `MAX_PANES` WebGL
+ * budget mitigation.
+ */
+export const pointCloudViewportCapabilities: ViewportCapabilities<PointCloudNativeMode> = {
+  coreModes: ["normal", "side", "split", "blend", "diff"],
+  nativeModes: [
+    {
+      mode: "diff-property",
+      label: "Diff: property (native)",
+      enabledFor: topologyMatches,
+      disabledReason: "Native diff modes need the same point count — disabled for this pair",
+    },
+    {
+      mode: "diff-position",
+      label: "Diff: position (native)",
+      enabledFor: topologyMatches,
+      disabledReason: "Native diff modes need the same point count — disabled for this pair",
+    },
+  ],
+  hasSteps: true,
+  postProcessing: false,
+  overlays: false,
+  colorbar: "never",
+  cameraSync: true,
+  resetView: "always",
+  crossTypeCompare: false,
+  webglContextsPerPane: 1,
+  maxPanes: 4,
+  label: { placement: "bottom-left", draggable: true },
+};
