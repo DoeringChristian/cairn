@@ -36,6 +36,8 @@ export interface MeshViewerProps {
   className?: string;
   /** Opt-in live camera sync group — see `lib/camera-sync.ts`. */
   sync?: Scene3DSyncOptions | null;
+  /** Forwarded to `useScene3D` — see its docstring (image-space compare snapshots). */
+  onFrame?: (canvas: HTMLCanvasElement) => void;
 }
 
 const BG_COLORS: Record<MeshBackground, number> = {
@@ -112,10 +114,12 @@ export default function MeshViewer({
   background,
   className,
   sync = null,
+  onFrame,
 }: MeshViewerProps) {
   const { containerRef, canvasRef, requestRender, fitToBounds, refs } = useScene3D({
     background: BG_COLORS[background],
     sync,
+    onFrame,
   });
 
   const meshRef = useRef<THREE.Mesh | null>(null);

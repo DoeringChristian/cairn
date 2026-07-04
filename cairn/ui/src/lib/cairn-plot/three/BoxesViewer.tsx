@@ -41,6 +41,15 @@ export interface BoxesViewerProps {
   sync?: Scene3DSyncOptions | null;
   /** Called after every geometry rebuild with the filtered/total box counts. */
   onVisibleCount?: (visible: number, total: number) => void;
+  /** Forwarded to `useScene3D` — see its docstring (image-space compare snapshots). */
+  onFrame?: (canvas: HTMLCanvasElement) => void;
+  /**
+   * Precomputed per-box RGB (`(nBoxes*3)`, 0..1), indexed like `depth`/
+   * `values` (i.e. BEFORE the depth/value filter), bypassing `colorMode`
+   * entirely when present. Used by the card's native `diff-property`
+   * comparison mode (colors from the shared `three/diff.ts` module).
+   */
+  overrideColors?: Float32Array | null;
 }
 
 const BG_COLORS: Record<BoxesBackground, number> = {
@@ -178,10 +187,13 @@ export default function BoxesViewer({
   className,
   sync = null,
   onVisibleCount,
+  onFrame,
+  overrideColors = null,
 }: BoxesViewerProps) {
   const { containerRef, canvasRef, requestRender, fitToBounds, refs } = useScene3D({
     background: BG_COLORS[background],
     sync,
+    onFrame,
   });
 
   const lineRef = useRef<THREE.LineSegments | null>(null);
@@ -196,14 +208,9 @@ export default function BoxesViewer({
     if (!scene) return;
 
     const visible = filterBoxes(nBoxes, depth, values, depthRange, valueThreshold ?? null);
-    const boxColors = computeBoxColors(
-      nBoxes,
-      depth,
-      values,
-      maxDepth,
-      valueRange,
-      effectiveColorMode,
-    );
+    const boxColors =
+      overrideColors ??
+      computeBoxColors(nBoxes, depth, values, maxDepth, valueRange, effectiveColorMode);
     const { positions, colors } = buildGeometry(mins, maxs, visible, boxColors);
 
     if (lineRef.current) {
@@ -240,6 +247,7 @@ export default function BoxesViewer({
     maxDepth,
     valueRange?.[0],
     valueRange?.[1],
+    overrideColors,
   ]);
 
   // ── Fit camera only when the underlying dataset changes, not on filter/

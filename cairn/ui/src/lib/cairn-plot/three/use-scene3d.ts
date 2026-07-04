@@ -30,6 +30,16 @@ export interface UseScene3DOptions {
   far?: number;
   /** Opt-in live camera sync group. `null`/absent disables sync (default). */
   sync?: Scene3DSyncOptions | null;
+  /**
+   * Called with the live `<canvas>` element after every `requestRender()`
+   * (including camera-sync-driven re-renders). Opt-in — absent by default,
+   * zero overhead when unused. This is how 3D cards feed the media-compare
+   * compositor for image-space split/blend/pixel-diff modes: snapshot this
+   * canvas (`canvas.toDataURL()`) rather than each viewer re-implementing
+   * render-to-image itself (spec-visual-compare.md WS-VC2 — reuse
+   * `use-scene3d` machinery, don't fork it).
+   */
+  onFrame?: (canvas: HTMLCanvasElement) => void;
 }
 
 export interface Scene3DHandle {
@@ -74,7 +84,7 @@ export interface Scene3DHandle {
  * in their own effect and dispose it in their own cleanup.
  */
 export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
-  const { background, fov = 50, near = 0.01, far = 1000, sync = null } = options;
+  const { background, fov = 50, near = 0.01, far = 1000, sync = null, onFrame } = options;
 
   const { ref: containerRef, size } = useContainerSize<HTMLDivElement>();
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -87,14 +97,22 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
   const boundsRef = useRef<Scene3DBounds | null>(null);
   const applyingRemoteRef = useRef(false);
   const syncRef = useRef<Scene3DSyncOptions | null>(sync);
+  const onFrameRef = useRef<((canvas: HTMLCanvasElement) => void) | undefined>(onFrame);
   const sourceIdRef = useRef<string>();
   if (!sourceIdRef.current) sourceIdRef.current = makeCameraSyncSourceId();
+
+  useEffect(() => {
+    onFrameRef.current = onFrame;
+  }, [onFrame]);
 
   const requestRender = useCallback(() => {
     const r = rendererRef.current;
     const s = sceneRef.current;
     const c = cameraRef.current;
-    if (r && s && c) r.render(s, c);
+    if (r && s && c) {
+      r.render(s, c);
+      onFrameRef.current?.(r.domElement);
+    }
   }, []);
 
   const fitToBounds = useCallback(

@@ -39,6 +39,8 @@ export interface VolumeViewerProps {
   className?: string;
   /** Opt-in live camera sync — see `use-scene3d.ts` / `lib/camera-sync.ts`. */
   sync?: Scene3DSyncOptions | null;
+  /** Forwarded to `useScene3D` — see its docstring (image-space compare snapshots). */
+  onFrame?: (canvas: HTMLCanvasElement) => void;
 }
 
 const BG_COLORS: Record<VolumeBackground, number> = {
@@ -347,10 +349,12 @@ function VolumeViewerInner({
   background,
   className,
   sync = null,
+  onFrame,
 }: VolumeViewerProps) {
   const { containerRef, canvasRef, requestRender, fitToBounds, refs } = useScene3D({
     background: BG_COLORS[background],
     sync,
+    onFrame,
   });
 
   const meshRef = useRef<THREE.Mesh | null>(null);

@@ -7,11 +7,16 @@ renderer treats them identically. ``cairn.Boxes3D``/``cairn.Octree``/
 ``"bvh"``) is metadata-only, set by the wrapper used at log time.
 
 npz arrays: ``mins`` f4 (N,3), ``maxs`` f4 (N,3), ``depth`` u2 (N,), optional
-``values`` f4 (N,). Every box must satisfy ``mins <= maxs`` elementwise.
-Box sets larger than ``MAX_BOXES`` raise (no silent truncation — matches
-Tensor's ``MAX_BYTES`` behavior). Metadata records ``n_boxes``, ``max_depth``,
-``kind``, overall ``bounds``, an optional ``value_range``, and ``size_bytes``
-so the UI can render a header without loading the blob.
+``values_<name>`` f4 (N,) — named per-box scalar properties. A bare
+``values=`` array is canonicalized to a single ``values_value`` property; a
+``values={"name": arr, ...}`` dict logs one array per name (see
+``handlers/_properties.py``). Every box must satisfy ``mins <= maxs``
+elementwise. Box sets larger than ``MAX_BOXES`` raise (no silent truncation —
+matches Tensor's ``MAX_BYTES`` behavior). Metadata records ``n_boxes``,
+``max_depth``, ``kind``, overall ``bounds``, an optional ``properties``
+list (``{name, min, max, mean}`` per property) plus ``value_range`` mirroring
+the first property for backward compat, and ``size_bytes`` so the UI can
+render a header without loading the blob.
 """
 
 from __future__ import annotations
@@ -23,6 +28,12 @@ import numpy as np
 
 from ..wrappers import _TypeWrapper
 from ._optional import try_import
+from ._properties import (
+    normalize_properties,
+    properties_arrays,
+    properties_metadata,
+    value_range_from,
+)
 
 MAX_BOXES = 200_000
 
@@ -87,20 +98,14 @@ class Boxes3DHandler:
                     f"got {depth.shape[0]}"
                 )
 
-        values_arr = _to_numpy(raw_values)
-        has_values = values_arr is not None
-        values = None
-        if has_values:
-            values = np.asarray(values_arr).reshape(-1).astype(np.float32)
-            if values.shape[0] != n_boxes:
-                raise ValueError(
-                    f"values must have length {n_boxes} (one per box); "
-                    f"got {values.shape[0]}"
-                )
+        # `values` (via the dict payload or the `values=` kwarg) may be a
+        # single array (canonicalized to {"value": arr}) or a dict[str,
+        # array] of named per-box properties (spec-3dx-superseded §B).
+        properties = normalize_properties(raw_values, n_boxes, "boxes3d")
+        property_arrays = properties_arrays(properties)
 
         arrays: dict[str, np.ndarray] = {"mins": mins, "maxs": maxs, "depth": depth}
-        if has_values:
-            arrays["values"] = values
+        arrays.update(property_arrays)
         buf = io.BytesIO()
         np.savez_compressed(buf, **arrays)
         data = buf.getvalue()
@@ -116,8 +121,8 @@ class Boxes3DHandler:
             max_depth = 0
 
         size_bytes = int(mins.nbytes + maxs.nbytes + depth.nbytes)
-        if has_values and values is not None:
-            size_bytes += int(values.nbytes)
+        for arr in property_arrays.values():
+            size_bytes += int(arr.nbytes)
 
         meta: dict[str, Any] = {
             "n_boxes": n_boxes,
@@ -126,20 +131,25 @@ class Boxes3DHandler:
             "bounds": bounds,
             "size_bytes": size_bytes,
         }
-        if has_values and values is not None and n_boxes:
-            meta["value_range"] = {
-                "min": float(values.min()),
-                "max": float(values.max()),
-                "mean": float(values.mean()),
-            }
+        properties_meta = properties_metadata(properties)
+        value_range = value_range_from(properties_meta)
+        if value_range is not None:
+            meta["value_range"] = value_range
+        if properties_meta is not None:
+            meta["properties"] = properties_meta
         return data, meta
 
     def deserialize(
         self, data: bytes, metadata: dict[str, Any] | None = None
     ) -> dict[str, "np.ndarray"]:
-        """Load .npz bytes back into ``{mins, maxs, depth, values?}`` arrays."""
+        """Load .npz bytes back into ``{mins, maxs, depth, values_<name>?, values?}``.
+
+        ``values`` (bare) is surfaced for OLD artifacts logged before named
+        properties existed; new artifacts carry ``values_<name>`` instead.
+        """
         loaded = np.load(io.BytesIO(data))
         out = {"mins": loaded["mins"], "maxs": loaded["maxs"], "depth": loaded["depth"]}
-        if "values" in loaded.files:
-            out["values"] = loaded["values"]
+        for key in loaded.files:
+            if key == "values" or key.startswith("values_"):
+                out[key] = loaded[key]
         return out

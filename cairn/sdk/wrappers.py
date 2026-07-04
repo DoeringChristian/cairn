@@ -147,14 +147,26 @@ class PointCloud(_TypeWrapper):
     Clouds larger than 300,000 points are uniformly downsampled (seeded) at
     log time; the original count is preserved in metadata.
 
+    Optional ``values``: a length-``N`` scalar array (canonicalized to a
+    single ``"value"`` property) or a ``dict[str, array]`` of named
+    per-point scalar properties (e.g. curvature, per-point loss), downsampled
+    together with the cloud. Feeds a "Property" selector + colormap/Colorbar
+    in the UI, same mechanism as ``Mesh``/``Boxes3D``.
+
     Usage::
 
         run.track(cairn.PointCloud(xyz), name="cloud", step=0)          # (N, 3)
         run.track(cairn.PointCloud(xyz_rgb), name="scan", step=0)        # (N, 6)
         run.track(cairn.PointCloud(xyz_cat), name="segments", step=0)    # (N, 4)
+        run.track(cairn.PointCloud(xyz, values=per_point_loss), name="cloud", step=0)
+        run.track(cairn.PointCloud(xyz, values={"loss": l, "curvature": c}), name="cloud", step=0)
     """
 
     object_type = "pointcloud"
+
+    def __init__(self, points: Any, values: Any = None, **kwargs: Any):
+        self.obj = points
+        self.kwargs = {**kwargs, "values": values}
 
 
 class Mesh(_TypeWrapper):
@@ -177,8 +189,11 @@ class Mesh(_TypeWrapper):
     metadata; the UI's double-sided rendering default keeps those (and any
     open-surface residuals) displayable. Optional per-vertex attributes:
 
-    - ``values``: a length-``N`` scalar array, colored via a colormap in the
-      UI (e.g. curvature, temperature, a training signal).
+    - ``values``: a length-``N`` scalar array (canonicalized to a single
+      ``"value"`` property), or a ``dict[str, array]`` of named per-vertex
+      scalar properties (e.g. curvature, temperature, a training signal per
+      vertex) — each is colored via a colormap in the UI, with a "Property"
+      selector shown when more than one is logged.
     - ``colors``: an ``(N, 3)`` RGB array. Color is auto-detected as either
       ``0-255`` or ``0-1`` and normalized to ``0-1`` at log time.
     - ``normals``: an ``(N, 3)`` array; the UI computes smooth-shading
@@ -190,6 +205,7 @@ class Mesh(_TypeWrapper):
 
         run.track(cairn.Mesh(vertices, faces), name="mesh", step=0)
         run.track(cairn.Mesh(vertices, faces, values=curvature), name="mesh", step=0)
+        run.track(cairn.Mesh(vertices, faces, values={"curvature": c, "loss": l}), name="mesh", step=0)
         run.track(cairn.Mesh(vertices, faces, colors=vertex_rgb), name="mesh", step=0)
     """
 
@@ -227,7 +243,10 @@ class Boxes3D(_TypeWrapper):
       Every box must satisfy ``mins <= maxs`` elementwise.
     - ``depth``: optional ``(N,)`` integer array (defaults to all zeros —
       a flat, unstructured box set).
-    - ``values``: optional ``(N,)`` float array for value-based coloring.
+    - ``values``: optional ``(N,)`` float array for value-based coloring, or
+      a ``dict[str, array]`` of named per-box scalar properties (e.g. node
+      cost, IoU) — a "Property" selector appears in the UI when more than
+      one is logged.
 
     Box sets larger than 200,000 rows raise (no silent truncation).
 
@@ -236,6 +255,7 @@ class Boxes3D(_TypeWrapper):
         run.track(cairn.Boxes3D(mins, maxs), name="boxes", step=0)
         run.track(cairn.Octree(mins, maxs, depth=depth), name="octree", step=0)
         run.track(cairn.BVH(mins, maxs, values=node_cost), name="bvh", step=0)
+        run.track(cairn.BVH(mins, maxs, values={"cost": c, "iou": iou}), name="bvh", step=0)
     """
 
     object_type = "boxes3d"

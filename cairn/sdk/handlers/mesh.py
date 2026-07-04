@@ -8,8 +8,13 @@ npz arrays:
 
 - ``positions`` f4 ``(N, 3)`` — vertex positions.
 - ``faces`` u4 ``(M, 3)`` — triangle vertex indices (must be ``< N``).
-- ``values`` f4 ``(N,)`` — optional per-vertex scalar (colored via a colormap
-  in the UI).
+- ``values_<name>`` f4 ``(N,)`` — optional named per-vertex scalar
+  properties (colored via a colormap + a Property selector in the UI). A
+  bare ``values=`` array is canonicalized to a single ``values_value``
+  property (see ``handlers/_properties.py``); a ``values={"name": arr, ...}``
+  dict logs one array per name. Metadata's ``properties`` list carries
+  ``{name, min, max, mean}`` per property; ``value_range`` mirrors the first
+  property for backward compat.
 - ``colors`` f4 ``(N, 3)`` — optional per-vertex RGB; accepts either ``0-255``
   or ``0-1`` and auto-normalizes to ``0-1`` (same convention as
   ``PointCloud``'s ``xyzrgb``).
@@ -47,6 +52,12 @@ import numpy as np
 
 from ..wrappers import _TypeWrapper
 from ._optional import try_import
+from ._properties import (
+    normalize_properties,
+    properties_arrays,
+    properties_metadata,
+    value_range_from,
+)
 
 MAX_BYTES = 64 * 1024 * 1024  # 64MB, pre-compression total array bytes
 
@@ -219,7 +230,7 @@ class MeshHandler:
 
         vertices = _to_numpy(obj.get("vertices"))
         faces = _to_numpy(obj.get("faces"))
-        values = _to_numpy(obj.get("values"))
+        raw_values = obj.get("values")
         colors = _to_numpy(obj.get("colors"))
         normals = _to_numpy(obj.get("normals"))
 
@@ -244,11 +255,10 @@ class MeshHandler:
                 f"[{int(faces_i.min())}, {int(faces_i.max())}]"
             )
 
-        if values is not None and (values.ndim != 1 or values.shape[0] != n_vertices):
-            raise ValueError(
-                f"mesh values must be a length-{n_vertices} 1D array; got "
-                f"{tuple(values.shape)}"
-            )
+        # `values` may be a single array (canonicalized to {"value": arr}) or
+        # a dict[str, array] of named per-vertex properties (spec-3dx-superseded
+        # §B) — validated against n_vertices by the shared helper.
+        properties = normalize_properties(raw_values, n_vertices, "mesh")
         if colors is not None and (colors.ndim != 2 or tuple(colors.shape) != (n_vertices, 3)):
             raise ValueError(
                 f"mesh colors must be an ({n_vertices}, 3) array; got "
@@ -275,17 +285,12 @@ class MeshHandler:
         arrays: dict[str, np.ndarray] = {"positions": positions, "faces": faces_u4}
         total_bytes = positions.nbytes + faces_u4.nbytes
 
-        value_range: dict[str, float] | None = None
-        if values is not None:
-            values_f4 = np.ascontiguousarray(values, dtype=np.float32)
-            arrays["values"] = values_f4
-            total_bytes += values_f4.nbytes
-            if values_f4.size:
-                value_range = {
-                    "min": float(values_f4.min()),
-                    "max": float(values_f4.max()),
-                    "mean": float(values_f4.mean()),
-                }
+        property_arrays = properties_arrays(properties)
+        arrays.update(property_arrays)
+        for arr in property_arrays.values():
+            total_bytes += arr.nbytes
+        properties_meta = properties_metadata(properties)
+        value_range = value_range_from(properties_meta)
 
         has_colors = colors is not None
         if has_colors:
@@ -334,6 +339,8 @@ class MeshHandler:
             meta["winding"] = "unnormalized"
         if value_range is not None:
             meta["value_range"] = value_range
+        if properties_meta is not None:
+            meta["properties"] = properties_meta
         return data, meta
 
     def deserialize(

@@ -82,16 +82,27 @@ class VolumeHandler:
         np.savez_compressed(buf, data=arr32)
         data = buf.getvalue()
 
+        vmin = float(arr32.min()) if arr32.size else 0.0
+        vmax = float(arr32.max()) if arr32.size else 0.0
+        mean = float(arr32.mean()) if arr32.size else 0.0
+
         meta = {
             "shape": shape,
             "dtype": dtype_str,
-            "vmin": float(arr32.min()) if arr32.size else 0.0,
-            "vmax": float(arr32.max()) if arr32.size else 0.0,
-            "mean": float(arr32.mean()) if arr32.size else 0.0,
+            "vmin": vmin,
+            "vmax": vmax,
+            "mean": mean,
             "spacing": sp,
             "origin": og,
             "bounds": bounds,
             "size_bytes": nbytes,
+            # Volume has a single implicit scalar field (unlike mesh/
+            # pointcloud/boxes3d, which support a named-properties dict) —
+            # this metadata shape still lets the UI's shared property
+            # selector/Colorbar code treat it uniformly with the other three
+            # 3D types (spec-3dx-superseded §B: "at least keep consistent
+            # metadata" for volume).
+            "properties": [{"name": "value", "min": vmin, "max": vmax, "mean": mean}],
         }
         return data, meta
 

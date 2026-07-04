@@ -54,10 +54,41 @@ def test_roundtrip_depth_and_values():
     assert meta["value_range"]["min"] == pytest.approx(float(values.min()))
     assert meta["value_range"]["max"] == pytest.approx(float(values.max()))
     assert meta["value_range"]["mean"] == pytest.approx(float(values.mean()))
+    assert meta["properties"] == [
+        {
+            "name": "value",
+            "min": pytest.approx(float(values.min())),
+            "max": pytest.approx(float(values.max())),
+            "mean": pytest.approx(float(values.mean())),
+        }
+    ]
 
     back = _load(data)
     np.testing.assert_array_equal(back["depth"], depth.astype(np.uint16))
-    np.testing.assert_allclose(back["values"], values)
+    np.testing.assert_allclose(back["values_value"], values)
+
+
+def test_named_properties_dict_recorded_and_roundtrip():
+    h = Boxes3DHandler()
+    rng = np.random.default_rng(7)
+    mins, maxs = _boxes(6, rng)
+    cost = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], dtype=np.float32)
+    iou = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6], dtype=np.float32)
+    data, meta = h.serialize({"mins": mins, "maxs": maxs, "values": {"cost": cost, "iou": iou}})
+    assert meta["value_range"] == {"min": 1.0, "max": 6.0, "mean": pytest.approx(3.5)}
+    assert [p["name"] for p in meta["properties"]] == ["cost", "iou"]
+    back = _load(data)
+    np.testing.assert_allclose(back["values_cost"], cost)
+    np.testing.assert_allclose(back["values_iou"], iou)
+    assert "values" not in back
+
+
+def test_named_properties_bad_length_rejected():
+    h = Boxes3DHandler()
+    rng = np.random.default_rng(8)
+    mins, maxs = _boxes(6, rng)
+    with pytest.raises(ValueError, match=r"property 'iou'"):
+        h.serialize({"mins": mins, "maxs": maxs, "values": {"cost": np.zeros(6), "iou": np.zeros(3)}})
 
 
 def test_bounds_over_mins_maxs():

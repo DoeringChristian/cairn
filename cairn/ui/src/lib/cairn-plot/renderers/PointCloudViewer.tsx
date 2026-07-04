@@ -29,9 +29,22 @@ export interface PointCloudViewerProps {
    * sync — see `lib/camera-sync.ts` for how cards resolve a group id.
    */
   sync?: Scene3DSyncOptions | null;
+  /** Forwarded to `useScene3D` — see its docstring (image-space compare snapshots). */
+  onFrame?: (canvas: HTMLCanvasElement) => void;
+  /**
+   * Precomputed per-point RGB (`(nPoints*3)`, 0..1), bypassing `colorMode`
+   * entirely when present. Used by the card's native `diff-property`/
+   * `diff-position` comparison modes (colors from the shared
+   * `three/diff.ts` module) — the viewer itself has no diff/colormap logic
+   * of its own (spec-visual-compare.md quality bar #3).
+   */
+  overrideColors?: Float32Array | null;
 }
 
-const CHANNEL_STRIDE: Record<PointCloudChannels, number> = {
+/** Element stride per channel layout — exported so cards can extract raw
+ *  xyz positions themselves (e.g. the `diff-position` native comparison
+ *  mode's displacement magnitude) without duplicating this layout table. */
+export const CHANNEL_STRIDE: Record<PointCloudChannels, number> = {
   xyz: 3,
   xyzc: 4,
   xyzrgb: 6,
@@ -56,7 +69,7 @@ export function resolveColorMode(
   return "height";
 }
 
-function extractPositions(data: Float32Array, channels: PointCloudChannels, nPoints: number): Float32Array {
+export function extractPositions(data: Float32Array, channels: PointCloudChannels, nPoints: number): Float32Array {
   const stride = CHANNEL_STRIDE[channels];
   if (stride === 3) return data.subarray(0, nPoints * 3);
   const out = new Float32Array(nPoints * 3);
@@ -111,10 +124,13 @@ export default function PointCloudViewer({
   background,
   className,
   sync = null,
+  onFrame,
+  overrideColors = null,
 }: PointCloudViewerProps) {
   const { containerRef, canvasRef, requestRender, fitToBounds, refs } = useScene3D({
     background: BG_COLORS[background],
     sync,
+    onFrame,
   });
 
   const pointsRef = useRef<THREE.Points | null>(null);
@@ -140,7 +156,7 @@ export default function PointCloudViewer({
 
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    const colors = computeColors(data, channels, nPoints, bounds, colorMode);
+    const colors = overrideColors ?? computeColors(data, channels, nPoints, bounds, colorMode);
     geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
 
     const material = new THREE.PointsMaterial({
@@ -159,17 +175,17 @@ export default function PointCloudViewer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [positions, data, channels, nPoints]);
 
-  // ── Recolor (mode change, no refit) ────────────────────────────────────
+  // ── Recolor (mode/overrideColors change, no refit) ─────────────────────
   useEffect(() => {
     const geometry = geometryRef.current;
     if (!geometry) return;
-    const colors = computeColors(data, channels, nPoints, bounds, colorMode);
+    const colors = overrideColors ?? computeColors(data, channels, nPoints, bounds, colorMode);
     const attr = geometry.getAttribute("color") as THREE.BufferAttribute;
     attr.copyArray(colors);
     attr.needsUpdate = true;
     requestRender();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [colorMode]);
+  }, [colorMode, overrideColors]);
 
   // ── Point size ─────────────────────────────────────────────────────────
   useEffect(() => {

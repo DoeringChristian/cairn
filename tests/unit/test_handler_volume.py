@@ -46,6 +46,21 @@ def test_metadata_stats():
     assert meta["mean"] == pytest.approx(arr.mean())
 
 
+def test_properties_metadata_mirrors_vmin_vmax_for_ui_consistency():
+    # Volume has a single implicit scalar field (unlike mesh/pointcloud/
+    # boxes3d's named-properties dict) but still carries a `properties` list
+    # so the UI's shared property-selector/Colorbar code treats all four 3D
+    # types uniformly (spec-3dx-superseded §B).
+    h = VolumeHandler()
+    arr = np.zeros((2, 2, 2), dtype=np.float32)
+    arr[0, 0, 0] = -5.0
+    arr[1, 1, 1] = 10.0
+    _, meta = h.serialize(arr)
+    assert meta["properties"] == [
+        {"name": "value", "min": pytest.approx(-5.0), "max": pytest.approx(10.0), "mean": pytest.approx(arr.mean())}
+    ]
+
+
 def test_spacing_and_origin_and_bounds():
     h = VolumeHandler()
     arr = np.zeros((2, 3, 4), dtype=np.float32)
