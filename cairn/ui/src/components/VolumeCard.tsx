@@ -190,10 +190,16 @@ function VolumeBody({
   hash,
   meta,
   view,
+  fill,
 }: {
   hash: string | undefined;
   meta: VolumeMeta | null | undefined;
   view: ViewConfig;
+  /** Fill the card's resizable body (single/normal-compare view) instead of
+   * the multi-pane grid's fixed, independently-scrollable pane height. See
+   * spec-3DR — one `fill` switch shared by all four 3D card `*Body`s rather
+   * than forking the wrapper per caller. */
+  fill?: boolean;
 }) {
   const blob = useVolumeBlob(hash);
 
@@ -201,15 +207,15 @@ function VolumeBody({
     return <div className="text-sm text-fg-muted">no volume logged yet</div>;
   }
   if (blob.isLoading) {
-    return <div className="h-64 motion-safe:animate-pulse rounded bg-bg-hover" />;
+    return <div className={fill ? "flex-1 min-h-0 motion-safe:animate-pulse rounded bg-bg-hover" : "h-64 motion-safe:animate-pulse rounded bg-bg-hover"} />;
   }
   if (blob.isError || !blob.data || !meta) {
     return <div className="text-sm text-fg-muted">failed to load volume</div>;
   }
 
   return (
-    <div className="flex flex-col">
-      <div className="flex h-64">
+    <div className={fill ? "flex flex-1 min-h-0 flex-col" : "flex flex-col"}>
+      <div className={fill ? "flex flex-1 min-h-0" : "flex h-64"}>
         <div className="min-w-0 flex-1 overflow-hidden rounded bg-bg">
           <VolumeViewer
             data={blob.data}
@@ -327,16 +333,16 @@ function VolumeComparePanel({
   const mode: VolumeCompareMode = settings.compareMode ?? "side";
 
   if (mode === "normal") {
-    return <VolumeBody hash={primaryHash} meta={primaryMeta} view={view} />;
+    return <VolumeBody hash={primaryHash} meta={primaryMeta} view={view} fill />;
   }
 
   if (!primaryBlob.data || !referenceBlob.data || !primaryMeta || !referenceMeta) {
-    return <div className="h-64 motion-safe:animate-pulse rounded bg-bg-hover" />;
+    return <div className="flex-1 min-h-0 motion-safe:animate-pulse rounded bg-bg-hover" />;
   }
 
   if (isCoreCompareMode(mode) && (mode === "split" || mode === "blend" || mode === "diff")) {
     return (
-      <div className="h-64 overflow-hidden rounded bg-bg">
+      <div className="flex-1 min-h-0 overflow-hidden rounded bg-bg">
         <OffscreenComparePanes
           mode={mode}
           renderPrimary={(onFrame, sync) => (
@@ -393,7 +399,7 @@ function VolumeComparePanel({
     primaryMeta.shape[2] === referenceMeta.shape[2];
   if (!topologyOk) {
     return (
-      <div className="flex h-64 items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
+      <div className="flex flex-1 min-h-0 items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
         Shape mismatch: {primaryMeta.shape.join("×")} vs {referenceMeta.shape.join("×")} — native
         diff needs matching voxel grid shape.
       </div>
@@ -407,7 +413,7 @@ function VolumeComparePanel({
   const diffData = diffColormap === "viridis" ? absArray(delta) : delta;
 
   return (
-    <div className="flex h-64 overflow-hidden rounded bg-bg">
+    <div className="flex flex-1 min-h-0 overflow-hidden rounded bg-bg">
       <div className="min-w-0 flex-1 overflow-hidden rounded bg-bg">
         <VolumeViewer
           data={diffData}
@@ -590,11 +596,11 @@ export default function VolumeCard({
 
   const renderSingle = () => {
     if (q.isLoading) {
-      return <div className="h-64 motion-safe:animate-pulse rounded bg-bg-hover" />;
+      return <div className="flex-1 min-h-0 motion-safe:animate-pulse rounded bg-bg-hover" />;
     }
     return (
       <>
-        <VolumeBody hash={current?.artifact_hash ?? undefined} meta={meta} view={view} />
+        <VolumeBody hash={current?.artifact_hash ?? undefined} meta={meta} view={view} fill />
         <StepSlider
           points={points}
           currentIndex={safeIdx}
@@ -718,6 +724,7 @@ export default function VolumeCard({
 
   return (
     <CardShell cardKind="volume"
+      defaultHeight={380}
       cardRef={cardRef}
       settings={settings}
       updateSettings={updateSettings}

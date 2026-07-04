@@ -167,10 +167,16 @@ function BoxesBody({
   hash,
   meta,
   view,
+  fill,
 }: {
   hash: string | undefined;
   meta: Boxes3DMeta | null | undefined;
   view: ViewConfig;
+  /** Fill the card's resizable body (single/normal-compare view) instead of
+   * the multi-pane grid's fixed, independently-scrollable pane height. See
+   * spec-3DR — one `fill` switch shared by all four 3D card `*Body`s rather
+   * than forking the wrapper per caller. */
+  fill?: boolean;
 }) {
   const blob = useBoxesBlob(hash);
   const [visibleCount, setVisibleCount] = useState<number | null>(null);
@@ -179,7 +185,7 @@ function BoxesBody({
     return <div className="text-sm text-fg-muted">no boxes logged yet</div>;
   }
   if (blob.isLoading) {
-    return <div className="h-64 motion-safe:animate-pulse rounded bg-bg-hover" />;
+    return <div className={fill ? "flex-1 min-h-0 motion-safe:animate-pulse rounded bg-bg-hover" : "h-64 motion-safe:animate-pulse rounded bg-bg-hover"} />;
   }
   const npz = blob.data;
   const mins = npz?.mins?.data;
@@ -209,8 +215,8 @@ function BoxesBody({
     effectiveColorMode === "value" && active.range ? active.range : [0, Math.max(maxDepth, 1)];
 
   return (
-    <div className="flex flex-col">
-      <div className="flex h-64 overflow-hidden rounded bg-bg">
+    <div className={fill ? "flex flex-1 min-h-0 flex-col" : "flex flex-col"}>
+      <div className={fill ? "flex flex-1 min-h-0 overflow-hidden rounded bg-bg" : "flex h-64 overflow-hidden rounded bg-bg"}>
         <div className="min-w-0 flex-1">
           <BoxesViewer
             mins={mins}
@@ -333,11 +339,11 @@ function BoxesComparePanel({
   const mode: BoxesCompareMode = settings.compareMode ?? "side";
 
   if (mode === "normal") {
-    return <BoxesBody hash={primaryHash} meta={primaryMeta} view={view} />;
+    return <BoxesBody hash={primaryHash} meta={primaryMeta} view={view} fill />;
   }
 
   if (!primaryBlob.data || !referenceBlob.data || !primaryMeta || !referenceMeta) {
-    return <div className="h-64 motion-safe:animate-pulse rounded bg-bg-hover" />;
+    return <div className="flex-1 min-h-0 motion-safe:animate-pulse rounded bg-bg-hover" />;
   }
   const primaryMins = primaryBlob.data.mins?.data;
   const primaryMaxs = primaryBlob.data.maxs?.data;
@@ -349,7 +355,7 @@ function BoxesComparePanel({
 
   if (isCoreCompareMode(mode) && (mode === "split" || mode === "blend" || mode === "diff")) {
     return (
-      <div className="h-64 overflow-hidden rounded bg-bg">
+      <div className="flex-1 min-h-0 overflow-hidden rounded bg-bg">
         <OffscreenComparePanes
           mode={mode}
           renderPrimary={(onFrame, sync) => {
@@ -415,7 +421,7 @@ function BoxesComparePanel({
     Array.from(primaryDepth).every((d, i) => d === referenceDepth[i]);
   if (!topologyOk) {
     return (
-      <div className="flex h-64 items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
+      <div className="flex flex-1 min-h-0 items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
         Topology mismatch: {primaryMeta.n_boxes.toLocaleString()} vs{" "}
         {referenceMeta.n_boxes.toLocaleString()} boxes (or differing per-box depth) — native diff
         needs matched box count + depth.
@@ -431,7 +437,7 @@ function BoxesComparePanel({
 
   if (!activeA.values || !activeB.values) {
     return (
-      <div className="flex h-64 items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
+      <div className="flex flex-1 min-h-0 items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
         No property values logged on these boxes to diff — pick a property with values on both series.
       </div>
     );
@@ -441,7 +447,7 @@ function BoxesComparePanel({
   const { colors, domain } = diffColors(deltaValues, primaryMeta.n_boxes, diffColormap);
 
   return (
-    <div className="flex h-64 overflow-hidden rounded bg-bg">
+    <div className="flex flex-1 min-h-0 overflow-hidden rounded bg-bg">
       <div className="min-w-0 flex-1">
         <BoxesViewer
           mins={primaryMins}
@@ -627,11 +633,11 @@ export default function BoxesCard({
 
   const renderSingle = () => {
     if (q.isLoading) {
-      return <div className="h-64 motion-safe:animate-pulse rounded bg-bg-hover" />;
+      return <div className="flex-1 min-h-0 motion-safe:animate-pulse rounded bg-bg-hover" />;
     }
     return (
       <>
-        <BoxesBody hash={current?.artifact_hash ?? undefined} meta={meta} view={view} />
+        <BoxesBody hash={current?.artifact_hash ?? undefined} meta={meta} view={view} fill />
         <StepSlider
           points={points}
           currentIndex={safeIdx}
@@ -751,6 +757,7 @@ export default function BoxesCard({
 
   return (
     <CardShell cardKind="boxes3d"
+      defaultHeight={380}
       cardRef={cardRef}
       settings={settings}
       updateSettings={updateSettings}

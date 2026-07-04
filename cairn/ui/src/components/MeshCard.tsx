@@ -200,10 +200,16 @@ function MeshBody({
   hash,
   meta,
   view,
+  fill,
 }: {
   hash: string | undefined;
   meta: MeshMeta | null | undefined;
   view: ViewConfig;
+  /** Fill the card's resizable body (single/normal-compare view) instead of
+   * the multi-pane grid's fixed, independently-scrollable pane height. See
+   * spec-3DR — one `fill` switch shared by all four 3D card `*Body`s rather
+   * than forking the wrapper per caller. */
+  fill?: boolean;
 }) {
   const blob = useMeshBlob(hash);
 
@@ -211,7 +217,7 @@ function MeshBody({
     return <div className="text-sm text-fg-muted">no mesh logged yet</div>;
   }
   if (blob.isLoading) {
-    return <div className="h-64 motion-safe:animate-pulse rounded bg-bg-hover" />;
+    return <div className={fill ? "flex-1 min-h-0 motion-safe:animate-pulse rounded bg-bg-hover" : "h-64 motion-safe:animate-pulse rounded bg-bg-hover"} />;
   }
   if (blob.isError || !blob.data || !meta) {
     return <div className="text-sm text-fg-muted">failed to load mesh</div>;
@@ -223,8 +229,8 @@ function MeshBody({
   const resolvedMode = resolveMeshColorMode(view.colorMode, !!blob.data.colors, !!active.values);
 
   return (
-    <div className="flex flex-col">
-      <div className="flex h-64 overflow-hidden rounded bg-bg">
+    <div className={fill ? "flex flex-1 min-h-0 flex-col" : "flex flex-col"}>
+      <div className={fill ? "flex flex-1 min-h-0 overflow-hidden rounded bg-bg" : "flex h-64 overflow-hidden rounded bg-bg"}>
         <div className="min-w-0 flex-1">
           <MeshViewer
             positions={blob.data.positions}
@@ -365,16 +371,16 @@ function MeshComparePanel({
   const mode: MeshCompareMode = settings.compareMode ?? "side";
 
   if (mode === "normal") {
-    return <MeshBody hash={primaryHash} meta={primaryMeta} view={view} />;
+    return <MeshBody hash={primaryHash} meta={primaryMeta} view={view} fill />;
   }
 
   if (!primaryBlob.data || !referenceBlob.data || !primaryMeta || !referenceMeta) {
-    return <div className="h-64 motion-safe:animate-pulse rounded bg-bg-hover" />;
+    return <div className="flex-1 min-h-0 motion-safe:animate-pulse rounded bg-bg-hover" />;
   }
 
   if (isCoreCompareMode(mode) && (mode === "split" || mode === "blend" || mode === "diff")) {
     return (
-      <div className="h-64 overflow-hidden rounded bg-bg">
+      <div className="flex-1 min-h-0 overflow-hidden rounded bg-bg">
         <OffscreenComparePanes
           mode={mode}
           renderPrimary={(onFrame, sync) => {
@@ -439,7 +445,7 @@ function MeshComparePanel({
     primaryMeta.n_vertices === referenceMeta.n_vertices && primaryMeta.n_faces === referenceMeta.n_faces;
   if (!topologyOk) {
     return (
-      <div className="flex h-64 items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
+      <div className="flex flex-1 min-h-0 items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
         Topology mismatch: {primaryMeta.n_vertices.toLocaleString()} vs{" "}
         {referenceMeta.n_vertices.toLocaleString()} vertices,{" "}
         {primaryMeta.n_faces.toLocaleString()} vs {referenceMeta.n_faces.toLocaleString()} faces — native diff
@@ -466,7 +472,7 @@ function MeshComparePanel({
 
   if (!deltaValues) {
     return (
-      <div className="flex h-64 items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
+      <div className="flex flex-1 min-h-0 items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
         No property values logged on this mesh to diff — pick a property, or use "Diff: geometry" instead.
       </div>
     );
@@ -475,7 +481,7 @@ function MeshComparePanel({
   const { colors, domain } = diffColors(deltaValues, primaryMeta.n_vertices, diffColormap);
 
   return (
-    <div className="flex h-64 overflow-hidden rounded bg-bg">
+    <div className="flex flex-1 min-h-0 overflow-hidden rounded bg-bg">
       <div className="min-w-0 flex-1">
         <MeshViewer
           positions={primaryBlob.data.positions}
@@ -663,11 +669,11 @@ export default function MeshCard({
 
   const renderSingle = () => {
     if (q.isLoading) {
-      return <div className="h-64 motion-safe:animate-pulse rounded bg-bg-hover" />;
+      return <div className="flex-1 min-h-0 motion-safe:animate-pulse rounded bg-bg-hover" />;
     }
     return (
       <>
-        <MeshBody hash={current?.artifact_hash ?? undefined} meta={meta} view={view} />
+        <MeshBody hash={current?.artifact_hash ?? undefined} meta={meta} view={view} fill />
         <StepSlider
           points={points}
           currentIndex={safeIdx}
@@ -778,6 +784,7 @@ export default function MeshCard({
 
   return (
     <CardShell cardKind="mesh"
+      defaultHeight={380}
       cardRef={cardRef}
       settings={settings}
       updateSettings={updateSettings}

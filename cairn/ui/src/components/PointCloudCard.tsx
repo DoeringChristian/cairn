@@ -192,10 +192,16 @@ function PointCloudBody({
   hash,
   meta,
   view,
+  fill,
 }: {
   hash: string | undefined;
   meta: PointCloudMeta | null | undefined;
   view: ViewConfig;
+  /** Fill the card's resizable body (single/normal-compare view) instead of
+   * the multi-pane grid's fixed, independently-scrollable pane height. See
+   * spec-3DR — one `fill` switch shared by all four 3D card `*Body`s rather
+   * than forking the wrapper per caller. */
+  fill?: boolean;
 }) {
   const blob = usePointCloudBlob(hash);
 
@@ -203,7 +209,7 @@ function PointCloudBody({
     return <div className="text-sm text-fg-muted">no point cloud logged yet</div>;
   }
   if (blob.isLoading) {
-    return <div className="h-64 motion-safe:animate-pulse rounded bg-bg-hover" />;
+    return <div className={fill ? "flex-1 min-h-0 motion-safe:animate-pulse rounded bg-bg-hover" : "h-64 motion-safe:animate-pulse rounded bg-bg-hover"} />;
   }
   if (blob.isError || !blob.data || !meta) {
     return <div className="text-sm text-fg-muted">failed to load point cloud</div>;
@@ -212,8 +218,8 @@ function PointCloudBody({
   const nPoints = meta.n_points;
   const active = resolveActiveProperty(blob.data.properties, view.property, meta.properties ?? null);
   return (
-    <div className="flex flex-col">
-      <div className="flex h-64 overflow-hidden rounded bg-bg">
+    <div className={fill ? "flex flex-1 min-h-0 flex-col" : "flex flex-col"}>
+      <div className={fill ? "flex flex-1 min-h-0 overflow-hidden rounded bg-bg" : "flex h-64 overflow-hidden rounded bg-bg"}>
         <div className="min-w-0 flex-1">
           <PointCloudViewer
             data={blob.data.data}
@@ -329,16 +335,16 @@ function PointCloudComparePanel({
   const mode: PointCloudCompareMode = settings.compareMode ?? "side";
 
   if (mode === "normal") {
-    return <PointCloudBody hash={primaryHash} meta={primaryMeta} view={view} />;
+    return <PointCloudBody hash={primaryHash} meta={primaryMeta} view={view} fill />;
   }
 
   if (!primaryBlob.data || !referenceBlob.data || !primaryMeta || !referenceMeta) {
-    return <div className="h-64 motion-safe:animate-pulse rounded bg-bg-hover" />;
+    return <div className="flex-1 min-h-0 motion-safe:animate-pulse rounded bg-bg-hover" />;
   }
 
   if (isCoreCompareMode(mode) && (mode === "split" || mode === "blend" || mode === "diff")) {
     return (
-      <div className="h-64 overflow-hidden rounded bg-bg">
+      <div className="flex-1 min-h-0 overflow-hidden rounded bg-bg">
         <OffscreenComparePanes
           mode={mode}
           renderPrimary={(onFrame, sync) => (
@@ -384,7 +390,7 @@ function PointCloudComparePanel({
   const topologyOk = primaryMeta.n_points === referenceMeta.n_points;
   if (!topologyOk) {
     return (
-      <div className="flex h-64 items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
+      <div className="flex flex-1 min-h-0 items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
         Point-count mismatch: {primaryMeta.n_points.toLocaleString()} vs{" "}
         {referenceMeta.n_points.toLocaleString()} points — native diff modes need the same point
         count (index-corresponding).
@@ -408,7 +414,7 @@ function PointCloudComparePanel({
 
   if (!deltaValues) {
     return (
-      <div className="flex h-64 items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
+      <div className="flex flex-1 min-h-0 items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
         No property values logged on this cloud to diff — pick a property, or use "Diff: position" instead.
       </div>
     );
@@ -417,7 +423,7 @@ function PointCloudComparePanel({
   const { colors, domain } = diffColors(deltaValues, primaryMeta.n_points, diffColormap);
 
   return (
-    <div className="flex h-64 overflow-hidden rounded bg-bg">
+    <div className="flex flex-1 min-h-0 overflow-hidden rounded bg-bg">
       <div className="min-w-0 flex-1">
         <PointCloudViewer
           data={primaryBlob.data.data}
@@ -588,11 +594,11 @@ export default function PointCloudCard({
 
   const renderSingle = () => {
     if (q.isLoading) {
-      return <div className="h-64 motion-safe:animate-pulse rounded bg-bg-hover" />;
+      return <div className="flex-1 min-h-0 motion-safe:animate-pulse rounded bg-bg-hover" />;
     }
     return (
       <>
-        <PointCloudBody hash={current?.artifact_hash ?? undefined} meta={meta} view={view} />
+        <PointCloudBody hash={current?.artifact_hash ?? undefined} meta={meta} view={view} fill />
         <StepSlider
           points={points}
           currentIndex={safeIdx}
@@ -702,6 +708,7 @@ export default function PointCloudCard({
 
   return (
     <CardShell cardKind="pointcloud"
+      defaultHeight={380}
       cardRef={cardRef}
       settings={settings}
       updateSettings={updateSettings}
