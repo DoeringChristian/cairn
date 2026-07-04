@@ -120,9 +120,10 @@ def main() -> None:
     print(f"Logging to {target.kind} at {target.location}")
     log_run("run-a", seed=0, spin=1.0)
     log_run("run-b", seed=7, spin=-1.5)
+    log_run("run-c", seed=42, spin=2.2)
     print(
         "\nAll done. Open the UI, add a Point Clouds card (sphere_rgb / "
-        "torus_category / helix_height), and build a 2-run comparison."
+        "torus_category / helix_height), and build an N-run comparison."
     )
 
 

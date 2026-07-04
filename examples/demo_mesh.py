@@ -249,10 +249,11 @@ def main() -> None:
     print(f"Logging to {target.kind} at {target.location}")
     log_run("run-a", seed=0, phase=1.0)
     log_run("run-b", seed=7, phase=-1.5)
+    log_run("run-c", seed=42, phase=2.2)
     print(
         "\nAll done. Open the UI, add a 3D Mesh card (blob_sphere / "
-        "rainbow_torus / faceted_cube / mixed_winding_sphere), and build a "
-        "2-run comparison."
+        "rainbow_torus / faceted_cube / mixed_winding_sphere), and build an "
+        "N-run comparison."
     )
 
 

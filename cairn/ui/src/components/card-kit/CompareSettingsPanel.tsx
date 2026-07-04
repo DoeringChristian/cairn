@@ -109,7 +109,7 @@ export function CompareSettingsPanel<M extends string>({
 
   return (
     <div className="mt-2 border-t border-border-subtle pt-2">
-      <div className="mb-1 text-xs font-semibold text-fg-muted">Compare (2 series)</div>
+      <div className="mb-1 text-xs font-semibold text-fg-muted">Compare</div>
       <Select
         label="Compare mode"
         value={mode}

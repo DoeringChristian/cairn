@@ -979,7 +979,7 @@ export default function PointCloudCard({
                 </span>
                 <button
                   type="button"
-                  onClick={() => updateSettings({ externalBaseline: undefined })}
+                  onClick={() => updateSettings({ externalBaseline: undefined, referenceMode: undefined })}
                   className="text-fg-subtle hover:text-fg shrink-0"
                   title="Remove external reference"
                 >{"×"}</button>

@@ -990,7 +990,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
             <span className="mono truncate flex-1">{settings.externalBaseline.name}{settings.externalBaseline.runId && settings.externalBaseline.runId !== runId ? ` · ${shortRunLabel(settings.externalBaseline.runId)}` : ""}</span>
             <button
               type="button"
-              onClick={() => updateSettings({ externalBaseline: undefined, baselineIndex: undefined })}
+              onClick={() => updateSettings({ externalBaseline: undefined, baselineIndex: undefined, referenceMode: undefined })}
               className="text-fg-subtle hover:text-fg shrink-0"
               title="Remove external reference"
             >{"×"}</button>

@@ -152,8 +152,17 @@ export function useMediaReference(args: UseMediaReferenceArgs): UseMediaReferenc
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [external, externalScope, panes, perRunRefQueries.map((q) => q.dataUpdatedAt).join("|"), currentStep, missingImageMode]);
 
+  // Gate on `external` too (not just `externalScope`): `externalScope` is a
+  // persisted setting that can outlive the reference it was chosen for
+  // (e.g. the user clears `externalBaseline` via the "×" button, which only
+  // resets that field — see ImageGalleryCard's + every 3D card's clear
+  // button). Without this guard, a stale externalScope==="per-run" would
+  // make every pane's hash resolve to `perPaneHashes?.[paneIdx]` === always
+  // undefined (perPaneHashes itself is `null` whenever `external` is unset),
+  // permanently hiding the fallback `globalHash` (e.g. the "series-same-
+  // step" default) even though a perfectly good reference is available.
   const perPaneHash = (paneIdx: number): string | undefined =>
-    externalScope === "per-run" ? perPaneHashes?.[paneIdx] : globalHash;
+    external && externalScope === "per-run" ? perPaneHashes?.[paneIdx] : globalHash;
 
   return { globalHash, perPaneHash, externalPoints };
 }
