@@ -577,6 +577,8 @@ export default function ScalarPlotCard({
       onScreenshot={() => { if (cardRef.current) exportChartFromContainer(cardRef.current, safeName(settings.title ?? metric.name), "svg"); }}
       addToComparisonSlot={<AddToComparisonButton cardType="scalar" series={compSeries} />}
       onRemove={onRemove}
+      onResetView={resetViewport}
+      viewModified={viewportModified}
       headerActions={<>
         {settings.smoothing > 0 && (
           <button
@@ -602,17 +604,6 @@ export default function ScalarPlotCard({
         >
           {settings.yScale === "log" ? "lin" : "log"}
         </button>
-        {viewportModified && (
-          <button
-            type="button"
-            onClick={resetViewport}
-            className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
-            aria-label="Reset view"
-            title="Reset view (zoom/pan)"
-          >
-            <i className="fa-solid fa-house" aria-hidden="true" />
-          </button>
-        )}
       </>}
       dropHighlight={dropHighlight}
       dropProps={dropProps}

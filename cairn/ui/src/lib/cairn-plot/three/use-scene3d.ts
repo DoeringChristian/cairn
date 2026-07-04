@@ -249,3 +249,18 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
     refs: { renderer: rendererRef, scene: sceneRef, camera: cameraRef, controls: controlsRef },
   };
 }
+
+/**
+ * Reset every Scene3D viewer nested under `container` to its fitted view.
+ * Reuses the dblclick-to-refit path each viewer already wires up above
+ * (`canvas.addEventListener("dblclick", ...)`) by dispatching a synthetic
+ * dblclick at each `<canvas>` — so a card's header "reset view" button
+ * doesn't need its own camera-framing logic or a ref into each viewer, and
+ * works uniformly across single-view and multi-pane (compare) layouts.
+ */
+export function resetScene3DViews(container: HTMLElement | null): void {
+  if (!container) return;
+  for (const canvas of container.querySelectorAll("canvas")) {
+    canvas.dispatchEvent(new Event("dblclick", { bubbles: true }));
+  }
+}

@@ -904,18 +904,9 @@ export default function FigureInteractiveCard({ runId, metric, extraSeries, cont
       onDownload={current?.artifact_hash ? () => downloadArtifact(api.artifactUrl(current.artifact_hash!), artifactFilename(metric.name, current.step, current.artifact_mime ?? "image/png")) : undefined}
       onScreenshot={() => { if (cardRef.current) exportPlotlyChart(cardRef.current, safeName(settings.title ?? metric.name), "svg"); }}
       addToComparisonSlot={<AddToComparisonButton cardType="figure" series={compSeries} />}
+      onResetView={resetView}
+      viewModified={viewModified}
       headerActions={<>
-        {viewModified && (
-          <button
-            type="button"
-            onClick={resetView}
-            className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
-            aria-label="Reset zoom and pan"
-            title="Reset zoom and pan"
-          >
-            {"\u2302"}
-          </button>
-        )}
         <button
           type="button"
           onClick={() => updateSettings({ displayModeBar: !settings.displayModeBar })}

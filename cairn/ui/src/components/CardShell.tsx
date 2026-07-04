@@ -17,6 +17,9 @@ interface Props {
   cardKind?: string;
   onRemove?: () => void;
   onSettings?: () => void;
+  /** Reset the card's interactive view to default. Renders a home button left of download, only when `viewModified`. */
+  onResetView?: () => void;
+  viewModified?: boolean;
   onDownload?: () => void;
   onScreenshot?: () => void;
   addToComparisonSlot?: ReactNode;
@@ -52,6 +55,8 @@ export default function CardShell({
   cardKind,
   onRemove,
   onSettings,
+  onResetView,
+  viewModified,
   onDownload,
   onScreenshot,
   addToComparisonSlot,
@@ -103,6 +108,8 @@ export default function CardShell({
         collapsed={settings.collapsed}
         onToggleCollapse={() => updateSettings({ collapsed: !settings.collapsed })}
         onSettings={onSettings}
+        onResetView={onResetView}
+        viewModified={viewModified}
         onRemove={onRemove}
         onDownload={onDownload}
         onScreenshot={onScreenshot}

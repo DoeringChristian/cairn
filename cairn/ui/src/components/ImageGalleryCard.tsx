@@ -761,19 +761,11 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     );
   };
 
+  const imageViewModified = settings.zoom !== 1 || settings.pan.x !== 0 || settings.pan.y !== 0;
+  const resetImageView = () => updateSettings({ zoom: 1, pan: { x: 0, y: 0 } });
+
   const headerActions = (
     <>
-      {(settings.zoom !== 1 || settings.pan.x !== 0 || settings.pan.y !== 0) && (
-        <button
-          type="button"
-          onClick={() => updateSettings({ zoom: 1, pan: { x: 0, y: 0 } })}
-          className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
-          aria-label="Reset zoom and pan"
-          title="Reset zoom and pan"
-        >
-          {"⌂"}
-        </button>
-      )}
       {hasBaseline && (
         <select
           value={effectiveMode}
@@ -1093,6 +1085,8 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
       onDownload={firstResolved.hash ? () => downloadArtifact(api.artifactUrl(firstResolved.hash!), artifactFilename(metric.name, currentStep, "image/png")) : undefined}
       onScreenshot={handleScreenshot}
       addToComparisonSlot={<AddToComparisonButton cardType="image" series={compSeries} />}
+      onResetView={resetImageView}
+      viewModified={imageViewModified}
       headerActions={headerActions}
       dropHighlight={dropHighlight}
       dropProps={dropProps}

@@ -40,7 +40,7 @@ import {
   type DiffMode,
   type Colormap,
 } from "../lib/cairn-plot";
-import type { Scene3DSyncOptions } from "../lib/cairn-plot/three/use-scene3d";
+import { resetScene3DViews, type Scene3DSyncOptions } from "../lib/cairn-plot/three/use-scene3d";
 import type { PropertyMeta } from "../lib/cairn-plot/three/properties";
 import { computeDelta, diffDomain, absArray, type DiffColormap } from "../lib/cairn-plot/three/diff";
 import AddToComparisonButton from "./AddToComparisonButton";
@@ -735,6 +735,10 @@ export default function VolumeCard({
           : undefined
       }
       addToComparisonSlot={<AddToComparisonButton cardType="volume" series={compSeries} />}
+      // Always-on: see PointCloudCard/MeshCard — 3D cards have no cheap
+      // "camera moved" signal, so reset-view is always shown.
+      onResetView={() => resetScene3DViews(cardRef.current)}
+      viewModified
       dropHighlight={dropHighlight}
       dropProps={dropProps}
       selectionPanel={selectionPanel}

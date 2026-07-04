@@ -36,7 +36,7 @@ import BoxesViewer, {
   type BoxesColorMode,
   type BoxesBackground,
 } from "../lib/cairn-plot/three/BoxesViewer";
-import type { Scene3DSyncOptions } from "../lib/cairn-plot/three/use-scene3d";
+import { resetScene3DViews, type Scene3DSyncOptions } from "../lib/cairn-plot/three/use-scene3d";
 import {
   extractProperties,
   resolveActiveProperty,
@@ -768,6 +768,10 @@ export default function BoxesCard({
           : undefined
       }
       addToComparisonSlot={<AddToComparisonButton cardType="boxes3d" series={compSeries} />}
+      // Always-on: see PointCloudCard/MeshCard — 3D cards have no cheap
+      // "camera moved" signal, so reset-view is always shown.
+      onResetView={() => resetScene3DViews(cardRef.current)}
+      viewModified
       dropHighlight={dropHighlight}
       dropProps={dropProps}
       selectionPanel={selectionPanel}

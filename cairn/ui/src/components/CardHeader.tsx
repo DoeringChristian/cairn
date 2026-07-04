@@ -22,6 +22,14 @@ interface Props {
   onToggleCollapse?: () => void;
   /** Opens the card settings modal / popover. Renders gear button. */
   onSettings?: () => void;
+  /**
+   * Reset the card's interactive view (camera/zoom/pan/etc.) to its default.
+   * Renders a home-icon button to the LEFT of download, shown only when
+   * `viewModified` is true.
+   */
+  onResetView?: () => void;
+  /** Whether the view has been changed from its default; gates the reset button. */
+  viewModified?: boolean;
   /** Download/export. Renders download button. */
   onDownload?: () => void;
   /** Screenshot/export-as-image. Renders camera button. */
@@ -41,6 +49,8 @@ export default function CardHeader({
   collapsed,
   onToggleCollapse,
   onSettings,
+  onResetView,
+  viewModified,
   onDownload,
   onScreenshot,
   addToComparisonSlot,
@@ -86,7 +96,8 @@ export default function CardHeader({
   );
 
   const resolvedActions = cardActions ?? children;
-  const hasStandardActions = !!(onDownload || onScreenshot || addToComparisonSlot || onSettings || onRemove);
+  const showResetView = !!(onResetView && viewModified);
+  const hasStandardActions = !!(showResetView || onDownload || onScreenshot || addToComparisonSlot || onSettings || onRemove);
 
   return (
     <div className="group mb-2 flex items-baseline justify-between gap-2">
@@ -163,6 +174,17 @@ export default function CardHeader({
         {/* Standard buttons: download, settings, remove */}
         {hasStandardActions && (
           <div className={resolvedActions ? "border-l border-border pl-1.5 flex items-center gap-1" : "flex items-center gap-1"}>
+            {showResetView && (
+              <button
+                type="button"
+                onClick={onResetView}
+                className="h-[22px] min-w-[22px] inline-flex items-center justify-center rounded hover:bg-bg-hover text-fg-muted hover:text-fg"
+                aria-label="Reset view"
+                title="Reset view"
+              >
+                <i className="fa-solid fa-house" aria-hidden="true" />
+              </button>
+            )}
             {onDownload && (
               <button
                 type="button"

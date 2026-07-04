@@ -37,7 +37,7 @@ import PointCloudViewer, {
   type PointCloudBackground,
   extractPositions,
 } from "../lib/cairn-plot/renderers/PointCloudViewer";
-import type { Scene3DSyncOptions } from "../lib/cairn-plot/three/use-scene3d";
+import { resetScene3DViews, type Scene3DSyncOptions } from "../lib/cairn-plot/three/use-scene3d";
 import { parseNpy } from "../lib/cairn-plot/transforms/parse-npy";
 import { parseNpz } from "../lib/cairn-plot/transforms/parse-npz";
 import {
@@ -719,6 +719,12 @@ export default function PointCloudCard({
           : undefined
       }
       addToComparisonSlot={<AddToComparisonButton cardType="pointcloud" series={compSeries} />}
+      // 3D cards have no cheap "has the camera moved" signal (orbit controls
+      // fire continuously), so the reset button is always shown rather than
+      // gated on a tracked modified flag — dblclick-to-refit already behaves
+      // this way (always available), and this just surfaces it in the header.
+      onResetView={() => resetScene3DViews(cardRef.current)}
+      viewModified
       dropHighlight={dropHighlight}
       dropProps={dropProps}
       selectionPanel={selectionPanel}

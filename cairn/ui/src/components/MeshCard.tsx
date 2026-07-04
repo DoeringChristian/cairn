@@ -38,7 +38,7 @@ import MeshViewer, {
   type MeshShading,
   type MeshBackground,
 } from "../lib/cairn-plot/three/MeshViewer";
-import type { Scene3DSyncOptions } from "../lib/cairn-plot/three/use-scene3d";
+import { resetScene3DViews, type Scene3DSyncOptions } from "../lib/cairn-plot/three/use-scene3d";
 import {
   extractProperties,
   resolveActiveProperty,
@@ -795,6 +795,11 @@ export default function MeshCard({
           : undefined
       }
       addToComparisonSlot={<AddToComparisonButton cardType="mesh" series={compSeries} />}
+      // Always-on: 3D cards have no cheap "camera moved" signal (orbit
+      // controls fire continuously), so reset-view is always shown, matching
+      // the always-available dblclick-to-refit it now shares an implementation with.
+      onResetView={() => resetScene3DViews(cardRef.current)}
+      viewModified
       dropHighlight={dropHighlight}
       dropProps={dropProps}
       selectionPanel={selectionPanel}
