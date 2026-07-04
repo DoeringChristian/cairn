@@ -9,6 +9,8 @@
 
 export type { BaseCardSettings } from "./base-settings";
 export { useCardSeries } from "./use-card-series";
+export { useIframeAutoHeight } from "./use-iframe-auto-height";
+export type { IframeAutoHeightOptions } from "./use-iframe-auto-height";
 export { resolveAtStep } from "./resolve-at-step";
 export { useStepSlider } from "./use-step-slider";
 export { useRunInfo, buildRunInfoMap } from "./use-run-info";

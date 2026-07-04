@@ -9,6 +9,7 @@ import { qk } from "../api/query-keys";
 import { safeJsonParse } from "../lib/format";
 import { downloadArtifact, artifactFilename, exportPlotlyChart, safeName } from "../lib/download";
 import { resolveCardHeight, type CardSettingsKey } from "../lib/card-settings";
+import { cardMinSize } from "./card-kit/card-min-sizes";
 import { useCardDrop } from "../lib/use-series-drop";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { useRunMetadataVersion, shortRunLabel } from "../lib/run-label";
@@ -32,6 +33,9 @@ import Select from "./settings/Select";
 import StepSlider from "./StepSlider";
 
 const Plot = createPlotlyComponent(Plotly);
+// The card's own minimum height — passed to every resolveCardHeight read so the
+// inner figure agrees with CardShell's outer-box clamp (one clamp source).
+const FIGURE_MIN_HEIGHT = cardMinSize("figure").minHeight;
 
 interface Props {
   runId: string;
@@ -678,7 +682,7 @@ export default function FigureInteractiveCard({ runId, metric, extraSeries, cont
 
   // Auto-height for figure containers
   const { figAutoHeight } = useMemo(() => {
-    if (resolveCardHeight(settings, undefined) != null) return { figAutoHeight: undefined, figRowHeight: undefined };
+    if (resolveCardHeight(settings, undefined, FIGURE_MIN_HEIGHT) != null) return { figAutoHeight: undefined, figRowHeight: undefined };
     if (cardWidth <= 0) return { figAutoHeight: "320px", figRowHeight: undefined };
     if (!isMulti) {
       const h = Math.max(200, Math.min(500, Math.round(cardWidth * 0.75)));
@@ -803,7 +807,7 @@ export default function FigureInteractiveCard({ runId, metric, extraSeries, cont
       {inModal ? (
         overlayActive ? renderOverlayPlot() : renderPaneGrid(true)
       ) : (
-        <div ref={figContainerRef} className="flex-1 min-h-0 overflow-auto" style={{ height: resolveCardHeight(settings, undefined) != null ? undefined : figAutoHeight }}>
+        <div ref={figContainerRef} className="flex-1 min-h-0 overflow-auto" style={{ height: resolveCardHeight(settings, undefined, FIGURE_MIN_HEIGHT) != null ? undefined : figAutoHeight }}>
           {overlayActive ? renderOverlayPlot() : renderPaneGrid(false)}
         </div>
       )}
@@ -831,7 +835,7 @@ export default function FigureInteractiveCard({ runId, metric, extraSeries, cont
     if (isMulti) return renderMultiFigure(inModal);
     return renderSingleFigure(
       inModal ? "h-[calc(100vh-12rem)]" : "flex-1 min-h-0",
-      inModal ? undefined : { height: resolveCardHeight(settings, undefined) != null ? undefined : figAutoHeight },
+      inModal ? undefined : { height: resolveCardHeight(settings, undefined, FIGURE_MIN_HEIGHT) != null ? undefined : figAutoHeight },
     );
   };
 

@@ -82,10 +82,10 @@ export default function CardShell({
   }, []);
 
   const minSize = cardMinSize(cardKind);
-  const resolvedHeight = resolveCardHeight(settings, defaultHeight);
-  // Own-min read-time clamp: guard against a stale/undersized persisted height.
-  const clampedHeight =
-    resolvedHeight == null ? resolvedHeight : Math.max(resolvedHeight, minSize.minHeight);
+  // Own-min read-time clamp lives inside resolveCardHeight (single source);
+  // pass the same minHeight anywhere inner content re-reads this height so
+  // the outer box and inner content never disagree.
+  const clampedHeight = resolveCardHeight(settings, defaultHeight, minSize.minHeight);
 
   return (
     <div

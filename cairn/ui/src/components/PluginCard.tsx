@@ -14,7 +14,7 @@ import { type CardSettingsKey } from "../lib/card-settings";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import type { SequenceMeta, SequenceResponse, SequencePoint } from "../api/types";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
-import { useCardSeries, useStepSlider, resolveAtStep, type BaseCardSettings } from "./card-kit";
+import { useCardSeries, useStepSlider, resolveAtStep, useIframeAutoHeight, type BaseCardSettings } from "./card-kit";
 import CardShell from "./CardShell";
 import SettingsPopover from "./SettingsPopover";
 import StepSlider from "./StepSlider";
@@ -201,7 +201,6 @@ function PluginPane({
   const wsRef = useRef<WebSocket | null>(null);
   const [serverFrameUrl, setServerFrameUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [measuredHeight, setMeasuredHeight] = useState<number | undefined>(undefined);
 
   // Cleanup blob URLs.
   useEffect(() => () => { if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current); }, []);
@@ -251,24 +250,17 @@ function PluginPane({
     return () => { cancelled = true; };
   }, [iframeReady, current, pluginMeta, targetStep, rid, m.name, pluginValues]);
 
-  // Host-side listener for the iframe shim's "cairn:resize" postMessage
-  // (mirrors HtmlCard's HtmlPane). The shim already posts on every content
-  // resize; the host previously never listened, so the iframe just filled
-  // its flex-1 slot. A height of 0 is ignored (pre-layout artifact) rather
-  // than collapsing the card, same lesson as HtmlPane.
-  useEffect(() => {
-    if (lang === "server" || lang === "window") return;
-    function onMessage(e: MessageEvent) {
-      if (e.source !== iframeRef.current?.contentWindow) return;
-      if (e.data?.type !== "cairn:resize") return;
-      const h = Number(e.data.height);
-      if (Number.isFinite(h) && h > 0) {
-        setMeasuredHeight(Math.min(PLUGIN_MAX_HEIGHT, Math.max(PLUGIN_MIN_HEIGHT, h)));
-      }
-    }
-    window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
-  }, [lang]);
+  // Host-side subscription to the iframe shim's "cairn:resize" postMessage is
+  // the shared card-kit hook (same one HtmlCard uses). The shim already posts
+  // on every content resize; the host previously never listened, so the iframe
+  // just filled its flex-1 slot. Disabled for the server/window (WebSocket
+  // <img>) path, which never renders an iframe. `undefined` until a message
+  // arrives → the iframe stays flex-1 (see JSX below).
+  const measuredHeight = useIframeAutoHeight(iframeRef, {
+    min: PLUGIN_MIN_HEIGHT,
+    max: PLUGIN_MAX_HEIGHT,
+    enabled: lang !== "server" && lang !== "window",
+  });
 
   // Server/Window plugin: WebSocket.
   useEffect(() => {

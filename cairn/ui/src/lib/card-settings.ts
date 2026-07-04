@@ -125,21 +125,33 @@ export function useCardSettings<T extends { version: number }>(
  *
  * @param settings  - card settings object
  * @param fallback  - default height when nothing is set (e.g. 300, 350, undefined)
+ * @param minHeight - optional per-card-type minimum; when given, a resolved
+ *   (non-undefined) height is clamped up to it. This is the SINGLE own-min
+ *   read-time clamp — CardShell (outer box) and any inner content that reads
+ *   the same height must pass the same value so they agree (guards a stale /
+ *   undersized persisted height). Callers get the min from
+ *   card-kit/card-min-sizes::cardMinSize; this module stays kind-agnostic.
  */
 export function resolveCardHeight(
   settings: { height?: number; height1?: number; height2?: number; heights?: Record<number, number>; colSpan?: number; collapsed?: boolean },
   fallback?: number,
+  minHeight?: number,
 ): number | undefined {
   if (settings.collapsed) return undefined;
   const span = settings.colSpan ?? 3;
 
   // New path: per-span heights record
+  let resolved: number | undefined;
   if (settings.heights && settings.heights[span] != null) {
-    return settings.heights[span];
+    resolved = settings.heights[span];
+  } else if (span > 1) {
+    // Legacy fallback: height2 (span > 1) / height1 (span 1)
+    resolved = settings.height2 ?? settings.height ?? fallback;
+  } else {
+    resolved = settings.height1 ?? settings.height ?? fallback;
   }
 
-  // Legacy fallback: height1 (span 1) / height2 (span > 1)
-  if (span > 1) return settings.height2 ?? settings.height ?? fallback;
-  return settings.height1 ?? settings.height ?? fallback;
+  if (resolved == null) return undefined;
+  return minHeight != null ? Math.max(resolved, minHeight) : resolved;
 }
 

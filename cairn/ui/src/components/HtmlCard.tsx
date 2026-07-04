@@ -28,7 +28,7 @@ import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import { seriesKey } from "../lib/series-utils";
 import type { SequenceMeta, SequenceResponse } from "../api/types";
-import { useCardSeries, useStepSlider, resolveAtStep, useRunInfo, MultiPaneGrid, type BaseCardSettings } from "./card-kit";
+import { useCardSeries, useStepSlider, resolveAtStep, useRunInfo, MultiPaneGrid, useIframeAutoHeight, type BaseCardSettings } from "./card-kit";
 import AddToComparisonButton from "./AddToComparisonButton";
 import CardShell from "./CardShell";
 import SeriesChipStrip from "./SeriesChipStrip";
@@ -144,7 +144,6 @@ function HtmlPane({
   );
 
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
-  const [measuredHeight, setMeasuredHeight] = useState(fixedHeight);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -160,27 +159,16 @@ function HtmlPane({
     return () => { cancelled = true; };
   }, [current?.artifact_hash]);
 
-  // Self-contained resize listener — no external hook needed to make this
-  // pane behave; it owns its own postMessage subscription. No timing
-  // assumptions here: the shim may post several times as the iframe's
-  // layout settles (see RESIZE_SHIM), and this listener stays subscribed
-  // for the pane's whole lifetime, so a message arriving late (or a later,
-  // larger one from legitimate content growth) is applied just like the
-  // first. A height of 0 is ignored rather than clamped down to MIN_HEIGHT
-  // — it's most often a pre-layout artifact, and even for content that
-  // legitimately renders nothing, holding at the last known/fixed height
-  // reads better than briefly collapsing to a sliver.
-  useEffect(() => {
-    if (!autoHeight) return;
-    function onMessage(e: MessageEvent) {
-      if (e.source !== iframeRef.current?.contentWindow) return;
-      if (e.data?.type !== "cairn:resize") return;
-      const h = Number(e.data.height);
-      if (Number.isFinite(h) && h > 0) setMeasuredHeight(Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, h)));
-    }
-    window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
-  }, [autoHeight]);
+  // Host-side resize subscription is the shared card-kit hook (the same one
+  // PluginCard uses) — see useIframeAutoHeight for the timing/guard rationale
+  // (h=0 ignored, source+type checks, clamp). Until a message arrives it
+  // returns undefined; we fall back to `fixedHeight` so the pane starts at the
+  // configured size exactly as before.
+  const measuredHeight = useIframeAutoHeight(iframeRef, {
+    min: MIN_HEIGHT,
+    max: MAX_HEIGHT,
+    enabled: autoHeight,
+  });
 
   if (error) {
     return <div className="rounded bg-bg p-2 text-xs text-status-failed overflow-auto"><pre>{error}</pre></div>;
@@ -193,7 +181,7 @@ function HtmlPane({
       ref={iframeRef}
       sandbox="allow-scripts"
       className="w-full rounded border-0 bg-bg"
-      style={{ height: autoHeight ? measuredHeight : fixedHeight }}
+      style={{ height: autoHeight ? (measuredHeight ?? fixedHeight) : fixedHeight }}
       title={`HTML: ${m.name}`}
     />
   );

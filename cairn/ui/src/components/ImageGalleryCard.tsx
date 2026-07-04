@@ -11,6 +11,7 @@ import { qk } from "../api/query-keys";
 import { useSequences } from "../api/hooks";
 import type { SequenceMeta, SequencePoint } from "../api/types";
 import { resolveCardHeight, type CardSettingsKey } from "../lib/card-settings";
+import { cardMinSize } from "./card-kit/card-min-sizes";
 import { useCardDrop } from "../lib/use-series-drop";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { downloadArtifact, exportImagesAsComposite, safeName, type CompositePane } from "../lib/download";
@@ -43,6 +44,9 @@ import CardShell from "./CardShell";
 import { CAIRN_SERIES_MIME } from "./SeriesChip";
 import SeriesChipStrip from "./SeriesChipStrip";
 const CAIRN_IMAGE_MIME = "application/x-cairn-image";
+// The card's own minimum height — passed to every resolveCardHeight read so
+// the inner content agrees with CardShell's outer-box clamp (one clamp source).
+const IMAGE_MIN_HEIGHT = cardMinSize("image").minHeight;
 import { useRunSelection, useRunSelectionHasProvider } from "../lib/use-run-selection";
 import RunSelectionPanel from "./RunSelectionPanel";
 import Select from "./settings/Select";
@@ -579,7 +583,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
   );
 
   const autoHeight = useMemo((): string | undefined => {
-    if (resolveCardHeight(settings, undefined) != null) return undefined;
+    if (resolveCardHeight(settings, undefined, IMAGE_MIN_HEIGHT) != null) return undefined;
     if (!imageAspect || containerWidth <= 0) return "20rem";
     const n = effectiveMetrics.length;
     const cols = Math.min(n, Math.max(1, Math.floor(containerWidth / 200)));
@@ -1103,9 +1107,9 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
         <>
           <div
             ref={containerSizeRef}
-            className={`relative min-h-0 flex flex-col overflow-hidden${resolveCardHeight(settings, undefined) != null ? " flex-1" : ""}${refDropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
+            className={`relative min-h-0 flex flex-col overflow-hidden${resolveCardHeight(settings, undefined, IMAGE_MIN_HEIGHT) != null ? " flex-1" : ""}${refDropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
             style={{
-              height: resolveCardHeight(settings, undefined) == null ? autoHeight : undefined,
+              height: resolveCardHeight(settings, undefined, IMAGE_MIN_HEIGHT) == null ? autoHeight : undefined,
             }}
             onDragOver={onRefDragOver}
             onDragLeave={onRefDragLeave}
