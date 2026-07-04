@@ -15,37 +15,30 @@ import { cardMinSize } from "./card-kit/card-min-sizes";
 import { useCardDrop } from "../lib/use-series-drop";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { downloadArtifact, exportImagesAsComposite, safeName, type CompositePane } from "../lib/download";
-import { useCardSeries, useStepSlider, useRunInfo, useMediaReference, useReferenceDrop, type BaseCardSettings } from "./card-kit";
+import { useCardSeries, useStepSlider, useRunInfo, useMediaReference, useReferenceDrop, type VisualCompareSettings } from "./card-kit";
 import {
   type DiffMode,
-  type ImageProcessing,
-  type Interpolation,
   type Colormap,
-  type ImageOverlayData,
   type ImageOverlaySettings,
-  type OverlayMask,
   type MediaCompareModeKind,
+  type ViewportModule,
+  type ViewState,
   DIVERGING_COLORMAPS,
   DEFAULT_OVERLAY_SETTINGS,
-  MEDIA_COMPARE_MODE_KINDS,
   getColormapLUT,
   overlayClassColor,
   resolveArtifactAtStep,
   migrateLegacyMode,
-  CompositeMediaPane,
-  ImagePane,
   Colorbar,
   ColormapSwatch,
   useContainerSize,
 } from "../lib/cairn-plot";
+import { parseOverlay } from "./viewport-registry";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import AddToComparisonButton from "./AddToComparisonButton";
 import CardShell from "./CardShell";
 import { startViewportDrag, type SeriesRef } from "./SeriesChip";
 import SeriesChipStrip from "./SeriesChipStrip";
-// The card's own minimum height — passed to every resolveCardHeight read so
-// the inner content agrees with CardShell's outer-box clamp (one clamp source).
-const IMAGE_MIN_HEIGHT = cardMinSize("image").minHeight;
 import { useRunSelection, useRunSelectionHasProvider } from "../lib/use-run-selection";
 import RunSelectionPanel from "./RunSelectionPanel";
 import Select from "./settings/Select";
@@ -67,70 +60,19 @@ interface Props {
   settingsKeyOverride?: CardSettingsKey;
   onRemove?: () => void;
   autoOpenSettings?: boolean;
+  /** The only thing that varies per object_type — supplies data resolution,
+   *  the per-viewport Pane, and the capability descriptor that gates which
+   *  chrome this card renders. Chosen by `object_type` in the viewport
+   *  registry (see components/viewport-registry.tsx) and injected by
+   *  CardRenderer. Everything else on this card is type-agnostic. */
+  viewport: ViewportModule<unknown, ViewState, VisualCompareSettings>;
 }
 
-interface ImageSettings extends BaseCardSettings {
-  metrics: Array<{ runId?: string; name: string; context_hash: string }>;
-  paneWidths?: number[];
-  brightness: number;
-  contrast: number;
-  gamma: number;
-  exposure: number;
-  offset: number;
-  flipSign: boolean;
-  zoom: number;
-  pan: { x: number; y: number };
-  baselineIndex?: number;
-  externalBaseline?: { runId?: string; name: string; context_hash: string };
-  /**
-   * The single exclusive media-compare mode (normal|side|split|blend|diff).
-   * When unset, `migrateLegacyMode` derives it from the legacy fields below
-   * on every read — see media-compare/migrate-legacy-mode.ts. Legacy fields
-   * are NEVER deleted on write (rollback safety); once `mode` is present it
-   * is authoritative and the legacy combo is ignored.
-   */
-  mode?: MediaCompareModeKind;
-  /** Legacy exclusive-mode axis #1 (kept for rollback + reused as the "diff"
-   *  mode's sub-mode selector: signed/absolute/squared/relative*). */
-  diffMode: "none" | DiffMode;
-  interpolation: Interpolation;
-  colormap: Colormap;
-  showAxes: boolean;
-  sliderStep?: number;
-  imageColumns?: 1 | 2;
-  missingImageMode?: "nothing" | "last_available";
-  xAxis?: "step" | "relative_time" | "wall_time";
-  referenceMode?: "global" | "per-run";
-  perRunBaselineStep?: number;
-  /** Legacy exclusive-mode axis #2 (kept for rollback). */
-  compareMode?: "side-by-side" | "split" | "blend";
-  splitPosition?: number;
-  blendAlpha?: number;
-  splitSynced?: boolean;
-  overlay?: ImageOverlaySettings;
-}
-
-function defaultImageSettings(seed: {
-  name: string;
-  context_hash: string;
-}): ImageSettings {
-  return {
-    version: 1,
-    metrics: [{ name: seed.name, context_hash: seed.context_hash }],
-    brightness: 0,
-    contrast: 0,
-    gamma: 1,
-    exposure: 0,
-    offset: 0,
-    flipSign: false,
-    zoom: 1,
-    pan: { x: 0, y: 0 },
-    diffMode: "none",
-    interpolation: "auto",
-    colormap: "none",
-    showAxes: false,
-  };
-}
+/** The persisted settings shape — hoisted to
+ *  `card-kit/visual-compare-settings.ts` (`VisualCompareSettings`) so the card
+ *  can be generic across viewport types. Field names/defaults unchanged from
+ *  the pre-refactor `ImageSettings` (persisted-settings compatibility). */
+type ImageSettings = VisualCompareSettings;
 
 function seriesLabel(
   m: { runId?: string; name: string; context_hash: string },
@@ -154,38 +96,6 @@ function seriesKey(m: {
   return `${m.runId ?? ""}::${m.name}::${m.context_hash}`;
 }
 
-/** Parse box/mask overlay annotations out of a point's artifact metadata. */
-function parseOverlay(pt: SequencePoint | undefined): ImageOverlayData | null {
-  const raw = pt?.artifact_metadata;
-  if (!raw) return null;
-  let meta: Record<string, unknown>;
-  try {
-    meta = JSON.parse(raw) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-  const boxes = Array.isArray(meta.boxes)
-    ? (meta.boxes as ImageOverlayData["boxes"])
-    : undefined;
-  const masksObj =
-    meta.masks && typeof meta.masks === "object"
-      ? (meta.masks as Record<string, { png_b64: string; class_labels?: Record<string, string> }>)
-      : undefined;
-  const masks: OverlayMask[] | undefined = masksObj
-    ? Object.entries(masksObj).map(([name, m]) => ({
-        name,
-        png_b64: m.png_b64,
-        class_labels: m.class_labels,
-      }))
-    : undefined;
-  const class_labels =
-    meta.class_labels && typeof meta.class_labels === "object"
-      ? (meta.class_labels as Record<string, string>)
-      : undefined;
-  if (!boxes?.length && !masks?.length) return null;
-  return { boxes, masks, class_labels };
-}
-
 const MEDIA_COMPARE_MODE_LABELS: Record<MediaCompareModeKind, string> = {
   normal: "normal",
   side: "side",
@@ -200,12 +110,14 @@ const MEDIA_COMPARE_MODE_LABELS: Record<MediaCompareModeKind, string> = {
 
 function ExternalBaselinePicker({
   runId,
+  objectType,
   currentMetricName,
   selected,
   onSelect,
   availableRunIds,
 }: {
   runId: string;
+  objectType: string;
   currentMetricName: string;
   selected?: string;
   onSelect: (name: string, contextHash: string, selectedRunId: string) => void;
@@ -224,7 +136,7 @@ function ExternalBaselinePicker({
   const imageMetrics = useMemo(() => {
     const seqs = data?.sequences ?? [];
     return seqs
-      .filter((s) => s.object_type === "image" && s.name !== currentMetricName)
+      .filter((s) => s.object_type === objectType && s.name !== currentMetricName)
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [data, currentMetricName]);
 
@@ -312,8 +224,14 @@ function ExternalBaselinePicker({
 // ImageGalleryCard
 // ---------------------------------------------------------------------------
 
-export default function ImageGalleryCard({ runId, metric, extraSeries, controlledSeries, settingsKeyOverride, onRemove, autoOpenSettings }: Props) {
+export default function VisualContentCard({ runId, metric, extraSeries, controlledSeries, settingsKeyOverride, onRemove, autoOpenSettings, viewport }: Props) {
   useRunMetadataVersion();
+
+  const caps = viewport.capabilities;
+  // The card's own minimum height — passed to every resolveCardHeight read so
+  // the inner content agrees with CardShell's outer-box clamp (one clamp
+  // source). Per-type via the viewport's object_type.
+  const MIN_HEIGHT = cardMinSize(viewport.objectType).minHeight;
 
   const {
     settings,
@@ -327,9 +245,10 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     extraSeries,
     controlledSeries,
     settingsKeyOverride,
-    makeDefaults: (seed, metrics) => ({
-      ...defaultImageSettings(seed),
+    makeDefaults: (_seed, metrics) => ({
+      version: 1,
       metrics,
+      ...viewport.defaultSettings(),
     }),
   });
 
@@ -419,20 +338,42 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
   );
 
   // -----------------------------------------------------------------------
-  // Processing props (passed to self-contained ImagePane / compositor)
+  // View state — persisted inside settings; the module owns which fields
+  // hold it (image: zoom/pan) via viewFromSettings/viewToSettingsPatch, so
+  // the card never assumes 2D-vs-3D view shape (D5 in the design doc).
   // -----------------------------------------------------------------------
-  const processing: ImageProcessing = useMemo(() => ({
-    brightness: settings.brightness,
-    contrast: settings.contrast,
-    gamma: settings.gamma,
-    exposure: settings.exposure,
-    offset: settings.offset,
-    flipSign: settings.flipSign,
-  }), [settings.brightness, settings.contrast, settings.gamma, settings.exposure, settings.offset, settings.flipSign]);
+  const view = viewport.viewFromSettings(settings);
+  const onPaneViewChange = useCallback(
+    (v: ViewState) => updateSettings(viewport.viewToSettingsPatch(v)),
+    [updateSettings, viewport],
+  );
 
-  const handleViewportChange = useCallback((v: { zoom: number; pan: { x: number; y: number } }) => {
-    updateSettings(v);
-  }, [updateSettings]);
+  // -----------------------------------------------------------------------
+  // Per-pane foreground resolution (hash + metadata at the current step),
+  // index-aligned with effectiveMetrics. The reference/data resolution that
+  // depends on perPaneHash is assembled below, after useMediaReference.
+  // -----------------------------------------------------------------------
+  const paneResolved = useMemo(
+    () => effectiveMetrics.map((_, i) => {
+      const stepMap = perSeriesStepMap[i] ?? new Map();
+      const steps = perSeriesPoints[i]?.map((p) => p.step) ?? [];
+      return resolveArtifactAtStep(stepMap, currentStep, steps, settings.missingImageMode);
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [effectiveMetrics, perSeriesStepMap, perSeriesPoints, currentStep, settings.missingImageMode],
+  );
+
+  const paneMetadata = useMemo(
+    () => effectiveMetrics.map((_, i) => {
+      const { hash, fallbackStep } = paneResolved[i] ?? { hash: undefined, fallbackStep: null };
+      if (!hash) return null;
+      const stepMap = perSeriesStepMap[i] ?? new Map();
+      const step = fallbackStep ?? currentStep;
+      return stepMap.get(step)?.artifact_metadata ?? null;
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [effectiveMetrics, perSeriesStepMap, paneResolved, currentStep],
+  );
 
   // -----------------------------------------------------------------------
   // Container size (for auto-height) + image aspect
@@ -488,18 +429,15 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     [settings.overlay],
   );
 
-  // Overlay data for the foreground image currently shown in each pane.
-  const paneOverlays = useMemo(() => {
-    return effectiveMetrics.map((_, i) => {
-      const stepMap = perSeriesStepMap[i] ?? new Map();
-      const steps = perSeriesPoints[i]?.map((p) => p.step) ?? [];
-      const { hash, fallbackStep } = resolveArtifactAtStep(stepMap, currentStep, steps, settings.missingImageMode);
-      if (!hash) return null;
-      const step = fallbackStep ?? currentStep;
-      return parseOverlay(stepMap.get(step));
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveMetrics, perSeriesStepMap, perSeriesPoints, currentStep, settings.missingImageMode]);
+  // Overlay data for the foreground image currently shown in each pane —
+  // parsed from each pane's resolved metadata via the ONE shared parser
+  // (viewport-registry's parseOverlay, also used by the image viewport's
+  // useData). Used here only for the settings-panel class aggregation; the
+  // panes themselves get overlays via `viewData` below.
+  const paneOverlays = useMemo(
+    () => paneMetadata.map((md) => parseOverlay(md)),
+    [paneMetadata],
+  );
 
   const { hasOverlay, overlayClasses } = useMemo(() => {
     const classes = new Map<number, string>();
@@ -547,7 +485,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
   );
 
   const autoHeight = useMemo((): string | undefined => {
-    if (resolveCardHeight(settings, undefined, IMAGE_MIN_HEIGHT) != null) return undefined;
+    if (resolveCardHeight(settings, undefined, MIN_HEIGHT) != null) return undefined;
     if (!imageAspect || containerWidth <= 0) return "20rem";
     const n = effectiveMetrics.length;
     const cols = Math.min(n, Math.max(1, Math.floor(containerWidth / 200)));
@@ -596,6 +534,39 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
   const baselineIdx = settings.baselineIndex;
   const hasBaseline = baselineIdx != null || extBase != null;
 
+  // -----------------------------------------------------------------------
+  // Per-pane reference resolution (with the split/blend dedup rule) fed into
+  // the module's data hook, which turns resolved hashes into render-ready
+  // items (image: {url, overlay}). Index-aligned with effectiveMetrics.
+  // -----------------------------------------------------------------------
+  const isOverlayMode = effectiveMode === "split" || effectiveMode === "blend";
+  const paneHashArr = paneResolved.map((r) => r?.hash ?? null);
+  const paneRefHashArr = effectiveMetrics.map((_, i) => {
+    const hash = paneResolved[i]?.hash;
+    const paneBaseline = perPaneHash(i);
+    // Split/blend are explicit user choices — honor them whenever a
+    // reference resolves, even when the content-addressed store deduped a
+    // byte-identical prediction and reference to the same artifact hash.
+    // Other modes keep the inequality so their fallback is unchanged.
+    const hasRef = !!(paneBaseline && hash && (isOverlayMode || paneBaseline !== hash));
+    return hasRef ? paneBaseline! : null;
+  });
+  const viewData = viewport.useData({
+    hashes: paneHashArr,
+    referenceHashes: paneRefHashArr,
+    metadata: paneMetadata,
+  });
+
+  // Settings handed to each Pane: identical to persisted settings, but with
+  // the overlay pre-merged against DEFAULT_OVERLAY_SETTINGS (the pre-refactor
+  // panes received `ovl`, not the raw `settings.overlay`).
+  const paneSettings = useMemo(
+    () => ({ ...settings, overlay: ovl }),
+    [settings, ovl],
+  );
+
+  const Pane = viewport.Pane;
+
   const cardRef = useRef<HTMLDivElement>(null);
 
   // -----------------------------------------------------------------------
@@ -605,7 +576,6 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     const splitPos = settings.splitPosition ?? 0.5;
     const blendAlpha = settings.blendAlpha ?? 0.5;
     const diffSubmode: DiffMode = settings.diffMode === "none" ? "absolute" : settings.diffMode;
-    const isOverlayMode = effectiveMode === "split" || effectiveMode === "blend";
 
     return (
       <div
@@ -614,40 +584,21 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
       >
         {effectiveMetrics.map((m, paneIdx) => {
           if (refMode === "global" && settings.externalBaseline && m.name === settings.externalBaseline.name && (m.runId ?? runId) === (settings.externalBaseline.runId ?? runId)) return null;
-          const stepMap = perSeriesStepMap[paneIdx] ?? new Map();
-          const steps = perSeriesPoints[paneIdx]?.map((p) => p.step) ?? [];
-          const { hash, fallbackStep } = resolveArtifactAtStep(stepMap, currentStep, steps, settings.missingImageMode);
+          const fallbackStep = paneResolved[paneIdx]?.fallbackStep ?? null;
           const label = seriesLabel(m, runId, multipleRuns, availableRunIds)
             + (fallbackStep != null ? ` (step ${fallbackStep})` : "");
-          const paneBaseline = perPaneHash(paneIdx);
-
-          // Split/blend are explicit user choices — honor them whenever a
-          // reference resolves, even when the content-addressed store deduped
-          // a byte-identical prediction and reference to the same artifact
-          // hash (e.g. an undistorted baseline run). Otherwise the pane
-          // silently falls back to "normal" and the split handle / blend
-          // slider have no visible effect. Other modes keep the inequality
-          // so their fallback behavior is unchanged.
-          const hasRef = !!(paneBaseline && hash && (isOverlayMode || paneBaseline !== hash));
-          const imageUrl = hash ? api.artifactUrl(hash) : null;
-          const baselineUrl = hasRef ? api.artifactUrl(paneBaseline!) : null;
-          const paneOverlay = paneOverlays[paneIdx] ?? null;
 
           return (
             <div key={seriesKey(m)} className="relative overflow-hidden">
-              <CompositeMediaPane
+              <Pane
+                data={viewData.items[paneIdx] ?? null}
+                reference={viewData.referenceItems[paneIdx] ?? null}
+                settings={paneSettings}
+                view={view}
+                onViewChange={onPaneViewChange}
                 mode={effectiveMode}
-                imageUrl={imageUrl}
-                baselineUrl={baselineUrl}
-                isReferencePane={refMode === "global" && baselineIdx === paneIdx}
-                diffSubmode={diffSubmode}
-                colormap={settings.colormap ?? "none"}
-                interpolation={(settings.interpolation ?? "auto") as Interpolation}
-                showAxes={settings.showAxes ?? false}
-                processing={processing}
-                zoom={settings.zoom}
-                pan={settings.pan}
-                onViewportChange={handleViewportChange}
+                diffMode={diffSubmode}
+                isBaseline={refMode === "global" && baselineIdx === paneIdx}
                 splitPosition={splitPos}
                 blendAlpha={blendAlpha}
                 onSplitPositionChange={(pos) => updateSettings({ splitPosition: pos })}
@@ -655,8 +606,6 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
                 isDraggable
                 onDragStart={(e) => onImageDragStart(e, m)}
                 onNaturalSize={onImageNaturalSize}
-                overlay={paneOverlay ?? undefined}
-                overlaySettings={ovl}
               />
             </div>
           );
@@ -666,26 +615,21 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
   };
 
   // -----------------------------------------------------------------------
-  // Single-image view (uses ImagePane from library)
+  // Single view — one pane, no reference (mode "normal").
   // -----------------------------------------------------------------------
   const renderSingleImageView = () => (
-    <ImagePane
-      imageUrl={firstResolved.hash ? api.artifactUrl(firstResolved.hash) : null}
-      baselineUrl={null}
-      diffMode="none"
-      interpolation={(settings.interpolation ?? "auto") as Interpolation}
-      colormap={settings.colormap ?? "none"}
-      showAxes={settings.showAxes ?? false}
-      processing={processing}
-      zoom={settings.zoom}
-      pan={settings.pan}
-      onViewportChange={handleViewportChange}
+    <Pane
+      data={viewData.items[0] ?? null}
+      reference={null}
+      settings={paneSettings}
+      view={view}
+      onViewChange={onPaneViewChange}
+      mode="normal"
+      diffMode="absolute"
       isDraggable
       onDragStart={(e) => onImageDragStart(e, effectiveMetrics[0]!)}
       onNaturalSize={onImageNaturalSize}
       label={metric.name}
-      overlay={paneOverlays[0] ?? undefined}
-      overlaySettings={ovl}
     />
   );
 
@@ -729,8 +673,16 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
     );
   };
 
+  // Reset-view gating: "tracked" (image — enabled only when zoom/pan moved)
+  // vs "always" (3D, VC5). `imageViewModified` reads the image2d view fields.
   const imageViewModified = settings.zoom !== 1 || settings.pan.x !== 0 || settings.pan.y !== 0;
-  const resetImageView = () => updateSettings({ zoom: 1, pan: { x: 0, y: 0 } });
+  const viewModified = caps.resetView === "tracked" ? imageViewModified : true;
+  const resetImageView = () => updateSettings(viewport.viewToSettingsPatch(viewport.defaultView()));
+
+  // The mode selector iterates the descriptor's core modes (+ native modes,
+  // gated by their `enabledFor`) instead of a hardcoded enum — so a viewport
+  // type declaring fewer/native modes gets the right selector for free.
+  const coreModeEntries = caps.coreModes;
 
   const headerActions = (
     <>
@@ -741,7 +693,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
           className={`h-[22px] rounded border border-border bg-bg-elevated px-1.5 text-[10px] mono cursor-pointer ${effectiveMode !== "normal" ? "text-accent" : "text-fg-muted hover:text-fg"}`}
           title="Compare mode"
         >
-          {MEDIA_COMPARE_MODE_KINDS.map((m) => (
+          {coreModeEntries.map((m) => (
             <option key={m} value={m}>{MEDIA_COMPARE_MODE_LABELS[m]}</option>
           ))}
         </select>
@@ -761,22 +713,26 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
           <option value="relative_squared">rel. squared</option>
         </select>
       )}
-      <select
-        value={settings.colormap ?? "none"}
-        onChange={(e) => updateSettings({ colormap: e.target.value as Colormap })}
-        className={`h-[22px] rounded border border-border bg-bg-elevated px-1.5 text-[10px] mono cursor-pointer ${(settings.colormap ?? "none") !== "none" ? "text-accent" : "text-fg-muted hover:text-fg"}`}
-        title="False color map"
-      >
-        <option value="none">color: off</option>
-        <option value="viridis">viridis</option>
-        <option value="red-green">red-green</option>
-        <option value="red-blue">red-blue</option>
-      </select>
+      {caps.colorbar !== "never" && (
+        <select
+          value={settings.colormap ?? "none"}
+          onChange={(e) => updateSettings({ colormap: e.target.value as Colormap })}
+          className={`h-[22px] rounded border border-border bg-bg-elevated px-1.5 text-[10px] mono cursor-pointer ${(settings.colormap ?? "none") !== "none" ? "text-accent" : "text-fg-muted hover:text-fg"}`}
+          title="False color map"
+        >
+          <option value="none">color: off</option>
+          <option value="viridis">viridis</option>
+          <option value="red-green">red-green</option>
+          <option value="red-blue">red-blue</option>
+        </select>
+      )}
     </>
   );
 
   const settingsPanel = (
     <>
+      {caps.postProcessing && (
+      <>
       <SettingsSection title="Image" first />
       <Slider
         label="Brightness"
@@ -872,7 +828,9 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
         onChange={(v) => updateSettings({ showAxes: v })}
         description="Show pixel coordinate ticks along edges"
       />
-      {hasOverlay && (
+      </>
+      )}
+      {caps.overlays && hasOverlay && (
         <>
           <SettingsSection title="Overlays" />
           <Toggle
@@ -948,12 +906,15 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
           )}
         </>
       )}
+      {viewport.SettingsControls && (
+        <viewport.SettingsControls settings={settings} update={updateSettings} meta={null} />
+      )}
       <SettingsSection title="Compare" />
       <Select<MediaCompareModeKind>
         label="Mode"
         value={effectiveMode}
         onChange={(v) => setMode(v)}
-        options={MEDIA_COMPARE_MODE_KINDS.map((m) => ({ value: m, label: MEDIA_COMPARE_MODE_LABELS[m] }))}
+        options={coreModeEntries.map((m) => ({ value: m, label: MEDIA_COMPARE_MODE_LABELS[m] }))}
       />
       {effectiveMode === "diff" && (
         <Select
@@ -1002,6 +963,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
         )}
         <ExternalBaselinePicker
           runId={runId}
+          objectType={viewport.objectType}
           currentMetricName={metric.name}
           selected={settings.externalBaseline?.name}
           availableRunIds={availableRunIds}
@@ -1042,7 +1004,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
   );
 
   return (
-    <CardShell cardKind="image"
+    <CardShell cardKind={viewport.objectType}
       cardRef={cardRef}
       settings={settings}
       updateSettings={updateSettings}
@@ -1052,9 +1014,9 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
       onRemove={onRemove}
       onDownload={firstResolved.hash ? () => downloadArtifact(api.artifactUrl(firstResolved.hash!), artifactFilename(metric.name, currentStep, "image/png")) : undefined}
       onScreenshot={handleScreenshot}
-      addToComparisonSlot={<AddToComparisonButton cardType="image" series={compSeries} />}
+      addToComparisonSlot={<AddToComparisonButton cardType={viewport.objectType} series={compSeries} />}
       onResetView={resetImageView}
-      viewModified={imageViewModified}
+      viewModified={viewModified}
       headerActions={headerActions}
       dropHighlight={dropHighlight}
       dropProps={dropProps}
@@ -1071,9 +1033,9 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
         <>
           <div
             ref={containerSizeRef}
-            className={`relative min-h-0 flex flex-col overflow-hidden${resolveCardHeight(settings, undefined, IMAGE_MIN_HEIGHT) != null ? " flex-1" : ""}${refDropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
+            className={`relative min-h-0 flex flex-col overflow-hidden${resolveCardHeight(settings, undefined, MIN_HEIGHT) != null ? " flex-1" : ""}${refDropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
             style={{
-              height: resolveCardHeight(settings, undefined, IMAGE_MIN_HEIGHT) == null ? autoHeight : undefined,
+              height: resolveCardHeight(settings, undefined, MIN_HEIGHT) == null ? autoHeight : undefined,
             }}
             onDragOver={onRefDragOver}
             onDragLeave={onRefDragLeave}
@@ -1083,7 +1045,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
           <div className="flex-1 min-w-0 min-h-0 flex flex-col">
           {renderImageContent()}
           </div>
-          {(settings.colormap ?? "none") !== "none" && (
+          {caps.colorbar !== "never" && (settings.colormap ?? "none") !== "none" && (
             <Colorbar colormap={settings.colormap as Exclude<Colormap, "none">} isDiff={effectiveMode === "diff"} />
           )}
           </div>
@@ -1091,7 +1053,7 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
 
           {isMulti && hasBaseline && (
             <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px]">
-              {MEDIA_COMPARE_MODE_KINDS.map((mode) => (
+              {coreModeEntries.map((mode) => (
                 <button
                   key={mode}
                   type="button"

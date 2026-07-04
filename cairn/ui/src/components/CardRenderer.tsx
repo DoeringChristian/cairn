@@ -11,7 +11,8 @@ import { useSequence } from "../api/hooks";
 import { api } from "../api/client";
 import { downloadArtifact, artifactFilename } from "../lib/download";
 import ScalarPlotCard from "./ScalarPlotCard";
-import ImageGalleryCard from "./ImageGalleryCard";
+import VisualContentCard from "./VisualContentCard";
+import { viewportRegistry } from "./viewport-registry";
 import AudioPlayerCard from "./AudioPlayerCard";
 import VideoPlayerCard from "./VideoPlayerCard";
 import HistogramCard from "./HistogramCard";
@@ -185,7 +186,7 @@ export default function CardRenderer(props: CardDescriptor) {
         />
       );
     case "image":
-      return <ImageGalleryCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />;
+      return <VisualContentCard {...baseProps} viewport={viewportRegistry.image} extraSeries={extraSeries} controlledSeries={controlledSeries} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />;
     case "figure":
       return (
         <Suspense
