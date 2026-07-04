@@ -1137,7 +1137,7 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
       subtitle={subtitle}
       onSettings={() => setExpanded(true)}
       onRemove={onRemove}
-      onDownload={firstResolved.hash ? () => downloadArtifact(api.artifactUrl(firstResolved.hash!), artifactFilename(metric.name, currentStep, downloadMime)) : undefined}
+      onDownload={firstResolved.hash ? () => downloadArtifact(api.artifactUrl(firstResolved.hash!), artifactFilename(metric.name, currentStep, downloadMime, caps.downloadExtension)) : undefined}
       onScreenshot={caps.postProcessing ? handleScreenshot : undefined}
       addToComparisonSlot={<AddToComparisonButton cardType={viewport.objectType} series={compSeries} />}
       onResetView={resetImageView}

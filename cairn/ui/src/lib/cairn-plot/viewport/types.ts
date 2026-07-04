@@ -125,6 +125,14 @@ export interface ViewportCapabilities<M extends string = never> {
    *  Kept on the descriptor (rather than hardcoded in the card) so a future
    *  type can, in principle, opt out — no type does today. */
   label: { placement: "bottom-left"; draggable: true };
+  /** Forces the download filename's extension, bypassing the MIME→ext table
+   *  in `lib/download.ts` (`artifactFilename`'s `extOverride`). Every 3D
+   *  type's on-disk artifact is `application/octet-stream` (mime-agnostic),
+   *  which the MIME table can only resolve to a generic `.bin` — each type
+   *  declares its actual on-disk format here instead (pointcloud: `.npy`).
+   *  `undefined` (image's case) keeps the existing MIME-derived naming
+   *  (`.png`/`.jpg`/...). */
+  downloadExtension?: string;
 }
 
 /** The identity of one series/pane, independent of what it renders (image

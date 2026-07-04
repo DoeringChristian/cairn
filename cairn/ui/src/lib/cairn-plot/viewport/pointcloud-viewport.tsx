@@ -421,4 +421,8 @@ export const pointCloudViewportCapabilities: ViewportCapabilities<PointCloudNati
   webglContextsPerPane: 1,
   maxPanes: 4,
   label: { placement: "bottom-left", draggable: true },
+  // Pointcloud artifacts are on-disk `.npy` tensors (mime `application/
+  // octet-stream`, which the shared MIME table can only resolve to a
+  // generic `.bin`) — matches the old PointCloudCard's `extOverride: ".npy"`.
+  downloadExtension: ".npy",
 };
