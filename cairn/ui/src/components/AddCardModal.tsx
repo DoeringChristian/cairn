@@ -13,8 +13,17 @@ import { useQueries } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { qk } from "../api/query-keys";
 import { useModalBehavior } from "../lib/use-modal-behavior";
-import { isMultiRunCardType, type ComparisonSeriesRef, type MultiRunCardType } from "../lib/comparisons";
+import { isMultiRunCardType, type ComparisonSeriesRef } from "../lib/comparisons";
+import { type AddCardSelection } from "../lib/reports";
+import { buildMetricIndex, type MetricIndexEntry } from "../lib/reports/metric-index";
 import { shortRunLabel } from "../lib/run-label";
+import type { SequenceMeta } from "../api/types";
+
+// Re-exported so existing importers (`import { type AddCardSelection } from
+// "../AddCardModal"`) keep working — the canonical definition now lives in
+// lib/reports/card-from-spec.ts (see cardFromSpec), shared with the
+// ```cairn dialect interpreter.
+export type { AddCardSelection };
 const TYPE_LABELS: Record<string, string> = {
   scalar: "Scalars",
   image: "Images",
@@ -41,35 +50,8 @@ const TYPE_LABELS: Record<string, string> = {
 
 const TYPE_ORDER = ["scalar", "image", "figure", "audio", "video", "histogram", "tensor", "text", "table", "html", "markdown", "pointcloud", "mesh", "boxes3d", "volume", "artifact", "plugin", "parallel", "scatter", "bar", "tile"];
 
-/** One entry per run that has this metric. */
-type SelectionRuns = Array<{ runId: string; context_hash: string }>;
-
-/**
- * Result of a user picking an entry in the modal. Mirrors CardDescriptor's
- * discriminant: `series` for a real per-metric card, `multi-run` for the
- * parallel/scatter cards that span the comparison's runs.
- *
- * `manual-series` is the "custom overlay" escape hatch: an explicit list of
- * (run, metric) pairs picked one at a time via checkboxes, rather than one
- * metric name applied across every run — the two can carry *different*
- * metric names (e.g. run-a's `loss` overlaid with run-b's `accuracy`).
- * `ComparisonCard.series` already supports this shape end to end (each
- * entry carries its own name); this is purely a UI affordance to build one.
- */
-export type AddCardSelection =
-  | { kind: "series"; name: string; object_type: string; runs: SelectionRuns }
-  | { kind: "multi-run"; cardType: MultiRunCardType; name: string; runs: SelectionRuns }
-  | { kind: "manual-series"; object_type: string; series: ComparisonSeriesRef[] };
-
-/** Internal grouping entry (also drives the type tabs). */
-interface MetricEntry {
-  name: string;
-  object_type: string;
-  runs: SelectionRuns;
-}
-
-/** Map a picked grouping entry to a typed selection. */
-function toSelection(m: MetricEntry): AddCardSelection {
+/** Map a picked grouping entry (a lib/reports/metric-index.ts entry) to a typed selection. */
+function toSelection(m: MetricIndexEntry): AddCardSelection {
   if (isMultiRunCardType(m.object_type)) {
     return { kind: "multi-run", cardType: m.object_type, name: m.name, runs: m.runs };
   }
@@ -121,39 +103,17 @@ export default function AddCardModal({
       : [],
   });
 
-  // Build union of metrics across all runs
+  // Build union of metrics across all runs — shared with the ```cairn
+  // dialect interpreter's type inference (lib/reports/metric-index.ts).
   const { grouped, allTypes } = useMemo(() => {
-    const map = new Map<
-      string,
-      {
-        name: string;
-        object_type: string;
-        runs: Array<{ runId: string; context_hash: string }>;
-      }
-    >();
-
-    seqQueries.forEach((q, idx) => {
-      const runId = runIds[idx];
-      if (!runId || !q.data) return;
-      for (const seq of q.data.sequences) {
-        const key = `${seq.name}::${seq.object_type}`;
-        const existing = map.get(key);
-        if (existing) {
-          if (!existing.runs.some((r) => r.runId === runId)) {
-            existing.runs.push({ runId, context_hash: seq.context_hash });
-          }
-        } else {
-          map.set(key, {
-            name: seq.name,
-            object_type: seq.object_type,
-            runs: [{ runId, context_hash: seq.context_hash }],
-          });
-        }
-      }
-    });
+    const map = buildMetricIndex(
+      seqQueries
+        .map((q, idx) => ({ runId: runIds[idx], sequences: q.data?.sequences }))
+        .filter((r): r is { runId: string; sequences: SequenceMeta[] } => !!r.runId && !!r.sequences),
+    );
 
     // Group by type
-    const byType = new Map<string, typeof map extends Map<string, infer V> ? V[] : never>();
+    const byType = new Map<string, MetricIndexEntry[]>();
     for (const entry of map.values()) {
       const arr = byType.get(entry.object_type) ?? [];
       arr.push(entry);

@@ -22,7 +22,9 @@ import {
   isCardsBlock,
   isMarkdownBlock,
   newId,
+  parseReportMarkdown,
   restoreReportCardSettings,
+  serializeReportToMarkdown,
   type CardsBlock,
   type MarkdownBlock,
   type ReportBlock,
@@ -30,6 +32,7 @@ import {
 } from "../lib/reports";
 import ReportMarkdownBlock from "../components/reports/ReportMarkdownBlock";
 import ReportCardsBlock from "../components/reports/ReportCardsBlock";
+import ReportSourceMarkdown from "../components/reports/ReportSourceMarkdown";
 
 const AUTOSAVE_DELAY_MS = 1500;
 const DEFAULT_REPORT_NAME = "Untitled report";
@@ -48,6 +51,16 @@ export default function ReportEditorPage() {
   const [blocks, setBlocks] = useState<ReportBlock[]>([]);
   const [hydrated, setHydrated] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>("idle");
+
+  // WS-AR1: markdown-source view — a second view over the same blocks[],
+  // via lib/reports/markdown-source.ts. `rawCairnSourceRef` caches each
+  // ```cairn fence's exact original text so an unedited cells<->markdown
+  // toggle round-trips byte-for-byte (see markdown-source.ts's module doc);
+  // any edit to a CardsBlock invalidates its own cache entry so serializing
+  // afterwards regenerates fresh YAML instead of showing stale content.
+  const [sourceView, setSourceView] = useState(false);
+  const [mdSource, setMdSource] = useState("");
+  const rawCairnSourceRef = useRef<Record<string, string>>({});
 
   // Transient "restored N of M cards" feedback handed over from
   // ReportsListPage's "New from template" apply (mirrors ComparePage's
@@ -77,9 +90,24 @@ export default function ReportEditorPage() {
     if (hydrated || !q.data) return;
     setName(q.data.name);
     const payload = q.data.payload as unknown as ReportPayload;
-    const loadedBlocks = payload.blocks ?? [];
-    setBlocks(loadedBlocks);
-    if (reportId) restoreReportCardSettings(reportId, payload);
+
+    // WS-AR1: `source` (canonical markdown) is authoritative when present;
+    // `blocks` is its parse cache. Older reports (saved before this field
+    // existed) simply have no `source` and load from `blocks` unchanged —
+    // additive, no migration (design doc D6).
+    if (typeof payload.source === "string") {
+      const parsed = parseReportMarkdown(payload.source);
+      setBlocks(parsed.blocks);
+      rawCairnSourceRef.current = parsed.rawCairnSource;
+      if (reportId) restoreReportCardSettings(reportId, { blocks: parsed.blocks, cardSettings: parsed.settings });
+      setMdSource(payload.source);
+    } else {
+      const loadedBlocks = payload.blocks ?? [];
+      setBlocks(loadedBlocks);
+      rawCairnSourceRef.current = {};
+      if (reportId) restoreReportCardSettings(reportId, payload);
+      setMdSource(serializeReportToMarkdown(loadedBlocks, payload.cardSettings ?? {}, {}));
+    }
     setLastSavedAt(q.data.updated_at);
     justHydratedRef.current = true;
     setHydrated(true);
@@ -96,8 +124,10 @@ export default function ReportEditorPage() {
     if (effectiveName !== name) setName(effectiveName);
     setSaveState("saving");
     const payload = buildReportPayload(reportId, blocks);
+    const source = serializeReportToMarkdown(blocks, payload.cardSettings ?? {}, rawCairnSourceRef.current);
+    const payloadWithSource: ReportPayload = { ...payload, source };
     updateMut.mutate(
-      { name: effectiveName, payload: payload as unknown as Record<string, unknown> },
+      { name: effectiveName, payload: payloadWithSource as unknown as Record<string, unknown> },
       {
         onSuccess: (res) => {
           setSaveState("saved");
@@ -146,6 +176,34 @@ export default function ReportEditorPage() {
 
   const handleSaveNow = () => {
     if (saveTimerRef.current != null) window.clearTimeout(saveTimerRef.current);
+    if (sourceView) {
+      // `blocks` state won't reflect a just-typed markdown edit until the
+      // next render, so — unlike the cells-view path — parse + save
+      // directly from `mdSource` rather than going through `doSave()` (which
+      // reads `blocks` from closure and would race a same-tick setBlocks).
+      if (!reportId) return;
+      const parsed = parseReportMarkdown(mdSource);
+      rawCairnSourceRef.current = parsed.rawCairnSource;
+      restoreReportCardSettings(reportId, { blocks: parsed.blocks, cardSettings: parsed.settings });
+      setBlocks(parsed.blocks);
+      setSourceView(false);
+      const trimmed = name.trim();
+      const effectiveName = trimmed || DEFAULT_REPORT_NAME;
+      if (effectiveName !== name) setName(effectiveName);
+      setSaveState("saving");
+      const payload: ReportPayload = { blocks: parsed.blocks, cardSettings: parsed.settings, source: mdSource };
+      updateMut.mutate(
+        { name: effectiveName, payload: payload as unknown as Record<string, unknown> },
+        {
+          onSuccess: (res) => {
+            setSaveState("saved");
+            setLastSavedAt(res.updated_at);
+          },
+          onError: () => setSaveState("error"),
+        },
+      );
+      return;
+    }
     doSave();
   };
 
@@ -160,11 +218,17 @@ export default function ReportEditorPage() {
   };
 
   const updateBlock = (id: string, next: ReportBlock) => {
+    // A CardsBlock's content changed — its cached raw ```cairn fence text
+    // (if any, from the last markdown parse) is now stale; drop it so the
+    // next markdown-source serialize regenerates fresh YAML instead of
+    // silently showing the pre-edit text (see rawCairnSourceRef's doc above).
+    if (isCardsBlock(next)) delete rawCairnSourceRef.current[id];
     setBlocks((prev) => prev.map((b) => (b.id === id ? next : b)));
   };
 
   const deleteBlock = (id: string) => {
     if (!confirm("Delete this block?")) return;
+    delete rawCairnSourceRef.current[id];
     setBlocks((prev) => prev.filter((b) => b.id !== id));
   };
 
@@ -179,6 +243,23 @@ export default function ReportEditorPage() {
       next.splice(toIdx, 0, moved!);
       return next;
     });
+  };
+
+  // Cells <-> Markdown-source toggle (WS-AR1). Both views read/write the
+  // same `blocks[]` — switching regenerates one from the other via
+  // lib/reports/markdown-source.ts, never holding two independent copies.
+  const enterMarkdownView = () => {
+    const payload = reportId ? buildReportPayload(reportId, blocks) : { blocks, cardSettings: {} };
+    setMdSource(serializeReportToMarkdown(blocks, payload.cardSettings ?? {}, rawCairnSourceRef.current));
+    setSourceView(true);
+  };
+
+  const exitMarkdownView = () => {
+    const parsed = parseReportMarkdown(mdSource);
+    rawCairnSourceRef.current = parsed.rawCairnSource;
+    setBlocks(parsed.blocks);
+    if (reportId) restoreReportCardSettings(reportId, { blocks: parsed.blocks, cardSettings: parsed.settings });
+    setSourceView(false);
   };
 
   // Save every cards-block card across this report as a reusable report
@@ -270,13 +351,46 @@ export default function ReportEditorPage() {
               Save as template
             </button>
           )}
+          <button
+            type="button"
+            onClick={() => (sourceView ? exitMarkdownView() : enterMarkdownView())}
+            className="btn text-xs"
+            title="Toggle between the block editor and the report's canonical markdown source"
+          >
+            {sourceView ? "Cells" : "Markdown"}
+          </button>
           <button type="button" onClick={() => setEditMode((v) => !v)} className="btn text-xs">
             {editMode ? "Done editing" : "Edit"}
           </button>
         </div>
       </div>
 
-      {blocks.length === 0 ? (
+      {sourceView ? (
+        editMode ? (
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+            <textarea
+              value={mdSource}
+              onChange={(e) => setMdSource(e.target.value)}
+              placeholder={"Write the report's markdown source directly — use a ```cairn fence for cards blocks."}
+              className="input h-[70vh] w-full resize-y font-mono text-xs leading-relaxed"
+              spellCheck={false}
+            />
+            <div className="h-[70vh] overflow-y-auto rounded border border-border-subtle bg-bg p-3 text-sm">
+              {mdSource.trim() ? (
+                <ReportSourceMarkdown projectId={projectId} reportId={reportId} allProjectRuns={allProjectRuns}>
+                  {mdSource}
+                </ReportSourceMarkdown>
+              ) : (
+                <span className="text-fg-subtle">Preview appears here…</span>
+              )}
+            </div>
+          </div>
+        ) : (
+          <ReportSourceMarkdown projectId={projectId} reportId={reportId} allProjectRuns={allProjectRuns}>
+            {mdSource}
+          </ReportSourceMarkdown>
+        )
+      ) : blocks.length === 0 ? (
         <div className="card p-6 text-sm text-fg-muted">
           {editMode
             ? "No blocks yet. Add a markdown or cards block below."
@@ -346,7 +460,7 @@ export default function ReportEditorPage() {
         </div>
       )}
 
-      {editMode && (
+      {editMode && !sourceView && (
         <div className="mt-6 flex gap-2">
           <button type="button" onClick={addMarkdownBlock} className="btn text-xs">
             + Markdown block

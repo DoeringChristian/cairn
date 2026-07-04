@@ -63,10 +63,24 @@ export const MD_COMPONENTS = {
  * element of its own so drop-in call sites (like MarkdownCard) keep an
  * identical DOM shape to inlining `<ReactMarkdown remarkPlugins={[remarkGfm]}
  * components={MD_COMPONENTS}>` directly.
+ *
+ * `components` optionally *overlays* extra overrides on top of the base
+ * `MD_COMPONENTS` (e.g. reports' `language-cairn` fence renderer, see
+ * components/reports/ReportSourceMarkdown.tsx) — MD_COMPONENTS itself is
+ * never forked, and every existing call site (MarkdownCard,
+ * ReportMarkdownBlock) that omits this prop renders byte-identically to
+ * before.
  */
-export default function Markdown({ children }: { children: string }) {
+export default function Markdown({
+  children,
+  components,
+}: {
+  children: string;
+  components?: Partial<typeof MD_COMPONENTS>;
+}) {
+  const merged = components ? { ...MD_COMPONENTS, ...components } : MD_COMPONENTS;
   return (
-    <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={merged}>
       {children}
     </ReactMarkdown>
   );

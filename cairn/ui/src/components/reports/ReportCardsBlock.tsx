@@ -18,7 +18,7 @@ import CardRenderer from "../CardRenderer";
 import ReorderableCardGrid from "../ReorderableCardGrid";
 import RunSelectorBadge from "../RunSelectorBadge";
 import { isMultiRunCardType, rebuildCardsFromRuns, type ComparisonCard } from "../../lib/comparisons";
-import { cardSettingsKeyForReport, newId, type CardsBlock } from "../../lib/reports";
+import { cardFromSpec, cardSettingsKeyForReport, type CardsBlock } from "../../lib/reports";
 import { describeRunSelector, DEFAULT_RUN_SELECTOR_N, type QueryRunSelector } from "../../lib/run-selector";
 import { useRunSelectorResolution } from "../../api/hooks";
 import { disambiguateRunLabels, useRunMetadataVersion } from "../../lib/run-label";
@@ -105,25 +105,12 @@ export default function ReportCardsBlock({ projectId, reportId, block, editMode,
     }
   };
 
+  // AddCardSelection → ComparisonCard is the shared `cardFromSpec` (see
+  // lib/reports/card-from-spec.ts) — also consumed by the ```cairn dialect
+  // interpreter (lib/reports/cairn-block.ts), so the two authoring paths
+  // build cards identically.
   const onAddCard = (sel: AddCardSelection) => {
-    if (sel.kind === "manual-series") {
-      // Custom overlay: series already carry their own (runId, name,
-      // context_hash) — no shared `name` to fan out across runs.
-      const newCard: ComparisonCard = {
-        id: newId(),
-        type: sel.object_type as ComparisonCard["type"],
-        series: sel.series,
-      };
-      onChange({ ...block, cards: [...block.cards, newCard] });
-      return;
-    }
-    const type: ComparisonCard["type"] = sel.kind === "multi-run" ? sel.cardType : (sel.object_type as ComparisonCard["type"]);
-    const newCard: ComparisonCard = {
-      id: newId(),
-      type,
-      series: sel.runs.map((r) => ({ runId: r.runId, name: sel.name, context_hash: r.context_hash })),
-    };
-    onChange({ ...block, cards: [...block.cards, newCard] });
+    onChange({ ...block, cards: [...block.cards, cardFromSpec(sel)] });
   };
 
   const removeCard = (cardId: string) => {

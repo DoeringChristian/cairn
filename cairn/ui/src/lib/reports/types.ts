@@ -35,6 +35,17 @@ export interface ReportPayload {
   cardSettings?: Record<string, unknown>;
   /** Report-level dynamic run selector — currently unused (per-block `CardsBlock.runSelector` is what's resolved); carried through unchanged. */
   runSelector?: RunSelector;
+  /**
+   * WS-AR1: the canonical markdown serialization (prose + ```cairn fences —
+   * see lib/reports/markdown-source.ts), written alongside `blocks` on every
+   * save. Additive-only field — older reports persisted before this field
+   * existed simply have no `source`, and load from `blocks` unchanged (see
+   * ReportEditorPage's hydrate effect). When present, `source` is treated as
+   * authoritative on load (`blocks` is its parse cache); `blocks` remains
+   * the persisted shape everything else reads, per the design doc's D6
+   * ("no migration").
+   */
+  source?: string;
 }
 
 export function isMarkdownBlock(b: ReportBlock): b is MarkdownBlock {
