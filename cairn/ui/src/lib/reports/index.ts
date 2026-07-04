@@ -18,6 +18,9 @@ export { reportRunId, cardSettingsKeyForReport } from "./scope";
 export { buildReportPayload, restoreReportCardSettings } from "./payload";
 export { newId } from "./ids";
 
+export type { AddCardSelection, SelectionRuns } from "./card-from-spec";
+export { cardFromSpec } from "./card-from-spec";
+
 export type { ReportTemplate, ReportTemplateCard } from "./templates";
 export {
   loadReportTemplates,
