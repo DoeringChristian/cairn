@@ -15,7 +15,7 @@ import { cardMinSize } from "./card-kit/card-min-sizes";
 import { useCardDrop } from "../lib/use-series-drop";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { downloadArtifact, exportImagesAsComposite, safeName, type CompositePane } from "../lib/download";
-import { useCardSeries, useStepSlider, useRunInfo, useMediaReference, type BaseCardSettings } from "./card-kit";
+import { useCardSeries, useStepSlider, useRunInfo, useMediaReference, useReferenceDrop, type BaseCardSettings } from "./card-kit";
 import {
   type DiffMode,
   type ImageProcessing,
@@ -41,9 +41,8 @@ import {
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import AddToComparisonButton from "./AddToComparisonButton";
 import CardShell from "./CardShell";
-import { CAIRN_SERIES_MIME } from "./SeriesChip";
+import { startViewportDrag, type SeriesRef } from "./SeriesChip";
 import SeriesChipStrip from "./SeriesChipStrip";
-const CAIRN_IMAGE_MIME = "application/x-cairn-image";
 // The card's own minimum height — passed to every resolveCardHeight read so
 // the inner content agrees with CardShell's outer-box clamp (one clamp source).
 const IMAGE_MIN_HEIGHT = cardMinSize("image").minHeight;
@@ -447,64 +446,29 @@ export default function ImageGalleryCard({ runId, metric, extraSeries, controlle
   }, []);
 
   // -----------------------------------------------------------------------
-  // Drop target for baseline references
+  // Drop target for baseline references — the ONE shared drag/drop-to-
+  // compare mechanic (card-kit/use-reference-drop.ts), also used by every
+  // 3D card. Dropping a reference always lands on "diff" — the exclusive-
+  // mode equivalent of the pre-refactor behavior (auto-enable diff coloring
+  // on drop; see spec-visual-compare.md's "map combinable states to diff").
   // -----------------------------------------------------------------------
-  const [refDropHighlight, setRefDropHighlight] = useState(false);
-  const onRefDragOver = useCallback((e: React.DragEvent) => {
-    if (e.dataTransfer.types.includes(CAIRN_SERIES_MIME) || e.dataTransfer.types.includes(CAIRN_IMAGE_MIME)) {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = "copy";
-      setRefDropHighlight(true);
-    }
-  }, []);
-  const onRefDragLeave = useCallback(() => setRefDropHighlight(false), []);
-  const onRefDrop = useCallback((e: React.DragEvent) => {
-    setRefDropHighlight(false);
-
-    // Dropping a reference always lands on "diff" — the exclusive-mode
-    // equivalent of the pre-refactor behavior (auto-enable diff coloring on
-    // drop; see spec-visual-compare.md's "map combinable states to diff").
-    const chipData = e.dataTransfer.getData(CAIRN_SERIES_MIME);
-    if (chipData) {
-      e.stopPropagation();
-      try {
-        const ref = JSON.parse(chipData) as { runId: string; name: string; context_hash: string };
-        updateSettings({
-          externalBaseline: { runId: ref.runId, name: ref.name, context_hash: ref.context_hash },
-          baselineIndex: undefined,
-          referenceMode: "per-run",
-          diffMode: settingsRef.current.diffMode === "none" ? "absolute" : settingsRef.current.diffMode,
-          mode: "diff",
-        });
-      } catch { /* ignore */ }
-      return;
-    }
-
-    const imageData = e.dataTransfer.getData(CAIRN_IMAGE_MIME);
-    if (imageData) {
-      e.stopPropagation();
-      try {
-        const ref = JSON.parse(imageData) as { runId: string; name: string; context_hash: string };
-        updateSettings({
-          externalBaseline: { runId: ref.runId, name: ref.name, context_hash: ref.context_hash },
-          baselineIndex: undefined,
-          referenceMode: "global",
-          diffMode: settingsRef.current.diffMode === "none" ? "absolute" : settingsRef.current.diffMode,
-          mode: "diff",
-        });
-      } catch { /* ignore */ }
-      return;
-    }
+  const applyReference = useCallback((ref: SeriesRef, mode: "global" | "per-run") => {
+    updateSettings({
+      externalBaseline: { runId: ref.runId, name: ref.name, context_hash: ref.context_hash },
+      baselineIndex: undefined,
+      referenceMode: mode,
+      diffMode: settingsRef.current.diffMode === "none" ? "absolute" : settingsRef.current.diffMode,
+      mode: "diff",
+    });
   }, [updateSettings]);
+  const { highlight: refDropHighlight, dropProps: refDropProps } = useReferenceDrop({
+    onSeriesDrop: (ref) => applyReference(ref, "per-run"),
+    onViewportDrop: (ref) => applyReference(ref, "global"),
+  });
+  const { onDragOver: onRefDragOver, onDragLeave: onRefDragLeave, onDrop: onRefDrop } = refDropProps;
 
   const onImageDragStart = useCallback((e: React.DragEvent, m: { runId?: string; name: string; context_hash: string }) => {
-    e.dataTransfer.effectAllowed = "copy";
-    e.dataTransfer.setData(CAIRN_IMAGE_MIME, JSON.stringify({
-      runId: m.runId ?? runId,
-      name: m.name,
-      context_hash: m.context_hash,
-    }));
-    e.dataTransfer.setData("text/plain", m.name);
+    startViewportDrag(e, { runId: m.runId ?? runId, name: m.name, context_hash: m.context_hash }, m.name);
   }, [runId]);
 
   // -----------------------------------------------------------------------
