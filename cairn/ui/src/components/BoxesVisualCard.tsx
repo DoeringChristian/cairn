@@ -283,6 +283,7 @@ function BoxesViewportPane(
     return (
       <OffscreenComparePanes
         mode={effectiveMode as Extract<MediaCompareModeKind, "side" | "split" | "blend" | "diff">}
+        syncGroupId={cameraSyncGroupId ?? null}
         primary={{ kind: "live", render: renderBoxesLive }}
         reference={{ kind: "frame", frameSource: { kind: "url", url: crossTypeReferenceUrl! } }}
         diffSubmode={diffMode}
@@ -322,6 +323,7 @@ function BoxesViewportPane(
     return (
       <OffscreenComparePanes
         mode={effectiveMode}
+        syncGroupId={cameraSyncGroupId ?? null}
         primary={{ kind: "live", render: renderBoxesLive }}
         reference={{
           kind: "live",

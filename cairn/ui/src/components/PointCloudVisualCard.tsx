@@ -324,6 +324,7 @@ function PointCloudViewportPane(
     return (
       <OffscreenComparePanes
         mode={effectiveMode as Extract<MediaCompareModeKind, "side" | "split" | "blend" | "diff">}
+        syncGroupId={cameraSyncGroupId ?? null}
         primary={{ kind: "live", render: renderPointCloudLive }}
         reference={{ kind: "frame", frameSource: { kind: "url", url: crossTypeReferenceUrl! } }}
         diffSubmode={diffMode}
@@ -362,6 +363,7 @@ function PointCloudViewportPane(
     return (
       <OffscreenComparePanes
         mode={effectiveMode}
+        syncGroupId={cameraSyncGroupId ?? null}
         primary={{ kind: "live", render: renderPointCloudLive }}
         reference={{
           kind: "live",

@@ -58,6 +58,28 @@ export interface OffscreenComparePanesProps {
    *  same-type pane's two live snapshots are already the same offscreen
    *  render size, so alignment would be a no-op there). */
   alignForDiff?: boolean;
+  /**
+   * WS-3DR2: the card's own live camera-sync group id (`cameraSyncGroupId`
+   * from `ViewportPaneProps`, non-null only when the card's "Sync 3D views"
+   * toggle is on), so this pane's two offscreen mirrors + interaction
+   * controller join THAT group instead of a private per-mount one.
+   *
+   * Before this, `OffscreenComparePanes` always minted its own private
+   * `compare3d-${useId()}` group, completely disconnected from the card-
+   * level toggle — so orbiting a split/blend/diff pane never propagated to
+   * any OTHER pane on the same card (e.g. a multi-series comparison with
+   * several split panes), even with "Sync 3D views" on. This is the WS-3DR2
+   * fix for that (user-reported as "pointcloud split sync broken", but the
+   * same bug affected split/blend/diff for every 3D type — mesh/boxes/
+   * volume too, since they all route through this one component).
+   *
+   * `null`/absent (card sync off, or no card-level group applies) falls
+   * back to the original private-per-mount group — the primary/reference
+   * pair (+ interaction controller) still always mirror each other (WS-VCP
+   * fix 3's equivalent for split/blend/diff), just scoped to this one pane,
+   * matching pre-WS-3DR2 behavior exactly when sync is off.
+   */
+  syncGroupId?: string | null;
 }
 
 /**
@@ -166,12 +188,17 @@ export function OffscreenComparePanes({
   blendAlpha,
   primaryLabel,
   alignForDiff,
+  syncGroupId,
 }: OffscreenComparePanesProps) {
-  // A private sync group, unrelated to the page-wide "Sync 3D views" group —
-  // whichever side(s) are live + the interaction controller all share this
-  // one camera while compare mode is active, independent of whether the
-  // card's own panes join page sync.
-  const groupId = `compare3d-${useId()}`;
+  // Join the card-level "Sync 3D views" group when supplied (WS-3DR2) so
+  // this pane's mirrors react to — and contribute to — the same camera as
+  // every other pane on the card; otherwise fall back to a private
+  // per-mount group (primary+reference still always mirror each other,
+  // independent of the card-level toggle — see `syncGroupId`'s doc
+  // comment). `useId()` is called unconditionally regardless (Rules of
+  // Hooks), even though its value is only used in the fallback case.
+  const localId = useId();
+  const groupId = syncGroupId ?? `compare3d-${localId}`;
   const sync: Scene3DSyncOptions = { groupId };
 
   const primarySnap = useOffscreenSnapshot();
