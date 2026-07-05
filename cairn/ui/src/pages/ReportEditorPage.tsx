@@ -102,8 +102,14 @@ export default function ReportEditorPage() {
   // metric name (no render-time rebind can recover an identity that was
   // never there). Both queries fire in parallel, so this rarely adds
   // user-visible latency.
+  //
+  // But don't wait forever: if `runsQ` errors out (data stays undefined
+  // after retries are exhausted), proceed anyway and hydrate with an empty
+  // run pool (`allProjectRuns` already falls back to `[]` above) rather than
+  // leaving the whole report — including prose that needs no runs at all —
+  // permanently blank.
   useEffect(() => {
-    if (hydrated || !q.data || !runsQ.data) return;
+    if (hydrated || !q.data || (!runsQ.data && !runsQ.isError)) return;
     setName(q.data.name);
     const payload = q.data.payload as unknown as ReportPayload;
 
@@ -126,7 +132,7 @@ export default function ReportEditorPage() {
     justHydratedRef.current = true;
     setHydrated(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q.data, runsQ.data, hydrated, reportId]);
+  }, [q.data, runsQ.data, runsQ.isError, hydrated, reportId]);
 
   const doSave = useCallback(() => {
     if (!hydrated || !reportId) return;
