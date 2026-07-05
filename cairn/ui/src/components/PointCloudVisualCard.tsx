@@ -460,16 +460,10 @@ function PointCloudSettingsControls({
         onChange={(v) => update({ background: v })}
         options={BACKGROUND_OPTIONS}
       />
-      <Select<DiffColormap>
-        label="Diff colormap"
-        value={settings.diffColormap ?? "viridis"}
-        onChange={(v) => update({ diffColormap: v })}
-        options={[
-          { value: "viridis", label: "Viridis (magnitude)" },
-          { value: "red-green", label: "Red – Green (signed)" },
-        ]}
-        description="Color mapping for the native diff modes (diff-property / diff-position)"
-      />
+      {/* "Diff colormap" (red-green/viridis) now lives in the shared
+          Compare section (VisualContentCard.tsx, WS-MFIX Bug 2) — rendering
+          it here too would duplicate the control in the same settings
+          panel. */}
     </>
   );
 }
