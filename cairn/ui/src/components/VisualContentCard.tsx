@@ -654,6 +654,23 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
   const useNativeRender = nativeEnabled && !!viewport.nativeDiff;
   const RenderPane = useNativeRender ? viewport.nativeDiff!.render : Pane;
 
+  // WS-VCP fix 4: the SINGLE card-level colorbar, computed once (not per
+  // Pane) across every currently-resolved pane's items — see
+  // `ViewportModule.activeColorbar`'s doc comment. `nativeMode` mirrors
+  // `RenderPane`'s own gating (`useNativeRender`) so the colorbar reflects
+  // what's ACTUALLY rendered, not merely selected (a selected-but-disabled
+  // native mode falls back to `Pane`, i.e. core-mode coloring). `undefined`
+  // (image's case, and any module that doesn't implement this) = no
+  // card-level colorbar from this mechanism.
+  const colorbarInfo = viewport.activeColorbar?.({
+    items: viewData.items,
+    referenceItems: viewData.referenceItems,
+    settings: paneSettings,
+    mode: effectiveMode,
+    nativeMode: useNativeRender ? activeNativeMode : undefined,
+  }) ?? null;
+  const colorRange: [number, number] | null = colorbarInfo ? [colorbarInfo.min, colorbarInfo.max] : null;
+
   const cardRef = useRef<HTMLDivElement>(null);
 
   // -----------------------------------------------------------------------
@@ -692,6 +709,7 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
                 diffMode={diffSubmode}
                 nativeMode={activeNativeMode}
                 cameraSyncGroupId={cameraSyncGroupId}
+                colorRange={colorRange}
                 isBaseline={refMode === "global" && baselineIdx === paneIdx}
                 splitPosition={splitPos}
                 blendAlpha={blendAlpha}
@@ -721,6 +739,7 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
       mode="normal"
       diffMode="absolute"
       cameraSyncGroupId={cameraSyncGroupId}
+      colorRange={colorRange}
       isDraggable
       onDragStart={(e) => onImageDragStart(e, effectiveMetrics[0]!)}
       onNaturalSize={onImageNaturalSize}
@@ -799,35 +818,17 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
     else setNativeMode(value);
   }, [setMode, setNativeMode]);
 
+  // Mode/diff-submode selection lives in exactly ONE place: the bottom
+  // pill row rendered below the media (see the `isMulti && hasBaseline`
+  // block further down). Pre-WS-VCP, the header ALSO rendered a compact
+  // <select> for both the compare mode and the diff sub-mode — true
+  // duplication (both visible at once, unconditionally, whenever a
+  // baseline was set). Header now keeps only genuinely header-level
+  // actions (reset-view/download/screenshot/settings/add-to-comparison,
+  // wired via CardShell props) plus the false-color colormap picker below
+  // (a distinct control, not a compare-mode selector).
   const headerActions = (
     <>
-      {hasBaseline && (
-        <select
-          value={selectedModeValue}
-          onChange={(e) => handleModeSelect(e.target.value)}
-          className={`h-[22px] rounded border border-border bg-bg-elevated px-1.5 text-[10px] mono cursor-pointer ${selectedModeValue !== "normal" ? "text-accent" : "text-fg-muted hover:text-fg"}`}
-          title="Compare mode"
-        >
-          {modeSelectorEntries.map((m) => (
-            <option key={m.value} value={m.value} disabled={m.disabled} title={m.title}>{m.label}</option>
-          ))}
-        </select>
-      )}
-      {hasBaseline && effectiveMode === "diff" && !activeNativeMode && (
-        <select
-          value={settings.diffMode === "none" ? "absolute" : settings.diffMode}
-          onChange={(e) => updateSettings({ diffMode: e.target.value as ImageSettings["diffMode"] })}
-          className="h-[22px] rounded border border-border bg-bg-elevated px-1.5 text-[10px] mono cursor-pointer text-accent"
-          title="Diff sub-mode"
-        >
-          <option value="absolute">absolute</option>
-          <option value="signed">signed</option>
-          <option value="squared">squared</option>
-          <option value="relative_absolute">rel. absolute</option>
-          <option value="relative_signed">rel. signed</option>
-          <option value="relative_squared">rel. squared</option>
-        </select>
-      )}
       {caps.colorbar !== "never" && (
         <select
           value={settings.colormap ?? "none"}
@@ -1202,6 +1203,15 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
           {caps.colorbar !== "never" && (settings.colormap ?? "none") !== "none" && (
             <Colorbar colormap={settings.colormap as Exclude<Colormap, "none">} isDiff={effectiveMode === "diff"} />
           )}
+          {/* WS-VCP fix 4: the SINGLE card-level colorbar for a value/vertex-
+              color mode (mesh/pointcloud/boxes/volume) — a wholly separate
+              mechanism from the false-color block above (image only, never
+              both at once: no module implementing `activeColorbar` also sets
+              `settings.colormap`). Unified range (`colorbarInfo`) computed
+              once above and threaded into every pane via `colorRange`. */}
+          {colorbarInfo && (
+            <Colorbar colormap={colorbarInfo.colormap} min={colorbarInfo.min} max={colorbarInfo.max} />
+          )}
           </div>
           </div>
 
@@ -1242,6 +1252,21 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
                   className="w-24 accent-accent"
                   title="Blend alpha"
                 />
+              )}
+              {effectiveMode === "diff" && !activeNativeMode && (
+                <select
+                  value={settings.diffMode === "none" ? "absolute" : settings.diffMode}
+                  onChange={(e) => updateSettings({ diffMode: e.target.value as ImageSettings["diffMode"] })}
+                  className="h-[22px] rounded border border-border bg-bg-elevated px-1.5 text-[10px] mono cursor-pointer text-accent"
+                  title="Diff sub-mode"
+                >
+                  <option value="absolute">absolute</option>
+                  <option value="signed">signed</option>
+                  <option value="squared">squared</option>
+                  <option value="relative_absolute">rel. absolute</option>
+                  <option value="relative_signed">rel. signed</option>
+                  <option value="relative_squared">rel. squared</option>
+                </select>
               )}
             </div>
           )}

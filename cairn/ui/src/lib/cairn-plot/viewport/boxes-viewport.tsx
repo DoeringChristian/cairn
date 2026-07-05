@@ -1,16 +1,19 @@
 import { useState } from "react";
 import BoxesViewer, {
+  resolveBoxesColorMode,
   type BoxesBackground,
   type BoxesColorMode,
 } from "../three/BoxesViewer";
-import type { Scene3DSyncOptions } from "../three/use-scene3d";
-import { computeDelta, diffColors, type DiffColormap } from "../three/diff";
+import { usePairedSideBySideSync, type Scene3DSyncOptions } from "../three/use-scene3d";
+import { computeDelta, diffColorsForDomain, diffDomain, unionDiffDomain, type DiffColormap } from "../three/diff";
 import {
   resolveActiveProperty,
   type PropertyMap,
   type PropertyMeta,
 } from "../three/properties";
-import { Colorbar, LabelChip } from "../primitives";
+import { LabelChip } from "../primitives";
+import type { ColormapName } from "../types";
+import type { MediaCompareModeKind } from "../media-compare/mode";
 import type { ViewportCapabilities, ViewportPaneProps, ViewState } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -112,6 +115,7 @@ export function BoxesSingleView({
   isDraggable,
   onDragStart,
   onFrame,
+  colorRange,
 }: {
   item: BoxesViewportItem | null;
   view: BoxesViewConfig;
@@ -120,6 +124,11 @@ export function BoxesSingleView({
   isDraggable?: boolean;
   onDragStart?: (e: React.DragEvent) => void;
   onFrame?: (canvas: HTMLCanvasElement) => void;
+  /** Card-level unified color domain (WS-VCP fix 4) — overrides the "value"
+   *  mode's property range or the "depth" mode's max-depth normalization
+   *  (whichever is active) so coloring matches the card's single colorbar.
+   *  Never affects the depth/value FILTER range, which stays per-item. */
+  colorRange?: [number, number] | null;
 }) {
   const [visibleCount, setVisibleCount] = useState<number | null>(null);
 
@@ -145,10 +154,9 @@ export function BoxesSingleView({
         ]
       : null;
 
-  const effectiveColorMode = view.colorMode === "value" && !hasValues ? "depth" : view.colorMode;
-  const showColorbar = effectiveColorMode !== "solid";
-  const colorbarDomain: [number, number] =
-    effectiveColorMode === "value" && active.range ? active.range : [0, Math.max(maxDepth, 1)];
+  const effectiveColorMode = resolveBoxesColorMode(view.colorMode, hasValues);
+  const valueRangeForColor = effectiveColorMode === "value" ? (colorRange ?? active.range) : active.range;
+  const maxDepthForColor = effectiveColorMode === "depth" && colorRange ? colorRange[1] : maxDepth;
 
   return (
     <div className="relative flex h-full w-full flex-col overflow-hidden rounded bg-bg">
@@ -161,8 +169,8 @@ export function BoxesSingleView({
             values={active.values}
             nBoxes={meta.n_boxes}
             bounds={meta.bounds}
-            maxDepth={maxDepth}
-            valueRange={active.range}
+            maxDepth={maxDepthForColor}
+            valueRange={valueRangeForColor}
             colorMode={view.colorMode}
             depthRange={[depthMin, depthMax]}
             valueThreshold={valueThreshold}
@@ -172,9 +180,6 @@ export function BoxesSingleView({
             onFrame={onFrame}
           />
         </div>
-        {showColorbar && (
-          <Colorbar colormap="viridis" min={colorbarDomain[0]} max={colorbarDomain[1]} />
-        )}
       </div>
       <div className="mono px-1 py-0.5 text-[10px] text-fg-subtle">
         {`${(visibleCount ?? meta.n_boxes).toLocaleString()} of ${meta.n_boxes.toLocaleString()} boxes · ${meta.kind}`}
@@ -193,6 +198,7 @@ export function BoxesSideBySideView({
   label,
   isDraggable,
   onDragStart,
+  colorRange,
 }: {
   item: BoxesViewportItem | null;
   reference: BoxesViewportItem | null;
@@ -201,7 +207,13 @@ export function BoxesSideBySideView({
   label: string;
   isDraggable?: boolean;
   onDragStart?: (e: React.DragEvent) => void;
+  /** See `BoxesSingleView`'s identical doc comment (WS-VCP fix 4) — threaded
+   *  to BOTH the ref and run viewer below so they color identically. */
+  colorRange?: [number, number] | null;
 }) {
+  // WS-VCP fix 3 — see MeshSideBySideView's identical comment: the ref+run
+  // pair always mirrors each other, independent of the card-level toggle.
+  const pairedSync = usePairedSideBySideSync(sync);
   if (!reference) {
     return (
       <BoxesSingleView
@@ -211,6 +223,7 @@ export function BoxesSideBySideView({
         label={label}
         isDraggable={isDraggable}
         onDragStart={onDragStart}
+        colorRange={colorRange}
       />
     );
   }
@@ -219,6 +232,10 @@ export function BoxesSideBySideView({
     view.property,
     reference.meta.properties ?? null,
   );
+  const refHasValues = !!refActive.values && !!refActive.range;
+  const refEffectiveColorMode = resolveBoxesColorMode(view.colorMode, refHasValues);
+  const refValueRangeForColor = refEffectiveColorMode === "value" ? (colorRange ?? refActive.range) : refActive.range;
+  const refMaxDepthForColor = refEffectiveColorMode === "depth" && colorRange ? colorRange[1] : reference.meta.max_depth;
   return (
     <div className="flex h-full w-full gap-0.5">
       <div className="relative flex-1 min-w-0 overflow-hidden rounded border border-accent/20 bg-bg">
@@ -229,12 +246,12 @@ export function BoxesSideBySideView({
           values={refActive.values}
           nBoxes={reference.meta.n_boxes}
           bounds={reference.meta.bounds}
-          maxDepth={reference.meta.max_depth}
-          valueRange={refActive.range}
+          maxDepth={refMaxDepthForColor}
+          valueRange={refValueRangeForColor}
           colorMode={view.colorMode}
           depthRange={[0, reference.meta.max_depth]}
           background={view.background}
-          sync={sync}
+          sync={pairedSync}
         />
         <LabelChip label="REF" />
       </div>
@@ -243,10 +260,11 @@ export function BoxesSideBySideView({
           <BoxesSingleView
             item={item}
             view={view}
-            sync={sync}
+            sync={pairedSync}
             label={label}
             isDraggable={isDraggable}
             onDragStart={onDragStart}
+            colorRange={colorRange}
           />
         ) : (
           <div className="flex h-full items-center justify-center text-sm text-fg-muted">
@@ -272,6 +290,7 @@ export function BoxesNativeDiffPane({
   label,
   isDraggable,
   onDragStart,
+  colorRange,
 }: ViewportPaneProps<BoxesViewportItem, BoxesViewState, BoxesViewportSettings>) {
   const sync: Scene3DSyncOptions | null = cameraSyncGroupId ? { groupId: cameraSyncGroupId } : null;
   const view = resolveBoxesViewConfig(settings);
@@ -317,7 +336,10 @@ export function BoxesNativeDiffPane({
   }
 
   const deltaValues = computeDelta(activeA.values, activeB.values, data.meta.n_boxes);
-  const { colors, domain } = diffColors(deltaValues, data.meta.n_boxes, diffColormap);
+  // WS-VCP fix 4: color against the card-level UNIFIED diff domain when
+  // supplied, else fall back to this pane's own autoscaled domain.
+  const domain = colorRange ?? diffDomain(deltaValues, diffColormap);
+  const colors = diffColorsForDomain(deltaValues, data.meta.n_boxes, domain, diffColormap);
 
   return (
     <div className="relative flex h-full w-full overflow-hidden rounded bg-bg">
@@ -336,7 +358,6 @@ export function BoxesNativeDiffPane({
           overrideColors={colors}
         />
       </div>
-      <Colorbar colormap={diffColormap} min={domain[0]} max={domain[1]} />
       <LabelChip label={label} isDraggable={isDraggable} onDragStart={onDragStart} />
     </div>
   );
@@ -352,11 +373,78 @@ function topologyMatches(content: unknown, reference: unknown): boolean {
 }
 
 /**
+ * `ViewportModule.activeColorbar` (WS-VCP fix 4) — the SINGLE card-level
+ * colorbar for boxes: under the native diff-property mode, unions every
+ * valid pane's diff domain; otherwise mirrors `BoxesSingleView`'s per-item
+ * `effectiveColorMode` fallback (colorMode "value" without any values present
+ * anywhere falls back to a depth-based domain) at the CARD level — "value"
+ * unions the active property's range across every item that actually has
+ * values; "depth" unions `max_depth` across every item; "solid" (or no
+ * items at all) is `null` (no colorbar).
+ */
+export function boxesActiveColorbar(args: {
+  items: (BoxesViewportItem | null)[];
+  referenceItems: (BoxesViewportItem | null)[];
+  settings: BoxesViewportSettings;
+  mode: MediaCompareModeKind;
+  nativeMode?: string;
+}): { colormap: ColormapName; min: number; max: number } | null {
+  const { items, referenceItems, settings, nativeMode } = args;
+  const diffColormap: DiffColormap = settings.diffColormap ?? "viridis";
+
+  if (nativeMode === "diff-property") {
+    const property = settings.property ?? null;
+    const domains: [number, number][] = [];
+    for (let i = 0; i < items.length; i++) {
+      const a = items[i];
+      const b = referenceItems[i];
+      if (!a || !b) continue;
+      if (a.meta.n_boxes !== b.meta.n_boxes || a.arrays.depth.length !== b.arrays.depth.length) continue;
+      const activeA = resolveActiveProperty(a.arrays.properties, property, a.meta.properties ?? null);
+      const activeB = resolveActiveProperty(b.arrays.properties, property, b.meta.properties ?? null);
+      if (!activeA.values || !activeB.values) continue;
+      const delta = computeDelta(activeA.values, activeB.values, a.meta.n_boxes);
+      domains.push(diffDomain(delta, diffColormap));
+    }
+    const union = unionDiffDomain(domains, diffColormap);
+    return union ? { colormap: diffColormap, min: union[0], max: union[1] } : null;
+  }
+
+  const all = [...items, ...referenceItems];
+  if (settings.colorMode === "solid") return null;
+  const property = settings.property ?? null;
+  let anyHasValues = false;
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const it of all) {
+    if (!it) continue;
+    const active = resolveActiveProperty(it.arrays.properties, property, it.meta.properties ?? null);
+    if (active.values && active.range) {
+      anyHasValues = true;
+      lo = Math.min(lo, active.range[0]);
+      hi = Math.max(hi, active.range[1]);
+    }
+  }
+  if (settings.colorMode === "value" && anyHasValues) {
+    return { colormap: "viridis", min: lo, max: hi };
+  }
+  // "depth" (or "value" with nothing to color by, matching the per-pane
+  // fallback) — domain is [0, max_depth] unioned across every item.
+  let maxDepth = 0;
+  for (const it of all) {
+    if (it) maxDepth = Math.max(maxDepth, it.meta.max_depth);
+  }
+  if (all.every((it) => !it)) return null;
+  return { colormap: "viridis", min: 0, max: Math.max(maxDepth, 1) };
+}
+
+/**
  * BoxesViewport's capability descriptor — mirrors `meshViewportCapabilities`
  * (all five core modes via the app-layer Pane's OffscreenComparePanes bridge,
  * plus the one native diff-property mode; no post-processing/overlays; camera
- * sync on; always-on reset; contextual colorbar rendered by the Pane;
- * `maxPanes: 4` + `webglContextsPerPane: 1` WebGL budget parity).
+ * sync on; always-on reset; the card renders ONE colorbar via
+ * `boxesActiveColorbar` (WS-VCP fix 4); `maxPanes: 4` +
+ * `webglContextsPerPane: 1` WebGL budget parity).
  */
 export const boxesViewportCapabilities: ViewportCapabilities<BoxesNativeMode> = {
   coreModes: ["normal", "side", "split", "blend", "diff"],

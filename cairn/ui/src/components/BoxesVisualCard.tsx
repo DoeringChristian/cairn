@@ -17,6 +17,7 @@ import {
   type ViewState,
 } from "../lib/cairn-plot";
 import BoxesViewer, {
+  resolveBoxesColorMode,
   type BoxesColorMode,
   type BoxesBackground,
 } from "../lib/cairn-plot/three/BoxesViewer";
@@ -25,6 +26,7 @@ import {
   BoxesSideBySideView,
   BoxesNativeDiffPane,
   boxesViewportCapabilities,
+  boxesActiveColorbar,
   resolveBoxesViewConfig,
   type Boxes3DMeta,
   type BoxesViewportItem,
@@ -132,6 +134,10 @@ function defaultBoxesSettings(): Omit<BoxesFullSettings, "metrics" | "version"> 
   return {
     colorMode: "depth",
     background: "dark",
+    // 3D views linked by default (WS-VCP fix 1) — see MeshVisualCard's
+    // identical comment; only affects cards without an explicit persisted
+    // `syncViews` value.
+    syncViews: true,
     // Inert placeholders — see defaultPointCloudSettings' identical comment.
     brightness: 0,
     contrast: 0,
@@ -187,6 +193,7 @@ function BoxesViewportPane(
     splitPosition,
     onSplitPositionChange,
     blendAlpha,
+    colorRange,
   } = props;
   const sync: Scene3DSyncOptions | null = cameraSyncGroupId ? { groupId: cameraSyncGroupId } : null;
   const view = resolveBoxesViewConfig(settings);
@@ -202,6 +209,7 @@ function BoxesViewportPane(
         label={label}
         isDraggable={isDraggable}
         onDragStart={onDragStart}
+        colorRange={colorRange}
       />
     );
   }
@@ -219,6 +227,9 @@ function BoxesViewportPane(
         mode={effectiveMode}
         renderPrimary={(cb, syncOpts) => {
           const active = resolveActiveProperty(data.arrays.properties, view.property, data.meta.properties ?? null);
+          const effectiveColorMode = resolveBoxesColorMode(view.colorMode, !!active.values && !!active.range);
+          const valueRange = effectiveColorMode === "value" ? (colorRange ?? active.range) : active.range;
+          const maxDepth = effectiveColorMode === "depth" && colorRange ? colorRange[1] : data.meta.max_depth;
           return (
             <BoxesViewer
               mins={data.arrays.mins}
@@ -227,8 +238,8 @@ function BoxesViewportPane(
               values={active.values}
               nBoxes={data.meta.n_boxes}
               bounds={data.meta.bounds}
-              maxDepth={data.meta.max_depth}
-              valueRange={active.range}
+              maxDepth={maxDepth}
+              valueRange={valueRange}
               colorMode={view.colorMode}
               depthRange={[0, data.meta.max_depth]}
               background={view.background}
@@ -239,6 +250,9 @@ function BoxesViewportPane(
         }}
         renderReference={(cb, syncOpts) => {
           const active = resolveActiveProperty(reference.arrays.properties, view.property, reference.meta.properties ?? null);
+          const effectiveColorMode = resolveBoxesColorMode(view.colorMode, !!active.values && !!active.range);
+          const valueRange = effectiveColorMode === "value" ? (colorRange ?? active.range) : active.range;
+          const maxDepth = effectiveColorMode === "depth" && colorRange ? colorRange[1] : reference.meta.max_depth;
           return (
             <BoxesViewer
               mins={reference.arrays.mins}
@@ -247,8 +261,8 @@ function BoxesViewportPane(
               values={active.values}
               nBoxes={reference.meta.n_boxes}
               bounds={reference.meta.bounds}
-              maxDepth={reference.meta.max_depth}
-              valueRange={active.range}
+              maxDepth={maxDepth}
+              valueRange={valueRange}
               colorMode={view.colorMode}
               depthRange={[0, reference.meta.max_depth]}
               background={view.background}
@@ -276,6 +290,7 @@ function BoxesViewportPane(
       label={label}
       isDraggable={isDraggable}
       onDragStart={onDragStart}
+      colorRange={colorRange}
     />
   );
 }
@@ -433,6 +448,7 @@ export const boxesViewportModule: ViewportModule<
   Pane: BoxesViewportPane,
   SettingsControls: BoxesSettingsControls,
   nativeDiff: { render: BoxesNativeDiffPane },
+  activeColorbar: boxesActiveColorbar,
 };
 
 interface BoxesVisualCardProps {

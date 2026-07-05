@@ -5,11 +5,13 @@ import PointCloudViewer, {
   type PointColorMode,
   extractPositions,
 } from "../renderers/PointCloudViewer";
-import type { Scene3DSyncOptions } from "../three/use-scene3d";
+import { usePairedSideBySideSync, type Scene3DSyncOptions } from "../three/use-scene3d";
 import {
   computeDelta,
   computeDisplacementMagnitude,
-  diffColors,
+  diffColorsForDomain,
+  diffDomain,
+  unionDiffDomain,
   type DiffColormap,
 } from "../three/diff";
 import {
@@ -17,7 +19,9 @@ import {
   type PropertyMap,
   type PropertyMeta,
 } from "../three/properties";
-import { Colorbar, LabelChip } from "../primitives";
+import { LabelChip } from "../primitives";
+import type { ColormapName } from "../types";
+import type { MediaCompareModeKind } from "../media-compare/mode";
 import type { ViewportCapabilities, ViewportPaneProps, ViewState } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -157,7 +161,6 @@ export function PointCloudSingleView({
     );
   }
   const { arrays, meta } = item;
-  const active = resolveActiveProperty(arrays.properties, view.property, meta.properties ?? null);
   return (
     <div className="relative flex h-full w-full overflow-hidden rounded bg-bg">
       <div className="min-w-0 flex-1">
@@ -173,9 +176,6 @@ export function PointCloudSingleView({
           onFrame={onFrame}
         />
       </div>
-      {active.range && active.values && (
-        <Colorbar colormap="viridis" min={active.range[0]} max={active.range[1]} />
-      )}
       <LabelChip label={label} isDraggable={isDraggable} onDragStart={onDragStart} />
     </div>
   );
@@ -203,6 +203,9 @@ export function PointCloudSideBySideView({
   isDraggable?: boolean;
   onDragStart?: (e: React.DragEvent) => void;
 }) {
+  // WS-VCP fix 3 — see MeshSideBySideView's identical comment: the ref+run
+  // pair always mirrors each other, independent of the card-level toggle.
+  const pairedSync = usePairedSideBySideSync(sync);
   if (!reference) {
     return (
       <PointCloudSingleView
@@ -226,7 +229,7 @@ export function PointCloudSideBySideView({
           colorMode={view.colorMode}
           pointSize={view.pointSize}
           background={view.background}
-          sync={sync}
+          sync={pairedSync}
         />
         <LabelChip label="REF" />
       </div>
@@ -240,7 +243,7 @@ export function PointCloudSideBySideView({
             colorMode={view.colorMode}
             pointSize={view.pointSize}
             background={view.background}
-            sync={sync}
+            sync={pairedSync}
           />
         ) : (
           <div className="flex h-full items-center justify-center text-sm text-fg-muted">
@@ -270,6 +273,7 @@ export function PointCloudNativeDiffPane({
   label,
   isDraggable,
   onDragStart,
+  colorRange,
 }: ViewportPaneProps<PointCloudViewportItem, PointCloudViewState, PointCloudViewportSettings>) {
   const sync: Scene3DSyncOptions | null = cameraSyncGroupId ? { groupId: cameraSyncGroupId } : null;
   const view = resolveViewConfig(settings);
@@ -320,7 +324,10 @@ export function PointCloudNativeDiffPane({
     );
   }
 
-  const { colors, domain } = diffColors(deltaValues, data.meta.n_points, diffColormap);
+  // WS-VCP fix 4: color against the card-level UNIFIED diff domain when
+  // supplied, else fall back to this pane's own autoscaled domain.
+  const domain = colorRange ?? diffDomain(deltaValues, diffColormap);
+  const colors = diffColorsForDomain(deltaValues, data.meta.n_points, domain, diffColormap);
 
   return (
     <div className="relative flex h-full w-full overflow-hidden rounded bg-bg">
@@ -337,7 +344,6 @@ export function PointCloudNativeDiffPane({
           overrideColors={colors}
         />
       </div>
-      <Colorbar colormap={diffColormap} min={domain[0]} max={domain[1]} />
       <LabelChip label={label} isDraggable={isDraggable} onDragStart={onDragStart} />
     </div>
   );
@@ -351,6 +357,48 @@ function topologyMatches(content: unknown, reference: unknown): boolean {
 }
 
 /**
+ * `ViewportModule.activeColorbar` (WS-VCP fix 4) — pointcloud has no direct
+ * scalar/"values" color mode today (`PointColorMode` is auto/rgb/category/
+ * height — none consume the property selector for coloring, only the two
+ * native diffs do), so the card-level colorbar only ever applies under a
+ * native diff mode: unions every valid pane's diff domain
+ * (`unionDiffDomain`). `null` (no colorbar) outside a native diff mode, or
+ * when nothing currently has a resolvable diff domain (e.g. every pair
+ * point-count-mismatched).
+ */
+export function pointCloudActiveColorbar(args: {
+  items: (PointCloudViewportItem | null)[];
+  referenceItems: (PointCloudViewportItem | null)[];
+  settings: PointCloudViewportSettings;
+  mode: MediaCompareModeKind;
+  nativeMode?: string;
+}): { colormap: ColormapName; min: number; max: number } | null {
+  const { items, referenceItems, settings, nativeMode } = args;
+  if (nativeMode !== "diff-property" && nativeMode !== "diff-position") return null;
+  const property = settings.property ?? null;
+  const diffColormap: DiffColormap = settings.diffColormap ?? "viridis";
+  const domains: [number, number][] = [];
+  for (let i = 0; i < items.length; i++) {
+    const a = items[i];
+    const b = referenceItems[i];
+    if (!a || !b || a.meta.n_points !== b.meta.n_points) continue;
+    let delta: Float32Array | null = null;
+    if (nativeMode === "diff-position") {
+      const posA = extractPositions(a.arrays.data, a.meta.channels, a.meta.n_points);
+      const posB = extractPositions(b.arrays.data, b.meta.channels, b.meta.n_points);
+      delta = computeDisplacementMagnitude(posA, posB, a.meta.n_points);
+    } else {
+      const activeA = resolveActiveProperty(a.arrays.properties, property, a.meta.properties ?? null);
+      const activeB = resolveActiveProperty(b.arrays.properties, property, b.meta.properties ?? null);
+      if (activeA.values && activeB.values) delta = computeDelta(activeA.values, activeB.values, a.meta.n_points);
+    }
+    if (delta) domains.push(diffDomain(delta, diffColormap));
+  }
+  const union = unionDiffDomain(domains, diffColormap);
+  return union ? { colormap: diffColormap, min: union[0], max: union[1] } : null;
+}
+
+/**
  * PointCloudViewport's capability descriptor. All five core modes (via the
  * app-layer Pane's split/blend/diff -> `OffscreenComparePanes` bridge, same
  * as every 3D type), plus the two native geometry diffs. No post-processing/
@@ -358,9 +406,8 @@ function topologyMatches(content: unknown, reference: unknown): boolean {
  * always-on reset (no tracked "modified" signal, matching the pre-refactor
  * cards); `colorbar: "never"` for the SHARED false-color mechanism (that
  * mechanism is `settings.colormap`-driven and image-specific — pointcloud
- * has no false-color post-processing knob) — the Pane renders its own
- * contextual colorbar (active property / diff domain) directly instead, see
- * `PointCloudSingleView`/`PointCloudNativeDiffPane` above. `maxPanes: 4` +
+ * has no false-color post-processing knob) — the card renders ONE colorbar
+ * via `pointCloudActiveColorbar` (WS-VCP fix 4) instead. `maxPanes: 4` +
  * `webglContextsPerPane: 1` preserve the pre-refactor `MAX_PANES` WebGL
  * budget mitigation.
  */
