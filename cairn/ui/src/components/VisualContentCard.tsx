@@ -1065,6 +1065,35 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
           ]}
         />
       )}
+      {/* Fixed-step reference control (VC5): the per-run-vs-global reference
+          resolution already reads `settings.refFixedStep` (seriesBaselineFixedStep
+          above), but the new unified panel lacked the UI the old bespoke
+          CompareSettingsPanel exposed. Shown whenever a compare mode is active
+          and there is a step axis — reachable for ALL visual cards (image +
+          4 3D). Off = per-iteration (the reference tracks the same step as the
+          primary series); On = pin the reference to one fixed step. Ignored
+          once an external baseline is set. */}
+      {(effectiveMode !== "normal" || activeNativeMode != null) && caps.hasSteps && (
+        <>
+          <Toggle
+            label="Pin reference to a fixed step"
+            checked={settings.refFixedStep != null}
+            onChange={(v) => updateSettings({ refFixedStep: v ? currentStep : undefined })}
+            description="Off = per-iteration (reference tracks the same step as the primary series)"
+          />
+          {settings.refFixedStep != null && (
+            <Slider
+              label="Reference step"
+              value={settings.refFixedStep}
+              onChange={(v) => updateSettings({ refFixedStep: Math.round(v) })}
+              min={0}
+              max={Math.max(...globalSteps, settings.refFixedStep, 1)}
+              step={1}
+              format={(v) => v.toFixed(0)}
+            />
+          )}
+        </>
+      )}
       <div className="mt-2">
         <label className="block text-[10px] uppercase tracking-wide text-fg-muted mb-1">
           Reference source
