@@ -201,8 +201,50 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
     };
     canvas.addEventListener("dblclick", onDblClick);
 
+    // BUG FIX (odd/even-pane "stuck loading" regression): a page with
+    // several 3D panes/cards open at once — especially compare modes
+    // (split/blend/diff/side), which each mount TWO live hidden viewers via
+    // `OffscreenComparePanes` — can exceed the browser's WebGL context
+    // budget. When that happens the browser force-loses the
+    // least-recently-used context(s) (observable as "THREE.WebGLRenderer:
+    // Context Lost." in the console), which — because of creation/render
+    // ORDER across panes — tends to hit a consistent relative position among
+    // a batch of newly-created contexts (reported by users as "every other
+    // pane"/"odd indices", though it's a resource-exhaustion artifact, not a
+    // literal index-parity bug in this app's pane-mapping code).
+    //
+    // `THREE.WebGLRenderer` already calls `event.preventDefault()` in its own
+    // internal `webglcontextlost` handler (see three.js's WebGLRenderer
+    // source) and re-initializes its GL state in `webglcontextrestored` — so
+    // the browser DOES restore the context automatically. But three.js's
+    // restore handler only resets internal state; it never re-renders, and
+    // this hook is deliberately on-demand-only (no persistent rAF loop, see
+    // the header comment). With no app-level `webglcontextrestored`
+    // listener anywhere in this codebase, NOTHING ever calls
+    // `requestRender()` again after a restore — so a lost-then-restored
+    // canvas stays blank forever, `onFrame` never fires again, and the pane
+    // (or its offscreen split/blend/diff snapshot) is stuck on its last
+    // state ("loading…"/"no image"/"computing diff…") permanently, even
+    // though the underlying WebGL context is technically alive again.
+    //
+    // Fix: request one fresh render the moment the context comes back, so
+    // the canvas (and any `onFrame` snapshot consumer) recovers on its own
+    // instead of hanging forever. `preventDefault` here is redundant with
+    // three.js's own handler but kept explicit/defensive (harmless either
+    // way, and this hook shouldn't rely on an internal three.js detail).
+    const onContextLost = (event: Event) => {
+      event.preventDefault();
+    };
+    const onContextRestored = () => {
+      requestRender();
+    };
+    canvas.addEventListener("webglcontextlost", onContextLost, false);
+    canvas.addEventListener("webglcontextrestored", onContextRestored, false);
+
     return () => {
       canvas.removeEventListener("dblclick", onDblClick);
+      canvas.removeEventListener("webglcontextlost", onContextLost, false);
+      canvas.removeEventListener("webglcontextrestored", onContextRestored, false);
       controls.removeEventListener("change", onChange);
       controls.dispose();
       renderer.dispose();
