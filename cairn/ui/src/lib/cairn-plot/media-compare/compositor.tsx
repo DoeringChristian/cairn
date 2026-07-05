@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   Colormap,
   DiffMode,
@@ -12,6 +12,7 @@ import { useGammaFilter, GammaFilterSvg } from "./post-processing";
 import ImageOverlay from "../renderers/ImageOverlay";
 import ImagePane from "../renderers/ImagePane";
 import type { MediaCompareModeKind } from "./mode";
+import { alignFrameSourcesForDiff } from "./cross-type-align";
 
 const DEFAULT_PROCESSING: ImageProcessing = {
   brightness: 0,
@@ -366,6 +367,56 @@ export function CompositeMediaPane({
       label={label}
       overlay={overlay}
       overlaySettings={overlaySettings}
+    />
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CrossTypeCompositeMediaPane — a thin wrapper around `CompositeMediaPane`
+// (NOT a second compare path) for WS-VC6's cross-type `diff`.
+//
+// Every other mode (normal/side/split/blend) works on the raw `imageUrl`/
+// `baselineUrl` unchanged — CSS `object-fit: contain` already handles
+// mismatched aspect visually. `diff` does per-pixel math, so when
+// `alignForDiff` is set (only ever true for a cross-type pane — see
+// VisualContentCard's wiring) this pre-resamples both frames onto one common
+// raster via `cross-type-align.ts` before calling `CompositeMediaPane`,
+// which then runs its EXISTING `image/diff.ts` pipeline unmodified (the two
+// aligned frames are already equal-size, so `computeDiff`'s own
+// `min(width,height)` crop becomes a no-op). While alignment is still
+// pending (first mount) it falls back to the raw urls, same as today.
+// ---------------------------------------------------------------------------
+export function CrossTypeCompositeMediaPane(
+  props: CompositeMediaPaneProps & { alignForDiff?: boolean },
+) {
+  const { alignForDiff, mode, imageUrl, baselineUrl, ...rest } = props;
+  const shouldAlign = !!alignForDiff && mode === "diff" && !!imageUrl && !!baselineUrl;
+  const [aligned, setAligned] = useState<{ a: string; b: string } | null>(null);
+
+  useEffect(() => {
+    if (!shouldAlign) {
+      setAligned(null);
+      return;
+    }
+    let cancelled = false;
+    alignFrameSourcesForDiff({ kind: "url", url: imageUrl! }, { kind: "url", url: baselineUrl! }).then(
+      (result) => {
+        if (!cancelled && result) setAligned({ a: result.primaryUrl, b: result.referenceUrl });
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shouldAlign, imageUrl, baselineUrl]);
+
+  const useAligned = shouldAlign && aligned;
+  return (
+    <CompositeMediaPane
+      {...rest}
+      mode={mode}
+      imageUrl={useAligned ? aligned!.a : imageUrl}
+      baselineUrl={useAligned ? aligned!.b : baselineUrl}
     />
   );
 }

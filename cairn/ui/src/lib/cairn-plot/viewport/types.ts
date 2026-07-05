@@ -250,6 +250,30 @@ export interface ViewportPaneProps<TData, TView extends ViewState, TSettings> {
    *  `null` = sync off or `capabilities.cameraSync` is false; ImageViewport
    *  ignores this (image has no camera). Added in WS-VC4. */
   cameraSyncGroupId?: string | null;
+  /** WS-VC6: the resolved reference belongs to a DIFFERENT `object_type` than
+   *  this viewport (cross-type compare — image<->3D). `reference` is always
+   *  `null` in this case (a foreign type's data cannot be shaped as this
+   *  module's own `TData`); the card instead supplies an already-rendered
+   *  raster here — a plain image URL (foreign type "image") or a
+   *  pre-snapshotted 3D render (foreign 3D type, rendered offscreen by the
+   *  card via that type's own module — see `components/card-kit/
+   *  cross-type-frame.tsx`). `undefined`/`null` = no cross-type reference for
+   *  this pane (the normal same-type `reference` field applies, if any); the
+   *  module then falls back to its native reference handling unchanged.
+   *  Only meaningful for the image-space compositor modes (side/split/blend/
+   *  diff) — native (geometry) `nativeModes` never receive this and stay
+   *  same-type by construction (their `enabledFor` sees a `null` `reference`
+   *  item, so they self-disable). */
+  crossTypeReferenceUrl?: string | null;
+  /** WS-VC6: when true AND `mode === "diff"`, the module should route the
+   *  pixel-diff through the resample/letterbox alignment step
+   *  (`media-compare/cross-type-align.ts`, via `CrossTypeCompositeMediaPane`)
+   *  instead of feeding `crossTypeReferenceUrl` straight into the ordinary
+   *  diff pipeline — the two rasters are cross-type and may have unrelated
+   *  pixel dimensions/aspect, so a naive top-left crop (today's same-type
+   *  `computeDiff` behavior) would not be spatially meaningful. Always
+   *  `false`/`undefined` outside cross-type compare. */
+  crossTypeAlignForDiff?: boolean;
 }
 
 /**

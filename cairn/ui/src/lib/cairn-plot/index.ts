@@ -97,8 +97,10 @@ export {
   resolveArtifactAtStep,
   resolveGlobalPositionalReference,
   CompositeMediaPane,
+  CrossTypeCompositeMediaPane,
   migrateLegacyMode,
   LEGACY_MODE_MIGRATION_TABLE,
+  alignFrameSourcesForDiff,
 } from "./media-compare";
 export type {
   MediaCompareModeKind,
@@ -112,6 +114,7 @@ export type {
   ReferenceSelection,
   CompositeMediaPaneProps,
   LegacyModeInputs,
+  RasterAlignmentResult,
 } from "./media-compare";
 
 // Viewport — the pluggable-rendering contract behind VisualContentCard
@@ -119,6 +122,8 @@ export type {
 export {
   ImageViewportPane,
   imageViewportCapabilities,
+  CROSS_TYPE_VISUAL_OBJECT_TYPES,
+  canCrossTypeCompare,
 } from "./viewport";
 export type {
   FrameSource,

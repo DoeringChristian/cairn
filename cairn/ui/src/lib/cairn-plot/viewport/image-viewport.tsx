@@ -5,7 +5,7 @@ import type {
   Interpolation,
   Colormap,
 } from "../types";
-import { CompositeMediaPane } from "../media-compare/compositor";
+import { CrossTypeCompositeMediaPane } from "../media-compare/compositor";
 import type { ViewportCapabilities, ViewportPaneProps, ViewState } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -77,6 +77,15 @@ function toProcessing(s: ImageViewportSettings): ImageProcessing {
  * else 1:1. `onFrame`/`nativeMode`/`fill` are accepted for interface
  * conformance but unused (image has no native modes and does not yet feed
  * the FrameSource bridge — see types.ts).
+ *
+ * WS-VC6: `crossTypeReferenceUrl` (a foreign 3D type's offscreen-rendered
+ * snapshot, when the resolved reference is cross-type) fills the same
+ * `baselineUrl` slot `reference?.url` would otherwise fill -- from
+ * `CompositeMediaPane`'s point of view a 3D snapshot data-URL and an image
+ * artifact URL are both just an `<img src>` string.
+ * `CrossTypeCompositeMediaPane` (a thin wrapper, not a second path)
+ * additionally routes `diff` through the resample/letterbox alignment step
+ * when `crossTypeAlignForDiff` is set.
  */
 export function ImageViewportPane({
   data,
@@ -94,13 +103,16 @@ export function ImageViewportPane({
   isBaseline,
   isDraggable,
   onDragStart,
+  crossTypeReferenceUrl,
+  crossTypeAlignForDiff,
 }: ViewportPaneProps<ImageViewportItem, ImageViewState, ImageViewportSettings>) {
   const processing = toProcessing(settings);
   return (
-    <CompositeMediaPane
+    <CrossTypeCompositeMediaPane
       mode={mode}
       imageUrl={data?.url ?? null}
-      baselineUrl={reference?.url ?? null}
+      baselineUrl={reference?.url ?? crossTypeReferenceUrl ?? null}
+      alignForDiff={crossTypeAlignForDiff}
       isReferencePane={isBaseline}
       diffSubmode={diffMode}
       colormap={settings.colormap ?? "none"}
