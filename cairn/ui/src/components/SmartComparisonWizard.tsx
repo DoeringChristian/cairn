@@ -14,9 +14,10 @@ import { useModalBehavior } from "../lib/use-modal-behavior";
 import type { Run } from "../api/types";
 import {
   createComparison,
-  addCardToComparison,
+  addCardsToComparison,
   loadComparisons,
   saveComparisons,
+  type ComparisonCard,
   type SmartFilters,
   type SmartFilterEntry,
 } from "../lib/comparisons";
@@ -214,7 +215,6 @@ export default function SmartComparisonWizard({
     setCreating(true);
 
     const name = compName.trim() || `Smart comparison (${matchedRuns.length} runs)`;
-    const cmp = createComparison(projectId, name);
 
     // Persist smart filters so the comparison can be refreshed later.
     const smartFilters: SmartFilters = {
@@ -227,12 +227,18 @@ export default function SmartComparisonWizard({
         regex: f.regex,
       })),
     };
-    const allComps = loadComparisons(projectId);
-    const updated = allComps.map((c) =>
-      c.id === cmp.id ? { ...c, smartFilters } : c,
-    );
-    saveComparisons(projectId, updated);
 
+    // Build every card in memory BEFORE touching the comparison store. This
+    // matters because `syncComparisonToServer` (lib/comparisons/sync.ts)
+    // decides create-vs-update by checking `cmp.serverId`, which is only
+    // set once the (async) create POST resolves. Previously this loop
+    // called `addCardToComparison` once per card, and each call synced
+    // immediately — so all N calls ran before the first create's response
+    // came back, saw no `serverId` yet, and each POSTed its own "create",
+    // producing N duplicate comparisons server-side. Collecting all cards
+    // first and adding them in a single batched call below means only one
+    // sync fires, which becomes the one-and-only create POST.
+    let cards: Omit<ComparisonCard, "id">[] = [];
     if (autoCards) {
       // Fetch sequences for matched runs, build cards
       const selectedIds = matchedRuns.map((r) => r.id);
@@ -267,13 +273,24 @@ export default function SmartComparisonWizard({
         }
       });
 
-      for (const card of cardMap.values()) {
-        addCardToComparison(projectId, cmp.id, {
-          type: card.object_type as "scalar",
-          series: card.series,
-        });
-      }
+      cards = Array.from(cardMap.values()).map((card) => ({
+        type: card.object_type as "scalar",
+        series: card.series,
+      }));
     }
+
+    // `createComparison` only touches localStorage — it does not sync to
+    // the server by itself. Stash the smart filters onto it (also
+    // localStorage-only) before the single batched `addCardsToComparison`
+    // call below, so that call's one-and-only sync ships smartFilters and
+    // all cards together in the same create payload.
+    const cmp = createComparison(projectId, name);
+    const allComps = loadComparisons(projectId);
+    const updated = allComps.map((c) =>
+      c.id === cmp.id ? { ...c, smartFilters } : c,
+    );
+    saveComparisons(projectId, updated);
+    addCardsToComparison(projectId, cmp.id, cards);
 
     setCreating(false);
     onCreated(cmp.id);

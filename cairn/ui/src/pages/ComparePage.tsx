@@ -30,6 +30,7 @@ import {
   saveComparisons,
   setComparisonRunSelector,
   syncComparisonsFromServer,
+  syncComparisonToServer,
   useComparisons,
   useTemplates,
   type ApplyTemplateResult,
@@ -278,6 +279,11 @@ export default function ComparePage() {
       const allComps = loadComparisons(projectId);
       const updatedComps = allComps.map((c) => (c.id === comparisonId ? { ...c, cards: newCards } : c));
       saveComparisons(projectId, updatedComps);
+      // saveComparisons() only persists to localStorage — sync the refreshed
+      // cards to the server now instead of waiting for an unrelated edit to
+      // pass through updateComparison() and trigger a sync.
+      const refreshed = updatedComps.find((c) => c.id === comparisonId);
+      if (refreshed) syncComparisonToServer(projectId, refreshed);
       refresh();
     },
     [projectId, refresh],
@@ -300,6 +306,10 @@ export default function ComparePage() {
         c.id === comparisonId ? { ...c, cards: newCards, runIds } : c,
       );
       saveComparisons(projectId, updatedComps);
+      // See handleRefreshSmartFilters above — saveComparisons() alone
+      // doesn't sync to the server, so do it explicitly here too.
+      const refreshed = updatedComps.find((c) => c.id === comparisonId);
+      if (refreshed) syncComparisonToServer(projectId, refreshed);
       refresh();
     },
     [projectId, refresh],
