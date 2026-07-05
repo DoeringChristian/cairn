@@ -67,6 +67,17 @@ interface CairnRunsInput {
 }
 
 interface CairnCardInput {
+  /**
+   * Optional stable-id carry-through (B4 fix) — same idea as `CairnSpec.id`
+   * for the block: when present, `compileCairnBlock` uses it verbatim as the
+   * card's id instead of deriving one, so a settings key
+   * (`cardSettingsKeyForReport`/`cardSettingsKeyForScope`, both keyed on
+   * `card.id`) never orphans across an edit that changes the card's shape.
+   * `serializeCairnSpec` always writes this back out, so once a card has
+   * been compiled once, its id survives edit→serialize→reparse round trips
+   * verbatim rather than being re-derived.
+   */
+  id?: unknown;
   metric?: unknown;
   type?: unknown;
   settings?: unknown;
@@ -164,6 +175,30 @@ function resolveRuns(spec: CairnSpec): { runIds?: string[]; runSelector?: RunSel
   return {};
 }
 
+/**
+ * The card's own declared shape (metric+type, or its exact manual `series`
+ * list) — deliberately NOT derived from any resolved data (metricIndex/
+ * runIds), so it's identical across recompiles of the same fence text
+ * regardless of an async metric-index load (B5) or a selector
+ * re-resolution (B4).
+ */
+function cardShapeKey(c: CairnCardInput): string {
+  if (c.series !== undefined) return `series:${JSON.stringify(c.series)}`;
+  const metric = typeof c.metric === "string" ? c.metric : "";
+  const type = typeof c.type === "string" ? c.type : "";
+  return `metric:${metric}|type:${type}`;
+}
+
+/**
+ * A stable id for a card that had no explicit `id:` in its spec entry —
+ * `shape` (see `cardShapeKey`) plus an `occurrence` counter to disambiguate
+ * two structurally-identical card entries in the same block (otherwise
+ * they'd collide on the same id).
+ */
+function stableCardId(blockId: string, shape: string, occurrence: number): string {
+  return `card:${blockId}:${shape}#${occurrence}`;
+}
+
 /** Build one card's AddCardSelection from its spec entry + the block's resolved runIds/metricIndex. */
 function selectionForCard(c: CairnCardInput, index: number, metricIndex: MetricIndex, runIds: string[]): AddCardSelection {
   if (c.series !== undefined) {
@@ -257,15 +292,32 @@ export function compileCairnBlock(
 ): CompiledCairnBlock {
   const { runIds, runSelector } = resolveRuns(spec);
   const effectiveRunIds = runIds ?? (runSelector ? (opts?.resolvedRunIds ?? []) : []);
+  // Stabilized the same way the block id already is (opts.id/spec.id) — see
+  // stableCardId's doc: card ids below are derived from this + each card's
+  // own declared shape, never from resolved run/metric data, so they don't
+  // churn across recompiles of the same fence (B4/B5).
+  const blockId = opts?.id ?? spec.id ?? newId();
 
   const cards: ComparisonCard[] = [];
   const settings: Record<string, unknown> = {};
+  const shapeOccurrences = new Map<string, number>();
   (spec.cards ?? []).forEach((c, i) => {
     if (typeof c !== "object" || c === null) {
       throw new CairnBlockError(`cards[${i}] must be a mapping`);
     }
+    if (c.id !== undefined && (typeof c.id !== "string" || c.id.length === 0)) {
+      throw new CairnBlockError(`cards[${i}].id must be a non-empty string`);
+    }
     const sel = selectionForCard(c, i, metricIndex, effectiveRunIds);
     const card = cardFromSpec(sel);
+    if (typeof c.id === "string") {
+      card.id = c.id;
+    } else {
+      const shape = cardShapeKey(c);
+      const occurrence = shapeOccurrences.get(shape) ?? 0;
+      shapeOccurrences.set(shape, occurrence + 1);
+      card.id = stableCardId(blockId, shape, occurrence);
+    }
     cards.push(card);
     if (c.settings !== undefined) {
       if (typeof c.settings !== "object" || c.settings === null) {
@@ -276,7 +328,7 @@ export function compileCairnBlock(
   });
 
   const block: CardsBlock = {
-    id: opts?.id ?? spec.id ?? newId(),
+    id: blockId,
     type: "cards",
     ...(spec.title !== undefined ? { title: spec.title } : {}),
     ...(runSelector ? { runSelector } : { runIds: effectiveRunIds }),
@@ -321,9 +373,16 @@ export function serializeCairnSpec(block: CardsBlock, settingsByCardId: Record<s
   doc.cards = block.cards.map((card): CairnCardInput => {
     const cardSettings = settingsByCardId[card.id];
     const settingsField = cardSettings !== undefined ? { settings: cardSettings } : {};
+    // Carry the id through explicitly (B4/B5 fix): once a card has been
+    // compiled once (whether its id came from an explicit `id:` or was
+    // stably derived from its shape), writing it back out means the *next*
+    // parse/compile uses this exact id verbatim — settings stay bound even
+    // if a later edit changes the card's metric/type/series (which would
+    // otherwise change its derived shape key).
+    const idField = { id: card.id };
 
     if (isMultiRunCardType(card.type)) {
-      return { type: card.type, ...settingsField };
+      return { type: card.type, ...idField, ...settingsField };
     }
 
     const name = seriesShareOneName(card);
@@ -332,12 +391,13 @@ export function serializeCairnSpec(block: CardsBlock, settingsByCardId: Record<s
       staticRunIdSet === null || (seriesRunIds.size === staticRunIdSet.size && [...seriesRunIds].every((id) => staticRunIdSet.has(id)));
 
     if (name !== null && coversBlockRuns) {
-      return { metric: name, type: card.type, ...settingsField };
+      return { metric: name, type: card.type, ...idField, ...settingsField };
     }
 
     return {
       type: card.type,
       series: card.series.map((s) => ({ runId: s.runId, name: s.name, context_hash: s.context_hash })),
+      ...idField,
       ...settingsField,
     };
   });
