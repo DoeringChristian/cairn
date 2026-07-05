@@ -42,7 +42,7 @@ const ScalarTileCard = lazy(() => import("./ScalarTileCard"));
 
 const PointCloudVisualCard = lazy(() => import("./PointCloudVisualCard"));
 
-const MeshCard = lazy(() => import("./MeshCard"));
+const MeshVisualCard = lazy(() => import("./MeshVisualCard"));
 
 const BoxesCard = lazy(() => import("./BoxesCard"));
 
@@ -266,7 +266,7 @@ export default function CardRenderer(props: CardDescriptor) {
             </div>
           }
         >
-          <MeshCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />
+          <MeshVisualCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />
         </Suspense>
       );
     case "boxes3d":
