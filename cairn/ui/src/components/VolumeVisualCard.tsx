@@ -478,16 +478,10 @@ function VolumeSettingsControls({
         <Slider label="Clip Z min" value={settings.clipMin[2]} onChange={(v) => setClipMin(2, v)} min={0} max={1} step={0.01} format={(v) => v.toFixed(2)} />
         <Slider label="Clip Z max" value={settings.clipMax[2]} onChange={(v) => setClipMax(2, v)} min={0} max={1} step={0.01} format={(v) => v.toFixed(2)} />
       </div>
-      <Select<DiffColormap>
-        label="Diff colormap"
-        value={settings.diffColormap ?? "viridis"}
-        onChange={(v) => update({ diffColormap: v })}
-        options={[
-          { value: "viridis", label: "Viridis (magnitude)" },
-          { value: "red-green", label: "Red – Green (signed)" },
-        ]}
-        description="Color mapping for the native diff mode (diff-value)"
-      />
+      {/* "Diff colormap" (red-green/viridis) now lives in the shared
+          Compare section (VisualContentCard.tsx, WS-MFIX Bug 2) — rendering
+          it here too would duplicate the control in the same settings
+          panel. */}
     </>
   );
 }

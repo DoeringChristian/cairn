@@ -29,12 +29,12 @@ import {
   overlayClassColor,
   resolveArtifactAtStep,
   migrateLegacyMode,
-  isCoreCompareMode,
   Colorbar,
   ColormapSwatch,
   useContainerSize,
   canCrossTypeCompare,
 } from "../lib/cairn-plot";
+import type { DiffColormap } from "../lib/cairn-plot/three/diff";
 import { parseOverlay } from "./viewport-registry";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import { useCameraSync } from "../lib/camera-sync";
@@ -914,34 +914,59 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
       ? viewport.onResetView(cardRef.current)
       : updateSettings(viewport.viewToSettingsPatch(viewport.defaultView()));
 
-  // The mode selector iterates the descriptor's core modes (+ native modes,
-  // gated by their `enabledFor`) instead of a hardcoded enum — so a viewport
-  // type declaring fewer/native modes gets the right selector for free.
-  // `caps.nativeModes` is `[]` for image, so `modeSelectorEntries` there is
-  // exactly `coreModeEntries` (byte-identical selector).
+  // The PRIMARY mode selector — core modes ONLY (normal/side/split/blend/
+  // diff). WS-MFIX Bug 2: native (geometry) modes used to be appended here
+  // too (as extra pills/options mixed into the same value-space as the core
+  // modes), which (a) made them unreachable-looking once "diff" was already
+  // selected (a same-row pill for "diff" AND for "Diff: property" reads as
+  // two competing top-level choices, not "diff, refined") and (b) forced
+  // button-pill styling everywhere to accommodate an open-ended list. Native
+  // modes now live exclusively in `diffTypeEntries` below, selectable via a
+  // dropdown that only appears once "diff" is the active core mode — see
+  // that block's doc comment.
   const coreModeEntries = caps.coreModes;
-  const modeSelectorEntries: Array<{ value: string; label: string; disabled: boolean; title?: string }> = [
-    ...coreModeEntries.map((m) => {
-      // WS-VC6: cross-type "diff" is gated behind the explicit opt-in
-      // (crossTypeDiffAllowed, computed above from settings.crossTypeDiffOptIn
-      // + the reference raster actually being resolved) — side/split/blend
-      // stay unconditionally enabled the moment crossTypeActive is true (no
-      // gate — image-space compositing works on any two FrameSources).
-      const gated = m === "diff" && crossTypeActive && !crossTypeDiffAllowed;
-      return {
-        value: m as string,
-        label: MEDIA_COMPARE_MODE_LABELS[m],
-        disabled: gated,
-        title: gated
-          ? (crossTypeDiffReady
-              ? "Enable “Cross-type pixel diff” in the settings panel to compare cross-type rasters"
-              : "Waiting for the cross-type reference to render")
-          : undefined,
-      };
-    }),
+  const modeSelectorEntries: Array<{ value: string; label: string; disabled: boolean; title?: string }> = coreModeEntries.map((m) => {
+    // WS-VC6: cross-type "diff" is gated behind the explicit opt-in
+    // (crossTypeDiffAllowed, computed above from settings.crossTypeDiffOptIn
+    // + the reference raster actually being resolved) — side/split/blend
+    // stay unconditionally enabled the moment crossTypeActive is true (no
+    // gate — image-space compositing works on any two FrameSources).
+    const gated = m === "diff" && crossTypeActive && !crossTypeDiffAllowed;
+    return {
+      value: m as string,
+      label: MEDIA_COMPARE_MODE_LABELS[m],
+      disabled: gated,
+      title: gated
+        ? (crossTypeDiffReady
+            ? "Enable “Cross-type pixel diff” in the settings panel to compare cross-type rasters"
+            : "Waiting for the cross-type reference to render")
+        : undefined,
+    };
+  });
+  const selectedModeValue: string = effectiveMode;
+  const handleModeSelect = useCallback((value: string) => {
+    setMode(value as MediaCompareModeKind);
+  }, [setMode]);
+
+  // The "diff" mode's TYPE selector — WS-MFIX Bug 2: one dropdown combining
+  // the pixel-diff methods (signed/absolute/squared/relative*, previously
+  // the lone "Diff sub-mode" select) AND this viewport's native (geometry)
+  // diff modes (diff-property/diff-geometry/diff-position/diff-value —
+  // `caps.nativeModes`, `[]` for image), so switching between a pixel diff
+  // and a native diff is one dropdown, not a separate control the user has
+  // to find. Only rendered/relevant once "diff" is the active core mode
+  // (`effectiveMode === "diff"`); native entries stay disabled (with a
+  // reason, shown as a disabled option + tooltip, not hidden) whenever their
+  // `enabledFor` topology check fails or a cross-type reference is active
+  // (native diffs are same-type only by construction).
+  const diffTypeEntries: Array<{ value: string; label: string; disabled: boolean; title?: string }> = [
+    { value: "signed", label: "Signed Error", disabled: false },
+    { value: "absolute", label: "Absolute Error", disabled: false },
+    { value: "squared", label: "Squared Error", disabled: false },
+    { value: "relative_signed", label: "Relative Signed", disabled: false },
+    { value: "relative_absolute", label: "Relative Absolute", disabled: false },
+    { value: "relative_squared", label: "Relative Squared", disabled: false },
     ...caps.nativeModes.map((nm) => {
-      // Native (geometry) diffs are same-type only by construction — a
-      // cross-type reference never has this module's own TData shape.
       if (crossTypeActive) {
         return { value: nm.mode as string, label: nm.label, disabled: true, title: "Native diff is same-type only — not available for a cross-type reference" };
       }
@@ -949,11 +974,25 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
       return { value: nm.mode as string, label: nm.label, disabled: !enabled, title: enabled ? undefined : nm.disabledReason };
     }),
   ];
-  const selectedModeValue: string = activeNativeMode ?? effectiveMode;
-  const handleModeSelect = useCallback((value: string) => {
-    if (isCoreCompareMode(value)) setMode(value);
-    else setNativeMode(value);
-  }, [setMode, setNativeMode]);
+  const PIXEL_DIFF_TYPE_VALUES = new Set(["signed", "absolute", "squared", "relative_signed", "relative_absolute", "relative_squared"]);
+  const selectedDiffTypeValue: string = activeNativeMode ?? (settings.diffMode === "none" ? "absolute" : settings.diffMode);
+  const handleDiffTypeSelect = useCallback((value: string) => {
+    if (PIXEL_DIFF_TYPE_VALUES.has(value)) {
+      updateSettings({ diffMode: value as ImageSettings["diffMode"], nativeMode: undefined });
+    } else {
+      setNativeMode(value);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [updateSettings, setNativeMode]);
+  // The diff-coloring "Colormap" dropdown (red-green signed vs viridis
+  // magnitude) — WS-MFIX Bug 2's original ask. Drives BOTH the core pixel
+  // `diff` mode (fed to `OffscreenComparePanes`/`CrossTypeCompositeMediaPane`
+  // as `colormap` in each viewport's Pane) and every native diff mode.
+  // `caps.nativeModes.length > 0` is the same "this is a 3D type" proxy
+  // `diffColormap`'s own field doc comment describes — `[]` for image,
+  // which has no `diffColormap` concept (it already has its own unrelated
+  // false-color `colormap` picker in the header for pixel-diff coloring).
+  const hasDiffColormap = caps.nativeModes.length > 0;
 
   // Mode/diff-submode selection lives in exactly ONE place: the bottom
   // pill row rendered below the media (see the `isMulti && hasBaseline`
@@ -1177,19 +1216,24 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
         onChange={(v) => handleModeSelect(v)}
         options={modeSelectorEntries}
       />
-      {effectiveMode === "diff" && !activeNativeMode && (
-        <Select
-          label="Diff sub-mode"
-          value={settings.diffMode === "none" ? "absolute" : settings.diffMode}
-          onChange={(v) => updateSettings({ diffMode: v })}
+      {effectiveMode === "diff" && (
+        <Select<string>
+          label="Diff type"
+          value={selectedDiffTypeValue}
+          onChange={(v) => handleDiffTypeSelect(v)}
+          options={diffTypeEntries}
+        />
+      )}
+      {effectiveMode === "diff" && hasDiffColormap && (
+        <Select<DiffColormap>
+          label="Diff colormap"
+          value={settings.diffColormap ?? "viridis"}
+          onChange={(v) => updateSettings({ diffColormap: v })}
           options={[
-            { value: "signed" as const, label: "Signed Error" },
-            { value: "absolute" as const, label: "Absolute Error" },
-            { value: "squared" as const, label: "Squared Error" },
-            { value: "relative_signed" as const, label: "Relative Signed" },
-            { value: "relative_absolute" as const, label: "Relative Absolute" },
-            { value: "relative_squared" as const, label: "Relative Squared" },
+            { value: "viridis", label: "Viridis (magnitude)" },
+            { value: "red-green", label: "Red – Green (signed)" },
           ]}
+          description="Color mapping for the active diff (pixel or native)"
         />
       )}
       {isMulti && extBase && (
@@ -1407,19 +1451,27 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
                   title="Blend alpha"
                 />
               )}
-              {effectiveMode === "diff" && !activeNativeMode && (
+              {effectiveMode === "diff" && (
                 <select
-                  value={settings.diffMode === "none" ? "absolute" : settings.diffMode}
-                  onChange={(e) => updateSettings({ diffMode: e.target.value as ImageSettings["diffMode"] })}
+                  value={selectedDiffTypeValue}
+                  onChange={(e) => handleDiffTypeSelect(e.target.value)}
                   className="h-[22px] rounded border border-border bg-bg-elevated px-1.5 text-[10px] mono cursor-pointer text-accent"
-                  title="Diff sub-mode"
+                  title="Diff type"
                 >
-                  <option value="absolute">absolute</option>
-                  <option value="signed">signed</option>
-                  <option value="squared">squared</option>
-                  <option value="relative_absolute">rel. absolute</option>
-                  <option value="relative_signed">rel. signed</option>
-                  <option value="relative_squared">rel. squared</option>
+                  {diffTypeEntries.map((d) => (
+                    <option key={d.value} value={d.value} disabled={d.disabled} title={d.title}>{d.label}</option>
+                  ))}
+                </select>
+              )}
+              {effectiveMode === "diff" && hasDiffColormap && (
+                <select
+                  value={settings.diffColormap ?? "viridis"}
+                  onChange={(e) => updateSettings({ diffColormap: e.target.value as DiffColormap })}
+                  className="h-[22px] rounded border border-border bg-bg-elevated px-1.5 text-[10px] mono cursor-pointer text-accent"
+                  title="Diff colormap"
+                >
+                  <option value="viridis">viridis</option>
+                  <option value="red-green">red-green</option>
                 </select>
               )}
             </div>

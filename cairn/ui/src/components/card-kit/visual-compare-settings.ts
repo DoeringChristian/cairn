@@ -5,6 +5,7 @@ import type {
   Interpolation,
 } from "../../lib/cairn-plot";
 import type { MediaCompareModeKind } from "../../lib/cairn-plot";
+import type { DiffColormap } from "../../lib/cairn-plot/three/diff";
 import type { BaseCardSettings } from "./base-settings";
 import type { SeriesRef } from "./use-card-series";
 
@@ -56,6 +57,15 @@ export interface VisualCompareSettings extends BaseCardSettings {
   /** Legacy exclusive-mode axis #1 (kept for rollback; also doubles as the
    *  "diff" mode's sub-mode selector: signed/absolute/squared/relative*). */
   diffMode: "none" | DiffMode;
+  /** Color mapping for a 3D type's diff coloring — BOTH the core pixel
+   *  `diff` mode (fed to `OffscreenComparePanes`/`CrossTypeCompositeMediaPane`
+   *  as `colormap`) and every native (geometry) diff mode. Hoisted here
+   *  (each of the four 3D types' own settings interface re-declares this
+   *  identical optional field) so the shared bottom-row/settings-panel
+   *  "Colormap" control (WS-MFIX Bug 2) can read/write it generically.
+   *  `undefined` for image (never rendered there — gated on
+   *  `caps.nativeModes.length > 0`, `[]` for image). */
+  diffColormap?: DiffColormap;
   referenceMode?: "global" | "per-run";
   perRunBaselineStep?: number;
   /** Pins the "series-same-step" baseline (`seriesBaselineIndex`) to one
