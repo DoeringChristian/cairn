@@ -1,11 +1,19 @@
 /**
  * Report editor/viewer — /p/:projectId/reports/:reportId
  *
- * View mode (default): read-only vertical render of blocks.
- * Edit mode: add/remove/reorder blocks, edit markdown/cards content, rename.
+ * View mode (default): read-only vertical render of cells (blocks[]).
+ * Edit mode: add/remove/reorder/insert cells, edit markdown/cards content
+ * inline (WS-NR1's `SegmentedMarkdownEditor` — see that component's doc for
+ * the "no separate raw/preview pane" design), rename.
  * Autosave: debounced PUT ~1.5s after the last change, plus an explicit
  * Save button. Card settings are gathered from/restored to localStorage
  * under the report's pseudo-scope on save/load — see lib/reports/payload.ts.
+ *
+ * WS-NR1 retires the old "Cells"/"Markdown" toggle (AR1's raw-textarea
+ * source view): `blocks[]` is now the *only* editing surface, and the
+ * canonical markdown `source` (still what's persisted, still authoritative
+ * on load) is available read-only via the "View source" escape hatch below
+ * — never a second editable copy.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -20,19 +28,13 @@ import {
   cardSettingsKeyForReport,
   createReportTemplate,
   isCardsBlock,
-  isMarkdownBlock,
-  newId,
   parseReportMarkdown,
   restoreReportCardSettings,
   serializeReportToMarkdown,
-  type CardsBlock,
-  type MarkdownBlock,
   type ReportBlock,
   type ReportPayload,
 } from "../lib/reports";
-import ReportMarkdownBlock from "../components/reports/ReportMarkdownBlock";
-import ReportCardsBlock from "../components/reports/ReportCardsBlock";
-import ReportSourceMarkdown from "../components/reports/ReportSourceMarkdown";
+import SegmentedMarkdownEditor, { makeEmptyBlock } from "../components/reports/SegmentedMarkdownEditor";
 
 const AUTOSAVE_DELAY_MS = 1500;
 const DEFAULT_REPORT_NAME = "Untitled report";
@@ -56,14 +58,16 @@ export default function ReportEditorPage() {
   const [hydrated, setHydrated] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>("idle");
 
-  // WS-AR1: markdown-source view — a second view over the same blocks[],
-  // via lib/reports/markdown-source.ts. `rawCairnSourceRef` caches each
-  // ```cairn fence's exact original text so an unedited cells<->markdown
-  // toggle round-trips byte-for-byte (see markdown-source.ts's module doc);
-  // any edit to a CardsBlock invalidates its own cache entry so serializing
-  // afterwards regenerates fresh YAML instead of showing stale content.
-  const [sourceView, setSourceView] = useState(false);
-  const [mdSource, setMdSource] = useState("");
+  // Read-only "View source" escape hatch (design doc §A: "keep a raw-source
+  // escape hatch") — never a second *editable* copy; recomputed from
+  // `blocks[]` on demand, not held as parallel state.
+  const [showSource, setShowSource] = useState(false);
+
+  // `rawCairnSourceRef` caches each ```cairn fence's exact original text so
+  // an unedited hydrate->save round-trip stays byte-identical (see
+  // markdown-source.ts's module doc); any edit to a CardsBlock invalidates
+  // its own cache entry so serializing afterwards regenerates fresh YAML
+  // instead of showing stale content.
   const rawCairnSourceRef = useRef<Record<string, string>>({});
 
   // Transient "restored N of M cards" feedback handed over from
@@ -112,13 +116,11 @@ export default function ReportEditorPage() {
       setBlocks(parsed.blocks);
       rawCairnSourceRef.current = parsed.rawCairnSource;
       if (reportId) restoreReportCardSettings(reportId, { blocks: parsed.blocks, cardSettings: parsed.settings });
-      setMdSource(payload.source);
     } else {
       const loadedBlocks = payload.blocks ?? [];
       setBlocks(loadedBlocks);
       rawCairnSourceRef.current = {};
       if (reportId) restoreReportCardSettings(reportId, payload);
-      setMdSource(serializeReportToMarkdown(loadedBlocks, payload.cardSettings ?? {}, {}));
     }
     setLastSavedAt(q.data.updated_at);
     justHydratedRef.current = true;
@@ -137,24 +139,9 @@ export default function ReportEditorPage() {
     if (effectiveName !== name) setName(effectiveName);
     setSaveState("saving");
 
-    // B1/B8: in the markdown-source view, edits live only in `mdSource`
-    // state until the user explicitly exits/saves (see handleSaveNow) —
-    // `blocks` doesn't reflect them yet. Persist a source-derived payload
-    // (parse-on-idle) here too, so this debounced autosave / the unmount
-    // flush below never clobbers in-progress source edits with stale
-    // `blocks`. This intentionally does NOT touch local `blocks`/`sourceView`
-    // state — only what gets persisted — so a silent autosave doesn't
-    // interrupt typing.
-    const payloadWithSource: ReportPayload = sourceView
-      ? (() => {
-          const parsed = parseReportMarkdown(mdSource);
-          return { blocks: parsed.blocks, cardSettings: parsed.settings, source: mdSource };
-        })()
-      : (() => {
-          const payload = buildReportPayload(reportId, blocks);
-          const source = serializeReportToMarkdown(blocks, payload.cardSettings ?? {}, rawCairnSourceRef.current);
-          return { ...payload, source };
-        })();
+    const payload = buildReportPayload(reportId, blocks);
+    const source = serializeReportToMarkdown(blocks, payload.cardSettings ?? {}, rawCairnSourceRef.current);
+    const payloadWithSource: ReportPayload = { ...payload, source };
 
     updateMut.mutate(
       { name: effectiveName, payload: payloadWithSource as unknown as Record<string, unknown> },
@@ -167,12 +154,9 @@ export default function ReportEditorPage() {
       },
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hydrated, reportId, blocks, name, sourceView, mdSource]);
+  }, [hydrated, reportId, blocks, name]);
 
-  // Debounced autosave — fires ~1.5s after the last local edit. Depends on
-  // `mdSource`/`sourceView` too (B1): typing in the markdown-source textarea
-  // only updates `mdSource`, never `blocks`, so without these deps a
-  // source-only edit never schedules a save at all.
+  // Debounced autosave — fires ~1.5s after the last local edit.
   useEffect(() => {
     if (!hydrated) return;
     if (justHydratedRef.current) {
@@ -187,7 +171,7 @@ export default function ReportEditorPage() {
       if (saveTimerRef.current != null) window.clearTimeout(saveTimerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [blocks, name, hydrated, sourceView, mdSource]);
+  }, [blocks, name, hydrated]);
 
   // Keep a ref to the latest doSave so the unmount-only effect below (empty
   // deps, so it can't re-subscribe on every edit) never calls a stale
@@ -209,45 +193,7 @@ export default function ReportEditorPage() {
 
   const handleSaveNow = () => {
     if (saveTimerRef.current != null) window.clearTimeout(saveTimerRef.current);
-    if (sourceView) {
-      // `blocks` state won't reflect a just-typed markdown edit until the
-      // next render, so — unlike the cells-view path — parse + save
-      // directly from `mdSource` rather than going through `doSave()` (which
-      // reads `blocks` from closure and would race a same-tick setBlocks).
-      if (!reportId) return;
-      const parsed = parseReportMarkdown(mdSource);
-      rawCairnSourceRef.current = parsed.rawCairnSource;
-      restoreReportCardSettings(reportId, { blocks: parsed.blocks, cardSettings: parsed.settings });
-      setBlocks(parsed.blocks);
-      setSourceView(false);
-      const trimmed = name.trim();
-      const effectiveName = trimmed || DEFAULT_REPORT_NAME;
-      if (effectiveName !== name) setName(effectiveName);
-      setSaveState("saving");
-      const payload: ReportPayload = { blocks: parsed.blocks, cardSettings: parsed.settings, source: mdSource };
-      updateMut.mutate(
-        { name: effectiveName, payload: payload as unknown as Record<string, unknown> },
-        {
-          onSuccess: (res) => {
-            setSaveState("saved");
-            setLastSavedAt(res.updated_at);
-          },
-          onError: () => setSaveState("error"),
-        },
-      );
-      return;
-    }
     doSave();
-  };
-
-  const addMarkdownBlock = () => {
-    const block: MarkdownBlock = { id: newId(), type: "markdown", text: "" };
-    setBlocks((prev) => [...prev, block]);
-  };
-
-  const addCardsBlock = () => {
-    const block: CardsBlock = { id: newId(), type: "cards", runIds: [], cards: [] };
-    setBlocks((prev) => [...prev, block]);
   };
 
   const updateBlock = (id: string, next: ReportBlock) => {
@@ -260,7 +206,7 @@ export default function ReportEditorPage() {
   };
 
   const deleteBlock = (id: string) => {
-    if (!confirm("Delete this block?")) return;
+    if (!confirm("Delete this cell?")) return;
     delete rawCairnSourceRef.current[id];
     setBlocks((prev) => prev.filter((b) => b.id !== id));
   };
@@ -278,25 +224,20 @@ export default function ReportEditorPage() {
     });
   };
 
-  // Cells <-> Markdown-source toggle (WS-AR1). Both views read/write the
-  // same `blocks[]` — switching regenerates one from the other via
-  // lib/reports/markdown-source.ts, never holding two independent copies.
-  const enterMarkdownView = () => {
-    const payload = reportId ? buildReportPayload(reportId, blocks) : { blocks, cardSettings: {} };
-    setMdSource(serializeReportToMarkdown(blocks, payload.cardSettings ?? {}, rawCairnSourceRef.current));
-    setSourceView(true);
-  };
-
-  const exitMarkdownView = () => {
-    // RBUG fold-in (see the hydrate effect's doc above): thread the live
-    // project run pool here too, so a selector block hand-edited in the
-    // markdown-source textarea recompiles with a non-empty run set instead
-    // of losing its cards' metric identity on toggle-back.
-    const parsed = parseReportMarkdown(mdSource, undefined, { allProjectRuns });
-    rawCairnSourceRef.current = parsed.rawCairnSource;
-    setBlocks(parsed.blocks);
-    if (reportId) restoreReportCardSettings(reportId, { blocks: parsed.blocks, cardSettings: parsed.settings });
-    setSourceView(false);
+  // WS-NR1 cell model: insert a fresh markdown/cards cell immediately after
+  // `afterId` (or at the end when `afterId` is null) — the "+ cell"
+  // affordance mirrors Jupyter's insert-below, and replaces the old
+  // append-only addMarkdownBlock/addCardsBlock.
+  const insertBlock = (afterId: string | null, type: ReportBlock["type"]) => {
+    const block = makeEmptyBlock(type);
+    setBlocks((prev) => {
+      if (afterId == null) return [...prev, block];
+      const idx = prev.findIndex((b) => b.id === afterId);
+      if (idx < 0) return [...prev, block];
+      const next = [...prev];
+      next.splice(idx + 1, 0, block);
+      return next;
+    });
   };
 
   // Save every cards-block card across this report as a reusable report
@@ -334,6 +275,13 @@ export default function ReportEditorPage() {
         : lastSavedAt
           ? `saved · updated ${formatRelative(lastSavedAt)}`
           : "";
+
+  // Recomputed on demand (not parallel state) whenever the escape hatch is
+  // open — cheap relative to a render, and guarantees it's always exactly
+  // what a save would persist right now.
+  const sourceText = showSource
+    ? serializeReportToMarkdown(blocks, buildReportPayload(reportId, blocks).cardSettings ?? {}, rawCairnSourceRef.current)
+    : "";
 
   return (
     <div>
@@ -390,11 +338,11 @@ export default function ReportEditorPage() {
           )}
           <button
             type="button"
-            onClick={() => (sourceView ? exitMarkdownView() : enterMarkdownView())}
+            onClick={() => setShowSource((v) => !v)}
             className="btn text-xs"
-            title="Toggle between the block editor and the report's canonical markdown source"
+            title="View the report's canonical markdown source (read-only)"
           >
-            {sourceView ? "Cells" : "Markdown"}
+            {showSource ? "Hide source" : "View source"}
           </button>
           <button type="button" onClick={() => setEditMode((v) => !v)} className="btn text-xs">
             {editMode ? "Done editing" : "Edit"}
@@ -402,108 +350,31 @@ export default function ReportEditorPage() {
         </div>
       </div>
 
-      {sourceView ? (
-        editMode ? (
-          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-            <textarea
-              value={mdSource}
-              onChange={(e) => setMdSource(e.target.value)}
-              placeholder={"Write the report's markdown source directly — use a ```cairn fence for cards blocks."}
-              className="input h-[70vh] w-full resize-y font-mono text-xs leading-relaxed"
-              spellCheck={false}
-            />
-            <div className="h-[70vh] overflow-y-auto rounded border border-border-subtle bg-bg p-3 text-sm">
-              {mdSource.trim() ? (
-                <ReportSourceMarkdown projectId={projectId} reportId={reportId} allProjectRuns={allProjectRuns}>
-                  {mdSource}
-                </ReportSourceMarkdown>
-              ) : (
-                <span className="text-fg-subtle">Preview appears here…</span>
-              )}
-            </div>
-          </div>
-        ) : (
-          <ReportSourceMarkdown projectId={projectId} reportId={reportId} allProjectRuns={allProjectRuns}>
-            {mdSource}
-          </ReportSourceMarkdown>
-        )
-      ) : blocks.length === 0 ? (
-        <div className="card p-6 text-sm text-fg-muted">
-          {editMode
-            ? "No blocks yet. Add a markdown or cards block below."
-            : "This report has no content yet."}
-        </div>
-      ) : (
-        <div className="space-y-6">
-          {blocks.map((block, idx) => (
-            <div key={block.id} className="group/block relative">
-              {editMode && (
-                <div className="mb-1.5 flex items-center justify-between">
-                  <span className="text-[10px] uppercase tracking-wide text-fg-subtle">
-                    {block.type}
-                  </span>
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => moveBlock(block.id, -1)}
-                      disabled={idx === 0}
-                      className="h-5 w-5 inline-flex items-center justify-center rounded text-fg-subtle hover:bg-bg-hover hover:text-fg disabled:opacity-30"
-                      title="Move up"
-                      aria-label="Move block up"
-                    >
-                      {"↑"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => moveBlock(block.id, 1)}
-                      disabled={idx === blocks.length - 1}
-                      className="h-5 w-5 inline-flex items-center justify-center rounded text-fg-subtle hover:bg-bg-hover hover:text-fg disabled:opacity-30"
-                      title="Move down"
-                      aria-label="Move block down"
-                    >
-                      {"↓"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => deleteBlock(block.id)}
-                      className="h-5 w-5 inline-flex items-center justify-center rounded text-fg-subtle hover:bg-bg-hover hover:text-status-failed"
-                      title="Delete block"
-                      aria-label="Delete block"
-                    >
-                      {"×"}
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {isMarkdownBlock(block) ? (
-                <ReportMarkdownBlock
-                  block={block}
-                  editMode={editMode}
-                  onChange={(text) => updateBlock(block.id, { ...block, text })}
-                />
-              ) : isCardsBlock(block) ? (
-                <ReportCardsBlock
-                  projectId={projectId}
-                  reportId={reportId}
-                  block={block}
-                  editMode={editMode}
-                  allProjectRuns={allProjectRuns}
-                  onChange={(next) => updateBlock(block.id, next)}
-                />
-              ) : null}
-            </div>
-          ))}
-        </div>
+      {showSource && (
+        <pre className="mono mb-4 max-h-[50vh] overflow-auto rounded border border-border-subtle bg-bg p-3 text-xs leading-relaxed text-fg-muted whitespace-pre-wrap">
+          {sourceText || "(empty)"}
+        </pre>
       )}
 
-      {editMode && !sourceView && (
+      <SegmentedMarkdownEditor
+        projectId={projectId}
+        reportId={reportId}
+        blocks={blocks}
+        editMode={editMode}
+        allProjectRuns={allProjectRuns}
+        onUpdateBlock={updateBlock}
+        onMoveBlock={moveBlock}
+        onDeleteBlock={deleteBlock}
+        onInsertBlock={insertBlock}
+      />
+
+      {editMode && blocks.length > 0 && (
         <div className="mt-6 flex gap-2">
-          <button type="button" onClick={addMarkdownBlock} className="btn text-xs">
-            + Markdown block
+          <button type="button" onClick={() => insertBlock(null, "markdown")} className="btn text-xs">
+            + Markdown cell
           </button>
-          <button type="button" onClick={addCardsBlock} className="btn text-xs">
-            + Cards block
+          <button type="button" onClick={() => insertBlock(null, "cards")} className="btn text-xs">
+            + Cards cell
           </button>
         </div>
       )}
