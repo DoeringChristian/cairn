@@ -37,6 +37,21 @@ const Plot = createPlotlyComponent(Plotly);
 // inner figure agrees with CardShell's outer-box clamp (one clamp source).
 const FIGURE_MIN_HEIGHT = cardMinSize("figure").minHeight;
 
+// Bug B: react-plotly.js's <Plot> already wraps its internal Plotly.react
+// call in a promise chain (see react-plotly.js/factory.js `updatePlotly`)
+// and forwards any rejection to `onError` — but WITHOUT an `onError` prop it
+// silently swallows the error instead of surfacing it. A degenerate axis
+// (single point / all-equal values / log axis with non-positive data) or a
+// relayout on a zero-size container can make Plotly's internal scale
+// computation throw ("Something went wrong with axis scaling"); wiring
+// `onError` on every <Plot> here turns that from a silent no-op (or, for
+// the one manual `Plotly.relayout` call in `resetView`, a genuinely
+// uncaught promise rejection) into a handled, logged warning so a bad step
+// never crashes the card.
+function onPlotlyError(err: unknown) {
+  console.warn("FigureInteractiveCard: plotly render error (recovered)", err);
+}
+
 interface Props {
   runId: string;
   metric: SequenceMeta;
@@ -351,6 +366,7 @@ function FigurePane({
           style={{ width: "100%", height: "100%" }}
           onRelayout={handleRelayout}
           revision={revision}
+          onError={onPlotlyError}
         />
       </div>
     );
@@ -433,7 +449,18 @@ export default function FigureInteractiveCard({ runId, metric, extraSeries, cont
     updateSettings,
   });
   // For the single-metric path, find the point at the current global step.
-  const current = useMemo(() => points.find((p) => p.step === currentStep && p.artifact_hash), [points, currentStep]);
+  // Falls back to the most recent point at-or-before the step (and, failing
+  // that, the first point) instead of an exact-match `.find` — `currentStep`
+  // comes from `useStepSlider`'s *global* step union, which in a multi-series
+  // card can legitimately include steps this series has no exact point for.
+  // Every other per-step card (TableCard, HistogramCard, TensorCard, etc.)
+  // already uses this `resolveAtStep(...) ?? points[0]` pattern; matching it
+  // here keeps this card from going blank instead of showing the last-good
+  // figure.
+  const current = useMemo(
+    () => resolveAtStep(points, currentStep) ?? points[0],
+    [points, currentStep],
+  );
 
   // -------------------------------------------------------------------------
   // Overlay merge (multi-run "overlay" compare mode).
@@ -604,7 +631,22 @@ export default function FigureInteractiveCard({ runId, metric, extraSeries, cont
       if (!update["xaxis.autorange"]) update["xaxis.autorange"] = true;
       if (!update["yaxis.autorange"]) update["yaxis.autorange"] = true;
       for (const plot of plots) {
-        Plotly.relayout(plot, update);
+        // Bug B guard: forcing autorange on a plot whose DOM node is
+        // currently 0×0 (e.g. mid step-transition, before layout settles)
+        // or whose data collapses to a degenerate axis (single point / all
+        // values equal / log axis with non-positive values) makes Plotly's
+        // internal scale computation (`h.setScale` → `drawMarginPushers` →
+        // `layoutReplot`) throw. `Plotly.relayout` returns a promise, and an
+        // unhandled rejection here is exactly the "Uncaught Error:
+        // Something went wrong with axis scaling" reported — so (1) skip
+        // zero-size plots entirely (autorange can't do anything useful
+        // there anyway) and (2) always attach a `.catch` so a bad step logs
+        // a handled warning instead of crashing the card.
+        const rect = plot.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) continue;
+        Promise.resolve(Plotly.relayout(plot, update)).catch((err) => {
+          console.warn("FigureInteractiveCard: reset-view relayout failed", err);
+        });
       }
     }
     setPlotRevision((r) => r + 1);
@@ -721,6 +763,7 @@ export default function FigureInteractiveCard({ runId, metric, extraSeries, cont
                 if (view) handlePaneRelayout(view);
               }}
               revision={plotRevision}
+              onError={onPlotlyError}
             />
           </div>
         ) : sourceHash && sourceQ.isLoading ? (
@@ -798,6 +841,7 @@ export default function FigureInteractiveCard({ runId, metric, extraSeries, cont
           if (view) handlePaneRelayout(view);
         }}
         revision={plotRevision}
+        onError={onPlotlyError}
       />
     </div>
   );
