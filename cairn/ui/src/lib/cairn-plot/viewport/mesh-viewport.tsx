@@ -88,6 +88,10 @@ export interface MeshViewportSettings {
   background: MeshBackground;
   property?: string;
   diffColormap?: DiffColormap;
+  /** Persisted "Show axes" setting (WS-3DR2) — colored XYZ origin lines +
+   *  grid, sized off the fitted bounds. `undefined` (old persisted cards) =
+   *  off, matching pre-WS-3DR2 rendering. */
+  showAxes?: boolean;
 }
 
 interface MeshViewConfig {
@@ -97,6 +101,7 @@ interface MeshViewConfig {
   doubleSided: boolean;
   background: MeshBackground;
   property: string | null;
+  showAxes: boolean;
 }
 
 function resolveViewConfig(settings: MeshViewportSettings): MeshViewConfig {
@@ -107,6 +112,7 @@ function resolveViewConfig(settings: MeshViewportSettings): MeshViewConfig {
     doubleSided: settings.doubleSided,
     background: settings.background,
     property: settings.property ?? null,
+    showAxes: settings.showAxes ?? false,
   };
 }
 
@@ -166,6 +172,7 @@ export function MeshSingleView({
             wireframe={view.wireframe}
             doubleSided={view.doubleSided}
             background={view.background}
+            showAxes={view.showAxes}
             sync={sync}
             onFrame={onFrame}
           />
@@ -253,6 +260,7 @@ export function MeshSideBySideView({
           wireframe={view.wireframe}
           doubleSided={view.doubleSided}
           background={view.background}
+          showAxes={view.showAxes}
           sync={pairedSync}
         />
         <LabelChip label="REF" />
@@ -278,6 +286,7 @@ export function MeshSideBySideView({
               wireframe={view.wireframe}
               doubleSided={view.doubleSided}
               background={view.background}
+              showAxes={view.showAxes}
               sync={pairedSync}
             />
           );
@@ -383,6 +392,7 @@ export function MeshNativeDiffPane({
           wireframe={view.wireframe}
           doubleSided={view.doubleSided}
           background={view.background}
+          showAxes={view.showAxes}
           sync={sync}
         />
       </div>

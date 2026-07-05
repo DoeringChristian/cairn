@@ -40,6 +40,7 @@ import { OffscreenComparePanes, PropertySelector, useOffscreenSnapshot, type Vis
 import type { ForeignFrameProps } from "./card-kit/cross-type-frame";
 import Select from "./settings/Select";
 import Slider from "./settings/Slider";
+import Toggle from "./settings/Toggle";
 import VisualContentCard from "./VisualContentCard";
 
 // ---------------------------------------------------------------------------
@@ -188,6 +189,8 @@ export interface PointCloudFullSettings extends VisualCompareSettings {
   background: PointCloudBackground;
   property?: string;
   diffColormap?: DiffColormap;
+  /** Persisted "Show axes" setting (WS-3DR2) — see `PointCloudViewportSettings`. */
+  showAxes?: boolean;
 }
 
 function defaultPointCloudSettings(): Omit<PointCloudFullSettings, "metrics" | "version"> {
@@ -195,6 +198,7 @@ function defaultPointCloudSettings(): Omit<PointCloudFullSettings, "metrics" | "
     pointSize: 2.5,
     colorMode: "auto",
     background: "dark",
+    showAxes: false,
     // 3D views linked by default (WS-VCP fix 1) — see MeshVisualCard's
     // identical comment; only affects cards without an explicit persisted
     // `syncViews` value.
@@ -280,6 +284,7 @@ function PointCloudViewportPane(
     colorMode: settings.colorMode,
     background: settings.background,
     property: settings.property ?? null,
+    showAxes: settings.showAxes ?? false,
   };
   const hasCrossTypeRef = crossTypeReferenceUrl != null;
   // Mirrors CompositeMediaPane's own rule: no reference resolved -> always
@@ -302,6 +307,7 @@ function PointCloudViewportPane(
       colorMode={view.colorMode}
       pointSize={view.pointSize}
       background={view.background}
+      showAxes={view.showAxes}
       sync={syncOpts}
       onFrame={cb}
     />
@@ -368,6 +374,7 @@ function PointCloudViewportPane(
               colorMode={view.colorMode}
               pointSize={view.pointSize}
               background={view.background}
+              showAxes={view.showAxes}
               sync={syncOpts}
               onFrame={cb}
             />
@@ -459,6 +466,12 @@ function PointCloudSettingsControls({
         value={settings.background}
         onChange={(v) => update({ background: v })}
         options={BACKGROUND_OPTIONS}
+      />
+      <Toggle
+        label="Show axes"
+        checked={!!settings.showAxes}
+        onChange={(v) => update({ showAxes: v })}
+        description="Colored XYZ origin lines + grid, sized to the fitted view"
       />
       {/* "Diff colormap" (red-green/viridis) now lives in the shared
           Compare section (VisualContentCard.tsx, WS-MFIX Bug 2) — rendering

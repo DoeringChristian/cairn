@@ -114,6 +114,10 @@ export interface PointCloudViewportSettings {
    *  from image's `colormap` (false-color post-processing, unused here:
    *  `capabilities.postProcessing` is false for pointcloud). */
   diffColormap?: DiffColormap;
+  /** Persisted "Show axes" setting (WS-3DR2) — colored XYZ origin lines +
+   *  grid, sized off the fitted bounds. `undefined` (old persisted cards) =
+   *  off, matching pre-WS-3DR2 rendering. */
+  showAxes?: boolean;
 }
 
 interface PointCloudViewConfig {
@@ -121,6 +125,7 @@ interface PointCloudViewConfig {
   colorMode: PointColorMode;
   background: PointCloudBackground;
   property: string | null;
+  showAxes: boolean;
 }
 
 function resolveViewConfig(settings: PointCloudViewportSettings): PointCloudViewConfig {
@@ -129,6 +134,7 @@ function resolveViewConfig(settings: PointCloudViewportSettings): PointCloudView
     colorMode: settings.colorMode,
     background: settings.background,
     property: settings.property ?? null,
+    showAxes: settings.showAxes ?? false,
   };
 }
 
@@ -172,6 +178,7 @@ export function PointCloudSingleView({
           colorMode={view.colorMode}
           pointSize={view.pointSize}
           background={view.background}
+          showAxes={view.showAxes}
           sync={sync}
           onFrame={onFrame}
         />
@@ -229,6 +236,7 @@ export function PointCloudSideBySideView({
           colorMode={view.colorMode}
           pointSize={view.pointSize}
           background={view.background}
+          showAxes={view.showAxes}
           sync={pairedSync}
         />
         <LabelChip label="REF" />
@@ -243,6 +251,7 @@ export function PointCloudSideBySideView({
             colorMode={view.colorMode}
             pointSize={view.pointSize}
             background={view.background}
+            showAxes={view.showAxes}
             sync={pairedSync}
           />
         ) : (
@@ -340,6 +349,7 @@ export function PointCloudNativeDiffPane({
           colorMode={view.colorMode}
           pointSize={view.pointSize}
           background={view.background}
+          showAxes={view.showAxes}
           sync={sync}
           overrideColors={colors}
         />

@@ -74,6 +74,8 @@ export interface BoxesViewportSettings {
   valueMax?: number;
   property?: string;
   diffColormap?: DiffColormap;
+  /** Persisted "Show axes" setting (WS-3DR2). */
+  showAxes?: boolean;
 }
 
 interface BoxesViewConfig {
@@ -85,6 +87,7 @@ interface BoxesViewConfig {
   valueMin?: number;
   valueMax?: number;
   property: string | null;
+  showAxes: boolean;
 }
 
 export function resolveBoxesViewConfig(settings: BoxesViewportSettings): BoxesViewConfig {
@@ -97,6 +100,7 @@ export function resolveBoxesViewConfig(settings: BoxesViewportSettings): BoxesVi
     valueMin: settings.valueMin,
     valueMax: settings.valueMax,
     property: settings.property ?? null,
+    showAxes: settings.showAxes ?? false,
   };
 }
 
@@ -175,6 +179,7 @@ export function BoxesSingleView({
             depthRange={[depthMin, depthMax]}
             valueThreshold={valueThreshold}
             background={view.background}
+            showAxes={view.showAxes}
             sync={sync}
             onVisibleCount={(visible) => setVisibleCount(visible)}
             onFrame={onFrame}
@@ -251,6 +256,7 @@ export function BoxesSideBySideView({
           colorMode={view.colorMode}
           depthRange={[0, reference.meta.max_depth]}
           background={view.background}
+          showAxes={view.showAxes}
           sync={pairedSync}
         />
         <LabelChip label="REF" />
@@ -354,6 +360,7 @@ export function BoxesNativeDiffPane({
           colorMode="value"
           depthRange={[0, data.meta.max_depth]}
           background={view.background}
+          showAxes={view.showAxes}
           sync={sync}
           overrideColors={colors}
         />

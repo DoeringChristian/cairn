@@ -70,6 +70,8 @@ export interface VolumeViewportSettings {
   clipMax: [number, number, number];
   background: VolumeBackground;
   diffColormap?: DiffColormap;
+  /** Persisted "Show axes" setting (WS-3DR2). */
+  showAxes?: boolean;
 }
 
 interface VolumeViewConfig {
@@ -80,6 +82,7 @@ interface VolumeViewConfig {
   clipMin: [number, number, number];
   clipMax: [number, number, number];
   background: VolumeBackground;
+  showAxes: boolean;
 }
 
 export function resolveVolumeViewConfig(settings: VolumeViewportSettings): VolumeViewConfig {
@@ -91,6 +94,7 @@ export function resolveVolumeViewConfig(settings: VolumeViewportSettings): Volum
     clipMin: settings.clipMin,
     clipMax: settings.clipMax,
     background: settings.background,
+    showAxes: settings.showAxes ?? false,
   };
 }
 
@@ -146,6 +150,7 @@ export function VolumeSingleView({
             steps={view.steps}
             clip={{ min: view.clipMin, max: view.clipMax }}
             background={view.background}
+            showAxes={view.showAxes}
             sync={sync}
             onFrame={onFrame}
           />
@@ -221,6 +226,7 @@ export function VolumeSideBySideView({
           steps={view.steps}
           clip={{ min: view.clipMin, max: view.clipMax }}
           background={view.background}
+          showAxes={view.showAxes}
           sync={pairedSync}
         />
         <LabelChip label="REF" />
@@ -311,6 +317,7 @@ export function VolumeNativeDiffPane({
           steps={view.steps}
           clip={{ min: view.clipMin, max: view.clipMax }}
           background={view.background}
+          showAxes={view.showAxes}
           sync={sync}
         />
       </div>

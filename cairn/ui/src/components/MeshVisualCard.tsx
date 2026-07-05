@@ -180,6 +180,8 @@ export interface MeshFullSettings extends VisualCompareSettings {
   background: MeshBackground;
   property?: string;
   diffColormap?: DiffColormap;
+  /** Persisted "Show axes" setting (WS-3DR2). */
+  showAxes?: boolean;
 }
 
 function defaultMeshSettings(): Omit<MeshFullSettings, "metrics" | "version"> {
@@ -189,6 +191,7 @@ function defaultMeshSettings(): Omit<MeshFullSettings, "metrics" | "version"> {
     wireframe: false,
     doubleSided: true,
     background: "dark",
+    showAxes: false,
     // 3D views linked by default (WS-VCP fix 1) — `useCardSettings` merges
     // this under any persisted value, so a card that already has an explicit
     // `syncViews` (on OR off) keeps it; only brand-new/never-toggled cards
@@ -268,6 +271,7 @@ function MeshViewportPane(
     doubleSided: settings.doubleSided,
     background: settings.background,
     property: settings.property ?? null,
+    showAxes: settings.showAxes ?? false,
   };
   const hasCrossTypeRef = crossTypeReferenceUrl != null;
   const effectiveMode: MediaCompareModeKind = reference == null && !hasCrossTypeRef ? "normal" : mode;
@@ -297,6 +301,7 @@ function MeshViewportPane(
         wireframe={view.wireframe}
         doubleSided={view.doubleSided}
         background={view.background}
+        showAxes={view.showAxes}
         sync={syncOpts}
         onFrame={cb}
       />
@@ -376,6 +381,7 @@ function MeshViewportPane(
                 wireframe={view.wireframe}
                 doubleSided={view.doubleSided}
                 background={view.background}
+                showAxes={view.showAxes}
                 sync={syncOpts}
                 onFrame={cb}
               />
@@ -476,6 +482,12 @@ function MeshSettingsControls({
         value={settings.background}
         onChange={(v) => update({ background: v })}
         options={BACKGROUND_OPTIONS}
+      />
+      <Toggle
+        label="Show axes"
+        checked={!!settings.showAxes}
+        onChange={(v) => update({ showAxes: v })}
+        description="Colored XYZ origin lines + grid, sized to the fitted view"
       />
       {/* "Diff colormap" (red-green/viridis) now lives in the shared
           Compare section (VisualContentCard.tsx, WS-MFIX Bug 2) — rendering

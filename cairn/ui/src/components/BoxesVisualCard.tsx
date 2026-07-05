@@ -165,12 +165,15 @@ export interface BoxesFullSettings extends VisualCompareSettings {
   valueMax?: number;
   property?: string;
   diffColormap?: DiffColormap;
+  /** Persisted "Show axes" setting (WS-3DR2). */
+  showAxes?: boolean;
 }
 
 function defaultBoxesSettings(): Omit<BoxesFullSettings, "metrics" | "version"> {
   return {
     colorMode: "depth",
     background: "dark",
+    showAxes: false,
     // 3D views linked by default (WS-VCP fix 1) — see MeshVisualCard's
     // identical comment; only affects cards without an explicit persisted
     // `syncViews` value.
@@ -262,6 +265,7 @@ function BoxesViewportPane(
         colorMode={view.colorMode}
         depthRange={[0, data!.meta.max_depth]}
         background={view.background}
+        showAxes={view.showAxes}
         sync={syncOpts}
         onFrame={cb}
       />
@@ -339,6 +343,7 @@ function BoxesViewportPane(
                 colorMode={view.colorMode}
                 depthRange={[0, reference.meta.max_depth]}
                 background={view.background}
+                showAxes={view.showAxes}
                 sync={syncOpts}
                 onFrame={cb}
               />
@@ -428,6 +433,12 @@ function BoxesSettingsControls({
         value={settings.background}
         onChange={(v) => update({ background: v })}
         options={BACKGROUND_OPTIONS}
+      />
+      <Toggle
+        label="Show axes"
+        checked={!!settings.showAxes}
+        onChange={(v) => update({ showAxes: v })}
+        description="Colored XYZ origin lines + grid, sized to the fitted view"
       />
       <Slider
         label="Depth min"

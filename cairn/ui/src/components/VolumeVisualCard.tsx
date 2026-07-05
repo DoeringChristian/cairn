@@ -41,6 +41,7 @@ import { OffscreenComparePanes, useOffscreenSnapshot, type VisualCompareSettings
 import type { ForeignFrameProps } from "./card-kit/cross-type-frame";
 import Select from "./settings/Select";
 import Slider from "./settings/Slider";
+import Toggle from "./settings/Toggle";
 import VisualContentCard from "./VisualContentCard";
 
 // ---------------------------------------------------------------------------
@@ -135,6 +136,7 @@ export function VolumeForeignFrame({ hash, metadata, onFrame }: ForeignFrameProp
       steps={view.steps}
       clip={{ min: view.clipMin, max: view.clipMax }}
       background={view.background}
+      showAxes={view.showAxes}
       onFrame={snap.onFrame}
     />
   );
@@ -162,6 +164,8 @@ export interface VolumeFullSettings extends VisualCompareSettings {
   clipMax: [number, number, number];
   background: VolumeBackground;
   diffColormap?: DiffColormap;
+  /** Persisted "Show axes" setting (WS-3DR2). */
+  showAxes?: boolean;
 }
 
 function defaultVolumeSettings(): Omit<VolumeFullSettings, "metrics" | "version"> {
@@ -173,6 +177,7 @@ function defaultVolumeSettings(): Omit<VolumeFullSettings, "metrics" | "version"
     clipMin: [0, 0, 0],
     clipMax: [1, 1, 1],
     background: "dark",
+    showAxes: false,
     // 3D views linked by default (WS-VCP fix 1) — see MeshVisualCard's
     // identical comment; only affects cards without an explicit persisted
     // `syncViews` value.
@@ -272,6 +277,7 @@ function VolumeViewportPane(
         steps={view.steps}
         clip={{ min: view.clipMin, max: view.clipMax }}
         background={view.background}
+        showAxes={view.showAxes}
         sync={syncOpts}
         onFrame={cb}
       />
@@ -347,6 +353,7 @@ function VolumeViewportPane(
                 steps={view.steps}
                 clip={{ min: view.clipMin, max: view.clipMax }}
                 background={view.background}
+                showAxes={view.showAxes}
                 sync={syncOpts}
                 onFrame={cb}
               />
@@ -465,6 +472,12 @@ function VolumeSettingsControls({
         value={settings.background}
         onChange={(v) => update({ background: v })}
         options={BACKGROUND_OPTIONS}
+      />
+      <Toggle
+        label="Show axes"
+        checked={!!settings.showAxes}
+        onChange={(v) => update({ showAxes: v })}
+        description="Colored XYZ origin lines + grid, sized to the fitted view"
       />
       <div className="mt-2 border-t border-border-subtle pt-2">
         <div className="mb-1 text-xs font-semibold text-fg-muted">
