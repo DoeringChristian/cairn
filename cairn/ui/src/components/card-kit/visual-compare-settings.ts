@@ -64,6 +64,17 @@ export interface VisualCompareSettings extends BaseCardSettings {
    *  toggle. Optional/absent (undefined) = unchanged default (track
    *  current step); image never sets this today (no UI wired to it yet). */
   refFixedStep?: number;
+  /** WS-VC6: opt-in for cross-type (image<->3D) pixel `diff` — side/split/
+   *  blend cross-type are offered as soon as `crossTypeCompare` permits
+   *  (image-space compositing works on any two FrameSources regardless of
+   *  origin), but `diff` additionally resamples/letterboxes both rasters
+   *  (`cross-type-align.ts`) since they may have unrelated pixel dimensions
+   *  — semantically meaningful only when the two rasters depict the same
+   *  spatial content, so it's gated behind this explicit confirmation rather
+   *  than turned on by default. `undefined`/`false` = "diff" stays disabled
+   *  (with a reason) whenever the resolved reference is cross-type. Never
+   *  set for a same-type reference (irrelevant there). */
+  crossTypeDiffOptIn?: boolean;
   /** "Sync 3D views" camera-lockstep toggle (capability: `cameraSync`).
    *  Image: never set (`cameraSync` is false, the shared toggle never
    *  renders). Resolved once per card via `lib/camera-sync.ts`'s

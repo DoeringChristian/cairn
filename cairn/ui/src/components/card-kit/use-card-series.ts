@@ -8,6 +8,15 @@ export interface SeriesRef {
   runId?: string;
   name: string;
   context_hash: string;
+  /** WS-VC6: the series' own `object_type`, when known at the point this
+   *  `SeriesRef` was captured (e.g. `ExternalBaselinePicker`'s sequence list,
+   *  or a dragged viewport label's own card). Optional/absent for every
+   *  pre-VC6 persisted `externalBaseline` (read as "unknown, assume
+   *  same-type" — `canCrossTypeCompare` is never consulted when this is
+   *  unset, so old settings keep their exact same-type behavior) and for the
+   *  card's own `metrics` entries (always same-type as the card itself by
+   *  construction, so never meaningfully cross-type). */
+  objectType?: string;
 }
 
 export interface CardSeriesResult<TSettings> {

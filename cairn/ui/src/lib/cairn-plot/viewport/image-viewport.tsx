@@ -152,7 +152,7 @@ export const imageViewportCapabilities: ViewportCapabilities<never> = {
   colorbar: "conditional",
   cameraSync: false,
   resetView: "tracked",
-  crossTypeCompare: false,
+  crossTypeCompare: true,
   webglContextsPerPane: 0,
   maxPanes: Number.POSITIVE_INFINITY,
   label: { placement: "bottom-left", draggable: true },

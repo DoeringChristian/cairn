@@ -105,10 +105,14 @@ export interface ViewportCapabilities<M extends string = never> {
    *  "tracked") or is always enabled regardless of state (3D: "always" per
    *  the design doc's analysis of the 3D cards' hardcoded `viewModified`). */
   resetView: "tracked" | "always";
-  /** Whether this type's reference may resolve to a DIFFERENT object_type
-   *  (WS-VC6). Always false until VC6 relaxes `useMediaReference`'s
-   *  same-family filter; declared now so the descriptor shape does not need
-   *  to change later. */
+  /** Whether this type PARTICIPATES in cross-type compare (WS-VC6) at all —
+   *  `true` for every type today (image + all four 3D types). This alone
+   *  doesn't mean any two types can compare against each other: the actual
+   *  pairing gate is `canCrossTypeCompare` (`viewport/cross-type.ts`), which
+   *  additionally requires one side to be "image" (see that module's doc
+   *  comment for the shipped-scope rationale). `VisualContentCard` checks
+   *  BOTH this flag and `canCrossTypeCompare` before offering a cross-type
+   *  reference (the `ExternalBaselinePicker` filter) or rendering one. */
   crossTypeCompare: boolean;
   /** Live WebGL contexts consumed per rendered pane (steady-state, not
    *  counting a transient compare-mode doubling). Image: 0 (diff uses one

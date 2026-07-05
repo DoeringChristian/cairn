@@ -28,6 +28,13 @@ export interface SeriesRef {
   runId?: string;
   name: string;
   context_hash: string;
+  /** WS-VC6: the dragged series' own `object_type`, when the drag source
+   *  knows it (a card's own bottom-left viewport label always does — see
+   *  `startViewportDrag`'s callers). Optional/absent for the plain
+   *  per-run chip drag (`SeriesChip`'s own `onDragStart`) — that path stays
+   *  same-type only for this pass (see VisualContentCard's cross-type
+   *  wiring doc comment). */
+  objectType?: string;
 }
 
 /**

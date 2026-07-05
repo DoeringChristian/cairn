@@ -33,10 +33,12 @@ import {
   Colorbar,
   ColormapSwatch,
   useContainerSize,
+  canCrossTypeCompare,
 } from "../lib/cairn-plot";
 import { parseOverlay } from "./viewport-registry";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import { useCameraSync } from "../lib/camera-sync";
+import { CrossTypeForeignFrame, hasForeignFrameBridge } from "./card-kit/cross-type-frame";
 import AddToComparisonButton from "./AddToComparisonButton";
 import CardShell from "./CardShell";
 import { startViewportDrag, type SeriesRef } from "./SeriesChip";
@@ -113,6 +115,7 @@ const MEDIA_COMPARE_MODE_LABELS: Record<MediaCompareModeKind, string> = {
 function ExternalBaselinePicker({
   runId,
   objectType,
+  allowCrossType,
   currentMetricName,
   selected,
   onSelect,
@@ -120,9 +123,14 @@ function ExternalBaselinePicker({
 }: {
   runId: string;
   objectType: string;
+  /** WS-VC6: when true (`capabilities.crossTypeCompare`), the picker ALSO
+   *  offers series of a different `object_type` that `canCrossTypeCompare`
+   *  permits against this card's own type (image<->3D, either role) — same-
+   *  type behavior (the filter below's first clause) is unchanged. */
+  allowCrossType: boolean;
   currentMetricName: string;
   selected?: string;
-  onSelect: (name: string, contextHash: string, selectedRunId: string) => void;
+  onSelect: (name: string, contextHash: string, selectedRunId: string, refObjectType: string) => void;
   availableRunIds: string[];
 }) {
   const multiRun = availableRunIds.length > 1;
@@ -138,9 +146,10 @@ function ExternalBaselinePicker({
   const imageMetrics = useMemo(() => {
     const seqs = data?.sequences ?? [];
     return seqs
-      .filter((s) => s.object_type === objectType && s.name !== currentMetricName)
+      .filter((s) => s.name !== currentMetricName
+        && (s.object_type === objectType || (allowCrossType && canCrossTypeCompare(objectType, s.object_type))))
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [data, currentMetricName]);
+  }, [data, currentMetricName, objectType, allowCrossType]);
 
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -206,7 +215,7 @@ function ExternalBaselinePicker({
                 <button
                   key={`${m.name}::${m.context_hash}`}
                   type="button"
-                  onClick={() => { onSelect(m.name, m.context_hash, activeRunId); setOpen(false); }}
+                  onClick={() => { onSelect(m.name, m.context_hash, activeRunId, m.object_type); setOpen(false); }}
                   className={`mono block w-full truncate px-3 py-1.5 text-left text-xs hover:bg-bg-hover ${
                     selected === m.name ? "text-accent" : "text-fg-muted hover:text-fg"
                   }`}
@@ -411,7 +420,7 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
   // -----------------------------------------------------------------------
   const applyReference = useCallback((ref: SeriesRef, mode: "global" | "per-run") => {
     updateSettings({
-      externalBaseline: { runId: ref.runId, name: ref.name, context_hash: ref.context_hash },
+      externalBaseline: { runId: ref.runId, name: ref.name, context_hash: ref.context_hash, objectType: ref.objectType },
       baselineIndex: undefined,
       referenceMode: mode,
       diffMode: settingsRef.current.diffMode === "none" ? "absolute" : settingsRef.current.diffMode,
@@ -424,9 +433,16 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
   });
   const { onDragOver: onRefDragOver, onDragLeave: onRefDragLeave, onDrop: onRefDrop } = refDropProps;
 
+  // WS-VC6: a card's own rendered viewport label always knows its own
+  // object_type (`viewport.objectType`) — carried in the drag payload so the
+  // RECEIVING card's reference-drop can recognize a cross-type drag (see
+  // `applyReference` above, which threads `ref.objectType` into
+  // `externalBaseline`). The plain per-run chip-strip drag
+  // (`SeriesChip`'s own `onDragStart`, `CAIRN_SERIES_MIME`) does NOT carry
+  // this — that path stays same-type only for this pass.
   const onImageDragStart = useCallback((e: React.DragEvent, m: { runId?: string; name: string; context_hash: string }) => {
-    startViewportDrag(e, { runId: m.runId ?? runId, name: m.name, context_hash: m.context_hash }, m.name);
-  }, [runId]);
+    startViewportDrag(e, { runId: m.runId ?? runId, name: m.name, context_hash: m.context_hash, objectType: viewport.objectType }, m.name);
+  }, [runId, viewport.objectType]);
 
   // -----------------------------------------------------------------------
   // Derived
@@ -618,11 +634,65 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
     [effectiveMetrics, caps.maxPanes],
   );
 
+  // -----------------------------------------------------------------------
+  // WS-VC6: cross-type compare — the resolved reference (`extBase`) belongs
+  // to a DIFFERENT object_type than this viewport. Gated by
+  // `canCrossTypeCompare` (image<->3D, either role — see
+  // `viewport/cross-type.ts`'s doc comment for why two different 3D types
+  // aren't wired this pass) AND the module's own `capabilities.
+  // crossTypeCompare`. When active, the reference is NEVER fed through this
+  // viewport's own `useData` below (a foreign type's bytes cannot be parsed
+  // as this module's `TData` — see `MeshMeta`/`PointCloudMeta`/etc's
+  // fetch+parse, which would throw on an image PNG's bytes, or vice versa);
+  // instead each pane gets an already-rendered raster via
+  // `crossTypeReferenceUrl`, computed below.
+  // -----------------------------------------------------------------------
+  const extBaseObjectType = extBase?.objectType;
+  const crossTypeActive =
+    !!extBaseObjectType && caps.crossTypeCompare && canCrossTypeCompare(viewport.objectType, extBaseObjectType);
+
+  // Case 2 (this card is a 3D type, foreign side is "image"): the reference
+  // is already just a URL (`api.artifactUrl`) — resolved synchronously,
+  // below, no bridge needed. Case 1 (this card is "image", foreign side is a
+  // 3D type): needs the async offscreen-render bridge (`CrossTypeForeignFrame`
+  // + `crossFrameUrls` state) since a 3D type has no raster until rendered.
+  const needsForeignBridge = crossTypeActive && !!extBaseObjectType && hasForeignFrameBridge(extBaseObjectType);
+
+  const [crossFrameUrls, setCrossFrameUrls] = useState<Record<string, string>>({});
+
+  const crossTypeReferenceUrls = useMemo(() => {
+    if (!crossTypeActive || !extBaseObjectType) return null;
+    return shownMetrics.map((_, i) => {
+      const hash = paneRefHashArr[i];
+      if (!hash) return null;
+      if (extBaseObjectType === "image") return api.artifactUrl(hash);
+      return crossFrameUrls[`${i}:${hash}`] ?? null;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [crossTypeActive, extBaseObjectType, shownMetrics, paneRefHashArr, crossFrameUrls]);
+
+  // Runtime "compatible raster" readiness (design doc §2.4) — pane 0 is
+  // representative (mirrors how `nativeEnabled` below gates off pane 0 too).
+  const crossTypeDiffReady = !crossTypeActive || crossTypeReferenceUrls?.[0] != null;
+  // Cross-type `diff` is gated behind an explicit opt-in (D8 in the design
+  // doc — semantics only hold for aligned rasters) AND needs the reference
+  // raster actually resolved. Side/split/blend cross-type have no such gate
+  // (image-space compositing works on any two FrameSources regardless of
+  // origin/dimensions).
+  const crossTypeDiffAllowed = !crossTypeActive || (!!settings.crossTypeDiffOptIn && crossTypeDiffReady);
+  // What's actually RENDERED (vs. `effectiveMode`, the user's raw selection,
+  // still used for isOverlayMode/UI elsewhere): downgrades a not-yet-allowed
+  // cross-type "diff" to "side" rather than running the diff pipeline on
+  // unaligned/not-yet-resolved rasters. `settings.mode` itself is untouched,
+  // so opting in immediately shows "diff" without reselecting.
+  const effectiveRenderMode: MediaCompareModeKind =
+    crossTypeActive && effectiveMode === "diff" && !crossTypeDiffAllowed ? "side" : effectiveMode;
+
   const viewData = viewport.useData({
     hashes: paneHashArr.slice(0, shownMetrics.length),
-    referenceHashes: paneRefHashArr.slice(0, shownMetrics.length),
+    referenceHashes: crossTypeActive ? shownMetrics.map(() => null) : paneRefHashArr.slice(0, shownMetrics.length),
     metadata: paneMetadata.slice(0, shownMetrics.length),
-    referenceMetadata: paneReferenceMetadata.slice(0, shownMetrics.length),
+    referenceMetadata: crossTypeActive ? shownMetrics.map(() => null) : paneReferenceMetadata.slice(0, shownMetrics.length),
   });
 
   // Settings handed to each Pane: identical to persisted settings, but with
@@ -649,8 +719,15 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
   const activeNativeSpec = activeNativeMode
     ? caps.nativeModes.find((nm) => nm.mode === activeNativeMode)
     : undefined;
+  // WS-VC6: native (geometry) diffs stay same-type by construction — `!
+  // crossTypeActive` is belt-and-suspenders (viewData.referenceItems[0] is
+  // already forced null under cross-type, above, so any sane `enabledFor`
+  // already returns false; this makes the rule explicit rather than
+  // incidental).
   const nativeEnabled =
-    !!activeNativeSpec && activeNativeSpec.enabledFor(viewData.items[0] ?? null, viewData.referenceItems[0] ?? null);
+    !crossTypeActive
+    && !!activeNativeSpec
+    && activeNativeSpec.enabledFor(viewData.items[0] ?? null, viewData.referenceItems[0] ?? null);
   const useNativeRender = nativeEnabled && !!viewport.nativeDiff;
   const RenderPane = useNativeRender ? viewport.nativeDiff!.render : Pane;
 
@@ -665,6 +742,7 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
     const diffSubmode: DiffMode = settings.diffMode === "none" ? "absolute" : settings.diffMode;
 
     return (
+      <>
       <div
         className="grid gap-1 flex-1 min-h-0 overflow-auto"
         style={{ gridTemplateColumns: `repeat(${settings.imageColumns ?? 2}, 1fr)` }}
@@ -688,7 +766,7 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
                 settings={paneSettings}
                 view={view}
                 onViewChange={onPaneViewChange}
-                mode={effectiveMode}
+                mode={effectiveRenderMode}
                 diffMode={diffSubmode}
                 nativeMode={activeNativeMode}
                 cameraSyncGroupId={cameraSyncGroupId}
@@ -700,11 +778,40 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
                 isDraggable
                 onDragStart={(e) => onImageDragStart(e, m)}
                 onNaturalSize={onImageNaturalSize}
+                crossTypeReferenceUrl={crossTypeActive ? (crossTypeReferenceUrls?.[paneIdx] ?? null) : undefined}
+                crossTypeAlignForDiff={crossTypeActive}
               />
             </div>
           );
         })}
       </div>
+      {/* WS-VC6 Case 1 (this card is "image", the resolved reference is a
+          3D type): render each pane's foreign-type reference hidden, off
+          -screen, purely to capture an offscreen snapshot into
+          `crossFrameUrls` — the bridge `crossTypeReferenceUrls` above reads
+          from. Case 2 (reference is "image") needs no bridge at all
+          (api.artifactUrl is synchronous), so `needsForeignBridge` is false
+          there and this renders nothing. */}
+      {needsForeignBridge && shownMetrics.map((_, i) => {
+        const hash = paneRefHashArr[i];
+        if (!hash) return null;
+        const key = `${i}:${hash}`;
+        if (crossFrameUrls[key]) return null;
+        return (
+          <div key={key} aria-hidden style={{ position: "fixed", left: -99999, top: 0, width: 640, height: 480 }}>
+            <CrossTypeForeignFrame
+              objectType={extBaseObjectType!}
+              hash={hash}
+              metadata={paneReferenceMetadata[i] ?? null}
+              onFrame={(f) => {
+                const url = f.kind === "dataUrl" ? f.dataUrl : f.kind === "url" ? f.url : f.canvas.toDataURL("image/png");
+                setCrossFrameUrls((m) => (m[key] === url ? m : { ...m, [key]: url }));
+              }}
+            />
+          </div>
+        );
+      })}
+      </>
     );
   };
 
@@ -787,8 +894,30 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
   // exactly `coreModeEntries` (byte-identical selector).
   const coreModeEntries = caps.coreModes;
   const modeSelectorEntries: Array<{ value: string; label: string; disabled: boolean; title?: string }> = [
-    ...coreModeEntries.map((m) => ({ value: m as string, label: MEDIA_COMPARE_MODE_LABELS[m], disabled: false, title: undefined })),
+    ...coreModeEntries.map((m) => {
+      // WS-VC6: cross-type "diff" is gated behind the explicit opt-in
+      // (crossTypeDiffAllowed, computed above from settings.crossTypeDiffOptIn
+      // + the reference raster actually being resolved) — side/split/blend
+      // stay unconditionally enabled the moment crossTypeActive is true (no
+      // gate — image-space compositing works on any two FrameSources).
+      const gated = m === "diff" && crossTypeActive && !crossTypeDiffAllowed;
+      return {
+        value: m as string,
+        label: MEDIA_COMPARE_MODE_LABELS[m],
+        disabled: gated,
+        title: gated
+          ? (crossTypeDiffReady
+              ? "Enable “Cross-type pixel diff” in the settings panel to compare cross-type rasters"
+              : "Waiting for the cross-type reference to render")
+          : undefined,
+      };
+    }),
     ...caps.nativeModes.map((nm) => {
+      // Native (geometry) diffs are same-type only by construction — a
+      // cross-type reference never has this module's own TData shape.
+      if (crossTypeActive) {
+        return { value: nm.mode as string, label: nm.label, disabled: true, title: "Native diff is same-type only — not available for a cross-type reference" };
+      }
       const enabled = nm.enabledFor(viewData.items[0] ?? null, viewData.referenceItems[0] ?? null);
       return { value: nm.mode as string, label: nm.label, disabled: !enabled, title: enabled ? undefined : nm.disabledReason };
     }),
@@ -1116,18 +1245,35 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
         <ExternalBaselinePicker
           runId={runId}
           objectType={viewport.objectType}
+          allowCrossType={caps.crossTypeCompare}
           currentMetricName={metric.name}
           selected={settings.externalBaseline?.name}
           availableRunIds={availableRunIds}
-          onSelect={(name, ctx, selectedRunId) => {
+          onSelect={(name, ctx, selectedRunId, refObjectType) => {
             updateSettings({
-              externalBaseline: { runId: selectedRunId, name, context_hash: ctx },
+              externalBaseline: { runId: selectedRunId, name, context_hash: ctx, objectType: refObjectType },
               baselineIndex: undefined,
               diffMode: settings.diffMode === "none" ? "absolute" : settings.diffMode,
               mode: "diff",
             });
           }}
         />
+        {crossTypeActive && (
+          <p className="mt-1 text-[10px] text-accent">
+            Cross-type reference ({settings.externalBaseline?.objectType} → {viewport.objectType}): side/split/blend compare the rendered rasters directly.{" "}
+            {settings.crossTypeDiffOptIn
+              ? "Pixel diff resamples both to a common raster before comparing."
+              : "Pixel diff is disabled until you opt in below (it resamples/letterboxes both rasters first — meaningful only when they depict the same spatial content)."}
+          </p>
+        )}
+        {crossTypeActive && (
+          <Toggle
+            label="Cross-type pixel diff (experimental)"
+            checked={!!settings.crossTypeDiffOptIn}
+            onChange={(v) => updateSettings({ crossTypeDiffOptIn: v })}
+            description="Resamples + letterboxes both rasters to a common size before diffing — meaningful only when they depict the same spatial content"
+          />
+        )}
       </div>
     </>
   );
