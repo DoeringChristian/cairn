@@ -580,20 +580,28 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
   const hasBaseline = baselineIdx != null || extBase != null;
 
   // -----------------------------------------------------------------------
-  // Per-pane reference resolution (with the split/blend dedup rule) fed into
-  // the module's data hook, which turns resolved hashes into render-ready
-  // items (image: {url, overlay}). Index-aligned with effectiveMetrics.
+  // Per-pane reference resolution fed into the module's data hook, which
+  // turns resolved hashes into render-ready items (image: {url, overlay}).
+  // Index-aligned with effectiveMetrics.
   // -----------------------------------------------------------------------
-  const isOverlayMode = effectiveMode === "split" || effectiveMode === "blend";
   const paneHashArr = paneResolved.map((r) => r?.hash ?? null);
   const paneRefHashArr = effectiveMetrics.map((_, i) => {
     const hash = paneResolved[i]?.hash;
     const paneBaseline = perPaneHash(i);
-    // Split/blend are explicit user choices — honor them whenever a
-    // reference resolves, even when the content-addressed store deduped a
-    // byte-identical prediction and reference to the same artifact hash.
-    // Other modes keep the inequality so their fallback is unchanged.
-    const hasRef = !!(paneBaseline && hash && (isOverlayMode || paneBaseline !== hash));
+    // A resolved reference is ALWAYS honored, even when the content-
+    // addressed store deduped a byte-identical prediction and reference to
+    // the same artifact hash (e.g. an old and a new run producing identical
+    // output, or split/blend against an undistorted baseline). Suppressing
+    // it on hash equality used to silently collapse EVERY mode to "normal"
+    // (reference==null forces effectiveMode="normal" downstream, see each
+    // viewport Pane's dispatch) instead of letting the mode render
+    // naturally: diff correctly shows a blank/all-zero diff ("no
+    // difference" — the pixel/native diff pipeline already produces that
+    // for identical inputs, nothing special-cased needed), while split/
+    // blend/side show two identical panes. Only split/blend used to be
+    // exempted from this suppression (a narrower, earlier fix for the same
+    // underlying issue) — now every mode is.
+    const hasRef = !!(paneBaseline && hash);
     return hasRef ? paneBaseline! : null;
   });
 
