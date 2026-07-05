@@ -1156,7 +1156,7 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
           label="Sync 3D views"
           checked={!!settings.syncViews}
           onChange={(v) => updateSettings({ syncViews: v })}
-          description="Share orbit/zoom/pan live with this card's other panes and any other sync-enabled 3D card on this page"
+          description="Share orbit/zoom/pan live across this card's own panes (not with other 3D cards on the page)"
         />
       )}
       {viewport.SettingsControls && (
