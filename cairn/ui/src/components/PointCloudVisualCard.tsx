@@ -162,6 +162,10 @@ function defaultPointCloudSettings(): Omit<PointCloudFullSettings, "metrics" | "
     pointSize: 2.5,
     colorMode: "auto",
     background: "dark",
+    // 3D views linked by default (WS-VCP fix 1) — see MeshVisualCard's
+    // identical comment; only affects cards without an explicit persisted
+    // `syncViews` value.
+    syncViews: true,
     // Inert placeholders: VisualCompareSettings' post-processing/view fields
     // are required by the base type but never read (capabilities.postProcessing
     // is false; view state isn't settings-roundtripped for pointcloud — see

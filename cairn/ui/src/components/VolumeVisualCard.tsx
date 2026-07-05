@@ -134,6 +134,10 @@ function defaultVolumeSettings(): Omit<VolumeFullSettings, "metrics" | "version"
     clipMin: [0, 0, 0],
     clipMax: [1, 1, 1],
     background: "dark",
+    // 3D views linked by default (WS-VCP fix 1) — see MeshVisualCard's
+    // identical comment; only affects cards without an explicit persisted
+    // `syncViews` value.
+    syncViews: true,
     // Inert placeholders — see defaultPointCloudSettings' identical comment.
     brightness: 0,
     contrast: 0,

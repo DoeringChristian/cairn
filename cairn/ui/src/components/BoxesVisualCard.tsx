@@ -132,6 +132,10 @@ function defaultBoxesSettings(): Omit<BoxesFullSettings, "metrics" | "version"> 
   return {
     colorMode: "depth",
     background: "dark",
+    // 3D views linked by default (WS-VCP fix 1) — see MeshVisualCard's
+    // identical comment; only affects cards without an explicit persisted
+    // `syncViews` value.
+    syncViews: true,
     // Inert placeholders — see defaultPointCloudSettings' identical comment.
     brightness: 0,
     contrast: 0,

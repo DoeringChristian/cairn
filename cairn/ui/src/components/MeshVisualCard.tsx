@@ -143,6 +143,11 @@ function defaultMeshSettings(): Omit<MeshFullSettings, "metrics" | "version"> {
     wireframe: false,
     doubleSided: true,
     background: "dark",
+    // 3D views linked by default (WS-VCP fix 1) — `useCardSettings` merges
+    // this under any persisted value, so a card that already has an explicit
+    // `syncViews` (on OR off) keeps it; only brand-new/never-toggled cards
+    // pick up this default.
+    syncViews: true,
     // Inert placeholders — see defaultPointCloudSettings' identical comment.
     brightness: 0,
     contrast: 0,
