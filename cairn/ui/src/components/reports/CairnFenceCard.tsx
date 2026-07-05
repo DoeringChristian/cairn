@@ -25,6 +25,7 @@ import {
   compileCairnBlock,
   parseCairnSpec,
   useMetricIndex,
+  type CardsBlock,
 } from "../../lib/reports";
 import type { QueryRunSelector } from "../../lib/run-selector";
 import ReportCardsBlock from "./ReportCardsBlock";
@@ -35,9 +36,27 @@ interface Props {
   allProjectRuns: Run[];
   /** The fence's raw YAML body (no ```cairn/``` delimiters). */
   source: string;
+  /**
+   * WS-NR1 (B7/edit-mode gating): threaded down to `ReportCardsBlock`, which
+   * gates every card's settings mutation on it via `CardMutationContext` —
+   * previously hardcoded `false`, so a card rendered through this fence
+   * preview was *always* view-mode-frozen even when the surrounding report
+   * was itself in edit mode. Defaults to `false` (unchanged behavior for the
+   * read-only whole-source viewer, `ReportSourceMarkdown`).
+   */
+  editMode?: boolean;
+  /**
+   * Structural card edits (add/remove/reorder card, run picker) — when
+   * omitted (the read-only whole-source viewer's usage), those controls are
+   * simply not shown (`ReportCardsBlock` only renders them in edit mode, and
+   * `editMode` defaults to `false` here). `SegmentedMarkdownEditor` passes a
+   * real callback so a cairn cell's structural edits re-serialize back into
+   * the segment's YAML (see markdown-cell.tsx).
+   */
+  onCardsChange?: (block: CardsBlock) => void;
 }
 
-export default function CairnFenceCard({ projectId, reportId, allProjectRuns, source }: Props) {
+export default function CairnFenceCard({ projectId, reportId, allProjectRuns, source, editMode = false, onCardsChange }: Props) {
   // Stable fallback id for the lifetime of this fence's position in the
   // document (specs without their own `id:` still get a stable per-mount
   // id, so ReportCardsBlock's internal keys/effects don't churn every
@@ -139,11 +158,17 @@ export default function CairnFenceCard({ projectId, reportId, allProjectRuns, so
       projectId={projectId}
       reportId={reportId}
       block={block}
-      editMode={false}
+      editMode={editMode}
       allProjectRuns={allProjectRuns}
-      onChange={() => {
-        /* read-only inline preview — edits happen by editing the YAML source */
-      }}
+      onChange={
+        onCardsChange ??
+        (() => {
+          /* no onCardsChange given (e.g. the read-only whole-source viewer) —
+           * structural edits happen by editing the YAML source instead; only
+           * per-card settings (gated by CardMutationContext via `editMode`
+           * above) flow through the card-settings store, not this onChange. */
+        })
+      }
     />
   );
 }

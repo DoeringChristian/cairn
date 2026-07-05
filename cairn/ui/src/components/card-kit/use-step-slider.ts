@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useContext, useMemo, useState } from "react";
+import { CardMutationContext } from "../../lib/card-settings";
 
 export interface StepSliderState {
   /** Sorted union of steps across all series' points. */
@@ -32,6 +33,11 @@ export function useStepSlider(args: {
   updateSettings: (patch: { sliderStep?: number }) => void;
 }): StepSliderState {
   const { seriesPoints, persistedIdx, updateSettings } = args;
+  // WS-NR1 (B7/edit-mode gating): `idx` is local state that mirrors, but is
+  // independent of, `useCardSettings`'s persisted `sliderStep` — a no-op
+  // `updateSettings` alone wouldn't stop the slider from moving locally, so
+  // gate this hook's own state update on the same context directly.
+  const mutable = useContext(CardMutationContext);
 
   const globalSteps = useMemo(() => {
     const stepSet = new Set<number>();
@@ -41,6 +47,7 @@ export function useStepSlider(args: {
 
   const [idx, setIdx] = useState(persistedIdx ?? 0);
   const onSliderChange = (newIdx: number) => {
+    if (!mutable) return;
     setIdx(newIdx);
     updateSettings({ sliderStep: newIdx });
   };

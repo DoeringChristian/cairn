@@ -7,8 +7,33 @@
  * different contexts (e.g. train/val) have independent settings.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { loadJson, saveJson, storageKeys } from "./storage";
+
+/**
+ * WS-NR1 deliverable 2 (bug (c) / B7): whether the card tree currently
+ * mounted under this context may mutate its own persisted settings —
+ * step/iteration, compare mode, yScale, smoothing, collapse/resize, … all
+ * flow through the *one* choke point below (`useCardSettings`'s
+ * `updateSettings`/`reset`), so gating it here freezes a card's entire
+ * saved config in one place instead of threading a `readOnly`/`editMode`
+ * prop through every one of the ~20 individual card components.
+ *
+ * Default `true` (mutable) — every existing call site (the Metrics & Media
+ * tab, ComparePage, …) that never wraps its tree in a
+ * `<CardMutationContext.Provider>` keeps behaving exactly as before. Only
+ * report surfaces (`ReportCardsBlock`/`CairnFenceCard`) provide `false` for
+ * a card rendered in VIEW mode — see their docs for why this is the fix for
+ * "interactive controls write localStorage in view mode, and the next
+ * `restoreReportCardSettings` silently clobbers the change anyway."
+ *
+ * Two hooks that maintain settings-shaped local UI state *outside*
+ * `useCardSettings` itself also read this directly, so their own local
+ * mirror state freezes in lockstep (a no-op `updateSettings` alone isn't
+ * enough for them — see each's doc): `card-kit/use-step-slider.ts` and
+ * `ArtifactCard.tsx`'s bespoke slider index.
+ */
+export const CardMutationContext = createContext<boolean>(true);
 
 export type CardSettingsKey = {
   runId: string;
@@ -57,13 +82,20 @@ export function resetCardSettings(key: CardSettingsKey): void {
  * - resetSettings(): clear localStorage and revert to defaults.
  *
  * Re-renders when the settings change. The returned updater/resetter have
- * stable identity across renders (only change when the storage key changes).
+ * stable identity across renders (only change when the storage key or the
+ * mutation gate changes — see `CardMutationContext`).
+ *
+ * When `CardMutationContext` reads `false` (a report card in VIEW mode),
+ * `updateSettings`/`reset` become no-ops: they neither touch localStorage
+ * nor update local state, so the card stays visually fixed at its loaded
+ * settings regardless of what an interactive control tries to write.
  */
 export function useCardSettings<T extends { version: number }>(
   key: CardSettingsKey,
   defaults: T,
 ): [T, (patch: Partial<T>) => void, () => void] {
   const storageKey = cardSettingsStorageKey(key);
+  const mutable = useContext(CardMutationContext);
 
   // Keep the latest `defaults` in a ref so we can merge on load without
   // adding `defaults` as an effect dep (which would thrash on every render
@@ -93,24 +125,26 @@ export function useCardSettings<T extends { version: number }>(
 
   const updateSettings = useCallback(
     (patch: Partial<T>) => {
+      if (!mutable) return;
       const next = { ...settingsRef.current, ...patch } as T;
       settingsRef.current = next;
       setSettings(next);
       saveCardSettings<T>(key, next);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [storageKey],
+    [storageKey, mutable],
   );
 
   const reset = useCallback(
     () => {
+      if (!mutable) return;
       resetCardSettings(key);
       const fresh = { ...defaultsRef.current } as T;
       settingsRef.current = fresh;
       setSettings(fresh);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [storageKey],
+    [storageKey, mutable],
   );
 
   return [settings, updateSettings, reset];

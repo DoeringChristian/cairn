@@ -3,12 +3,12 @@
  * Shows file metadata (name, size, MIME type) and a step slider.
  */
 
-import { useMemo, useRef, useState } from "react";
+import { useContext, useMemo, useRef, useState } from "react";
 import { useSequence, useArtifacts } from "../api/hooks";
 import { api } from "../api/client";
 import { safeJsonParse } from "../lib/format";
 import { downloadArtifact, artifactFilename } from "../lib/download";
-import { useCardSettings, type CardSettingsKey } from "../lib/card-settings";
+import { CardMutationContext, useCardSettings, type CardSettingsKey } from "../lib/card-settings";
 import type { SequenceMeta } from "../api/types";
 import CardShell from "./CardShell";
 import StepSlider from "./StepSlider";
@@ -77,6 +77,10 @@ export default function ArtifactCard({ runId, metric, settingsKeyOverride, onRem
     DEFAULT_SETTINGS,
   );
 
+  // WS-NR1 (B7/edit-mode gating): local mirror of settings.sliderStep, same
+  // caveat as card-kit/use-step-slider.ts — gate the state update directly,
+  // since a no-op updateSettings alone wouldn't stop this local idx moving.
+  const mutable = useContext(CardMutationContext);
   const [idx, setIdx] = useState(settings.sliderStep ?? 0);
   const safeIdx = Math.min(Math.max(0, idx), Math.max(0, points.length - 1));
   const current = points[safeIdx];
@@ -184,6 +188,7 @@ export default function ArtifactCard({ runId, metric, settingsKeyOverride, onRem
             points={points}
             currentIndex={safeIdx}
             onChange={(v) => {
+              if (!mutable) return;
               setIdx(v);
               updateSettings({ sliderStep: v });
             }}

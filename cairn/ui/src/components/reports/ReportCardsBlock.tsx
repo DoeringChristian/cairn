@@ -17,6 +17,7 @@ import AddCardModal, { type AddCardSelection } from "../AddCardModal";
 import CardRenderer from "../CardRenderer";
 import ReorderableCardGrid from "../ReorderableCardGrid";
 import RunSelectorBadge from "../RunSelectorBadge";
+import { CardMutationContext } from "../../lib/card-settings";
 import {
   isMultiRunCardType,
   rebindCardsToMetricIndex,
@@ -203,6 +204,12 @@ export default function ReportCardsBlock({ projectId, reportId, block, editMode,
   };
 
   return (
+    // WS-NR1 (B7/edit-mode gating): freeze every card's persisted settings
+    // (step/iteration, compare mode, yScale, …) outside edit mode — see
+    // CardMutationContext's doc. `editMode` here is this block's real
+    // edit-mode flag; CairnFenceCard (the ```cairn fence preview) passes its
+    // own threaded `editMode`, defaulting to `false` for a pure viewer.
+    <CardMutationContext.Provider value={editMode}>
     <div>
       {(editMode || selector) && (
         <div className="mb-3 card p-3">
@@ -419,6 +426,7 @@ export default function ReportCardsBlock({ projectId, reportId, block, editMode,
         />
       )}
     </div>
+    </CardMutationContext.Provider>
   );
 }
 
