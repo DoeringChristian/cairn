@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { api } from "../api/client";
 import type { SequenceMeta } from "../api/types";
@@ -37,7 +37,8 @@ import {
 import type { DiffColormap } from "../lib/cairn-plot/three/diff";
 import { resetScene3DViews, type Scene3DSyncOptions } from "../lib/cairn-plot/three/use-scene3d";
 import type { ViewportPaneProps } from "../lib/cairn-plot/viewport/types";
-import { OffscreenComparePanes, type VisualCompareSettings } from "./card-kit";
+import { OffscreenComparePanes, useOffscreenSnapshot, type VisualCompareSettings } from "./card-kit";
+import type { ForeignFrameProps } from "./card-kit/cross-type-frame";
 import Select from "./settings/Select";
 import Slider from "./settings/Slider";
 import VisualContentCard from "./VisualContentCard";
@@ -100,6 +101,43 @@ function useVolumeData(args: ViewportDataArgs): ViewportDataResult<VolumeViewpor
     fg.map((q) => q.dataUpdatedAt).join("|"),
     ref.map((q) => q.dataUpdatedAt).join("|"),
   ]);
+}
+
+// ---------------------------------------------------------------------------
+// VolumeForeignFrame — WS-VC6 cross-type bridge (mirrors `MeshForeignFrame`'s
+// doc comment exactly): renders ONE volume hash's viewer hidden, default
+// view (`defaultVolumeSettings`, hoisted below), purely to capture a single
+// offscreen snapshot for another (image) card's cross-type compare.
+// ---------------------------------------------------------------------------
+export function VolumeForeignFrame({ hash, metadata, onFrame }: ForeignFrameProps) {
+  const [blob] = useVolumeBlobs([hash]);
+  const meta = safeJsonParse<VolumeMeta>(metadata);
+  const snap = useOffscreenSnapshot();
+  const view = resolveVolumeViewConfig(defaultVolumeSettings() as VolumeFullSettings);
+
+  useEffect(() => {
+    if (snap.dataUrl) onFrame({ kind: "dataUrl", dataUrl: snap.dataUrl });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snap.dataUrl]);
+
+  if (!blob?.data || !meta) return null;
+  return (
+    <VolumeViewer
+      data={blob.data}
+      shape={meta.shape}
+      spacing={meta.spacing}
+      origin={meta.origin}
+      vmin={meta.vmin}
+      vmax={meta.vmax}
+      mode={view.mode}
+      isovalue={view.isovalue}
+      colormap={view.colormap}
+      steps={view.steps}
+      clip={{ min: view.clipMin, max: view.clipMax }}
+      background={view.background}
+      onFrame={snap.onFrame}
+    />
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -204,11 +242,65 @@ function VolumeViewportPane(
     splitPosition,
     onSplitPositionChange,
     blendAlpha,
+    crossTypeReferenceUrl,
+    crossTypeAlignForDiff,
     colorRange,
   } = props;
   const sync: Scene3DSyncOptions | null = cameraSyncGroupId ? { groupId: cameraSyncGroupId } : null;
   const view = resolveVolumeViewConfig(settings);
-  const effectiveMode: MediaCompareModeKind = reference == null ? "normal" : mode;
+  const hasCrossTypeRef = crossTypeReferenceUrl != null;
+  const effectiveMode: MediaCompareModeKind = reference == null && !hasCrossTypeRef ? "normal" : mode;
+
+  // Renders THIS pane's own (foreground) volume live — shared by the
+  // same-type split/blend/diff branch below AND the WS-VC6 cross-type
+  // branch (a foreign-type reference has no `VolumeSideBySideView`
+  // counterpart, so cross-type routes "side" through the generalized
+  // `OffscreenComparePanes` too).
+  const renderVolumeLive = (cb: (canvas: HTMLCanvasElement) => void, syncOpts: Scene3DSyncOptions) => {
+    const [vmin, vmax] = colorRange ?? [data!.meta.vmin, data!.meta.vmax];
+    return (
+      <VolumeViewer
+        data={data!.arrays.data}
+        shape={data!.meta.shape}
+        spacing={data!.meta.spacing}
+        origin={data!.meta.origin}
+        vmin={vmin}
+        vmax={vmax}
+        mode={view.mode}
+        isovalue={view.isovalue}
+        colormap={view.colormap}
+        steps={view.steps}
+        clip={{ min: view.clipMin, max: view.clipMax }}
+        background={view.background}
+        sync={syncOpts}
+        onFrame={cb}
+      />
+    );
+  };
+
+  if (hasCrossTypeRef && effectiveMode !== "normal") {
+    if (!data) {
+      return (
+        <div className="flex h-full w-full items-center justify-center text-sm text-fg-muted motion-safe:animate-pulse">
+          loading…
+        </div>
+      );
+    }
+    return (
+      <OffscreenComparePanes
+        mode={effectiveMode as Extract<MediaCompareModeKind, "side" | "split" | "blend" | "diff">}
+        primary={{ kind: "live", render: renderVolumeLive }}
+        reference={{ kind: "frame", frameSource: { kind: "url", url: crossTypeReferenceUrl! } }}
+        diffSubmode={diffMode}
+        colormap={(settings.diffColormap ?? "viridis") as Colormap}
+        splitPosition={splitPosition ?? 0.5}
+        onSplitPositionChange={onSplitPositionChange ?? (() => {})}
+        blendAlpha={blendAlpha ?? 0.5}
+        primaryLabel={label}
+        alignForDiff={crossTypeAlignForDiff}
+      />
+    );
+  }
 
   if (effectiveMode === "side") {
     return (
@@ -236,47 +328,30 @@ function VolumeViewportPane(
     return (
       <OffscreenComparePanes
         mode={effectiveMode}
-        renderPrimary={(cb, syncOpts) => {
-          const [vmin, vmax] = colorRange ?? [data.meta.vmin, data.meta.vmax];
-          return (
-            <VolumeViewer
-              data={data.arrays.data}
-              shape={data.meta.shape}
-              spacing={data.meta.spacing}
-              origin={data.meta.origin}
-              vmin={vmin}
-              vmax={vmax}
-              mode={view.mode}
-              isovalue={view.isovalue}
-              colormap={view.colormap}
-              steps={view.steps}
-              clip={{ min: view.clipMin, max: view.clipMax }}
-              background={view.background}
-              sync={syncOpts}
-              onFrame={cb}
-            />
-          );
-        }}
-        renderReference={(cb, syncOpts) => {
-          const [vmin, vmax] = colorRange ?? [reference.meta.vmin, reference.meta.vmax];
-          return (
-            <VolumeViewer
-              data={reference.arrays.data}
-              shape={reference.meta.shape}
-              spacing={reference.meta.spacing}
-              origin={reference.meta.origin}
-              vmin={vmin}
-              vmax={vmax}
-              mode={view.mode}
-              isovalue={view.isovalue}
-              colormap={view.colormap}
-              steps={view.steps}
-              clip={{ min: view.clipMin, max: view.clipMax }}
-              background={view.background}
-              sync={syncOpts}
-              onFrame={cb}
-            />
-          );
+        primary={{ kind: "live", render: renderVolumeLive }}
+        reference={{
+          kind: "live",
+          render: (cb, syncOpts) => {
+            const [vmin, vmax] = colorRange ?? [reference.meta.vmin, reference.meta.vmax];
+            return (
+              <VolumeViewer
+                data={reference.arrays.data}
+                shape={reference.meta.shape}
+                spacing={reference.meta.spacing}
+                origin={reference.meta.origin}
+                vmin={vmin}
+                vmax={vmax}
+                mode={view.mode}
+                isovalue={view.isovalue}
+                colormap={view.colormap}
+                steps={view.steps}
+                clip={{ min: view.clipMin, max: view.clipMax }}
+                background={view.background}
+                sync={syncOpts}
+                onFrame={cb}
+              />
+            );
+          },
         }}
         diffSubmode={diffMode}
         colormap={(settings.diffColormap ?? "viridis") as Colormap}

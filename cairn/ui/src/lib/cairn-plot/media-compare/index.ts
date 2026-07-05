@@ -39,6 +39,7 @@ export {
   type MediaComparePaneProps,
   CompositeMediaPane,
   type CompositeMediaPaneProps,
+  CrossTypeCompositeMediaPane,
 } from "./compositor";
 
 export {
@@ -47,3 +48,5 @@ export {
   LEGACY_MODE_MIGRATION_TABLE,
   assertLegacyModeMigrationTable,
 } from "./migrate-legacy-mode";
+
+export { alignFrameSourcesForDiff, type RasterAlignmentResult } from "./cross-type-align";

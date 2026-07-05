@@ -105,10 +105,14 @@ export interface ViewportCapabilities<M extends string = never> {
    *  "tracked") or is always enabled regardless of state (3D: "always" per
    *  the design doc's analysis of the 3D cards' hardcoded `viewModified`). */
   resetView: "tracked" | "always";
-  /** Whether this type's reference may resolve to a DIFFERENT object_type
-   *  (WS-VC6). Always false until VC6 relaxes `useMediaReference`'s
-   *  same-family filter; declared now so the descriptor shape does not need
-   *  to change later. */
+  /** Whether this type PARTICIPATES in cross-type compare (WS-VC6) at all —
+   *  `true` for every type today (image + all four 3D types). This alone
+   *  doesn't mean any two types can compare against each other: the actual
+   *  pairing gate is `canCrossTypeCompare` (`viewport/cross-type.ts`), which
+   *  additionally requires one side to be "image" (see that module's doc
+   *  comment for the shipped-scope rationale). `VisualContentCard` checks
+   *  BOTH this flag and `canCrossTypeCompare` before offering a cross-type
+   *  reference (the `ExternalBaselinePicker` filter) or rendering one. */
   crossTypeCompare: boolean;
   /** Live WebGL contexts consumed per rendered pane (steady-state, not
    *  counting a transient compare-mode doubling). Image: 0 (diff uses one
@@ -246,10 +250,36 @@ export interface ViewportPaneProps<TData, TView extends ViewState, TSettings> {
   /** Live camera-sync group id ("Sync 3D views"), resolved ONCE per card
    *  (never per pane — see `lib/camera-sync.ts`'s `useCameraSync` doc
    *  comment) and threaded to every pane so orbit/zoom/pan mirrors across
-   *  this card's panes (and any other sync-enabled 3D card on the page).
-   *  `null` = sync off or `capabilities.cameraSync` is false; ImageViewport
-   *  ignores this (image has no camera). Added in WS-VC4. */
+   *  this card's OWN panes only — scoped per card instance, NOT shared with
+   *  any other 3D card on the page (see `useCameraSync`'s doc comment; fixed
+   *  in the "per-card sync group, not app-wide" pass). `null` = sync off or
+   *  `capabilities.cameraSync` is false; ImageViewport ignores this (image
+   *  has no camera). Added in WS-VC4. */
   cameraSyncGroupId?: string | null;
+  /** WS-VC6: the resolved reference belongs to a DIFFERENT `object_type` than
+   *  this viewport (cross-type compare — image<->3D). `reference` is always
+   *  `null` in this case (a foreign type's data cannot be shaped as this
+   *  module's own `TData`); the card instead supplies an already-rendered
+   *  raster here — a plain image URL (foreign type "image") or a
+   *  pre-snapshotted 3D render (foreign 3D type, rendered offscreen by the
+   *  card via that type's own module — see `components/card-kit/
+   *  cross-type-frame.tsx`). `undefined`/`null` = no cross-type reference for
+   *  this pane (the normal same-type `reference` field applies, if any); the
+   *  module then falls back to its native reference handling unchanged.
+   *  Only meaningful for the image-space compositor modes (side/split/blend/
+   *  diff) — native (geometry) `nativeModes` never receive this and stay
+   *  same-type by construction (their `enabledFor` sees a `null` `reference`
+   *  item, so they self-disable). */
+  crossTypeReferenceUrl?: string | null;
+  /** WS-VC6: when true AND `mode === "diff"`, the module should route the
+   *  pixel-diff through the resample/letterbox alignment step
+   *  (`media-compare/cross-type-align.ts`, via `CrossTypeCompositeMediaPane`)
+   *  instead of feeding `crossTypeReferenceUrl` straight into the ordinary
+   *  diff pipeline — the two rasters are cross-type and may have unrelated
+   *  pixel dimensions/aspect, so a naive top-left crop (today's same-type
+   *  `computeDiff` behavior) would not be spatially meaningful. Always
+   *  `false`/`undefined` outside cross-type compare. */
+  crossTypeAlignForDiff?: boolean;
   /**
    * Card-level UNIFIED value/colormap domain (WS-VCP fix 4) — computed ONCE
    * per card by `ViewportModule.activeColorbar` across every pane's

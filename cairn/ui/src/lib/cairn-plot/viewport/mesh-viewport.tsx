@@ -148,26 +148,37 @@ export function MeshSingleView({
   const resolvedMode = resolveMeshColorMode(view.colorMode, !!arrays.colors, !!active.values);
   const valueRange = resolvedMode === "values" ? (colorRange ?? active.range) : active.range;
   return (
-    <div className="relative flex h-full w-full overflow-hidden rounded bg-bg">
-      <div className="min-w-0 flex-1">
-        <MeshViewer
-          positions={arrays.positions}
-          faces={arrays.faces}
-          nVertices={meta.n_vertices}
-          nFaces={meta.n_faces}
-          values={active.values}
-          valueRange={valueRange}
-          colors={arrays.colors}
-          normals={arrays.normals}
-          bounds={meta.bounds}
-          colorMode={view.colorMode}
-          shading={view.shading}
-          wireframe={view.wireframe}
-          doubleSided={view.doubleSided}
-          background={view.background}
-          sync={sync}
-          onFrame={onFrame}
-        />
+    <div className="relative flex h-full w-full flex-col overflow-hidden rounded bg-bg">
+      <div className="flex flex-1 min-h-0 overflow-hidden">
+        <div className="min-w-0 flex-1">
+          <MeshViewer
+            positions={arrays.positions}
+            faces={arrays.faces}
+            nVertices={meta.n_vertices}
+            nFaces={meta.n_faces}
+            values={active.values}
+            valueRange={valueRange}
+            colors={arrays.colors}
+            normals={arrays.normals}
+            bounds={meta.bounds}
+            colorMode={view.colorMode}
+            shading={view.shading}
+            wireframe={view.wireframe}
+            doubleSided={view.doubleSided}
+            background={view.background}
+            sync={sync}
+            onFrame={onFrame}
+          />
+        </div>
+      </div>
+      {/* Per-pane metadata caption (restored — dropped when WS-VC5 migrated
+          off the bespoke MeshCard; boxes3d kept its equivalent
+          ("N of M boxes · kind") through the migration, mesh's/volume's
+          didn't). Mirrors the pre-VC5 MeshCard.tsx caption verbatim
+          (vertex/face counts + the active property name, when any). */}
+      <div className="mono px-1 py-0.5 text-[10px] text-fg-subtle">
+        {`${meta.n_vertices.toLocaleString()} verts · ${meta.n_faces.toLocaleString()} faces`}
+        {active.name ? ` · ${active.name}` : ""}
       </div>
       <LabelChip label={label} isDraggable={isDraggable} onDragStart={onDragStart} />
     </div>
@@ -476,7 +487,7 @@ export const meshViewportCapabilities: ViewportCapabilities<MeshNativeMode> = {
   colorbar: "never",
   cameraSync: true,
   resetView: "always",
-  crossTypeCompare: false,
+  crossTypeCompare: true,
   webglContextsPerPane: 1,
   maxPanes: 4,
   label: { placement: "bottom-left", draggable: true },

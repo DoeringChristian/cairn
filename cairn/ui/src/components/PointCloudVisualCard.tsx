@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { api } from "../api/client";
 import type { SequenceMeta } from "../api/types";
@@ -36,7 +36,8 @@ import { extractProperties, propertyNames } from "../lib/cairn-plot/three/proper
 import type { DiffColormap } from "../lib/cairn-plot/three/diff";
 import { resetScene3DViews, type Scene3DSyncOptions } from "../lib/cairn-plot/three/use-scene3d";
 import type { ViewportPaneProps } from "../lib/cairn-plot/viewport/types";
-import { OffscreenComparePanes, PropertySelector, type VisualCompareSettings } from "./card-kit";
+import { OffscreenComparePanes, PropertySelector, useOffscreenSnapshot, type VisualCompareSettings } from "./card-kit";
+import type { ForeignFrameProps } from "./card-kit/cross-type-frame";
 import Select from "./settings/Select";
 import Slider from "./settings/Slider";
 import VisualContentCard from "./VisualContentCard";
@@ -136,6 +137,37 @@ function usePointCloudData(args: ViewportDataArgs): ViewportDataResult<PointClou
     fg.map((q) => q.dataUpdatedAt).join("|"),
     ref.map((q) => q.dataUpdatedAt).join("|"),
   ]);
+}
+
+// ---------------------------------------------------------------------------
+// PointCloudForeignFrame — WS-VC6 cross-type bridge (mirrors
+// `MeshForeignFrame`'s doc comment exactly): renders ONE point cloud hash's
+// viewer hidden, default view, purely to capture a single offscreen snapshot
+// for another (image) card's cross-type compare.
+// ---------------------------------------------------------------------------
+export function PointCloudForeignFrame({ hash, metadata, onFrame }: ForeignFrameProps) {
+  const [blob] = usePointCloudBlobs([hash]);
+  const meta = safeJsonParse<PointCloudMeta>(metadata);
+  const snap = useOffscreenSnapshot();
+
+  useEffect(() => {
+    if (snap.dataUrl) onFrame({ kind: "dataUrl", dataUrl: snap.dataUrl });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snap.dataUrl]);
+
+  if (!blob?.data || !meta) return null;
+  return (
+    <PointCloudViewer
+      data={blob.data.data}
+      channels={meta.channels}
+      nPoints={meta.n_points}
+      bounds={meta.bounds}
+      colorMode="auto"
+      pointSize={2.5}
+      background="dark"
+      onFrame={snap.onFrame}
+    />
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -239,13 +271,9 @@ function PointCloudViewportPane(
     splitPosition,
     onSplitPositionChange,
     blendAlpha,
+    crossTypeReferenceUrl,
+    crossTypeAlignForDiff,
   } = props;
-  // `onFrame` (ViewportPaneProps) is the FrameSource compositor bridge
-  // reserved for WS-VC6 cross-type compare — not yet called here, matching
-  // ImageViewportPane's own stance (see FrameSource's doc comment in
-  // viewport/types.ts). `PointCloudSingleView`'s OWN `onFrame` param is a
-  // different, unrelated thing (the raw `useScene3D` canvas callback) that
-  // this Pane doesn't need in the plain single-pane case.
   const sync: Scene3DSyncOptions | null = cameraSyncGroupId ? { groupId: cameraSyncGroupId } : null;
   const view = {
     pointSize: settings.pointSize,
@@ -253,10 +281,55 @@ function PointCloudViewportPane(
     background: settings.background,
     property: settings.property ?? null,
   };
+  const hasCrossTypeRef = crossTypeReferenceUrl != null;
   // Mirrors CompositeMediaPane's own rule: no reference resolved -> always
   // "normal", regardless of the user's selected mode (see ViewportPaneProps'
-  // `mode` doc comment).
-  const effectiveMode: MediaCompareModeKind = reference == null ? "normal" : mode;
+  // `mode` doc comment) — UNLESS a WS-VC6 cross-type reference is resolved
+  // instead (same-type `reference` is always null in that case).
+  const effectiveMode: MediaCompareModeKind = reference == null && !hasCrossTypeRef ? "normal" : mode;
+
+  // Renders THIS pane's own (foreground) point cloud live — shared by the
+  // same-type split/blend/diff branch below AND the WS-VC6 cross-type
+  // branch (a foreign-type reference has no `PointCloudSideBySideView`
+  // counterpart, so cross-type routes "side" through the generalized
+  // `OffscreenComparePanes` too).
+  const renderPointCloudLive = (cb: (canvas: HTMLCanvasElement) => void, syncOpts: Scene3DSyncOptions) => (
+    <PointCloudViewer
+      data={data!.arrays.data}
+      channels={data!.meta.channels}
+      nPoints={data!.meta.n_points}
+      bounds={data!.meta.bounds}
+      colorMode={view.colorMode}
+      pointSize={view.pointSize}
+      background={view.background}
+      sync={syncOpts}
+      onFrame={cb}
+    />
+  );
+
+  if (hasCrossTypeRef && effectiveMode !== "normal") {
+    if (!data) {
+      return (
+        <div className="flex h-full w-full items-center justify-center text-sm text-fg-muted motion-safe:animate-pulse">
+          loading…
+        </div>
+      );
+    }
+    return (
+      <OffscreenComparePanes
+        mode={effectiveMode as Extract<MediaCompareModeKind, "side" | "split" | "blend" | "diff">}
+        primary={{ kind: "live", render: renderPointCloudLive }}
+        reference={{ kind: "frame", frameSource: { kind: "url", url: crossTypeReferenceUrl! } }}
+        diffSubmode={diffMode}
+        colormap={(settings.diffColormap ?? "viridis") as Colormap}
+        splitPosition={splitPosition ?? 0.5}
+        onSplitPositionChange={onSplitPositionChange ?? (() => {})}
+        blendAlpha={blendAlpha ?? 0.5}
+        primaryLabel={label}
+        alignForDiff={crossTypeAlignForDiff}
+      />
+    );
+  }
 
   if (effectiveMode === "side") {
     return (
@@ -283,32 +356,23 @@ function PointCloudViewportPane(
     return (
       <OffscreenComparePanes
         mode={effectiveMode}
-        renderPrimary={(cb, syncOpts) => (
-          <PointCloudViewer
-            data={data.arrays.data}
-            channels={data.meta.channels}
-            nPoints={data.meta.n_points}
-            bounds={data.meta.bounds}
-            colorMode={view.colorMode}
-            pointSize={view.pointSize}
-            background={view.background}
-            sync={syncOpts}
-            onFrame={cb}
-          />
-        )}
-        renderReference={(cb, syncOpts) => (
-          <PointCloudViewer
-            data={reference.arrays.data}
-            channels={reference.meta.channels}
-            nPoints={reference.meta.n_points}
-            bounds={reference.meta.bounds}
-            colorMode={view.colorMode}
-            pointSize={view.pointSize}
-            background={view.background}
-            sync={syncOpts}
-            onFrame={cb}
-          />
-        )}
+        primary={{ kind: "live", render: renderPointCloudLive }}
+        reference={{
+          kind: "live",
+          render: (cb, syncOpts) => (
+            <PointCloudViewer
+              data={reference.arrays.data}
+              channels={reference.meta.channels}
+              nPoints={reference.meta.n_points}
+              bounds={reference.meta.bounds}
+              colorMode={view.colorMode}
+              pointSize={view.pointSize}
+              background={view.background}
+              sync={syncOpts}
+              onFrame={cb}
+            />
+          ),
+        }}
         diffSubmode={diffMode}
         colormap={(settings.diffColormap ?? "viridis") as Colormap}
         splitPosition={splitPosition ?? 0.5}

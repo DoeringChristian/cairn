@@ -130,24 +130,35 @@ export function VolumeSingleView({
   const { arrays, meta } = item;
   const [vmin, vmax] = colorRange ?? [meta.vmin, meta.vmax];
   return (
-    <div className="relative flex h-full w-full overflow-hidden rounded bg-bg">
-      <div className="min-w-0 flex-1 overflow-hidden rounded bg-bg">
-        <VolumeViewer
-          data={arrays.data}
-          shape={meta.shape}
-          spacing={meta.spacing}
-          origin={meta.origin}
-          vmin={vmin}
-          vmax={vmax}
-          mode={view.mode}
-          isovalue={view.isovalue}
-          colormap={view.colormap}
-          steps={view.steps}
-          clip={{ min: view.clipMin, max: view.clipMax }}
-          background={view.background}
-          sync={sync}
-          onFrame={onFrame}
-        />
+    <div className="relative flex h-full w-full flex-col overflow-hidden rounded bg-bg">
+      <div className="flex flex-1 min-h-0 overflow-hidden">
+        <div className="min-w-0 flex-1 overflow-hidden rounded bg-bg">
+          <VolumeViewer
+            data={arrays.data}
+            shape={meta.shape}
+            spacing={meta.spacing}
+            origin={meta.origin}
+            vmin={vmin}
+            vmax={vmax}
+            mode={view.mode}
+            isovalue={view.isovalue}
+            colormap={view.colormap}
+            steps={view.steps}
+            clip={{ min: view.clipMin, max: view.clipMax }}
+            background={view.background}
+            sync={sync}
+            onFrame={onFrame}
+          />
+        </div>
+      </div>
+      {/* Per-pane metadata caption (restored — dropped when WS-VC5 migrated
+          off the bespoke VolumeCard; boxes3d kept its equivalent through the
+          migration, mesh's/volume's didn't). Mirrors the pre-VC5
+          VolumeCard.tsx caption verbatim (voxel shape + this pane's OWN
+          blob's data range — not the card-unified `colorRange`, so the
+          caption always reflects what's actually in this artifact). */}
+      <div className="mono px-1 py-0.5 text-[10px] text-fg-subtle">
+        {`${meta.shape.join("×")} · vmin ${meta.vmin.toFixed(3)} · vmax ${meta.vmax.toFixed(3)}`}
       </div>
       <LabelChip label={label} isDraggable={isDraggable} onDragStart={onDragStart} />
     </div>
@@ -396,7 +407,7 @@ export const volumeViewportCapabilities: ViewportCapabilities<VolumeNativeMode> 
   colorbar: "never",
   cameraSync: true,
   resetView: "always",
-  crossTypeCompare: false,
+  crossTypeCompare: true,
   webglContextsPerPane: 1,
   maxPanes: 4,
   label: { placement: "bottom-left", draggable: true },

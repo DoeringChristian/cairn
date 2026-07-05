@@ -462,7 +462,7 @@ export const boxesViewportCapabilities: ViewportCapabilities<BoxesNativeMode> = 
   colorbar: "never",
   cameraSync: true,
   resetView: "always",
-  crossTypeCompare: false,
+  crossTypeCompare: true,
   webglContextsPerPane: 1,
   maxPanes: 4,
   label: { placement: "bottom-left", draggable: true },

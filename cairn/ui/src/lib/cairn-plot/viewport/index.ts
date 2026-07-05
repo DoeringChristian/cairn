@@ -18,6 +18,8 @@ export {
   type ImageViewportSettings,
 } from "./image-viewport";
 
+export { CROSS_TYPE_VISUAL_OBJECT_TYPES, canCrossTypeCompare } from "./cross-type";
+
 // NOTE: pointcloud-viewport.tsx (WS-VC4) is DELIBERATELY not re-exported
 // from this barrel (or cairn-plot/index.ts's, both of which are imported
 // eagerly by non-lazy call sites such as VisualContentCard.tsx). It pulls
