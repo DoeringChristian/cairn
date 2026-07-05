@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { api } from "../api/client";
 import type { SequenceMeta } from "../api/types";
@@ -36,7 +36,8 @@ import { extractProperties, propertyNames, resolveActiveProperty } from "../lib/
 import type { DiffColormap } from "../lib/cairn-plot/three/diff";
 import { resetScene3DViews, type Scene3DSyncOptions } from "../lib/cairn-plot/three/use-scene3d";
 import type { ViewportPaneProps } from "../lib/cairn-plot/viewport/types";
-import { OffscreenComparePanes, PropertySelector, type VisualCompareSettings } from "./card-kit";
+import { OffscreenComparePanes, PropertySelector, useOffscreenSnapshot, type VisualCompareSettings } from "./card-kit";
+import type { ForeignFrameProps } from "./card-kit/cross-type-frame";
 import Select from "./settings/Select";
 import Toggle from "./settings/Toggle";
 import VisualContentCard from "./VisualContentCard";
@@ -116,6 +117,49 @@ function useMeshData(args: ViewportDataArgs): ViewportDataResult<MeshViewportIte
     fg.map((q) => q.dataUpdatedAt).join("|"),
     ref.map((q) => q.dataUpdatedAt).join("|"),
   ]);
+}
+
+// ---------------------------------------------------------------------------
+// MeshForeignFrame — WS-VC6 cross-type bridge: renders ONE mesh hash's
+// viewer hidden (default view — solid/smooth/dark, no per-card settings to
+// borrow, since the REQUESTING card is a different object_type) purely to
+// capture a single offscreen snapshot for another card's cross-type
+// compare. Dynamically imported (via `cross-type-frame-registry.tsx`) only
+// when an IMAGE card's resolved reference is this type, so `three`/
+// `MeshViewer` stay out of every other card's bundle exactly like
+// `MeshVisualCard`'s own lazy boundary.
+// ---------------------------------------------------------------------------
+export function MeshForeignFrame({ hash, metadata, onFrame }: ForeignFrameProps) {
+  const [blob] = useMeshBlobs([hash]);
+  const meta = safeJsonParse<MeshMeta>(metadata);
+  const snap = useOffscreenSnapshot();
+
+  useEffect(() => {
+    if (snap.dataUrl) onFrame({ kind: "dataUrl", dataUrl: snap.dataUrl });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snap.dataUrl]);
+
+  if (!blob?.data || !meta) return null;
+  const active = resolveActiveProperty(blob.data.properties, null, meta.properties ?? null);
+  return (
+    <MeshViewer
+      positions={blob.data.positions}
+      faces={blob.data.faces}
+      nVertices={meta.n_vertices}
+      nFaces={meta.n_faces}
+      values={active.values}
+      valueRange={active.range}
+      colors={blob.data.colors}
+      normals={blob.data.normals}
+      bounds={meta.bounds}
+      colorMode="solid"
+      shading="smooth"
+      wireframe={false}
+      doubleSided
+      background="dark"
+      onFrame={snap.onFrame}
+    />
+  );
 }
 
 // ---------------------------------------------------------------------------

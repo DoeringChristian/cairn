@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { api } from "../api/client";
 import type { SequenceMeta } from "../api/types";
@@ -35,7 +35,8 @@ import { extractProperties, propertyNames } from "../lib/cairn-plot/three/proper
 import type { DiffColormap } from "../lib/cairn-plot/three/diff";
 import { resetScene3DViews, type Scene3DSyncOptions } from "../lib/cairn-plot/three/use-scene3d";
 import type { ViewportPaneProps } from "../lib/cairn-plot/viewport/types";
-import { OffscreenComparePanes, PropertySelector, type VisualCompareSettings } from "./card-kit";
+import { OffscreenComparePanes, PropertySelector, useOffscreenSnapshot, type VisualCompareSettings } from "./card-kit";
+import type { ForeignFrameProps } from "./card-kit/cross-type-frame";
 import Select from "./settings/Select";
 import Slider from "./settings/Slider";
 import VisualContentCard from "./VisualContentCard";
@@ -135,6 +136,37 @@ function usePointCloudData(args: ViewportDataArgs): ViewportDataResult<PointClou
     fg.map((q) => q.dataUpdatedAt).join("|"),
     ref.map((q) => q.dataUpdatedAt).join("|"),
   ]);
+}
+
+// ---------------------------------------------------------------------------
+// PointCloudForeignFrame — WS-VC6 cross-type bridge (mirrors
+// `MeshForeignFrame`'s doc comment exactly): renders ONE point cloud hash's
+// viewer hidden, default view, purely to capture a single offscreen snapshot
+// for another (image) card's cross-type compare.
+// ---------------------------------------------------------------------------
+export function PointCloudForeignFrame({ hash, metadata, onFrame }: ForeignFrameProps) {
+  const [blob] = usePointCloudBlobs([hash]);
+  const meta = safeJsonParse<PointCloudMeta>(metadata);
+  const snap = useOffscreenSnapshot();
+
+  useEffect(() => {
+    if (snap.dataUrl) onFrame({ kind: "dataUrl", dataUrl: snap.dataUrl });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snap.dataUrl]);
+
+  if (!blob?.data || !meta) return null;
+  return (
+    <PointCloudViewer
+      data={blob.data.data}
+      channels={meta.channels}
+      nPoints={meta.n_points}
+      bounds={meta.bounds}
+      colorMode="auto"
+      pointSize={2.5}
+      background="dark"
+      onFrame={snap.onFrame}
+    />
+  );
 }
 
 // ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { api } from "../api/client";
 import type { SequenceMeta } from "../api/types";
@@ -39,7 +39,8 @@ import {
 import type { DiffColormap } from "../lib/cairn-plot/three/diff";
 import { resetScene3DViews, type Scene3DSyncOptions } from "../lib/cairn-plot/three/use-scene3d";
 import type { ViewportPaneProps } from "../lib/cairn-plot/viewport/types";
-import { OffscreenComparePanes, PropertySelector, type VisualCompareSettings } from "./card-kit";
+import { OffscreenComparePanes, PropertySelector, useOffscreenSnapshot, type VisualCompareSettings } from "./card-kit";
+import type { ForeignFrameProps } from "./card-kit/cross-type-frame";
 import Select from "./settings/Select";
 import Slider from "./settings/Slider";
 import Toggle from "./settings/Toggle";
@@ -108,6 +109,42 @@ function useBoxesData(args: ViewportDataArgs): ViewportDataResult<BoxesViewportI
     fg.map((q) => q.dataUpdatedAt).join("|"),
     ref.map((q) => q.dataUpdatedAt).join("|"),
   ]);
+}
+
+// ---------------------------------------------------------------------------
+// BoxesForeignFrame — WS-VC6 cross-type bridge (mirrors `MeshForeignFrame`'s
+// doc comment exactly): renders ONE boxes3d hash's viewer hidden, default
+// view, purely to capture a single offscreen snapshot for another (image)
+// card's cross-type compare.
+// ---------------------------------------------------------------------------
+export function BoxesForeignFrame({ hash, metadata, onFrame }: ForeignFrameProps) {
+  const [blob] = useBoxesBlobs([hash]);
+  const meta = safeJsonParse<Boxes3DMeta>(metadata);
+  const snap = useOffscreenSnapshot();
+
+  useEffect(() => {
+    if (snap.dataUrl) onFrame({ kind: "dataUrl", dataUrl: snap.dataUrl });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snap.dataUrl]);
+
+  if (!blob?.data || !meta) return null;
+  const active = resolveActiveProperty(blob.data.properties, null, meta.properties ?? null);
+  return (
+    <BoxesViewer
+      mins={blob.data.mins}
+      maxs={blob.data.maxs}
+      depth={blob.data.depth}
+      values={active.values}
+      nBoxes={meta.n_boxes}
+      bounds={meta.bounds}
+      maxDepth={meta.max_depth}
+      valueRange={active.range}
+      colorMode="depth"
+      depthRange={[0, meta.max_depth]}
+      background="dark"
+      onFrame={snap.onFrame}
+    />
+  );
 }
 
 // ---------------------------------------------------------------------------
