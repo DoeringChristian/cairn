@@ -25,6 +25,7 @@ import {
   PointCloudSideBySideView,
   PointCloudNativeDiffPane,
   pointCloudViewportCapabilities,
+  pointCloudActiveColorbar,
   type PointCloudMeta,
   type PointCloudViewportItem,
   type PointCloudViewState,
@@ -443,6 +444,7 @@ export const pointCloudViewportModule: ViewportModule<
   Pane: PointCloudViewportPane,
   SettingsControls: PointCloudSettingsControls,
   nativeDiff: { render: PointCloudNativeDiffPane },
+  activeColorbar: pointCloudActiveColorbar,
 };
 
 interface PointCloudVisualCardProps {

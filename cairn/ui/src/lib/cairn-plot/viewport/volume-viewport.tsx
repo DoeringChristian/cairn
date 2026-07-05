@@ -3,11 +3,12 @@ import VolumeViewer, {
   type VolumeQuality,
   type VolumeRenderMode,
 } from "../three/VolumeViewer";
-import type { Scene3DSyncOptions } from "../three/use-scene3d";
-import { absArray, computeDelta, diffDomain, type DiffColormap } from "../three/diff";
+import { usePairedSideBySideSync, type Scene3DSyncOptions } from "../three/use-scene3d";
+import { absArray, computeDelta, diffDomain, unionDiffDomain, type DiffColormap } from "../three/diff";
 import type { PropertyMeta } from "../three/properties";
-import { Colorbar, LabelChip } from "../primitives";
+import { LabelChip } from "../primitives";
 import type { ColormapName } from "../types";
+import type { MediaCompareModeKind } from "../media-compare/mode";
 import type { ViewportCapabilities, ViewportPaneProps, ViewState } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -103,6 +104,7 @@ export function VolumeSingleView({
   isDraggable,
   onDragStart,
   onFrame,
+  colorRange,
 }: {
   item: VolumeViewportItem | null;
   view: VolumeViewConfig;
@@ -111,6 +113,12 @@ export function VolumeSingleView({
   isDraggable?: boolean;
   onDragStart?: (e: React.DragEvent) => void;
   onFrame?: (canvas: HTMLCanvasElement) => void;
+  /** Card-level unified value range (WS-VCP fix 4) — overrides this item's
+   *  own `meta.vmin`/`vmax` so every pane's raymarch normalizes against the
+   *  SAME domain (matching the card's single always-on colorbar) instead of
+   *  each item's own data range. `null`/absent = fall back to this item's
+   *  own `vmin`/`vmax` (e.g. only one pane resolved so far). */
+  colorRange?: [number, number] | null;
 }) {
   if (!item) {
     return (
@@ -120,6 +128,7 @@ export function VolumeSingleView({
     );
   }
   const { arrays, meta } = item;
+  const [vmin, vmax] = colorRange ?? [meta.vmin, meta.vmax];
   return (
     <div className="relative flex h-full w-full overflow-hidden rounded bg-bg">
       <div className="min-w-0 flex-1 overflow-hidden rounded bg-bg">
@@ -128,8 +137,8 @@ export function VolumeSingleView({
           shape={meta.shape}
           spacing={meta.spacing}
           origin={meta.origin}
-          vmin={meta.vmin}
-          vmax={meta.vmax}
+          vmin={vmin}
+          vmax={vmax}
           mode={view.mode}
           isovalue={view.isovalue}
           colormap={view.colormap}
@@ -140,7 +149,6 @@ export function VolumeSingleView({
           onFrame={onFrame}
         />
       </div>
-      <Colorbar colormap={view.colormap} min={meta.vmin} max={meta.vmax} />
       <LabelChip label={label} isDraggable={isDraggable} onDragStart={onDragStart} />
     </div>
   );
@@ -155,6 +163,7 @@ export function VolumeSideBySideView({
   label,
   isDraggable,
   onDragStart,
+  colorRange,
 }: {
   item: VolumeViewportItem | null;
   reference: VolumeViewportItem | null;
@@ -163,7 +172,14 @@ export function VolumeSideBySideView({
   label: string;
   isDraggable?: boolean;
   onDragStart?: (e: React.DragEvent) => void;
+  /** See `VolumeSingleView`'s identical doc comment (WS-VCP fix 4) — threaded
+   *  to BOTH the ref and run viewer below so they raymarch against the SAME
+   *  normalized domain. */
+  colorRange?: [number, number] | null;
 }) {
+  // WS-VCP fix 3 — see MeshSideBySideView's identical comment: the ref+run
+  // pair always mirrors each other, independent of the card-level toggle.
+  const pairedSync = usePairedSideBySideSync(sync);
   if (!reference) {
     return (
       <VolumeSingleView
@@ -173,9 +189,11 @@ export function VolumeSideBySideView({
         label={label}
         isDraggable={isDraggable}
         onDragStart={onDragStart}
+        colorRange={colorRange}
       />
     );
   }
+  const [refVmin, refVmax] = colorRange ?? [reference.meta.vmin, reference.meta.vmax];
   return (
     <div className="flex h-full w-full gap-0.5">
       <div className="relative flex-1 min-w-0 overflow-hidden rounded border border-accent/20 bg-bg">
@@ -184,15 +202,15 @@ export function VolumeSideBySideView({
           shape={reference.meta.shape}
           spacing={reference.meta.spacing}
           origin={reference.meta.origin}
-          vmin={reference.meta.vmin}
-          vmax={reference.meta.vmax}
+          vmin={refVmin}
+          vmax={refVmax}
           mode={view.mode}
           isovalue={view.isovalue}
           colormap={view.colormap}
           steps={view.steps}
           clip={{ min: view.clipMin, max: view.clipMax }}
           background={view.background}
-          sync={sync}
+          sync={pairedSync}
         />
         <LabelChip label="REF" />
       </div>
@@ -201,10 +219,11 @@ export function VolumeSideBySideView({
           <VolumeSingleView
             item={item}
             view={view}
-            sync={sync}
+            sync={pairedSync}
             label={label}
             isDraggable={isDraggable}
             onDragStart={onDragStart}
+            colorRange={colorRange}
           />
         ) : (
           <div className="flex h-full items-center justify-center text-sm text-fg-muted">
@@ -229,6 +248,7 @@ export function VolumeNativeDiffPane({
   label,
   isDraggable,
   onDragStart,
+  colorRange,
 }: ViewportPaneProps<VolumeViewportItem, VolumeViewState, VolumeViewportSettings>) {
   const sync: Scene3DSyncOptions | null = cameraSyncGroupId ? { groupId: cameraSyncGroupId } : null;
   const view = resolveVolumeViewConfig(settings);
@@ -257,7 +277,11 @@ export function VolumeNativeDiffPane({
   const diffColormap: DiffColormap = settings.diffColormap ?? "viridis";
   const n = data.meta.shape[0] * data.meta.shape[1] * data.meta.shape[2];
   const delta = computeDelta(data.arrays.data, reference.arrays.data, n);
-  const domain = diffDomain(delta, diffColormap);
+  // WS-VCP fix 4: normalize against the card-level UNIFIED diff domain when
+  // supplied, else fall back to this pane's own autoscaled domain. Unlike
+  // mesh/pointcloud/boxes (precomputed per-element RGB), the raymarch shader
+  // itself normalizes by `vmin`/`vmax` — no separate recolor step needed.
+  const domain = colorRange ?? diffDomain(delta, diffColormap);
   const diffData = diffColormap === "viridis" ? absArray(delta) : delta;
 
   return (
@@ -279,7 +303,6 @@ export function VolumeNativeDiffPane({
           sync={sync}
         />
       </div>
-      <Colorbar colormap={diffColormap} min={domain[0]} max={domain[1]} />
       <LabelChip label={label} isDraggable={isDraggable} onDragStart={onDragStart} />
     </div>
   );
@@ -297,9 +320,64 @@ function shapeMatches(content: unknown, reference: unknown): boolean {
 }
 
 /**
- * VolumeViewport's capability descriptor — mirrors the other 3D types, with
- * `colorbar: "always"` (spec §1.2: Volume's colorbar is always shown; the
- * Pane renders it directly). One native diff-value mode (matching voxel grid
+ * `ViewportModule.activeColorbar` (WS-VCP fix 4) — the SINGLE card-level
+ * colorbar for volume: under the native diff-value mode, unions every valid
+ * pane's diff domain (`unionDiffDomain`) with `settings.diffColormap`;
+ * otherwise (volume's colorbar is unconditionally "always" — spec §1.2)
+ * unions `meta.vmin`/`vmax` across every foreground + reference item
+ * currently resolved, with the single card-wide `settings.colormap`. `null`
+ * only when NOTHING has resolved yet (no items at all).
+ */
+export function volumeActiveColorbar(args: {
+  items: (VolumeViewportItem | null)[];
+  referenceItems: (VolumeViewportItem | null)[];
+  settings: VolumeViewportSettings;
+  mode: MediaCompareModeKind;
+  nativeMode?: string;
+}): { colormap: ColormapName; min: number; max: number } | null {
+  const { items, referenceItems, settings, nativeMode } = args;
+
+  if (nativeMode === "diff-value") {
+    const diffColormap: DiffColormap = settings.diffColormap ?? "viridis";
+    const domains: [number, number][] = [];
+    for (let i = 0; i < items.length; i++) {
+      const a = items[i];
+      const b = referenceItems[i];
+      if (!a || !b) continue;
+      if (a.meta.shape[0] !== b.meta.shape[0] || a.meta.shape[1] !== b.meta.shape[1] || a.meta.shape[2] !== b.meta.shape[2]) continue;
+      const n = a.meta.shape[0] * a.meta.shape[1] * a.meta.shape[2];
+      const delta = computeDelta(a.arrays.data, b.arrays.data, n);
+      domains.push(diffDomain(delta, diffColormap));
+    }
+    const union = unionDiffDomain(domains, diffColormap);
+    return union ? { colormap: diffColormap, min: union[0], max: union[1] } : null;
+  }
+
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const it of [...items, ...referenceItems]) {
+    if (!it) continue;
+    lo = Math.min(lo, it.meta.vmin);
+    hi = Math.max(hi, it.meta.vmax);
+  }
+  if (!Number.isFinite(lo) || !Number.isFinite(hi)) return null;
+  return { colormap: settings.colormap, min: lo, max: hi };
+}
+
+/**
+ * VolumeViewport's capability descriptor — mirrors the other 3D types.
+ * `colorbar: "never"` here means the SAME thing it means for mesh/pointcloud/
+ * boxes: "never" for the SHARED `settings.colormap`-driven false-color
+ * mechanism (that select/colorbar pair is image-specific plumbing — see
+ * VisualContentCard's `headerActions`/footer). Volume's colorbar is
+ * unconditionally "always" in the actual UI (spec §1.2), but that's now
+ * `volumeActiveColorbar` (WS-VCP fix 4), a wholly separate mechanism — NOT
+ * gated by this field. (Before fix 4, this WAS "always", which — because
+ * `VolumeFullSettings.colormap` structurally reuses `VisualCompareSettings`'
+ * `colormap` field name for volume's OWN raymarch colormap — accidentally
+ * ALSO lit up the image-only false-color `<select>`/`<Colorbar>` for volume
+ * cards: a real "extra card-level colorbar" bug, now fixed by decoupling the
+ * two mechanisms entirely.) One native diff-value mode (matching voxel grid
  * shape). `maxPanes: 4` + `webglContextsPerPane: 1` WebGL budget parity.
  */
 export const volumeViewportCapabilities: ViewportCapabilities<VolumeNativeMode> = {
@@ -315,7 +393,7 @@ export const volumeViewportCapabilities: ViewportCapabilities<VolumeNativeMode> 
   hasSteps: true,
   postProcessing: false,
   overlays: false,
-  colorbar: "always",
+  colorbar: "never",
   cameraSync: true,
   resetView: "always",
   crossTypeCompare: false,

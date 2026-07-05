@@ -27,6 +27,7 @@ import {
   VolumeSideBySideView,
   VolumeNativeDiffPane,
   volumeViewportCapabilities,
+  volumeActiveColorbar,
   resolveVolumeViewConfig,
   type VolumeMeta,
   type VolumeViewportItem,
@@ -203,6 +204,7 @@ function VolumeViewportPane(
     splitPosition,
     onSplitPositionChange,
     blendAlpha,
+    colorRange,
   } = props;
   const sync: Scene3DSyncOptions | null = cameraSyncGroupId ? { groupId: cameraSyncGroupId } : null;
   const view = resolveVolumeViewConfig(settings);
@@ -218,6 +220,7 @@ function VolumeViewportPane(
         label={label}
         isDraggable={isDraggable}
         onDragStart={onDragStart}
+        colorRange={colorRange}
       />
     );
   }
@@ -233,42 +236,48 @@ function VolumeViewportPane(
     return (
       <OffscreenComparePanes
         mode={effectiveMode}
-        renderPrimary={(cb, syncOpts) => (
-          <VolumeViewer
-            data={data.arrays.data}
-            shape={data.meta.shape}
-            spacing={data.meta.spacing}
-            origin={data.meta.origin}
-            vmin={data.meta.vmin}
-            vmax={data.meta.vmax}
-            mode={view.mode}
-            isovalue={view.isovalue}
-            colormap={view.colormap}
-            steps={view.steps}
-            clip={{ min: view.clipMin, max: view.clipMax }}
-            background={view.background}
-            sync={syncOpts}
-            onFrame={cb}
-          />
-        )}
-        renderReference={(cb, syncOpts) => (
-          <VolumeViewer
-            data={reference.arrays.data}
-            shape={reference.meta.shape}
-            spacing={reference.meta.spacing}
-            origin={reference.meta.origin}
-            vmin={reference.meta.vmin}
-            vmax={reference.meta.vmax}
-            mode={view.mode}
-            isovalue={view.isovalue}
-            colormap={view.colormap}
-            steps={view.steps}
-            clip={{ min: view.clipMin, max: view.clipMax }}
-            background={view.background}
-            sync={syncOpts}
-            onFrame={cb}
-          />
-        )}
+        renderPrimary={(cb, syncOpts) => {
+          const [vmin, vmax] = colorRange ?? [data.meta.vmin, data.meta.vmax];
+          return (
+            <VolumeViewer
+              data={data.arrays.data}
+              shape={data.meta.shape}
+              spacing={data.meta.spacing}
+              origin={data.meta.origin}
+              vmin={vmin}
+              vmax={vmax}
+              mode={view.mode}
+              isovalue={view.isovalue}
+              colormap={view.colormap}
+              steps={view.steps}
+              clip={{ min: view.clipMin, max: view.clipMax }}
+              background={view.background}
+              sync={syncOpts}
+              onFrame={cb}
+            />
+          );
+        }}
+        renderReference={(cb, syncOpts) => {
+          const [vmin, vmax] = colorRange ?? [reference.meta.vmin, reference.meta.vmax];
+          return (
+            <VolumeViewer
+              data={reference.arrays.data}
+              shape={reference.meta.shape}
+              spacing={reference.meta.spacing}
+              origin={reference.meta.origin}
+              vmin={vmin}
+              vmax={vmax}
+              mode={view.mode}
+              isovalue={view.isovalue}
+              colormap={view.colormap}
+              steps={view.steps}
+              clip={{ min: view.clipMin, max: view.clipMax }}
+              background={view.background}
+              sync={syncOpts}
+              onFrame={cb}
+            />
+          );
+        }}
         diffSubmode={diffMode}
         colormap={(settings.diffColormap ?? "viridis") as Colormap}
         splitPosition={splitPosition ?? 0.5}
@@ -288,6 +297,7 @@ function VolumeViewportPane(
       label={label}
       isDraggable={isDraggable}
       onDragStart={onDragStart}
+      colorRange={colorRange}
     />
   );
 }
@@ -436,6 +446,7 @@ export const volumeViewportModule: ViewportModule<
   Pane: VolumeViewportPane,
   SettingsControls: VolumeSettingsControls,
   nativeDiff: { render: VolumeNativeDiffPane },
+  activeColorbar: volumeActiveColorbar,
 };
 
 interface VolumeVisualCardProps {
