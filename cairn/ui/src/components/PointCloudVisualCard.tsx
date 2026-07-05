@@ -234,13 +234,9 @@ function PointCloudViewportPane(
     splitPosition,
     onSplitPositionChange,
     blendAlpha,
+    crossTypeReferenceUrl,
+    crossTypeAlignForDiff,
   } = props;
-  // `onFrame` (ViewportPaneProps) is the FrameSource compositor bridge
-  // reserved for WS-VC6 cross-type compare — not yet called here, matching
-  // ImageViewportPane's own stance (see FrameSource's doc comment in
-  // viewport/types.ts). `PointCloudSingleView`'s OWN `onFrame` param is a
-  // different, unrelated thing (the raw `useScene3D` canvas callback) that
-  // this Pane doesn't need in the plain single-pane case.
   const sync: Scene3DSyncOptions | null = cameraSyncGroupId ? { groupId: cameraSyncGroupId } : null;
   const view = {
     pointSize: settings.pointSize,
@@ -248,10 +244,55 @@ function PointCloudViewportPane(
     background: settings.background,
     property: settings.property ?? null,
   };
+  const hasCrossTypeRef = crossTypeReferenceUrl != null;
   // Mirrors CompositeMediaPane's own rule: no reference resolved -> always
   // "normal", regardless of the user's selected mode (see ViewportPaneProps'
-  // `mode` doc comment).
-  const effectiveMode: MediaCompareModeKind = reference == null ? "normal" : mode;
+  // `mode` doc comment) — UNLESS a WS-VC6 cross-type reference is resolved
+  // instead (same-type `reference` is always null in that case).
+  const effectiveMode: MediaCompareModeKind = reference == null && !hasCrossTypeRef ? "normal" : mode;
+
+  // Renders THIS pane's own (foreground) point cloud live — shared by the
+  // same-type split/blend/diff branch below AND the WS-VC6 cross-type
+  // branch (a foreign-type reference has no `PointCloudSideBySideView`
+  // counterpart, so cross-type routes "side" through the generalized
+  // `OffscreenComparePanes` too).
+  const renderPointCloudLive = (cb: (canvas: HTMLCanvasElement) => void, syncOpts: Scene3DSyncOptions) => (
+    <PointCloudViewer
+      data={data!.arrays.data}
+      channels={data!.meta.channels}
+      nPoints={data!.meta.n_points}
+      bounds={data!.meta.bounds}
+      colorMode={view.colorMode}
+      pointSize={view.pointSize}
+      background={view.background}
+      sync={syncOpts}
+      onFrame={cb}
+    />
+  );
+
+  if (hasCrossTypeRef && effectiveMode !== "normal") {
+    if (!data) {
+      return (
+        <div className="flex h-full w-full items-center justify-center text-sm text-fg-muted motion-safe:animate-pulse">
+          loading…
+        </div>
+      );
+    }
+    return (
+      <OffscreenComparePanes
+        mode={effectiveMode as Extract<MediaCompareModeKind, "side" | "split" | "blend" | "diff">}
+        primary={{ kind: "live", render: renderPointCloudLive }}
+        reference={{ kind: "frame", frameSource: { kind: "url", url: crossTypeReferenceUrl! } }}
+        diffSubmode={diffMode}
+        colormap={(settings.diffColormap ?? "viridis") as Colormap}
+        splitPosition={splitPosition ?? 0.5}
+        onSplitPositionChange={onSplitPositionChange ?? (() => {})}
+        blendAlpha={blendAlpha ?? 0.5}
+        primaryLabel={label}
+        alignForDiff={crossTypeAlignForDiff}
+      />
+    );
+  }
 
   if (effectiveMode === "side") {
     return (
@@ -278,32 +319,23 @@ function PointCloudViewportPane(
     return (
       <OffscreenComparePanes
         mode={effectiveMode}
-        renderPrimary={(cb, syncOpts) => (
-          <PointCloudViewer
-            data={data.arrays.data}
-            channels={data.meta.channels}
-            nPoints={data.meta.n_points}
-            bounds={data.meta.bounds}
-            colorMode={view.colorMode}
-            pointSize={view.pointSize}
-            background={view.background}
-            sync={syncOpts}
-            onFrame={cb}
-          />
-        )}
-        renderReference={(cb, syncOpts) => (
-          <PointCloudViewer
-            data={reference.arrays.data}
-            channels={reference.meta.channels}
-            nPoints={reference.meta.n_points}
-            bounds={reference.meta.bounds}
-            colorMode={view.colorMode}
-            pointSize={view.pointSize}
-            background={view.background}
-            sync={syncOpts}
-            onFrame={cb}
-          />
-        )}
+        primary={{ kind: "live", render: renderPointCloudLive }}
+        reference={{
+          kind: "live",
+          render: (cb, syncOpts) => (
+            <PointCloudViewer
+              data={reference.arrays.data}
+              channels={reference.meta.channels}
+              nPoints={reference.meta.n_points}
+              bounds={reference.meta.bounds}
+              colorMode={view.colorMode}
+              pointSize={view.pointSize}
+              background={view.background}
+              sync={syncOpts}
+              onFrame={cb}
+            />
+          ),
+        }}
         diffSubmode={diffMode}
         colormap={(settings.diffColormap ?? "viridis") as Colormap}
         splitPosition={splitPosition ?? 0.5}

@@ -205,6 +205,8 @@ function MeshViewportPane(
     splitPosition,
     onSplitPositionChange,
     blendAlpha,
+    crossTypeReferenceUrl,
+    crossTypeAlignForDiff,
   } = props;
   const sync: Scene3DSyncOptions | null = cameraSyncGroupId ? { groupId: cameraSyncGroupId } : null;
   const view = {
@@ -215,7 +217,61 @@ function MeshViewportPane(
     background: settings.background,
     property: settings.property ?? null,
   };
-  const effectiveMode: MediaCompareModeKind = reference == null ? "normal" : mode;
+  const hasCrossTypeRef = crossTypeReferenceUrl != null;
+  const effectiveMode: MediaCompareModeKind = reference == null && !hasCrossTypeRef ? "normal" : mode;
+
+  // Renders THIS pane's own (foreground) mesh live — shared by the same-type
+  // split/blend/diff branch below AND the WS-VC6 cross-type branch (a
+  // foreign-type reference has no MeshSideBySideView/OffscreenComparePanes
+  // same-type counterpart, so cross-type always routes "side" too through
+  // the generalized OffscreenComparePanes).
+  const renderMeshLive = (cb: (canvas: HTMLCanvasElement) => void, syncOpts: Scene3DSyncOptions) => {
+    const active = resolveActiveProperty(data!.arrays.properties, view.property, data!.meta.properties ?? null);
+    return (
+      <MeshViewer
+        positions={data!.arrays.positions}
+        faces={data!.arrays.faces}
+        nVertices={data!.meta.n_vertices}
+        nFaces={data!.meta.n_faces}
+        values={active.values}
+        valueRange={active.range}
+        colors={data!.arrays.colors}
+        normals={data!.arrays.normals}
+        bounds={data!.meta.bounds}
+        colorMode={view.colorMode}
+        shading={view.shading}
+        wireframe={view.wireframe}
+        doubleSided={view.doubleSided}
+        background={view.background}
+        sync={syncOpts}
+        onFrame={cb}
+      />
+    );
+  };
+
+  if (hasCrossTypeRef && effectiveMode !== "normal") {
+    if (!data) {
+      return (
+        <div className="flex h-full w-full items-center justify-center text-sm text-fg-muted motion-safe:animate-pulse">
+          loading…
+        </div>
+      );
+    }
+    return (
+      <OffscreenComparePanes
+        mode={effectiveMode as Extract<MediaCompareModeKind, "side" | "split" | "blend" | "diff">}
+        primary={{ kind: "live", render: renderMeshLive }}
+        reference={{ kind: "frame", frameSource: { kind: "url", url: crossTypeReferenceUrl! } }}
+        diffSubmode={diffMode}
+        colormap={(settings.diffColormap ?? "viridis") as Colormap}
+        splitPosition={splitPosition ?? 0.5}
+        onSplitPositionChange={onSplitPositionChange ?? (() => {})}
+        blendAlpha={blendAlpha ?? 0.5}
+        primaryLabel={label}
+        alignForDiff={crossTypeAlignForDiff}
+      />
+    );
+  }
 
   if (effectiveMode === "side") {
     return (
@@ -242,51 +298,32 @@ function MeshViewportPane(
     return (
       <OffscreenComparePanes
         mode={effectiveMode}
-        renderPrimary={(cb, syncOpts) => {
-          const active = resolveActiveProperty(data.arrays.properties, view.property, data.meta.properties ?? null);
-          return (
-            <MeshViewer
-              positions={data.arrays.positions}
-              faces={data.arrays.faces}
-              nVertices={data.meta.n_vertices}
-              nFaces={data.meta.n_faces}
-              values={active.values}
-              valueRange={active.range}
-              colors={data.arrays.colors}
-              normals={data.arrays.normals}
-              bounds={data.meta.bounds}
-              colorMode={view.colorMode}
-              shading={view.shading}
-              wireframe={view.wireframe}
-              doubleSided={view.doubleSided}
-              background={view.background}
-              sync={syncOpts}
-              onFrame={cb}
-            />
-          );
-        }}
-        renderReference={(cb, syncOpts) => {
-          const active = resolveActiveProperty(reference.arrays.properties, view.property, reference.meta.properties ?? null);
-          return (
-            <MeshViewer
-              positions={reference.arrays.positions}
-              faces={reference.arrays.faces}
-              nVertices={reference.meta.n_vertices}
-              nFaces={reference.meta.n_faces}
-              values={active.values}
-              valueRange={active.range}
-              colors={reference.arrays.colors}
-              normals={reference.arrays.normals}
-              bounds={reference.meta.bounds}
-              colorMode={view.colorMode}
-              shading={view.shading}
-              wireframe={view.wireframe}
-              doubleSided={view.doubleSided}
-              background={view.background}
-              sync={syncOpts}
-              onFrame={cb}
-            />
-          );
+        primary={{ kind: "live", render: renderMeshLive }}
+        reference={{
+          kind: "live",
+          render: (cb, syncOpts) => {
+            const active = resolveActiveProperty(reference.arrays.properties, view.property, reference.meta.properties ?? null);
+            return (
+              <MeshViewer
+                positions={reference.arrays.positions}
+                faces={reference.arrays.faces}
+                nVertices={reference.meta.n_vertices}
+                nFaces={reference.meta.n_faces}
+                values={active.values}
+                valueRange={active.range}
+                colors={reference.arrays.colors}
+                normals={reference.arrays.normals}
+                bounds={reference.meta.bounds}
+                colorMode={view.colorMode}
+                shading={view.shading}
+                wireframe={view.wireframe}
+                doubleSided={view.doubleSided}
+                background={view.background}
+                sync={syncOpts}
+                onFrame={cb}
+              />
+            );
+          },
         }}
         diffSubmode={diffMode}
         colormap={(settings.diffColormap ?? "viridis") as Colormap}

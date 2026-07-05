@@ -187,10 +187,63 @@ function BoxesViewportPane(
     splitPosition,
     onSplitPositionChange,
     blendAlpha,
+    crossTypeReferenceUrl,
+    crossTypeAlignForDiff,
   } = props;
   const sync: Scene3DSyncOptions | null = cameraSyncGroupId ? { groupId: cameraSyncGroupId } : null;
   const view = resolveBoxesViewConfig(settings);
-  const effectiveMode: MediaCompareModeKind = reference == null ? "normal" : mode;
+  const hasCrossTypeRef = crossTypeReferenceUrl != null;
+  const effectiveMode: MediaCompareModeKind = reference == null && !hasCrossTypeRef ? "normal" : mode;
+
+  // Renders THIS pane's own (foreground) boxes live — shared by the
+  // same-type split/blend/diff branch below AND the WS-VC6 cross-type
+  // branch (a foreign-type reference has no `BoxesSideBySideView`
+  // counterpart, so cross-type routes "side" through the generalized
+  // `OffscreenComparePanes` too).
+  const renderBoxesLive = (cb: (canvas: HTMLCanvasElement) => void, syncOpts: Scene3DSyncOptions) => {
+    const active = resolveActiveProperty(data!.arrays.properties, view.property, data!.meta.properties ?? null);
+    return (
+      <BoxesViewer
+        mins={data!.arrays.mins}
+        maxs={data!.arrays.maxs}
+        depth={data!.arrays.depth}
+        values={active.values}
+        nBoxes={data!.meta.n_boxes}
+        bounds={data!.meta.bounds}
+        maxDepth={data!.meta.max_depth}
+        valueRange={active.range}
+        colorMode={view.colorMode}
+        depthRange={[0, data!.meta.max_depth]}
+        background={view.background}
+        sync={syncOpts}
+        onFrame={cb}
+      />
+    );
+  };
+
+  if (hasCrossTypeRef && effectiveMode !== "normal") {
+    if (!data) {
+      return (
+        <div className="flex h-full w-full items-center justify-center text-sm text-fg-muted motion-safe:animate-pulse">
+          loading…
+        </div>
+      );
+    }
+    return (
+      <OffscreenComparePanes
+        mode={effectiveMode as Extract<MediaCompareModeKind, "side" | "split" | "blend" | "diff">}
+        primary={{ kind: "live", render: renderBoxesLive }}
+        reference={{ kind: "frame", frameSource: { kind: "url", url: crossTypeReferenceUrl! } }}
+        diffSubmode={diffMode}
+        colormap={(settings.diffColormap ?? "viridis") as Colormap}
+        splitPosition={splitPosition ?? 0.5}
+        onSplitPositionChange={onSplitPositionChange ?? (() => {})}
+        blendAlpha={blendAlpha ?? 0.5}
+        primaryLabel={label}
+        alignForDiff={crossTypeAlignForDiff}
+      />
+    );
+  }
 
   if (effectiveMode === "side") {
     return (
@@ -217,45 +270,29 @@ function BoxesViewportPane(
     return (
       <OffscreenComparePanes
         mode={effectiveMode}
-        renderPrimary={(cb, syncOpts) => {
-          const active = resolveActiveProperty(data.arrays.properties, view.property, data.meta.properties ?? null);
-          return (
-            <BoxesViewer
-              mins={data.arrays.mins}
-              maxs={data.arrays.maxs}
-              depth={data.arrays.depth}
-              values={active.values}
-              nBoxes={data.meta.n_boxes}
-              bounds={data.meta.bounds}
-              maxDepth={data.meta.max_depth}
-              valueRange={active.range}
-              colorMode={view.colorMode}
-              depthRange={[0, data.meta.max_depth]}
-              background={view.background}
-              sync={syncOpts}
-              onFrame={cb}
-            />
-          );
-        }}
-        renderReference={(cb, syncOpts) => {
-          const active = resolveActiveProperty(reference.arrays.properties, view.property, reference.meta.properties ?? null);
-          return (
-            <BoxesViewer
-              mins={reference.arrays.mins}
-              maxs={reference.arrays.maxs}
-              depth={reference.arrays.depth}
-              values={active.values}
-              nBoxes={reference.meta.n_boxes}
-              bounds={reference.meta.bounds}
-              maxDepth={reference.meta.max_depth}
-              valueRange={active.range}
-              colorMode={view.colorMode}
-              depthRange={[0, reference.meta.max_depth]}
-              background={view.background}
-              sync={syncOpts}
-              onFrame={cb}
-            />
-          );
+        primary={{ kind: "live", render: renderBoxesLive }}
+        reference={{
+          kind: "live",
+          render: (cb, syncOpts) => {
+            const active = resolveActiveProperty(reference.arrays.properties, view.property, reference.meta.properties ?? null);
+            return (
+              <BoxesViewer
+                mins={reference.arrays.mins}
+                maxs={reference.arrays.maxs}
+                depth={reference.arrays.depth}
+                values={active.values}
+                nBoxes={reference.meta.n_boxes}
+                bounds={reference.meta.bounds}
+                maxDepth={reference.meta.max_depth}
+                valueRange={active.range}
+                colorMode={view.colorMode}
+                depthRange={[0, reference.meta.max_depth]}
+                background={view.background}
+                sync={syncOpts}
+                onFrame={cb}
+              />
+            );
+          },
         }}
         diffSubmode={diffMode}
         colormap={(settings.diffColormap ?? "viridis") as Colormap}

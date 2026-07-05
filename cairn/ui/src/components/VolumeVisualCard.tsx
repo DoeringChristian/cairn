@@ -199,10 +199,61 @@ function VolumeViewportPane(
     splitPosition,
     onSplitPositionChange,
     blendAlpha,
+    crossTypeReferenceUrl,
+    crossTypeAlignForDiff,
   } = props;
   const sync: Scene3DSyncOptions | null = cameraSyncGroupId ? { groupId: cameraSyncGroupId } : null;
   const view = resolveVolumeViewConfig(settings);
-  const effectiveMode: MediaCompareModeKind = reference == null ? "normal" : mode;
+  const hasCrossTypeRef = crossTypeReferenceUrl != null;
+  const effectiveMode: MediaCompareModeKind = reference == null && !hasCrossTypeRef ? "normal" : mode;
+
+  // Renders THIS pane's own (foreground) volume live — shared by the
+  // same-type split/blend/diff branch below AND the WS-VC6 cross-type
+  // branch (a foreign-type reference has no `VolumeSideBySideView`
+  // counterpart, so cross-type routes "side" through the generalized
+  // `OffscreenComparePanes` too).
+  const renderVolumeLive = (cb: (canvas: HTMLCanvasElement) => void, syncOpts: Scene3DSyncOptions) => (
+    <VolumeViewer
+      data={data!.arrays.data}
+      shape={data!.meta.shape}
+      spacing={data!.meta.spacing}
+      origin={data!.meta.origin}
+      vmin={data!.meta.vmin}
+      vmax={data!.meta.vmax}
+      mode={view.mode}
+      isovalue={view.isovalue}
+      colormap={view.colormap}
+      steps={view.steps}
+      clip={{ min: view.clipMin, max: view.clipMax }}
+      background={view.background}
+      sync={syncOpts}
+      onFrame={cb}
+    />
+  );
+
+  if (hasCrossTypeRef && effectiveMode !== "normal") {
+    if (!data) {
+      return (
+        <div className="flex h-full w-full items-center justify-center text-sm text-fg-muted motion-safe:animate-pulse">
+          loading…
+        </div>
+      );
+    }
+    return (
+      <OffscreenComparePanes
+        mode={effectiveMode as Extract<MediaCompareModeKind, "side" | "split" | "blend" | "diff">}
+        primary={{ kind: "live", render: renderVolumeLive }}
+        reference={{ kind: "frame", frameSource: { kind: "url", url: crossTypeReferenceUrl! } }}
+        diffSubmode={diffMode}
+        colormap={(settings.diffColormap ?? "viridis") as Colormap}
+        splitPosition={splitPosition ?? 0.5}
+        onSplitPositionChange={onSplitPositionChange ?? (() => {})}
+        blendAlpha={blendAlpha ?? 0.5}
+        primaryLabel={label}
+        alignForDiff={crossTypeAlignForDiff}
+      />
+    );
+  }
 
   if (effectiveMode === "side") {
     return (
@@ -229,42 +280,28 @@ function VolumeViewportPane(
     return (
       <OffscreenComparePanes
         mode={effectiveMode}
-        renderPrimary={(cb, syncOpts) => (
-          <VolumeViewer
-            data={data.arrays.data}
-            shape={data.meta.shape}
-            spacing={data.meta.spacing}
-            origin={data.meta.origin}
-            vmin={data.meta.vmin}
-            vmax={data.meta.vmax}
-            mode={view.mode}
-            isovalue={view.isovalue}
-            colormap={view.colormap}
-            steps={view.steps}
-            clip={{ min: view.clipMin, max: view.clipMax }}
-            background={view.background}
-            sync={syncOpts}
-            onFrame={cb}
-          />
-        )}
-        renderReference={(cb, syncOpts) => (
-          <VolumeViewer
-            data={reference.arrays.data}
-            shape={reference.meta.shape}
-            spacing={reference.meta.spacing}
-            origin={reference.meta.origin}
-            vmin={reference.meta.vmin}
-            vmax={reference.meta.vmax}
-            mode={view.mode}
-            isovalue={view.isovalue}
-            colormap={view.colormap}
-            steps={view.steps}
-            clip={{ min: view.clipMin, max: view.clipMax }}
-            background={view.background}
-            sync={syncOpts}
-            onFrame={cb}
-          />
-        )}
+        primary={{ kind: "live", render: renderVolumeLive }}
+        reference={{
+          kind: "live",
+          render: (cb, syncOpts) => (
+            <VolumeViewer
+              data={reference.arrays.data}
+              shape={reference.meta.shape}
+              spacing={reference.meta.spacing}
+              origin={reference.meta.origin}
+              vmin={reference.meta.vmin}
+              vmax={reference.meta.vmax}
+              mode={view.mode}
+              isovalue={view.isovalue}
+              colormap={view.colormap}
+              steps={view.steps}
+              clip={{ min: view.clipMin, max: view.clipMax }}
+              background={view.background}
+              sync={syncOpts}
+              onFrame={cb}
+            />
+          ),
+        }}
         diffSubmode={diffMode}
         colormap={(settings.diffColormap ?? "viridis") as Colormap}
         splitPosition={splitPosition ?? 0.5}
