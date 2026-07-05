@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { useScene3D, type Scene3DBounds, type Scene3DSyncOptions } from "./use-scene3d";
+import { Scene3DCanvas } from "./Scene3DCanvas";
 import { getColormapLUT } from "../colormaps";
 import type { ColormapName } from "../types";
 
@@ -41,6 +42,8 @@ export interface VolumeViewerProps {
   sync?: Scene3DSyncOptions | null;
   /** Forwarded to `useScene3D` — see its docstring (image-space compare snapshots). */
   onFrame?: (canvas: HTMLCanvasElement) => void;
+  /** Forwarded to `useScene3D` — persisted "Show axes" setting (WS-3DR2). */
+  showAxes?: boolean;
 }
 
 const BG_COLORS: Record<VolumeBackground, number> = {
@@ -350,12 +353,15 @@ function VolumeViewerInner({
   className,
   sync = null,
   onFrame,
+  showAxes = false,
 }: VolumeViewerProps) {
-  const { containerRef, canvasRef, requestRender, fitToBounds, refs } = useScene3D({
+  const handle = useScene3D({
     background: BG_COLORS[background],
     sync,
+    showAxes,
     onFrame,
   });
+  const { requestRender, fitToBounds, refs } = handle;
 
   const meshRef = useRef<THREE.Mesh | null>(null);
   const geometryRef = useRef<THREE.BoxGeometry | null>(null);
@@ -470,11 +476,7 @@ function VolumeViewerInner({
     };
   }, []);
 
-  return (
-    <div ref={containerRef} className={className ?? "relative h-full w-full"}>
-      <canvas ref={canvasRef} className="block h-full w-full rounded" />
-    </div>
-  );
+  return <Scene3DCanvas handle={handle} className={className} />;
 }
 
 /**

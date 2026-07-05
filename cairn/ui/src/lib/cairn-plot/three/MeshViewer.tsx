@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { useScene3D, type Scene3DSyncOptions } from "../three/use-scene3d";
+import { Scene3DCanvas } from "../three/Scene3DCanvas";
 import { valuesToColors, packRgbColors } from "../three/value-colors";
 
 export type MeshColorMode = "solid" | "vertex-colors" | "values";
@@ -38,6 +39,8 @@ export interface MeshViewerProps {
   sync?: Scene3DSyncOptions | null;
   /** Forwarded to `useScene3D` — see its docstring (image-space compare snapshots). */
   onFrame?: (canvas: HTMLCanvasElement) => void;
+  /** Forwarded to `useScene3D` — persisted "Show axes" setting (WS-3DR2). */
+  showAxes?: boolean;
 }
 
 const BG_COLORS: Record<MeshBackground, number> = {
@@ -115,12 +118,15 @@ export default function MeshViewer({
   className,
   sync = null,
   onFrame,
+  showAxes = false,
 }: MeshViewerProps) {
-  const { containerRef, canvasRef, requestRender, fitToBounds, refs } = useScene3D({
+  const handle = useScene3D({
     background: BG_COLORS[background],
     sync,
+    showAxes,
     onFrame,
   });
+  const { requestRender, fitToBounds, refs } = handle;
 
   const meshRef = useRef<THREE.Mesh | null>(null);
   const geometryRef = useRef<THREE.BufferGeometry | null>(null);
@@ -281,9 +287,5 @@ export default function MeshViewer({
     };
   }, []);
 
-  return (
-    <div ref={containerRef} className={className ?? "relative h-full w-full"}>
-      <canvas ref={canvasRef} className="block h-full w-full rounded" />
-    </div>
-  );
+  return <Scene3DCanvas handle={handle} className={className} />;
 }

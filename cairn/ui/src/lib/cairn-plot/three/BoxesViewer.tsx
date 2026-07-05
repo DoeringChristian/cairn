@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { useScene3D, type Scene3DSyncOptions } from "./use-scene3d";
+import { Scene3DCanvas } from "./Scene3DCanvas";
 import { valuesToColors } from "./value-colors";
 
 export type BoxesColorMode = "depth" | "value" | "solid";
@@ -43,6 +44,8 @@ export interface BoxesViewerProps {
   onVisibleCount?: (visible: number, total: number) => void;
   /** Forwarded to `useScene3D` — see its docstring (image-space compare snapshots). */
   onFrame?: (canvas: HTMLCanvasElement) => void;
+  /** Forwarded to `useScene3D` — persisted "Show axes" setting (WS-3DR2). */
+  showAxes?: boolean;
   /**
    * Precomputed per-box RGB (`(nBoxes*3)`, 0..1), indexed like `depth`/
    * `values` (i.e. BEFORE the depth/value filter), bypassing `colorMode`
@@ -188,13 +191,16 @@ export default function BoxesViewer({
   sync = null,
   onVisibleCount,
   onFrame,
+  showAxes = false,
   overrideColors = null,
 }: BoxesViewerProps) {
-  const { containerRef, canvasRef, requestRender, fitToBounds, refs } = useScene3D({
+  const handle = useScene3D({
     background: BG_COLORS[background],
     sync,
+    showAxes,
     onFrame,
   });
+  const { requestRender, fitToBounds, refs } = handle;
 
   const lineRef = useRef<THREE.LineSegments | null>(null);
   const geometryRef = useRef<THREE.BufferGeometry | null>(null);
@@ -266,9 +272,5 @@ export default function BoxesViewer({
     };
   }, []);
 
-  return (
-    <div ref={containerRef} className={className ?? "relative h-full w-full"}>
-      <canvas ref={canvasRef} className="block h-full w-full rounded" />
-    </div>
-  );
+  return <Scene3DCanvas handle={handle} className={className} />;
 }
