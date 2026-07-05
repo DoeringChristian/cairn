@@ -44,7 +44,7 @@ const PointCloudVisualCard = lazy(() => import("./PointCloudVisualCard"));
 
 const MeshVisualCard = lazy(() => import("./MeshVisualCard"));
 
-const BoxesCard = lazy(() => import("./BoxesCard"));
+const BoxesVisualCard = lazy(() => import("./BoxesVisualCard"));
 
 const VolumeCard = lazy(() => import("./VolumeCard"));
 
@@ -282,7 +282,7 @@ export default function CardRenderer(props: CardDescriptor) {
             </div>
           }
         >
-          <BoxesCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />
+          <BoxesVisualCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />
         </Suspense>
       );
     case "volume":

@@ -1,0 +1,460 @@
+import { useMemo } from "react";
+import { useQueries } from "@tanstack/react-query";
+import { api } from "../api/client";
+import type { SequenceMeta } from "../api/types";
+import type { CardSettingsKey } from "../lib/card-settings";
+import type { ComparisonSeriesRef } from "../lib/comparisons";
+import { safeJsonParse } from "../lib/format";
+import {
+  parseNpz,
+  isCoreCompareMode,
+  type MediaCompareModeKind,
+  type DiffMode,
+  type Colormap,
+  type ViewportDataArgs,
+  type ViewportDataResult,
+  type ViewportModule,
+  type ViewState,
+} from "../lib/cairn-plot";
+import BoxesViewer, {
+  type BoxesColorMode,
+  type BoxesBackground,
+} from "../lib/cairn-plot/three/BoxesViewer";
+import {
+  BoxesSingleView,
+  BoxesSideBySideView,
+  BoxesNativeDiffPane,
+  boxesViewportCapabilities,
+  resolveBoxesViewConfig,
+  type Boxes3DMeta,
+  type BoxesViewportItem,
+  type BoxesViewState,
+  type BoxesNativeMode,
+} from "../lib/cairn-plot/viewport/boxes-viewport";
+import {
+  extractProperties,
+  propertyNames,
+  resolveActiveProperty,
+} from "../lib/cairn-plot/three/properties";
+import type { DiffColormap } from "../lib/cairn-plot/three/diff";
+import { resetScene3DViews, type Scene3DSyncOptions } from "../lib/cairn-plot/three/use-scene3d";
+import type { ViewportPaneProps } from "../lib/cairn-plot/viewport/types";
+import { OffscreenComparePanes, PropertySelector, type VisualCompareSettings } from "./card-kit";
+import Select from "./settings/Select";
+import Slider from "./settings/Slider";
+import Toggle from "./settings/Toggle";
+import VisualContentCard from "./VisualContentCard";
+
+// ---------------------------------------------------------------------------
+// BoxesVisualCard — the boxes3d object_type's APP-LAYER Viewport assembly +
+// the lazy-loading boundary (WS-VC5). Mirrors MeshVisualCard.tsx /
+// PointCloudVisualCard.tsx exactly — replaces the deleted BoxesCard.tsx.
+// ---------------------------------------------------------------------------
+
+async function fetchBoxesArrays(hash: string): Promise<BoxesViewportItem["arrays"]> {
+  const res = await fetch(api.artifactUrl(hash));
+  if (!res.ok) throw new Error(`failed to fetch boxes3d (${res.status})`);
+  const npz = await parseNpz(await res.arrayBuffer());
+  if (!npz.mins || !npz.maxs || !npz.depth) {
+    throw new Error("boxes blob missing mins/maxs/depth");
+  }
+  return {
+    mins: Float32Array.from(npz.mins.data),
+    maxs: Float32Array.from(npz.maxs.data),
+    depth: Float32Array.from(npz.depth.data),
+    properties: extractProperties(npz),
+  };
+}
+
+function useBoxesBlobs(hashes: (string | null)[]) {
+  return useQueries({
+    queries: hashes.map((h) => ({
+      queryKey: ["boxes3d-npz", h],
+      enabled: !!h,
+      staleTime: Infinity,
+      queryFn: () => fetchBoxesArrays(h!),
+    })),
+  });
+}
+
+function useBoxesData(args: ViewportDataArgs): ViewportDataResult<BoxesViewportItem> {
+  const { hashes, referenceHashes, metadata, referenceMetadata } = args;
+  const fg = useBoxesBlobs(hashes);
+  const ref = useBoxesBlobs(referenceHashes);
+
+  return useMemo(() => {
+    const items = hashes.map((h, i) => {
+      if (!h) return null;
+      const blob = fg[i]?.data;
+      const meta = safeJsonParse<Boxes3DMeta>(metadata?.[i]);
+      if (!blob || !meta) return null;
+      return { arrays: blob, meta };
+    });
+    const referenceItems = referenceHashes.map((h, i) => {
+      if (!h) return null;
+      const blob = ref[i]?.data;
+      const meta = safeJsonParse<Boxes3DMeta>(referenceMetadata?.[i]);
+      if (!blob || !meta) return null;
+      return { arrays: blob, meta };
+    });
+    const isLoading = fg.some((q) => q.isLoading) || ref.some((q) => q.isLoading);
+    return { items, referenceItems, isLoading };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    hashes.join("|"),
+    referenceHashes.join("|"),
+    (metadata ?? []).join("|"),
+    (referenceMetadata ?? []).join("|"),
+    fg.map((q) => q.dataUpdatedAt).join("|"),
+    ref.map((q) => q.dataUpdatedAt).join("|"),
+  ]);
+}
+
+// ---------------------------------------------------------------------------
+// Settings — VisualCompareSettings (shared) intersected with boxes3d's own
+// fields. `compareMode`/`diffSubmode` are the OLD field names for what's now
+// `mode`/`nativeMode`/`diffMode` — read only through `migrateBoxesSettings`.
+// ---------------------------------------------------------------------------
+
+export interface BoxesFullSettings extends VisualCompareSettings {
+  colorMode: BoxesColorMode;
+  background: BoxesBackground;
+  depthMin?: number;
+  depthMax?: number;
+  valueFilterEnabled?: boolean;
+  valueMin?: number;
+  valueMax?: number;
+  property?: string;
+  diffColormap?: DiffColormap;
+}
+
+function defaultBoxesSettings(): Omit<BoxesFullSettings, "metrics" | "version"> {
+  return {
+    colorMode: "depth",
+    background: "dark",
+    // Inert placeholders — see defaultPointCloudSettings' identical comment.
+    brightness: 0,
+    contrast: 0,
+    gamma: 1,
+    exposure: 0,
+    offset: 0,
+    flipSign: false,
+    zoom: 1,
+    pan: { x: 0, y: 0 },
+    diffMode: "none",
+  };
+}
+
+const LEGACY_CORE_MODES = new Set<string>(["normal", "side", "split", "blend", "diff"]);
+
+function migrateBoxesSettings(settings: BoxesFullSettings): BoxesFullSettings {
+  const raw = settings as unknown as Record<string, unknown>;
+  let next = settings;
+  if (next.mode == null && next.nativeMode == null && typeof raw.compareMode === "string") {
+    const legacy = raw.compareMode;
+    if (legacy === "diff-property") {
+      next = { ...next, nativeMode: legacy };
+    } else if (LEGACY_CORE_MODES.has(legacy)) {
+      next = { ...next, mode: legacy as MediaCompareModeKind };
+    }
+  }
+  if (next.diffMode === "none" && typeof raw.diffSubmode === "string") {
+    next = { ...next, diffMode: raw.diffSubmode as DiffMode };
+  }
+  return next;
+}
+
+// ---------------------------------------------------------------------------
+// Pane — the REAL `ViewportModule.Pane`. Dispatches "normal"/"side" to the
+// pure cairn-plot components and "split"/"blend"/"diff" to
+// OffscreenComparePanes, mirroring MeshViewportPane.
+// ---------------------------------------------------------------------------
+
+function BoxesViewportPane(
+  props: ViewportPaneProps<BoxesViewportItem, BoxesViewState, BoxesFullSettings>,
+) {
+  const {
+    data,
+    reference,
+    settings,
+    mode,
+    diffMode,
+    cameraSyncGroupId,
+    label,
+    isBaseline,
+    isDraggable,
+    onDragStart,
+    splitPosition,
+    onSplitPositionChange,
+    blendAlpha,
+  } = props;
+  const sync: Scene3DSyncOptions | null = cameraSyncGroupId ? { groupId: cameraSyncGroupId } : null;
+  const view = resolveBoxesViewConfig(settings);
+  const effectiveMode: MediaCompareModeKind = reference == null ? "normal" : mode;
+
+  if (effectiveMode === "side") {
+    return (
+      <BoxesSideBySideView
+        item={data}
+        reference={reference ?? null}
+        view={view}
+        sync={sync}
+        label={label}
+        isDraggable={isDraggable}
+        onDragStart={onDragStart}
+      />
+    );
+  }
+
+  if (isCoreCompareMode(effectiveMode) && (effectiveMode === "split" || effectiveMode === "blend" || effectiveMode === "diff")) {
+    if (!data || !reference) {
+      return (
+        <div className="flex h-full w-full items-center justify-center text-sm text-fg-muted motion-safe:animate-pulse">
+          loading…
+        </div>
+      );
+    }
+    return (
+      <OffscreenComparePanes
+        mode={effectiveMode}
+        renderPrimary={(cb, syncOpts) => {
+          const active = resolveActiveProperty(data.arrays.properties, view.property, data.meta.properties ?? null);
+          return (
+            <BoxesViewer
+              mins={data.arrays.mins}
+              maxs={data.arrays.maxs}
+              depth={data.arrays.depth}
+              values={active.values}
+              nBoxes={data.meta.n_boxes}
+              bounds={data.meta.bounds}
+              maxDepth={data.meta.max_depth}
+              valueRange={active.range}
+              colorMode={view.colorMode}
+              depthRange={[0, data.meta.max_depth]}
+              background={view.background}
+              sync={syncOpts}
+              onFrame={cb}
+            />
+          );
+        }}
+        renderReference={(cb, syncOpts) => {
+          const active = resolveActiveProperty(reference.arrays.properties, view.property, reference.meta.properties ?? null);
+          return (
+            <BoxesViewer
+              mins={reference.arrays.mins}
+              maxs={reference.arrays.maxs}
+              depth={reference.arrays.depth}
+              values={active.values}
+              nBoxes={reference.meta.n_boxes}
+              bounds={reference.meta.bounds}
+              maxDepth={reference.meta.max_depth}
+              valueRange={active.range}
+              colorMode={view.colorMode}
+              depthRange={[0, reference.meta.max_depth]}
+              background={view.background}
+              sync={syncOpts}
+              onFrame={cb}
+            />
+          );
+        }}
+        diffSubmode={diffMode}
+        colormap={(settings.diffColormap ?? "viridis") as Colormap}
+        splitPosition={splitPosition ?? 0.5}
+        onSplitPositionChange={onSplitPositionChange ?? (() => {})}
+        blendAlpha={blendAlpha ?? 0.5}
+        primaryLabel={label}
+      />
+    );
+  }
+
+  void isBaseline;
+  return (
+    <BoxesSingleView
+      item={data}
+      view={view}
+      sync={sync}
+      label={label}
+      isDraggable={isDraggable}
+      onDragStart={onDragStart}
+    />
+  );
+}
+
+// ---------------------------------------------------------------------------
+// SettingsControls — per-type controls injected into the shared settings
+// panel (color mode, property, background, depth filter, value filter, diff
+// colormap). "Sync 3D views" is rendered centrally by VisualContentCard.
+// ---------------------------------------------------------------------------
+
+const COLOR_MODE_OPTIONS: Array<{ value: BoxesColorMode; label: string }> = [
+  { value: "depth", label: "Depth" },
+  { value: "value", label: "Value (falls back to depth if absent)" },
+  { value: "solid", label: "Solid" },
+];
+
+const BACKGROUND_OPTIONS: Array<{ value: BoxesBackground; label: string }> = [
+  { value: "dark", label: "Dark" },
+  { value: "light", label: "Light" },
+];
+
+function BoxesSettingsControls({
+  settings,
+  update,
+  meta,
+}: {
+  settings: BoxesFullSettings;
+  update: (p: Partial<BoxesFullSettings>) => void;
+  meta: unknown;
+}) {
+  const item = meta as BoxesViewportItem | null;
+  const propertyOptions = propertyNames(item?.arrays.properties);
+  const boxMeta = item?.meta;
+
+  const depthCap = Math.max(boxMeta?.max_depth ?? 8, 1);
+  const curDepthMin = settings.depthMin ?? 0;
+  const curDepthMax = settings.depthMax ?? depthCap;
+  const canFilterByValue = !!boxMeta?.value_range;
+  const valLo = boxMeta?.value_range?.min ?? 0;
+  const valHi = boxMeta?.value_range?.max ?? 1;
+  const valStep = (valHi - valLo) / 100 || 0.01;
+  const curValMin = settings.valueMin ?? valLo;
+  const curValMax = settings.valueMax ?? valHi;
+
+  return (
+    <>
+      <Select
+        label="Color mode"
+        value={settings.colorMode}
+        onChange={(v) => update({ colorMode: v })}
+        options={COLOR_MODE_OPTIONS}
+        description="Depth uses a LUT over 0..max depth; Value needs per-box values logged"
+      />
+      <PropertySelector
+        properties={propertyOptions}
+        value={settings.property ?? null}
+        onChange={(p) => update({ property: p })}
+      />
+      <Select
+        label="Background"
+        value={settings.background}
+        onChange={(v) => update({ background: v })}
+        options={BACKGROUND_OPTIONS}
+      />
+      <Slider
+        label="Depth min"
+        value={curDepthMin}
+        onChange={(v) => update({ depthMin: Math.min(v, curDepthMax) })}
+        min={0}
+        max={depthCap}
+        step={1}
+        format={(v) => v.toFixed(0)}
+      />
+      <Slider
+        label="Depth max"
+        value={curDepthMax}
+        onChange={(v) => update({ depthMax: Math.max(v, curDepthMin) })}
+        min={0}
+        max={depthCap}
+        step={1}
+        format={(v) => v.toFixed(0)}
+        description="Rebuilds the box geometry live; shows 'n of N boxes' below the view"
+      />
+      {canFilterByValue && (
+        <>
+          <Toggle
+            label="Filter by value"
+            checked={!!settings.valueFilterEnabled}
+            onChange={(v) => update({ valueFilterEnabled: v })}
+          />
+          {settings.valueFilterEnabled && (
+            <>
+              <Slider
+                label="Value min"
+                value={curValMin}
+                onChange={(v) => update({ valueMin: Math.min(v, curValMax) })}
+                min={valLo}
+                max={valHi}
+                step={valStep}
+                format={(v) => v.toFixed(2)}
+              />
+              <Slider
+                label="Value max"
+                value={curValMax}
+                onChange={(v) => update({ valueMax: Math.max(v, curValMin) })}
+                min={valLo}
+                max={valHi}
+                step={valStep}
+                format={(v) => v.toFixed(2)}
+              />
+            </>
+          )}
+        </>
+      )}
+      <Select<DiffColormap>
+        label="Diff colormap"
+        value={settings.diffColormap ?? "viridis"}
+        onChange={(v) => update({ diffColormap: v })}
+        options={[
+          { value: "viridis", label: "Viridis (magnitude)" },
+          { value: "red-green", label: "Red – Green (signed)" },
+        ]}
+        description="Color mapping for the native diff mode (diff-property)"
+      />
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Module assembly + the lazy-loaded card component.
+// ---------------------------------------------------------------------------
+
+const DEFAULT_VIEW: BoxesViewState = {
+  kind: "camera3d",
+  position: [0, 0, 5],
+  target: [0, 0, 0],
+  zoom: 1,
+};
+
+export const boxesViewportModule: ViewportModule<
+  BoxesViewportItem,
+  BoxesViewState,
+  BoxesFullSettings,
+  BoxesNativeMode
+> = {
+  objectType: "boxes3d",
+  capabilities: boxesViewportCapabilities,
+  useData: useBoxesData,
+  defaultSettings: defaultBoxesSettings,
+  migrateSettings: migrateBoxesSettings,
+  viewFromSettings: () => DEFAULT_VIEW,
+  viewToSettingsPatch: () => ({}),
+  defaultView: () => DEFAULT_VIEW,
+  onResetView: (container) => resetScene3DViews(container),
+  Pane: BoxesViewportPane,
+  SettingsControls: BoxesSettingsControls,
+  nativeDiff: { render: BoxesNativeDiffPane },
+};
+
+interface BoxesVisualCardProps {
+  runId: string;
+  metric: SequenceMeta;
+  extraSeries?: ComparisonSeriesRef[];
+  controlledSeries?: boolean;
+  settingsKeyOverride?: CardSettingsKey;
+  onRemove?: () => void;
+  autoOpenSettings?: boolean;
+}
+
+/**
+ * The lazy-loading boundary for boxes3d (WS-VC5): `CardRenderer.tsx`
+ * dynamically imports THIS file instead of the deleted `BoxesCard.tsx`, so
+ * `three`/`BoxesViewer` stay out of every other card's bundle.
+ */
+export default function BoxesVisualCard(props: BoxesVisualCardProps) {
+  return (
+    <VisualContentCard
+      {...props}
+      viewport={boxesViewportModule as unknown as ViewportModule<unknown, ViewState, VisualCompareSettings>}
+    />
+  );
+}
