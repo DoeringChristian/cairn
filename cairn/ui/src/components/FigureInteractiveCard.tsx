@@ -433,7 +433,18 @@ export default function FigureInteractiveCard({ runId, metric, extraSeries, cont
     updateSettings,
   });
   // For the single-metric path, find the point at the current global step.
-  const current = useMemo(() => points.find((p) => p.step === currentStep && p.artifact_hash), [points, currentStep]);
+  // Falls back to the most recent point at-or-before the step (and, failing
+  // that, the first point) instead of an exact-match `.find` — `currentStep`
+  // comes from `useStepSlider`'s *global* step union, which in a multi-series
+  // card can legitimately include steps this series has no exact point for.
+  // Every other per-step card (TableCard, HistogramCard, TensorCard, etc.)
+  // already uses this `resolveAtStep(...) ?? points[0]` pattern; matching it
+  // here keeps this card from going blank instead of showing the last-good
+  // figure.
+  const current = useMemo(
+    () => resolveAtStep(points, currentStep) ?? points[0],
+    [points, currentStep],
+  );
 
   // -------------------------------------------------------------------------
   // Overlay merge (multi-run "overlay" compare mode).
