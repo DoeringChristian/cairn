@@ -19,11 +19,12 @@ import ReorderableCardGrid from "../ReorderableCardGrid";
 import RunSelectorBadge from "../RunSelectorBadge";
 import {
   isMultiRunCardType,
+  rebindCardsToMetricIndex,
   rebindCardsToRuns,
   rebuildCardsFromRuns,
   type ComparisonCard,
 } from "../../lib/comparisons";
-import { cardFromSpec, cardSettingsKeyForReport, type CardsBlock } from "../../lib/reports";
+import { cardFromSpec, cardSettingsKeyForReport, useMetricIndex, type CardsBlock } from "../../lib/reports";
 import { describeRunSelector, DEFAULT_RUN_SELECTOR_N, type QueryRunSelector } from "../../lib/run-selector";
 import { useRunSelectorResolution } from "../../api/hooks";
 import { disambiguateRunLabels, useRunMetadataVersion } from "../../lib/run-label";
@@ -56,6 +57,21 @@ export default function ReportCardsBlock({ projectId, reportId, block, editMode,
 
   const resolution = useRunSelectorResolution(projectId, selector);
   const runIds = selector ? resolution.runIds : staticRunIds;
+
+  // Render-only rebind (never persisted/autosaved — see handleRefresh's and
+  // the auto-rebind effect's doc below for the persisting counterpart): a
+  // selector block's *persisted* `cards` can be stale relative to `runIds`
+  // right after this report was hydrated from its markdown `source` (a fresh
+  // parse has no live-resolved runs to compile against) or between edits.
+  // Viewers never trigger a save (B2), but they should still see cards bound
+  // to the currently-resolved runs rather than a frozen/stale snapshot —
+  // this mirrors the ```cairn fence preview's own `opts.resolvedRunIds`
+  // handling (cairn-block.ts), just without ever calling `onChange`.
+  const { index: liveMetricIndex } = useMetricIndex(selector ? runIds : []);
+  const displayCards = useMemo(
+    () => (selector ? rebindCardsToMetricIndex(block.cards, runIds, liveMetricIndex) : block.cards),
+    [selector, block.cards, runIds, liveMetricIndex],
+  );
 
   const includedSet = useMemo(() => new Set(runIds), [runIds]);
   const candidates = useMemo(
@@ -379,7 +395,7 @@ export default function ReportCardsBlock({ projectId, reportId, block, editMode,
         </>
       )}
 
-      {block.cards.length === 0 ? (
+      {displayCards.length === 0 ? (
         <div className="card p-4 text-sm text-fg-muted">
           {runIds.length === 0
             ? "No runs bound to this block yet."
@@ -389,7 +405,7 @@ export default function ReportCardsBlock({ projectId, reportId, block, editMode,
         </div>
       ) : (
         <ReorderableCardGrid
-          cards={block.cards.map((card) => ({
+          cards={displayCards.map((card) => ({
             key: card.id,
             content: (
               <ReportCardRenderer
