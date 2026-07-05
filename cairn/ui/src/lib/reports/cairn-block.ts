@@ -154,7 +154,15 @@ function validateRunSelector(sel: CairnRunsSelectorInput): RunSelector {
   return out;
 }
 
-function resolveRuns(spec: CairnSpec): { runIds?: string[]; runSelector?: RunSelector } {
+/**
+ * Exported so `markdown-source.ts`'s `parseReportMarkdown` can synchronously
+ * resolve a `runs.selector` block's live run set (against an already-fetched
+ * run pool) *before* calling `compileCairnBlock` — the hydrate-time fix for
+ * the "selector card compiles with empty series" gap (RBUG follow-up): reuse
+ * this exact validation/resolution instead of re-deriving `RunSelector` shape
+ * a second way.
+ */
+export function resolveRuns(spec: CairnSpec): { runIds?: string[]; runSelector?: RunSelector } {
   if (!spec.runs) return {};
   const { ids, selector } = spec.runs;
   if (ids !== undefined && selector !== undefined) {

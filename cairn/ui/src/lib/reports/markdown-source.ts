@@ -45,9 +45,11 @@
  * id (see lib/reports/scope.ts), never by block id.
  */
 
+import type { Run } from "../../api/types";
 import type { MetricIndex } from "./metric-index";
-import { CairnBlockError, compileCairnBlock, parseCairnSpec, serializeCairnSpec, stringifyCairnSpec } from "./cairn-block";
+import { CairnBlockError, compileCairnBlock, parseCairnSpec, resolveRuns, serializeCairnSpec, stringifyCairnSpec } from "./cairn-block";
 import { newId } from "./ids";
+import { resolveRunSelectorFromRuns } from "../run-selector";
 import { isCardsBlock, isMarkdownBlock, type CardsBlock, type ReportBlock } from "./types";
 
 export const CAIRN_FENCE_LANG = "cairn";
@@ -151,8 +153,25 @@ export interface ParsedReportMarkdown {
  * markdown this module itself produced (`serializeReportToMarkdown` always
  * emits an explicit `type`), so callers on the structural cells⇄markdown
  * toggle path can omit it entirely and stay synchronous.
+ *
+ * `opts.allProjectRuns`, when given, lets a `runs.selector` block resolve its
+ * *live* run set synchronously (via `resolveRunSelectorFromRuns` — the same
+ * pure resolution `useRunSelectorResolution` calls) and thread it into
+ * `compileCairnBlock` as `resolvedRunIds`, exactly like the ```cairn fence
+ * preview (`CairnFenceCard.tsx`) already does at render time. Without it, a
+ * selector block compiles with an empty run set (`effectiveRunIds = []`) —
+ * the RBUG hydrate gap: a fresh hydrate / cells⇄markdown toggle produced
+ * cards with `series: []`, and since a card's metric *name* only lives
+ * inside `series[].name`, that identity is permanently lost — no downstream
+ * render-time rebind (`rebindCardsToMetricIndex`) can recover a name from an
+ * empty series. Passing the already-fetched project run pool here fixes it
+ * at the source, still staying a synchronous, pure function (no fetch).
  */
-export function parseReportMarkdown(source: string, metricIndex: MetricIndex = new Map()): ParsedReportMarkdown {
+export function parseReportMarkdown(
+  source: string,
+  metricIndex: MetricIndex = new Map(),
+  opts?: { allProjectRuns?: Run[] },
+): ParsedReportMarkdown {
   const segments = splitFences(source);
   const blocks: ReportBlock[] = [];
   const settings: Record<string, unknown> = {};
@@ -169,7 +188,12 @@ export function parseReportMarkdown(source: string, metricIndex: MetricIndex = n
     try {
       const spec = parseCairnSpec(seg.body);
       specId = spec.id;
-      const compiled = compileCairnBlock(spec, metricIndex, specId ? { id: specId } : undefined);
+      let resolvedRunIds: string[] | undefined;
+      if (opts?.allProjectRuns) {
+        const { runSelector } = resolveRuns(spec);
+        if (runSelector) resolvedRunIds = resolveRunSelectorFromRuns(runSelector, opts.allProjectRuns);
+      }
+      const compiled = compileCairnBlock(spec, metricIndex, { id: specId, resolvedRunIds });
       blocks.push(compiled.block);
       Object.assign(settings, compiled.settings);
       rawCairnSource[compiled.block.id] = seg.raw;

@@ -90,8 +90,16 @@ export default function ReportEditorPage() {
     setHydrated(false);
   }, [reportId]);
 
+  // RBUG fold-in: wait for `runsQ` too (not just the report itself) before
+  // hydrating — a selector-bound ```cairn block needs the live project run
+  // pool to resolve its run set *before* `compileCairnBlock` runs (see
+  // parseReportMarkdown's `opts.allProjectRuns` doc); parsing with an empty
+  // pool would compile the card with `series: []`, permanently losing its
+  // metric name (no render-time rebind can recover an identity that was
+  // never there). Both queries fire in parallel, so this rarely adds
+  // user-visible latency.
   useEffect(() => {
-    if (hydrated || !q.data) return;
+    if (hydrated || !q.data || !runsQ.data) return;
     setName(q.data.name);
     const payload = q.data.payload as unknown as ReportPayload;
 
@@ -100,7 +108,7 @@ export default function ReportEditorPage() {
     // existed) simply have no `source` and load from `blocks` unchanged —
     // additive, no migration (design doc D6).
     if (typeof payload.source === "string") {
-      const parsed = parseReportMarkdown(payload.source);
+      const parsed = parseReportMarkdown(payload.source, undefined, { allProjectRuns });
       setBlocks(parsed.blocks);
       rawCairnSourceRef.current = parsed.rawCairnSource;
       if (reportId) restoreReportCardSettings(reportId, { blocks: parsed.blocks, cardSettings: parsed.settings });
@@ -115,7 +123,8 @@ export default function ReportEditorPage() {
     setLastSavedAt(q.data.updated_at);
     justHydratedRef.current = true;
     setHydrated(true);
-  }, [q.data, hydrated, reportId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q.data, runsQ.data, hydrated, reportId]);
 
   const doSave = useCallback(() => {
     if (!hydrated || !reportId) return;
@@ -279,7 +288,11 @@ export default function ReportEditorPage() {
   };
 
   const exitMarkdownView = () => {
-    const parsed = parseReportMarkdown(mdSource);
+    // RBUG fold-in (see the hydrate effect's doc above): thread the live
+    // project run pool here too, so a selector block hand-edited in the
+    // markdown-source textarea recompiles with a non-empty run set instead
+    // of losing its cards' metric identity on toggle-back.
+    const parsed = parseReportMarkdown(mdSource, undefined, { allProjectRuns });
     rawCairnSourceRef.current = parsed.rawCairnSource;
     setBlocks(parsed.blocks);
     if (reportId) restoreReportCardSettings(reportId, { blocks: parsed.blocks, cardSettings: parsed.settings });
