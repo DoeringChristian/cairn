@@ -12,6 +12,7 @@ improvements over that module:
 from __future__ import annotations
 
 import json
+import re
 import secrets
 from typing import Any
 
@@ -42,6 +43,68 @@ def _parse_payload(raw: str) -> dict[str, Any]:
         return {}
 
 
+_FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})[ \t]*(.*)$")
+
+
+def _count_source_segments(source: str) -> int:
+    """B11 fix: count top-level blocks directly from `source` for a
+    source-only report (SDK/`cairn.Report` ships `{source}` with no
+    `blocks[]` cache — see AR1 §6) instead of misreporting "0 blocks".
+
+    Approximates `lib/reports/markdown-source.ts`'s `splitFences`: a run of
+    prose lines is one block, and every ```cairn fence is its own block; any
+    other fenced code block stays embedded in its surrounding prose (not
+    split out), same as the TS splitter. Good enough for this list-page
+    badge — the TS parser stays the single source of truth for the actual
+    `blocks[]` a report compiles to.
+    """
+    lines = source.split("\n")
+    n = len(lines)
+    segments = 0
+    prose_buf: list[str] = []
+    i = 0
+
+    def flush_prose() -> None:
+        nonlocal segments
+        if prose_buf:
+            segments += 1
+            prose_buf.clear()
+
+    while i < n:
+        m = _FENCE_OPEN_RE.match(lines[i])
+        if not m:
+            prose_buf.append(lines[i])
+            i += 1
+            continue
+        run, info = m.group(1), m.group(2)
+        char, min_len = run[0], len(run)
+        lang = info.strip().split()[0] if info.strip() else ""
+        close_re = re.compile(rf"^ {{0,3}}{re.escape(char)}{{{min_len},}}[ \t]*$")
+        close_idx = next((j for j in range(i + 1, n) if close_re.match(lines[j])), -1)
+        closed = close_idx != -1
+        end_idx = close_idx if closed else n - 1
+
+        if lang == "cairn":
+            flush_prose()
+            segments += 1
+        else:
+            prose_buf.append("\n".join(lines[i : end_idx + 1]))
+        i = close_idx + 1 if closed else n
+
+    flush_prose()
+    return segments
+
+
+def _block_count(payload: dict[str, Any]) -> int:
+    blocks = payload.get("blocks")
+    if blocks:
+        return len(blocks)
+    source = payload.get("source")
+    if isinstance(source, str) and source.strip():
+        return _count_source_segments(source)
+    return 0
+
+
 @router.get("/projects/{project_id}/reports")
 def list_reports(
     project_id: str,
@@ -66,7 +129,7 @@ def list_reports(
             "id": r["id"],
             "name": r["name"],
             "updated_at": r["updated_at"],
-            "block_count": len(payload.get("blocks", [])),
+            "block_count": _block_count(payload),
         })
     return {"reports": result, "total": total, "limit": limit, "offset": offset}
 

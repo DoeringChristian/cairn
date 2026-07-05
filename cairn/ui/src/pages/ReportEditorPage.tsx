@@ -10,7 +10,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
-import { useReport, useRuns, useUpdateReport } from "../api/hooks";
+import { RUN_SELECTOR_FETCH_LIMIT, useReport, useRuns, useUpdateReport } from "../api/hooks";
 import { formatRelative } from "../lib/format";
 import { loadCardSettings } from "../lib/card-settings";
 import { isMultiRunCardType, type ComparisonTemplateCard } from "../lib/comparisons";
@@ -43,7 +43,11 @@ export default function ReportEditorPage() {
   const { projectId, reportId } = useParams<{ projectId: string; reportId: string }>();
   const q = useReport(projectId ?? "", reportId ?? "");
   const updateMut = useUpdateReport(projectId ?? "", reportId ?? "");
-  const runsQ = useRuns({ project: projectId, limit: 200 });
+  // B10 fix: match RUN_SELECTOR_FETCH_LIMIT (the pool a `RunSelector` query
+  // resolves against) so a resolved run never falls outside this page's own
+  // "all project runs" list — a smaller cap here silently dropped chips for
+  // any resolved run beyond it.
+  const runsQ = useRuns({ project: projectId, limit: RUN_SELECTOR_FETCH_LIMIT });
   const allProjectRuns = runsQ.data?.runs ?? [];
 
   const [editMode, setEditMode] = useState(false);

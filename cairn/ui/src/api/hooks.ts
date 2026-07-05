@@ -374,8 +374,16 @@ export function useDeleteReport(projectId: string) {
 // `runSelector` field and reports' cards-block `runSelector` field.
 // ---------------------------------------------------------------------------
 
-/** Bounded pool size fetched to resolve a "query" run selector against. */
-const RUN_SELECTOR_FETCH_LIMIT = 500;
+/**
+ * Bounded pool size fetched to resolve a "query" run selector against.
+ * Exported so any other "all project runs" fetch that a selector's resolved
+ * ids need to be looked up against (chips/pickers) uses the *same* bound —
+ * B10 fix: `ReportsListPage`/`ReportEditorPage` used to fetch only 200
+ * project runs for chip/candidate rendering while resolution itself pulled
+ * from a pool of 500, so a resolved run beyond the 200th silently vanished
+ * from chips/pickers (its id had nothing to look up a label against).
+ */
+export const RUN_SELECTOR_FETCH_LIMIT = 500;
 /** Short staleTime so a newly logged run shows up on the next focus/refresh
  *  without requiring a full page reload. */
 const RUN_SELECTOR_STALE_MS = 10_000;

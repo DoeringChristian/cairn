@@ -56,6 +56,24 @@ def test_list_reports_summary_and_block_count(client):
     assert set(by_name["A"].keys()) == {"id", "name", "updated_at", "block_count"}
 
 
+def test_list_reports_block_count_source_only(client):
+    # B11: an SDK/`cairn.Report`-created report ships `{source}` with no
+    # `blocks[]` cache (AR1 §6) — block_count must not misreport "0 blocks".
+    project_id = _make_project(client)
+    source_payload = {
+        "source": "Some intro prose.\n\n```cairn\nruns:\n  ids: []\ncards: []\n```\n\nMore prose after.\n",
+    }
+    empty_source_payload = {"source": "   \n"}
+    client.post(f"/api/projects/{project_id}/reports", json={"name": "S", "payload": source_payload})
+    client.post(f"/api/projects/{project_id}/reports", json={"name": "Empty", "payload": empty_source_payload})
+
+    body = client.get(f"/api/projects/{project_id}/reports").json()
+    by_name = {r["name"]: r for r in body["reports"]}
+    # prose + ```cairn fence + prose = 3 segments.
+    assert by_name["S"]["block_count"] == 3
+    assert by_name["Empty"]["block_count"] == 0
+
+
 def test_list_reports_pagination_bounded(client):
     project_id = _make_project(client)
     for i in range(5):
