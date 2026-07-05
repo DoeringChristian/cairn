@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, type RefObject } from "react";
+import { useCallback, useEffect, useId, useRef, type RefObject } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { useContainerSize } from "../hooks/use-container-size";
@@ -17,6 +17,27 @@ export interface Scene3DBounds {
 export interface Scene3DSyncOptions {
   /** Viewers sharing a `groupId` mirror each other's orbit/zoom/pan live. */
   groupId: string;
+}
+
+/**
+ * Resolves the sync group a "side" mode's reference+foreground pair of live
+ * viewers should share (WS-VCP fix 3).
+ *
+ * `sync` is the card-level group (non-null only when the card's "Sync 3D
+ * views" toggle is on) — when present, every pane on the card/page shares
+ * it, so the ref+run pair is already linked (and linked to every OTHER
+ * pane too, by design). When `sync` is `null` (card-level sync off), the
+ * ref+run pair must still always mirror each other (only DIFFERENT
+ * comparison pairs stay independent) — so this falls back to a group id
+ * derived from `useId()`, unique per `*SideBySideView` mount, shared by
+ * that one call's two viewers and no one else's.
+ *
+ * Call once per `*SideBySideView` component (not per viewer) and pass the
+ * result to BOTH the reference and foreground viewer's `sync` prop.
+ */
+export function usePairedSideBySideSync(sync: Scene3DSyncOptions | null): Scene3DSyncOptions {
+  const localId = useId();
+  return sync ?? { groupId: `side-pair-${localId}` };
 }
 
 export interface UseScene3DOptions {

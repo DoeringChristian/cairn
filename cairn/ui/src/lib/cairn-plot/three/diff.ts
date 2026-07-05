@@ -103,9 +103,45 @@ export function diffColors(
   colormap: DiffColormap,
 ): DiffColorsResult {
   const domain = diffDomain(values, colormap);
+  return { colors: diffColorsForDomain(values, nElements, domain, colormap), domain };
+}
+
+/**
+ * Same colormap-application step as `diffColors`, but against an EXTERNALLY
+ * supplied domain instead of autoscaling from `values` — the WS-VCP fix 4
+ * hook a card-native diff pane uses once a card-level UNIFIED diff domain
+ * (`unionDiffDomain`, below) has been computed across every pane, so every
+ * pane's diff recolors against the SAME domain rather than each pane's own.
+ */
+export function diffColorsForDomain(
+  values: Float32Array,
+  nElements: number,
+  domain: [number, number],
+  colormap: DiffColormap,
+): Float32Array {
   const magnitudeSafe = colormap === "viridis" ? absArray(values) : values;
-  const colors = valuesToColors(magnitudeSafe, nElements, domain, colormap);
-  return { colors, domain };
+  return valuesToColors(magnitudeSafe, nElements, domain, colormap);
+}
+
+/**
+ * Unions per-pane diff domains (each from `diffDomain`) into ONE card-level
+ * domain — the "value-only" analogue of `diffDomain` for the multi-pane
+ * case: "red-green" (signed, symmetric) takes the largest `maxAbs` across
+ * every pane; "viridis" (magnitude, `[0, maxAbs]`) takes the largest `hi`.
+ * `null` when `domains` is empty (no pane currently has a valid diff to
+ * contribute — e.g. every pair is topology-mismatched).
+ */
+export function unionDiffDomain(
+  domains: readonly [number, number][],
+  colormap: DiffColormap,
+): [number, number] | null {
+  if (domains.length === 0) return null;
+  if (colormap === "red-green") {
+    const m = Math.max(...domains.map(([lo, hi]) => Math.max(Math.abs(lo), Math.abs(hi))));
+    return [-m, m];
+  }
+  const hi = Math.max(...domains.map(([, h]) => h));
+  return [0, hi];
 }
 
 // ---------------------------------------------------------------------------

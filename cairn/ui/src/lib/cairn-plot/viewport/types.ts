@@ -1,4 +1,4 @@
-import type { DiffMode } from "../types";
+import type { ColormapName, DiffMode } from "../types";
 import type { MediaCompareModeKind } from "../media-compare/mode";
 
 // ---------------------------------------------------------------------------
@@ -250,9 +250,11 @@ export interface ViewportPaneProps<TData, TView extends ViewState, TSettings> {
   /** Live camera-sync group id ("Sync 3D views"), resolved ONCE per card
    *  (never per pane — see `lib/camera-sync.ts`'s `useCameraSync` doc
    *  comment) and threaded to every pane so orbit/zoom/pan mirrors across
-   *  this card's panes (and any other sync-enabled 3D card on the page).
-   *  `null` = sync off or `capabilities.cameraSync` is false; ImageViewport
-   *  ignores this (image has no camera). Added in WS-VC4. */
+   *  this card's OWN panes only — scoped per card instance, NOT shared with
+   *  any other 3D card on the page (see `useCameraSync`'s doc comment; fixed
+   *  in the "per-card sync group, not app-wide" pass). `null` = sync off or
+   *  `capabilities.cameraSync` is false; ImageViewport ignores this (image
+   *  has no camera). Added in WS-VC4. */
   cameraSyncGroupId?: string | null;
   /** WS-VC6: the resolved reference belongs to a DIFFERENT `object_type` than
    *  this viewport (cross-type compare — image<->3D). `reference` is always
@@ -278,6 +280,19 @@ export interface ViewportPaneProps<TData, TView extends ViewState, TSettings> {
    *  `computeDiff` behavior) would not be spatially meaningful. Always
    *  `false`/`undefined` outside cross-type compare. */
   crossTypeAlignForDiff?: boolean;
+  /**
+   * Card-level UNIFIED value/colormap domain (WS-VCP fix 4) — computed ONCE
+   * per card by `ViewportModule.activeColorbar` across every pane's
+   * foreground+reference items, and threaded to EVERY pane so per-pane
+   * coloring is synchronized instead of each pane autoscaling from its own
+   * item's data (mismatched ranges across a comparison's panes was the
+   * bug). `null`/absent = no unified domain applies right now (e.g. solid
+   * coloring, or the type doesn't implement `activeColorbar`) — the Pane
+   * falls back to its own per-item autoscale in that case. Ignored by
+   * ImageViewport (image's false-color colorbar is `settings.colormap`-
+   * driven, a separate mechanism, unaffected by this).
+   */
+  colorRange?: [number, number] | null;
 }
 
 /**
@@ -360,4 +375,25 @@ export interface ViewportModule<
   /** Geometry-space diff renderer (VC4's `three/diff.ts`), if any. Absent
    *  for image. */
   nativeDiff?: { render: React.ComponentType<ViewportPaneProps<TData, TView, TSettings>> };
+  /**
+   * Computes the SINGLE card-level colorbar (WS-VCP fix 4): given every
+   * currently-resolved pane's foreground+reference items (index-aligned,
+   * mirroring `ViewportDataResult`), the persisted settings, and the
+   * effective mode/native-mode, returns the colormap + UNIFIED `[min,max]`
+   * domain the card should render as its ONE `<Colorbar>` — or `null` when
+   * no colorbar applies right now (e.g. solid coloring with no active
+   * value/vertex-color mode). VisualContentCard calls this ONCE per render
+   * (never per-Pane), renders the result as the sole colorbar, and threads
+   * its range back into every Pane via `colorRange` so cross-pane coloring
+   * stays synchronized. Absent (image's case) = no card-level colorbar
+   * from this mechanism — image keeps its own independent
+   * `settings.colormap`-driven false-color colorbar, unaffected.
+   */
+  activeColorbar?(args: {
+    items: (TData | null)[];
+    referenceItems: (TData | null)[];
+    settings: TSettings;
+    mode: MediaCompareModeKind;
+    nativeMode?: string;
+  }): { colormap: ColormapName; min: number; max: number } | null;
 }

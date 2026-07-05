@@ -17,6 +17,7 @@ import {
   type ViewState,
 } from "../lib/cairn-plot";
 import MeshViewer, {
+  resolveMeshColorMode,
   type MeshColorMode,
   type MeshShading,
   type MeshBackground,
@@ -26,6 +27,7 @@ import {
   MeshSideBySideView,
   MeshNativeDiffPane,
   meshViewportCapabilities,
+  meshActiveColorbar,
   type MeshMeta,
   type MeshViewportItem,
   type MeshViewState,
@@ -187,6 +189,11 @@ function defaultMeshSettings(): Omit<MeshFullSettings, "metrics" | "version"> {
     wireframe: false,
     doubleSided: true,
     background: "dark",
+    // 3D views linked by default (WS-VCP fix 1) — `useCardSettings` merges
+    // this under any persisted value, so a card that already has an explicit
+    // `syncViews` (on OR off) keeps it; only brand-new/never-toggled cards
+    // pick up this default.
+    syncViews: true,
     // Inert placeholders — see defaultPointCloudSettings' identical comment.
     brightness: 0,
     contrast: 0,
@@ -251,6 +258,7 @@ function MeshViewportPane(
     blendAlpha,
     crossTypeReferenceUrl,
     crossTypeAlignForDiff,
+    colorRange,
   } = props;
   const sync: Scene3DSyncOptions | null = cameraSyncGroupId ? { groupId: cameraSyncGroupId } : null;
   const view = {
@@ -271,6 +279,8 @@ function MeshViewportPane(
   // the generalized OffscreenComparePanes).
   const renderMeshLive = (cb: (canvas: HTMLCanvasElement) => void, syncOpts: Scene3DSyncOptions) => {
     const active = resolveActiveProperty(data!.arrays.properties, view.property, data!.meta.properties ?? null);
+    const resolvedMode = resolveMeshColorMode(view.colorMode, !!data!.arrays.colors, !!active.values);
+    const valueRange = resolvedMode === "values" ? (colorRange ?? active.range) : active.range;
     return (
       <MeshViewer
         positions={data!.arrays.positions}
@@ -278,7 +288,7 @@ function MeshViewportPane(
         nVertices={data!.meta.n_vertices}
         nFaces={data!.meta.n_faces}
         values={active.values}
-        valueRange={active.range}
+        valueRange={valueRange}
         colors={data!.arrays.colors}
         normals={data!.arrays.normals}
         bounds={data!.meta.bounds}
@@ -327,6 +337,7 @@ function MeshViewportPane(
         label={label}
         isDraggable={isDraggable}
         onDragStart={onDragStart}
+        colorRange={colorRange}
       />
     );
   }
@@ -347,6 +358,8 @@ function MeshViewportPane(
           kind: "live",
           render: (cb, syncOpts) => {
             const active = resolveActiveProperty(reference.arrays.properties, view.property, reference.meta.properties ?? null);
+            const resolvedMode = resolveMeshColorMode(view.colorMode, !!reference.arrays.colors, !!active.values);
+            const valueRange = resolvedMode === "values" ? (colorRange ?? active.range) : active.range;
             return (
               <MeshViewer
                 positions={reference.arrays.positions}
@@ -354,7 +367,7 @@ function MeshViewportPane(
                 nVertices={reference.meta.n_vertices}
                 nFaces={reference.meta.n_faces}
                 values={active.values}
-                valueRange={active.range}
+                valueRange={valueRange}
                 colors={reference.arrays.colors}
                 normals={reference.arrays.normals}
                 bounds={reference.meta.bounds}
@@ -388,6 +401,7 @@ function MeshViewportPane(
       label={label}
       isDraggable={isDraggable}
       onDragStart={onDragStart}
+      colorRange={colorRange}
     />
   );
 }
@@ -503,6 +517,7 @@ export const meshViewportModule: ViewportModule<
   viewToSettingsPatch: () => ({}),
   defaultView: () => DEFAULT_VIEW,
   onResetView: (container) => resetScene3DViews(container),
+  activeColorbar: meshActiveColorbar,
   Pane: MeshViewportPane,
   SettingsControls: MeshSettingsControls,
   nativeDiff: { render: MeshNativeDiffPane },

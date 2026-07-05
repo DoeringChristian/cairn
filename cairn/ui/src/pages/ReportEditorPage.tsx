@@ -10,7 +10,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
-import { useReport, useRuns, useUpdateReport } from "../api/hooks";
+import { RUN_SELECTOR_FETCH_LIMIT, useReport, useRuns, useUpdateReport } from "../api/hooks";
 import { formatRelative } from "../lib/format";
 import { loadCardSettings } from "../lib/card-settings";
 import { isMultiRunCardType, type ComparisonTemplateCard } from "../lib/comparisons";
@@ -43,7 +43,11 @@ export default function ReportEditorPage() {
   const { projectId, reportId } = useParams<{ projectId: string; reportId: string }>();
   const q = useReport(projectId ?? "", reportId ?? "");
   const updateMut = useUpdateReport(projectId ?? "", reportId ?? "");
-  const runsQ = useRuns({ project: projectId, limit: 200 });
+  // B10 fix: match RUN_SELECTOR_FETCH_LIMIT (the pool a `RunSelector` query
+  // resolves against) so a resolved run never falls outside this page's own
+  // "all project runs" list — a smaller cap here silently dropped chips for
+  // any resolved run beyond it.
+  const runsQ = useRuns({ project: projectId, limit: RUN_SELECTOR_FETCH_LIMIT });
   const allProjectRuns = runsQ.data?.runs ?? [];
 
   const [editMode, setEditMode] = useState(false);
@@ -123,9 +127,26 @@ export default function ReportEditorPage() {
     const effectiveName = trimmed || DEFAULT_REPORT_NAME;
     if (effectiveName !== name) setName(effectiveName);
     setSaveState("saving");
-    const payload = buildReportPayload(reportId, blocks);
-    const source = serializeReportToMarkdown(blocks, payload.cardSettings ?? {}, rawCairnSourceRef.current);
-    const payloadWithSource: ReportPayload = { ...payload, source };
+
+    // B1/B8: in the markdown-source view, edits live only in `mdSource`
+    // state until the user explicitly exits/saves (see handleSaveNow) —
+    // `blocks` doesn't reflect them yet. Persist a source-derived payload
+    // (parse-on-idle) here too, so this debounced autosave / the unmount
+    // flush below never clobbers in-progress source edits with stale
+    // `blocks`. This intentionally does NOT touch local `blocks`/`sourceView`
+    // state — only what gets persisted — so a silent autosave doesn't
+    // interrupt typing.
+    const payloadWithSource: ReportPayload = sourceView
+      ? (() => {
+          const parsed = parseReportMarkdown(mdSource);
+          return { blocks: parsed.blocks, cardSettings: parsed.settings, source: mdSource };
+        })()
+      : (() => {
+          const payload = buildReportPayload(reportId, blocks);
+          const source = serializeReportToMarkdown(blocks, payload.cardSettings ?? {}, rawCairnSourceRef.current);
+          return { ...payload, source };
+        })();
+
     updateMut.mutate(
       { name: effectiveName, payload: payloadWithSource as unknown as Record<string, unknown> },
       {
@@ -137,9 +158,12 @@ export default function ReportEditorPage() {
       },
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hydrated, reportId, blocks, name]);
+  }, [hydrated, reportId, blocks, name, sourceView, mdSource]);
 
-  // Debounced autosave — fires ~1.5s after the last local edit.
+  // Debounced autosave — fires ~1.5s after the last local edit. Depends on
+  // `mdSource`/`sourceView` too (B1): typing in the markdown-source textarea
+  // only updates `mdSource`, never `blocks`, so without these deps a
+  // source-only edit never schedules a save at all.
   useEffect(() => {
     if (!hydrated) return;
     if (justHydratedRef.current) {
@@ -154,7 +178,7 @@ export default function ReportEditorPage() {
       if (saveTimerRef.current != null) window.clearTimeout(saveTimerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [blocks, name, hydrated]);
+  }, [blocks, name, hydrated, sourceView, mdSource]);
 
   // Keep a ref to the latest doSave so the unmount-only effect below (empty
   // deps, so it can't re-subscribe on every edit) never calls a stale

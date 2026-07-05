@@ -4,11 +4,13 @@ import MeshViewer, {
   type MeshColorMode,
   type MeshShading,
 } from "../three/MeshViewer";
-import type { Scene3DSyncOptions } from "../three/use-scene3d";
+import { usePairedSideBySideSync, type Scene3DSyncOptions } from "../three/use-scene3d";
 import {
   computeDelta,
   computeDisplacementMagnitude,
-  diffColors,
+  diffColorsForDomain,
+  diffDomain,
+  unionDiffDomain,
   type DiffColormap,
 } from "../three/diff";
 import {
@@ -16,7 +18,9 @@ import {
   type PropertyMap,
   type PropertyMeta,
 } from "../three/properties";
-import { Colorbar, LabelChip } from "../primitives";
+import { LabelChip } from "../primitives";
+import type { ColormapName } from "../types";
+import type { MediaCompareModeKind } from "../media-compare/mode";
 import type { ViewportCapabilities, ViewportPaneProps, ViewState } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -117,6 +121,7 @@ export function MeshSingleView({
   isDraggable,
   onDragStart,
   onFrame,
+  colorRange,
 }: {
   item: MeshViewportItem | null;
   view: MeshViewConfig;
@@ -125,6 +130,11 @@ export function MeshSingleView({
   isDraggable?: boolean;
   onDragStart?: (e: React.DragEvent) => void;
   onFrame?: (canvas: HTMLCanvasElement) => void;
+  /** Card-level unified value range (WS-VCP fix 4) — overrides this item's
+   *  own autoscaled `active.range` when the "values" color mode is active,
+   *  so coloring matches the card's single colorbar. `null`/absent = fall
+   *  back to per-item autoscale (e.g. no card-level colorbar applies). */
+  colorRange?: [number, number] | null;
 }) {
   if (!item) {
     return (
@@ -136,6 +146,7 @@ export function MeshSingleView({
   const { arrays, meta } = item;
   const active = resolveActiveProperty(arrays.properties, view.property, meta.properties ?? null);
   const resolvedMode = resolveMeshColorMode(view.colorMode, !!arrays.colors, !!active.values);
+  const valueRange = resolvedMode === "values" ? (colorRange ?? active.range) : active.range;
   return (
     <div className="relative flex h-full w-full overflow-hidden rounded bg-bg">
       <div className="min-w-0 flex-1">
@@ -145,7 +156,7 @@ export function MeshSingleView({
           nVertices={meta.n_vertices}
           nFaces={meta.n_faces}
           values={active.values}
-          valueRange={active.range}
+          valueRange={valueRange}
           colors={arrays.colors}
           normals={arrays.normals}
           bounds={meta.bounds}
@@ -158,9 +169,6 @@ export function MeshSingleView({
           onFrame={onFrame}
         />
       </div>
-      {resolvedMode === "values" && active.range && (
-        <Colorbar colormap="viridis" min={active.range[0]} max={active.range[1]} />
-      )}
       <LabelChip label={label} isDraggable={isDraggable} onDragStart={onDragStart} />
     </div>
   );
@@ -176,6 +184,7 @@ export function MeshSideBySideView({
   label,
   isDraggable,
   onDragStart,
+  colorRange,
 }: {
   item: MeshViewportItem | null;
   reference: MeshViewportItem | null;
@@ -184,7 +193,17 @@ export function MeshSideBySideView({
   label: string;
   isDraggable?: boolean;
   onDragStart?: (e: React.DragEvent) => void;
+  /** See `MeshSingleView`'s identical doc comment (WS-VCP fix 4) — threaded
+   *  to BOTH the ref and run viewer below so they color identically. */
+  colorRange?: [number, number] | null;
 }) {
+  // WS-VCP fix 3: the ref+run pair below must ALWAYS mirror each other's
+  // orbit/zoom/pan, even when the card-level "Sync 3D views" toggle is off
+  // (`sync` null) — only cross-pair/cross-card linking is gated by that
+  // toggle. `pairedSync` is `sync` unchanged when non-null (so the pair
+  // still joins the wider group), else a per-mount fallback group shared
+  // by just this pane's two viewers.
+  const pairedSync = usePairedSideBySideSync(sync);
   if (!reference) {
     return (
       <MeshSingleView
@@ -194,6 +213,7 @@ export function MeshSideBySideView({
         label={label}
         isDraggable={isDraggable}
         onDragStart={onDragStart}
+        colorRange={colorRange}
       />
     );
   }
@@ -202,6 +222,8 @@ export function MeshSideBySideView({
     view.property,
     reference.meta.properties ?? null,
   );
+  const refResolvedMode = resolveMeshColorMode(view.colorMode, !!reference.arrays.colors, !!refActive.values);
+  const refValueRange = refResolvedMode === "values" ? (colorRange ?? refActive.range) : refActive.range;
   return (
     <div className="flex h-full w-full gap-0.5">
       <div className="relative flex-1 min-w-0 overflow-hidden rounded border border-accent/20 bg-bg">
@@ -211,7 +233,7 @@ export function MeshSideBySideView({
           nVertices={reference.meta.n_vertices}
           nFaces={reference.meta.n_faces}
           values={refActive.values}
-          valueRange={refActive.range}
+          valueRange={refValueRange}
           colors={reference.arrays.colors}
           normals={reference.arrays.normals}
           bounds={reference.meta.bounds}
@@ -220,13 +242,15 @@ export function MeshSideBySideView({
           wireframe={view.wireframe}
           doubleSided={view.doubleSided}
           background={view.background}
-          sync={sync}
+          sync={pairedSync}
         />
         <LabelChip label="REF" />
       </div>
       <div className="relative flex-1 min-w-0 overflow-hidden rounded bg-bg">
         {item ? (() => {
           const active = resolveActiveProperty(item.arrays.properties, view.property, item.meta.properties ?? null);
+          const resolvedMode = resolveMeshColorMode(view.colorMode, !!item.arrays.colors, !!active.values);
+          const valueRange = resolvedMode === "values" ? (colorRange ?? active.range) : active.range;
           return (
             <MeshViewer
               positions={item.arrays.positions}
@@ -234,7 +258,7 @@ export function MeshSideBySideView({
               nVertices={item.meta.n_vertices}
               nFaces={item.meta.n_faces}
               values={active.values}
-              valueRange={active.range}
+              valueRange={valueRange}
               colors={item.arrays.colors}
               normals={item.arrays.normals}
               bounds={item.meta.bounds}
@@ -243,7 +267,7 @@ export function MeshSideBySideView({
               wireframe={view.wireframe}
               doubleSided={view.doubleSided}
               background={view.background}
-              sync={sync}
+              sync={pairedSync}
             />
           );
         })() : (
@@ -272,6 +296,7 @@ export function MeshNativeDiffPane({
   label,
   isDraggable,
   onDragStart,
+  colorRange,
 }: ViewportPaneProps<MeshViewportItem, MeshViewState, MeshViewportSettings>) {
   const sync: Scene3DSyncOptions | null = cameraSyncGroupId ? { groupId: cameraSyncGroupId } : null;
   const view = resolveViewConfig(settings);
@@ -325,7 +350,11 @@ export function MeshNativeDiffPane({
     );
   }
 
-  const { colors, domain } = diffColors(deltaValues, data.meta.n_vertices, diffColormap);
+  // WS-VCP fix 4: color against the card-level UNIFIED diff domain when
+  // supplied (every diff pane on the card then shares one scale), else fall
+  // back to this pane's own autoscaled domain.
+  const domain = colorRange ?? diffDomain(deltaValues, diffColormap);
+  const colors = diffColorsForDomain(deltaValues, data.meta.n_vertices, domain, diffColormap);
 
   return (
     <div className="relative flex h-full w-full overflow-hidden rounded bg-bg">
@@ -346,7 +375,6 @@ export function MeshNativeDiffPane({
           sync={sync}
         />
       </div>
-      <Colorbar colormap={diffColormap} min={domain[0]} max={domain[1]} />
       <LabelChip label={label} isDraggable={isDraggable} onDragStart={onDragStart} />
     </div>
   );
@@ -360,13 +388,70 @@ function topologyMatches(content: unknown, reference: unknown): boolean {
 }
 
 /**
+ * `ViewportModule.activeColorbar` (WS-VCP fix 4) — the SINGLE card-level
+ * colorbar for mesh: under a native diff mode, unions every valid pane's
+ * diff domain (`unionDiffDomain`); otherwise, when "values" coloring is
+ * selected, unions the active property's range across every foreground +
+ * reference item currently resolved. `null` (no colorbar) for "solid"/
+ * "vertex-colors" coloring, or when nothing currently has a resolvable
+ * domain (e.g. every pair topology-mismatched, or no property values
+ * logged).
+ */
+export function meshActiveColorbar(args: {
+  items: (MeshViewportItem | null)[];
+  referenceItems: (MeshViewportItem | null)[];
+  settings: MeshViewportSettings;
+  mode: MediaCompareModeKind;
+  nativeMode?: string;
+}): { colormap: ColormapName; min: number; max: number } | null {
+  const { items, referenceItems, settings, nativeMode } = args;
+  const property = settings.property ?? null;
+  const diffColormap: DiffColormap = settings.diffColormap ?? "viridis";
+
+  if (nativeMode === "diff-property" || nativeMode === "diff-geometry") {
+    const domains: [number, number][] = [];
+    for (let i = 0; i < items.length; i++) {
+      const a = items[i];
+      const b = referenceItems[i];
+      if (!a || !b) continue;
+      if (a.meta.n_vertices !== b.meta.n_vertices || a.meta.n_faces !== b.meta.n_faces) continue;
+      let delta: Float32Array | null = null;
+      if (nativeMode === "diff-geometry") {
+        delta = computeDisplacementMagnitude(a.arrays.positions, b.arrays.positions, a.meta.n_vertices);
+      } else {
+        const activeA = resolveActiveProperty(a.arrays.properties, property, a.meta.properties ?? null);
+        const activeB = resolveActiveProperty(b.arrays.properties, property, b.meta.properties ?? null);
+        if (activeA.values && activeB.values) delta = computeDelta(activeA.values, activeB.values, a.meta.n_vertices);
+      }
+      if (delta) domains.push(diffDomain(delta, diffColormap));
+    }
+    const union = unionDiffDomain(domains, diffColormap);
+    return union ? { colormap: diffColormap, min: union[0], max: union[1] } : null;
+  }
+
+  if (settings.colorMode !== "values") return null;
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const it of [...items, ...referenceItems]) {
+    if (!it) continue;
+    const active = resolveActiveProperty(it.arrays.properties, property, it.meta.properties ?? null);
+    if (active.values && active.range) {
+      lo = Math.min(lo, active.range[0]);
+      hi = Math.max(hi, active.range[1]);
+    }
+  }
+  if (!Number.isFinite(lo) || !Number.isFinite(hi)) return null;
+  return { colormap: "viridis", min: lo, max: hi };
+}
+
+/**
  * MeshViewport's capability descriptor — mirrors
  * `pointCloudViewportCapabilities` exactly (all five core modes via the
  * app-layer Pane's split/blend/diff -> `OffscreenComparePanes` bridge, plus
  * the two native geometry diffs; no post-processing/overlays; camera sync
  * on; always-on reset; `colorbar: "never"` for the shared false-color
- * mechanism — the Pane renders its own contextual "values" colorbar
- * directly; `maxPanes: 4` + `webglContextsPerPane: 1` preserve the
+ * mechanism — the card renders ONE colorbar via `meshActiveColorbar`
+ * (WS-VCP fix 4) instead; `maxPanes: 4` + `webglContextsPerPane: 1` preserve the
  * pre-refactor `MAX_PANES` WebGL budget mitigation).
  */
 export const meshViewportCapabilities: ViewportCapabilities<MeshNativeMode> = {

@@ -8,7 +8,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { useCreateReport, useDeleteReport, useReports, useRuns, useUpdateReport } from "../api/hooks";
+import {
+  RUN_SELECTOR_FETCH_LIMIT,
+  useCreateReport,
+  useDeleteReport,
+  useReports,
+  useRuns,
+  useUpdateReport,
+} from "../api/hooks";
 import { formatRelative } from "../lib/format";
 import { disambiguateRunLabels, useRunMetadataVersion } from "../lib/run-label";
 import {
@@ -26,11 +33,17 @@ export default function ReportsListPage() {
   const navigate = useNavigate();
   const [offset, setOffset] = useState(0);
   const [applyBanner, setApplyBanner] = useState<string | null>(null);
+  // B9 fix: surface create/delete failures (previously silent) and track
+  // which row is mid-delete so its button can show pending state.
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const q = useReports(projectId ?? "", { limit: PAGE_SIZE, offset });
   const createMut = useCreateReport(projectId ?? "");
   const deleteMut = useDeleteReport(projectId ?? "");
-  const runsQ = useRuns({ project: projectId, limit: 200 });
+  // B10 fix: match RUN_SELECTOR_FETCH_LIMIT — see ReportEditorPage's same fix
+  // for why this must match the pool a `RunSelector` query resolves against.
+  const runsQ = useRuns({ project: projectId, limit: RUN_SELECTOR_FETCH_LIMIT });
   const allRuns = runsQ.data?.runs ?? [];
 
   if (!projectId) return null;
@@ -42,15 +55,37 @@ export default function ReportsListPage() {
     const name = prompt("Report name:", "Untitled report");
     if (name == null) return;
     const trimmed = name.trim() || "Untitled report";
+    setActionError(null);
     createMut.mutate(
       { name: trimmed, payload: { blocks: [] } },
-      { onSuccess: (res) => navigate(`/p/${projectId}/reports/${res.id}`) },
+      {
+        onSuccess: (res) => navigate(`/p/${projectId}/reports/${res.id}`),
+        onError: () => setActionError(`Failed to create "${trimmed}". Please try again.`),
+      },
     );
   };
 
   const handleDelete = (id: string, name: string) => {
     if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
-    deleteMut.mutate(id);
+    setActionError(null);
+    setDeletingId(id);
+    // B9 fix (pagination strand): deleting the last remaining report on a
+    // page beyond the first would otherwise leave `offset` pointing past
+    // the new end of the list — nothing renders, and the Prev/Next controls
+    // can vanish too (once total <= PAGE_SIZE), stranding the user with no
+    // way back to page 1. Step back a page when this delete empties the
+    // current one.
+    const isLastOnPage = reports.length === 1 && offset > 0;
+    deleteMut.mutate(id, {
+      onSuccess: () => {
+        setDeletingId(null);
+        if (isLastOnPage) setOffset((o) => Math.max(0, o - PAGE_SIZE));
+      },
+      onError: () => {
+        setDeletingId(null);
+        setActionError(`Failed to delete "${name}". Please try again.`);
+      },
+    });
   };
 
   const handleApplied = (result: ApplyReportTemplateResult, templateName: string) => {
@@ -74,9 +109,9 @@ export default function ReportsListPage() {
             type="button"
             onClick={handleCreate}
             disabled={createMut.isPending}
-            className="btn text-xs"
+            className="btn text-xs disabled:opacity-60"
           >
-            + New report
+            {createMut.isPending ? "Creating…" : "+ New report"}
           </button>
         </div>
       </div>
@@ -88,6 +123,20 @@ export default function ReportsListPage() {
             type="button"
             onClick={() => setApplyBanner(null)}
             className="shrink-0 text-fg-subtle hover:text-fg"
+            aria-label="Dismiss"
+          >
+            {"×"}
+          </button>
+        </div>
+      )}
+
+      {actionError && (
+        <div className="mb-4 flex items-center justify-between gap-2 rounded border border-status-failed/40 bg-status-failed/10 px-3 py-2 text-xs text-status-failed">
+          <span>{actionError}</span>
+          <button
+            type="button"
+            onClick={() => setActionError(null)}
+            className="shrink-0 text-status-failed/70 hover:text-status-failed"
             aria-label="Dismiss"
           >
             {"×"}
@@ -118,6 +167,7 @@ export default function ReportsListPage() {
               key={r.id}
               projectId={projectId}
               report={r}
+              deleting={deletingId === r.id}
               onDelete={() => handleDelete(r.id, r.name)}
             />
           ))}
@@ -161,47 +211,69 @@ interface ReportSummary {
 function ReportRow({
   projectId,
   report,
+  deleting,
   onDelete,
 }: {
   projectId: string;
   report: ReportSummary;
+  deleting: boolean;
   onDelete: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(report.name);
+  const [renameError, setRenameError] = useState<string | null>(null);
   const updateMut = useUpdateReport(projectId, report.id);
 
   useEffect(() => {
     if (!editing) setDraft(report.name);
   }, [report.name, editing]);
 
+  // B9 fix: don't optimistically exit edit mode before the rename actually
+  // lands — stay in edit mode (with pending/error feedback) until it does,
+  // instead of silently reverting to the pre-edit name on failure with no
+  // indication anything went wrong.
   const commit = () => {
     const trimmed = draft.trim();
-    if (trimmed && trimmed !== report.name) updateMut.mutate({ name: trimmed });
-    setEditing(false);
+    if (!trimmed || trimmed === report.name) {
+      setEditing(false);
+      return;
+    }
+    setRenameError(null);
+    updateMut.mutate(
+      { name: trimmed },
+      {
+        onSuccess: () => setEditing(false),
+        onError: () => setRenameError("Rename failed — try again or press Esc to cancel."),
+      },
+    );
   };
 
   return (
     <div className="group flex items-center gap-2 px-3 py-2.5 text-sm">
       {editing ? (
-        <input
-          autoFocus
-          type="text"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={commit}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              commit();
-            } else if (e.key === "Escape") {
-              e.preventDefault();
-              setEditing(false);
-              setDraft(report.name);
-            }
-          }}
-          className="input flex-1 text-sm"
-        />
+        <div className="min-w-0 flex-1">
+          <input
+            autoFocus
+            type="text"
+            value={draft}
+            disabled={updateMut.isPending}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                commit();
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                setEditing(false);
+                setRenameError(null);
+                setDraft(report.name);
+              }
+            }}
+            className="input w-full text-sm disabled:opacity-60"
+          />
+          {renameError && <p className="mt-0.5 text-xs text-status-failed">{renameError}</p>}
+        </div>
       ) : (
         <Link
           to={`/p/${projectId}/reports/${report.id}`}
@@ -219,7 +291,8 @@ function ReportRow({
       <button
         type="button"
         onClick={() => setEditing(true)}
-        className="shrink-0 text-xs text-fg-subtle hover:text-fg"
+        disabled={deleting}
+        className="shrink-0 text-xs text-fg-subtle hover:text-fg disabled:opacity-40"
         title="Rename"
       >
         rename
@@ -227,10 +300,11 @@ function ReportRow({
       <button
         type="button"
         onClick={onDelete}
-        className="shrink-0 text-xs text-fg-subtle hover:text-status-failed"
+        disabled={deleting}
+        className="shrink-0 text-xs text-fg-subtle hover:text-status-failed disabled:opacity-40"
         title="Delete"
       >
-        delete
+        {deleting ? "deleting…" : "delete"}
       </button>
     </div>
   );
