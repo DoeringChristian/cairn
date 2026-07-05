@@ -35,6 +35,29 @@ import { loadJson, saveJson, storageKeys } from "./storage";
  */
 export const CardMutationContext = createContext<boolean>(true);
 
+/**
+ * WS-NR1 (B7 round-trip fix): a report's autosave is keyed off `blocks[]`
+ * state changing (`ReportEditorPage`'s debounced-autosave effect deps) —
+ * but a settings-only edit (yScale, smoothing, step, mode, …) never touched
+ * `blocks` at all, only localStorage, via `useCardSettings.updateSettings`
+ * directly. That meant a settings change made in edit mode had *no save
+ * path*: it looked like it "persisted" only because localStorage survives a
+ * reload in the same browser, but `buildReportPayload`/`serializeCairnSpec`
+ * never actually swept it into the report's `source` unless some unrelated
+ * blocks-changing edit happened to piggyback a save afterwards. Reproduced
+ * during WS-NR1 browser self-verification: changing a card's Y-scale then
+ * reloading looked fine, but "View source" showed no `settings:` key at all.
+ *
+ * Fix: `useCardSettings.updateSettings`/`reset` call this notifier (when
+ * provided) right after a mutable write actually lands, so a report surface
+ * can "touch" its owning block's identity — reusing `blocks[]`'s existing
+ * autosave trigger instead of adding a second save-scheduling mechanism.
+ * `ReportCardsBlock` provides it in edit mode only (mirrors
+ * `CardMutationContext`); every other consumer (Metrics & Media, ComparePage)
+ * leaves it `undefined`, a no-op, unchanged from before.
+ */
+export const CardSettingsChangeContext = createContext<(() => void) | undefined>(undefined);
+
 export type CardSettingsKey = {
   runId: string;
   metricName: string;
@@ -96,6 +119,7 @@ export function useCardSettings<T extends { version: number }>(
 ): [T, (patch: Partial<T>) => void, () => void] {
   const storageKey = cardSettingsStorageKey(key);
   const mutable = useContext(CardMutationContext);
+  const notifyChange = useContext(CardSettingsChangeContext);
 
   // Keep the latest `defaults` in a ref so we can merge on load without
   // adding `defaults` as an effect dep (which would thrash on every render
@@ -130,9 +154,10 @@ export function useCardSettings<T extends { version: number }>(
       settingsRef.current = next;
       setSettings(next);
       saveCardSettings<T>(key, next);
+      notifyChange?.();
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [storageKey, mutable],
+    [storageKey, mutable, notifyChange],
   );
 
   const reset = useCallback(
@@ -142,9 +167,10 @@ export function useCardSettings<T extends { version: number }>(
       const fresh = { ...defaultsRef.current } as T;
       settingsRef.current = fresh;
       setSettings(fresh);
+      notifyChange?.();
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [storageKey, mutable],
+    [storageKey, mutable, notifyChange],
   );
 
   return [settings, updateSettings, reset];

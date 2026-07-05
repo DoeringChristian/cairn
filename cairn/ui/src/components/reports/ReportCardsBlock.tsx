@@ -12,12 +12,12 @@
  * comparison).
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AddCardModal, { type AddCardSelection } from "../AddCardModal";
 import CardRenderer from "../CardRenderer";
 import ReorderableCardGrid from "../ReorderableCardGrid";
 import RunSelectorBadge from "../RunSelectorBadge";
-import { CardMutationContext } from "../../lib/card-settings";
+import { CardMutationContext, CardSettingsChangeContext } from "../../lib/card-settings";
 import {
   isMultiRunCardType,
   rebindCardsToMetricIndex,
@@ -203,6 +203,18 @@ export default function ReportCardsBlock({ projectId, reportId, block, editMode,
     onChange({ ...block, cards });
   };
 
+  // WS-NR1 (B7 round-trip fix): a card's settings change (yScale, step,
+  // mode, ...) only ever touched localStorage, never `block`/`blocks[]` —
+  // so it never reached ReportEditorPage's blocks[]-keyed autosave. "Touch"
+  // this block (new object identity, same content) whenever a settings
+  // write actually lands, reusing the existing autosave trigger instead of
+  // adding a second save-scheduling path. Only wired in edit mode — a view
+  // mode settings attempt is already a no-op at the source (CardMutationContext).
+  const handleSettingsTouched = useCallback(() => {
+    onChange({ ...block });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [block]);
+
   return (
     // WS-NR1 (B7/edit-mode gating): freeze every card's persisted settings
     // (step/iteration, compare mode, yScale, …) outside edit mode — see
@@ -210,6 +222,7 @@ export default function ReportCardsBlock({ projectId, reportId, block, editMode,
     // edit-mode flag; CairnFenceCard (the ```cairn fence preview) passes its
     // own threaded `editMode`, defaulting to `false` for a pure viewer.
     <CardMutationContext.Provider value={editMode}>
+    <CardSettingsChangeContext.Provider value={editMode ? handleSettingsTouched : undefined}>
     <div>
       {(editMode || selector) && (
         <div className="mb-3 card p-3">
@@ -426,6 +439,7 @@ export default function ReportCardsBlock({ projectId, reportId, block, editMode,
         />
       )}
     </div>
+    </CardSettingsChangeContext.Provider>
     </CardMutationContext.Provider>
   );
 }
