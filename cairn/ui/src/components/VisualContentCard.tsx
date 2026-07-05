@@ -799,35 +799,17 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
     else setNativeMode(value);
   }, [setMode, setNativeMode]);
 
+  // Mode/diff-submode selection lives in exactly ONE place: the bottom
+  // pill row rendered below the media (see the `isMulti && hasBaseline`
+  // block further down). Pre-WS-VCP, the header ALSO rendered a compact
+  // <select> for both the compare mode and the diff sub-mode — true
+  // duplication (both visible at once, unconditionally, whenever a
+  // baseline was set). Header now keeps only genuinely header-level
+  // actions (reset-view/download/screenshot/settings/add-to-comparison,
+  // wired via CardShell props) plus the false-color colormap picker below
+  // (a distinct control, not a compare-mode selector).
   const headerActions = (
     <>
-      {hasBaseline && (
-        <select
-          value={selectedModeValue}
-          onChange={(e) => handleModeSelect(e.target.value)}
-          className={`h-[22px] rounded border border-border bg-bg-elevated px-1.5 text-[10px] mono cursor-pointer ${selectedModeValue !== "normal" ? "text-accent" : "text-fg-muted hover:text-fg"}`}
-          title="Compare mode"
-        >
-          {modeSelectorEntries.map((m) => (
-            <option key={m.value} value={m.value} disabled={m.disabled} title={m.title}>{m.label}</option>
-          ))}
-        </select>
-      )}
-      {hasBaseline && effectiveMode === "diff" && !activeNativeMode && (
-        <select
-          value={settings.diffMode === "none" ? "absolute" : settings.diffMode}
-          onChange={(e) => updateSettings({ diffMode: e.target.value as ImageSettings["diffMode"] })}
-          className="h-[22px] rounded border border-border bg-bg-elevated px-1.5 text-[10px] mono cursor-pointer text-accent"
-          title="Diff sub-mode"
-        >
-          <option value="absolute">absolute</option>
-          <option value="signed">signed</option>
-          <option value="squared">squared</option>
-          <option value="relative_absolute">rel. absolute</option>
-          <option value="relative_signed">rel. signed</option>
-          <option value="relative_squared">rel. squared</option>
-        </select>
-      )}
       {caps.colorbar !== "never" && (
         <select
           value={settings.colormap ?? "none"}
@@ -1242,6 +1224,21 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
                   className="w-24 accent-accent"
                   title="Blend alpha"
                 />
+              )}
+              {effectiveMode === "diff" && !activeNativeMode && (
+                <select
+                  value={settings.diffMode === "none" ? "absolute" : settings.diffMode}
+                  onChange={(e) => updateSettings({ diffMode: e.target.value as ImageSettings["diffMode"] })}
+                  className="h-[22px] rounded border border-border bg-bg-elevated px-1.5 text-[10px] mono cursor-pointer text-accent"
+                  title="Diff sub-mode"
+                >
+                  <option value="absolute">absolute</option>
+                  <option value="signed">signed</option>
+                  <option value="squared">squared</option>
+                  <option value="relative_absolute">rel. absolute</option>
+                  <option value="relative_signed">rel. signed</option>
+                  <option value="relative_squared">rel. squared</option>
+                </select>
               )}
             </div>
           )}
