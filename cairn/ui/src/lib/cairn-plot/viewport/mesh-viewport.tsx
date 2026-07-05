@@ -197,6 +197,11 @@ export function MeshSideBySideView({
       />
     );
   }
+  const refActive = resolveActiveProperty(
+    reference.arrays.properties,
+    view.property,
+    reference.meta.properties ?? null,
+  );
   return (
     <div className="flex h-full w-full gap-0.5">
       <div className="relative flex-1 min-w-0 overflow-hidden rounded border border-accent/20 bg-bg">
@@ -205,6 +210,8 @@ export function MeshSideBySideView({
           faces={reference.arrays.faces}
           nVertices={reference.meta.n_vertices}
           nFaces={reference.meta.n_faces}
+          values={refActive.values}
+          valueRange={refActive.range}
           colors={reference.arrays.colors}
           normals={reference.arrays.normals}
           bounds={reference.meta.bounds}
@@ -218,23 +225,28 @@ export function MeshSideBySideView({
         <LabelChip label="REF" />
       </div>
       <div className="relative flex-1 min-w-0 overflow-hidden rounded bg-bg">
-        {item ? (
-          <MeshViewer
-            positions={item.arrays.positions}
-            faces={item.arrays.faces}
-            nVertices={item.meta.n_vertices}
-            nFaces={item.meta.n_faces}
-            colors={item.arrays.colors}
-            normals={item.arrays.normals}
-            bounds={item.meta.bounds}
-            colorMode={view.colorMode}
-            shading={view.shading}
-            wireframe={view.wireframe}
-            doubleSided={view.doubleSided}
-            background={view.background}
-            sync={sync}
-          />
-        ) : (
+        {item ? (() => {
+          const active = resolveActiveProperty(item.arrays.properties, view.property, item.meta.properties ?? null);
+          return (
+            <MeshViewer
+              positions={item.arrays.positions}
+              faces={item.arrays.faces}
+              nVertices={item.meta.n_vertices}
+              nFaces={item.meta.n_faces}
+              values={active.values}
+              valueRange={active.range}
+              colors={item.arrays.colors}
+              normals={item.arrays.normals}
+              bounds={item.meta.bounds}
+              colorMode={view.colorMode}
+              shading={view.shading}
+              wireframe={view.wireframe}
+              doubleSided={view.doubleSided}
+              background={view.background}
+              sync={sync}
+            />
+          );
+        })() : (
           <div className="flex h-full items-center justify-center text-sm text-fg-muted">
             no mesh logged yet
           </div>
