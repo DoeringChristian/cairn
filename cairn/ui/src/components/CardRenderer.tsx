@@ -46,7 +46,7 @@ const MeshVisualCard = lazy(() => import("./MeshVisualCard"));
 
 const BoxesVisualCard = lazy(() => import("./BoxesVisualCard"));
 
-const VolumeCard = lazy(() => import("./VolumeCard"));
+const VolumeVisualCard = lazy(() => import("./VolumeVisualCard"));
 
 /**
  * Descriptor for the card CardRenderer should render.
@@ -298,7 +298,7 @@ export default function CardRenderer(props: CardDescriptor) {
             </div>
           }
         >
-          <VolumeCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />
+          <VolumeVisualCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />
         </Suspense>
       );
     case "plugin":
