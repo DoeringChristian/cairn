@@ -37,7 +37,7 @@ export {
   setComparisonRunSelector,
 } from "./store";
 
-export { rebuildCardsFromRuns } from "./rebuild-cards";
+export { rebuildCardsFromRuns, rebindCardsToRuns, rebindCardsToMetricIndex } from "./rebuild-cards";
 
 export { useComparisons } from "./events";
 

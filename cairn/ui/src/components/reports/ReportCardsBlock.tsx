@@ -12,12 +12,17 @@
  * comparison).
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import AddCardModal, { type AddCardSelection } from "../AddCardModal";
 import CardRenderer from "../CardRenderer";
 import ReorderableCardGrid from "../ReorderableCardGrid";
 import RunSelectorBadge from "../RunSelectorBadge";
-import { isMultiRunCardType, rebuildCardsFromRuns, type ComparisonCard } from "../../lib/comparisons";
+import {
+  isMultiRunCardType,
+  rebindCardsToRuns,
+  rebuildCardsFromRuns,
+  type ComparisonCard,
+} from "../../lib/comparisons";
 import { cardFromSpec, cardSettingsKeyForReport, type CardsBlock } from "../../lib/reports";
 import { describeRunSelector, DEFAULT_RUN_SELECTOR_N, type QueryRunSelector } from "../../lib/run-selector";
 import { useRunSelectorResolution } from "../../api/hooks";
@@ -39,6 +44,7 @@ export default function ReportCardsBlock({ projectId, reportId, block, editMode,
   const [pickerOpen, setPickerOpen] = useState(false);
   const [addCardOpen, setAddCardOpen] = useState(false);
   const [rebuilding, setRebuilding] = useState(false);
+  const [resetting, setResetting] = useState(false);
 
   const staticRunIds = block.runIds ?? [];
   // A CardsBlock's runSelector, when present, is always a query selector in
@@ -94,16 +100,69 @@ export default function ReportCardsBlock({ projectId, reportId, block, editMode,
     onChange({ ...block, runSelector: { ...selector, ...patch } });
   };
 
+  // Re-resolve which runs currently match, then REBIND the existing cards to
+  // that run set (keep curated cards/order, re-derive series) rather than
+  // discarding and regrowing one card per metric — see rebindCardsToRuns.
+  // Only mutates in edit mode: a viewer clicking "refresh" should re-resolve
+  // for display purposes only, never overwrite the persisted card set.
   const handleRefresh = async () => {
     setRebuilding(true);
     try {
       const freshRunIds = await resolution.refresh();
-      const cards = freshRunIds.length > 0 ? await rebuildCardsFromRuns(freshRunIds) : [];
+      if (!editMode) return;
+      const cards = await rebindCardsToRuns(block.cards, freshRunIds);
       onChange({ ...block, cards });
     } finally {
       setRebuilding(false);
     }
   };
+
+  // Explicit, destructive "start over" action — full regrow (one card per
+  // (name, object_type) across the block's runs), discarding curated
+  // cards/order/overlays. Edit-mode only; the auto "refresh" above no longer
+  // does this implicitly (see rebindCardsToRuns).
+  const handleResetFromRuns = async () => {
+    if (runIds.length === 0) return;
+    setResetting(true);
+    try {
+      const cards = await rebuildCardsFromRuns(runIds);
+      onChange({ ...block, cards });
+    } finally {
+      setResetting(false);
+    }
+  };
+
+  // Auto-rebind: when a selector block's resolved run set changes while in
+  // edit mode, rebind existing cards to the new runs automatically (mirrors
+  // the ```cairn fence path's `opts.resolvedRunIds` handling) so cards don't
+  // go stale between explicit refreshes — the #44 fix. Never runs in view
+  // mode (no mutation/autosave for viewers) and never regrows the card set.
+  const resolvedRunIdsKey = selector ? runIds.join("|") : "";
+  const lastReboundKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!editMode || !selector) return;
+    if (block.cards.length === 0) return;
+    const boundRunIds = new Set(block.cards.flatMap((c) => c.series.map((s) => s.runId)));
+    const resolvedSet = new Set(runIds);
+    const isStale =
+      boundRunIds.size !== resolvedSet.size || [...resolvedSet].some((id) => !boundRunIds.has(id));
+    if (!isStale) return;
+    // Guard against re-running for a key we already rebound (e.g. while the
+    // async rebind for this exact run set is in flight, or after it landed
+    // and block.cards was updated but still doesn't perfectly match, which
+    // can happen for curated overlay cards that intentionally don't grow).
+    if (lastReboundKeyRef.current === resolvedRunIdsKey) return;
+    lastReboundKeyRef.current = resolvedRunIdsKey;
+    let cancelled = false;
+    void (async () => {
+      const rebound = await rebindCardsToRuns(block.cards, runIds);
+      if (!cancelled) onChange({ ...block, cards: rebound });
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editMode, selector, resolvedRunIdsKey]);
 
   // AddCardSelection → ComparisonCard is the shared `cardFromSpec` (see
   // lib/reports/card-from-spec.ts) — also consumed by the ```cairn dialect
@@ -152,6 +211,17 @@ export default function ReportCardsBlock({ projectId, reportId, block, editMode,
                   title={selector ? "Switch to a fixed run list" : "Switch to a dynamic run selector"}
                 >
                   {selector ? "Use static runs" : "Use auto (query)"}
+                </button>
+              )}
+              {editMode && (
+                <button
+                  type="button"
+                  onClick={() => void handleResetFromRuns()}
+                  disabled={resetting || runIds.length === 0}
+                  className="inline-flex h-6 items-center justify-center rounded border border-border bg-bg px-2 text-[10px] text-fg-muted hover:border-accent hover:text-fg disabled:opacity-40"
+                  title="Discard current cards and regrow one card per metric across this block's runs"
+                >
+                  {resetting ? "Resetting…" : "Reset cards from runs"}
                 </button>
               )}
               {editMode && !selector && (
