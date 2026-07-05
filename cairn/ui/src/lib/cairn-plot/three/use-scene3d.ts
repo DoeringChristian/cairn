@@ -251,15 +251,31 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
   const park = useCallback(() => {
     const r = rendererRef.current;
     if (!r || parkedRef.current) return;
-    const s = sceneRef.current;
-    const c = cameraRef.current;
-    if (s && c) r.render(s, c);
-    try {
-      setCachedImageUrl(r.domElement.toDataURL("image/png"));
-    } catch {
-      // Tainted/unreadable canvas (shouldn't happen — same-origin app) —
-      // release the context anyway rather than pinning it live forever;
-      // the consumer just shows a blank canvas until the next re-acquire.
+    // WS-3DR2 fix round: only attempt the render+capture if the GL context
+    // is actually usable right now. This can be called (as the pool's
+    // eviction callback, or via this instance's own idle timer) while the
+    // context is lost/mid-restore — e.g. a sync-storm re-acquire raced with
+    // eviction, or the browser hasn't dispatched `webglcontextrestored` yet
+    // after our own `restoreContext()` call. Rendering/reading back a
+    // lost context produces a BLANK frame (three.js silently skips
+    // rendering, and `toDataURL()` reads back all-zero pixels — see the
+    // longer note above), so previously this could stomp a perfectly good
+    // cached image with a blank one. Skipping the capture here and keeping
+    // whatever `cachedImageUrl` is already set is strictly better: worst
+    // case the pane shows a slightly-stale-but-real frame instead of a
+    // blank one.
+    const gl = r.getContext();
+    if (!gl.isContextLost()) {
+      const s = sceneRef.current;
+      const c = cameraRef.current;
+      if (s && c) r.render(s, c);
+      try {
+        setCachedImageUrl(r.domElement.toDataURL("image/png"));
+      } catch {
+        // Tainted/unreadable canvas (shouldn't happen — same-origin app) —
+        // release the context anyway rather than pinning it live forever;
+        // the consumer just shows a blank canvas until the next re-acquire.
+      }
     }
     loseContextExtRef.current?.loseContext();
     parkedRef.current = true;

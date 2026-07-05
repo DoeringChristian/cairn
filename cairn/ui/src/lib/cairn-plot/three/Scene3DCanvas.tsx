@@ -30,7 +30,7 @@ export function Scene3DCanvas({ handle, className }: Scene3DCanvasProps) {
           src={handle.cachedImageUrl}
           alt=""
           aria-hidden
-          className="pointer-events-none absolute inset-0 block h-full w-full rounded object-cover"
+          className="pointer-events-none absolute inset-0 block h-full w-full rounded object-fill"
         />
       )}
     </div>
