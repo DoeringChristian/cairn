@@ -106,12 +106,16 @@ export interface Scene3DHandle {
    * first render, before any consumer effect that runs after this hook's
    * call in the same component — see `PointCloudViewer` for the pattern).
    *
-   * `refs.renderer.current` becomes `null` whenever this viewer parks
-   * (WS-3DR2) and is repopulated on the next `requestRender()` — consumers
-   * that only touch `refs.scene`/`refs.camera`/`refs.controls` (every
-   * existing renderer: Mesh/Boxes/Volume/PointCloud) are unaffected, since
-   * those three persist for the component's whole lifetime regardless of
-   * park state.
+   * `refs.renderer.current` is the SAME `WebGLRenderer` instance for this
+   * viewer's whole lifetime (created once at mount, disposed only on
+   * unmount) — WS-3DR2's park/re-acquire cycle toggles the underlying WebGL
+   * CONTEXT's lost/restored state via the `WEBGL_lose_context` extension
+   * rather than destroying/recreating the renderer object (constructing a
+   * second `WebGLRenderer` on a canvas whose context is still mid-restore
+   * crashes inside three.js's capability probing — `getContext()` on an
+   * already-bound canvas returns the SAME, still-lost context, not a fresh
+   * one). `refs.scene`/`refs.camera`/`refs.controls` likewise persist
+   * unconditionally.
    */
   refs: {
     renderer: RefObject<THREE.WebGLRenderer | null>;
@@ -189,6 +193,13 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
   const sizeRef = useRef(size);
   const backgroundRef = useRef(background);
   const [cachedImageUrl, setCachedImageUrl] = useState<string | null>(null);
+  /** The `WEBGL_lose_context` extension for this viewer's one-and-only
+   *  renderer, grabbed once at creation. `null` in the (essentially
+   *  theoretical, per the WebGL spec every conformant implementation
+   *  exposes it) case a browser doesn't support it — park()/acquireRenderer()
+   *  degrade to a no-op in that case (the viewer just never parks, rather
+   *  than crashing). */
+  const loseContextExtRef = useRef<{ loseContext: () => void; restoreContext: () => void } | null>(null);
 
   useEffect(() => {
     onFrameRef.current = onFrame;
@@ -211,15 +222,38 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
 
   /**
    * Snapshots the current frame to `cachedImageUrl` and releases this
-   * viewer's WebGL context. Idempotent (safe to call when already parked, or
-   * called by the pool as an eviction callback on an instance that races
+   * viewer's WebGL context via `WEBGL_lose_context.loseContext()` — NOT
+   * `renderer.dispose()+forceContextLoss()` (that combination is reserved
+   * for final unmount teardown; see `disposeRenderer`). The renderer OBJECT
+   * survives; only its GPU-side context goes away, freeing the browser's
+   * live-context budget while leaving a path back via `restoreContext()`
+   * (see `acquireRenderer`). Idempotent (safe to call when already parked,
+   * or called by the pool as an eviction callback on an instance that races
    * with its own idle timer). This IS the pool's per-entry `park` callback
    * (registered in `acquireRenderer` below), so pool-driven eviction and
    * this instance's own idle-timeout path are the exact same code.
+   *
+   * Re-renders ONE more time, synchronously, immediately before reading the
+   * canvas back — WITHOUT `preserveDrawingBuffer` (deliberately not set,
+   * see the mount effect: keeping it off is what makes parking actually
+   * cheap for many simultaneous contexts), the browser is free to clear a
+   * WebGL drawing buffer any time after compositing a frame to the screen,
+   * which — since `park()` can fire up to `IDLE_PARK_MS` after the LAST
+   * real render — had already happened by the time this ran, making
+   * `toDataURL()` capture a blank/transparent canvas (caught in browser
+   * self-verify: the cached `<img>` decoded fine per `naturalWidth`/
+   * `complete`, but every pixel read back via a canvas 2D context was
+   * `[0,0,0,0]`). A render()-then-read in the SAME synchronous tick is the
+   * standard safe pattern (no async gap for the browser to clear anything
+   * in between) — cheap here since it only runs once per park (a rare,
+   * discrete event), not per frame.
    */
   const park = useCallback(() => {
     const r = rendererRef.current;
-    if (!r) return;
+    if (!r || parkedRef.current) return;
+    const s = sceneRef.current;
+    const c = cameraRef.current;
+    if (s && c) r.render(s, c);
     try {
       setCachedImageUrl(r.domElement.toDataURL("image/png"));
     } catch {
@@ -227,11 +261,11 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
       // release the context anyway rather than pinning it live forever;
       // the consumer just shows a blank canvas until the next re-acquire.
     }
-    disposeRenderer();
+    loseContextExtRef.current?.loseContext();
     parkedRef.current = true;
     poolRelease(sourceIdRef.current!);
     clearIdleTimer();
-  }, [disposeRenderer, clearIdleTimer]);
+  }, [clearIdleTimer]);
 
   const scheduleIdlePark = useCallback(() => {
     clearIdleTimer();
@@ -276,24 +310,32 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
     gridHelperRef.current = grid;
   }, []);
 
-  /** Creates a fresh `WebGLRenderer` bound to the (persistent) canvas if one
-   *  isn't already live, applying the last-known size/background, and
-   *  registers with the pool. No-op (besides an LRU touch) if already live. */
+  /**
+   * Re-acquires a live WebGL context for this viewer's (one, persistent)
+   * renderer if it's currently parked, and registers with the pool. No-op
+   * (besides an LRU touch) if already live.
+   *
+   * Requests an IMMEDIATE, deterministic restore via `WEBGL_lose_context.
+   * restoreContext()` rather than waiting on the browser's own auto-restore
+   * heuristics (which can take an unpredictable amount of time — fine for
+   * the #52 accidental-loss safety net, not for "must feel live while
+   * orbiting"). The actual pixels only become live once the browser
+   * dispatches `webglcontextrestored` in response (typically near-
+   * immediate for an explicit `restoreContext()` call) — the existing
+   * `onContextRestored` listener (mount effect, below) is what actually
+   * calls `requestRender()` and clears `cachedImageUrl` once that happens;
+   * calling `requestRender()` right after this (as `requestRender` itself
+   * already does) is a harmless no-op speculative attempt in the meantime
+   * (three.js's own `render()` silently skips while its context is still
+   * marked lost).
+   */
   const acquireRenderer = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    if (rendererRef.current) {
+    if (!parkedRef.current) {
       poolTouch(sourceIdRef.current!);
       return;
     }
-    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.setClearColor(backgroundRef.current, 1);
-    const s = sizeRef.current;
-    if (s.w > 0 && s.h > 0) renderer.setSize(s.w, s.h, false);
-    rendererRef.current = renderer;
+    loseContextExtRef.current?.restoreContext();
     parkedRef.current = false;
-    setCachedImageUrl(null);
     poolAcquire(sourceIdRef.current!, park);
   }, [park]);
 
@@ -343,6 +385,22 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(backgroundRef.current, 1);
+    const initialSize = sizeRef.current;
+    if (initialSize.w > 0 && initialSize.h > 0) renderer.setSize(initialSize.w, initialSize.h, false);
+    rendererRef.current = renderer;
+    // WS-3DR2: grab the lose/restore-context extension ONCE for this
+    // renderer's whole lifetime — every conformant WebGL implementation
+    // exposes it (it's not an optional/vendor extension); `null` here just
+    // means park()/acquireRenderer() degrade to a no-op (this viewer stays
+    // live forever, same as pre-WS-3DR2 behavior) rather than crashing.
+    const gl = renderer.getContext();
+    loseContextExtRef.current =
+      (gl?.getExtension("WEBGL_lose_context") as { loseContext: () => void; restoreContext: () => void } | null) ??
+      null;
 
     const scene = new THREE.Scene();
     sceneRef.current = scene;
@@ -404,14 +462,16 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
     // pane"/"odd indices", though it's a resource-exhaustion artifact, not a
     // literal index-parity bug in this app's pane-mapping code).
     //
-    // WS-3DR2 note: this recovery path is kept as-is, UNCHANGED, as a safety
-    // net for context loss the app did NOT itself request (e.g. driven by
-    // some other tab/page, or a genuine GPU-driver-level eviction that slips
-    // past the new bounded pool below) — `park()`'s own DELIBERATE
-    // `forceContextLoss()` is handled by the normal re-acquire path
-    // (`requestRender` → `acquireRenderer`, a brand new `WebGLRenderer`
-    // instance), not by this listener; this listener only matters for
-    // UNEXPECTED loss of a context this hook still believes is live.
+    // WS-3DR2 note: this recovery path is now the SAME code path used for
+    // our own deliberate park()/acquireRenderer() cycle too (not a separate
+    // mechanism) — `onContextRestored` below fires whenever the browser
+    // actually restores the context, whether that restore was requested by
+    // `acquireRenderer()`'s `restoreContext()` call or happened on the
+    // browser's own initiative after an unexpected loss (e.g. driven by
+    // some other tab/page, or a GPU-driver-level eviction that slips past
+    // the new bounded pool below) — a single listener correctly handles
+    // both, since `parkedRef`/`cachedImageUrl` only reflect OUR bookkeeping
+    // and are always safe to reset once the context is confirmed live again.
     //
     // `THREE.WebGLRenderer` already calls `event.preventDefault()` in its own
     // internal `webglcontextlost` handler (see three.js's WebGLRenderer
@@ -436,17 +496,19 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
       event.preventDefault();
     };
     const onContextRestored = () => {
+      parkedRef.current = false;
       requestRender();
+      setCachedImageUrl(null);
     };
     canvas.addEventListener("webglcontextlost", onContextLost, false);
     canvas.addEventListener("webglcontextrestored", onContextRestored, false);
 
-    // Initial live render — every viewer starts live (not parked); it parks
-    // itself on its own idle timer shortly after its first (fitted) render
-    // if nothing interacts with it, and the pool additionally caps how many
-    // simultaneously-mounting viewers can stay live at once (see
-    // `context-pool.ts`).
-    acquireRenderer();
+    // Every viewer starts live (not parked) — register it with the pool
+    // immediately (possibly evicting the least-recently-used entries if a
+    // burst of simultaneous mounts pushes past the cap — see
+    // `context-pool.ts`). It parks itself on its own idle timer shortly
+    // after its first (fitted) render if nothing interacts with it.
+    poolAcquire(sourceIdRef.current!, park);
 
     return () => {
       canvas.removeEventListener("dblclick", onDblClick);
@@ -459,6 +521,7 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
       clearIdleTimer();
       poolRelease(sourceIdRef.current!);
       disposeRenderer();
+      loseContextExtRef.current = null;
       if (axesHelperRef.current) {
         axesHelperRef.current.geometry.dispose();
         (axesHelperRef.current.material as THREE.Material).dispose();
