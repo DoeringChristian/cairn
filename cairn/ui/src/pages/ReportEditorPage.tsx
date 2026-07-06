@@ -59,6 +59,11 @@ export default function ReportEditorPage() {
 
   const [editMode, setEditMode] = useState(false);
   const [name, setName] = useState("");
+  // Inline title rename (WS-report-editor-fix): click-to-edit, independent
+  // of `editMode` — mirrors ReportsListPage's `ReportRow` inline rename so
+  // there's exactly one rename affordance style across the reports UI, and
+  // no blocking `prompt()` anywhere in the create/rename path.
+  const [titleEditing, setTitleEditing] = useState(false);
   const [blocks, setBlocks] = useState<ReportBlock[]>([]);
   const [hydrated, setHydrated] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>("idle");
@@ -317,15 +322,43 @@ export default function ReportEditorPage() {
       )}
 
       <div className="mb-6 flex flex-wrap items-baseline justify-between gap-3">
-        {editMode ? (
+        {titleEditing ? (
           <input
             type="text"
+            autoFocus
             value={name}
             onChange={(e) => setName(e.target.value)}
+            onBlur={() => {
+              if (!name.trim()) setName(DEFAULT_REPORT_NAME);
+              setTitleEditing(false);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                (e.target as HTMLInputElement).blur();
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                setTitleEditing(false);
+              }
+            }}
             className="input text-xl font-semibold flex-1 min-w-[240px]"
           />
         ) : (
-          <h1 className="mono text-xl font-semibold">{name}</h1>
+          <h1
+            role="button"
+            tabIndex={0}
+            title="Click to rename"
+            onClick={() => setTitleEditing(true)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                setTitleEditing(true);
+              }
+            }}
+            className="mono text-xl font-semibold cursor-text rounded hover:bg-bg-hover/60"
+          >
+            {name}
+          </h1>
         )}
 
         <div className="flex items-center gap-3">

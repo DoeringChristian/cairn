@@ -51,16 +51,18 @@ export default function ReportsListPage() {
   const reports = q.data?.reports ?? [];
   const total = q.data?.total ?? 0;
 
+  // No upfront naming dialog (a blocking `prompt()` is bad UX and freezes
+  // browser automation) — create immediately with a sensible default and
+  // land straight in the editor, where the title is click-to-edit inline
+  // (see ReportEditorPage) for the actual rename.
   const handleCreate = () => {
-    const name = prompt("Report name:", "Untitled report");
-    if (name == null) return;
-    const trimmed = name.trim() || "Untitled report";
+    const defaultName = `Untitled report — ${new Date().toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
     setActionError(null);
     createMut.mutate(
-      { name: trimmed, payload: { blocks: [] } },
+      { name: defaultName, payload: { blocks: [] } },
       {
         onSuccess: (res) => navigate(`/p/${projectId}/reports/${res.id}`),
-        onError: () => setActionError(`Failed to create "${trimmed}". Please try again.`),
+        onError: () => setActionError(`Failed to create "${defaultName}". Please try again.`),
       },
     );
   };
