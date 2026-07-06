@@ -998,16 +998,16 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
   // block further down). Pre-WS-VCP, the header ALSO rendered a compact
   // <select> for both the compare mode and the diff sub-mode — true
   // duplication (both visible at once, unconditionally, whenever a
-  // baseline was set). WS-MCP: the header also hardcoded the image's
-  // false-color colormap <select> — the LAST media-specific control still
-  // in the header, and the sole reason image's color control sat on the
-  // card face while every 3D type's color control lived in the bottom
-  // settings panel. It has moved into `ImageSettingsControls` (registered
-  // as the image module's `viewport.SettingsControls`, rendered in the
-  // shared bottom slot below), so the header now carries ONLY standard card
-  // chrome (reset-view/download/screenshot/settings/add-to-comparison, all
-  // wired via CardShell props) for EVERY media type. No media-specific
-  // control renders in the header anymore.
+  // baseline was set). WS-MCP folded in the last header-hardcoded media
+  // control too: the image false-color colormap <select> that used to live
+  // in the header (the sole reason image's color control sat on the card
+  // face while every 3D type's color control lived in the bottom settings
+  // panel) has moved into `ImageSettingsControls` (registered as the image
+  // module's `viewport.SettingsControls`, rendered in the shared bottom
+  // slot below). The header now carries ONLY standard card chrome
+  // (reset-view/download/screenshot/settings/add-to-comparison, all wired
+  // via CardShell props) for EVERY media type — no media-specific control
+  // renders in the header anymore.
 
   const settingsPanel = (
     <>
