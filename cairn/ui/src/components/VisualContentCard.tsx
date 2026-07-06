@@ -30,7 +30,6 @@ import {
   resolveArtifactAtStep,
   migrateLegacyMode,
   Colorbar,
-  ColormapSwatch,
   useContainerSize,
   canCrossTypeCompare,
 } from "../lib/cairn-plot";
@@ -999,129 +998,19 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
   // block further down). Pre-WS-VCP, the header ALSO rendered a compact
   // <select> for both the compare mode and the diff sub-mode — true
   // duplication (both visible at once, unconditionally, whenever a
-  // baseline was set). Header now keeps only genuinely header-level
-  // actions (reset-view/download/screenshot/settings/add-to-comparison,
-  // wired via CardShell props) plus the false-color colormap picker below
-  // (a distinct control, not a compare-mode selector).
-  const headerActions = (
-    <>
-      {caps.colorbar !== "never" && (
-        <select
-          value={settings.colormap ?? "none"}
-          onChange={(e) => updateSettings({ colormap: e.target.value as Colormap })}
-          className={`h-[22px] rounded border border-border bg-bg-elevated px-1.5 text-[10px] mono cursor-pointer ${(settings.colormap ?? "none") !== "none" ? "text-accent" : "text-fg-muted hover:text-fg"}`}
-          title="False color map"
-        >
-          <option value="none">color: off</option>
-          <option value="viridis">viridis</option>
-          <option value="red-green">red-green</option>
-          <option value="red-blue">red-blue</option>
-        </select>
-      )}
-    </>
-  );
+  // baseline was set). WS-MCP: the header also hardcoded the image's
+  // false-color colormap <select> — the LAST media-specific control still
+  // in the header, and the sole reason image's color control sat on the
+  // card face while every 3D type's color control lived in the bottom
+  // settings panel. It has moved into `ImageSettingsControls` (registered
+  // as the image module's `viewport.SettingsControls`, rendered in the
+  // shared bottom slot below), so the header now carries ONLY standard card
+  // chrome (reset-view/download/screenshot/settings/add-to-comparison, all
+  // wired via CardShell props) for EVERY media type. No media-specific
+  // control renders in the header anymore.
 
   const settingsPanel = (
     <>
-      {caps.postProcessing && (
-      <>
-      <SettingsSection title="Image" first />
-      <Slider
-        label="Brightness"
-        value={settings.brightness}
-        onChange={(v) => updateSettings({ brightness: v })}
-        min={-1}
-        max={1}
-        step={0.01}
-        format={(v) => v.toFixed(2)}
-      />
-      <Slider
-        label="Contrast"
-        value={settings.contrast}
-        onChange={(v) => updateSettings({ contrast: v })}
-        min={-1}
-        max={1}
-        step={0.01}
-        format={(v) => v.toFixed(2)}
-      />
-      <Slider
-        label="Gamma"
-        value={settings.gamma}
-        onChange={(v) => updateSettings({ gamma: v })}
-        min={0.1}
-        max={3}
-        step={0.01}
-        format={(v) => v.toFixed(2)}
-        description="1 = no change; <1 brightens shadows, >1 darkens"
-      />
-      <Slider
-        label="Exposure"
-        value={settings.exposure}
-        onChange={(v) => updateSettings({ exposure: v })}
-        min={-3}
-        max={3}
-        step={0.01}
-        format={(v) => v.toFixed(2)}
-        description="EV stops: 0 = none, +1 = 2× brighter"
-      />
-      <Slider
-        label="Offset"
-        value={settings.offset}
-        onChange={(v) => updateSettings({ offset: v })}
-        min={-0.5}
-        max={0.5}
-        step={0.001}
-        format={(v) => v.toFixed(3)}
-        description="Uniform shift added after gamma"
-      />
-      <Toggle
-        label="Flip sign"
-        checked={settings.flipSign}
-        onChange={(v) => updateSettings({ flipSign: v })}
-        description="Invert / negate pixel values"
-      />
-      <Select<"auto" | "pixelated" | "crisp-edges">
-        label="Interpolation"
-        value={settings.interpolation ?? "auto"}
-        onChange={(v) => updateSettings({ interpolation: v })}
-        options={[
-          { value: "auto", label: "Smooth (bilinear)" },
-          { value: "pixelated", label: "Nearest (pixelated)" },
-          { value: "crisp-edges", label: "Crisp edges" },
-        ]}
-      />
-      <Select<Colormap>
-        label="False color"
-        description={DIVERGING_COLORMAPS.has(settings.colormap ?? "none") ? "Diverging: 0 = center (white)" : undefined}
-        value={settings.colormap ?? "none"}
-        onChange={(v) => updateSettings({ colormap: v })}
-        options={[
-          { value: "none", label: "None (original)" },
-          { value: "viridis", label: "Viridis" },
-          { value: "red-green", label: "Red – Green (±)" },
-          { value: "red-blue", label: "Red – Blue (±)" },
-        ]}
-      />
-      {(settings.colormap ?? "none") !== "none" && (
-        <ColormapSwatch colormap={settings.colormap as Exclude<Colormap, "none">} />
-      )}
-      <Select<"nothing" | "last_available">
-        label="Missing image"
-        value={settings.missingImageMode ?? "last_available"}
-        onChange={(v) => updateSettings({ missingImageMode: v })}
-        options={[
-          { value: "nothing", label: "Show nothing" },
-          { value: "last_available", label: "Show last available" },
-        ]}
-      />
-      <Toggle
-        label="Pixel axes"
-        checked={settings.showAxes ?? false}
-        onChange={(v) => updateSettings({ showAxes: v })}
-        description="Show pixel coordinate ticks along edges"
-      />
-      </>
-      )}
       {caps.overlays && hasOverlay && (
         <>
           <SettingsSection title="Overlays" />
@@ -1370,7 +1259,6 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
       addToComparisonSlot={<AddToComparisonButton cardType={viewport.objectType} series={compSeries} />}
       onResetView={resetImageView}
       viewModified={viewModified}
-      headerActions={headerActions}
       dropHighlight={dropHighlight}
       dropProps={dropProps}
       settingsPanel={settingsPanel}
