@@ -1,10 +1,15 @@
 /**
  * Report editor/viewer — /p/:projectId/reports/:reportId
  *
- * View mode (default): read-only vertical render of cells (blocks[]).
- * Edit mode: add/remove/reorder/insert cells, edit markdown/cards content
- * inline (WS-NR1's `SegmentedMarkdownEditor` — see that component's doc for
- * the "no separate raw/preview pane" design), rename.
+ * View mode (default): vertical render of cells (blocks[]) — prose
+ * paragraphs are ALWAYS click-to-edit inline (Obsidian-style: click a
+ * rendered paragraph, it becomes a raw `<textarea>`, blur/Cmd+Enter commits
+ * and re-renders, autosave picks it up), independent of the Edit toggle;
+ * ```cairn card *settings* stay frozen/read-only until Edit is on.
+ * Edit mode: additionally exposes structural cell editing (add/remove/
+ * reorder/insert cells — WS-NR1's `SegmentedMarkdownEditor`, see that
+ * component's doc for the "no separate raw/preview pane" design) and card
+ * settings mutation, plus rename.
  * Autosave: debounced PUT ~1.5s after the last change, plus an explicit
  * Save button. Card settings are gathered from/restored to localStorage
  * under the report's pseudo-scope on save/load — see lib/reports/payload.ts.

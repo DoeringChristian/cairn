@@ -31,6 +31,15 @@
  * card" modal/reorder) rather than a second raw-YAML textarea — reusing the
  * one card-editing surface instead of forking a parallel YAML-hand-editing
  * path (no-duplication guard).
+ *
+ * `editMode` scope: prose click-to-edit (`MarkdownCellEditor`) is always
+ * live, regardless of `editMode` — true to the "each line is rendered
+ * unless the user clicks on it" Obsidian requirement, a mode toggle would
+ * just hide the affordance. `editMode` here only gates *structural* cell
+ * editing (the per-cell type label/move/delete chrome and the "+ cell"
+ * insert rows below) and is threaded straight through to `ReportCardsBlock`,
+ * which still uses it to freeze card settings (`CardMutationContext`) until
+ * the user explicitly opts into editing.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -126,7 +135,6 @@ export default function SegmentedMarkdownEditor({
           {isMarkdownBlock(block) ? (
             <MarkdownCellEditor
               block={block}
-              editMode={editMode}
               onChange={(text) => onUpdateBlock(block.id, { ...block, text })}
             />
           ) : isCardsBlock(block) ? (
@@ -174,14 +182,19 @@ function InsertCellRow({ onInsert, className = "" }: { onInsert: (type: CellType
  * autosave timer) isn't touched until blur/commit, exactly mirroring the
  * old block-level "edit, then re-render on blur" behavior, just scoped to
  * one paragraph instead of the whole block.
+ *
+ * Deliberately NOT gated on `editMode`: prose is the Obsidian-style
+ * "click a paragraph to edit it" surface and stays live in the default
+ * view (matching the original per-line-click requirement) — `editMode`
+ * here only governs the reorder/insert/delete chrome and card-settings
+ * mutation (`ReportCardsBlock`'s `CardMutationContext`), never whether a
+ * markdown paragraph itself is editable.
  */
 function MarkdownCellEditor({
   block,
-  editMode,
   onChange,
 }: {
   block: MarkdownBlock;
-  editMode: boolean;
   onChange: (text: string) => void;
 }) {
   const paragraphs = splitProseBlocks(block.text);
@@ -194,7 +207,6 @@ function MarkdownCellEditor({
   }, [activeIdx]);
 
   const activate = (i: number) => {
-    if (!editMode) return;
     setDraft(paragraphs[i] ?? "");
     setActiveIdx(i);
   };
@@ -208,14 +220,6 @@ function MarkdownCellEditor({
   };
 
   const cancel = () => setActiveIdx(null);
-
-  if (!editMode) {
-    return (
-      <div className="rounded bg-bg p-3 text-sm">
-        <Markdown>{block.text}</Markdown>
-      </div>
-    );
-  }
 
   return (
     <div className="rounded bg-bg p-3 text-sm">
