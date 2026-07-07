@@ -29,3 +29,10 @@ export {
   type PointCloudBackground,
   type PointCloudBounds,
 } from "./PointCloudViewer";
+export {
+  default as Table,
+  type TableProps,
+  type TableData,
+  type TableColumn,
+  type ColumnType,
+} from "./Table";

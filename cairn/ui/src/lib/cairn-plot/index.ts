@@ -89,6 +89,8 @@ export type {
   PointCloudBackground,
   PointCloudBounds,
 } from "./renderers";
+export { Table } from "./renderers";
+export type { TableProps, TableData, TableColumn, ColumnType } from "./renderers";
 
 // media-compare — unified visual-media comparison core (see media-compare/index.ts)
 export {
