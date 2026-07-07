@@ -179,6 +179,71 @@ class Sequence:
 
 
 # ---------------------------------------------------------------------------
+# DataRef — lazy handle over a run's tag, returned by Run.__getitem__
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class DataRef:
+    """A lazy reference to the data behind ``run[tag]`` (WS-PYAPI).
+
+    Wraps ``(run, tag[, step])`` only — it does **not** fetch anything at
+    construction time. Resolution happens only when something actually
+    needs the data: ``.resolve()`` fetches it eagerly (via the existing
+    ``Run.sequence``/``Run.artifact``), and ``cairn.plot`` element builders
+    resolve just the ``(runId, name, context_hash)`` triple needed to build
+    a server-anchored ``SeriesRef`` (no bytes ever move for that path — the
+    card renders by reference through ``/embed/card``).
+
+    ``run[tag][step]`` (via :meth:`__getitem__`) narrows to one step,
+    mapping to the existing ``step=`` args on ``Run.sequence``/``Run.artifact``.
+    """
+
+    run: "Run"
+    tag: str
+    step: int | None = None
+
+    def __getitem__(self, step: int) -> DataRef:
+        if not isinstance(step, int):
+            raise TypeError(f"DataRef step index must be an int, got {type(step)}")
+        return DataRef(self.run, self.tag, step)
+
+    @property
+    def run_id(self) -> str:
+        return self.run.id
+
+    def resolve(self) -> Any:
+        """Eagerly fetch the underlying data.
+
+        Tries a named/sequence artifact first (images, meshes, tensors,
+        ...); falls back to the raw scalar :class:`Sequence` when the tag
+        isn't an artifact (e.g. a plain scalar metric).
+        """
+        try:
+            return self.run.artifact(self.tag, step=self.step)
+        except KeyError:
+            seq = self.run.sequence(self.tag)
+            if self.step is not None:
+                return seq[self.step]
+            return seq
+
+    def context_hash(self) -> str:
+        """Resolve the ``context_hash`` for this tag (for a ``SeriesRef``).
+
+        A single network/DB round trip against the run's sequence index
+        (``Run.sequences()``); "" (the "no context" sentinel) when the tag
+        isn't a tracked sequence at all (e.g. a plain named artifact).
+        """
+        for info in self.run.sequences():
+            if info.name == self.tag:
+                return info.context_hash
+        return ""
+
+    def __repr__(self) -> str:
+        step_part = f"[{self.step}]" if self.step is not None else ""
+        return f"DataRef(run={self.run.id!r}, tag={self.tag!r}{step_part})"
+
+
+# ---------------------------------------------------------------------------
 # Run wrapper
 # ---------------------------------------------------------------------------
 
@@ -422,6 +487,19 @@ class Run:
     def __repr__(self) -> str:
         name = self.name or self.id
         return f"Run({name!r}, status={self.status!r}, project={self.project!r})"
+
+    # ---- Lazy data handles (WS-PYAPI) ----
+
+    def __getitem__(self, tag: str) -> DataRef:
+        """``run[tag]`` — a lazy :class:`DataRef` over a sequence/artifact tag.
+
+        Does not fetch anything; resolves only when the handle is rendered
+        (``cairn.plot`` element builders) or explicitly ``.resolve()``d.
+        Optional step indexing: ``run[tag][step]``.
+        """
+        if not isinstance(tag, str):
+            raise TypeError(f"Run.__getitem__ expects a string tag, got {type(tag)}")
+        return DataRef(self, tag)
 
 
 # ---------------------------------------------------------------------------
