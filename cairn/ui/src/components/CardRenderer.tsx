@@ -101,6 +101,14 @@ export type CardDescriptor =
  * below fails to compile if the two ever disagree — so adding a member to
  * `CARD_TYPES` without a matching case here (or vice-versa) is a build
  * error, not a silent runtime fall-through to `UnknownTypeCard`.
+ *
+ * CAUTION: `SeriesRendererCase` below is a HAND-MAINTAINED MIRROR of the
+ * render switch's `case` labels, not a type derived from the switch itself.
+ * `AssertRendererCoversAllCardTypes` only checks `CARD_TYPES` against THIS
+ * list — if a `case` in the switch is removed or renamed without updating
+ * this list to match, the compiler will not catch the mismatch. Follow-up
+ * #61 tracks hardening this with a `default: assertNever(...)` branch in the
+ * switch so the two can never drift apart silently.
  */
 type SeriesRendererCase =
   | "scalar"
