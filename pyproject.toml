@@ -55,6 +55,9 @@ hf = [
 discovery = [
     "zeroconf>=0.132",
 ]
+examples = [
+    "marimo>=0.10",
+]
 dev = [
     "pytest>=8.0",
     "pytest-cov>=4.1",
