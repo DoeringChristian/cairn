@@ -43,7 +43,44 @@
  * This is a deliberate, scoped answer to the design doc's open question #2;
  * it doesn't matter for correctness because settings are keyed by *card*
  * id (see lib/reports/scope.ts), never by block id.
+ *
+ * Adjacent-prose cell boundary (WS-MDDELIM): two consecutive `MarkdownBlock`s
+ * have no fence between them to force a split on reparse, so naively joining
+ * `blockA.text + "\n" + blockB.text` is indistinguishable, on the next parse,
+ * from a single prose block that always contained both — the two cells
+ * silently fuse into one (independent move/delete lost, though no text is
+ * lost). `CELL_BOUNDARY_MARKER` (see below) is appended, invisibly, to the
+ * end of a markdown block's serialized text whenever the *next* block is
+ * also markdown, and `parseReportMarkdown` splits a prose segment back into
+ * multiple `MarkdownBlock`s wherever that exact marker+blank-line token
+ * appears. An HTML-comment marker (the obvious first idea) does NOT work
+ * here: this module's own sanitization contract (line 41 above, enforced in
+ * lib/markdown.tsx) renders raw HTML as *visible inert text*, not as a
+ * stripped comment — a `<!-- ... -->` delimiter would show up literally in
+ * the read-only single-flow viewer (`ReportSourceMarkdown.tsx` runs the
+ * *entire* serialized document through one `<Markdown>` call). A marker made
+ * entirely of zero-width Unicode code points sidesteps that: it's ordinary
+ * *text* (not HTML), so the sanitizer never touches it, and it has zero
+ * visual width in any renderer, so it's genuinely invisible rather than
+ * merely "suppressed." Backward compatible by construction: the marker
+ * token is vanishingly unlikely to occur in a pre-existing report, so old
+ * documents parse exactly as before (adjacent prose with no marker still
+ * merges into one block, unchanged).
  */
+
+/**
+ * Invisible cell-boundary marker: zero-width space (U+200B) + invisible
+ * separator (U+2063) + zero-width space (U+200B). All three are Unicode
+ * "format" (Cf) characters with no visible glyph in any renderer. Appended
+ * to a markdown block's serialized text only when the following block is
+ * also markdown (see `serializeReportToMarkdown`), immediately before the
+ * ordinary blank-line paragraph break — so it rides along on an already-
+ * ordinary paragraph boundary instead of manufacturing an extra empty
+ * paragraph node.
+ */
+export const CELL_BOUNDARY_MARKER = "\u200B\u2063\u200B";
+/** The exact token `parseReportMarkdown` splits a prose segment on. */
+const CELL_BOUNDARY_TOKEN = `${CELL_BOUNDARY_MARKER}\n\n`;
 
 import type { Run } from "../../api/types";
 import type { MetricIndex } from "./metric-index";
@@ -205,7 +242,14 @@ export function parseReportMarkdown(
 
   for (const seg of segments) {
     if (seg.kind === "prose") {
-      blocks.push({ id: newId(), type: "markdown", text: seg.text });
+      // A prose segment may itself contain one or more CELL_BOUNDARY_TOKENs
+      // (deliberately adjacent markdown cells) — split it back into the
+      // original per-cell texts. A segment with no marker at all (the
+      // overwhelmingly common case, and every pre-existing report) yields
+      // exactly one piece, i.e. today's behavior, unchanged.
+      for (const text of seg.text.split(CELL_BOUNDARY_TOKEN)) {
+        blocks.push({ id: newId(), type: "markdown", text });
+      }
       continue;
     }
 
@@ -240,6 +284,15 @@ export function parseReportMarkdown(
  * source. Reuses each block's original fence text verbatim when present in
  * `rawCairnSource` (byte-preserving an unedited round trip); otherwise
  * regenerates a fresh ```cairn fence via `serializeCairnSpec`.
+ *
+ * Appends `CELL_BOUNDARY_MARKER` + a single "\n" after a markdown block's
+ * text whenever the *next* block is also markdown — the only case where two
+ * blocks would otherwise be indistinguishable, on reparse, from one prose
+ * region that always spanned both (see module doc). A fence (cards block)
+ * on either side already forces a split, so no marker is needed there. The
+ * block-join below (`.join("\n")`) contributes the second "\n", so the pair
+ * always reconstitutes `CELL_BOUNDARY_TOKEN` (marker + blank line) exactly —
+ * the same token `parseReportMarkdown` splits on.
  */
 export function serializeReportToMarkdown(
   blocks: ReportBlock[],
@@ -247,8 +300,11 @@ export function serializeReportToMarkdown(
   rawCairnSource: Record<string, string> = {},
 ): string {
   return blocks
-    .map((b) => {
-      if (isMarkdownBlock(b)) return b.text;
+    .map((b, i) => {
+      if (isMarkdownBlock(b)) {
+        const next = blocks[i + 1];
+        return next && isMarkdownBlock(next) ? `${b.text}${CELL_BOUNDARY_MARKER}\n` : b.text;
+      }
       if (isCardsBlock(b)) {
         const raw = rawCairnSource[b.id];
         if (raw !== undefined) return raw;
