@@ -204,12 +204,19 @@ def test_card_element_spec_is_reusable_in_a_cairn_fence_shaped_doc(two_runs):
 def test_card_element_repr_html_no_server_falls_back_to_text(monkeypatch):
     import cairn.sdk.elements as elements_mod
 
-    # An address nothing listens on -> the health probe fails fast.
-    monkeypatch.setattr(elements_mod._config, "resolve_server", lambda explicit=None: "http://127.0.0.1:1")
+    # Force every candidate (advertised servers.json entries, the
+    # config-default probe, the `cairn ui` CLI-default-port probe) to read
+    # as unreachable — real environments may genuinely have a `cairn ui`
+    # running on 4300/4301 (that's the whole point of this feature), so
+    # mocking the health probe itself is the only environment-independent
+    # way to simulate "nothing reachable".
+    monkeypatch.setattr(elements_mod.CardElement, "_probe", staticmethod(lambda url: False))
     el = CardElement({"type": "scalar", "series": [{"runId": "r1", "name": "loss", "context_hash": ""}]})
     html = el._repr_html_()
     assert "<iframe" not in html
     assert "no reachable cairn server" in html
+    assert "cairn ui --no-auth" in html
+    assert "<details>" in html and "spec (debug)" in html
 
 
 def test_card_element_repr_html_live_server_returns_iframe_with_resolving_sid(live_server):
@@ -225,6 +232,75 @@ def test_card_element_repr_html_live_server_returns_iframe_with_resolving_sid(li
     resp = httpx.get(f"{live_server}/api/embed/specs/{sid}")
     assert resp.status_code == 200
     assert resp.json()["spec"] == spec
+
+
+def test_resolve_server_prefers_advertised_servers_json_over_default(
+    live_server, tmp_path, monkeypatch
+):
+    """WS-SRVDISC: a `cairn ui` that landed on a non-default port (because
+    4300/4301 were taken — the reported bug) is still auto-discovered via
+    its repo's `servers.json`, without needing `server=`/`CAIRN_REPO`."""
+    from urllib.parse import urlsplit
+
+    from cairn.server.storage.datadir import DataDir
+
+    parts = urlsplit(live_server)
+    repo = tmp_path / ".cairn"
+    dd = DataDir(repo)
+    dd.add_live_server("ui", host=parts.hostname, port=parts.port)
+
+    # Config-default candidate deliberately unreachable — proves the
+    # advertised entry is what's actually being used, not a lucky fallback.
+    import cairn.sdk.elements as elements_mod
+
+    monkeypatch.setattr(elements_mod._config, "resolve_server", lambda explicit=None: "http://127.0.0.1:1")
+
+    el = CardElement({"type": "scalar", "series": []}, repo_path=str(repo))
+    assert el._resolve_server() == f"http://localhost:{parts.port}"
+
+
+def test_resolve_server_ignores_stale_advertised_entry(tmp_path, monkeypatch):
+    """A dead pid's advertisement is pruned; discovery falls through (and
+    ultimately fails, here, since nothing else is reachable either)."""
+    from cairn.server.storage.datadir import DataDir
+
+    repo = tmp_path / ".cairn"
+    dd = DataDir(repo)
+    dd.servers_path.write_text(
+        json.dumps([{"pid": 999999999, "mode": "ui", "host": "127.0.0.1", "port": 65000}])
+    )
+    import cairn.sdk.elements as elements_mod
+
+    monkeypatch.setattr(elements_mod.CardElement, "_probe", staticmethod(lambda url: url != "http://localhost:65000"))
+    el = CardElement({"type": "scalar", "series": []}, repo_path=str(repo))
+    assert el._resolve_server() is None
+
+
+def test_plot_builder_threads_repo_path_and_autodiscovers_live_server(two_runs, live_server):
+    """End-to-end: `cplot.scalar(run["tag"])` threads the Reader's actual
+    repo dir into `CardElement`, and `_repr_html_()` finds the live server
+    advertised there — the real notebook-usage path this fix targets."""
+    from urllib.parse import urlsplit
+
+    from cairn.server.storage.datadir import DataDir
+
+    _reader, run_a, _run_b = two_runs
+    repo_path = run_a._backend.repo_path
+    parts = urlsplit(live_server)
+    dd = DataDir(repo_path)
+    dd.add_live_server("ui", host=parts.hostname, port=parts.port)
+    try:
+        el = cplot.scalar(run_a["loss"])
+        assert el._repo_path == repo_path
+        html = el._repr_html_()
+        assert f"http://localhost:{parts.port}/embed/card?sid=" in html
+        sid = html.split("sid=", 1)[1].split('"', 1)[0]
+        import httpx
+
+        resp = httpx.get(f"{live_server}/api/embed/specs/{sid}")
+        assert resp.status_code == 200
+    finally:
+        dd.remove_live_server()
 
 
 def test_card_element_mimebundle_matches_repr_html():

@@ -36,6 +36,7 @@ from __future__ import annotations
 import html as _html
 import json
 import logging
+from pathlib import Path
 from typing import Any
 
 from .. import config as _config
@@ -64,6 +65,12 @@ _RESIZE_LISTENER_JS = """<script>
 
 _HEALTHCHECK_TIMEOUT = 0.5
 _DEFAULT_IFRAME_HEIGHT = 420
+
+# `cairn ui`'s own CLI `--port` default (`cli.py`'s `ui_cmd`) — distinct
+# from `config.DEFAULT_SERVER`'s port (4300, the CLI client commands'
+# fallback). Not imported from `cli.py` to avoid pulling click/uvicorn into
+# the SDK's import graph; kept in sync by `tests/unit/test_plot_elements.py`.
+_CAIRN_UI_DEFAULT_PORT = 4301
 
 
 class Element:
@@ -123,43 +130,98 @@ class CardElement(Element):
         server: str | None = None,
         token: str | None = None,
         height: int = _DEFAULT_IFRAME_HEIGHT,
+        repo_path: str | Path | None = None,
     ) -> None:
         self.spec = spec
         self._server_override = server
         self._token_override = token
         self._height = height
+        self._repo_path = str(repo_path) if repo_path is not None else None
+        """The local ``.cairn`` dir this card's data came from (threaded by
+        ``cairn.plot``'s builders from the `Reader`/`Run` used to fetch it),
+        for `servers.json` auto-discovery in `_resolve_server`. `None` for
+        HTTP-backed readers or when built directly (`CardElement(spec)`)."""
 
     # ---- server + auth resolution ----
 
     def _resolve_server(self) -> str | None:
         """Best-effort HTTP base for the live iframe, or ``None``.
 
-        Mirrors the SDK's own ``Transport``/``config`` chain
-        (``config.resolve_target``/``resolve_server``). An explicitly
-        configured server (``cairn://host:port``, ``CAIRN_REPO``, ...) is
-        trusted without a probe — same posture as ``Transport``/
-        ``_HttpBackend``, which never health-check either. A plain local
-        repo path (the common notebook default) has no implied HTTP URL, so
-        we do a fast, short-timeout probe of the CLI-default server
-        (``config.resolve_server()``'s fallback) before trusting it — this
-        is the "is `cairn ui` actually running" check the design spec's
-        ``file://``-mode caveat calls for.
+        Resolution order:
+
+        1. Explicit ``server=`` override — trusted without a probe.
+        2. ``cairn.configure``/``CAIRN_REPO``/config-file ``cairn://...``
+           (via ``config.resolve_target()``) — also trusted without a probe,
+           same posture as ``Transport``/``_HttpBackend``.
+        3. The repo's advertised ``servers.json`` (written by ``cairn ui``
+           on startup — see ``DataDir.add_live_server``), health-probed.
+           Uses ``self._repo_path`` (the actual repo this card's data came
+           from, threaded from the ``Reader``) when known, else the same
+           local repo path ``config.resolve_target()`` would use — this is
+           what makes discovery work regardless of which port ``cairn ui``
+           actually landed on (it auto-increments past its default when
+           taken).
+        4. Last resort: probe the CLI-default ports directly
+           (``config.DEFAULT_SERVER`` and ``cairn ui``'s own ``--port``
+           default) — covers a server that predates this repo's
+           `servers.json` support, or a `servers.json` that failed to write.
+
+        A plain local repo path has no *implied* HTTP URL, so steps 3-4
+        never trust a candidate without a fast, short-timeout
+        ``GET /api/health`` first — this is the "is `cairn ui` actually
+        running" check the design spec's ``file://``-mode caveat calls for.
         """
         if self._server_override is not None:
             return self._server_override
         target = _config.resolve_target()
         if not target.is_local:
             return target.location
-        candidate = _config.resolve_server()
+
+        repo_path = self._repo_path or target.location
+        for candidate in self._advertised_candidates(repo_path):
+            if self._probe(candidate):
+                return candidate
+
+        # No (live) advertisement found — last-resort fixed-port probes.
+        legacy_candidates = [
+            _config.resolve_server(),
+            f"http://localhost:{_CAIRN_UI_DEFAULT_PORT}",
+        ]
+        for candidate in dict.fromkeys(legacy_candidates):  # de-dup, keep order
+            if self._probe(candidate):
+                return candidate
+        return None
+
+    @staticmethod
+    def _advertised_candidates(repo_path: str) -> list[str]:
+        """Live server URLs advertised for ``repo_path``, newest first."""
+        try:
+            from ..server.storage.datadir import read_live_servers
+
+            entries = read_live_servers(Path(repo_path))
+        except Exception:  # noqa: BLE001 - discovery must never raise
+            return []
+        entries = sorted(entries, key=lambda e: e.get("started_at") or "", reverse=True)
+        urls = []
+        for entry in entries:
+            port = entry.get("port")
+            if port is None:
+                continue
+            host = entry.get("host") or "localhost"
+            if host in ("0.0.0.0", "127.0.0.1"):
+                host = "localhost"
+            urls.append(f"http://{host}:{port}")
+        return urls
+
+    @staticmethod
+    def _probe(url: str) -> bool:
         try:
             import httpx
 
-            resp = httpx.get(f"{candidate}/api/health", timeout=_HEALTHCHECK_TIMEOUT)
-            if resp.status_code < 500:
-                return candidate
+            resp = httpx.get(f"{url}/api/health", timeout=_HEALTHCHECK_TIMEOUT)
+            return resp.status_code < 500
         except Exception:  # noqa: BLE001 - any failure means "not reachable"
-            pass
-        return None
+            return False
 
     def _post_spec(self, server: str) -> str | None:
         try:
@@ -205,11 +267,22 @@ class CardElement(Element):
         iframe = self.iframe_html()
         if iframe is not None:
             return iframe
-        spec_json = _html.escape(json.dumps(self.spec))
+        repo_flag = f" --repo {self._repo_path}" if self._repo_path else ""
+        start_cmd = f"cairn ui{repo_flag} --no-auth"
+        spec_json = _html.escape(json.dumps(self.spec, indent=2))
+        notice = (
+            "cairn: no reachable cairn server — this card needs a running "
+            "`cairn ui` on the SAME repo to render live.\n"
+            f"  Start one:     {start_cmd}\n"
+            "  Or point at one explicitly, via any of:\n"
+            '    cairn.configure(repo="cairn://localhost:PORT")\n'
+            "    CAIRN_REPO=cairn://localhost:PORT\n"
+            '    CardElement(..., server="http://localhost:PORT")'
+        )
         return (
-            "<pre>cairn: no reachable cairn server — start `cairn ui` "
-            "(or `cairn ui --no-auth` for local dev) to render this card "
-            f"live.\ncard spec: {spec_json}</pre>"
+            f"<pre>{_html.escape(notice)}</pre>\n"
+            "<details><summary>spec (debug)</summary>"
+            f"<pre>{spec_json}</pre></details>"
         )
 
     def __repr__(self) -> str:

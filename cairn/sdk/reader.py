@@ -762,6 +762,14 @@ class _LocalBackend:
         self._blobs = BlobStore(self._dd.artifacts_dir)
         self._ingest_all = _ingest_all
 
+    @property
+    def repo_path(self) -> str:
+        """The ``.cairn/`` dir this backend reads — lets `cairn.plot`
+        element builders thread the actual repo dir to `CardElement` for
+        local server auto-discovery (`servers.json`), rather than relying
+        on global `cairn.configure`/`CAIRN_REPO` state."""
+        return str(self._dd.root)
+
     def _drain_wals(self) -> None:
         """Ingest any pending WAL files before reading."""
         try:

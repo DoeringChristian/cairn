@@ -567,6 +567,19 @@ def _resolve_series(data: Any, *, builder: str) -> tuple[SeriesRef, int | None]:
     )
 
 
+def _repo_path_of(source: Any) -> str | None:
+    """Best-effort local ``.cairn`` dir behind a `DataRef`'s `Run`, or
+    `None` (HTTP-backed readers, or anything unexpected).
+
+    Threaded into `CardElement(repo_path=...)` so `_resolve_server()` can
+    look up *this specific repo's* `servers.json` advertisement instead of
+    only the process-global `cairn.configure`/`CAIRN_REPO` state — the
+    notebook may be reading a repo that was never `configure()`-d at all.
+    """
+    backend = getattr(getattr(source, "run", None), "_backend", None)
+    return getattr(backend, "repo_path", None)
+
+
 def _card_element(
     card_type: str,
     sources: Sequence[Any],
@@ -579,11 +592,14 @@ def _card_element(
     wrap it in the server-backed `CardElement` display object."""
     series: list[SeriesRef] = []
     step: int | None = None
+    repo_path: str | None = None
     for source in sources:
         ref, source_step = _resolve_series(source, builder=builder)
         series.append(ref)
         if step is None and source_step is not None:
             step = source_step
+        if repo_path is None:
+            repo_path = _repo_path_of(source)
 
     merged_settings = dict(settings or {})
     if mode is not None:
@@ -593,7 +609,7 @@ def _card_element(
     settings_obj = CardSettingsSpec(**merged_settings) if merged_settings else None
 
     spec = CardSpec(id=str(_uuid.uuid4()), type=card_type, series=series, settings=settings_obj)
-    return CardElement(spec.model_dump(exclude_none=True, mode="json"))
+    return CardElement(spec.model_dump(exclude_none=True, mode="json"), repo_path=repo_path)
 
 
 def _rows_to_html_table(rows: Any) -> str:

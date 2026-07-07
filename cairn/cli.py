@@ -390,6 +390,14 @@ def ui_cmd(
             err=True,
         )
 
+    # Best-effort: advertise our actual URL in the repo dir (`servers.json`)
+    # so notebook-side `CardElement._resolve_server()` can auto-discover us
+    # regardless of which port we landed on (this port may have
+    # auto-incremented past the CLI default). Independent of the write-lock
+    # above — concurrent `ui` processes on the same repo are all valid
+    # discovery targets.
+    dd.add_live_server("ui", host="127.0.0.1", port=port)
+
     db = Database.open(dd.db_path)
     blobs = BlobStore(dd.artifacts_dir)
     auth_enabled = not no_auth
@@ -424,6 +432,7 @@ def ui_cmd(
         uv_server.run()
     finally:
         db.close()
+        dd.remove_live_server()
         if has_lock:
             dd.release_lock()
 
