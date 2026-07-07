@@ -6,6 +6,7 @@
 import { Suspense, lazy, useMemo } from "react";
 import type { SequenceMeta } from "../api/types";
 import type { ComparisonSeriesRef, MultiRunCardType } from "../lib/comparisons";
+import type { CardType } from "../lib/cards/card-spec";
 import type { CardSettingsKey } from "../lib/card-settings";
 import { useSequence } from "../api/hooks";
 import { api } from "../api/client";
@@ -90,6 +91,42 @@ export type CardDescriptor =
       /** Open the settings modal and scroll into view once on mount (e.g. just-added card). */
       autoOpenSettings?: boolean;
     };
+
+/**
+ * WS-SCHEMA drift guard: the set of `object_type` values the `switch` in
+ * `CardRenderer` handles as a per-metric ("series") card. Combined with the
+ * multi-run branch (`MultiRunCardType`: parallel/scatter/bar/tile), this is
+ * the renderer's declared coverage of the canonical `CardType`
+ * (lib/cards/card-spec.ts). The `_AssertRendererCoversAllCardTypes` type
+ * below fails to compile if the two ever disagree — so adding a member to
+ * `CARD_TYPES` without a matching case here (or vice-versa) is a build
+ * error, not a silent runtime fall-through to `UnknownTypeCard`.
+ */
+type SeriesRendererCase =
+  | "scalar"
+  | "image"
+  | "figure"
+  | "audio"
+  | "video"
+  | "histogram"
+  | "tensor"
+  | "text"
+  | "table"
+  | "html"
+  | "markdown"
+  | "artifact"
+  | "pointcloud"
+  | "mesh"
+  | "boxes3d"
+  | "volume"
+  | "plugin";
+
+type MutualExtends<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+type AssertTrue<T extends true> = T;
+/** Exported only so it counts as "used" — its sole purpose is the compile-time assertion above. */
+export type AssertRendererCoversAllCardTypes = AssertTrue<
+  MutualExtends<CardType, SeriesRendererCase | MultiRunCardType>
+>;
 
 /** Loading placeholder shared by the lazily-loaded card variants. */
 function LazyCardFallback({ label }: { label: string }) {
