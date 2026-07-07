@@ -26,9 +26,10 @@
  * Deferred to a later security-reviewed follow-up — LOCAL / SAME-ORIGIN only.
  */
 
-import React, { useEffect, useMemo, useRef } from "react";
+import React, { Component, useEffect, useMemo, useRef, type ReactNode } from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
 import CardRenderer from "./components/CardRenderer";
 import type { SequenceMeta } from "./api/types";
 import {
@@ -55,6 +56,30 @@ const EMBED_SCOPE = "embed";
 interface EmbedSpecResponse {
   sid: string;
   spec: ComparisonCard;
+}
+
+/**
+ * Error boundary so a card render failure surfaces a readable message inside
+ * the iframe instead of a blank page (and still lets the host size to it).
+ */
+class EmbedErrorBoundary extends Component<
+  { children: ReactNode },
+  { error: Error | null }
+> {
+  state = { error: null as Error | null };
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div data-cairn-card className="card p-4 text-sm text-red-400">
+          Embed render error: {this.state.error.message}
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 /** Post the current content height to the host so it can size the iframe. */
@@ -159,7 +184,11 @@ function EmbedApp() {
   } else if (query.isError || !query.data) {
     body = <div className="card p-4 text-sm text-red-400">Failed to load embed spec.</div>;
   } else {
-    body = <EmbeddedCard card={query.data.spec} />;
+    body = (
+      <EmbedErrorBoundary>
+        <EmbeddedCard card={query.data.spec} />
+      </EmbedErrorBoundary>
+    );
   }
 
   // Single-column CSS grid: a card's `gridColumn: span N` (from CardShell)
@@ -179,7 +208,17 @@ function EmbedApp() {
 ReactDOM.createRoot(document.getElementById("embed-root")!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
-      <EmbedApp />
+      {/*
+       * MemoryRouter (not BrowserRouter): cards reuse viewer components that
+       * call react-router hooks deep in the tree (e.g. RunSelectionPanel's
+       * useNavigate), which throw without a Router context. The embed shows
+       * NO nav/routing — this just satisfies that context in memory so the
+       * card renders. In the SPA these hooks get their context from the
+       * app's RouterProvider; the embed provides an equivalent here.
+       */}
+      <MemoryRouter>
+        <EmbedApp />
+      </MemoryRouter>
     </QueryClientProvider>
   </React.StrictMode>,
 );
