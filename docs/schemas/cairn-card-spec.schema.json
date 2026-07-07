@@ -1,0 +1,310 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$ref": "#/definitions/CardSpecSchema",
+  "definitions": {
+    "CardSpecSchema": {
+      "type": "object",
+      "properties": {
+        "cardType": {
+          "$ref": "#/definitions/CardType"
+        },
+        "cardSpec": {
+          "$ref": "#/definitions/CardSpec"
+        },
+        "cardsSpec": {
+          "$ref": "#/definitions/CardsSpec"
+        },
+        "reportSpec": {
+          "$ref": "#/definitions/ReportSpec"
+        },
+        "seriesRef": {
+          "$ref": "#/definitions/SeriesRef"
+        },
+        "runSelector": {
+          "$ref": "#/definitions/RunSelectorSpec"
+        }
+      },
+      "required": [
+        "cardType",
+        "cardSpec",
+        "cardsSpec",
+        "reportSpec",
+        "seriesRef",
+        "runSelector"
+      ],
+      "additionalProperties": false,
+      "description": "Umbrella entry point for schema generation only — `scripts/gen-card-spec-schema.mjs` generates the JSON Schema from THIS type so every card-spec root (`CardsSpec`, `CardSpec`, `ReportSpec`, `CardType`, …) lands under one deterministic `definitions` block with no degenerate wildcard entry. Never constructed at runtime; it exists purely to anchor the generator."
+    },
+    "CardType": {
+      "type": "string",
+      "enum": [
+        "scalar",
+        "image",
+        "figure",
+        "audio",
+        "video",
+        "histogram",
+        "tensor",
+        "text",
+        "pointcloud",
+        "mesh",
+        "boxes3d",
+        "volume",
+        "parallel",
+        "scatter",
+        "bar",
+        "tile",
+        "table",
+        "html",
+        "markdown",
+        "artifact",
+        "plugin"
+      ]
+    },
+    "CardSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "settings": {
+          "$ref": "#/definitions/CardSettingsSpec"
+        },
+        "id": {
+          "type": "string",
+          "description": "Stable uuid. Distinct from the settings storage key — see lib/card-settings.ts."
+        },
+        "type": {
+          "$ref": "#/definitions/CardType",
+          "description": "Derives from the single canonical `CardType` (lib/cards/card-spec.ts — the WS-SCHEMA source of truth). Previously a hand-maintained closed union of 16 members here; now the one list every dispatch site (`CardRenderer` switch, this union, the `isComparisonCard` guard) agrees on. See card-spec.ts for how the three former definitions reconcile."
+        },
+        "series": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ComparisonSeriesRef"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "series",
+        "type"
+      ],
+      "description": "The schema root for one card entry — `ComparisonCard` (id/type/series) plus the optional inline `settings` blob the ```cairn dialect carries (see `CairnCardInput.settings` in lib/reports/cairn-block.ts)."
+    },
+    "CardSettingsSpec": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "number"
+        },
+        "yScale": {
+          "type": "string",
+          "enum": [
+            "linear",
+            "log"
+          ]
+        },
+        "smoothing": {
+          "type": "number"
+        },
+        "step": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/JSONValue"
+          },
+          {
+            "not": {}
+          }
+        ]
+      },
+      "description": "Per-card `settings` are an untyped side-channel today (`Record<cardId, unknown>` — see `ReportPayload.cardSettings` in lib/reports/types.ts and `CairnCardInput.settings` in lib/reports/cairn-block.ts). Rather than a full discriminated union keyed by card type (which would require typing every one of `lib/card-settings.ts`'s ~20 per-type interfaces up front), this starts permissive with a few well-known keys and tightens over time — see docs/superpowers/specs/2026-07-07-notebook-python-and-embed.md §3.2."
+    },
+    "JSONValue": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/JSONValue"
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/JSONValue"
+          }
+        }
+      ],
+      "description": "Any valid JSON value — used to keep per-card `settings` permissive (see `CardSettingsSpec`)."
+    },
+    "ComparisonSeriesRef": {
+      "type": "object",
+      "properties": {
+        "runId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string",
+          "description": "Metric name."
+        },
+        "context_hash": {
+          "type": "string",
+          "description": "\"\" for \"no context\"; otherwise the context hash returned by /sequences."
+        }
+      },
+      "required": [
+        "runId",
+        "name",
+        "context_hash"
+      ],
+      "additionalProperties": false
+    },
+    "CardsSpec": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "runs": {
+          "$ref": "#/definitions/RunsSpec"
+        },
+        "title": {
+          "type": "string"
+        },
+        "cards": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/CardSpec"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "description": "The ```cairn dialect's schema root. Mirrors `CairnSpec` (lib/reports/cairn-block.ts), which remains the actual parser's input type — this is its schema-generation counterpart, kept in sync by hand (both are small and rarely change independently of each other)."
+    },
+    "RunsSpec": {
+      "type": "object",
+      "properties": {
+        "ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "selector": {
+          "$ref": "#/definitions/RunSelectorSpec"
+        }
+      },
+      "additionalProperties": false,
+      "description": "A `runs:` block — static ids or a dynamic selector (mirrors `CairnRunsInput` in lib/reports/cairn-block.ts)."
+    },
+    "RunSelectorSpec": {
+      "$ref": "#/definitions/RunSelector",
+      "description": "= `RunSelector` (lib/run-selector.ts) — a dynamic run-set binding."
+    },
+    "RunSelector": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/StaticRunSelector"
+        },
+        {
+          "$ref": "#/definitions/QueryRunSelector"
+        }
+      ]
+    },
+    "StaticRunSelector": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "static"
+        },
+        "runIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "kind",
+        "runIds"
+      ],
+      "additionalProperties": false
+    },
+    "QueryRunSelector": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "query"
+        },
+        "namePattern": {
+          "type": "string",
+          "description": "Substring match (case-insensitive), or a glob if it contains `*`."
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Run must carry every one of these tags."
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "latest-n",
+            "newest-per-name"
+          ],
+          "description": "\"latest-n\": the N most recently created matching runs. \"newest-per-name\": the single newest matching run per distinct display name."
+        },
+        "n": {
+          "type": "number",
+          "description": "Cap on the result count. Default 5. Applies to both modes."
+        }
+      },
+      "required": [
+        "kind",
+        "mode"
+      ],
+      "additionalProperties": false
+    },
+    "ReportSpec": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "source"
+      ],
+      "additionalProperties": false,
+      "description": "The `cairn.Report.publish()` payload shape (§3.3 of the design doc) — a report's canonical markdown `source` plus create-route metadata (mirrors `ReportCreate` in cairn/server/routes/reports.py). Not wired into any runtime path yet (that's WS-PYAPI); included here so the JSON Schema/pydantic model has a stable root for it ahead of that workstream."
+    },
+    "SeriesRef": {
+      "$ref": "#/definitions/ComparisonSeriesRef",
+      "description": "= `ComparisonSeriesRef` (lib/comparisons/types.ts) — one (run, metric) binding for a card."
+    }
+  }
+}

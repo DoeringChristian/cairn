@@ -147,3 +147,19 @@ export interface ReportSpec {
   project?: string;
   source: string;
 }
+
+/**
+ * Umbrella entry point for schema generation only — `scripts/gen-card-spec-schema.mjs`
+ * generates the JSON Schema from THIS type so every card-spec root
+ * (`CardsSpec`, `CardSpec`, `ReportSpec`, `CardType`, …) lands under one
+ * deterministic `definitions` block with no degenerate wildcard entry.
+ * Never constructed at runtime; it exists purely to anchor the generator.
+ */
+export interface CardSpecSchema {
+  cardType: CardType;
+  cardSpec: CardSpec;
+  cardsSpec: CardsSpec;
+  reportSpec: ReportSpec;
+  seriesRef: SeriesRef;
+  runSelector: RunSelectorSpec;
+}
