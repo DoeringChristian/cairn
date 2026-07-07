@@ -20,6 +20,17 @@ export {
 
 export { CROSS_TYPE_VISUAL_OBJECT_TYPES, canCrossTypeCompare } from "./cross-type";
 
+// The DataSource seam (hash -> TData mapping cores) — no heavy dependencies
+// (parseNpy/parseNpz/PropertyMap are already eager-safe, see their own
+// barrels), safe to re-export from this eagerly-reached barrel.
+export {
+  createEndpointDataSource,
+  resolveImageViewportItems,
+  fetchPointCloudArrays,
+  type DataSource,
+  type PointCloudArrays,
+} from "./data-sources";
+
 // NOTE: pointcloud-viewport.tsx (WS-VC4) is DELIBERATELY not re-exported
 // from this barrel (or cairn-plot/index.ts's, both of which are imported
 // eagerly by non-lazy call sites such as VisualContentCard.tsx). It pulls

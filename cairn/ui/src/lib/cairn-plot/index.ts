@@ -89,6 +89,18 @@ export type {
   PointCloudBackground,
   PointCloudBounds,
 } from "./renderers";
+export { Table } from "./renderers";
+export type { TableProps, TableData, TableColumn, ColumnType } from "./renderers";
+// NOTE: `Figure` (and its Plotly dependency) is intentionally NOT re-exported
+// from this barrel, or from "./renderers" — many eagerly-bundled cards
+// (ScalarPlotCard, HistogramCard, TensorCard, VisualContentCard,
+// viewport-registry) statically import from "../lib/cairn-plot" /
+// "../lib/cairn-plot/renderers", and plotly.js-dist-min is a large
+// non-tree-shakeable (UMD-style) bundle: merely being *reachable* through a
+// re-export chain pulls its full ~5MB into the eager main chunk even when
+// unused. Import Figure directly from "../lib/cairn-plot/renderers/Figure"
+// (only reached by the lazy FigureInteractiveCard) to keep it in its own
+// async chunk.
 
 // media-compare — unified visual-media comparison core (see media-compare/index.ts)
 export {
@@ -124,6 +136,9 @@ export {
   imageViewportCapabilities,
   CROSS_TYPE_VISUAL_OBJECT_TYPES,
   canCrossTypeCompare,
+  createEndpointDataSource,
+  resolveImageViewportItems,
+  fetchPointCloudArrays,
 } from "./viewport";
 export type {
   FrameSource,
@@ -138,4 +153,6 @@ export type {
   ImageViewportItem,
   ImageViewState,
   ImageViewportSettings,
+  DataSource,
+  PointCloudArrays,
 } from "./viewport";

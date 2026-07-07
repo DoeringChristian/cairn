@@ -7,8 +7,8 @@ import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { safeJsonParse } from "../lib/format";
 import {
   PointCloudViewer,
-  parseNpy,
-  parseNpz,
+  createEndpointDataSource,
+  fetchPointCloudArrays,
   isCoreCompareMode,
   type MediaCompareModeKind,
   type DiffMode,
@@ -31,8 +31,7 @@ import {
   type PointCloudViewState,
   type PointCloudNativeMode,
 } from "../lib/cairn-plot/viewport/pointcloud-viewport";
-import type { PropertyMap } from "../lib/cairn-plot/three/properties";
-import { extractProperties, propertyNames } from "../lib/cairn-plot/three/properties";
+import { propertyNames } from "../lib/cairn-plot/three/properties";
 import type { DiffColormap } from "../lib/cairn-plot/three/diff";
 import { resetScene3DViews, type Scene3DSyncOptions } from "../lib/cairn-plot/three/use-scene3d";
 import type { ViewportPaneProps } from "../lib/cairn-plot/viewport/types";
@@ -68,33 +67,14 @@ import VisualContentCard from "./VisualContentCard";
 // length, one hook call each), since `ViewportModule.useData` receives
 // arrays of already-resolved hashes rather than owning its own step
 // resolution (that stays card-owned — see `ViewportDataArgs`'s doc comment).
+//
+// The fetch+parse core itself (`fetchPointCloudArrays`) now lives in
+// `cairn-plot/viewport/data-sources.ts`, parameterized by a `DataSource`
+// instead of calling `api.artifactUrl` directly — this file just supplies
+// the app's endpoint-backed `DataSource` and the react-query wiring.
 // ---------------------------------------------------------------------------
 
-function looksLikeNpz(buf: ArrayBuffer): boolean {
-  if (buf.byteLength < 2) return false;
-  const view = new Uint8Array(buf, 0, 2);
-  return view[0] === 0x50 && view[1] === 0x4b; // "PK\x03\x04"
-}
-
-interface PointCloudArrays {
-  data: Float32Array;
-  properties: PropertyMap;
-}
-
-async function fetchPointCloudArrays(hash: string): Promise<PointCloudArrays> {
-  const res = await fetch(api.artifactUrl(hash));
-  if (!res.ok) throw new Error(`failed to fetch point cloud (${res.status})`);
-  const buf = await res.arrayBuffer();
-  if (looksLikeNpz(buf)) {
-    const npz = await parseNpz(buf);
-    if (!npz.points) throw new Error("point cloud npz missing 'points'");
-    return { data: Float32Array.from(npz.points.data), properties: extractProperties(npz) };
-  }
-  const parsed = parseNpy(buf);
-  // The shared parser returns Float64Array for uniform downstream math;
-  // three.js BufferAttributes require Float32Array, so narrow once here.
-  return { data: Float32Array.from(parsed.data), properties: {} };
-}
+const dataSource = createEndpointDataSource((hash) => api.artifactUrl(hash));
 
 function usePointCloudBlobs(hashes: (string | null)[]) {
   return useQueries({
@@ -102,7 +82,7 @@ function usePointCloudBlobs(hashes: (string | null)[]) {
       queryKey: ["pointcloud-blob", h],
       enabled: !!h,
       staleTime: Infinity,
-      queryFn: () => fetchPointCloudArrays(h!),
+      queryFn: () => fetchPointCloudArrays(h!, dataSource),
     })),
   });
 }

@@ -29,3 +29,14 @@ export {
   type PointCloudBackground,
   type PointCloudBounds,
 } from "./PointCloudViewer";
+export {
+  default as Table,
+  type TableProps,
+  type TableData,
+  type TableColumn,
+  type ColumnType,
+} from "./Table";
+// NOTE: `Figure` is intentionally NOT re-exported from this barrel — see the
+// comment in `../index.ts`. Import it directly from "./Figure" (or
+// "../lib/cairn-plot/renderers/Figure" from app code) so its Plotly
+// dependency stays out of the eagerly-bundled reexport graph.
