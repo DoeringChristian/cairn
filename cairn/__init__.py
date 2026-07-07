@@ -18,6 +18,7 @@ from .sdk.plugins import (  # noqa: E402
 from .sdk.reader import Reader  # noqa: E402
 from .sdk.run import ArtifactVersion  # noqa: E402
 from . import plot  # noqa: E402, F401  - cairn.plot.* helpers (plotly imports stay lazy)
+from .sdk.report import Report  # noqa: E402
 
 from .sdk.wrappers import (  # noqa: E402
     Artifact,
@@ -47,6 +48,7 @@ __all__ = [
     "Reader",
     "ArtifactVersion",
     "plot",
+    "Report",
     "Artifact",
     "Image",
     "Figure",
