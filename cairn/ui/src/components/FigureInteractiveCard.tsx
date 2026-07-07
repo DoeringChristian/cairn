@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useState, useMemo, useRef } from "react";
+import { useCallback, useState, useMemo, useRef } from "react";
 import { useQuery, useQueries } from "@tanstack/react-query";
-import createPlotlyComponent from "react-plotly.js/factory";
 // @ts-expect-error - plotly.js-dist-min has no bundled types, but is runtime-compatible with the factory.
 import Plotly from "plotly.js-dist-min";
 import { useSequence } from "../api/hooks";
@@ -24,6 +23,7 @@ import {
   type PlotlyFigureLike,
   type FigureMergeEntry,
 } from "../lib/cairn-plot";
+import Figure, { type SharedView } from "../lib/cairn-plot/renderers/Figure";
 import AddToComparisonButton from "./AddToComparisonButton";
 import CardShell from "./CardShell";
 import RunSelectionPanel from "./RunSelectionPanel";
@@ -32,25 +32,9 @@ import Toggle from "./settings/Toggle";
 import Select from "./settings/Select";
 import StepSlider from "./StepSlider";
 
-const Plot = createPlotlyComponent(Plotly);
 // The card's own minimum height — passed to every resolveCardHeight read so the
 // inner figure agrees with CardShell's outer-box clamp (one clamp source).
 const FIGURE_MIN_HEIGHT = cardMinSize("figure").minHeight;
-
-// Bug B: react-plotly.js's <Plot> already wraps its internal Plotly.react
-// call in a promise chain (see react-plotly.js/factory.js `updatePlotly`)
-// and forwards any rejection to `onError` — but WITHOUT an `onError` prop it
-// silently swallows the error instead of surfacing it. A degenerate axis
-// (single point / all-equal values / log axis with non-positive data) or a
-// relayout on a zero-size container can make Plotly's internal scale
-// computation throw ("Something went wrong with axis scaling"); wiring
-// `onError` on every <Plot> here turns that from a silent no-op (or, for
-// the one manual `Plotly.relayout` call in `resetView`, a genuinely
-// uncaught promise rejection) into a handled, logged warning so a bad step
-// never crashes the card.
-function onPlotlyError(err: unknown) {
-  console.warn("FigureInteractiveCard: plotly render error (recovered)", err);
-}
 
 interface Props {
   runId: string;
@@ -131,13 +115,6 @@ const DRAG_OPTIONS: Array<{ value: DragMode; label: string }> = [
   { value: "none", label: "None" },
 ];
 
-const DARK_LAYOUT: Record<string, unknown> = {
-  paper_bgcolor: "transparent",
-  plot_bgcolor: "transparent",
-  font: { color: "#1f2328" },
-  autosize: true,
-};
-
 function usePlotlySource(sourceHash: string | null | undefined) {
   return useQuery({
     queryKey: qk.plotlySource(sourceHash),
@@ -155,98 +132,6 @@ function usePlotlySource(sourceHash: string | null | undefined) {
 }
 
 
-
-// ---------------------------------------------------------------------------
-// Shared view state synced across comparison panes.
-// Captures axis ranges (2D) and camera (3D) from Plotly relayout events.
-// ---------------------------------------------------------------------------
-
-type SharedView = Record<string, unknown>;
-
-/** Extract axis ranges + scene camera from a Plotly relayout event object. */
-function extractViewState(relayoutData: Record<string, unknown>): SharedView | null {
-  const view: SharedView = {};
-  let any = false;
-  for (const [k, v] of Object.entries(relayoutData)) {
-    // 2D axis ranges: xaxis.range[0], yaxis.range[1], xaxis.autorange, etc.
-    if (/^[xy]axis\d*\./.test(k)) {
-      view[k] = v;
-      any = true;
-    }
-    // 3D scene camera: both dot-path (scene.camera.eye.x) and nested object (scene)
-    if (/^scene\d*\.camera/.test(k)) {
-      view[k] = v;
-      any = true;
-    }
-    // 3D scene as a nested object (Plotly sometimes sends {scene: {camera: {...}}})
-    if (/^scene\d*$/.test(k) && v && typeof v === "object") {
-      view[k] = v;
-      any = true;
-    }
-    // Mapbox/geo: mapbox.center, mapbox.zoom, geo.projection, etc.
-    if (/^(mapbox|geo)\d*\./.test(k)) {
-      view[k] = v;
-      any = true;
-    }
-  }
-  return any ? view : null;
-}
-
-/** Deep merge b into a (returns new object). */
-function deepMerge(a: Record<string, unknown>, b: Record<string, unknown>): Record<string, unknown> {
-  const result = { ...a };
-  for (const [k, v] of Object.entries(b)) {
-    if (v && typeof v === "object" && !Array.isArray(v) && a[k] && typeof a[k] === "object" && !Array.isArray(a[k])) {
-      result[k] = deepMerge(a[k] as Record<string, unknown>, v as Record<string, unknown>);
-    } else {
-      result[k] = v;
-    }
-  }
-  return result;
-}
-
-/** Merge shared view overrides into a Plotly layout object. */
-function applyViewOverrides(
-  layout: Record<string, unknown>,
-  overrides: SharedView,
-): Record<string, unknown> {
-  const result = { ...layout };
-  for (const [k, v] of Object.entries(overrides)) {
-    // If the value is an object and key has no dots (e.g. "scene" with nested camera),
-    // deep-merge it into the layout.
-    if (!k.includes(".") && !k.includes("[") && v && typeof v === "object" && !Array.isArray(v)) {
-      result[k] = deepMerge((result[k] as Record<string, unknown>) ?? {}, v as Record<string, unknown>);
-      continue;
-    }
-    // Plotly relayout keys are dot-separated paths like "xaxis.range[0]"
-    const bracketMatch = k.match(/^(.+)\[(\d+)]$/);
-    if (bracketMatch) {
-      const [, path, idx] = bracketMatch;
-      const parts = path!.split(".");
-      let obj: Record<string, unknown> = result;
-      for (let i = 0; i < parts.length; i++) {
-        const p = parts[i]!;
-        if (i === parts.length - 1) {
-          if (!Array.isArray(obj[p])) obj[p] = [];
-          (obj[p] as unknown[])[Number(idx)] = v;
-        } else {
-          if (obj[p] == null || typeof obj[p] !== "object") obj[p] = {};
-          obj = obj[p] as Record<string, unknown>;
-        }
-      }
-    } else {
-      const parts = k.split(".");
-      let obj: Record<string, unknown> = result;
-      for (let i = 0; i < parts.length - 1; i++) {
-        const p = parts[i]!;
-        if (obj[p] == null || typeof obj[p] !== "object") obj[p] = {};
-        obj = obj[p] as Record<string, unknown>;
-      }
-      obj[parts[parts.length - 1]!] = v;
-    }
-  }
-  return result;
-}
 
 // ---------------------------------------------------------------------------
 // Single pane: renders one figure at the given global step number.
@@ -291,62 +176,6 @@ function FigurePane({
 
   const sourceQ = usePlotlySource(sourceHash);
 
-  const baseLayout = useMemo(() => {
-    const base = (sourceQ.data?.layout ?? {}) as Record<string, unknown>;
-    const layout: Record<string, unknown> = {
-      ...base,
-      ...DARK_LAYOUT,
-      font: { ...((base.font as object) ?? {}), ...(DARK_LAYOUT.font as object) },
-      hovermode: settings.hoverMode === "none" ? false : settings.hoverMode,
-      dragmode: settings.dragMode === "none" ? false : settings.dragMode,
-      showlegend: settings.showLegend,
-    };
-    // Remove fixed dimensions so Plotly uses container size with autosize
-    delete layout.width;
-    delete layout.height;
-    return layout;
-  }, [sourceQ.data, settings.hoverMode, settings.dragMode, settings.showLegend]);
-
-  // Apply shared view overrides (synced zoom/pan/camera from other panes).
-  const mergedLayout = useMemo(
-    () => viewOverrides && Object.keys(viewOverrides).length > 0
-      ? applyViewOverrides(baseLayout, viewOverrides)
-      : baseLayout,
-    [baseLayout, viewOverrides],
-  );
-
-  const handleRelayout = useCallback(
-    (e: Readonly<Plotly.PlotRelayoutEvent>) => {
-      if (!onRelayout) return;
-      const view = extractViewState(e as unknown as Record<string, unknown>);
-      if (view) onRelayout(view);
-    },
-    [onRelayout],
-  );
-
-  // Attach plotly_relayouting for real-time sync during 3D drag rotation.
-  const plotContainerRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!onRelayout) return;
-    const el = plotContainerRef.current?.querySelector(".js-plotly-plot") as Plotly.PlotlyHTMLElement | null;
-    if (!el?.on) return;
-    const handler = (e: Plotly.PlotRelayoutEvent) => {
-      const view = extractViewState(e as unknown as Record<string, unknown>);
-      if (view) onRelayout(view);
-    };
-    el.on("plotly_relayouting", handler);
-    return () => el.removeAllListeners?.("plotly_relayouting");
-  });
-
-  const plotlyConfig = useMemo(
-    () => ({
-      displayModeBar: settings.displayModeBar,
-      scrollZoom: settings.scrollZoom,
-      responsive: true,
-    }),
-    [settings.displayModeBar, settings.scrollZoom],
-  );
-
   const showPlotly = !!sourceHash && sourceQ.isSuccess && !!sourceQ.data?.data;
 
   if (q.isLoading) {
@@ -357,18 +186,14 @@ function FigurePane({
   }
   if (showPlotly) {
     return (
-      <div ref={plotContainerRef} className="rounded bg-bg h-full">
-        <Plot
-          data={(sourceQ.data?.data ?? []) as Plotly.Data[]}
-          layout={mergedLayout as Partial<Plotly.Layout>}
-          config={plotlyConfig}
-          useResizeHandler
-          style={{ width: "100%", height: "100%" }}
-          onRelayout={handleRelayout}
-          revision={revision}
-          onError={onPlotlyError}
-        />
-      </div>
+      <Figure
+        figure={sourceQ.data!}
+        settings={settings}
+        viewOverrides={viewOverrides}
+        onRelayout={onRelayout}
+        revision={revision}
+        enableLiveRelayout
+      />
     );
   }
   if (sourceHash && sourceQ.isLoading) {
@@ -561,22 +386,6 @@ export default function FigureInteractiveCard({ runId, metric, extraSeries, cont
     [overlayActive, overlayMergeEntries],
   );
 
-  const overlayBaseLayout = useMemo(() => {
-    if (!mergedFigure) return null;
-    const base = mergedFigure.layout ?? {};
-    const layout: Record<string, unknown> = {
-      ...base,
-      ...DARK_LAYOUT,
-      font: { ...((base.font as object) ?? {}), ...(DARK_LAYOUT.font as object) },
-      hovermode: settings.hoverMode === "none" ? false : settings.hoverMode,
-      dragmode: settings.dragMode === "none" ? false : settings.dragMode,
-      showlegend: settings.showLegend,
-    };
-    delete layout.width;
-    delete layout.height;
-    return layout;
-  }, [mergedFigure, settings.hoverMode, settings.dragMode, settings.showLegend]);
-
   const [expanded, setExpanded] = useState(autoOpenSettings ?? false);
 
   const compSeries = useMemo(
@@ -652,50 +461,6 @@ export default function FigureInteractiveCard({ runId, metric, extraSeries, cont
     setPlotRevision((r) => r + 1);
   }, []);
 
-  const mainBaseLayout = useMemo(() => {
-    const base = (sourceQ.data?.layout ?? {}) as Record<string, unknown>;
-    const layout: Record<string, unknown> = {
-      ...base,
-      ...DARK_LAYOUT,
-      font: { ...((base.font as object) ?? {}), ...(DARK_LAYOUT.font as object) },
-      hovermode: settings.hoverMode === "none" ? false : settings.hoverMode,
-      dragmode: settings.dragMode === "none" ? false : settings.dragMode,
-      showlegend: settings.showLegend,
-    };
-    // Remove fixed dimensions so Plotly uses container size with autosize
-    delete layout.width;
-    delete layout.height;
-    return layout;
-  }, [sourceQ.data, settings.hoverMode, settings.dragMode, settings.showLegend]);
-
-  // Apply shared view (for home button reset in single-pane mode too).
-  const mergedLayout = useMemo(
-    () => Object.keys(sharedView).length > 0
-      ? applyViewOverrides(mainBaseLayout, sharedView)
-      : mainBaseLayout,
-    [mainBaseLayout, sharedView],
-  );
-
-  // Same shared-view sync applied to the merged overlay figure (see
-  // `overlayBaseLayout` above), so zoom/pan and the header "reset view"
-  // button behave the same whether the card is showing one pane or the
-  // merged overlay plot.
-  const overlayViewLayout = useMemo(
-    () => overlayBaseLayout && Object.keys(sharedView).length > 0
-      ? applyViewOverrides(overlayBaseLayout, sharedView)
-      : overlayBaseLayout,
-    [overlayBaseLayout, sharedView],
-  );
-
-  const plotlyConfig = useMemo(
-    () => ({
-      displayModeBar: settings.displayModeBar,
-      scrollZoom: settings.scrollZoom,
-      responsive: true,
-    }),
-    [settings.displayModeBar, settings.scrollZoom],
-  );
-
   const showPlotly = !!sourceHash && sourceQ.isSuccess && !!sourceQ.data?.data;
 
   const { selectedIds, selectedArray, toggle, clear } = useRunSelection();
@@ -751,21 +516,15 @@ export default function FigureInteractiveCard({ runId, metric, extraSeries, cont
     return (
       <>
         {showPlotly ? (
-          <div className={`rounded bg-bg ${heightClass}`} style={heightStyle}>
-            <Plot
-              data={(sourceQ.data?.data ?? []) as Plotly.Data[]}
-              layout={mergedLayout as Partial<Plotly.Layout>}
-              config={plotlyConfig}
-              useResizeHandler
-              style={{ width: "100%", height: "100%" }}
-              onRelayout={(e) => {
-                const view = extractViewState(e as unknown as Record<string, unknown>);
-                if (view) handlePaneRelayout(view);
-              }}
-              revision={plotRevision}
-              onError={onPlotlyError}
-            />
-          </div>
+          <Figure
+            figure={sourceQ.data!}
+            settings={settings}
+            viewOverrides={sharedView}
+            onRelayout={handlePaneRelayout}
+            revision={plotRevision}
+            className={`rounded bg-bg ${heightClass}`}
+            style={heightStyle}
+          />
         ) : sourceHash && sourceQ.isLoading ? (
           <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
         ) : (
@@ -829,21 +588,13 @@ export default function FigureInteractiveCard({ runId, metric, extraSeries, cont
   // in one figure, layout from the first run with fixed ranges dropped (see
   // mergeFigures/checkFigureMergeable in lib/cairn-plot).
   const renderOverlayPlot = () => (
-    <div className="rounded bg-bg h-full">
-      <Plot
-        data={(mergedFigure?.data ?? []) as Plotly.Data[]}
-        layout={(overlayViewLayout ?? {}) as Partial<Plotly.Layout>}
-        config={plotlyConfig}
-        useResizeHandler
-        style={{ width: "100%", height: "100%" }}
-        onRelayout={(e) => {
-          const view = extractViewState(e as unknown as Record<string, unknown>);
-          if (view) handlePaneRelayout(view);
-        }}
-        revision={plotRevision}
-        onError={onPlotlyError}
-      />
-    </div>
+    <Figure
+      figure={mergedFigure ?? { data: [], layout: {} }}
+      settings={settings}
+      viewOverrides={sharedView}
+      onRelayout={handlePaneRelayout}
+      revision={plotRevision}
+    />
   );
 
   const renderMultiFigure = (inModal: boolean) => (
