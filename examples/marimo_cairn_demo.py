@@ -11,13 +11,23 @@ WS-PYAPI section + §11).
 
 Usage::
 
-    pip install marimo          # optional dep, not required by cairn core
+    # marimo and plotly are optional deps, not required by cairn core —
+    # installed via the "examples" + "media" extras. `uv sync --extra
+    # examples --extra media` once, or let `uv run --extra examples
+    # --extra media ...` resolve them inline each time.
     uv run cairn init /tmp/cairn-marimo-demo
     CAIRN_REPO=/tmp/cairn-marimo-demo/.cairn \\
-        uv run python examples/demo_plot_helpers.py   # populate some runs
+        uv run --extra media python examples/demo_plot_helpers.py  # populate runs
     # optional, for the WS-PYAPI section's live iframe:
     #   cairn ui --repo /tmp/cairn-marimo-demo --no-auth &
-    marimo edit examples/marimo_cairn_demo.py
+
+    # interactive edit:
+    uv run --extra examples --extra media marimo edit examples/marimo_cairn_demo.py
+
+    # headless run/"test" — runs the notebook end-to-end as a script and
+    # exits 0 if every cell ran without error (falls back to synthetic
+    # data when CAIRN_REPO / no runs are found, so this works standalone):
+    uv run --extra examples --extra media python examples/marimo_cairn_demo.py
 """
 
 import marimo
@@ -36,14 +46,21 @@ def _(mo):
         read API today, and previews the target Python "card" API that
         lands with the notebook/Python-API workstream.
 
-        marimo is an *optional* dependency of cairn — install it with
-        `pip install marimo` (or the `examples` extra: `pip install
-        cairn-track[examples]`). It is not required to use cairn itself.
+        marimo and plotly are *optional* dependencies of cairn, installed
+        via the `examples` + `media` extras. Neither is required to use
+        cairn itself.
 
         Run this notebook with:
 
         ```
-        marimo edit examples/marimo_cairn_demo.py
+        uv run --extra examples --extra media marimo edit examples/marimo_cairn_demo.py
+        ```
+
+        Or run it headless (as a "test" — exits 0 if every cell runs
+        without error):
+
+        ```
+        uv run --extra examples --extra media python examples/marimo_cairn_demo.py
         ```
         """
     )
