@@ -143,6 +143,17 @@ for run in reader.runs(project="sweep").list():
 | `examples/dask_sweep.py` | Dask SSHCluster | Yes |
 | `examples/kubernetes_jobs.py` | Kubernetes Jobs | Yes |
 
+### Notebook / marimo
+
+`examples/marimo_cairn_demo.py` shows cairn's read API and `cairn.plot`
+helpers rendered inline in a [marimo](https://marimo.io) notebook. marimo
+and plotly are optional dependencies, installed via the `examples` +
+`media` extras:
+
+```bash
+uv run --extra examples --extra media marimo edit examples/marimo_cairn_demo.py
+```
+
 ## Development
 
 This project uses [uv](https://docs.astral.sh/uv/) for Python and npm for the UI.
