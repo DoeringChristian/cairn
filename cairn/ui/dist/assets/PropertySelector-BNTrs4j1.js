@@ -1,0 +1,1 @@
+import{o as s,bj as a}from"./index-BLOwh7Wd.js";function u({properties:r,value:n,onChange:t,label:e="Property"}){if(r.length<=1)return null;const l=n&&r.includes(n)?n:r[0];return s.jsx(a,{label:e,value:l,onChange:t,options:r.map(o=>({value:o,label:o})),description:"Drives value coloring + the Colorbar's range"})}export{u as P};

@@ -5,6 +5,8 @@ import {
   imageViewportCapabilities,
   ColormapSwatch,
   DIVERGING_COLORMAPS,
+  createEndpointDataSource,
+  resolveImageViewportItems,
   type Colormap,
   type ImageViewportItem,
   type ImageViewState,
@@ -75,23 +77,24 @@ export function parseOverlay(raw: string | null | undefined): ImageOverlayData |
 // this file's shape.
 // ---------------------------------------------------------------------------
 
+/** The app's default `DataSource` — wraps `api.artifactUrl`. See
+ *  `cairn-plot/viewport/data-sources.ts` for why this indirection exists
+ *  (keeps the app's API client out of cairn-plot itself). */
+const endpointDataSource = createEndpointDataSource((hash) => api.artifactUrl(hash));
+
 /**
  * ImageViewport's `useData` — a pure, synchronous hash->URL mapping (no
  * network fetch: `api.artifactUrl` is a plain string formatter) plus overlay
  * parsing (moved verbatim from ImageGalleryCard's `parseOverlay`, now run
  * against each pane's resolved `metadata` string here instead of the card
- * reaching into raw `SequencePoint`s directly).
+ * reaching into raw `SequencePoint`s directly). The hash->TData mapping
+ * itself is `resolveImageViewportItems` (cairn-plot/viewport/data-sources) —
+ * this hook is now just the `useMemo` + `DataSource`/`parseOverlay` wiring.
  */
 function useImageData(args: ViewportDataArgs): ViewportDataResult<ImageViewportItem> {
   const { hashes, referenceHashes, metadata } = args;
   return useMemo(
-    () => ({
-      items: hashes.map((h, i) =>
-        h ? { url: api.artifactUrl(h), overlay: parseOverlay(metadata?.[i]) } : null,
-      ),
-      referenceItems: referenceHashes.map((h) => (h ? { url: api.artifactUrl(h) } : null)),
-      isLoading: false,
-    }),
+    () => resolveImageViewportItems(args, endpointDataSource, parseOverlay),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [hashes.join("|"), referenceHashes.join("|"), (metadata ?? []).join("|")],
   );

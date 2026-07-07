@@ -1,4 +1,4 @@
-import{bf as rc,r as De,o as Dn,bL as sc,bF as ac}from"./index-BzZubbp-.js";/**
+import{bf as rc,r as De,o as Dn,bP as sc,bF as ac}from"./index-BLOwh7Wd.js";/**
  * @license
  * Copyright 2010-2026 Three.js Authors
  * SPDX-License-Identifier: MIT

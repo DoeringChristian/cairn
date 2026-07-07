@@ -136,6 +136,9 @@ export {
   imageViewportCapabilities,
   CROSS_TYPE_VISUAL_OBJECT_TYPES,
   canCrossTypeCompare,
+  createEndpointDataSource,
+  resolveImageViewportItems,
+  fetchPointCloudArrays,
 } from "./viewport";
 export type {
   FrameSource,
@@ -150,4 +153,6 @@ export type {
   ImageViewportItem,
   ImageViewState,
   ImageViewportSettings,
+  DataSource,
+  PointCloudArrays,
 } from "./viewport";
