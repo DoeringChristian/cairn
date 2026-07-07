@@ -1013,6 +1013,14 @@ class _HttpBackend:
         self._client = httpx.Client(base_url=self._base, timeout=30.0, headers=headers)
         self._cache_dir = _resolve_cache_dir(cache_dir) if cache else None
 
+    @property
+    def server_url(self) -> str:
+        """The HTTP base this backend queries — threaded into `CardElement`
+        (via `cairn.plot`) so a card renders against the SAME server a
+        `Reader(repo="cairn://host:port")` was connected to, without needing
+        `cairn.configure`/`CAIRN_REPO`/`server=`."""
+        return self._base
+
     def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         resp = self._client.get(path, params=params)
         resp.raise_for_status()

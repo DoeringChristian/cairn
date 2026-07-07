@@ -59,6 +59,54 @@ def two_runs(tmp_path):
         reader.close()
 
 
+@pytest.fixture
+def two_runs_http_reader(tmp_path):
+    """A live server serving a repo that has runs, opened via a
+    ``Reader(repo="cairn://127.0.0.1:<port>")`` (server mode) — for testing
+    that the reader's connected server is threaded into cards."""
+    import socket
+    import threading
+    import time
+
+    import uvicorn
+
+    from cairn.server.app import create_app
+
+    repo = tmp_path / ".cairn"
+    run_a = cairn.Run(
+        project="pyapi-plot-test", name="run-a", repo=str(repo),
+        capture_source=False, capture_stdout=False, capture_env=False,
+        capture_system_metrics=False,
+    )
+    run_a_id = run_a.id
+    for i in range(3):
+        run_a.track(float(i) * 0.1, name="loss", step=i)
+    run_a.finish()
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+
+    app = create_app(data_dir=repo, auth_enabled=False)
+    config = uvicorn.Config(app=app, host="127.0.0.1", port=port, log_level="warning", lifespan="on")
+    server = uvicorn.Server(config)
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.time() + 10
+    while time.time() < deadline and not server.started:
+        time.sleep(0.02)
+    if not server.started:
+        raise RuntimeError("uvicorn failed to start within 10s")
+
+    reader = Reader(repo=f"cairn://127.0.0.1:{port}")
+    try:
+        yield reader, reader.run(run_a_id)
+    finally:
+        reader.close()
+        server.should_exit = True
+        thread.join(timeout=10)
+
+
 def _validate_card_spec(spec_dict: dict) -> CardSpec:
     """Round-trip through the WS-SCHEMA pydantic mirror — raises on any
     schema violation (this IS the "validated against card_spec.py" gate)."""
@@ -312,6 +360,40 @@ def test_plot_builder_threads_repo_path_and_autodiscovers_live_server(two_runs, 
         assert resp.status_code == 200
     finally:
         dd.remove_live_server()
+
+
+def test_reader_server_threaded_from_http_reader_wins_over_config(monkeypatch):
+    """A `Reader(repo="cairn://host:port")` threads its connected server into
+    the element, so the card renders against the SAME server the reader
+    queried — no `cairn.configure`/`CAIRN_REPO` needed, and it beats the
+    (deliberately unreachable) global-config default."""
+    import cairn.sdk.elements as elements_mod
+
+    # Global config points somewhere dead — proves reader_server is used.
+    monkeypatch.setattr(elements_mod._config, "resolve_server", lambda explicit=None: "http://127.0.0.1:1")
+    monkeypatch.setattr(elements_mod._config, "resolve_target", lambda repo=None: elements_mod._config.RunTarget("local", "/tmp/nope/.cairn"))
+
+    el = CardElement({"type": "scalar", "series": []}, reader_server="http://localhost:4302")
+    # Trusted without a probe (like an explicit server=), so no network needed.
+    assert el._resolve_server() == "http://localhost:4302"
+
+
+def test_plot_builder_threads_reader_server_end_to_end(two_runs_http_reader):
+    """`cplot.scalar(run["tag"])` on a server-mode Reader renders a LIVE
+    iframe at that reader's server port with NO config — the reported bug
+    (reader on cairn://:PORT, card fell back to dead :4300)."""
+    import httpx
+
+    reader, run_a = two_runs_http_reader
+    from urllib.parse import urlsplit
+
+    port = urlsplit(reader._backend.server_url).port
+    el = cplot.scalar(run_a["loss"])
+    html = el._repr_html_()
+    assert f":{port}/embed/card?sid=" in html
+    sid = html.split("sid=", 1)[1].split('"', 1)[0]
+    resp = httpx.get(f"{reader._backend.server_url}/api/embed/specs/{sid}")
+    assert resp.status_code == 200
 
 
 def test_card_element_mimebundle_matches_repr_html():

@@ -130,10 +130,17 @@ class CardElement(Element):
         server: str | None = None,
         token: str | None = None,
         height: int = _DEFAULT_IFRAME_HEIGHT,
+        reader_server: str | None = None,
         repo_path: str | Path | None = None,
     ) -> None:
         self.spec = spec
         self._server_override = server
+        self._reader_server = reader_server
+        """The HTTP base the source `Reader` was connected to when it was
+        opened in server mode (``Reader(repo="cairn://host:port")``), threaded
+        by ``cairn.plot``. Preferred over global config/discovery so a card
+        renders against the SAME server that served its data. `None` for
+        local-repo readers (they use `repo_path` discovery instead)."""
         self._token_override = token
         self._height = height
         self._repo_path = str(repo_path) if repo_path is not None else None
@@ -150,10 +157,15 @@ class CardElement(Element):
         Resolution order:
 
         1. Explicit ``server=`` override — trusted without a probe.
-        2. ``cairn.configure``/``CAIRN_REPO``/config-file ``cairn://...``
+        2. The source ``Reader``'s own connected server
+           (``self._reader_server``, set when it was opened as
+           ``Reader(repo="cairn://host:port")``) — trusted without a probe:
+           the reader literally queried this card's data from there, so the
+           card must render there too, with no global config needed.
+        3. ``cairn.configure``/``CAIRN_REPO``/config-file ``cairn://...``
            (via ``config.resolve_target()``) — also trusted without a probe,
            same posture as ``Transport``/``_HttpBackend``.
-        3. The repo's advertised ``servers.json`` (written by ``cairn ui``
+        4. The repo's advertised ``servers.json`` (written by ``cairn ui``
            on startup — see ``DataDir.add_live_server``), health-probed.
            Uses ``self._repo_path`` (the actual repo this card's data came
            from, threaded from the ``Reader``) when known, else the same
@@ -161,18 +173,20 @@ class CardElement(Element):
            what makes discovery work regardless of which port ``cairn ui``
            actually landed on (it auto-increments past its default when
            taken).
-        4. Last resort: probe the CLI-default ports directly
+        5. Last resort: probe the CLI-default ports directly
            (``config.DEFAULT_SERVER`` and ``cairn ui``'s own ``--port``
            default) — covers a server that predates this repo's
            `servers.json` support, or a `servers.json` that failed to write.
 
-        A plain local repo path has no *implied* HTTP URL, so steps 3-4
+        A plain local repo path has no *implied* HTTP URL, so steps 4-5
         never trust a candidate without a fast, short-timeout
         ``GET /api/health`` first — this is the "is `cairn ui` actually
         running" check the design spec's ``file://``-mode caveat calls for.
         """
         if self._server_override is not None:
             return self._server_override
+        if self._reader_server is not None:
+            return self._reader_server
         target = _config.resolve_target()
         if not target.is_local:
             return target.location

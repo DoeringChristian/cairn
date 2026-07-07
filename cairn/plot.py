@@ -567,6 +567,11 @@ def _resolve_series(data: Any, *, builder: str) -> tuple[SeriesRef, int | None]:
     )
 
 
+def _backend_of(source: Any) -> Any:
+    """The `_LocalBackend`/`_HttpBackend` behind a `DataRef`'s `Run`, if any."""
+    return getattr(getattr(source, "run", None), "_backend", None)
+
+
 def _repo_path_of(source: Any) -> str | None:
     """Best-effort local ``.cairn`` dir behind a `DataRef`'s `Run`, or
     `None` (HTTP-backed readers, or anything unexpected).
@@ -576,8 +581,19 @@ def _repo_path_of(source: Any) -> str | None:
     only the process-global `cairn.configure`/`CAIRN_REPO` state — the
     notebook may be reading a repo that was never `configure()`-d at all.
     """
-    backend = getattr(getattr(source, "run", None), "_backend", None)
-    return getattr(backend, "repo_path", None)
+    return getattr(_backend_of(source), "repo_path", None)
+
+
+def _server_url_of(source: Any) -> str | None:
+    """Best-effort HTTP base behind a `DataRef`'s `Run` when its `Reader`
+    was opened in server mode (``Reader(repo="cairn://host:port")``), else
+    `None`.
+
+    Threaded into `CardElement(server=...)` so a card renders against the
+    SAME server the reader queried — the reader "found" the runs there, so
+    the card must resolve there too, with no `cairn.configure`/`CAIRN_REPO`
+    needed."""
+    return getattr(_backend_of(source), "server_url", None)
 
 
 def _card_element(
@@ -593,6 +609,7 @@ def _card_element(
     series: list[SeriesRef] = []
     step: int | None = None
     repo_path: str | None = None
+    reader_server: str | None = None
     for source in sources:
         ref, source_step = _resolve_series(source, builder=builder)
         series.append(ref)
@@ -600,6 +617,8 @@ def _card_element(
             step = source_step
         if repo_path is None:
             repo_path = _repo_path_of(source)
+        if reader_server is None:
+            reader_server = _server_url_of(source)
 
     merged_settings = dict(settings or {})
     if mode is not None:
@@ -609,7 +628,11 @@ def _card_element(
     settings_obj = CardSettingsSpec(**merged_settings) if merged_settings else None
 
     spec = CardSpec(id=str(_uuid.uuid4()), type=card_type, series=series, settings=settings_obj)
-    return CardElement(spec.model_dump(exclude_none=True, mode="json"), repo_path=repo_path)
+    return CardElement(
+        spec.model_dump(exclude_none=True, mode="json"),
+        reader_server=reader_server,
+        repo_path=repo_path,
+    )
 
 
 def _rows_to_html_table(rows: Any) -> str:
