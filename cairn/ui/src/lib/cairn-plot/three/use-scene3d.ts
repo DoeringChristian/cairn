@@ -193,6 +193,22 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
   const sizeRef = useRef(size);
   const backgroundRef = useRef(background);
   const [cachedImageUrl, setCachedImageUrl] = useState<string | null>(null);
+  // Mirrors `cachedImageUrl` synchronously (state updates aren't visible
+  // until next render, but `park()` needs to know RIGHT NOW whether a prior
+  // successful capture exists — see the blank-pane fix below).
+  const cachedImageUrlRef = useRef<string | null>(null);
+  /** WS-3DR2 blank-pane fix: true once this viewer has completed its first
+   *  CONTENT-bearing render — i.e. `fitToBounds` has run at least once,
+   *  meaning real geometry/bounds (not just the mount effect's empty
+   *  scene) have been drawn. `park()` refuses to actually release the
+   *  context until this is true: without the guard, the mount effect's own
+   *  resize-triggered `requestRender()` draws (and starts the idle-park
+   *  clock off of) an EMPTY scene well before slower-to-load data finishes,
+   *  so a burst of many simultaneous panes — or just an unlucky idle timer
+   *  — could park/get pool-evicted with nothing but a blank clear-color
+   *  frame ever captured, leaving the pane visibly blank until the user
+   *  interacts with it. */
+  const hasRenderedContentRef = useRef(false);
   /** The `WEBGL_lose_context` extension for this viewer's one-and-only
    *  renderer, grabbed once at creation. `null` in the (essentially
    *  theoretical, per the WebGL spec every conformant implementation
@@ -248,9 +264,24 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
    * in between) — cheap here since it only runs once per park (a rare,
    * discrete event), not per frame.
    */
-  const park = useCallback(() => {
+  const park = useCallback((): void => {
     const r = rendererRef.current;
     if (!r || parkedRef.current) return;
+    // WS-3DR2 fix round 2 (blank-pane-on-load): never let this callback —
+    // it's BOTH the pool's per-entry eviction callback and this instance's
+    // own idle-timer callback, the exact same code path either way — leave
+    // the pane parked with NOTHING real to show. `hasRenderedContentRef`
+    // guards the first of two ways that used to happen: if real content
+    // (`fitToBounds`) hasn't rendered yet, defer instead of parking an
+    // empty/clear-color frame. Re-`poolAcquire` here because, when this is
+    // running AS the pool's eviction callback, `context-pool.ts` already
+    // removed us from its live-set before calling us — without this we'd
+    // silently fall out of the pool's bookkeeping forever (never eligible
+    // for eviction again, even once we DO have real content).
+    if (!hasRenderedContentRef.current) {
+      poolAcquire(sourceIdRef.current!, park);
+      return;
+    }
     // WS-3DR2 fix round: only attempt the render+capture if the GL context
     // is actually usable right now. This can be called (as the pool's
     // eviction callback, or via this instance's own idle timer) while the
@@ -263,24 +294,41 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
     // cached image with a blank one. Skipping the capture here and keeping
     // whatever `cachedImageUrl` is already set is strictly better: worst
     // case the pane shows a slightly-stale-but-real frame instead of a
-    // blank one.
+    // blank one — UNLESS there's no earlier cached image either (this
+    // would be this viewer's first-ever successful capture racing with a
+    // lost/mid-restore context): in that case parking now would leave
+    // `cachedImageUrl` null while `parkedRef` flips true, i.e. exactly the
+    // blank-pane bug. Guard round 2: defer instead of parking blind (same
+    // re-`poolAcquire` reasoning as above), and let the persistent
+    // `onContextRestored` listener's `requestRender()` (mount effect,
+    // below) resume the normal idle-park cycle once the context actually
+    // comes back.
     const gl = r.getContext();
+    let captured = false;
     if (!gl.isContextLost()) {
       const s = sceneRef.current;
       const c = cameraRef.current;
       if (s && c) r.render(s, c);
       try {
-        setCachedImageUrl(r.domElement.toDataURL("image/png"));
+        const url = r.domElement.toDataURL("image/png");
+        setCachedImageUrl(url);
+        cachedImageUrlRef.current = url;
+        captured = true;
       } catch {
         // Tainted/unreadable canvas (shouldn't happen — same-origin app) —
-        // release the context anyway rather than pinning it live forever;
-        // the consumer just shows a blank canvas until the next re-acquire.
+        // fall through to the "already have a cached image?" check below,
+        // same as a lost-context skip.
       }
+    }
+    if (!captured && cachedImageUrlRef.current == null) {
+      poolAcquire(sourceIdRef.current!, park);
+      return;
     }
     loseContextExtRef.current?.loseContext();
     parkedRef.current = true;
     poolRelease(sourceIdRef.current!);
     clearIdleTimer();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clearIdleTimer]);
 
   const scheduleIdlePark = useCallback(() => {
@@ -371,6 +419,11 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
   const fitToBounds = useCallback(
     (bounds: Scene3DBounds) => {
       boundsRef.current = bounds;
+      // WS-3DR2 blank-pane fix: every viewer (Mesh/Boxes/Volume/PointCloud)
+      // calls `fitToBounds` exactly once real geometry/bounds are known —
+      // the natural "this pane now has actual content" signal. See
+      // `hasRenderedContentRef`'s docstring for why `park()` needs this.
+      hasRenderedContentRef.current = true;
       const camera = cameraRef.current;
       const controls = controlsRef.current;
       if (!camera || !controls) return;
@@ -515,6 +568,7 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
       parkedRef.current = false;
       requestRender();
       setCachedImageUrl(null);
+      cachedImageUrlRef.current = null;
     };
     canvas.addEventListener("webglcontextlost", onContextLost, false);
     canvas.addEventListener("webglcontextrestored", onContextRestored, false);
