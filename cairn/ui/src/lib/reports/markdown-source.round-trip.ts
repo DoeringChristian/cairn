@@ -20,11 +20,20 @@
  * Same caveat as cairn-block.round-trip.ts: no test framework is wired into
  * this repo; `runMarkdownSourceRoundTripChecks()` is a plain function — see
  * ws-AR1-report.md for the executed results.
+ *
+ * (c) WS-MDDELIM: the adjacent-markdown-cell boundary marker
+ * (`CELL_BOUNDARY_MARKER` in markdown-source.ts). `runCellBoundaryRoundTripChecks()`
+ * below asserts block *count* (not just byte-identity — a bug that silently
+ * re-merges two cells into one can still be byte-identical on the source
+ * side, since the merged single block would just cache the marker inside its
+ * own text and re-emit it verbatim) for: two/three chained adjacent markdown
+ * cells, a pre-existing report with no marker (must still merge, unchanged),
+ * prose+card+prose, and a lone markdown cell (must emit no marker at all).
  */
 
 import type { ComparisonCard } from "../comparisons";
-import { isCardsBlock, type CardsBlock, type MarkdownBlock, type ReportBlock } from "./types";
-import { parseReportMarkdown, serializeReportToMarkdown } from "./markdown-source";
+import { isCardsBlock, isMarkdownBlock, type CardsBlock, type MarkdownBlock, type ReportBlock } from "./types";
+import { CELL_BOUNDARY_MARKER, parseReportMarkdown, serializeReportToMarkdown } from "./markdown-source";
 
 export interface RoundTripResult {
   name: string;
@@ -115,6 +124,28 @@ const BLOCKS_CASES: BlocksCase[] = [
     ],
     settingsByCardId: {},
   },
+  {
+    name: "two adjacent markdown cells — survive as two independent cells, not merged (WS-MDDELIM)",
+    blocks: [
+      { id: "md_a", type: "markdown", text: "Cell A text." } satisfies MarkdownBlock,
+      { id: "md_b", type: "markdown", text: "Cell B text." } satisfies MarkdownBlock,
+    ],
+    settingsByCardId: {},
+  },
+  {
+    name: "three adjacent markdown cells chained — all three survive independently (WS-MDDELIM)",
+    blocks: [
+      { id: "md_a", type: "markdown", text: "A" } satisfies MarkdownBlock,
+      { id: "md_b", type: "markdown", text: "B" } satisfies MarkdownBlock,
+      { id: "md_c", type: "markdown", text: "C" } satisfies MarkdownBlock,
+    ],
+    settingsByCardId: {},
+  },
+  {
+    name: "single markdown cell — unaffected by the boundary marker (WS-MDDELIM)",
+    blocks: [{ id: "md_1", type: "markdown", text: "Solo cell." } satisfies MarkdownBlock],
+    settingsByCardId: {},
+  },
 ];
 
 export function runBlocksRoundTripChecks(): RoundTripResult[] {
@@ -143,4 +174,91 @@ export function runBlocksRoundTripChecks(): RoundTripResult[] {
     const pass = problems.length === 0;
     return { name: c.name, pass, detail: pass ? undefined : `${problems.join("; ")}\n---md---\n${md}` };
   });
+}
+
+// ---------------------------------------------------------------------------
+// (iii) WS-MDDELIM: block-*count* assertions the byte-identity check above
+// can't catch (a silently-remerged cell would still byte-match, since the
+// merged block just caches the marker inside its own text). Also covers
+// hand-authored source containing the marker directly (simulating a report
+// already saved by the fixed code) and the backward-compat "old report, no
+// marker" case.
+// ---------------------------------------------------------------------------
+
+function countMarkdown(blocks: ReportBlock[]): number {
+  return blocks.filter(isMarkdownBlock).length;
+}
+
+export function runCellBoundaryRoundTripChecks(): RoundTripResult[] {
+  const results: RoundTripResult[] = [];
+
+  // (a) Old report, no marker: two "paragraphs" joined by an ordinary
+  // newline (today's pre-fix save output, or literally any hand-authored
+  // markdown) must still merge into ONE markdown block — unchanged
+  // behavior for every pre-existing report.
+  {
+    const source = "Cell A text.\nCell B text.";
+    const parsed = parseReportMarkdown(source);
+    const reserialized = serializeReportToMarkdown(parsed.blocks, parsed.settings, parsed.rawCairnSource);
+    const pass = countMarkdown(parsed.blocks) === 1 && parsed.blocks.length === 1 && reserialized === source;
+    results.push({
+      name: "old report (no marker): adjacent prose still merges into one block — backward compatible (WS-MDDELIM)",
+      pass,
+      detail: pass ? undefined : `blocks: ${JSON.stringify(parsed.blocks)}\nreserialized: ${JSON.stringify(reserialized)}`,
+    });
+  }
+
+  // (b) A source string already containing the marker (as the fixed
+  // serializer would emit for two adjacent markdown cells) must parse into
+  // TWO markdown blocks with the marker stripped from both texts, and must
+  // reserialize back to byte-identical source.
+  {
+    const source = `Cell A text.${CELL_BOUNDARY_MARKER}\n\nCell B text.`;
+    const parsed = parseReportMarkdown(source);
+    const reserialized = serializeReportToMarkdown(parsed.blocks, parsed.settings, parsed.rawCairnSource);
+    const texts = parsed.blocks.filter(isMarkdownBlock).map((b) => b.text);
+    const pass =
+      parsed.blocks.length === 2 &&
+      texts.length === 2 &&
+      texts[0] === "Cell A text." &&
+      texts[1] === "Cell B text." &&
+      reserialized === source;
+    results.push({
+      name: "source already containing the marker splits into two blocks and round-trips byte-identically (WS-MDDELIM)",
+      pass,
+      detail: pass ? undefined : `blocks: ${JSON.stringify(parsed.blocks)}\nreserialized: ${JSON.stringify(reserialized)}`,
+    });
+  }
+
+  // (c) prose + card + prose: the fence already forces a split — must
+  // remain 3 blocks (markdown, cards, markdown), no marker involved at all.
+  {
+    const source = "Intro paragraph.\n\n```cairn\nid: blk1\nruns:\n  ids: []\ncards: []\n```\n\nOutro paragraph.";
+    const parsed = parseReportMarkdown(source);
+    const pass =
+      parsed.blocks.length === 3 &&
+      isMarkdownBlock(parsed.blocks[0]!) &&
+      !isMarkdownBlock(parsed.blocks[1]!) &&
+      isMarkdownBlock(parsed.blocks[2]!);
+    results.push({
+      name: "prose + card + prose — still 3 blocks (WS-MDDELIM)",
+      pass,
+      detail: pass ? undefined : `blocks: ${JSON.stringify(parsed.blocks)}`,
+    });
+  }
+
+  // (d) A single markdown cell — serializing it (with no following markdown
+  // sibling) must never emit the marker at all.
+  {
+    const blocks: ReportBlock[] = [{ id: "md_1", type: "markdown", text: "Solo cell." } satisfies MarkdownBlock];
+    const md = serializeReportToMarkdown(blocks, {}, {});
+    const pass = !md.includes(CELL_BOUNDARY_MARKER) && md === "Solo cell.";
+    results.push({
+      name: "single markdown cell emits no boundary marker (WS-MDDELIM)",
+      pass,
+      detail: pass ? undefined : `md: ${JSON.stringify(md)}`,
+    });
+  }
+
+  return results;
 }
