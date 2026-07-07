@@ -713,12 +713,25 @@ def media_compare(a: Any, b: Any, *, mode: str = "diff", card_type: str = "image
             ``"volume"``, or ``"boxes3d"``.
 
     `compare` sugar: this just sets the card's two `series` plus
-    `settings.mode`; the renderer's existing compare compositor does the
-    rest — no new render path.
+    `settings.mode`/`settings.baselineIndex`; the renderer's existing compare
+    compositor does the rest — no new render path.
+
+    `settings.baselineIndex` designates `a` (series index 0) as the
+    reference the compositor diffs/splits/blends `b` against — see
+    `useMediaReference`'s `seriesBaselineIndex` (card-kit/use-media-
+    reference.ts) and `VisualContentCard.tsx`'s `hasBaseline`/`baselineIdx`:
+    without it, every pane resolves no reference at all and every mode
+    (including "diff") falls back to plain unmodified per-pane rendering
+    (`side`-shaped output) — the bug this fixes. `"side"` itself never reads
+    the reference, so this is a no-op for it, but is set unconditionally so
+    switching modes after render (e.g. via the card's own UI) works
+    immediately without a reload.
     """
     if mode not in _COMPARE_MODES:
         raise ValueError(f"mode must be one of {_COMPARE_MODES!r}, got {mode!r}")
-    return _card_element(card_type, [a, b], builder="media_compare", mode=mode)
+    return _card_element(
+        card_type, [a, b], builder="media_compare", mode=mode, settings={"baselineIndex": 0}
+    )
 
 
 def image_compare(a: Any, b: Any, *, mode: str = "side") -> Any:

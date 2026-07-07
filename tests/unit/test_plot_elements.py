@@ -82,7 +82,12 @@ def test_media_compare_sets_two_series_and_mode(two_runs):
     assert spec.type == "image"
     assert [s.runId for s in spec.series] == [run_a.id, run_b.id]
     assert spec.settings is not None
-    assert spec.settings.model_dump(exclude_none=True).get("mode") == "diff"
+    settings = spec.settings.model_dump(exclude_none=True)
+    assert settings.get("mode") == "diff"
+    # RC1 (WS-MCFIX): a real reference designated — index 0 (`a`) — or the
+    # compositor's diff/split/blend never resolve a pane to diff against and
+    # silently render as unmodified "side" output.
+    assert settings.get("baselineIndex") == 0
 
 
 def test_media_compare_rejects_bad_mode(two_runs):
