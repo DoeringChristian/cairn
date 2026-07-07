@@ -24,6 +24,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import auth as auth_core
+from .embed_specs import EmbedSpecStore
 from .routes import (
     artifact_registry,
     artifacts,
@@ -31,6 +32,7 @@ from .routes import (
     compare,
     comparison_templates,
     comparisons,
+    embed,
     health,
     import_export,
     ingest,
@@ -140,6 +142,10 @@ def create_app(
     # WS handshake gate (plugin_ws.py) on every request/connection. Set
     # before any router registration so it's never accessed unset.
     app.state.auth_enabled = auth_enabled
+    # Short-lived, in-memory store for /embed/card specs (WS-EMBED). Created
+    # per-app so it shares the app's lifetime; specs are throwaway render
+    # inputs, not persisted domain data. See cairn/server/embed_specs.py.
+    app.state.embed_specs = EmbedSpecStore()
 
     app.add_middleware(
         CORSMiddleware,
@@ -188,6 +194,7 @@ def create_app(
         reports.router,
         report_templates.router,
         artifact_registry.router,
+        embed.router,
     ):
         app.include_router(router, dependencies=[Depends(require("read"))])
 
@@ -237,6 +244,21 @@ def _mount_spa_or_placeholder(app: FastAPI) -> None:
             StaticFiles(directory=str(ui_dist / "assets")),
             name="ui-assets",
         )
+
+        # WS-EMBED: serve the standalone embed entry at /embed/card. This is a
+        # SEPARATE HTML bundle (embed.html + embed-main.tsx) from the SPA, so
+        # it must be registered BEFORE the SPA catch-all below — otherwise the
+        # catch-all would swallow /embed/card and serve the full app shell
+        # instead of the minimal one-card embed. ?sid=... selects the spec.
+        embed_html_path = ui_dist / "embed.html"
+        if embed_html_path.exists():
+            embed_html = embed_html_path.read_bytes()
+
+            @app.get("/embed/card", include_in_schema=False)
+            async def _embed_card() -> Response:
+                from fastapi.responses import Response
+
+                return Response(content=embed_html, media_type="text/html")
 
         # SPA catch-all: serve index.html for any non-API, non-asset path.
         # Explicitly refuse anything under /api/ instead of falling through
