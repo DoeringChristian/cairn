@@ -17,6 +17,8 @@ Covers:
 
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pytest
 
@@ -260,8 +262,8 @@ def test_resolve_server_prefers_advertised_servers_json_over_default(
 
 
 def test_resolve_server_ignores_stale_advertised_entry(tmp_path, monkeypatch):
-    """A dead pid's advertisement is pruned; discovery falls through (and
-    ultimately fails, here, since nothing else is reachable either)."""
+    """A dead pid's advertisement is PRUNED — its port is never even probed,
+    and (with nothing else reachable) discovery returns None."""
     from cairn.server.storage.datadir import DataDir
 
     repo = tmp_path / ".cairn"
@@ -271,9 +273,18 @@ def test_resolve_server_ignores_stale_advertised_entry(tmp_path, monkeypatch):
     )
     import cairn.sdk.elements as elements_mod
 
-    monkeypatch.setattr(elements_mod.CardElement, "_probe", staticmethod(lambda url: url != "http://localhost:65000"))
+    probed: list[str] = []
+
+    def _record(url: str) -> bool:
+        probed.append(url)
+        return False  # nothing reachable
+
+    monkeypatch.setattr(elements_mod.CardElement, "_probe", staticmethod(_record))
     el = CardElement({"type": "scalar", "series": []}, repo_path=str(repo))
     assert el._resolve_server() is None
+    # The dead-pid advertisement (:65000) was pruned by read_live_servers, so
+    # it never reached the health probe at all.
+    assert not any("65000" in u for u in probed)
 
 
 def test_plot_builder_threads_repo_path_and_autodiscovers_live_server(two_runs, live_server):

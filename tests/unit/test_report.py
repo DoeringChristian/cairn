@@ -53,6 +53,14 @@ def test_report_add_appends_element_html_no_server(monkeypatch):
     monkeypatch.setattr(
         elements_mod._config, "resolve_server", lambda explicit=None: "http://127.0.0.1:1"
     )
+    # Also neutralize the health probe outright: `_resolve_server` now falls
+    # through to fixed-port fallbacks (incl. `cairn ui`'s :4301 default), so
+    # a stray dev server on that port would otherwise satisfy discovery and
+    # defeat this "no server" assertion. Mocking `_probe` keeps the test
+    # deterministic regardless of what's running locally.
+    monkeypatch.setattr(
+        elements_mod.CardElement, "_probe", staticmethod(lambda url: False)
+    )
     r = cairn.Report()
     el = CardElement({"type": "scalar", "series": []})
     r.add(el)
