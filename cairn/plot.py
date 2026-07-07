@@ -29,13 +29,27 @@ Numeric edge cases (documented per-function below, and covered by
 - ``y_probas`` must not contain NaN scores — these would make the score sort
   order ambiguous, so it is a ``ValueError`` rather than a silent NaN
   propagation.
+
+WS-PYAPI (below, `Element builders`_) extends this module — the Python
+mirror of the TS ``cairn-plot`` element set — with builders
+(``scalar``/``image``/``mesh``/``pointcloud``/``volume``/``boxes``/``table``/
+``figure``/``media_compare``/...) that take DATA (a lazy ``run[tag]`` handle,
+see ``cairn/sdk/reader.py``'s ``DataRef``, or raw data for the trivial
+self-contained cases) and return a display-protocol ``Element``
+(``cairn/sdk/elements.py``) rather than a raw dict — see
+``docs/superpowers/specs/2026-07-07-notebook-python-and-embed.md`` §11.
 """
 
 from __future__ import annotations
 
+import uuid as _uuid
 from typing import Any, Sequence
 
 import numpy as np
+
+from .sdk.card_spec import CardSettingsSpec, CardSpec, SeriesRef
+from .sdk.elements import CardElement, HtmlElement
+from .sdk.reader import DataRef
 
 # numpy >=2.0 renamed trapz -> trapezoid (trapz was removed outright in some
 # 2.x releases); numpy <2.0 (the package's floor is 1.24) only has trapz.
@@ -507,6 +521,226 @@ def line_series(
     for i, y in enumerate(ys_list):
         name = str(keys[i]) if keys is not None else f"series_{i}"
         fig.add_trace(go.Scatter(x=xs_per_series[i], y=list(y), mode="lines", name=name))
-
     fig.update_layout(title=title, xaxis_title="x", yaxis_title="y", legend_title="series")
     return fig
+
+
+# ---------------------------------------------------------------------------
+# Element builders (WS-PYAPI, design spec §11) — the Python mirror of the TS
+# `cairn-plot` element set. Each builder takes DATA (a lazy `run[tag]`
+# handle — see `cairn/sdk/reader.py`'s `DataRef` — or raw data for the
+# trivial self-contained cases) and returns a display-protocol `Element`
+# (`cairn/sdk/elements.py`), never a raw dict. `cardFromSpec` (TS) stays the
+# only interpreter of the card spec these builders build and validate
+# against `cairn/sdk/card_spec.py`.
+# ---------------------------------------------------------------------------
+
+# `mode` values for the "one-pane" media-compare compositor — mirrors
+# `Extract<MediaCompareModeKind, "side"|"split"|"blend"|"diff">`
+# (`cairn/ui/src/components/card-kit/OffscreenComparePanes.tsx`).
+_COMPARE_MODES = ("side", "split", "blend", "diff")
+
+
+def _resolve_series(data: Any, *, builder: str) -> tuple[SeriesRef, int | None]:
+    """A `run[tag]` handle -> a validated `SeriesRef` (+ its optional step).
+
+    Raw (non-`DataRef`) data has no card-spec representation today — a
+    `SeriesRef` is inherently `(runId, name, context_hash)`, a pointer into
+    server-tracked data, and the schema has no inline-data variant yet. This
+    is the WS-INLINE inline-data render path (design spec §6.3), explicitly
+    deferred: raise a clear, actionable error rather than doing something
+    silently wrong.
+    """
+    if isinstance(data, DataRef):
+        ref = SeriesRef(runId=data.run_id, name=data.tag, context_hash=data.context_hash())
+        return ref, data.step
+    raise NotImplementedError(
+        f"cairn.plot.{builder}(...): raw array/image/bytes data has no "
+        "card-spec representation yet (a card `series` entry is a pointer "
+        "into server-tracked data — `(runId, name, context_hash)` — and the "
+        "schema has no inline-data variant). This is the WS-INLINE "
+        "inline-data render path, deferred — see "
+        "docs/superpowers/specs/2026-07-07-notebook-python-and-embed.md "
+        "§6.3. Track the data to a run first (`run.track(data, name=...)`) "
+        "and pass `run[tag]` instead, e.g. "
+        f"`cairn.plot.{builder}(run[\"{{tag}}\"])`."
+    )
+
+
+def _card_element(
+    card_type: str,
+    sources: Sequence[Any],
+    *,
+    builder: str,
+    mode: str | None = None,
+    settings: dict[str, Any] | None = None,
+) -> CardElement:
+    """Build + schema-validate one `CardSpec` from `run[tag]` sources, and
+    wrap it in the server-backed `CardElement` display object."""
+    series: list[SeriesRef] = []
+    step: int | None = None
+    for source in sources:
+        ref, source_step = _resolve_series(source, builder=builder)
+        series.append(ref)
+        if step is None and source_step is not None:
+            step = source_step
+
+    merged_settings = dict(settings or {})
+    if mode is not None:
+        merged_settings["mode"] = mode
+    if step is not None:
+        merged_settings.setdefault("step", float(step))
+    settings_obj = CardSettingsSpec(**merged_settings) if merged_settings else None
+
+    spec = CardSpec(id=str(_uuid.uuid4()), type=card_type, series=series, settings=settings_obj)
+    return CardElement(spec.model_dump(exclude_none=True, mode="json"))
+
+
+def _rows_to_html_table(rows: Any) -> str:
+    """Minimal, dependency-free HTML table for the `table()` raw fallback."""
+    import html as _html_mod
+
+    rows = list(rows)
+    if not rows:
+        return "<table></table>"
+    first = rows[0]
+    if isinstance(first, dict):
+        columns = list(first.keys())
+        records = rows
+    else:
+        columns = [f"col_{i}" for i in range(len(first))]
+        records = [dict(zip(columns, r)) for r in rows]
+    head = "".join(f"<th>{_html_mod.escape(str(c))}</th>" for c in columns)
+    body = "".join(
+        "<tr>" + "".join(f"<td>{_html_mod.escape(str(rec.get(c, '')))}</td>" for c in columns) + "</tr>"
+        for rec in records
+    )
+    return f"<table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
+
+
+def scalar(data: Any) -> Any:
+    """A single scalar-sequence card/element.
+
+    Args:
+        data: a `run[tag]` lazy handle (a tracked scalar sequence) -> a
+            server-backed `CardElement` (type ``"scalar"``); OR raw numeric
+            values (any array-like) -> a self-contained Plotly line-plot
+            `HtmlElement` (no server needed), built via `line_series`.
+    """
+    if isinstance(data, DataRef):
+        return _card_element("scalar", [data], builder="scalar")
+    values = np.asarray(list(data), dtype=np.float64).ravel()
+    if values.size == 0:
+        raise ValueError("scalar(...) raw data must not be empty")
+    fig = line_series(list(range(values.size)), [values], keys=["value"])
+    return HtmlElement(fig.to_html(include_plotlyjs="inline", full_html=False), label="scalar")
+
+
+def figure(data: Any) -> Any:
+    """A `figure` (Plotly) card/element.
+
+    Args:
+        data: a `run[tag]` lazy handle (a tracked `figure` artifact) -> a
+            server-backed `CardElement`; OR a plotly `Figure` (e.g. from
+            `roc_curve`/`confusion_matrix`/... above, or hand-built) -> a
+            self-contained `HtmlElement` via `fig.to_html()`.
+    """
+    if isinstance(data, DataRef):
+        return _card_element("figure", [data], builder="figure")
+    if not hasattr(data, "to_html"):
+        raise TypeError(
+            "cairn.plot.figure(...) expects a run[tag] handle or a plotly "
+            f"Figure (an object with .to_html()); got {type(data).__name__}"
+        )
+    return HtmlElement(data.to_html(include_plotlyjs="inline", full_html=False), label="figure")
+
+
+def table(data: Any) -> Any:
+    """A `table` card/element.
+
+    Args:
+        data: a `run[tag]` lazy handle (a tracked `table` artifact) -> a
+            server-backed `CardElement`; OR raw tabular data — anything with
+            a `.to_html()` method (e.g. a pandas `DataFrame`, duck-typed —
+            pandas is not a cairn dependency) or a list of dicts/rows -> a
+            self-contained `HtmlElement`.
+    """
+    if isinstance(data, DataRef):
+        return _card_element("table", [data], builder="table")
+    if hasattr(data, "to_html"):
+        return HtmlElement(data.to_html(index=False), label="table")
+    return HtmlElement(_rows_to_html_table(data), label="table")
+
+
+def image(data: Any) -> Any:
+    """A single-view `image` card. `data` must be a `run[tag]` handle —
+    raw images have no card-spec representation yet (see `_resolve_series`;
+    WS-INLINE, deferred)."""
+    return _card_element("image", [data], builder="image")
+
+
+def mesh(data: Any) -> Any:
+    """A single-view `mesh` card. `data` must be a `run[tag]` handle."""
+    return _card_element("mesh", [data], builder="mesh")
+
+
+def pointcloud(data: Any) -> Any:
+    """A single-view `pointcloud` card. `data` must be a `run[tag]` handle."""
+    return _card_element("pointcloud", [data], builder="pointcloud")
+
+
+def volume(data: Any) -> Any:
+    """A single-view `volume` card. `data` must be a `run[tag]` handle."""
+    return _card_element("volume", [data], builder="volume")
+
+
+def boxes(data: Any) -> Any:
+    """A single-view `boxes3d` card. `data` must be a `run[tag]` handle."""
+    return _card_element("boxes3d", [data], builder="boxes")
+
+
+def media_compare(a: Any, b: Any, *, mode: str = "diff", card_type: str = "image") -> Any:
+    """Compare two media sources as one card — the Python mirror of the TS
+    media-compare compositor (`OffscreenComparePanes`/`CompareSettingsPanel`).
+
+    Args:
+        a: first `run[tag]` handle.
+        b: second `run[tag]` handle.
+        mode: ``"side"`` (side-by-side), ``"split"`` (image-space split),
+            ``"blend"`` (alpha blend), or ``"diff"`` (pixel diff).
+        card_type: which single-view card type `a`/`b` are —
+            ``"image"`` (default), ``"mesh"``, ``"pointcloud"``,
+            ``"volume"``, or ``"boxes3d"``.
+
+    `compare` sugar: this just sets the card's two `series` plus
+    `settings.mode`; the renderer's existing compare compositor does the
+    rest — no new render path.
+    """
+    if mode not in _COMPARE_MODES:
+        raise ValueError(f"mode must be one of {_COMPARE_MODES!r}, got {mode!r}")
+    return _card_element(card_type, [a, b], builder="media_compare", mode=mode)
+
+
+def image_compare(a: Any, b: Any, *, mode: str = "side") -> Any:
+    """`media_compare(a, b, mode=mode, card_type="image")`."""
+    return media_compare(a, b, mode=mode, card_type="image")
+
+
+def mesh_compare(a: Any, b: Any, *, mode: str = "side") -> Any:
+    """`media_compare(a, b, mode=mode, card_type="mesh")`."""
+    return media_compare(a, b, mode=mode, card_type="mesh")
+
+
+def pointcloud_compare(a: Any, b: Any, *, mode: str = "side") -> Any:
+    """`media_compare(a, b, mode=mode, card_type="pointcloud")`."""
+    return media_compare(a, b, mode=mode, card_type="pointcloud")
+
+
+def volume_compare(a: Any, b: Any, *, mode: str = "side") -> Any:
+    """`media_compare(a, b, mode=mode, card_type="volume")`."""
+    return media_compare(a, b, mode=mode, card_type="volume")
+
+
+def boxes_compare(a: Any, b: Any, *, mode: str = "side") -> Any:
+    """`media_compare(a, b, mode=mode, card_type="boxes3d")`."""
+    return media_compare(a, b, mode=mode, card_type="boxes3d")
