@@ -3,9 +3,11 @@
 Shows the cairn read API (``cairn.Reader``) and the pure-numpy Plotly
 helpers in ``cairn.plot`` (confusion_matrix, roc_curve, pr_curve, bar,
 line_series — see ``cairn/plot.py``) rendering directly inside marimo
-cells, plus a preview of the not-yet-built Python "card"/report API
-(``docs/superpowers/specs/2026-07-05-notebook-reports.md``, section
-"E. Python card API + Jupyter/marimo").
+cells, plus the WS-PYAPI Python element/report API — ``run[tag]`` lazy
+handles, ``cairn.plot.media_compare``/friends, and the notebook-only
+``cairn.Report`` container (see
+``docs/superpowers/specs/2026-07-07-notebook-python-and-embed.md``, the
+WS-PYAPI section + §11).
 
 Usage::
 
@@ -13,6 +15,8 @@ Usage::
     uv run cairn init /tmp/cairn-marimo-demo
     CAIRN_REPO=/tmp/cairn-marimo-demo/.cairn \\
         uv run python examples/demo_plot_helpers.py   # populate some runs
+    # optional, for the WS-PYAPI section's live iframe:
+    #   cairn ui --repo /tmp/cairn-marimo-demo --no-auth &
     marimo edit examples/marimo_cairn_demo.py
 """
 
@@ -195,46 +199,66 @@ def _(cairn, latest_run):
 def _(mo):
     mo.md(
         r"""
-        ## 4. 🚧 Coming soon (WS-PYAPI)
+        ## 4. `cairn.plot` elements + `cairn.Report` (WS-PYAPI)
 
-        The cells above use cairn's *read* API. A Python **card/report**
-        API — build cards in code, `_repr_html_`/`_repr_mimebundle_` so
-        they render inline in Jupyter/marimo, and `publish()` to push a
-        report to the server — is designed but not yet built; see
-        `docs/superpowers/specs/2026-07-05-notebook-reports.md`, section
-        "E. Python card API + Jupyter/marimo", for the target shape.
-        Sketch of the intended API (not runnable yet):
+        A Python **element**/report API lets you build individual
+        cairn-plot elements — and assemble a lightweight report from them —
+        entirely in code; see
+        `docs/superpowers/specs/2026-07-07-notebook-python-and-embed.md`
+        (the WS-PYAPI section, especially §11) for the design.
+
+        `run[tag]` (added to `cairn.sdk.reader.Run`) is a **lazy** handle
+        over a tracked sequence/artifact — it resolves only when an element
+        actually renders, never at `run[tag]` construction time.
+        `cairn.plot.media_compare(a, b, mode=...)` (alongside the
+        single-view `scalar`/`image`/`mesh`/`pointcloud`/`volume`/`boxes`/
+        `table`/`figure` builders in the same module) takes such handles and
+        builds one schema-validated card spec. The returned `Element`
+        implements `_repr_html_`/`_repr_mimebundle_`, so it renders as a
+        live `/embed/card` iframe right here in the cell **when a cairn
+        server is reachable** (start one with `cairn ui --repo
+        /tmp/cairn-marimo-demo --no-auth`), and falls back to an inline
+        notice — no exception — when one isn't.
+
+        `cairn.Report` is a **notebook-only container** (no server
+        `publish()` — the notebook itself is the report): `.md(...)`
+        appends prose, `.add(el)` appends an element, and the report's own
+        `_repr_html_` renders every block inline, in order.
+
+        This needs at least two runs in the project to compare; it falls
+        back to a no-op notice otherwise.
         """
     )
     return
 
 
 @app.cell
-def _():
-    # --- target API (WS-PYAPI, not yet implemented) --------------------
-    #
-    # import cairn
-    #
-    # r = cairn.Reader()
-    # run_a = r.runs(project="plot-helpers-demo").filter(name__contains="-a").last()
-    # run_b = r.runs(project="plot-helpers-demo").filter(name__contains="-b").last()
-    #
-    # # Compare two runs' logged media side by side / as a diff overlay.
-    # # `el` implements `_repr_html_`/`_repr_mimebundle_` so it renders
-    # # inline right here in the marimo cell, no `report.add` needed to see it.
-    # el = cairn.plot.media_compare(
-    #     run_a.artifact("eval.predictions"),
-    #     run_b.artifact("eval.predictions"),
-    #     mode="diff",
-    # )
-    # el  # <- renders inline in Jupyter/marimo via _repr_html_
-    #
-    # # Assembling a report from notebook cells and publishing it to the
-    # # cairn server as a shareable page:
-    # report = cairn.Report(name="Ablation study", project="plot-helpers-demo")
-    # report.md("## Results\nBaseline vs. ablation.")
-    # report.add(el)
-    # report.publish()
+def _(cairn, mo, project, reader):
+    _runs = reader.runs(project=project).filter(tags__contains="demo").list()
+
+    if len(_runs) >= 2:
+        run_a, run_b = _runs[0], _runs[1]
+
+        # `run[tag]` is a LAZY handle — no fetch happens on this line.
+        # `media_compare` builds + schema-validates one card spec from the
+        # two handles ("diff" = the pixel-diff image-space compositor); a
+        # single-series element would be e.g.
+        # `cairn.plot.scalar(run_a["eval.accuracy"])`.
+        el = cairn.plot.media_compare(
+            run_a["eval.predictions"], run_b["eval.predictions"], mode="diff"
+        )
+
+        report = cairn.Report(name="Ablation study", project=project)
+        report.md(f"## Results\nComparing `{run_a.name}` vs. `{run_b.name}`.")
+        report.add(el)
+        pyapi_demo = report  # renders inline via _repr_html_/_repr_mimebundle_
+    else:
+        pyapi_demo = mo.md(
+            "Need at least 2 runs in this project to demo `media_compare` — "
+            "generate more with `examples/demo_plot_helpers.py`."
+        )
+
+    pyapi_demo
     return
 
 
