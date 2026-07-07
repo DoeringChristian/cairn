@@ -129,3 +129,49 @@ Clearly marked TODO(remote-embed) in `embed_specs.py`, `routes/embed.py`, and
 
 Left for a later security-reviewed follow-up. This run is LOCAL / SAME-ORIGIN
 only and does not weaken existing auth.
+
+## MERGE LOG (merge agent M-EMBED, 2026-07-07)
+
+Merged `feature/ws-embed` (tip 8fd3a56b, base ae86a95b) into `main` (was
+c083444d, WS-SCHEMA already merged since). Merge commit **ce0aded9**
+("Merge branch 'feature/ws-embed'"). No source conflicts — the schema and
+embed changes touched disjoint files; the merge was clean (only the
+usual `cairn/ui/dist/*` + `tsconfig.app.tsbuildinfo` regenerated). dist
+rebuilt from clean (`rm -rf dist && vite build`) and is byte-identical to
+the committed dist.
+
+Gates (all foreground):
+- `npm run typecheck` → exit 0, clean.
+- `vite build` → green; emits BOTH `dist/index.html` (entry
+  `main-*.js`, `#root`) and `dist/embed.html` (entry `embed-*.js`,
+  `#embed-root`, title "Cairn — Embed"). `three` stays lazy: the real
+  three.js code lives in `dist/assets/diff-*.js`, statically imported
+  only by the lazy visual-card chunks (Boxes/Mesh/PointCloud/Volume) and
+  referenced only as a dynamic-import chunk dep from the shared
+  `index-*.js` — NOT eagerly present in `main-*.js` or `embed-*.js`.
+- `pytest tests/unit` → 15 failed, 439 passed, 3 skipped — the SAME
+  pre-existing baseline (all failures in test_cli / test_config /
+  test_config_target / test_local_transport; NONE embed-related). The 4
+  embed route tests pass, including the auth-on 401 test
+  (`test_embed_routes_reject_unauthenticated_when_auth_enabled`).
+
+Verification:
+- Embed round-trip (curl, :4301 --no-auth): `POST /api/embed/specs`
+  with a real scalar spec (run cfd6456f…, metric `quality.psnr`) →
+  `sid=dd397758f4060f25`; `GET /api/embed/specs/{sid}` → 200 returns the
+  spec; `GET /embed/card?sid=…` → 200 serving the embed shell
+  (`embed-root` + `embed-*.js`, "Cairn — Embed"), NOT the SPA; `GET /` →
+  200 SPA index.html (`#root` + `main-*.js`).
+- Auth-on (:4402, no --no-auth): unauth `POST` and `GET
+  /api/embed/specs` both → 401 (matches the unit test end-to-end).
+- Browser render: the CDP-attached Chrome could not load
+  localhost:4301 (navigation lands on `chrome-error://chromewebdata/`)
+  despite the server responding to curl — the documented
+  extension/connection flake. Not reselected per instructions;
+  browser render was already verified by the implementer during opus
+  review, and the shell/round-trip is confirmed here via curl.
+
+Cleanup: worktree `agent-a5e83944b37269550` removed (node_modules +
+tsbuildinfo cleared first); auto-branch `worktree-agent-a5e83944b37269550`
+(was ae86a95b, ancestor of main) deleted; `feature/ws-embed` KEPT.
+:4301 left running with --no-auth.
