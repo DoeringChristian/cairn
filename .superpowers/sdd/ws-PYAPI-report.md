@@ -235,3 +235,89 @@ the surface that replaced it.)
 
 STOP at branch `feature/ws-pyapi` (no merge to main — shared checkout,
 review gate).
+
+## MERGE LOG (merge agent M-PYAPI, 2026-07-07)
+
+- **Merge:** `git merge feature/ws-pyapi` from main tip `ec4bb6f5` was a
+  clean **fast-forward** to `c928a012` (5 commits, Python-only, disjoint
+  from prior UI/dist work — no conflicts).
+- **Docstring fix:** `cairn/sdk/elements.py`'s module docstring referenced
+  `_resolve_series_ref`; the real function is `_resolve_series` (in
+  `cairn/plot.py`). Fixed and committed as `9e6aaf80` ("Fix stale function
+  name in elements docstring").
+- **Gates:** `uv run --extra dev pytest tests/unit` — 487 passed, 15
+  failed, 3 skipped. The 48 new WS-PYAPI tests (`test_plot_elements.py`,
+  `test_reader_dataref.py`, `test_report.py`) all pass in isolation too.
+  The 15 failures are the pre-existing baseline, same files as before
+  (`test_cli.py`, `test_config.py`, `test_config_target.py`,
+  `test_local_transport.py`) — no new failures introduced.
+- **Live server:** started `cairn ui --repo .cairn --port 4301 --no-auth`;
+  health OK. Seeded `examples/demo_image_comparison.py` (10 runs: baseline
+  + 9 distortion variants, project `image-comparison-demo`) giving a real
+  image metric (`output`) plus scalar metrics (`quality.mae`,
+  `quality.psnr`) to test against.
+- **(a) Element -> embed round-trip:** confirmed live. `cairn.plot.scalar(run["quality.mae"])._repr_html_()`
+  produced a real `<iframe src=".../embed/card?sid=...">`; `GET
+  /api/embed/specs/<sid>` returned 200 with the matching spec.
+  `cairn.Report().add(el)._repr_html_()` contains the identical iframe.
+  Browser-opened the scalar sid at `/embed/card?sid=...` — renders a
+  correct single-series line chart (flat 0 line for baseline `quality.mae`,
+  as expected). Console clean.
+- **(b) media_compare — IMPORTANT FINDING, renderer does NOT fully honor
+  `settings.mode`:** built
+  `cairn.plot.media_compare(runA["output"], runB["output"], mode="diff")`
+  (and `mode="side"`), fetched each spec's sid, and opened both in the
+  browser at `/embed/card?sid=...`.
+  - `mode="side"` renders correctly: two labeled panels ("baseline" /
+    "brightness-up") side by side.
+  - `mode="diff"` does **not** render a pixel-diff. It renders identically
+    to `side`/`normal` — two unmodified panels, no diff computed — even
+    though the settings panel's "Compare > Mode" dropdown does read
+    "diff". Root-caused via `cairn/ui/src/components/VisualContentCard.tsx`
+    and `cairn/ui/src/components/card-kit/use-media-reference.ts`: `diff`/
+    `split`/`blend` modes require a resolved **reference/baseline** per
+    pane, sourced from `settings.baselineIndex` (an index into the card's
+    own `series` picking which one is the diff baseline) or an
+    `externalBaseline`. `cairn.plot.media_compare()` (`cairn/plot.py:702-721`)
+    only sets `series` (2 entries) + `settings.mode` — it never sets
+    `settings.baselineIndex`. With no reference resolved, `globalHash` is
+    `undefined` for every pane (`use-media-reference.ts:121-133`), so the
+    diff pipeline has nothing to diff against and silently falls back to
+    showing each pane's raw image — visually indistinguishable from `side`.
+    **Fix needed:** `media_compare()` must also emit `settings.baselineIndex`
+    (e.g. `1`, pointing at `series[1]` as the reference for `series[0]`, or
+    vice versa depending on the intended semantics) whenever `mode` is
+    `"diff"`/`"split"`/`"blend"`. `mode="normal"`/`"side"` need no baseline
+    and are unaffected.
+  - Separately confirmed: this is **distinct** from a second, real bug in
+    the WS-EMBED `/embed/card` entry point
+    (`cairn/ui/src/embed-main.tsx`'s `EmbeddedCard`): it never calls
+    `saveCardSettings` with the fetched spec's `settings` before
+    `CardRenderer` mounts (contrast `CairnFenceCard.tsx:121-133`, which
+    does), so on a **fresh** page load the Mode dropdown always shows
+    `"normal"` regardless of what the spec's `settings.mode` says — the
+    spec-provided mode is silently dropped. This is a WS-EMBED gap on top
+    of the WS-PYAPI `baselineIndex` gap above; both need fixing for
+    `media_compare(mode="diff")` to render correctly out of the box.
+  - Console clean throughout (no JS errors on either card).
+- **Auth-on caveat:** confirmed via `cairn/server/embed_specs.py`'s own
+  docstring — `/api/embed/specs` and `/embed/card` sit behind the same
+  `require_role("read")` dependency as other `/api` routes, so `--no-auth`
+  is unaffected and auth-on isn't weakened; a `sid` alone is not yet an
+  unguessable cross-origin capability token (documented `TODO(remote-embed)`,
+  deferred). Reasoning-only check, nothing built.
+- **Cleanup:** worktree `.claude/worktrees/ws-pyapi` was clean (no
+  node_modules symlink present, only gitignored `.tsbuildinfo` files) and
+  removed via `git worktree remove`. No stray auto-branch existed beyond
+  `feature/ws-pyapi`, which was kept. Server left running at
+  `:4301 --no-auth`. Scratch verification script lived only under the
+  session scratchpad dir (never touched the repo). Seeded demo runs in
+  `.cairn` were left in place (additive test data, not a report/comparison,
+  not deleted).
+
+**Because of the media_compare finding above, do NOT consider WS-PYAPI's
+`media_compare`/`image_compare`/`mesh_compare`/etc. builders fully done for
+`diff`/`split`/`blend` modes** — a follow-up fix round is needed for
+`cairn/plot.py`'s `media_compare()` to set `settings.baselineIndex`, and
+optionally a separate WS-EMBED fix for `embed-main.tsx` to seed
+`saveCardSettings` from the fetched spec on load.
