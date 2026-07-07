@@ -145,10 +145,19 @@ function ExternalBaselinePicker({
   const imageMetrics = useMemo(() => {
     const seqs = data?.sequences ?? [];
     return seqs
-      .filter((s) => s.name !== currentMetricName
+      .filter((s) =>
+        // A DIFFERENT metric is always a candidate reference (cross-metric /
+        // manual compare). The SAME metric is ALSO valid in a multi-run card:
+        // picking "<this metric> from run X" (scoped by the Run selector above)
+        // makes run X the shared cross-run baseline every pane diffs/splits
+        // against — the same-metric cross-run reference the auto N-run grid
+        // otherwise had no way to set (the settings picker was the only
+        // reference affordance and it excluded the current metric outright).
+        // Kept excluded in single-run cards, where it would be a self-reference.
+        (s.name !== currentMetricName || multiRun)
         && (s.object_type === objectType || (allowCrossType && canCrossTypeCompare(objectType, s.object_type))))
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [data, currentMetricName, objectType, allowCrossType]);
+  }, [data, currentMetricName, objectType, allowCrossType, multiRun]);
 
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -220,6 +229,7 @@ function ExternalBaselinePicker({
                   }`}
                 >
                   {m.name}
+                  {multiRun && m.name === currentMetricName ? ` · ${runLabel(activeRunId)}` : ""}
                 </button>
               ))
             )}
@@ -1181,7 +1191,9 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
           </div>
         ) : (
           <p className="text-[10px] text-fg-subtle mb-1">
-            Drag a series chip onto the card, or select a tag below.
+            {multipleRuns
+              ? "Pick a run below, then choose this metric to make that run the shared baseline every other run diffs/splits against. Or select a different tag / drag a series chip onto the card."
+              : "Drag a series chip onto the card, or select a tag below."}
           </p>
         )}
         <ExternalBaselinePicker
