@@ -18,8 +18,21 @@ Usage::
     uv run cairn init /tmp/cairn-marimo-demo
     CAIRN_REPO=/tmp/cairn-marimo-demo/.cairn \\
         uv run --extra media python examples/demo_plot_helpers.py  # populate runs
-    # optional, for the WS-PYAPI section's live iframe:
+    # optional, to also demo the WS-PYAPI `media_compare` cell (section 4)
+    # with real image data instead of its scalar/figure fallback:
+    CAIRN_REPO=/tmp/cairn-marimo-demo/.cairn \\
+        uv run --extra examples --extra media python examples/demo_image_comparison.py
+
+    # optional, for a LIVE `/embed/card` iframe instead of the WS-PYAPI
+    # cells' text fallback: start `cairn ui` on the SAME repo. As of the
+    # server auto-discovery fix, no port wiring is needed — the element
+    # finds whichever port `cairn ui` actually bound (it auto-increments
+    # past 4301 when taken) via that repo's `.cairn/servers.json`:
     #   cairn ui --repo /tmp/cairn-marimo-demo --no-auth &
+    # To pin an explicit server instead (bypassing auto-discovery), use the
+    # `cairn://host:port` scheme — NOT `http://`, which `cairn.Reader`/
+    # `cairn.configure` read as a *local filesystem path*, not a server URL:
+    #   CAIRN_REPO=cairn://localhost:4301 uv run ...
 
     # interactive edit:
     uv run --extra examples --extra media marimo edit examples/marimo_cairn_demo.py
@@ -83,6 +96,23 @@ def _(mo):
         Point this at your own project's `.cairn` by exporting
         `CAIRN_REPO=/path/to/project/.cairn` before launching marimo, or
         by editing `repo_path` below.
+
+        **Server discovery for the WS-PYAPI cells (section 4):** those
+        cells' `CardElement`s render a live `/embed/card` iframe when a
+        `cairn ui` is reachable. With a *local* `.cairn` repo (the default
+        above), the element auto-discovers a `cairn ui` running on that
+        same repo — no matter which port it actually bound (it
+        auto-increments past its 4301 default when taken) — by reading
+        that repo's `.cairn/servers.json`, which `cairn ui` writes on
+        startup. Just start it: `cairn ui --repo <path> --no-auth`, no
+        port bookkeeping required.
+
+        To point at a specific server explicitly instead (skipping
+        auto-discovery), use the `cairn://host:port` scheme — e.g.
+        `CAIRN_REPO=cairn://localhost:4301` or
+        `cairn.configure(repo="cairn://localhost:4301")`. A plain
+        `http://...` URL here is read as a *local filesystem path*, not a
+        server address, and silently resolves to zero runs.
         """
     )
     return
@@ -234,7 +264,8 @@ def _(mo):
         implements `_repr_html_`/`_repr_mimebundle_`, so it renders as a
         live `/embed/card` iframe right here in the cell **when a cairn
         server is reachable** (start one with `cairn ui --repo
-        /tmp/cairn-marimo-demo --no-auth`), and falls back to an inline
+        /tmp/cairn-marimo-demo --no-auth` — with the local repo above it's
+        auto-discovered, no port needed), and falls back to an inline
         notice — no exception — when one isn't.
 
         `cairn.Report` is a **notebook-only container** (no server
@@ -242,37 +273,65 @@ def _(mo):
         appends prose, `.add(el)` appends an element, and the report's own
         `_repr_html_` renders every block inline, in order.
 
-        This needs at least two runs in the project to compare; it falls
-        back to a no-op notice otherwise.
+        `media_compare` needs *image* data, which `demo_plot_helpers.py`
+        (section 2/3's project) doesn't log — seed it separately with:
+
+        ```
+        CAIRN_REPO=/tmp/cairn-marimo-demo/.cairn \\
+            uv run --extra examples --extra media python \\
+            examples/demo_image_comparison.py
+        ```
+
+        Without that, this cell falls back to a `cairn.plot.figure` element
+        built from section 2/3's run instead — still a real, working
+        server-backed element, just not a comparison.
         """
     )
     return
 
 
 @app.cell
-def _(cairn, mo, project, reader):
-    _runs = reader.runs(project=project).filter(tags__contains="demo").list()
+def _(cairn, latest_run, mo, reader):
+    _image_runs = reader.runs(project="image-comparison-demo").list()
 
-    if len(_runs) >= 2:
-        run_a, run_b = _runs[0], _runs[1]
+    if len(_image_runs) >= 2:
+        run_a, run_b = _image_runs[0], _image_runs[1]
 
         # `run[tag]` is a LAZY handle — no fetch happens on this line.
         # `media_compare` builds + schema-validates one card spec from the
         # two handles ("diff" = the pixel-diff image-space compositor); a
         # single-series element would be e.g.
-        # `cairn.plot.scalar(run_a["eval.accuracy"])`.
-        el = cairn.plot.media_compare(
-            run_a["eval.predictions"], run_b["eval.predictions"], mode="diff"
-        )
+        # `cairn.plot.scalar(run_a["quality.mae"])`.
+        el = cairn.plot.media_compare(run_a["output"], run_b["output"], mode="diff")
 
-        report = cairn.Report(name="Ablation study", project=project)
+        report = cairn.Report(name="Image comparison", project="image-comparison-demo")
         report.md(f"## Results\nComparing `{run_a.name}` vs. `{run_b.name}`.")
         report.add(el)
         pyapi_demo = report  # renders inline via _repr_html_/_repr_mimebundle_
+    elif latest_run is not None and "eval.roc_curve" in [
+        s.name for s in latest_run.sequences()
+    ]:
+        # No `image-comparison-demo` data — still demo a WORKING
+        # server-backed element (never a dead cell) from whatever real data
+        # section 2/3's query above already found.
+        el = cairn.plot.figure(latest_run["eval.roc_curve"])
+        report = cairn.Report(name="ROC curve", project="plot-helpers-demo")
+        report.md(
+            "No `image-comparison-demo` runs found (2+ needed to demo "
+            "`media_compare`) — generate them with `uv run --extra examples "
+            "--extra media python examples/demo_image_comparison.py`. "
+            "Showing a working server-backed `cairn.plot.figure` element "
+            f"instead, from `{latest_run.name}` (queried in section 2)."
+        )
+        report.add(el)
+        pyapi_demo = report
     else:
         pyapi_demo = mo.md(
-            "Need at least 2 runs in this project to demo `media_compare` — "
-            "generate more with `examples/demo_plot_helpers.py`."
+            "Need at least 2 runs in `image-comparison-demo` to demo "
+            "`media_compare` (or a `plot-helpers-demo` run to fall back "
+            "to) — generate one with `uv run --extra examples --extra "
+            "media python examples/demo_image_comparison.py` or "
+            "`examples/demo_plot_helpers.py`."
         )
 
     pyapi_demo
