@@ -33,10 +33,11 @@ import { MemoryRouter } from "react-router-dom";
 import CardRenderer from "./components/CardRenderer";
 import type { SequenceMeta } from "./api/types";
 import {
-  type ComparisonCard,
   isMultiRunCardType,
   cardSettingsKeyForScope,
 } from "./lib/comparisons";
+import type { CardSpec } from "./lib/cards/card-spec";
+import { saveCardSettings } from "./lib/card-settings";
 import "./index.css";
 
 const queryClient = new QueryClient({
@@ -55,7 +56,7 @@ const EMBED_SCOPE = "embed";
 
 interface EmbedSpecResponse {
   sid: string;
-  spec: ComparisonCard;
+  spec: CardSpec;
 }
 
 /**
@@ -105,12 +106,36 @@ function useEmitAutoHeight(ref: React.RefObject<HTMLElement | null>) {
 }
 
 /** Render one card from its spec, reusing the ReportCardRenderer precedent. */
-function EmbeddedCard({ card }: { card: ComparisonCard }) {
+function EmbeddedCard({ card }: { card: CardSpec }) {
   // Ensure a stable id for the settings key even if the stored spec omits it.
-  const cardWithId = useMemo<ComparisonCard>(
-    () => (card.id ? card : { ...card, id: `${EMBED_SCOPE}-card` }),
-    [card],
-  );
+  //
+  // RC2 (WS-MCFIX): seed the card's persisted settings from `spec.settings`
+  // HERE — synchronously, inside this useMemo — rather than in a `useEffect`.
+  // A card reads its persisted settings synchronously on first render (see
+  // `useCardSettings`'s `useRef` initializer in lib/card-settings.ts, which
+  // calls `loadCardSettings` before any effect runs), so seeding via an
+  // effect would always be one render too late: the child `CardRenderer`
+  // below would already have mounted with default settings (mode="normal")
+  // by the time the effect fired. A synchronous `useMemo` in the PARENT's
+  // render body runs strictly before React renders the child, so the write
+  // lands before `CardRenderer`/`useCardSettings` ever reads it — mirrors
+  // `restoreReportCardSettings` (lib/reports/payload.ts), which relies on
+  // the same before-first-render ordering (there, gated behind `blocks`
+  // starting empty until the settings write already happened).
+  //
+  // Keyed by `cardSettingsKeyForScope(EMBED_SCOPE, ...)` — this embed's OWN
+  // scope/localStorage key, never the real app's comparison/report scopes,
+  // so this can't leak into or clobber a user's saved comparisons/reports.
+  const cardWithId = useMemo<CardSpec>(() => {
+    const withId: CardSpec = card.id ? card : { ...card, id: `${EMBED_SCOPE}-card` };
+    if (card.settings) {
+      saveCardSettings(cardSettingsKeyForScope(EMBED_SCOPE, withId), {
+        version: 1,
+        ...card.settings,
+      });
+    }
+    return withId;
+  }, [card]);
 
   if (isMultiRunCardType(cardWithId.type)) {
     const runIds = Array.from(new Set(cardWithId.series.map((s) => s.runId)));
