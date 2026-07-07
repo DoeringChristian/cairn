@@ -107,3 +107,47 @@ Built 4 embed specs via `cplot.media_compare(base["output"], noisy["output"], mo
   kwarg-signature mismatch predating this branch, confirmed by inspecting the failures
   directly: `TypeError: resolve_target() got an unexpected keyword argument 'server'`),
   488 passed, 2 skipped — matches the expected "~15 baseline unchanged".
+
+## MERGE LOG (merge agent M-62, 2026-07-07)
+
+- Merged `fix/media-compare-embed` (3 commits, ending `4ad5c3c6`) into `main` via
+  `git merge` — **fast-forward**, `d5270aff` → `4ad5c3c6`. No conflicts (a stray
+  uncommitted `cairn/ui/tsconfig.app.tsbuildinfo` diff on `main` was stashed before the
+  merge and dropped after — it was regenerated identically by the rebuild, so nothing
+  to recommit).
+- Gates re-verified on `main` post-merge:
+  - `npm run typecheck` — exit 0, no errors.
+  - `node_modules/.bin/vite build` — green; `dist/index.html` and `dist/embed.html`
+    both emitted; rebuilt `dist/` byte-for-byte matches the committed tree (`git status`
+    clean after build) — no recommit needed.
+  - `uv run --extra dev pytest tests/unit` — 487 passed, 3 skipped, 15 failed; the 15
+    failures are exactly the known pre-existing baseline (`test_cli.py`, `test_config.py`,
+    `test_config_target.py`, `test_local_transport.py::test_create_run_writes_to_duckdb`),
+    zero failures in `test_plot_elements.py` (the `baselineIndex` assertion included).
+- Server restarted on `:4301` with `--no-auth` after the (no-op) dist rebuild; health
+  check `200` on `/`.
+- Browser verification (Chrome MCP) against the existing `image-comparison-demo`
+  project's `baseline` and `red-tint` runs (no new runs needed to seed — both already
+  present) — built four `cairn.plot.media_compare(run_a["output"], run_b["output"],
+  mode=...)` cards, POSTed each spec to `/api/embed/specs`, opened
+  `/embed/card?sid=...` for each:
+  - **diff**: right pane renders a uniform dark-red pixel-diff heatmap (consistent with
+    the constant red-channel offset the `red-tint` variant applies) — NOT the raw
+    unmodified `red-tint` image (which would show grid lines/shapes). Compare toolbar
+    (normal/side/split/blend/diff + "Absolute Error" dropdown) present. Console shows
+    `[cairn] WebGL 2 diff initialized`, corroborating a real GPU-computed diff.
+  - **split**: draggable clip — left half REF (baseline, unmodified), right half the
+    `red-tint` variant, visibly distinct (reddish/pink tint) at the split line.
+  - **blend**: DOM-inspected — the `red-tint` pane stacks two distinct `<img>` sources
+    (`red-tint` + baseline `REF`) each at `opacity: 0.5`, a genuine alpha composite (the
+    `baseline`-vs-itself pane correctly self-blends to an unchanged image).
+  - **side**: four panes (REF/baseline/REF/red-tint) — the `red-tint` pane visibly
+    tinted vs. the other three, all correctly distinct.
+  - Console clean across all four loads — no errors, only the WebGL-diff info log.
+- Cleanup: removed the `.claude/worktrees/fix-mediacompare` worktree (unlinked the
+  `node_modules` symlink and deleted the stale `tsconfig.app.tsbuildinfo` first, then
+  `git worktree remove --force`; the only worktree-local diff was that same tsbuildinfo
+  deletion). Kept branch `fix/media-compare-embed` per instructions — no auto-branch
+  existed for this task to delete. `:4301` left running with `--no-auth`.
+- Nothing unverified — no browser/CDP flake this round; all four compare modes visually
+  and structurally confirmed distinct and correct.

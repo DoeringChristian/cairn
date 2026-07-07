@@ -37,3 +37,6 @@ cairn/ui/*.tsbuildinfo
 .vscode/
 *.swp
 *.swo
+
+# marimo notebook run cache
+__marimo__/
