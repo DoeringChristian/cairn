@@ -28,7 +28,7 @@ anchor a ``SeriesRef`` to) has **no** self-contained render path today — the
 card-spec schema (``cairn/sdk/card_spec.py``) has no inline-data variant.
 That is WS-INLINE (design spec §6.3, deferred); builders that hit this case
 raise a clear ``NotImplementedError`` rather than silently doing something
-half-right (see ``cairn/plot.py``'s ``_resolve_series_ref``).
+half-right (see ``cairn/plot.py``'s ``_resolve_series``).
 """
 
 from __future__ import annotations
