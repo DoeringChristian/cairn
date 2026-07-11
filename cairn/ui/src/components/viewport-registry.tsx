@@ -7,13 +7,12 @@ import {
   DIVERGING_COLORMAPS,
   createEndpointDataSource,
   resolveImageViewportItems,
+  parseOverlay,
   type Colormap,
   type ImageViewportItem,
   type ImageViewState,
 } from "../lib/cairn-plot";
 import type {
-  ImageOverlayData,
-  OverlayMask,
   ViewState,
   ViewportDataArgs,
   ViewportDataResult,
@@ -25,40 +24,11 @@ import Slider from "./settings/Slider";
 import Toggle from "./settings/Toggle";
 import SettingsSection from "./settings/SettingsSection";
 
-/** Parse box/mask overlay annotations out of a point's raw
- *  `artifact_metadata` JSON — moved verbatim from ImageGalleryCard's
- *  `parseOverlay` (same behavior, same shape). Exported so VisualContentCard's
- *  overlay-class aggregation (settings panel) reuses the ONE parser rather
- *  than keeping a private copy. */
-export function parseOverlay(raw: string | null | undefined): ImageOverlayData | null {
-  if (!raw) return null;
-  let meta: Record<string, unknown>;
-  try {
-    meta = JSON.parse(raw) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-  const boxes = Array.isArray(meta.boxes)
-    ? (meta.boxes as ImageOverlayData["boxes"])
-    : undefined;
-  const masksObj =
-    meta.masks && typeof meta.masks === "object"
-      ? (meta.masks as Record<string, { png_b64: string; class_labels?: Record<string, string> }>)
-      : undefined;
-  const masks: OverlayMask[] | undefined = masksObj
-    ? Object.entries(masksObj).map(([name, m]) => ({
-        name,
-        png_b64: m.png_b64,
-        class_labels: m.class_labels,
-      }))
-    : undefined;
-  const class_labels =
-    meta.class_labels && typeof meta.class_labels === "object"
-      ? (meta.class_labels as Record<string, string>)
-      : undefined;
-  if (!boxes?.length && !masks?.length) return null;
-  return { boxes, masks, class_labels };
-}
+// `parseOverlay` now lives in cairn-plot (`viewport/parse-overlay.ts`) so the
+// standalone plot bundle's LOCAL image provider shares the ONE parser. Kept
+// re-exported from here so existing importers (VisualContentCard's overlay
+// settings aggregation) and this module's `useImageData` keep working.
+export { parseOverlay };
 
 // ---------------------------------------------------------------------------
 // viewport-registry — `object_type` -> `ViewportModule`.

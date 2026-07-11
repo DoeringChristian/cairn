@@ -4,6 +4,7 @@ export type {
   ScatterPoint,
   ParallelColumn,
   ParallelRow,
+  Viewport,
   AxisScale,
   DiffMode,
   Colormap,
@@ -139,8 +140,15 @@ export {
   createEndpointDataSource,
   resolveImageViewportItems,
   fetchPointCloudArrays,
+  parseOverlay,
+  createLocalDataSource,
+  registerPlotStore,
+  loadPlotStoreFromDom,
+  PLOT_STORE_SCRIPT_ID,
 } from "./viewport";
 export type {
+  PlotStore,
+  PlotStoreEntry,
   FrameSource,
   ViewState,
   NativeModeSpec,

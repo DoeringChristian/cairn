@@ -26,7 +26,7 @@
  * Deferred to a later security-reviewed follow-up — LOCAL / SAME-ORIGIN only.
  */
 
-import React, { Component, useEffect, useMemo, useRef, type ReactNode } from "react";
+import React, { Component, useMemo, useRef, type ReactNode } from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
@@ -38,6 +38,7 @@ import {
 } from "./lib/comparisons";
 import type { CardSpec } from "./lib/cards/card-spec";
 import { saveCardSettings } from "./lib/card-settings";
+import { useEmitAutoHeight } from "./lib/emit-auto-height";
 import "./index.css";
 
 const queryClient = new QueryClient({
@@ -81,28 +82,6 @@ class EmbedErrorBoundary extends Component<
     }
     return this.props.children;
   }
-}
-
-/** Post the current content height to the host so it can size the iframe. */
-function useEmitAutoHeight(ref: React.RefObject<HTMLElement | null>) {
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const post = () => {
-      const height = Math.ceil(el.getBoundingClientRect().height);
-      if (height > 0) {
-        // TODO(remote-embed): narrow "*" to the allowed host origin.
-        window.parent.postMessage(
-          { type: "cairn:resize", height, protocolVersion: 1 },
-          "*",
-        );
-      }
-    };
-    const ro = new ResizeObserver(post);
-    ro.observe(el);
-    post();
-    return () => ro.disconnect();
-  }, [ref]);
 }
 
 /** Render one card from its spec, reusing the ReportCardRenderer precedent. */

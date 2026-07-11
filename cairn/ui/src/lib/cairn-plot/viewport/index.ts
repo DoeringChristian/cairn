@@ -31,6 +31,22 @@ export {
   type PointCloudArrays,
 } from "./data-sources";
 
+// Overlay-metadata parser (shared by the app's viewport-registry and the
+// standalone plot bundle's LOCAL image provider). Pure, no `api` dependency.
+export { parseOverlay } from "./parse-overlay";
+
+// LOCAL content-addressed blob store (design spec §5) — the DataSource the
+// standalone plot bundle uses for baked/self-contained data. Eager-safe
+// (only imports the `DataSource` type).
+export {
+  createLocalDataSource,
+  registerPlotStore,
+  loadPlotStoreFromDom,
+  PLOT_STORE_SCRIPT_ID,
+  type PlotStore,
+  type PlotStoreEntry,
+} from "./local-store";
+
 // NOTE: pointcloud-viewport.tsx (WS-VC4) is DELIBERATELY not re-exported
 // from this barrel (or cairn-plot/index.ts's, both of which are imported
 // eagerly by non-lazy call sites such as VisualContentCard.tsx). It pulls
