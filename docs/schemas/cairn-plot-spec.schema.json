@@ -1,0 +1,98 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$ref": "#/definitions/PlotDescriptor",
+  "definitions": {
+    "PlotDescriptor": {
+      "type": "object",
+      "properties": {
+        "renderer": {
+          "type": "string",
+          "description": "Key into `RENDERER_MAP` (e.g. \"scalar\", \"image\", \"table\", \"figure\")."
+        },
+        "props": {
+          "$ref": "#/definitions/Record%3Cstring%2Cunknown%3E",
+          "description": "The renderer's non-data config props (§1 \"Non-data config props\")."
+        },
+        "data": {
+          "$ref": "#/definitions/DataSpec",
+          "description": "How to produce the renderer's DATA props."
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "local",
+            "endpoint"
+          ],
+          "description": "Which `DataSource` the bootstrap builds for `data` resolution. Optional — omitted (or \"local\") means the self-contained LOCAL store; kept optional so it stays in lockstep with the Python `PlotSpec` default (`mode=\"local\"`)."
+        },
+        "endpoint": {
+          "type": "string",
+          "description": "ENDPOINT only: absolute base URL of the repo server (no trailing slash), used to build `${endpoint}/api/artifacts/${hash}`."
+        }
+      },
+      "required": [
+        "renderer",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "Record<string,unknown>": {
+      "type": "object",
+      "additionalProperties": {}
+    },
+    "DataSpec": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "inline"
+            },
+            "props": {
+              "$ref": "#/definitions/Record%3Cstring%2Cunknown%3E"
+            }
+          },
+          "required": [
+            "kind",
+            "props"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "image"
+            },
+            "hash": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "referenceHash": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "metadata": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "hash"
+          ],
+          "additionalProperties": false
+        }
+      ],
+      "description": "How the renderer's DATA props are produced.\n\n - `inline`: the data-contract props are plain JSON, carried directly in the    descriptor (2D contracts — Series[]/points[]/matrix/counts+edges/table/    figure). The bootstrap merges `props` straight onto the renderer. No    `DataSource` needed.  - `image`: a content-addressed image artifact (+ optional baseline +    overlay metadata). Resolved via `resolveImageViewportItems` against the    active `DataSource` (LOCAL `data:` URL or ENDPOINT `/api/artifacts/…`),    yielding `{ imageUrl, baselineUrl, overlay }` for `ImagePane`."
+    }
+  }
+}

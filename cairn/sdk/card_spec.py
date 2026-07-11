@@ -17,9 +17,9 @@ never parses markdown and never re-implements ``cardFromSpec``.
 
 from __future__ import annotations
 
-from typing import Literal, Optional, Union
+from typing import Any, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 __all__ = [
     "CARD_TYPES",
@@ -33,6 +33,10 @@ __all__ = [
     "RunsSpec",
     "CardsSpec",
     "ReportSpec",
+    "InlineDataSpec",
+    "ImageDataSpec",
+    "DataSpec",
+    "PlotSpec",
 ]
 
 # The canonical card-type vocabulary. Mirrors `CARD_TYPES` in
@@ -125,6 +129,54 @@ class CardSpec(_Strict):
     type: CardType
     series: list[SeriesRef]
     settings: Optional[CardSettingsSpec] = None
+
+
+# ---------------------------------------------------------------------------
+# WS-PLOT (Phase C): the plot descriptor — the renderer-props-shaped contract
+# the standalone cairn-plot bundle mounts. Mirrors the authoritative TS
+# `PlotDescriptor`/`DataSpec` in ``cairn/ui/src/plot-descriptor.ts`` (from which
+# ``docs/schemas/cairn-plot-spec.schema.json`` is generated); kept honest by
+# ``tests/unit/test_plot_spec_conformance.py`` field-for-field against that
+# committed schema. Construction == validation, like ``CardSpec``.
+# ---------------------------------------------------------------------------
+
+
+class InlineDataSpec(_Strict):
+    """`DataSpec{kind:"inline"}` — the renderer's DATA props carried directly
+    as plain JSON (2D contracts: Series[]/points[]/matrix/table/figure)."""
+
+    kind: Literal["inline"]
+    props: dict[str, Any]
+
+
+class ImageDataSpec(_Strict):
+    """`DataSpec{kind:"image"}` — a content-addressed image artifact (+
+    optional baseline + overlay metadata), resolved through the active
+    `DataSource` (LOCAL `data:` URL / ENDPOINT `/api/artifacts/…`).
+
+    ``hash`` is required-but-nullable (matches the TS `string | null`);
+    ``referenceHash``/``metadata`` are optional."""
+
+    kind: Literal["image"]
+    hash: Optional[str]
+    referenceHash: Optional[str] = None
+    metadata: Optional[str] = None
+
+
+# Discriminated on ``kind`` (mirrors the TS `DataSpec` discriminated union).
+DataSpec = Union[InlineDataSpec, ImageDataSpec]
+
+
+class PlotSpec(_Strict):
+    """One plot descriptor = `{renderer, props?, data, mode?, endpoint?}`
+    (== TS ``PlotDescriptor``). ``mode`` defaults to ``"local"`` (the
+    self-contained baked-store mode); ``props`` defaults to ``{}``."""
+
+    renderer: str
+    props: dict[str, Any] = Field(default_factory=dict)
+    data: DataSpec = Field(discriminator="kind")
+    mode: Literal["local", "endpoint"] = "local"
+    endpoint: Optional[str] = None
 
 
 class StaticRunSelector(_Strict):

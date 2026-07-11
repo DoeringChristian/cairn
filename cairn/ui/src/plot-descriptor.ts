@@ -51,8 +51,11 @@ export interface PlotDescriptor {
   props?: Record<string, unknown>;
   /** How to produce the renderer's DATA props. */
   data: DataSpec;
-  /** Which `DataSource` the bootstrap builds for `data` resolution. */
-  mode: "local" | "endpoint";
+  /** Which `DataSource` the bootstrap builds for `data` resolution.
+   *  Optional — omitted (or "local") means the self-contained LOCAL store;
+   *  kept optional so it stays in lockstep with the Python `PlotSpec` default
+   *  (`mode="local"`). */
+  mode?: "local" | "endpoint";
   /** ENDPOINT only: absolute base URL of the repo server (no trailing slash),
    *  used to build `${endpoint}/api/artifacts/${hash}`. */
   endpoint?: string;

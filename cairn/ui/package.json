@@ -9,7 +9,10 @@
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
     "gen:card-schema": "node scripts/gen-card-spec-schema.mjs",
-    "check:card-schema": "node scripts/check-card-spec-schema.mjs"
+    "check:card-schema": "node scripts/check-card-spec-schema.mjs",
+    "gen:plot-schema": "node scripts/gen-plot-spec-schema.mjs",
+    "check:plot-schema": "node scripts/check-plot-spec-schema.mjs",
+    "build:plot-inline": "vite build --config vite.plot-inline.config.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.59.0",
