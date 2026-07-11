@@ -260,6 +260,22 @@ def _mount_spa_or_placeholder(app: FastAPI) -> None:
 
                 return Response(content=embed_html, media_type="text/html")
 
+        # cairn-plot (Phase B): serve the standalone plot entry at /plot. Like
+        # /embed/card this is a SEPARATE HTML bundle (plot.html + plot-main.tsx)
+        # from the SPA, so it must be registered BEFORE the SPA catch-all below
+        # — otherwise the catch-all swallows /plot and serves the app shell. It
+        # is the ENDPOINT-mode variant's shell (?src=/?sid= select the
+        # descriptor); LOCAL-mode plots are self-contained and need no server.
+        plot_html_path = ui_dist / "plot.html"
+        if plot_html_path.exists():
+            plot_html = plot_html_path.read_bytes()
+
+            @app.get("/plot", include_in_schema=False)
+            async def _plot() -> Response:
+                from fastapi.responses import Response
+
+                return Response(content=plot_html, media_type="text/html")
+
         # SPA catch-all: serve index.html for any non-API, non-asset path.
         # Explicitly refuse anything under /api/ instead of falling through
         # to index.html — registration order alone (API routers registered
