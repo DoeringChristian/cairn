@@ -11,13 +11,16 @@ export default defineConfig({
     // Avoid hashed asset names collisions that trip the StaticFiles mount.
     // (Vite hashes by default; that's fine — we ship the generated index.html.)
     rollupOptions: {
-      // Two HTML entries: the SPA (index.html → main.tsx) and the standalone
-      // WS-EMBED card (embed.html → embed-main.tsx, served at /embed/card).
-      // Both emit into dist/ with a shared /assets chunk graph.
+      // Three HTML entries: the SPA (index.html → main.tsx), the standalone
+      // WS-EMBED card (embed.html → embed-main.tsx, served at /embed/card),
+      // and the standalone cairn-plot renderer (plot.html → plot-main.tsx,
+      // served at /plot). All emit into dist/ with a shared /assets chunk
+      // graph so React + cairn-plot dedup across entries.
       // Relative to the vite project root (this dir); resolved by vite.
       input: {
         main: "index.html",
         embed: "embed.html",
+        plot: "plot.html",
       },
     },
   },
