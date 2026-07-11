@@ -42,14 +42,36 @@ self-contained cases) and return a display-protocol ``Element``
 
 from __future__ import annotations
 
+import base64 as _base64
+import hashlib as _hashlib
+import json as _json
 import uuid as _uuid
 from typing import Any, Sequence
 
 import numpy as np
 
-from .sdk.card_spec import CardSettingsSpec, CardSpec, SeriesRef
-from .sdk.elements import CardElement, HtmlElement
-from .sdk.reader import DataRef
+from .sdk.card_spec import (
+    CardSettingsSpec,
+    CardSpec,
+    ImageDataSpec,
+    InlineDataSpec,
+    PlotSpec,
+    SeriesRef,
+)
+from .sdk.elements import CardElement, HtmlElement, PlotElement
+from .sdk.reader import ArtifactInfo, DataRef
+
+# The app's categorical series palette — mirrors `SERIES_COLORS` in
+# `cairn/ui/src/lib/cairn-plot/types.ts` so a Python-emitted scalar plot uses
+# the exact same colors as the same metric in the viewer.
+_SERIES_COLORS = (
+    "#0969da",
+    "#d29922",
+    "#3fb950",
+    "#f85149",
+    "#c678dd",
+    "#56d4dd",
+)
 
 # numpy >=2.0 renamed trapz -> trapezoid (trapz was removed outright in some
 # 2.x releases); numpy <2.0 (the package's floor is 1.24) only has trapz.
@@ -635,6 +657,313 @@ def _card_element(
     )
 
 
+# ---------------------------------------------------------------------------
+# WS-PLOT (Phase C): LOCAL/ENDPOINT data-shaping → `PlotElement`.
+#
+# Each `cairn.plot.X(data, *, data_mode=...)` builder resolves DATA to the
+# renderer's data-contract shape (design spec §1) and returns a `PlotElement`
+# that mounts the PURE cairn-plot renderer — LOCAL (default) bakes the data
+# self-contained; ENDPOINT links the renderer JS to a reachable server and, for
+# `image`, fetches bytes by reference. `data_mode` is DISTINCT from
+# `media_compare`'s `mode=` (the compare mode) by design.
+# ---------------------------------------------------------------------------
+
+_DATA_MODES = ("local", "endpoint")
+
+
+def _check_data_mode(data_mode: str) -> None:
+    if data_mode not in _DATA_MODES:
+        raise ValueError(
+            f"data_mode must be one of {_DATA_MODES!r}, got {data_mode!r}"
+        )
+
+
+def _content_hash(data: bytes) -> str:
+    """A content-address for baked bytes — matches the store-key convention
+    (design spec §5/R6): the artifact's own hash when known, else this."""
+    return "sha256:" + _hashlib.sha256(data).hexdigest()
+
+
+def _endpoint_server_of(source: Any) -> str:
+    """The HTTP base for ENDPOINT mode, or a clear error. Prefers the server
+    the source `Reader` was connected to (`_server_url_of`)."""
+    url = _server_url_of(source)
+    if url:
+        return url
+    raise ValueError(
+        "cairn.plot(..., data_mode='endpoint') needs a reachable cairn "
+        "server, but the data came from a local repo. Use data_mode='local' "
+        "(the self-contained default), or open the reader in server mode "
+        '(`cairn.Reader(repo="cairn://host:port")`).'
+    )
+
+
+def _plot_element_inline(
+    renderer: str,
+    inline_props: dict[str, Any],
+    *,
+    data_mode: str,
+    source: Any = None,
+    label: str,
+    height: int | None = None,
+) -> PlotElement:
+    """Wrap already-shaped 2D JSON (`inline_props`) in a `PlotElement`.
+
+    LOCAL bakes it self-contained (inline bundle). ENDPOINT links the renderer
+    JS to the source server but still carries the resolved JSON inline — the
+    plot bootstrap has no by-reference 2D-sequence fetch path yet, so ENDPOINT
+    for 2D types links only the renderer, not the data (documented thinness)."""
+    if data_mode == "endpoint":
+        server = _endpoint_server_of(source)
+        spec = PlotSpec(
+            renderer=renderer,
+            data=InlineDataSpec(kind="inline", props=inline_props),
+            mode="endpoint",
+            endpoint=server,
+        )
+        return PlotElement(spec, bundle="link", server=server, label=label, height=height)
+    spec = PlotSpec(
+        renderer=renderer,
+        data=InlineDataSpec(kind="inline", props=inline_props),
+        mode="local",
+    )
+    return PlotElement(spec, bundle="inline", label=label, height=height)
+
+
+# ---- scalar ---------------------------------------------------------------
+
+
+def _scalar_series_from_ref(ref: DataRef) -> dict[str, Any]:
+    """A `run[tag]` scalar sequence → one `Series` (design spec §1 ScalarPlot):
+    `{key,label,color,points:[{x,y,wallTime?}]}` from `Run.sequence`."""
+    seq = ref.run.sequence(ref.tag)
+    points: list[dict[str, Any]] = []
+    for p in seq.points:
+        if p.scalar_value is None:
+            continue
+        pt: dict[str, Any] = {"x": p.step, "y": float(p.scalar_value)}
+        if p.wall_time:
+            pt["wallTime"] = p.wall_time
+        points.append(pt)
+    return {
+        "key": ref.tag,
+        "label": ref.tag,
+        "color": _SERIES_COLORS[0],
+        "points": points,
+    }
+
+
+def _scalar_series_from_raw(values: Any) -> dict[str, Any]:
+    arr = np.asarray(list(values), dtype=np.float64).ravel()
+    if arr.size == 0:
+        raise ValueError("scalar(...) raw data must not be empty")
+    return {
+        "key": "value",
+        "label": "value",
+        "color": _SERIES_COLORS[0],
+        "points": [
+            {"x": int(i), "y": float(v)}
+            for i, v in enumerate(arr)
+            if np.isfinite(v)
+        ],
+    }
+
+
+# ---- figure ---------------------------------------------------------------
+
+
+def _figure_json_from_ref(ref: DataRef) -> dict[str, Any]:
+    """A `run[tag]` figure artifact → its interactive Plotly `{data,layout}`.
+
+    The figure handler stores a PNG primary + the Plotly source as a SEPARATE
+    artifact, referenced from the PNG artifact's metadata (`source_hash` +
+    `source_format="plotly_json"`) — see `handlers/figure.py`. Fetch that
+    source blob."""
+    ai = _artifact_info_of(ref)
+    meta = _parse_meta(ai.metadata)
+    source_hash = meta.get("source_hash")
+    if not source_hash or meta.get("source_format") != "plotly_json":
+        raise ValueError(
+            f"figure artifact {ref.tag!r} has no interactive plotly source "
+            "(only a rasterized PNG); nothing to mount in the figure renderer."
+        )
+    raw = ref.run._backend.get_artifact_bytes(source_hash)
+    return _json.loads(raw.decode("utf-8"))
+
+
+def _figure_json_from_plotly(fig: Any) -> dict[str, Any]:
+    if not hasattr(fig, "to_json"):
+        raise TypeError(
+            "cairn.plot.figure(...) expects a run[tag] handle or a plotly "
+            f"Figure (an object with .to_json()); got {type(fig).__name__}"
+        )
+    obj = _json.loads(fig.to_json())
+    return {"data": obj.get("data", []), "layout": obj.get("layout", {})}
+
+
+# ---- table ----------------------------------------------------------------
+
+
+def _table_json_from_ref(ref: DataRef) -> dict[str, Any]:
+    """A `run[tag]` table artifact → `{columns,data,truncated?}` (the exact
+    `handlers/table.py` blob format the Table renderer consumes)."""
+    tbl = ref.run.artifact(ref.tag, step=ref.step)
+    if not isinstance(tbl, dict) or "columns" not in tbl:
+        raise ValueError(
+            f"table artifact {ref.tag!r} did not deserialize to a "
+            "{columns,data} table blob."
+        )
+    return tbl
+
+
+def _table_json_from_raw(data: Any) -> dict[str, Any]:
+    """Raw tabular data → the canonical table blob, via the same
+    `TableHandler` the tracking path uses (columns/type inference identical)."""
+    from .sdk.handlers.table import TableHandler
+
+    if hasattr(data, "itertuples") and hasattr(data, "columns"):
+        wrapper: dict[str, Any] = {"dataframe": data}
+    elif isinstance(data, dict):
+        wrapper = {"columns": list(data.keys()), "data": list(zip(*data.values()))} if data else {"data": []}
+    else:
+        rows = list(data)
+        if rows and isinstance(rows[0], dict):
+            columns: list[str] = []
+            for r in rows:
+                for k in r:
+                    if k not in columns:
+                        columns.append(k)
+            wrapper = {"columns": columns, "data": [[r.get(c) for c in columns] for r in rows]}
+        else:
+            wrapper = {"data": rows}
+    blob, _meta = TableHandler().serialize(wrapper)
+    return _json.loads(blob.decode("utf-8"))
+
+
+# ---- image ----------------------------------------------------------------
+
+
+def _artifact_info_of(ref: DataRef) -> ArtifactInfo:
+    """The `ArtifactInfo` (hash + mime + metadata) behind `run[tag][step?]`."""
+    matches = [
+        ai
+        for ai in ref.run.artifacts()
+        if ai.name == ref.tag and (ref.step is None or ai.step == ref.step)
+    ]
+    if not matches:
+        raise KeyError(
+            f"No artifact named {ref.tag!r}"
+            + (f" at step {ref.step}" if ref.step is not None else "")
+            + f" on run {ref.run_id!r}."
+        )
+    # Highest step (the "latest") when unspecified.
+    return max(matches, key=lambda a: a.step if a.step is not None else -1)
+
+
+def _parse_meta(meta: Any) -> dict[str, Any]:
+    if isinstance(meta, str):
+        try:
+            parsed = _json.loads(meta)
+        except _json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return meta if isinstance(meta, dict) else {}
+
+
+def _encode_image_raw(data: Any) -> tuple[bytes, str]:
+    """Raw image (bytes / PIL.Image / ndarray) → `(png_or_orig_bytes, mime)`."""
+    if isinstance(data, (bytes, bytearray)):
+        b = bytes(data)
+        # Sniff the container so the `data:` URL MIME is right.
+        if b[:8] == b"\x89PNG\r\n\x1a\n":
+            return b, "image/png"
+        if b[:3] == b"\xff\xd8\xff":
+            return b, "image/jpeg"
+        if b[:6] in (b"GIF87a", b"GIF89a"):
+            return b, "image/gif"
+        if b[:4] == b"RIFF" and b[8:12] == b"WEBP":
+            return b, "image/webp"
+        return b, "image/png"  # best-effort default
+    try:
+        from PIL import Image as _PILImage
+    except ImportError as exc:  # pragma: no cover
+        raise ImportError(
+            "cairn.plot.image(...) with a raw PIL/ndarray image requires "
+            "Pillow. Install it with `pip install cairn-track[media]`."
+        ) from exc
+    import io as _io
+
+    if isinstance(data, np.ndarray):
+        arr = data
+        if arr.dtype != np.uint8:
+            # Assume float in [0,1] or already-scaled ints; clip to uint8.
+            arr = np.clip(arr, 0, 255).astype(np.uint8) if arr.max() > 1 else (
+                np.clip(arr, 0, 1) * 255
+            ).astype(np.uint8)
+        img = _PILImage.fromarray(arr)
+    elif hasattr(data, "save"):  # PIL.Image (duck-typed)
+        img = data
+    else:
+        raise TypeError(
+            "cairn.plot.image(...) raw data must be bytes, a PIL.Image, or a "
+            f"numpy array; got {type(data).__name__}"
+        )
+    buf = _io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue(), "image/png"
+
+
+def _image_element(
+    data: Any, *, data_mode: str, label: str
+) -> PlotElement:
+    """Shape a single-view image → an `image` `PlotElement`.
+
+    LOCAL bakes the PNG/JPEG bytes into the content-addressed store keyed by
+    hash + carries overlay metadata inline. ENDPOINT emits an image `DataSpec`
+    by reference (the bootstrap fetches `${endpoint}/api/artifacts/${hash}`)."""
+    if isinstance(data, DataRef):
+        ai = _artifact_info_of(data)
+        hash_ = ai.hash
+        mime = ai.mime_type or "image/png"
+        meta_str = ai.metadata if isinstance(ai.metadata, str) else (
+            _json.dumps(ai.metadata) if ai.metadata else None
+        )
+        if data_mode == "endpoint":
+            server = _endpoint_server_of(data)
+            spec = PlotSpec(
+                renderer="image",
+                data=ImageDataSpec(kind="image", hash=hash_, metadata=meta_str),
+                mode="endpoint",
+                endpoint=server,
+            )
+            return PlotElement(spec, bundle="link", server=server, label=label)
+        raw = data.run.artifact_bytes(data.tag, step=data.step)
+        store = {hash_: {"mime": mime, "b64": _base64.b64encode(raw).decode("ascii")}}
+        spec = PlotSpec(
+            renderer="image",
+            data=ImageDataSpec(kind="image", hash=hash_, metadata=meta_str),
+            mode="local",
+        )
+        return PlotElement(spec, store=store, bundle="inline", label=label)
+
+    # Raw image (PIL/ndarray/bytes) — LOCAL only (no server reference; C4).
+    if data_mode == "endpoint":
+        raise ValueError(
+            "cairn.plot.image(raw, data_mode='endpoint') is unsupported: raw "
+            "images have no server reference. Use data_mode='local' (bakes "
+            "the bytes self-contained)."
+        )
+    raw, mime = _encode_image_raw(data)
+    hash_ = _content_hash(raw)
+    store = {hash_: {"mime": mime, "b64": _base64.b64encode(raw).decode("ascii")}}
+    spec = PlotSpec(
+        renderer="image",
+        data=ImageDataSpec(kind="image", hash=hash_, metadata=None),
+        mode="local",
+    )
+    return PlotElement(spec, store=store, bundle="inline", label=label)
+
+
 def _rows_to_html_table(rows: Any) -> str:
     """Minimal, dependency-free HTML table for the `table()` raw fallback."""
     import html as _html_mod
@@ -657,65 +986,97 @@ def _rows_to_html_table(rows: Any) -> str:
     return f"<table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
 
 
-def scalar(data: Any) -> Any:
-    """A single scalar-sequence card/element.
+def scalar(data: Any, *, data_mode: str = "local") -> Any:
+    """A single scalar-sequence plot — mounts the pure `ScalarPlot` renderer.
 
     Args:
-        data: a `run[tag]` lazy handle (a tracked scalar sequence) -> a
-            server-backed `CardElement` (type ``"scalar"``); OR raw numeric
-            values (any array-like) -> a self-contained Plotly line-plot
-            `HtmlElement` (no server needed), built via `line_series`.
+        data: a `run[tag]` lazy handle (a tracked scalar sequence), OR raw
+            numeric values (any array-like) plotted against their index.
+        data_mode: ``"local"`` (default) bakes the resolved series into a
+            self-contained, offline `PlotElement`; ``"endpoint"`` links the
+            renderer JS to the source server (the data is still resolved+baked
+            — the bootstrap has no by-ref 2D fetch yet). Distinct from
+            `media_compare`'s `mode=` (the compare mode).
+
+    Returns a `PlotElement` (design spec §6).
     """
+    _check_data_mode(data_mode)
     if isinstance(data, DataRef):
-        return _card_element("scalar", [data], builder="scalar")
-    values = np.asarray(list(data), dtype=np.float64).ravel()
-    if values.size == 0:
-        raise ValueError("scalar(...) raw data must not be empty")
-    fig = line_series(list(range(values.size)), [values], keys=["value"])
-    return HtmlElement(fig.to_html(include_plotlyjs="inline", full_html=False), label="scalar")
-
-
-def figure(data: Any) -> Any:
-    """A `figure` (Plotly) card/element.
-
-    Args:
-        data: a `run[tag]` lazy handle (a tracked `figure` artifact) -> a
-            server-backed `CardElement`; OR a plotly `Figure` (e.g. from
-            `roc_curve`/`confusion_matrix`/... above, or hand-built) -> a
-            self-contained `HtmlElement` via `fig.to_html()`.
-    """
-    if isinstance(data, DataRef):
-        return _card_element("figure", [data], builder="figure")
-    if not hasattr(data, "to_html"):
-        raise TypeError(
-            "cairn.plot.figure(...) expects a run[tag] handle or a plotly "
-            f"Figure (an object with .to_html()); got {type(data).__name__}"
+        series = _scalar_series_from_ref(data)
+        return _plot_element_inline(
+            "scalar", {"series": [series]}, data_mode=data_mode, source=data,
+            label="scalar",
         )
-    return HtmlElement(data.to_html(include_plotlyjs="inline", full_html=False), label="figure")
+    series = _scalar_series_from_raw(data)
+    return _plot_element_inline(
+        "scalar", {"series": [series]}, data_mode="local", label="scalar",
+    )
 
 
-def table(data: Any) -> Any:
-    """A `table` card/element.
+def figure(data: Any, *, data_mode: str = "local") -> Any:
+    """A `figure` (Plotly) plot — mounts the pure `Figure` renderer.
 
     Args:
-        data: a `run[tag]` lazy handle (a tracked `table` artifact) -> a
-            server-backed `CardElement`; OR raw tabular data — anything with
-            a `.to_html()` method (e.g. a pandas `DataFrame`, duck-typed —
-            pandas is not a cairn dependency) or a list of dicts/rows -> a
-            self-contained `HtmlElement`.
+        data: a `run[tag]` lazy handle (a tracked `figure` artifact, whose
+            interactive Plotly source is fetched), OR a plotly `Figure` (e.g.
+            from `roc_curve`/`confusion_matrix`/… above, or hand-built).
+        data_mode: see :func:`scalar`.
+
+    Returns a `PlotElement`.
     """
+    _check_data_mode(data_mode)
     if isinstance(data, DataRef):
-        return _card_element("table", [data], builder="table")
-    if hasattr(data, "to_html"):
-        return HtmlElement(data.to_html(index=False), label="table")
-    return HtmlElement(_rows_to_html_table(data), label="table")
+        fig_json = _figure_json_from_ref(data)
+        return _plot_element_inline(
+            "figure", {"figure": fig_json}, data_mode=data_mode, source=data,
+            label="figure",
+        )
+    fig_json = _figure_json_from_plotly(data)
+    return _plot_element_inline(
+        "figure", {"figure": fig_json}, data_mode="local", label="figure",
+    )
 
 
-def image(data: Any) -> Any:
-    """A single-view `image` card. `data` must be a `run[tag]` handle —
-    raw images have no card-spec representation yet (see `_resolve_series`;
-    WS-INLINE, deferred)."""
-    return _card_element("image", [data], builder="image")
+def table(data: Any, *, data_mode: str = "local") -> Any:
+    """A `table` plot — mounts the pure `Table` renderer.
+
+    Args:
+        data: a `run[tag]` lazy handle (a tracked `table` artifact), OR raw
+            tabular data (a pandas `DataFrame` — duck-typed, pandas is not a
+            cairn dependency; a list of row-dicts; or a list of rows).
+        data_mode: see :func:`scalar`.
+
+    Returns a `PlotElement`.
+    """
+    _check_data_mode(data_mode)
+    if isinstance(data, DataRef):
+        tbl = _table_json_from_ref(data)
+        return _plot_element_inline(
+            "table", {"table": tbl}, data_mode=data_mode, source=data,
+            label="table", height=200,
+        )
+    tbl = _table_json_from_raw(data)
+    return _plot_element_inline(
+        "table", {"table": tbl}, data_mode="local", label="table", height=200,
+    )
+
+
+def image(data: Any, *, data_mode: str = "local") -> Any:
+    """A single-view `image` plot — mounts the pure `ImagePane` renderer.
+
+    Args:
+        data: a `run[tag]` lazy handle (a tracked `image` artifact, bytes +
+            overlay metadata), OR a raw image (`PIL.Image`, a numpy array, or
+            PNG/JPEG `bytes`) — baked self-contained (LOCAL only; C4).
+        data_mode: ``"local"`` (default) bakes the image bytes into the
+            content-addressed store; ``"endpoint"`` emits an image `DataSpec`
+            by reference (the bootstrap fetches from the server). Raw images
+            support only ``"local"``.
+
+    Returns a `PlotElement`.
+    """
+    _check_data_mode(data_mode)
+    return _image_element(data, data_mode=data_mode, label="image")
 
 
 def mesh(data: Any) -> Any:

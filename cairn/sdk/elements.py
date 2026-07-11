@@ -301,3 +301,136 @@ class CardElement(Element):
 
     def __repr__(self) -> str:
         return f"CardElement(type={self.spec.get('type')!r}, series={len(self.spec.get('series', []))})"
+
+
+class PlotElement(Element):
+    """A plots-only display object that mounts a PURE ``cairn-plot`` renderer
+    (WS-PLOT / design spec §6) — the default return of the ``cairn.plot.*``
+    builders, replacing the ``/embed/card`` iframe (``CardElement``).
+
+    It emits, plotly-``include_plotlyjs``-style, three include-once-guarded
+    pieces per page (design spec §5–§7):
+
+      1. the **renderer bundle** — the self-contained IIFE + design-token CSS
+         inlined ONCE (LOCAL default, ``bundle="inline"``, offline), guarded by
+         ``window.__cairnPlotBundleLoaded``; or a ``<script type=module
+         src=…/assets/plot-*.js>`` linked from a reachable server
+         (``bundle="link"``, the ENDPOINT companion, deduped by module URL);
+      2. the **content-addressed store** (LOCAL only) — the baked binary blobs
+         (image/npz bytes) merged additively into ``window.__cairnPlotStore``;
+      3. the **mount** — a ``<div>`` + the descriptor
+         ``<script application/cairn-plot+json>`` + a queue ``push`` so N plots
+         mount independently on one page.
+
+    A display hook NEVER raises: a missing dist / serialization failure
+    degrades to a visible inline message.
+    """
+
+    def __init__(
+        self,
+        spec: Any,
+        *,
+        store: dict[str, dict[str, str]] | None = None,
+        bundle: str = "inline",
+        server: str | None = None,
+        label: str = "plot",
+        height: int | None = None,
+    ) -> None:
+        self.spec = spec  # a PlotSpec (card_spec.PlotSpec) or a plain dict
+        self._store = store or {}
+        self._bundle = bundle
+        self._server = server
+        self._label = label
+        self._height = height
+
+    # ---- serialization ----
+
+    def _descriptor_dict(self) -> dict[str, Any]:
+        spec = self.spec
+        if hasattr(spec, "model_dump"):
+            return spec.model_dump(exclude_none=True, mode="json")
+        return dict(spec)
+
+    # ---- rendering ----
+
+    def _bundle_html(self) -> str:
+        from . import _plot_bundle as pb
+
+        if self._bundle == "link":
+            server = (self._server or "").rstrip("/")
+            if not server:
+                raise ValueError("PlotElement(bundle='link') requires a server URL")
+            js_url, css_url = pb.link_asset_urls(server)
+            css_tag = (
+                f'<link rel="stylesheet" href="{_html.escape(css_url)}">' if css_url else ""
+            )
+            # A module is evaluated once per URL per realm, so repeating this
+            # across cells is naturally include-once.
+            return (
+                f"{css_tag}"
+                f'<script type="module" src="{_html.escape(js_url)}" crossorigin></script>'
+            )
+
+        # inline (default): one guarded classic <script> injects the CSS as a
+        # <style> then runs the IIFE (which sets __cairnPlotBundleLoaded).
+        css_js = pb.json_script_safe(pb.inline_bundle_css())
+        js = pb.inline_bundle_js()
+        return (
+            "<script>if(!window.__cairnPlotBundleLoaded){"
+            "(function(){var s=document.createElement('style');"
+            f"s.textContent={css_js};document.head.appendChild(s);}})();\n"
+            f"{js}\n}}</script>"
+        )
+
+    def _store_html(self, store_id: str) -> str:
+        from . import _plot_bundle as pb
+
+        if self._bundle != "inline" or not self._store:
+            return ""
+        blob = pb.json_script_safe(self._store)
+        eid = json.dumps(store_id)
+        return (
+            f'<script type="application/cairn-plot-store+json" id="{_html.escape(store_id)}">'
+            f"{blob}</script>"
+            "<script>window.__cairnPlotStore=window.__cairnPlotStore||{};"
+            f"Object.assign(window.__cairnPlotStore,JSON.parse(document.getElementById({eid}).textContent));"
+            "</script>"
+        )
+
+    def _mount_html(self, div_id: str, desc_id: str) -> str:
+        from . import _plot_bundle as pb
+
+        descriptor = pb.json_script_safe(self._descriptor_dict())
+        min_h = self._height if self._height is not None else 60
+        did, sid = json.dumps(div_id), json.dumps(desc_id)
+        return (
+            f'<div id="{_html.escape(div_id)}" class="cairn-plot-mount" '
+            f'style="min-height:{int(min_h)}px"></div>'
+            f'<script type="application/cairn-plot+json" id="{_html.escape(desc_id)}">'
+            f"{descriptor}</script>"
+            f"<script>(window.__cairnPlotQueue=window.__cairnPlotQueue||[]).push([{did},{sid}]);</script>"
+        )
+
+    def _repr_html_(self) -> str:
+        try:
+            import uuid as _uuid
+
+            uid = _uuid.uuid4().hex[:12]
+            div_id = f"cairn-plot-{uid}"
+            desc_id = f"cairn-plot-desc-{uid}"
+            store_id = f"__cairn_plot_store__{uid}"
+            return (
+                self._bundle_html()
+                + self._store_html(store_id)
+                + self._mount_html(div_id, desc_id)
+            )
+        except Exception as exc:  # noqa: BLE001 - display hooks must never raise
+            log.debug("cairn PlotElement render failed: %s", exc)
+            return (
+                "<pre>cairn-plot: could not render this plot "
+                f"({_html.escape(type(exc).__name__)}: {_html.escape(str(exc))}).</pre>"
+            )
+
+    def __repr__(self) -> str:
+        renderer = self._descriptor_dict().get("renderer", "?") if self.spec else "?"
+        return f"<cairn.plot.{self._label} (renderer={renderer!r}, mode={self._bundle})>"

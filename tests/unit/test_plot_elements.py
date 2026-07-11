@@ -24,9 +24,29 @@ import pytest
 
 import cairn
 import cairn.plot as cplot
-from cairn.sdk.card_spec import CardSpec, CardsSpec, RunsSpec
-from cairn.sdk.elements import CardElement, HtmlElement
+from cairn.sdk import _plot_bundle as _pb
+from cairn.sdk.card_spec import CardSpec, CardsSpec, PlotSpec, RunsSpec
+from cairn.sdk.elements import CardElement, HtmlElement, PlotElement
 from cairn.sdk.reader import DataRef, Reader
+
+
+def _descriptor_of(el: PlotElement) -> dict:
+    """Parse the `application/cairn-plot+json` descriptor out of a
+    PlotElement's emitted HTML, undoing the M1 `<`/`>`/`&` script-escaping."""
+    import re
+
+    html = el._repr_html_()
+    m = re.search(
+        r'application/cairn-plot\+json" id="[^"]+">(.*?)</script>', html, re.S
+    )
+    assert m, "no descriptor script found in PlotElement HTML"
+    raw = (
+        m.group(1)
+        .replace("\\u003c", "<")
+        .replace("\\u003e", ">")
+        .replace("\\u0026", "&")
+    )
+    return json.loads(raw)
 
 
 @pytest.fixture
@@ -113,16 +133,20 @@ def _validate_card_spec(spec_dict: dict) -> CardSpec:
     return CardSpec.model_validate(spec_dict)
 
 
-def test_scalar_with_dataref_emits_schema_valid_spec(two_runs):
+def test_scalar_with_dataref_emits_schema_valid_plot(two_runs):
     _reader, run_a, _run_b = two_runs
     el = cplot.scalar(run_a["loss"])
-    assert isinstance(el, CardElement)
-    spec = _validate_card_spec(el.spec)
-    assert spec.type == "scalar"
-    assert len(spec.series) == 1
-    assert spec.series[0].runId == run_a.id
-    assert spec.series[0].name == "loss"
-    assert spec.series[0].context_hash == ""
+    assert isinstance(el, PlotElement)
+    desc = _descriptor_of(el)
+    spec = PlotSpec.model_validate(desc)  # schema-valid round-trip
+    assert spec.renderer == "scalar"
+    assert spec.mode == "local"
+    series = desc["data"]["props"]["series"]
+    assert len(series) == 1
+    assert series[0]["label"] == "loss"
+    # loss = [0.0, 0.1, 0.2] tracked at steps 0..2.
+    assert [p["y"] for p in series[0]["points"]] == [0.0, 0.1, 0.2]
+    assert [p["x"] for p in series[0]["points"]] == [0, 1, 2]
 
 
 def test_media_compare_sets_two_series_and_mode(two_runs):
@@ -149,18 +173,17 @@ def test_media_compare_rejects_bad_mode(two_runs):
 @pytest.mark.parametrize(
     "fn,card_type",
     [
-        (cplot.image, "image"),
+        # 3D single-view builders remain CardElement (iframe) — Phase D.
         (cplot.mesh, "mesh"),
         (cplot.pointcloud, "pointcloud"),
         (cplot.volume, "volume"),
         (cplot.boxes, "boxes3d"),
-        (cplot.table, "table"),
-        (cplot.figure, "figure"),
     ],
 )
-def test_single_view_builders_emit_correct_card_type(two_runs, fn, card_type):
+def test_single_view_3d_builders_still_emit_cardelement(two_runs, fn, card_type):
     _reader, run_a, _run_b = two_runs
     el = fn(run_a["thing"])
+    assert isinstance(el, CardElement)
     spec = _validate_card_spec(el.spec)
     assert spec.type == card_type
     assert spec.series[0].runId == run_a.id
@@ -186,17 +209,21 @@ def test_typed_compare_wrappers_delegate_to_media_compare(two_runs, fn, card_typ
 
 
 def test_dataref_step_becomes_settings_step(two_runs):
+    # Step→settings threading is a CardElement (3D/compare) concern; scalar is
+    # now a PlotElement that bakes the whole sequence.
     _reader, run_a, _run_b = two_runs
-    el = cplot.scalar(run_a["loss"][2])
+    el = cplot.mesh(run_a["loss"][2])
     spec = _validate_card_spec(el.spec)
     assert spec.settings is not None
     assert spec.settings.model_dump(exclude_none=True).get("step") == 2.0
 
 
 @pytest.mark.parametrize(
-    "fn", [cplot.image, cplot.mesh, cplot.pointcloud, cplot.volume, cplot.boxes]
+    "fn", [cplot.mesh, cplot.pointcloud, cplot.volume, cplot.boxes]
 )
 def test_raw_media_data_raises_notimplemented_pointing_at_ws_inline(fn):
+    # 3D raw data still has no self-contained render path (Phase D). `image`
+    # is now supported (raw → baked LOCAL PlotElement) — tested separately.
     raw = np.zeros((4, 4, 3), dtype=np.uint8)
     with pytest.raises(NotImplementedError, match="WS-INLINE"):
         fn(raw)
@@ -209,20 +236,26 @@ def test_media_compare_raw_data_raises_notimplemented():
         cplot.media_compare(raw_a, raw_b)
 
 
-@pytest.mark.media
-def test_scalar_raw_data_falls_back_to_self_contained_html():
+def test_scalar_raw_data_bakes_local_plot_element():
     el = cplot.scalar([1.0, 2.0, 3.0, 2.5])
-    assert isinstance(el, HtmlElement)
-    html = el._repr_html_()
-    assert "<div" in html or "plotly" in html.lower()
+    assert isinstance(el, PlotElement)
+    desc = _descriptor_of(el)
+    assert PlotSpec.model_validate(desc).renderer == "scalar"
+    assert [p["y"] for p in desc["data"]["props"]["series"][0]["points"]] == [
+        1.0, 2.0, 3.0, 2.5,
+    ]
 
 
 @pytest.mark.media
-def test_figure_raw_plotly_figure_falls_back_to_self_contained_html():
+def test_figure_raw_plotly_figure_bakes_local_plot_element():
     fig = cplot.roc_curve([0, 1, 1, 0], [0.1, 0.9, 0.8, 0.2])
     el = cplot.figure(fig)
-    assert isinstance(el, HtmlElement)
-    assert "plotly" in el._repr_html_().lower()
+    assert isinstance(el, PlotElement)
+    desc = _descriptor_of(el)
+    assert PlotSpec.model_validate(desc).renderer == "figure"
+    fig_json = desc["data"]["props"]["figure"]
+    assert "data" in fig_json and "layout" in fig_json
+    assert len(fig_json["data"]) >= 1
 
 
 def test_figure_rejects_non_figure_raw_data():
@@ -230,18 +263,97 @@ def test_figure_rejects_non_figure_raw_data():
         cplot.figure(object())
 
 
-def test_table_raw_list_of_dicts_falls_back_to_html_table():
+def test_table_raw_list_of_dicts_bakes_local_plot_element():
     el = cplot.table([{"a": 1, "b": 2}, {"a": 3, "b": 4}])
-    assert isinstance(el, HtmlElement)
+    assert isinstance(el, PlotElement)
+    desc = _descriptor_of(el)
+    assert PlotSpec.model_validate(desc).renderer == "table"
+    tbl = desc["data"]["props"]["table"]
+    assert [c["name"] for c in tbl["columns"]] == ["a", "b"]
+    assert tbl["data"] == [[1, 2], [3, 4]]
+
+
+def test_image_raw_bytes_bakes_into_store():
+    # 1x1 PNG.
+    png = bytes.fromhex(
+        "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489"
+        "0000000d4944415478da6360000002000154a24f5f0000000049454e44ae426082"
+    )
+    el = cplot.image(png)
+    assert isinstance(el, PlotElement)
     html = el._repr_html_()
-    assert "<table" in html and "<th>a</th>" in html and "<td>1</td>" in html
+    assert "application/cairn-plot-store+json" in html
+    desc = _descriptor_of(el)
+    assert desc["data"]["kind"] == "image"
+    assert desc["data"]["hash"].startswith("sha256:")
+    # The store carries the baked bytes keyed by that hash.
+    assert desc["data"]["hash"] in el._store
+    assert el._store[desc["data"]["hash"]]["mime"] == "image/png"
+
+
+@pytest.mark.media
+def test_image_dataref_bakes_bytes_into_store(tmp_path):
+    from PIL import Image as PILImage
+
+    repo = tmp_path / ".cairn"
+    run = cairn.Run(
+        project="pyapi-img", name="r", repo=str(repo),
+        capture_source=False, capture_stdout=False, capture_env=False,
+        capture_system_metrics=False,
+    )
+    rid = run.id
+    img = PILImage.new("RGB", (3, 2), (10, 20, 30))
+    run.track(cairn.Image(img), name="pic", step=0)
+    run.finish()
+
+    reader = Reader(repo=str(repo))
+    try:
+        el = cplot.image(reader.run(rid)["pic"])
+        assert isinstance(el, PlotElement)
+        desc = _descriptor_of(el)
+        assert PlotSpec.model_validate(desc).renderer == "image"
+        h = desc["data"]["hash"]
+        assert h in el._store and el._store[h]["mime"].startswith("image/")
+        # The baked bytes decode back to a PNG/image.
+        import base64
+
+        assert base64.b64decode(el._store[h]["b64"])[:4] in (b"\x89PNG", b"\xff\xd8\xff\xe0")
+    finally:
+        reader.close()
+
+
+def test_table_dataref_shapes_columns_and_rows(tmp_path):
+    repo = tmp_path / ".cairn"
+    run = cairn.Run(
+        project="pyapi-tbl", name="r", repo=str(repo),
+        capture_source=False, capture_stdout=False, capture_env=False,
+        capture_system_metrics=False,
+    )
+    rid = run.id
+    run.track(
+        cairn.Table(columns=["epoch", "acc"], data=[[1, 0.5], [2, 0.9]]),
+        name="metrics",
+    )
+    run.finish()
+
+    reader = Reader(repo=str(repo))
+    try:
+        el = cplot.table(reader.run(rid)["metrics"])
+        assert isinstance(el, PlotElement)
+        desc = _descriptor_of(el)
+        tbl = desc["data"]["props"]["table"]
+        assert [c["name"] for c in tbl["columns"]] == ["epoch", "acc"]
+        assert tbl["data"] == [[1, 0.5], [2, 0.9]]
+    finally:
+        reader.close()
 
 
 def test_card_element_spec_is_reusable_in_a_cairn_fence_shaped_doc(two_runs):
     """Sanity check that a built spec composes into a `CardsSpec` (the
-    ```cairn fence root) without further translation — no card-spec fork."""
+    ```cairn fence root) without further translation — no card-spec fork.
+    (Uses a 3D builder, which still emits a `CardElement` spec.)"""
     _reader, run_a, _run_b = two_runs
-    el = cplot.scalar(run_a["loss"])
+    el = cplot.mesh(run_a["loss"])
     doc = CardsSpec(runs=RunsSpec(ids=[run_a.id]), cards=[CardSpec.model_validate(el.spec)])
     assert doc.cards[0].series[0].runId == run_a.id
 
@@ -349,7 +461,9 @@ def test_plot_builder_threads_repo_path_and_autodiscovers_live_server(two_runs, 
     dd = DataDir(repo_path)
     dd.add_live_server("ui", host=parts.hostname, port=parts.port)
     try:
-        el = cplot.scalar(run_a["loss"])
+        # A 3D builder still returns a CardElement (iframe) whose server is
+        # auto-discovered from the Reader's repo — the path this fix targets.
+        el = cplot.mesh(run_a["loss"])
         assert el._repo_path == repo_path
         html = el._repr_html_()
         assert f"http://localhost:{parts.port}/embed/card?sid=" in html
@@ -388,7 +502,8 @@ def test_plot_builder_threads_reader_server_end_to_end(two_runs_http_reader):
     from urllib.parse import urlsplit
 
     port = urlsplit(reader._backend.server_url).port
-    el = cplot.scalar(run_a["loss"])
+    # 3D builder → CardElement iframe against the reader's own server.
+    el = cplot.mesh(run_a["loss"])
     html = el._repr_html_()
     assert f":{port}/embed/card?sid=" in html
     sid = html.split("sid=", 1)[1].split('"', 1)[0]
