@@ -237,36 +237,291 @@ class Component:
 # ---------------------------------------------------------------------------
 
 
-class Scalar(Component):
-    """A single scalar-sequence plot (mounts the pure ``ScalarPlot`` renderer).
+class Line(Component):
+    """A line chart (mounts the pure ``ScalarPlot`` renderer, key ``scalar``).
 
-    ``data``: a ``run[tag]`` handle (a tracked scalar sequence) OR raw numeric
-    values plotted against their index. Raw data is always ``local``."""
+    Raw data is the primary input (Plotly-style):
 
-    _label = "scalar"
+    * ``cp.Line(y)`` — a single 1-D sequence plotted against its integer index;
+    * ``cp.Line(y, x)`` — an explicit shared x-axis;
+    * ``cp.Line({"loss": ya, "val": yb})`` — one named series per dict entry;
+    * ``cp.Line([[...], [...]])`` — a 2-D array, one series per row;
+    * ``cp.Line(run["loss"])`` — convenience: a tracked scalar sequence.
 
-    def __init__(self, data: Any, *, data_mode: str = "local") -> None:
+    ``label`` names the single-series case. Raw data is always ``local``;
+    a ``run[tag]`` handle honours ``data_mode`` (``"endpoint"`` links the
+    renderer to the source server).
+    """
+
+    _label = "line"
+
+    def __init__(
+        self, y: Any, x: Any = None, *, label: str | None = None, data_mode: str = "local"
+    ) -> None:
         from ..plot import (
             _check_data_mode,
-            _scalar_series_from_raw,
+            _line_series_list,
             _scalar_series_from_ref,
         )
 
         _check_data_mode(data_mode)
-        if isinstance(data, DataRef):
-            series = _scalar_series_from_ref(data)
-            self._source: Any = data
+        if isinstance(y, DataRef):
+            series = [_scalar_series_from_ref(y)]
+            self._source: Any = y
             self._data_mode = data_mode
         else:
-            series = _scalar_series_from_raw(data)
+            series = _line_series_list(y, x=x, label=label)
             self._source = None
             self._data_mode = "local"
-        self._inline = {"series": [series]}
+        self._inline = {"series": series}
 
     def to_node(self) -> dict[str, Any]:
         return {
             "kind": "plot",
             "renderer": "scalar",
+            "data": {"kind": "inline", "props": self._inline},
+        }
+
+
+# ``cp.Scalar`` is the deprecated pre-G2 name for a line chart — a scalar
+# sequence IS a line plot. Kept as a thin alias (case-sensitive; distinct from
+# the lowercase ``cp.scalar`` builder that returns a ``PlotElement``).
+Scalar = Line
+
+
+class Scatter(Component):
+    """A scatter plot (renderer key ``scatter``).
+
+    ``cp.Scatter(x, y, *, color=None, labels=None, x_label=None, y_label=None,
+    color_label=None, x_log=False, y_log=False)``. ``color`` is a per-point
+    numeric value mapped through the viridis colorbar. Raw-only (``local``)."""
+
+    _label = "scatter"
+
+    def __init__(
+        self,
+        x: Any,
+        y: Any,
+        *,
+        color: Any = None,
+        labels: Any = None,
+        x_label: str | None = None,
+        y_label: str | None = None,
+        color_label: str | None = None,
+        x_log: bool = False,
+        y_log: bool = False,
+    ) -> None:
+        from ..plot import _scatter_points_from_raw
+
+        points = _scatter_points_from_raw(x, y, color=color, labels=labels)
+        self._inline = {"points": points}
+        cfg: dict[str, Any] = {}
+        if x_label is not None:
+            cfg["xLabel"] = x_label
+        if y_label is not None:
+            cfg["yLabel"] = y_label
+        if color_label is not None:
+            cfg["colorLabel"] = color_label
+        if x_log:
+            cfg["xLog"] = True
+        if y_log:
+            cfg["yLog"] = True
+        self._config = cfg
+
+    def to_node(self) -> dict[str, Any]:
+        node: dict[str, Any] = {
+            "kind": "plot",
+            "renderer": "scatter",
+            "data": {"kind": "inline", "props": self._inline},
+        }
+        if self._config:
+            node["props"] = self._config
+        return node
+
+
+class Bar(Component):
+    """A bar chart (renderer key ``bar``).
+
+    ``cp.Bar(values, *, labels=None, colors=None, value_label=None,
+    log_x=False)``. Labels default to the bar index. Raw-only (``local``).
+    Distinct from the lowercase ``cp.bar`` plotly-recipe (returns a
+    ``go.Figure``); this capitalized native composable emits a ``PlotElement``."""
+
+    _label = "bar"
+
+    def __init__(
+        self,
+        values: Any,
+        *,
+        labels: Any = None,
+        colors: Any = None,
+        value_label: str | None = None,
+        log_x: bool = False,
+    ) -> None:
+        from ..plot import _bar_data_from_raw
+
+        self._inline = {"bars": _bar_data_from_raw(values, labels=labels, colors=colors)}
+        cfg: dict[str, Any] = {}
+        if value_label is not None:
+            cfg["valueLabel"] = value_label
+        if log_x:
+            cfg["logX"] = True
+        self._config = cfg
+
+    def to_node(self) -> dict[str, Any]:
+        node: dict[str, Any] = {
+            "kind": "plot",
+            "renderer": "bar",
+            "data": {"kind": "inline", "props": self._inline},
+        }
+        if self._config:
+            node["props"] = self._config
+        return node
+
+
+class Histogram(Component):
+    """A histogram (renderer key ``histogram``, ``view="bars"``).
+
+    ``cp.Histogram(x, *, bins=30)`` computes ``counts``/``edges`` via
+    ``numpy.histogram``; or pass precomputed ``cp.Histogram(counts=...,
+    edges=...)`` (``len(edges) == len(counts) + 1``). Raw-only (``local``)."""
+
+    _label = "histogram"
+
+    def __init__(
+        self,
+        x: Any = None,
+        *,
+        bins: int = 30,
+        counts: Any = None,
+        edges: Any = None,
+        log_y: bool = False,
+    ) -> None:
+        from ..plot import _histogram_check_precomputed, _histogram_from_samples
+
+        if counts is not None or edges is not None:
+            if x is not None:
+                raise ValueError(
+                    "cp.Histogram(...): pass samples `x` OR precomputed "
+                    "`counts`/`edges`, not both"
+                )
+            if counts is None or edges is None:
+                raise ValueError(
+                    "cp.Histogram(counts=..., edges=...): both counts and edges "
+                    "are required for the precomputed form"
+                )
+            c, e = _histogram_check_precomputed(counts, edges)
+        else:
+            if x is None:
+                raise ValueError(
+                    "cp.Histogram(...) requires either samples `x` or precomputed "
+                    "`counts`/`edges`"
+                )
+            c, e = _histogram_from_samples(x, bins=bins)
+        self._inline = {"counts": c, "edges": e}
+        self._config: dict[str, Any] = {"view": "bars"}
+        if log_y:
+            self._config["logY"] = True
+
+    def to_node(self) -> dict[str, Any]:
+        return {
+            "kind": "plot",
+            "renderer": "histogram",
+            "props": self._config,
+            "data": {"kind": "inline", "props": self._inline},
+        }
+
+
+class Heatmap(Component):
+    """A heatmap (renderer key ``heatmap``).
+
+    ``cp.Heatmap(z, *, colormap="viridis", zmin=None, zmax=None,
+    log_color=False, origin_top=True, x_label=None, y_label=None,
+    value_label=None)`` where ``z`` is a 2-D array (``matrix[y][x]``).
+    Convenience: ``cp.Heatmap(run["confusion"])`` deserializes a 2-D artifact.
+    ``colormap`` is one of ``viridis``/``red-green``/``red-blue``."""
+
+    _label = "heatmap"
+
+    def __init__(
+        self,
+        z: Any,
+        *,
+        colormap: str = "viridis",
+        zmin: float | None = None,
+        zmax: float | None = None,
+        log_color: bool = False,
+        origin_top: bool = True,
+        x_label: str | None = None,
+        y_label: str | None = None,
+        value_label: str | None = None,
+        data_mode: str = "local",
+    ) -> None:
+        from ..plot import _check_data_mode, _heatmap_matrix_from_raw
+
+        _check_data_mode(data_mode)
+        if isinstance(z, DataRef):
+            arr = z.run.artifact(z.tag, step=z.step)
+            matrix = _heatmap_matrix_from_raw(arr)
+            self._source: Any = z
+            self._data_mode = data_mode
+        else:
+            matrix = _heatmap_matrix_from_raw(z)
+            self._source = None
+            self._data_mode = "local"
+        self._inline = {"matrix": matrix}
+        cfg: dict[str, Any] = {"colormap": colormap}
+        if zmin is not None:
+            cfg["min"] = zmin
+        if zmax is not None:
+            cfg["max"] = zmax
+        if log_color:
+            cfg["logColor"] = True
+        # The renderer defaults originTop=true; only emit when overridden false.
+        if not origin_top:
+            cfg["originTop"] = False
+        if x_label is not None:
+            cfg["xLabel"] = x_label
+        if y_label is not None:
+            cfg["yLabel"] = y_label
+        if value_label is not None:
+            cfg["valueLabel"] = value_label
+        self._config = cfg
+
+    def to_node(self) -> dict[str, Any]:
+        return {
+            "kind": "plot",
+            "renderer": "heatmap",
+            "props": self._config,
+            "data": {"kind": "inline", "props": self._inline},
+        }
+
+
+class ParallelCoordinates(Component):
+    """A parallel-coordinates plot (renderer key ``parallel``).
+
+    ``cp.ParallelCoordinates(dimensions)`` where ``dimensions`` is a list of
+    ``{label, values}`` dicts (Plotly-style), a ``{label: values}`` dict, or a
+    pandas ``DataFrame`` (duck-typed). Numeric columns keep their scale;
+    non-numeric columns are treated categorically (first-seen index). The last
+    column drives the line color. Raw-only (``local``)."""
+
+    _label = "parallel"
+
+    def __init__(self, dimensions: Any) -> None:
+        from ..plot import _parallel_from_dimensions
+
+        columns, rows, column_domains = _parallel_from_dimensions(dimensions)
+        self._inline = {
+            "columns": columns,
+            "rows": rows,
+            "columnDomains": column_domains,
+        }
+
+    def to_node(self) -> dict[str, Any]:
+        return {
+            "kind": "plot",
+            "renderer": "parallel",
             "data": {"kind": "inline", "props": self._inline},
         }
 
@@ -423,7 +678,8 @@ def _as_component(obj: Any) -> Component:
         return obj
     raise TypeError(
         f"cp.Grid/Compare children must be cairn.plot Components "
-        f"(cp.Scalar/Image/Figure/Table/Compare/Grid), got {type(obj).__name__}"
+        f"(cp.Line/Scatter/Bar/Histogram/Heatmap/ParallelCoordinates/Image/"
+        f"Figure/Table/Compare/Grid), got {type(obj).__name__}"
     )
 
 
@@ -467,11 +723,6 @@ class Grid(Component):
                     )
             flat = [_as_component(c) for row in children for c in row]
             derived_cols = ncols
-            if row_heights is not None and len(list(row_heights)) != nrows:
-                raise ValueError(
-                    f"cp.Grid(row_heights=...) must have one entry per row "
-                    f"({nrows}); got {len(list(row_heights))}."
-                )
         else:
             if any(isinstance(row, (list, tuple)) for row in children):
                 raise TypeError(
@@ -483,6 +734,21 @@ class Grid(Component):
 
         self._children = flat
         self._cols = cols if cols is not None else derived_cols
+        # m1: validate col_widths/row_heights against the EFFECTIVE grid shape
+        # (works for both 1-D auto-flow and 2-D grids). Effective columns is the
+        # resolved `cols`; effective rows is how many rows the children fill.
+        eff_cols = self._cols
+        eff_rows = -(-len(flat) // eff_cols) if eff_cols else 0  # ceil-div
+        if col_widths is not None and len(list(col_widths)) != eff_cols:
+            raise ValueError(
+                f"cp.Grid(col_widths=...) must have one entry per column "
+                f"({eff_cols}); got {len(list(col_widths))}."
+            )
+        if row_heights is not None and len(list(row_heights)) != eff_rows:
+            raise ValueError(
+                f"cp.Grid(row_heights=...) must have one entry per row "
+                f"({eff_rows}); got {len(list(row_heights))}."
+            )
         self._col_widths = list(col_widths) if col_widths is not None else None
         self._row_heights = list(row_heights) if row_heights is not None else None
         self._gap = gap
