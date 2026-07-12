@@ -4,10 +4,16 @@ The Python emit (``PlotElement`` in ``elements.py``) ships the SAME pure
 ``cairn-plot`` renderers the viewer app uses — read from the committed Vite
 ``dist/`` — in one of two shapes:
 
-* **inline** (default, offline/self-contained): the single-file IIFE
-  ``dist/plot-inline/plot-inline.iife.js`` + its ``style.css`` (built by
-  ``vite.plot-inline.config.ts``). No ``/assets`` requests, works on
-  ``file://`` with no server. This is the LOCAL data-mode companion.
+* **inline** (default, offline/self-contained): O2 bundle-split — a small
+  **core** IIFE ``dist/plot-inline/core.iife.js`` + its ``style.css`` (built by
+  ``vite.plot-core.config.ts``) carries the bootstrap + 2D/image/table
+  renderers and is emitted for EVERY plot; the **figure addon**
+  ``dist/plot-inline/figure.iife.js`` (built by ``vite.plot-figure.config.ts``)
+  carries Plotly + the Figure renderer and is emitted ONLY for a ``figure``
+  element. Both are self-contained (no ``/assets`` requests, work on
+  ``file://`` with no server) and each is include-once guarded, so a page with
+  a figure + a scalar loads core once + the figure addon once. This is the
+  LOCAL data-mode companion.
 * **link** (opt-in, needs a reachable server): a ``<script type="module"
   src="…/assets/plot-*.js">`` pointed at the code-split ``plot.html`` build,
   resolved from ``dist/plot.html`` so the hashed filename is never stale. The
@@ -34,8 +40,13 @@ from typing import Any
 # ``cairn/ui/dist`` relative to this file (``cairn/sdk/_plot_bundle.py``).
 _DIST = Path(__file__).resolve().parent.parent / "ui" / "dist"
 _INLINE_DIR = _DIST / "plot-inline"
-_INLINE_JS = _INLINE_DIR / "plot-inline.iife.js"
-_INLINE_CSS = _INLINE_DIR / "style.css"
+# O2 bundle-split: core (always) + figure addon (only for `figure` elements).
+_CORE_JS = _INLINE_DIR / "core.iife.js"
+# The core design-token CSS. `vite.plot-core.config.ts` pins the emitted
+# filename to `style.css` (via `cssFileName: "style"`, robust to a future vite
+# honoring the option) — keep this path in lock-step with that config.
+_CORE_CSS = _INLINE_DIR / "style.css"
+_FIGURE_JS = _INLINE_DIR / "figure.iife.js"
 _PLOT_HTML = _DIST / "plot.html"
 
 
@@ -83,22 +94,49 @@ def js_inline_safe(js: str) -> str:
 
 
 @lru_cache(maxsize=1)
-def inline_bundle_js() -> str:
-    """The self-contained IIFE bundle JS (``</script``-guarded)."""
-    if not _INLINE_JS.exists():
+def inline_core_js() -> str:
+    """The self-contained **core** IIFE JS (bootstrap + 2D/image/table
+    renderers; NO Plotly/three.js), ``</script``-guarded. Emitted for EVERY
+    inline plot."""
+    if not _CORE_JS.exists():
         raise BundleUnavailable(
-            f"cairn-plot inline bundle missing at {_INLINE_JS}. Rebuild with "
+            f"cairn-plot core bundle missing at {_CORE_JS}. Rebuild with "
             "`cd cairn/ui && npm run build:plot-inline` (and commit dist/)."
         )
-    return js_inline_safe(_INLINE_JS.read_text(encoding="utf-8"))
+    return js_inline_safe(_CORE_JS.read_text(encoding="utf-8"))
 
 
 @lru_cache(maxsize=1)
+def inline_core_css() -> str:
+    """The design-token CSS (``bg-bg``/``text-fg`` …) for the core bundle."""
+    if not _CORE_CSS.exists():
+        raise BundleUnavailable(f"cairn-plot core CSS missing at {_CORE_CSS}.")
+    return _CORE_CSS.read_text(encoding="utf-8")
+
+
+@lru_cache(maxsize=1)
+def inline_figure_addon_js() -> str:
+    """The self-contained **figure addon** IIFE JS (Plotly + Figure renderer;
+    reuses core's React via ``window.__cairnPlotReact``), ``</script``-guarded.
+    Emitted ONLY for a ``figure`` element."""
+    if not _FIGURE_JS.exists():
+        raise BundleUnavailable(
+            f"cairn-plot figure addon missing at {_FIGURE_JS}. Rebuild with "
+            "`cd cairn/ui && npm run build:plot-inline` (and commit dist/)."
+        )
+    return js_inline_safe(_FIGURE_JS.read_text(encoding="utf-8"))
+
+
+# Backward-compatible aliases (pre-O2 names) → the core bundle. Kept so the
+# Phase C emit/XSS tests and any external callers still resolve.
+def inline_bundle_js() -> str:
+    """Deprecated alias for :func:`inline_core_js` (pre-O2 name)."""
+    return inline_core_js()
+
+
 def inline_bundle_css() -> str:
-    """The design-token CSS (``bg-bg``/``text-fg`` …) for the inline bundle."""
-    if not _INLINE_CSS.exists():
-        raise BundleUnavailable(f"cairn-plot inline CSS missing at {_INLINE_CSS}.")
-    return _INLINE_CSS.read_text(encoding="utf-8")
+    """Deprecated alias for :func:`inline_core_css` (pre-O2 name)."""
+    return inline_core_css()
 
 
 @lru_cache(maxsize=1)

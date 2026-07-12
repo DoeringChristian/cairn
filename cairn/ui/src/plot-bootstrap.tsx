@@ -17,7 +17,13 @@
  *    (`dist/plot-inline/plot-inline.iife.js`) Python inlines for the offline
  *    LOCAL default (no server, no external network).
  */
-import React, { Suspense, useEffect, useRef, useState } from "react";
+import React, {
+  Suspense,
+  useEffect,
+  useRef,
+  useState,
+  type ComponentType,
+} from "react";
 import ReactDOM from "react-dom/client";
 import {
   createEndpointDataSource,
@@ -27,10 +33,19 @@ import {
 } from "./lib/cairn-plot";
 import { useEmitAutoHeight } from "./lib/emit-auto-height";
 import { resolveDataProps, type PlotDescriptor } from "./plot-descriptor";
-import { RENDERER_MAP } from "./plot-renderers";
+import { getRenderer, onRegister, registerRenderer } from "./plot-registry";
 
 const DESCRIPTOR_SCRIPT_ID = "__cairn_plot_descriptor__";
 const DESCRIPTOR_MIME = "application/cairn-plot+json";
+
+/**
+ * How long a mounted `PlotApp` waits for a not-yet-registered renderer (an
+ * addon `<script>` still parsing) before giving up with a visible "unknown
+ * renderer" error. The addon IIFE is emitted synchronously BEFORE the mount
+ * push, so in practice registration always wins the race; this bound only
+ * guards a genuinely unknown renderer (a bad descriptor / a missing addon).
+ */
+const RENDERER_WAIT_MS = 8000;
 
 type QueueEntry = [divId: string, descId: string];
 
@@ -39,6 +54,14 @@ declare global {
     __cairnPlotBundleLoaded?: boolean;
     __cairnPlotBootstrap?: (divId: string, descId: string) => void;
     __cairnPlotQueue?: QueueEntry[] | { push: (e: QueueEntry) => void };
+    /**
+     * Addon → core seam (O2). The core bundle exposes this so a self-contained
+     * addon IIFE (which cannot `import` from core) can add its renderer by name
+     * at runtime. GENERIC: figure today, three.js 3D in Phase D — same hook.
+     */
+    __cairnPlotRegisterRenderer?: (name: string, component: ComponentType<any>) => void;
+    /** Include-once guard the `figure` addon sets after it registers. */
+    __cairnPlotFigureLoaded?: boolean;
   }
 }
 
@@ -105,16 +128,18 @@ export function PlotApp({ descriptor: given }: { descriptor?: PlotDescriptor }) 
     | { status: "error"; message: string }
     | { status: "ready"; renderer: string; props: Record<string, unknown> }
   >({ status: "loading" });
+  // Bumped when the registry gains a renderer, so a `ready` state whose
+  // renderer was not yet registered re-evaluates `getRenderer` and mounts.
+  const [, bumpRegistry] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         const descriptor = given ?? (await readPageDescriptor());
-        const Renderer = RENDERER_MAP[descriptor.renderer];
-        if (!Renderer) {
-          throw new Error(`unknown renderer "${descriptor.renderer}"`);
-        }
+        // NOTE (O2): do NOT reject an unregistered renderer here. With the
+        // bundle split a `figure` addon may still be parsing; the render path
+        // below waits for registration (bounded) instead of throwing.
         const source = dataSourceFor(descriptor);
         const dataProps = await resolveDataProps(descriptor.data, source);
         if (cancelled) return;
@@ -136,17 +161,47 @@ export function PlotApp({ descriptor: given }: { descriptor?: PlotDescriptor }) 
     };
   }, [given]);
 
+  // Wait-for-registration: when the data is ready but the descriptor's renderer
+  // is not yet in the registry (its addon `<script>` hasn't executed), subscribe
+  // and re-render the instant it arrives; after a bounded wait, surface the
+  // existing visible "unknown renderer" error for a genuinely missing renderer.
+  const rendererMissing = state.status === "ready" && !getRenderer(state.renderer);
+  useEffect(() => {
+    if (state.status !== "ready" || getRenderer(state.renderer)) return;
+    const name = state.renderer;
+    let settled = false;
+    const unsub = onRegister(() => {
+      if (!settled && getRenderer(name)) {
+        settled = true;
+        bumpRegistry((n) => n + 1);
+      }
+    });
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        setState({ status: "error", message: `unknown renderer "${name}"` });
+      }
+    }, RENDERER_WAIT_MS);
+    return () => {
+      settled = true;
+      unsub();
+      clearTimeout(timer);
+    };
+  }, [state, rendererMissing]);
+
   let body: React.ReactNode;
   if (state.status === "loading") {
     body = <Message text="Loading…" />;
   } else if (state.status === "error") {
     body = <Message text={`Plot error: ${state.message}`} error />;
   } else {
-    const Renderer = RENDERER_MAP[state.renderer]!;
-    body = (
+    const Renderer = getRenderer(state.renderer);
+    body = Renderer ? (
       <Suspense fallback={<Message text="Loading renderer…" />}>
         <Renderer {...state.props} />
       </Suspense>
+    ) : (
+      <Message text="Loading renderer…" />
     );
   }
 
@@ -191,6 +246,9 @@ function mountOne(divId: string, descId: string): void {
 export function installCairnPlotBootstrap(): void {
   if (window.__cairnPlotBootstrap) return;
   window.__cairnPlotBootstrap = mountOne;
+  // Expose the addon → core seam BEFORE marking the bundle loaded, so an addon
+  // IIFE (emitted after core) can always find it (O2 / generic for Phase D).
+  window.__cairnPlotRegisterRenderer = registerRenderer;
   window.__cairnPlotBundleLoaded = true;
 
   // Drain anything queued before the bundle loaded, then swap the queue for a

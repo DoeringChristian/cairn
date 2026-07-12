@@ -1,8 +1,15 @@
 /**
- * `RENDERER_MAP` — the standalone plot bundle's `renderer` name → component
- * table (design spec §4). It imports the SAME pure `lib/cairn-plot` renderers
- * the viewer app uses, so a Python-emitted plot is pixel-identical to the same
- * renderer in the app (consistency by construction).
+ * `CORE_RENDERERS` — the standalone plot bundle's ALWAYS-present `renderer`
+ * name → component table (design spec §4): the 2D charts + single-image +
+ * table. It imports the SAME pure `lib/cairn-plot` renderers the viewer app
+ * uses, so a Python-emitted plot is pixel-identical to the same renderer in
+ * the app (consistency by construction).
+ *
+ * O2 bundle-split: Plotly `figure` is NO LONGER in this map — it ships as a
+ * separate addon (`plot-figure-renderer.tsx` → `figure.iife.js`) registered at
+ * runtime via `registerRenderer` so a scalar/table/image page never carries
+ * Plotly. 3D (three.js) is likewise Phase-D addon territory and absent here.
+ * `registerCoreRenderers()` seeds the runtime registry (`plot-registry.tsx`).
  *
  * Each entry is a thin STANDALONE ADAPTER around the pure renderer. The pure
  * renderers are prop-pure but several expect controlled interactive state
@@ -16,47 +23,22 @@
  *
  * DATA props arrive already-resolved from the descriptor (`resolveDataProps`)
  * merged over the descriptor's config `props`; adapters spread that as `p`.
- *
- * Figure (Plotly) is a `React.lazy` chunk so plotly.js-dist-min (~4.6M) stays
- * OUT of the eager plot bundle and only loads when a `figure` plot renders.
- * 3D (three.js) renderers are intentionally NOT in the eager map — Phase D.
  */
-import React, { useState, type ComponentType } from "react";
-import {
-  ScalarPlot,
-  ScatterPlot,
-  ParallelCoords,
-  BarChart,
-  HistogramPlot,
-  Heatmap,
-  ImagePane,
-  Table,
-  type Viewport,
-  type PromotedSeriesConfig,
-} from "./lib/cairn-plot";
+import { useState, type ComponentType } from "react";
+import ScalarPlot from "./lib/cairn-plot/renderers/ScalarPlot";
+import ScatterPlot from "./lib/cairn-plot/renderers/ScatterPlot";
+import ParallelCoords from "./lib/cairn-plot/renderers/ParallelCoords";
+import BarChart from "./lib/cairn-plot/renderers/BarChart";
+import HistogramPlot from "./lib/cairn-plot/renderers/HistogramPlot";
+import Heatmap from "./lib/cairn-plot/renderers/Heatmap";
+import ImagePane from "./lib/cairn-plot/renderers/ImagePane";
+import Table from "./lib/cairn-plot/renderers/Table";
+import type { Viewport, PromotedSeriesConfig } from "./lib/cairn-plot/types";
+import { ChartBox } from "./plot-standalone-helpers";
+import { registerRenderer } from "./plot-registry";
 
 /** Loose prop bag — resolved data props + descriptor config, unified. */
 type P = Record<string, any>;
-
-const DEFAULT_CHART_HEIGHT = 400;
-
-/** Wrap a container-filling chart renderer in a default-height box so it has
- *  something to measure on a bare standalone page. The pure chart renderers
- *  size themselves to their parent (their root has no intrinsic height — in
- *  the app the card supplies a fixed-height flex cell), so we force the direct
- *  child to fill this box (renderer-agnostic; works whether or not a renderer
- *  forwards `className`). Height is overridable via `props.height` (px). */
-function ChartBox({ height, children }: { height?: number; children: React.ReactNode }) {
-  return (
-    <div
-      className="cairn-plot-chartbox"
-      style={{ height: height ?? DEFAULT_CHART_HEIGHT, width: "100%" }}
-    >
-      <style>{".cairn-plot-chartbox > * { height: 100%; width: 100%; }"}</style>
-      {children}
-    </div>
-  );
-}
 
 // --- ScalarPlot: owns viewport + promotedSeries interactive state ----------
 function ScalarPlotStandalone(p: P) {
@@ -170,38 +152,13 @@ function TableStandalone(p: P) {
   );
 }
 
-// --- Figure: LAZY so plotly.js stays out of the eager plot bundle ----------
-const LazyFigure = React.lazy(() => import("./lib/cairn-plot/renderers/Figure"));
-
-const DEFAULT_FIGURE_SETTINGS = {
-  displayModeBar: true,
-  scrollZoom: false,
-  hoverMode: "closest" as const,
-  dragMode: "zoom" as const,
-  showLegend: true,
-};
-
-function FigureStandalone(p: P) {
-  const { height, figure, settings, ...rest } = p;
-  return (
-    <ChartBox height={height}>
-      <LazyFigure
-        figure={figure ?? { data: [], layout: {} }}
-        settings={{ ...DEFAULT_FIGURE_SETTINGS, ...(settings ?? {}) }}
-        style={{ width: "100%", height: "100%" }}
-        {...rest}
-      />
-    </ChartBox>
-  );
-}
-
 /**
- * The renderer registry. Names match the design spec §7 "clean 2D +
+ * The core renderer registry. Names match the design spec §7 "clean 2D +
  * single-image" set (`scalar, scatter, parallel, bar, histogram, heatmap,
- * image`) plus `table` and `figure`. 3D (`pointcloud`/`mesh`/`boxes`/`volume`)
- * is Phase D and deliberately absent (keeps three.js out of the eager bundle).
+ * image`) plus `table`. `figure` (Plotly) and 3D (three.js) are ADDONS
+ * registered at runtime — deliberately absent so they stay out of core.
  */
-export const RENDERER_MAP: Record<string, ComponentType<any>> = {
+export const CORE_RENDERERS: Record<string, ComponentType<any>> = {
   scalar: ScalarPlotStandalone,
   scatter: ScatterPlotStandalone,
   parallel: ParallelCoordsStandalone,
@@ -210,5 +167,11 @@ export const RENDERER_MAP: Record<string, ComponentType<any>> = {
   heatmap: HeatmapStandalone,
   image: ImageStandalone,
   table: TableStandalone,
-  figure: FigureStandalone,
 };
+
+/** Seed the runtime registry with the always-present core renderers. */
+export function registerCoreRenderers(): void {
+  for (const [name, component] of Object.entries(CORE_RENDERERS)) {
+    registerRenderer(name, component);
+  }
+}

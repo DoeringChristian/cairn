@@ -49,3 +49,10 @@ jobs:
       - run: npm run typecheck
 
       - run: npm run build
+
+      # Enforce the TS → JSON-schema contracts (drift = fail). These generate
+      # from the TS types and diff against the committed schemas; without them
+      # a TS type change that desyncs the pydantic-facing schema slips through.
+      - run: npm run check:plot-schema
+
+      - run: npm run check:card-schema

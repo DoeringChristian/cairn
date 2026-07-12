@@ -68,8 +68,18 @@ def test_each_renderer_emits_mount_div_and_schema_valid_descriptor(figure_obj):
 
 
 def test_include_once_guard_present(figure_obj):
-    for el in _supported_elements(figure_obj).values():
-        assert "window.__cairnPlotBundleLoaded" in el._repr_html_()
+    # O2 bundle-split: EVERY plot carries the CORE include-once guard, but only
+    # a `figure` element additionally carries Plotly via the figure-addon guard
+    # — a scalar/table/image page must never carry Plotly.
+    for name, el in _supported_elements(figure_obj).items():
+        html = el._repr_html_()
+        assert "window.__cairnPlotBundleLoaded" in html, f"{name}: no core guard"
+        if name == "figure":
+            assert "window.__cairnPlotFigureLoaded" in html, "figure: no addon guard"
+            assert "plotly" in html.lower(), "figure: Plotly not inlined"
+        else:
+            assert "window.__cairnPlotFigureLoaded" not in html, f"{name}: has figure addon"
+            assert "plotly" not in html.lower(), f"{name}: carries Plotly (split broken)"
 
 
 def test_image_emits_store_blob(figure_obj):
@@ -125,16 +135,22 @@ def test_m1_json_script_safe_escapes_all_breakout_sequences():
 def test_m2_no_external_cdn_or_network(figure_obj):
     # M2 is about the EMIT WRAPPER: the offline HTML Python generates must not
     # pull a CDN (the plot.html shell's font-awesome `<link>` must NOT appear)
-    # nor add any external src/href/@import. Strip the inlined bundle JS + CSS
-    # first — the bundled plotly legitimately carries W3C XML namespace URIs
-    # and map-tile attribution string literals that are never fetched for the
-    # renderers we ship.
-    bundle_js = pb.inline_bundle_js()
-    bundle_css = pb.json_script_safe(pb.inline_bundle_css())
+    # nor add any external src/href/@import. Strip the inlined core JS + CSS AND
+    # the figure-addon JS first (O2 bundle-split) — the bundled plotly
+    # legitimately carries W3C XML namespace URIs and map-tile attribution string
+    # literals that are never fetched for the renderers we ship.
+    core_js = pb.inline_core_js()
+    core_css = pb.json_script_safe(pb.inline_core_css())
+    figure_js = pb.inline_figure_addon_js()
     cdn_hosts = ("cdnjs", "cloudflare", "unpkg", "jsdelivr", "googleapis", "font-awesome")
     ext_ref = re.compile(r'(?:src|href)\s*=\s*["\']https?://|@import\s+url\(\s*["\']?https?://')
     for name, el in _supported_elements(figure_obj).items():
-        wrapper = el._repr_html_().replace(bundle_js, "").replace(bundle_css, "")
+        wrapper = (
+            el._repr_html_()
+            .replace(core_js, "")
+            .replace(core_css, "")
+            .replace(figure_js, "")
+        )
         low = wrapper.lower()
         for host in cdn_hosts:
             assert host not in low, f"{name}: emit wrapper references CDN {host!r}"

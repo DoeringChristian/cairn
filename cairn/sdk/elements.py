@@ -351,6 +351,12 @@ class PlotElement(Element):
             return spec.model_dump(exclude_none=True, mode="json")
         return dict(spec)
 
+    def _renderer_name(self) -> str:
+        try:
+            return str(self._descriptor_dict().get("renderer", ""))
+        except Exception:  # noqa: BLE001 - never break the display path
+            return ""
+
     # ---- rendering ----
 
     def _bundle_html(self) -> str:
@@ -372,15 +378,30 @@ class PlotElement(Element):
             )
 
         # inline (default): one guarded classic <script> injects the CSS as a
-        # <style> then runs the IIFE (which sets __cairnPlotBundleLoaded).
-        css_js = pb.json_script_safe(pb.inline_bundle_css())
-        js = pb.inline_bundle_js()
+        # <style> then runs the CORE IIFE (which sets __cairnPlotBundleLoaded).
+        # O2: this is the CORE bundle only — NO Plotly. The figure addon is
+        # emitted separately (see `_figure_addon_html`) and only for `figure`.
+        css_js = pb.json_script_safe(pb.inline_core_css())
+        js = pb.inline_core_js()
         return (
             "<script>if(!window.__cairnPlotBundleLoaded){"
             "(function(){var s=document.createElement('style');"
             f"s.textContent={css_js};document.head.appendChild(s);}})();\n"
             f"{js}\n}}</script>"
         )
+
+    def _figure_addon_html(self) -> str:
+        """The Plotly `figure` addon IIFE, guarded include-once by
+        `window.__cairnPlotFigureLoaded`. Emitted ONLY for a `figure` element
+        (inline mode) — so a scalar/table/image plot never carries Plotly. The
+        addon reuses core's React (`window.__cairnPlotReact`), so it MUST come
+        after `_bundle_html` (the core script) in the emitted HTML."""
+        if self._bundle != "inline" or self._renderer_name() != "figure":
+            return ""
+        from . import _plot_bundle as pb
+
+        js = pb.inline_figure_addon_js()
+        return f"<script>if(!window.__cairnPlotFigureLoaded){{\n{js}\n}}</script>"
 
     def _store_html(self, store_id: str) -> str:
         from . import _plot_bundle as pb
@@ -421,6 +442,7 @@ class PlotElement(Element):
             store_id = f"__cairn_plot_store__{uid}"
             return (
                 self._bundle_html()
+                + self._figure_addon_html()
                 + self._store_html(store_id)
                 + self._mount_html(div_id, desc_id)
             )
