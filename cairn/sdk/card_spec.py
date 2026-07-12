@@ -36,6 +36,7 @@ __all__ = [
     "InlineDataSpec",
     "ImageDataSpec",
     "UrlDataSpec",
+    "NpzDataSpec",
     "DataSpec",
     "PlotSpec",
     "PlotLeafSpec",
@@ -182,9 +183,24 @@ class UrlDataSpec(_Strict):
     metadata: Optional[str] = None
 
 
+class NpzDataSpec(_Strict):
+    """`DataSpec{kind:"npz"}` — a content-addressed 3D binary artifact
+    (``.npy``/``.npz``) for the three.js renderers (G3). ``objectType`` selects
+    the 3D type (``pointcloud`` wired in G3a; ``mesh``/``volume``/``boxes3d`` in
+    G3b). ``hash`` keys the LOCAL store / ENDPOINT artifact (required-but-
+    nullable, matching the TS `string | null`); ``meta`` is the Python-baked
+    artifact metadata (channels/bounds/n_points/…) carried inline so the
+    renderer needs a single bytes fetch, not a second metadata round trip."""
+
+    kind: Literal["npz"]
+    hash: Optional[str]
+    objectType: str
+    meta: dict[str, Any]
+
+
 # Discriminated on ``kind`` (mirrors the TS `DataSpec` discriminated union).
 DataSpec = Annotated[
-    Union[InlineDataSpec, ImageDataSpec, UrlDataSpec],
+    Union[InlineDataSpec, ImageDataSpec, UrlDataSpec, NpzDataSpec],
     Field(discriminator="kind"),
 ]
 

@@ -128,8 +128,9 @@ def _dataspec_branches(defs) -> dict:
         (cs.InlineDataSpec, "inline"),
         (cs.ImageDataSpec, "image"),
         (cs.UrlDataSpec, "url"),
+        (cs.NpzDataSpec, "npz"),
     ],
-    ids=["inline", "image", "url"],
+    ids=["inline", "image", "url", "npz"],
 )
 def test_dataspec_variant_matches_schema(model, kind, defs):
     branch = _dataspec_branches(defs)[kind]
@@ -257,6 +258,33 @@ def test_shared_props_sync_matches_schema(defs):
     schema_sync_props = set(sync_def.get("properties", {}).keys())
     model_sync_props = set(cs._SyncSpec.model_fields.keys())
     assert model_sync_props == schema_sync_props, "SharedProps.sync field mismatch"
+
+
+def test_npz_dataspec_round_trips():
+    # G3a: the `npz` DataSpec (3D binary artifact for the three.js renderers).
+    spec = cs.PlotDescriptorSpec(
+        root=cs.PlotLeafSpec(
+            kind="plot",
+            renderer="pointcloud",
+            props={"pointSize": 0.02},
+            data=cs.NpzDataSpec(
+                kind="npz",
+                hash="sha256:abc",
+                objectType="pointcloud",
+                meta={
+                    "n_points": 100,
+                    "channels": "xyz",
+                    "bounds": {"min": [0, 0, 0], "max": [1, 1, 1]},
+                    "original_count": 100,
+                },
+            ),
+        ),
+    )
+    dumped = spec.model_dump(exclude_none=True, mode="json")
+    assert dumped["root"]["data"]["kind"] == "npz"
+    assert dumped["root"]["data"]["objectType"] == "pointcloud"
+    assert dumped["root"]["data"]["meta"]["n_points"] == 100
+    assert cs.PlotDescriptorSpec.model_validate(dumped) == spec
 
 
 def test_compare_node_round_trips():

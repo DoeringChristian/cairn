@@ -19,6 +19,7 @@
  */
 import {
   resolveImageViewportItems,
+  fetchPointCloudArrays,
   parseOverlay,
   type DataSource,
 } from "./lib/cairn-plot";
@@ -34,6 +35,12 @@ import {
  *    overlay metadata). Resolved via `resolveImageViewportItems` against the
  *    active `DataSource` (LOCAL `data:` URL or ENDPOINT `/api/artifacts/…`),
  *    yielding `{ imageUrl, baselineUrl, overlay }` for `ImagePane`.
+ *  - `npz`: a content-addressed 3D binary artifact (`.npy`/`.npz`) for the
+ *    three.js renderers (G3). `objectType` selects which 3D type the bytes
+ *    belong to (`pointcloud` is the only one wired in G3a; the others land in
+ *    G3b). `hash` keys the LOCAL store / ENDPOINT artifact; `meta` is the
+ *    Python-baked artifact metadata (channels/bounds/n_points/…) carried inline
+ *    so the renderer needs a SINGLE bytes fetch, no second metadata round trip.
  */
 export type DataSpec =
   | { kind: "inline"; props: Record<string, unknown> }
@@ -42,6 +49,12 @@ export type DataSpec =
       hash: string | null;
       referenceHash?: string | null;
       metadata?: string | null;
+    }
+  | {
+      kind: "npz";
+      hash: string | null;
+      objectType: "pointcloud" | "mesh" | "volume" | "boxes3d";
+      meta: Record<string, unknown>;
     }
   | {
       // `url`: a raw URL passed through verbatim (the 3rd data-provenance mode
@@ -161,6 +174,26 @@ export async function resolveDataProps(
         baselineUrl: data.referenceSrc ?? null,
         overlay: parseOverlay(data.metadata) ?? undefined,
       };
+    }
+    case "npz": {
+      // 3D binary artifact (G3). Dispatch on `objectType`; only `pointcloud`
+      // is wired in G3a — the other three land in G3b. `fetchPointCloudArrays`
+      // (source-agnostic: LOCAL store bytes or ENDPOINT fetch) parses the
+      // `.npy`/`.npz` into `{data, properties}`; bundle it with the inline
+      // `meta` into the `{arrays, meta}` `item` the 3D standalone consumes.
+      // NOTE: this path pulls NO three.js into core — the parsers are pure;
+      // three lives only in the standalone renderer (the three addon bundle).
+      if (data.objectType !== "pointcloud") {
+        throw new Error(
+          `npz objectType "${data.objectType}" is not supported yet ` +
+            "(coming in G3b).",
+        );
+      }
+      if (!data.hash) {
+        throw new Error("npz DataSpec has no hash to resolve.");
+      }
+      const arrays = await fetchPointCloudArrays(data.hash, source);
+      return { item: { arrays, meta: data.meta } };
     }
   }
 }

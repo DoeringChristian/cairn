@@ -128,6 +128,40 @@
           "properties": {
             "kind": {
               "type": "string",
+              "const": "npz"
+            },
+            "hash": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "objectType": {
+              "type": "string",
+              "enum": [
+                "pointcloud",
+                "mesh",
+                "volume",
+                "boxes3d"
+              ]
+            },
+            "meta": {
+              "$ref": "#/definitions/Record%3Cstring%2Cunknown%3E"
+            }
+          },
+          "required": [
+            "kind",
+            "hash",
+            "objectType",
+            "meta"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
               "const": "url"
             },
             "src": {
@@ -153,7 +187,7 @@
           "additionalProperties": false
         }
       ],
-      "description": "How the renderer's DATA props are produced.\n\n - `inline`: the data-contract props are plain JSON, carried directly in the    descriptor (2D contracts — Series[]/points[]/matrix/counts+edges/table/    figure). The bootstrap merges `props` straight onto the renderer. No    `DataSource` needed.  - `image`: a content-addressed image artifact (+ optional baseline +    overlay metadata). Resolved via `resolveImageViewportItems` against the    active `DataSource` (LOCAL `data:` URL or ENDPOINT `/api/artifacts/…`),    yielding `{ imageUrl, baselineUrl, overlay }` for `ImagePane`."
+      "description": "How the renderer's DATA props are produced.\n\n - `inline`: the data-contract props are plain JSON, carried directly in the    descriptor (2D contracts — Series[]/points[]/matrix/counts+edges/table/    figure). The bootstrap merges `props` straight onto the renderer. No    `DataSource` needed.  - `image`: a content-addressed image artifact (+ optional baseline +    overlay metadata). Resolved via `resolveImageViewportItems` against the    active `DataSource` (LOCAL `data:` URL or ENDPOINT `/api/artifacts/…`),    yielding `{ imageUrl, baselineUrl, overlay }` for `ImagePane`.  - `npz`: a content-addressed 3D binary artifact (`.npy`/`.npz`) for the    three.js renderers (G3). `objectType` selects which 3D type the bytes    belong to (`pointcloud` is the only one wired in G3a; the others land in    G3b). `hash` keys the LOCAL store / ENDPOINT artifact; `meta` is the    Python-baked artifact metadata (channels/bounds/n_points/…) carried inline    so the renderer needs a SINGLE bytes fetch, no second metadata round trip."
     },
     "GridNode": {
       "type": "object",

@@ -1,4 +1,4 @@
-import{u as rc,r as De,j as Dn,C as sc,J as ac}from"./index-DxI2oYUV.js";/**
+import{u as rc,r as De,j as Dn,C as sc,K as ac}from"./index-DlzQ51By.js";/**
  * @license
  * Copyright 2010-2026 Three.js Authors
  * SPDX-License-Identifier: MIT
