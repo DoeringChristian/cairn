@@ -212,6 +212,53 @@ def test_recursive_grid_round_trips():
     assert cs.PlotDescriptorSpec.model_validate(dumped) == spec
 
 
+def test_shared_props_sync_and_reference_round_trip():
+    # F3: SharedProps carries a `sync` sub-object (viewport/camera) and a
+    # `reference` that is itself a full DataSpec — both must round-trip.
+    spec = cs.PlotDescriptorSpec(
+        root=cs.GridSpec(
+            kind="grid",
+            children=[
+                cs.PlotLeafSpec(
+                    kind="plot",
+                    renderer="image",
+                    data=cs.ImageDataSpec(kind="image", hash="sha256:a"),
+                ),
+            ],
+            shared=cs.SharedPropsSpec(
+                colormap="viridis",
+                colorRange=(0.0, 1.0),
+                colorbar=True,
+                reference=cs.ImageDataSpec(kind="image", hash="sha256:ref"),
+                sync=cs._SyncSpec(viewport=True, camera=False),
+            ),
+        ),
+    )
+    dumped = spec.model_dump(exclude_none=True, mode="json")
+    sh = dumped["root"]["shared"]
+    # The sync sub-object round-trips key-for-key.
+    assert sh["sync"] == {"viewport": True, "camera": False}
+    # `reference` is a nested DataSpec (discriminated on `kind`).
+    assert sh["reference"] == {"kind": "image", "hash": "sha256:ref"}
+    assert cs.PlotDescriptorSpec.model_validate(dumped) == spec
+
+
+def test_shared_props_sync_matches_schema(defs):
+    # The `sync` object's shape must mirror the schema's SharedProps.sync.
+    shared_props = defs["SharedProps"]["properties"]
+    assert "sync" in shared_props and "reference" in shared_props
+    sync_ref = shared_props["sync"]
+    # Resolve either an inline object or a $ref to the sync sub-definition.
+    if "$ref" in sync_ref:
+        sync_def_name = sync_ref["$ref"].split("/")[-1]
+        sync_def = defs[sync_def_name]
+    else:
+        sync_def = sync_ref
+    schema_sync_props = set(sync_def.get("properties", {}).keys())
+    model_sync_props = set(cs._SyncSpec.model_fields.keys())
+    assert model_sync_props == schema_sync_props, "SharedProps.sync field mismatch"
+
+
 def test_compare_node_round_trips():
     spec = cs.PlotDescriptorSpec(
         root=cs.CompareSpec(

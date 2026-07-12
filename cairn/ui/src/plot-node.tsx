@@ -26,6 +26,8 @@ import {
   type DataSource,
   type DiffMode,
   type ImageOverlayData,
+  type ImageProcessing,
+  type Interpolation,
 } from "./lib/cairn-plot";
 import {
   resolveDataProps,
@@ -187,16 +189,33 @@ function CompareView({ node }: { node: CompareNode }) {
   const baseIdx = node.baselineIndex ?? 0;
   const reference = baseIdx === 0 ? a : b;
   const foreground = baseIdx === 0 ? b : a;
-  const colormap = (shared?.colormap as ColormapName | undefined) ?? undefined;
+
+  // F2: honour the compare node's own `props` (interpolation/colormap/diff
+  // submode/split/blend/…) — CompareView previously dropped them entirely. A
+  // node prop wins over the inherited `shared` block, which wins over defaults.
+  const props = (node.props ?? {}) as Record<string, unknown>;
+  const colormap =
+    (props.colormap as ColormapName | undefined) ??
+    (shared?.colormap as ColormapName | undefined) ??
+    "viridis";
+  const diffSubmode =
+    (props.diffSubmode as DiffMode | undefined) ??
+    (node.diffSubmode as DiffMode | undefined) ??
+    "signed";
+
   return (
     <ChartBox>
       <CompositeMediaPane
         mode={node.mode}
         imageUrl={foreground.url}
         baselineUrl={reference.url}
-        diffSubmode={(node.diffSubmode as DiffMode | undefined) ?? "signed"}
-        colormap={colormap ?? "viridis"}
-        interpolation="auto"
+        diffSubmode={diffSubmode}
+        colormap={colormap}
+        interpolation={(props.interpolation as Interpolation | undefined) ?? "auto"}
+        showAxes={(props.showAxes as boolean | undefined) ?? false}
+        processing={props.processing as ImageProcessing | undefined}
+        splitPosition={props.splitPosition as number | undefined}
+        blendAlpha={props.blendAlpha as number | undefined}
         zoom={1}
         pan={{ x: 0, y: 0 }}
         label=""
@@ -261,9 +280,13 @@ function GridView({ node }: { node: GridNode }) {
       grid
     );
 
-  if (!shared?.colorbar) return body;
-  const cbColormap = (shared?.colormap as ColormapName | undefined) ?? "viridis";
-  const [min, max] = shared?.colorRange ?? [undefined, undefined];
+  // F1: gate the colorbar on the node's OWN `shared.colorbar` (owner-only). A
+  // nested grid that merely INHERITS `colorbar:true` (via `shared` above, used
+  // for leaf colormap/colorRange) must NOT draw a second colorbar — only the
+  // grid that actually declares `colorbar` renders one.
+  if (!node.shared?.colorbar) return body;
+  const cbColormap = (node.shared.colormap as ColormapName | undefined) ?? "viridis";
+  const [min, max] = node.shared.colorRange ?? [undefined, undefined];
   return (
     <div style={{ display: "flex", alignItems: "stretch", gap: 4, width: "100%" }}>
       <div style={{ flex: 1, minWidth: 0 }}>{body}</div>
