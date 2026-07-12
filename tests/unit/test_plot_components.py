@@ -232,5 +232,231 @@ def test_lowercase_image_still_returns_plot_element_with_store():
 
 
 def test_capitalized_names_exported():
-    for name in ("Scalar", "Figure", "Table", "Image", "Grid", "Compare"):
+    for name in (
+        "Line",
+        "Scatter",
+        "Bar",
+        "Histogram",
+        "Heatmap",
+        "ParallelCoordinates",
+        "Scalar",
+        "Figure",
+        "Table",
+        "Image",
+        "Grid",
+        "Compare",
+    ):
         assert hasattr(cp, name), f"cp.{name} not exported"
+
+
+# ---------------------------------------------------------------------------
+# G2 revision — general plotting leaves (Line/Scatter/Bar/Histogram/Heatmap/
+# ParallelCoordinates). Each raw-data constructor drives the real display path
+# and round-trips through the flat PlotSpec (byte-compatible legacy render).
+# ---------------------------------------------------------------------------
+
+
+def _leaf_desc(component) -> dict:
+    html = component._repr_html_()
+    assert len(_mount_divs(html)) == 1
+    desc = _descriptor_from_html(html)
+    PlotSpec.model_validate(desc)  # schema-valid round-trip
+    return desc
+
+
+def test_scalar_is_deprecated_alias_of_line():
+    assert cp.Scalar is cp.Line
+
+
+def test_line_raw_single_series_matches_index():
+    desc = _leaf_desc(cp.Line([0.9, 0.5, 0.3]))
+    assert desc["renderer"] == "scalar"
+    series = desc["data"]["props"]["series"]
+    assert len(series) == 1
+    assert series[0]["points"][0] == {"x": 0, "y": 0.9}
+
+
+def test_line_multi_series_from_dict():
+    desc = _leaf_desc(cp.Line({"loss": [0.9, 0.6], "val": [1.0, 0.7]}))
+    series = desc["data"]["props"]["series"]
+    assert [s["key"] for s in series] == ["loss", "val"]
+    # Distinct colors per series (categorical palette).
+    assert series[0]["color"] != series[1]["color"]
+
+
+def test_line_explicit_x_axis():
+    desc = _leaf_desc(cp.Line([2.0, 4.0], x=[10, 20]))
+    pts = desc["data"]["props"]["series"][0]["points"]
+    assert [p["x"] for p in pts] == [10.0, 20.0]
+
+
+def test_line_2d_array_one_series_per_row():
+    desc = _leaf_desc(cp.Line([[1, 2, 3], [4, 5, 6]]))
+    series = desc["data"]["props"]["series"]
+    assert [s["key"] for s in series] == ["series_0", "series_1"]
+
+
+def test_scatter_raw_shapes_points_and_config():
+    desc = _leaf_desc(
+        cp.Scatter([1, 2, 3], [4, 5, 6], color=[0, 1, 2], x_label="lr", y_log=True)
+    )
+    assert desc["renderer"] == "scatter"
+    assert desc["props"] == {"xLabel": "lr", "yLog": True}
+    pt = desc["data"]["props"]["points"][0]
+    assert pt == {"id": "0", "x": 1.0, "y": 4.0, "color": 0.0}
+
+
+def test_scatter_length_mismatch_raises():
+    with pytest.raises(ValueError, match="same length"):
+        cp.Scatter([1, 2, 3], [4, 5])
+
+
+def test_bar_raw_shapes_bardatum():
+    desc = _leaf_desc(cp.Bar([3, 7, 5], labels=["a", "b", "c"], value_label="score"))
+    assert desc["renderer"] == "bar"
+    assert desc["props"] == {"valueLabel": "score"}
+    assert desc["data"]["props"]["bars"][0] == {"id": "0", "label": "a", "value": 3.0}
+
+
+def test_bar_labels_default_to_index():
+    desc = _leaf_desc(cp.Bar([1, 2]))
+    labels = [b["label"] for b in desc["data"]["props"]["bars"]]
+    assert labels == ["0", "1"]
+
+
+def test_histogram_from_samples_edges_is_counts_plus_one():
+    desc = _leaf_desc(cp.Histogram([1, 1, 2, 3, 3, 3, 4, 5, 5], bins=6))
+    assert desc["renderer"] == "histogram"
+    assert desc["props"]["view"] == "bars"
+    counts = desc["data"]["props"]["counts"]
+    edges = desc["data"]["props"]["edges"]
+    assert len(edges) == len(counts) + 1
+    assert sum(counts) == 9
+
+
+def test_histogram_precomputed_counts_edges():
+    desc = _leaf_desc(cp.Histogram(counts=[1, 2, 3], edges=[0, 1, 2, 3]))
+    assert desc["data"]["props"]["counts"] == [1.0, 2.0, 3.0]
+
+
+def test_histogram_precomputed_bad_edges_raises():
+    with pytest.raises(ValueError, match="len\\(counts\\)\\+1"):
+        cp.Histogram(counts=[1, 2, 3], edges=[0, 1, 2])
+
+
+def test_heatmap_raw_matrix_and_colormap():
+    desc = _leaf_desc(cp.Heatmap([[1, 2, 3], [4, 5, 6]], colormap="red-blue", zmin=0))
+    assert desc["renderer"] == "heatmap"
+    assert desc["props"]["colormap"] == "red-blue"
+    assert desc["props"]["min"] == 0
+    assert desc["data"]["props"]["matrix"] == [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
+
+
+def test_heatmap_non_2d_raises():
+    with pytest.raises(ValueError, match="2-D"):
+        cp.Heatmap([1, 2, 3])
+
+
+def test_parallel_numeric_and_categorical_columns():
+    desc = _leaf_desc(
+        cp.ParallelCoordinates(
+            [
+                {"label": "lr", "values": [0.1, 0.2, 0.3]},
+                {"label": "opt", "values": ["sgd", "adam", "sgd"]},
+                {"label": "acc", "values": [0.8, 0.9, 0.85]},
+            ]
+        )
+    )
+    assert desc["renderer"] == "parallel"
+    props = desc["data"]["props"]
+    assert [c["key"] for c in props["columns"]] == ["lr", "opt", "acc"]
+    domains = props["columnDomains"]
+    assert domains[0]["isNumeric"] is True
+    # Categorical column: not numeric, mapped to first-seen indices 0..n-1.
+    assert domains[1]["isNumeric"] is False
+    row0 = props["rows"][0]
+    assert row0["values"] == [0.1, 0.0, 0.8]
+    assert row0["raw"][1] == "sgd"
+
+
+def test_parallel_from_dict():
+    desc = _leaf_desc(cp.ParallelCoordinates({"a": [1, 2], "b": [3, 4]}))
+    assert [c["key"] for c in desc["data"]["props"]["columns"]] == ["a", "b"]
+
+
+def test_parallel_ragged_dimensions_raise():
+    with pytest.raises(ValueError, match="same number of rows"):
+        cp.ParallelCoordinates({"a": [1, 2, 3], "b": [4, 5]})
+
+
+@pytest.mark.parametrize(
+    "leaf",
+    [
+        cp.Line({"loss": [0.9, 0.6], "val": [1.0, 0.7]}),
+        cp.Scatter([1, 2, 3], [3, 1, 2], color=[0, 1, 2]),
+        cp.Bar([3, 7, 5], labels=["a", "b", "c"]),
+        cp.Histogram([1, 1, 2, 3, 3, 4], bins=4),
+        cp.Heatmap([[1, 2], [3, 4]]),
+        cp.ParallelCoordinates({"lr": [0.1, 0.2], "acc": [0.8, 0.9]}),
+    ],
+)
+def test_new_leaf_renders_inside_a_grid(leaf):
+    grid = cp.Grid([leaf, cp.Image(_PNG)], cols=2)
+    html = grid._repr_html_()
+    assert len(_mount_divs(html)) == 1
+    desc = _descriptor_from_html(html)
+    spec = PlotDescriptorSpec.model_validate(desc)
+    assert spec.model_dump(exclude_none=True, mode="json") == desc
+    assert desc["root"]["kind"] == "grid"
+    assert desc["root"]["children"][0]["kind"] == "plot"
+
+
+# ---------------------------------------------------------------------------
+# m1 — Grid col_widths / row_heights validation (1-D and 2-D).
+# ---------------------------------------------------------------------------
+
+
+def test_grid_col_widths_length_validated():
+    with pytest.raises(ValueError, match="one entry per column"):
+        cp.Grid([cp.Line([1]), cp.Line([2])], col_widths=[0.5, 0.3, 0.2])
+
+
+def test_grid_row_heights_length_validated_1d():
+    # 4 children over cols=2 → 2 effective rows; 3 row_heights is wrong.
+    with pytest.raises(ValueError, match="one entry per row"):
+        cp.Grid(
+            [cp.Line([1]), cp.Line([2]), cp.Line([3]), cp.Line([4])],
+            cols=2,
+            row_heights=[1, 1, 1],
+        )
+
+
+def test_grid_valid_widths_and_heights_accepted():
+    grid = cp.Grid(
+        [[cp.Line([1]), cp.Image(_PNG)], [cp.Image(_PNG2), cp.Line([2])]],
+        col_widths=[0.5, 0.5],
+        row_heights=[1, 1],
+    )
+    assert grid.to_node()["colWidths"] == [0.5, 0.5]
+
+
+# ---------------------------------------------------------------------------
+# m2 — a Grid CONTAINING a Figure emits the Plotly figure addon; a pure-2D
+# grid does NOT (the _descriptor_has_figure tree walk).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.media
+def test_grid_with_nested_figure_emits_figure_addon():
+    fig = cp.roc_curve([0, 1, 1, 0], [0.1, 0.9, 0.8, 0.2])
+    grid = cp.Grid([cp.Figure(fig), cp.Line([1, 2, 3])], cols=2)
+    html = grid._repr_html_()
+    assert "window.__cairnPlotFigureLoaded" in html
+    assert "plotly" in html.lower()
+
+
+def test_pure_2d_grid_carries_no_figure_addon():
+    grid = cp.Grid([cp.Line([1, 2, 3]), cp.Bar([1, 2, 3])], cols=2)
+    html = grid._repr_html_()
+    assert "window.__cairnPlotFigureLoaded" not in html
+    assert "plotly" not in html.lower()
