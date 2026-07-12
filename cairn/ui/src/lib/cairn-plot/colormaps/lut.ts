@@ -41,7 +41,11 @@ const colormapLUTs = new Map<string, Uint8Array>();
 export function getColormapLUT(name: ColormapName): Uint8Array {
   let lut = colormapLUTs.get(name);
   if (!lut) {
-    lut = buildLUT(COLORMAP_STOPS[name]);
+    // Degrade an unknown colormap name to viridis rather than crash. The G2
+    // Python composable API lets a caller pass an arbitrary `shared.colormap`
+    // string, so a typo must not read `undefined.length` and blank the page.
+    const stops = COLORMAP_STOPS[name] ?? COLORMAP_STOPS.viridis;
+    lut = buildLUT(stops);
     colormapLUTs.set(name, lut);
   }
   return lut;
