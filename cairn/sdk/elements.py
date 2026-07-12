@@ -316,6 +316,30 @@ def _node_has_figure(node: Any) -> bool:
     return False
 
 
+# The three.js renderer names (the 3D types the `three` addon carries).
+_THREE_RENDERERS = frozenset({"mesh", "volume", "pointcloud", "boxes3d"})
+
+
+def _node_has_three(node: Any) -> bool:
+    """Recursively: does this ``PlotNode`` dict contain a three.js 3D renderer?
+    ``plot`` leaves carry a ``renderer``; ``grid`` recurses its children;
+    ``compare`` frames are ``DataSpec``s — a 3D compare (G3c) carries ``npz``
+    frames, so check ``a``/``b`` kinds (forward-looking; harmless today)."""
+    if not isinstance(node, dict):
+        return False
+    kind = node.get("kind")
+    if kind == "plot":
+        return node.get("renderer") in _THREE_RENDERERS
+    if kind == "grid":
+        return any(_node_has_three(c) for c in node.get("children", []))
+    if kind == "compare":
+        return any(
+            isinstance(node.get(f), dict) and node[f].get("kind") == "npz"
+            for f in ("a", "b")
+        )
+    return False
+
+
 class PlotElement(Element):
     """A plots-only display object that mounts a PURE ``cairn-plot`` renderer
     (WS-PLOT / design spec §6) — the default return of the ``cairn.plot.*``
@@ -385,6 +409,19 @@ class PlotElement(Element):
         root = desc.get("root")
         return _node_has_figure(root) if isinstance(root, dict) else False
 
+    def _descriptor_has_three(self) -> bool:
+        """Whether the descriptor carries a three.js 3D renderer ANYWHERE — a
+        flat leaf OR a 3D leaf nested in the recursive ``root`` tree. Gates the
+        three.js addon so a 2D/table/image tree never inlines three."""
+        try:
+            desc = self._descriptor_dict()
+        except Exception:  # noqa: BLE001 - never break the display path
+            return False
+        if desc.get("renderer") in _THREE_RENDERERS:
+            return True
+        root = desc.get("root")
+        return _node_has_three(root) if isinstance(root, dict) else False
+
     # ---- rendering ----
 
     def _bundle_html(self) -> str:
@@ -431,6 +468,19 @@ class PlotElement(Element):
         js = pb.inline_figure_addon_js()
         return f"<script>if(!window.__cairnPlotFigureLoaded){{\n{js}\n}}</script>"
 
+    def _three_addon_html(self) -> str:
+        """The three.js 3D addon IIFE, guarded include-once by
+        `window.__cairnPlotThreeLoaded`. Emitted ONLY for a 3D element (inline
+        mode) — so 2D/table/image plots never carry three. Like the figure
+        addon, it reuses core's React (`window.__cairnPlotReact`), so it MUST
+        come after `_bundle_html` (the core script) in the emitted HTML."""
+        if self._bundle != "inline" or not self._descriptor_has_three():
+            return ""
+        from . import _plot_bundle as pb
+
+        js = pb.inline_three_addon_js()
+        return f"<script>if(!window.__cairnPlotThreeLoaded){{\n{js}\n}}</script>"
+
     def _store_html(self, store_id: str) -> str:
         from . import _plot_bundle as pb
 
@@ -471,6 +521,7 @@ class PlotElement(Element):
             return (
                 self._bundle_html()
                 + self._figure_addon_html()
+                + self._three_addon_html()
                 + self._store_html(store_id)
                 + self._mount_html(div_id, desc_id)
             )

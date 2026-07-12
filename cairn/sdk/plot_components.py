@@ -668,6 +668,120 @@ class Image(Component):
         return dict(self._store)
 
 
+class PointCloud(Component):
+    """A 3D point-cloud plot (mounts the pure point-cloud viewer, key
+    ``pointcloud`` — carried by the three.js addon).
+
+    Raw data is the primary input:
+
+    * ``cp.PointCloud(xyz)`` — an ``(N, 3)``, ``(N, 4)`` or ``(N, 6)`` array
+      (xyz, optionally + intensity, or xyz + rgb); baked self-contained (LOCAL);
+    * ``cp.PointCloud(run[tag])`` — a tracked ``pointcloud`` artifact; LOCAL
+      bakes the ``.npy``/``.npz`` bytes, ENDPOINT emits by reference.
+
+    ``values`` attaches named per-point scalar properties (raw input only).
+    Optional view overrides: ``point_size``, ``color_mode`` (``"auto"``/…),
+    ``background`` (``"dark"``/``"light"``), ``show_axes``.
+    """
+
+    _label = "pointcloud"
+    _height = 400
+
+    def __init__(
+        self,
+        data: Any,
+        *,
+        values: Any = None,
+        data_mode: str = "local",
+        point_size: float | None = None,
+        color_mode: str | None = None,
+        background: str | None = None,
+        show_axes: bool | None = None,
+    ) -> None:
+        from ..plot import (
+            _artifact_info_of,
+            _check_data_mode,
+            _content_hash,
+            _parse_meta,
+        )
+
+        _check_data_mode(data_mode)
+        self._source: Any = None
+        self._store: dict[str, dict[str, str]] = {}
+        self._data_mode = data_mode
+
+        self._props: dict[str, Any] = {}
+        if point_size is not None:
+            self._props["pointSize"] = float(point_size)
+        if color_mode is not None:
+            self._props["colorMode"] = color_mode
+        if background is not None:
+            self._props["background"] = background
+        if show_axes is not None:
+            self._props["showAxes"] = bool(show_axes)
+
+        if isinstance(data, DataRef):
+            ai = _artifact_info_of(data)
+            hash_ = ai.hash
+            meta = _parse_meta(ai.metadata)
+            self._data: dict[str, Any] = {
+                "kind": "npz",
+                "hash": hash_,
+                "objectType": "pointcloud",
+                "meta": meta,
+            }
+            if data_mode == "endpoint":
+                self._source = data
+            else:
+                raw = data.run.artifact_bytes(data.tag, step=data.step)
+                self._store = {
+                    hash_: {
+                        "mime": "application/octet-stream",
+                        "b64": _base64.b64encode(raw).decode("ascii"),
+                    }
+                }
+            return
+
+        # Raw arrays — LOCAL only (no server reference). The tracking handler's
+        # serialize() gives the exact `.npy`/`.npz` bytes + meta the viewer's
+        # parseNpy/parseNpz already consume, so parse-correctness is free.
+        if data_mode == "endpoint":
+            raise ValueError(
+                "cp.PointCloud(raw, data_mode='endpoint') is unsupported: raw "
+                "arrays have no server reference. Use data_mode='local'."
+            )
+        from .handlers.pointcloud import PointCloudHandler
+
+        raw, meta = PointCloudHandler().serialize(data, values=values)
+        hash_ = _content_hash(raw)
+        self._store = {
+            hash_: {
+                "mime": "application/octet-stream",
+                "b64": _base64.b64encode(raw).decode("ascii"),
+            }
+        }
+        self._data = {
+            "kind": "npz",
+            "hash": hash_,
+            "objectType": "pointcloud",
+            "meta": meta,
+        }
+        self._data_mode = "local"
+
+    def to_node(self) -> dict[str, Any]:
+        node: dict[str, Any] = {
+            "kind": "plot",
+            "renderer": "pointcloud",
+            "data": self._data,
+        }
+        if self._props:
+            node["props"] = dict(self._props)
+        return node
+
+    def _collect_store(self) -> dict[str, dict[str, str]]:
+        return dict(self._store)
+
+
 # ---------------------------------------------------------------------------
 # Containers — cp.Grid / cp.Compare. (Stage B)
 # ---------------------------------------------------------------------------

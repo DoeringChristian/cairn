@@ -47,6 +47,7 @@ _CORE_JS = _INLINE_DIR / "core.iife.js"
 # honoring the option) — keep this path in lock-step with that config.
 _CORE_CSS = _INLINE_DIR / "style.css"
 _FIGURE_JS = _INLINE_DIR / "figure.iife.js"
+_THREE_JS = _INLINE_DIR / "three.iife.js"
 _PLOT_HTML = _DIST / "plot.html"
 
 
@@ -125,6 +126,20 @@ def inline_figure_addon_js() -> str:
             "`cd cairn/ui && npm run build:plot-inline` (and commit dist/)."
         )
     return js_inline_safe(_FIGURE_JS.read_text(encoding="utf-8"))
+
+
+@lru_cache(maxsize=1)
+def inline_three_addon_js() -> str:
+    """The self-contained **three.js 3D addon** IIFE JS (three + the 3D
+    standalone adapters; reuses core's React via ``window.__cairnPlotReact``),
+    ``</script``-guarded. Emitted ONLY for a 3D element
+    (pointcloud/mesh/volume/boxes3d)."""
+    if not _THREE_JS.exists():
+        raise BundleUnavailable(
+            f"cairn-plot three addon missing at {_THREE_JS}. Rebuild with "
+            "`cd cairn/ui && npm run build:plot-inline` (and commit dist/)."
+        )
+    return js_inline_safe(_THREE_JS.read_text(encoding="utf-8"))
 
 
 # Backward-compatible aliases (pre-O2 names) → the core bundle. Kept so the

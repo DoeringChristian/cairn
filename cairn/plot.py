@@ -70,6 +70,7 @@ from .sdk.plot_components import (
     Image,
     Line,
     ParallelCoordinates,
+    PointCloud,
     Scalar,
     Scatter,
     Shared,
@@ -1353,9 +1354,11 @@ def mesh(data: Any) -> Any:
     return _card_element("mesh", [data], builder="mesh")
 
 
-def pointcloud(data: Any) -> Any:
-    """A single-view `pointcloud` card. `data` must be a `run[tag]` handle."""
-    return _card_element("pointcloud", [data], builder="pointcloud")
+def pointcloud(data: Any, **kwargs: Any) -> Any:
+    """A single-view point-cloud plot (self-contained). Lowercase alias for
+    :class:`~cairn.sdk.plot_components.PointCloud`; accepts a raw ``(N,3|4|6)``
+    array or a ``run[tag]`` handle. Returns a ``PlotElement``."""
+    return PointCloud(data, **kwargs)._build_element()
 
 
 def volume(data: Any) -> Any:
@@ -1445,6 +1448,7 @@ __all__ = [
     "Heatmap",
     "ParallelCoordinates",
     "Image",
+    "PointCloud",
     "Table",
     "Figure",
     "Compare",

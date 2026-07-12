@@ -12,7 +12,7 @@
     "check:card-schema": "node scripts/check-card-spec-schema.mjs",
     "gen:plot-schema": "node scripts/gen-plot-spec-schema.mjs",
     "check:plot-schema": "node scripts/check-plot-spec-schema.mjs",
-    "build:plot-inline": "vite build --config vite.plot-figure.config.ts && vite build --config vite.plot-core.config.ts"
+    "build:plot-inline": "vite build --config vite.plot-figure.config.ts && vite build --config vite.plot-three.config.ts && vite build --config vite.plot-core.config.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.59.0",

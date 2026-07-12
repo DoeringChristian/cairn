@@ -53,6 +53,8 @@ declare global {
     __cairnPlotRegisterRenderer?: (name: string, component: ComponentType<any>) => void;
     /** Include-once guard the `figure` addon sets after it registers. */
     __cairnPlotFigureLoaded?: boolean;
+    /** Include-once guard the three.js 3D addon sets after it registers. */
+    __cairnPlotThreeLoaded?: boolean;
   }
 }
 

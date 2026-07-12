@@ -173,9 +173,9 @@ def test_media_compare_rejects_bad_mode(two_runs):
 @pytest.mark.parametrize(
     "fn,card_type",
     [
-        # 3D single-view builders remain CardElement (iframe) — Phase D.
+        # mesh/volume/boxes single-view builders remain CardElement (iframe)
+        # until G3b; pointcloud is now a self-contained PlotElement (G3a).
         (cplot.mesh, "mesh"),
-        (cplot.pointcloud, "pointcloud"),
         (cplot.volume, "volume"),
         (cplot.boxes, "boxes3d"),
     ],
@@ -218,15 +218,27 @@ def test_dataref_step_becomes_settings_step(two_runs):
     assert spec.settings.model_dump(exclude_none=True).get("step") == 2.0
 
 
-@pytest.mark.parametrize(
-    "fn", [cplot.mesh, cplot.pointcloud, cplot.volume, cplot.boxes]
-)
+@pytest.mark.parametrize("fn", [cplot.mesh, cplot.volume, cplot.boxes])
 def test_raw_media_data_raises_notimplemented_pointing_at_ws_inline(fn):
-    # 3D raw data still has no self-contained render path (Phase D). `image`
-    # is now supported (raw → baked LOCAL PlotElement) — tested separately.
+    # mesh/volume/boxes raw data still has no self-contained render path (G3b).
+    # `image` and `pointcloud` are now supported (raw → baked LOCAL PlotElement)
+    # — tested separately.
     raw = np.zeros((4, 4, 3), dtype=np.uint8)
     with pytest.raises(NotImplementedError, match="WS-INLINE"):
         fn(raw)
+
+
+def test_pointcloud_raw_emits_self_contained_plotelement():
+    # G3a: cp.pointcloud(raw) bakes an npz DataSpec + the three.js addon, no
+    # server needed.
+    from cairn.sdk.elements import PlotElement
+
+    xyz = np.random.default_rng(0).random((64, 3)).astype("float32")
+    el = cplot.pointcloud(xyz)
+    assert isinstance(el, PlotElement)
+    html = el._repr_html_()
+    assert "__cairnPlotThreeLoaded" in html  # three addon emitted
+    assert "cairn-plot-store" in html  # bytes baked into the page store
 
 
 def test_media_compare_raw_data_raises_notimplemented():
