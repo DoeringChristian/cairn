@@ -1009,6 +1009,8 @@ def _parallel_column(vals: list[Any]) -> tuple[list[float | None], list[str], di
 
 
 def _num_str(v: float) -> str:
+    if not np.isfinite(v):
+        return ""
     if v == int(v) and abs(v) < 1e15:
         return str(int(v))
     return f"{v:.4g}"

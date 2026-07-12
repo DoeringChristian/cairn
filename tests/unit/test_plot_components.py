@@ -389,6 +389,14 @@ def test_parallel_ragged_dimensions_raise():
         cp.ParallelCoordinates({"a": [1, 2, 3], "b": [4, 5]})
 
 
+def test_parallel_non_finite_numeric_value_degrades_gracefully():
+    # A NaN in a numeric column must not crash at construction (it is coerced
+    # to null in the descriptor, like every other leaf) — not raise a traceback.
+    desc = _leaf_desc(cp.ParallelCoordinates({"lr": [0.1, float("nan")], "acc": [0.8, 0.9]}))
+    lr_values = desc["data"]["props"]["rows"][1]["values"]
+    assert lr_values[0] is None  # the NaN cell nulled, no exception raised
+
+
 @pytest.mark.parametrize(
     "leaf",
     [
