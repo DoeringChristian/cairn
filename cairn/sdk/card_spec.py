@@ -17,7 +17,7 @@ never parses markdown and never re-implements ``cardFromSpec``.
 
 from __future__ import annotations
 
-from typing import Any, Literal, Optional, Union
+from typing import Annotated, Any, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -35,8 +35,15 @@ __all__ = [
     "ReportSpec",
     "InlineDataSpec",
     "ImageDataSpec",
+    "UrlDataSpec",
     "DataSpec",
     "PlotSpec",
+    "PlotLeafSpec",
+    "GridSpec",
+    "CompareSpec",
+    "SharedPropsSpec",
+    "PlotNode",
+    "PlotDescriptorSpec",
 ]
 
 # The canonical card-type vocabulary. Mirrors `CARD_TYPES` in
@@ -163,20 +170,119 @@ class ImageDataSpec(_Strict):
     metadata: Optional[str] = None
 
 
+class UrlDataSpec(_Strict):
+    """`DataSpec{kind:"url"}` — a raw URL passed through verbatim (the 3rd
+    data-provenance mode beside inline/image). ``src`` is the foreground image
+    URL, ``referenceSrc`` an optional baseline, ``metadata`` optional overlay
+    JSON. No `DataSource` hash lookup — the URL is used as-is."""
+
+    kind: Literal["url"]
+    src: str
+    referenceSrc: Optional[str] = None
+    metadata: Optional[str] = None
+
+
 # Discriminated on ``kind`` (mirrors the TS `DataSpec` discriminated union).
-DataSpec = Union[InlineDataSpec, ImageDataSpec]
+DataSpec = Annotated[
+    Union[InlineDataSpec, ImageDataSpec, UrlDataSpec],
+    Field(discriminator="kind"),
+]
 
 
 class PlotSpec(_Strict):
-    """One plot descriptor = `{renderer, props?, data, mode?, endpoint?}`
-    (== TS ``PlotDescriptor``). ``mode`` defaults to ``"local"`` (the
+    """One (flat) plot descriptor = `{renderer, props?, data, mode?, endpoint?}`.
+
+    The pre-G1 flat form, kept as a leaf-builder for the lowercase
+    (``cp.scalar``/``cp.image``/…) path. The recursive tree descriptor is
+    ``PlotDescriptorSpec`` below. ``mode`` defaults to ``"local"`` (the
     self-contained baked-store mode); ``props`` defaults to ``{}``."""
 
     renderer: str
     props: dict[str, Any] = Field(default_factory=dict)
-    data: DataSpec = Field(discriminator="kind")
+    data: DataSpec
     mode: Literal["local", "endpoint"] = "local"
     endpoint: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# G1: the recursive TREE descriptor. A `PlotNode` is a leaf (`plot`), a `grid`
+# (children in CSS grid), or a `compare` (two frames composited). Mirrors the TS
+# `PlotNode`/`PlotDescriptor` in ``cairn/ui/src/plot-descriptor.ts`` (from which
+# ``docs/schemas/cairn-plot-spec.schema.json`` is generated). Discriminated on
+# ``kind``; `GridSpec.children` is a forward ref resolved by `model_rebuild()`.
+# ---------------------------------------------------------------------------
+
+
+class PlotLeafSpec(_Strict):
+    """`PlotNode{kind:"plot"}` — one renderer + its data (the former flat body)."""
+
+    kind: Literal["plot"]
+    renderer: str
+    props: Optional[dict[str, Any]] = None
+    data: DataSpec
+
+
+class SharedPropsSpec(_Strict):
+    """`SharedProps` — properties shared across a grid's cells."""
+
+    colormap: Optional[str] = None
+    colorRange: Optional[tuple[float, float]] = None
+    colorbar: Optional[bool] = None
+    reference: Optional[DataSpec] = None
+    sync: Optional["_SyncSpec"] = None
+
+
+class _SyncSpec(_Strict):
+    viewport: Optional[bool] = None
+    camera: Optional[bool] = None
+
+
+class GridSpec(_Strict):
+    """`PlotNode{kind:"grid"}` — children laid out in a CSS grid. ``colWidths``/
+    ``rowHeights`` entries: number → ``Nfr``, string → verbatim CSS."""
+
+    kind: Literal["grid"]
+    children: list["PlotNode"]
+    cols: Optional[int] = None
+    colWidths: Optional[list[Union[float, str]]] = None
+    rowHeights: Optional[list[Union[float, str]]] = None
+    gap: Optional[Union[float, str]] = None
+    shared: Optional[SharedPropsSpec] = None
+
+
+class CompareSpec(_Strict):
+    """`PlotNode{kind:"compare"}` — two DataSpec frames composited into one pane."""
+
+    kind: Literal["compare"]
+    mode: Literal["split", "blend", "diff"]
+    a: DataSpec
+    b: DataSpec
+    baselineIndex: Optional[Literal[0, 1]] = None
+    diffSubmode: Optional[str] = None
+    props: Optional[dict[str, Any]] = None
+
+
+# Discriminated on ``kind`` (mirrors the TS `PlotNode` discriminated union).
+PlotNode = Annotated[
+    Union[PlotLeafSpec, GridSpec, CompareSpec],
+    Field(discriminator="kind"),
+]
+
+
+class PlotDescriptorSpec(_Strict):
+    """The recursive tree descriptor = `{root, mode?, endpoint?}`
+    (== TS ``PlotDescriptor``). ``mode``/``endpoint`` bind the whole tree to one
+    `DataSource`; ``mode`` defaults to ``"local"``."""
+
+    root: PlotNode
+    mode: Literal["local", "endpoint"] = "local"
+    endpoint: Optional[str] = None
+
+
+# Resolve the `GridSpec.children -> PlotNode` / `SharedPropsSpec.sync` forward
+# refs now that every referenced model is defined.
+GridSpec.model_rebuild()
+SharedPropsSpec.model_rebuild()
 
 
 class StaticRunSelector(_Strict):

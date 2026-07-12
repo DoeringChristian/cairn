@@ -5,17 +5,9 @@
     "PlotDescriptor": {
       "type": "object",
       "properties": {
-        "renderer": {
-          "type": "string",
-          "description": "Key into `RENDERER_MAP` (e.g. \"scalar\", \"image\", \"table\", \"figure\")."
-        },
-        "props": {
-          "$ref": "#/definitions/Record%3Cstring%2Cunknown%3E",
-          "description": "The renderer's non-data config props (§1 \"Non-data config props\")."
-        },
-        "data": {
-          "$ref": "#/definitions/DataSpec",
-          "description": "How to produce the renderer's DATA props."
+        "root": {
+          "$ref": "#/definitions/PlotNode",
+          "description": "The root node of the plot tree (leaf, grid, or compare)."
         },
         "mode": {
           "type": "string",
@@ -23,7 +15,7 @@
             "local",
             "endpoint"
           ],
-          "description": "Which `DataSource` the bootstrap builds for `data` resolution. Optional — omitted (or \"local\") means the self-contained LOCAL store; kept optional so it stays in lockstep with the Python `PlotSpec` default (`mode=\"local\"`)."
+          "description": "Which `DataSource` the bootstrap builds for `data` resolution across the whole tree. Optional — omitted (or \"local\") means the self-contained LOCAL store; kept optional so it stays in lockstep with the Python `PlotDescriptorSpec` default (`mode=\"local\"`)."
         },
         "endpoint": {
           "type": "string",
@@ -31,10 +23,50 @@
         }
       },
       "required": [
+        "root"
+      ],
+      "additionalProperties": false
+    },
+    "PlotNode": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/PlotLeafNode"
+        },
+        {
+          "$ref": "#/definitions/GridNode"
+        },
+        {
+          "$ref": "#/definitions/CompareNode"
+        }
+      ]
+    },
+    "PlotLeafNode": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "plot"
+        },
+        "renderer": {
+          "type": "string",
+          "description": "Key into the renderer registry (e.g. \"scalar\", \"image\", \"table\", \"figure\")."
+        },
+        "props": {
+          "$ref": "#/definitions/Record%3Cstring%2Cunknown%3E",
+          "description": "The renderer's non-data config props."
+        },
+        "data": {
+          "$ref": "#/definitions/DataSpec",
+          "description": "How to produce the renderer's DATA props."
+        }
+      },
+      "required": [
+        "kind",
         "renderer",
         "data"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "A single renderer + its data — the former flat descriptor body."
     },
     "Record<string,unknown>": {
       "type": "object",
@@ -90,9 +122,170 @@
             "hash"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "url"
+            },
+            "src": {
+              "type": "string"
+            },
+            "referenceSrc": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "metadata": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "src"
+          ],
+          "additionalProperties": false
         }
       ],
       "description": "How the renderer's DATA props are produced.\n\n - `inline`: the data-contract props are plain JSON, carried directly in the    descriptor (2D contracts — Series[]/points[]/matrix/counts+edges/table/    figure). The bootstrap merges `props` straight onto the renderer. No    `DataSource` needed.  - `image`: a content-addressed image artifact (+ optional baseline +    overlay metadata). Resolved via `resolveImageViewportItems` against the    active `DataSource` (LOCAL `data:` URL or ENDPOINT `/api/artifacts/…`),    yielding `{ imageUrl, baselineUrl, overlay }` for `ImagePane`."
+    },
+    "GridNode": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "grid"
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/PlotNode"
+          }
+        },
+        "cols": {
+          "type": "number"
+        },
+        "colWidths": {
+          "type": "array",
+          "items": {
+            "type": [
+              "number",
+              "string"
+            ]
+          }
+        },
+        "rowHeights": {
+          "type": "array",
+          "items": {
+            "type": [
+              "number",
+              "string"
+            ]
+          }
+        },
+        "gap": {
+          "type": [
+            "number",
+            "string"
+          ]
+        },
+        "shared": {
+          "$ref": "#/definitions/SharedProps"
+        }
+      },
+      "required": [
+        "kind",
+        "children"
+      ],
+      "additionalProperties": false,
+      "description": "Children laid out in a CSS grid. `colWidths`/`rowHeights` entries: number → `Nfr`, string → verbatim CSS (\"25%\", \"120px\")."
+    },
+    "SharedProps": {
+      "type": "object",
+      "properties": {
+        "colormap": {
+          "type": "string"
+        },
+        "colorRange": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "colorbar": {
+          "type": "boolean"
+        },
+        "reference": {
+          "$ref": "#/definitions/DataSpec"
+        },
+        "sync": {
+          "type": "object",
+          "properties": {
+            "viewport": {
+              "type": "boolean"
+            },
+            "camera": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false,
+      "description": "Properties shared across a grid's cells (colormap/range/colorbar/reference, plus opt-in viewport/camera sync)."
+    },
+    "CompareNode": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "compare"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "split",
+            "blend",
+            "diff"
+          ]
+        },
+        "a": {
+          "$ref": "#/definitions/DataSpec"
+        },
+        "b": {
+          "$ref": "#/definitions/DataSpec"
+        },
+        "baselineIndex": {
+          "type": "number",
+          "enum": [
+            0,
+            1
+          ],
+          "description": "Which frame is the reference/baseline (0 = `a`, 1 = `b`). Default 0."
+        },
+        "diffSubmode": {
+          "type": "string"
+        },
+        "props": {
+          "$ref": "#/definitions/Record%3Cstring%2Cunknown%3E"
+        }
+      },
+      "required": [
+        "kind",
+        "mode",
+        "a",
+        "b"
+      ],
+      "additionalProperties": false,
+      "description": "Two DataSpec frames composited into one pane (split/blend/diff)."
     }
   }
 }

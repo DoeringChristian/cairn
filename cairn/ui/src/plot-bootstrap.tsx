@@ -32,7 +32,11 @@ import {
   type DataSource,
 } from "./lib/cairn-plot";
 import { useEmitAutoHeight } from "./lib/emit-auto-height";
-import { resolveDataProps, type PlotDescriptor } from "./plot-descriptor";
+import {
+  resolveDataProps,
+  type PlotDescriptor,
+  type PlotNode,
+} from "./plot-descriptor";
 import { getRenderer, onRegister, registerRenderer } from "./plot-registry";
 
 const DESCRIPTOR_SCRIPT_ID = "__cairn_plot_descriptor__";
@@ -76,7 +80,7 @@ async function readPageDescriptor(): Promise<PlotDescriptor> {
     document.getElementById(DESCRIPTOR_SCRIPT_ID) ??
     document.querySelector(`script[type="${DESCRIPTOR_MIME}"]`);
   if (inline?.textContent) {
-    return JSON.parse(inline.textContent) as PlotDescriptor;
+    return normalizeDescriptor(JSON.parse(inline.textContent));
   }
   const params = new URLSearchParams(window.location.search);
   const src = params.get("src");
@@ -85,7 +89,7 @@ async function readPageDescriptor(): Promise<PlotDescriptor> {
     if (!res.ok) {
       throw new Error(`failed to fetch descriptor from ${src} (${res.status})`);
     }
-    return (await res.json()) as PlotDescriptor;
+    return normalizeDescriptor(await res.json());
   }
   if (params.get("sid")) {
     throw new Error("?sid= descriptor loading is not available yet (Phase C).");
@@ -94,6 +98,28 @@ async function readPageDescriptor(): Promise<PlotDescriptor> {
     "No plot descriptor found (expected an inline " +
       `<script type="${DESCRIPTOR_MIME}"> blob or a ?src= param).`,
   );
+}
+
+/**
+ * Legacy-flat shim (plan B): a pre-G1 descriptor is `{renderer,props?,data,…}`
+ * with no `root`. Lift it to the G1 tree shape `{root:{kind:"plot",…},…}` so old
+ * committed fixtures / emitters keep mounting. New descriptors already carry
+ * `root` and pass through unchanged.
+ */
+export function normalizeDescriptor(raw: any): PlotDescriptor {
+  if (raw && !raw.root && typeof raw.renderer === "string") {
+    return {
+      root: {
+        kind: "plot",
+        renderer: raw.renderer,
+        props: raw.props,
+        data: raw.data,
+      },
+      mode: raw.mode,
+      endpoint: raw.endpoint,
+    };
+  }
+  return raw as PlotDescriptor;
 }
 
 /** Build the `DataSource` the descriptor's `mode` selects. */
@@ -136,17 +162,25 @@ export function PlotApp({ descriptor: given }: { descriptor?: PlotDescriptor }) 
     let cancelled = false;
     (async () => {
       try {
-        const descriptor = given ?? (await readPageDescriptor());
+        const descriptor = normalizeDescriptor(
+          given ?? (await readPageDescriptor()),
+        );
+        // Stage A bridge: this thin PlotApp renders the root leaf only; the
+        // recursive grid/compare compositor arrives in Stage B (plot-node.tsx).
+        const root: PlotNode = descriptor.root;
+        if (root.kind !== "plot") {
+          throw new Error(`unsupported root node kind "${root.kind}"`);
+        }
         // NOTE (O2): do NOT reject an unregistered renderer here. With the
         // bundle split a `figure` addon may still be parsing; the render path
         // below waits for registration (bounded) instead of throwing.
         const source = dataSourceFor(descriptor);
-        const dataProps = await resolveDataProps(descriptor.data, source);
+        const dataProps = await resolveDataProps(root.data, source);
         if (cancelled) return;
         setState({
           status: "ready",
-          renderer: descriptor.renderer,
-          props: { ...(descriptor.props ?? {}), ...dataProps },
+          renderer: root.renderer,
+          props: { ...(root.props ?? {}), ...dataProps },
         });
       } catch (err) {
         if (cancelled) return;

@@ -1,8 +1,8 @@
-"""WS-PLOT (Phase C) conformance: the hand-written pydantic mirror
-``cairn.sdk.card_spec.PlotSpec`` (+ its ``DataSpec`` variants) must match the
-committed JSON Schema ``docs/schemas/cairn-plot-spec.schema.json`` (itself
-generated from the authoritative TS ``PlotDescriptor`` in
-``cairn/ui/src/plot-descriptor.ts``).
+"""WS-PLOT (Phase C) / G1 conformance: the hand-written pydantic mirror in
+``cairn.sdk.card_spec`` (``PlotDescriptorSpec`` + the recursive ``PlotNode``
+union + ``DataSpec`` variants) must match the committed JSON Schema
+``docs/schemas/cairn-plot-spec.schema.json`` (itself generated from the
+authoritative TS ``PlotDescriptor`` in ``cairn/ui/src/plot-descriptor.ts``).
 
 This is the Python half of the plot anti-drift chain: TS -> JSON Schema
 (``npm run check:plot-schema`` guards TS<->schema) -> pydantic (this test
@@ -37,30 +37,83 @@ def defs(schema) -> dict:
 
 def test_schema_file_exists_and_parses(schema):
     assert schema["$schema"].startswith("http://json-schema.org/draft-07")
+    # G1: the root is now the recursive tree wrapper.
     assert schema["$ref"] == "#/definitions/PlotDescriptor"
+
+
+# ---------------------------------------------------------------------------
+# Root wrapper: PlotDescriptor{root, mode?, endpoint?} <-> PlotDescriptorSpec.
+# ---------------------------------------------------------------------------
 
 
 def test_plot_descriptor_properties_match_schema(defs):
     schema_props = set(defs["PlotDescriptor"].get("properties", {}).keys())
-    model_props = set(cs.PlotSpec.model_fields.keys())
-    assert model_props == schema_props, "PlotSpec: field name mismatch vs PlotDescriptor"
+    model_props = set(cs.PlotDescriptorSpec.model_fields.keys())
+    assert model_props == schema_props, "PlotDescriptorSpec: field name mismatch"
 
 
 def test_plot_descriptor_required_matches_schema(defs):
     schema_required = set(defs["PlotDescriptor"].get("required", []))
     model_required = {
-        name for name, f in cs.PlotSpec.model_fields.items() if f.is_required()
+        name for name, f in cs.PlotDescriptorSpec.model_fields.items() if f.is_required()
     }
-    assert model_required == schema_required, "PlotSpec: required-set mismatch"
+    assert model_required == schema_required, "PlotDescriptorSpec: required-set mismatch"
 
 
 def test_plot_descriptor_extra_policy_is_forbid(defs):
-    # PlotDescriptor is additionalProperties:false <-> extra="forbid".
     assert defs["PlotDescriptor"].get("additionalProperties") is False
-    assert cs.PlotSpec.model_config.get("extra") == "forbid"
+    assert cs.PlotDescriptorSpec.model_config.get("extra") == "forbid"
 
 
-# The two DataSpec variants (anyOf branches), matched by their `kind` const.
+def test_plot_descriptor_root_refs_plot_node(defs):
+    # The recursive seam: PlotDescriptor.root -> PlotNode (an anyOf of the three
+    # node defs).
+    assert defs["PlotDescriptor"]["properties"]["root"]["$ref"] == "#/definitions/PlotNode"
+    node_refs = {b["$ref"] for b in defs["PlotNode"]["anyOf"]}
+    assert node_refs == {
+        "#/definitions/PlotLeafNode",
+        "#/definitions/GridNode",
+        "#/definitions/CompareNode",
+    }
+    # And the recursion closes: GridNode.children.items -> PlotNode.
+    assert (
+        defs["GridNode"]["properties"]["children"]["items"]["$ref"]
+        == "#/definitions/PlotNode"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Node defs: field-parity / required / additionalProperties per model.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "model,def_name",
+    [
+        (cs.PlotLeafSpec, "PlotLeafNode"),
+        (cs.GridSpec, "GridNode"),
+        (cs.CompareSpec, "CompareNode"),
+        (cs.SharedPropsSpec, "SharedProps"),
+    ],
+    ids=["plot", "grid", "compare", "shared"],
+)
+def test_node_model_matches_schema(model, def_name, defs):
+    d = defs[def_name]
+    schema_props = set(d.get("properties", {}).keys())
+    model_props = set(model.model_fields.keys())
+    assert model_props == schema_props, f"{def_name}: field name mismatch"
+    schema_required = set(d.get("required", []))
+    model_required = {n for n, f in model.model_fields.items() if f.is_required()}
+    assert model_required == schema_required, f"{def_name}: required-set mismatch"
+    assert d.get("additionalProperties") is False
+    assert model.model_config.get("extra") == "forbid"
+
+
+# ---------------------------------------------------------------------------
+# DataSpec variants (anyOf branches), matched by their `kind` const.
+# ---------------------------------------------------------------------------
+
+
 def _dataspec_branches(defs) -> dict:
     out = {}
     for branch in defs["DataSpec"]["anyOf"]:
@@ -71,8 +124,12 @@ def _dataspec_branches(defs) -> dict:
 
 @pytest.mark.parametrize(
     "model,kind",
-    [(cs.InlineDataSpec, "inline"), (cs.ImageDataSpec, "image")],
-    ids=["inline", "image"],
+    [
+        (cs.InlineDataSpec, "inline"),
+        (cs.ImageDataSpec, "image"),
+        (cs.UrlDataSpec, "url"),
+    ],
+    ids=["inline", "image", "url"],
 )
 def test_dataspec_variant_matches_schema(model, kind, defs):
     branch = _dataspec_branches(defs)[kind]
@@ -86,34 +143,108 @@ def test_dataspec_variant_matches_schema(model, kind, defs):
     assert model.model_config.get("extra") == "forbid"
 
 
-def test_inline_sample_round_trips_and_is_schema_shaped(defs):
-    spec = cs.PlotSpec(
-        renderer="scalar",
-        props={"xAxis": "step", "yScale": "log"},
-        data=cs.InlineDataSpec(
-            kind="inline",
-            props={"series": [{"key": "loss", "label": "loss", "color": "#0969da",
-                               "points": [{"x": 0, "y": 1.0}]}]},
+# ---------------------------------------------------------------------------
+# Round-trips.
+# ---------------------------------------------------------------------------
+
+
+def test_leaf_descriptor_round_trips(defs):
+    spec = cs.PlotDescriptorSpec(
+        root=cs.PlotLeafSpec(
+            kind="plot",
+            renderer="scalar",
+            props={"xAxis": "step", "yScale": "log"},
+            data=cs.InlineDataSpec(
+                kind="inline",
+                props={"series": [{"key": "loss", "label": "loss", "color": "#0969da",
+                                   "points": [{"x": 0, "y": 1.0}]}]},
+            ),
         ),
     )
     dumped = spec.model_dump(exclude_none=True, mode="json")
     assert set(dumped).issubset(set(defs["PlotDescriptor"]["properties"]))
     assert dumped["mode"] == "local"
-    assert dumped["data"]["kind"] == "inline"
-    # Re-validate the emitted dict to prove it's model-round-trip stable.
-    assert cs.PlotSpec.model_validate(dumped) == spec
+    assert dumped["root"]["kind"] == "plot"
+    assert dumped["root"]["data"]["kind"] == "inline"
+    assert cs.PlotDescriptorSpec.model_validate(dumped) == spec
 
 
-def test_image_sample_round_trips(defs):
-    spec = cs.PlotSpec(
+def test_recursive_grid_round_trips():
+    # grid -> [grid -> [image leaf, image leaf], url leaf]
+    inner = cs.GridSpec(
+        kind="grid",
+        children=[
+            cs.PlotLeafSpec(
+                kind="plot",
+                renderer="image",
+                data=cs.ImageDataSpec(kind="image", hash="sha256:a"),
+            ),
+            cs.PlotLeafSpec(
+                kind="plot",
+                renderer="image",
+                data=cs.ImageDataSpec(kind="image", hash="sha256:b",
+                                      referenceHash="sha256:ref"),
+            ),
+        ],
+        cols=2,
+        colWidths=[0.6, 0.4],
+    )
+    url_leaf = cs.PlotLeafSpec(
+        kind="plot",
         renderer="image",
-        data=cs.ImageDataSpec(kind="image", hash="sha256:abc", metadata=None),
+        data=cs.UrlDataSpec(kind="url", src="https://x/y.png", referenceSrc=None),
+    )
+    spec = cs.PlotDescriptorSpec(
+        root=cs.GridSpec(
+            kind="grid",
+            children=[inner, url_leaf],
+            rowHeights=[1, 1],
+            gap=8,
+            shared=cs.SharedPropsSpec(colormap="viridis", colorbar=True),
+        ),
+    )
+    dumped = spec.model_dump(exclude_none=True, mode="json")
+    assert dumped["root"]["kind"] == "grid"
+    assert dumped["root"]["children"][0]["kind"] == "grid"
+    assert dumped["root"]["children"][0]["children"][0]["data"]["kind"] == "image"
+    assert dumped["root"]["children"][1]["data"]["kind"] == "url"
+    # model_dump(exclude_none) -> model_validate is stable.
+    assert cs.PlotDescriptorSpec.model_validate(dumped) == spec
+
+
+def test_compare_node_round_trips():
+    spec = cs.PlotDescriptorSpec(
+        root=cs.CompareSpec(
+            kind="compare",
+            mode="diff",
+            a=cs.ImageDataSpec(kind="image", hash="sha256:a"),
+            b=cs.ImageDataSpec(kind="image", hash="sha256:b"),
+            baselineIndex=0,
+            diffSubmode="heatmap",
+        ),
         mode="endpoint",
         endpoint="http://localhost:4301",
     )
     dumped = spec.model_dump(exclude_none=True, mode="json")
-    assert dumped["data"]["kind"] == "image"
-    assert dumped["data"]["hash"] == "sha256:abc"
+    assert dumped["root"]["kind"] == "compare"
+    assert dumped["root"]["mode"] == "diff"
+    assert cs.PlotDescriptorSpec.model_validate(dumped) == spec
+
+
+# ---------------------------------------------------------------------------
+# The flat PlotSpec leaf-builder stays green (lowercase path).
+# ---------------------------------------------------------------------------
+
+
+def test_flat_plot_spec_inline_round_trips():
+    spec = cs.PlotSpec(
+        renderer="scalar",
+        props={"xAxis": "step"},
+        data=cs.InlineDataSpec(kind="inline", props={"series": []}),
+    )
+    dumped = spec.model_dump(exclude_none=True, mode="json")
+    assert dumped["mode"] == "local"
+    assert dumped["data"]["kind"] == "inline"
     assert cs.PlotSpec.model_validate(dumped) == spec
 
 
@@ -122,10 +253,13 @@ def test_discriminator_rejects_unknown_kind():
         cs.PlotSpec(renderer="scalar", data={"kind": "bogus", "props": {}})
 
 
-def test_extra_field_rejected_on_plot_spec():
+def test_extra_field_rejected_on_descriptor():
     with pytest.raises(ValidationError):
-        cs.PlotSpec(
-            renderer="scalar",
-            data=cs.InlineDataSpec(kind="inline", props={}),
+        cs.PlotDescriptorSpec(
+            root=cs.PlotLeafSpec(
+                kind="plot",
+                renderer="scalar",
+                data=cs.InlineDataSpec(kind="inline", props={}),
+            ),
             bogus=1,
         )

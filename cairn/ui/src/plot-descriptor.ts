@@ -42,19 +42,79 @@ export type DataSpec =
       hash: string | null;
       referenceHash?: string | null;
       metadata?: string | null;
+    }
+  | {
+      // `url`: a raw URL passed through verbatim (the 3rd data-provenance mode
+      // beside inline/image). Source-agnostic like `image`, but the URL is used
+      // as-is — no `DataSource` hash lookup. `src` is the foreground image URL,
+      // `referenceSrc` an optional baseline, `metadata` optional overlay JSON.
+      kind: "url";
+      src: string;
+      referenceSrc?: string | null;
+      metadata?: string | null;
     };
 
-export interface PlotDescriptor {
-  /** Key into `RENDERER_MAP` (e.g. "scalar", "image", "table", "figure"). */
+// ---------------------------------------------------------------------------
+// G1: the descriptor is a recursive TREE. A `PlotNode` is a leaf (`plot`), a
+// `grid` (children laid out in CSS grid), or a `compare` (two frames composited
+// into one pane). `mode`/`endpoint` are hoisted to the root `PlotDescriptor`
+// wrapper — they bind the whole tree to ONE `DataSource`.
+// ---------------------------------------------------------------------------
+
+export type PlotNode = PlotLeafNode | GridNode | CompareNode;
+
+/** A single renderer + its data — the former flat descriptor body. */
+export interface PlotLeafNode {
+  kind: "plot";
+  /** Key into the renderer registry (e.g. "scalar", "image", "table", "figure"). */
   renderer: string;
-  /** The renderer's non-data config props (§1 "Non-data config props"). */
+  /** The renderer's non-data config props. */
   props?: Record<string, unknown>;
   /** How to produce the renderer's DATA props. */
   data: DataSpec;
-  /** Which `DataSource` the bootstrap builds for `data` resolution.
-   *  Optional — omitted (or "local") means the self-contained LOCAL store;
-   *  kept optional so it stays in lockstep with the Python `PlotSpec` default
-   *  (`mode="local"`). */
+}
+
+/** Children laid out in a CSS grid. `colWidths`/`rowHeights` entries:
+ *  number → `Nfr`, string → verbatim CSS ("25%", "120px"). */
+export interface GridNode {
+  kind: "grid";
+  children: PlotNode[];
+  cols?: number;
+  colWidths?: Array<number | string>;
+  rowHeights?: Array<number | string>;
+  gap?: number | string;
+  shared?: SharedProps;
+}
+
+/** Two DataSpec frames composited into one pane (split/blend/diff). */
+export interface CompareNode {
+  kind: "compare";
+  mode: "split" | "blend" | "diff";
+  a: DataSpec;
+  b: DataSpec;
+  /** Which frame is the reference/baseline (0 = `a`, 1 = `b`). Default 0. */
+  baselineIndex?: 0 | 1;
+  diffSubmode?: string;
+  props?: Record<string, unknown>;
+}
+
+/** Properties shared across a grid's cells (colormap/range/colorbar/reference,
+ *  plus opt-in viewport/camera sync). */
+export interface SharedProps {
+  colormap?: string;
+  colorRange?: [number, number];
+  colorbar?: boolean;
+  reference?: DataSpec;
+  sync?: { viewport?: boolean; camera?: boolean };
+}
+
+export interface PlotDescriptor {
+  /** The root node of the plot tree (leaf, grid, or compare). */
+  root: PlotNode;
+  /** Which `DataSource` the bootstrap builds for `data` resolution across the
+   *  whole tree. Optional — omitted (or "local") means the self-contained LOCAL
+   *  store; kept optional so it stays in lockstep with the Python
+   *  `PlotDescriptorSpec` default (`mode="local"`). */
   mode?: "local" | "endpoint";
   /** ENDPOINT only: absolute base URL of the repo server (no trailing slash),
    *  used to build `${endpoint}/api/artifacts/${hash}`. */
@@ -90,6 +150,16 @@ export async function resolveDataProps(
         imageUrl: item?.url ?? null,
         baselineUrl: ref?.url ?? null,
         overlay: item?.overlay ?? undefined,
+      };
+    }
+    case "url": {
+      // Raw URL passthrough: the `src`/`referenceSrc` are used verbatim (no
+      // DataSource hash lookup). Source-agnostic like `image`; the overlay
+      // `metadata` is parsed the same way `resolveImageViewportItems` does.
+      return {
+        imageUrl: data.src,
+        baselineUrl: data.referenceSrc ?? null,
+        overlay: parseOverlay(data.metadata) ?? undefined,
       };
     }
   }
