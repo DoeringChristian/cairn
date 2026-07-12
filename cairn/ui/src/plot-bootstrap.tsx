@@ -13,17 +13,16 @@
  * Two build shapes consume this ONE module (identical behaviour):
  *  - `plot-main.tsx` → the code-split `plot.html` entry (server `/plot`, the
  *    ENDPOINT/`link` companion — chunks loaded from the server origin);
- *  - the `vite.plot-inline.config.ts` lib build → a single self-contained IIFE
- *    (`dist/plot-inline/plot-inline.iife.js`) Python inlines for the offline
- *    LOCAL default (no server, no external network).
+ *  - the `vite.plot-inline.config.ts` lib build → the self-contained inline
+ *    IIFEs (`dist/plot-inline/core.iife.js` + optional addon IIFEs) Python
+ *    inlines for the offline LOCAL default (no server, no external network).
+ *
+ * G1: the descriptor is a recursive TREE; `PlotApp` is now a thin root wrapper
+ * that builds one `DataSource` and renders `<PlotNodeView>` under a
+ * `SharedPlotContext` (see plot-node.tsx). The former flat single-renderer body
+ * lives on there as `LeafView`.
  */
-import React, {
-  Suspense,
-  useEffect,
-  useRef,
-  useState,
-  type ComponentType,
-} from "react";
+import React, { useEffect, useRef, type ComponentType } from "react";
 import ReactDOM from "react-dom/client";
 import {
   createEndpointDataSource,
@@ -32,24 +31,12 @@ import {
   type DataSource,
 } from "./lib/cairn-plot";
 import { useEmitAutoHeight } from "./lib/emit-auto-height";
-import {
-  resolveDataProps,
-  type PlotDescriptor,
-  type PlotNode,
-} from "./plot-descriptor";
-import { getRenderer, onRegister, registerRenderer } from "./plot-registry";
+import { type PlotDescriptor } from "./plot-descriptor";
+import { registerRenderer } from "./plot-registry";
+import { PlotNodeView, SharedPlotContext } from "./plot-node";
 
 const DESCRIPTOR_SCRIPT_ID = "__cairn_plot_descriptor__";
 const DESCRIPTOR_MIME = "application/cairn-plot+json";
-
-/**
- * How long a mounted `PlotApp` waits for a not-yet-registered renderer (an
- * addon `<script>` still parsing) before giving up with a visible "unknown
- * renderer" error. The addon IIFE is emitted synchronously BEFORE the mount
- * push, so in practice registration always wins the race; this bound only
- * guards a genuinely unknown renderer (a bad descriptor / a missing addon).
- */
-const RENDERER_WAIT_MS = 8000;
 
 type QueueEntry = [divId: string, descId: string];
 
@@ -141,46 +128,38 @@ function Message({ text, error }: { text: string; error?: boolean }) {
 }
 
 /**
- * Mount ONE renderer. `descriptor` may be supplied directly (per-div notebook
- * mount) or read from the page (server `/plot` root). NEVER throws to the host
- * — a resolve/render failure degrades to a visible in-div message.
+ * Mount ONE plot tree. `descriptor` may be supplied directly (per-div notebook
+ * mount) or read from the page (server `/plot` root, possibly via a `?src=`
+ * fetch). Thin root wrapper (G1): normalize (legacy-flat shim) → build ONE
+ * `DataSource` → seed `SharedPlotContext` → `<PlotNodeView node={root}>`. Each
+ * leaf owns its own resolve + bounded registry-wait (plot-node.tsx). NEVER
+ * throws to the host — a descriptor read failure degrades to a visible message.
  */
 export function PlotApp({ descriptor: given }: { descriptor?: PlotDescriptor }) {
   const containerRef = useRef<HTMLDivElement>(null);
   useEmitAutoHeight(containerRef);
 
-  const [state, setState] = useState<
+  const [state, setState] = React.useState<
     | { status: "loading" }
     | { status: "error"; message: string }
-    | { status: "ready"; renderer: string; props: Record<string, unknown> }
-  >({ status: "loading" });
-  // Bumped when the registry gains a renderer, so a `ready` state whose
-  // renderer was not yet registered re-evaluates `getRenderer` and mounts.
-  const [, bumpRegistry] = useState(0);
+    | { status: "ready"; descriptor: PlotDescriptor; source: DataSource }
+  >(() => {
+    if (!given) return { status: "loading" };
+    const descriptor = normalizeDescriptor(given);
+    return { status: "ready", descriptor, source: dataSourceFor(descriptor) };
+  });
 
   useEffect(() => {
+    if (given) return; // already resolved synchronously above
     let cancelled = false;
     (async () => {
       try {
-        const descriptor = normalizeDescriptor(
-          given ?? (await readPageDescriptor()),
-        );
-        // Stage A bridge: this thin PlotApp renders the root leaf only; the
-        // recursive grid/compare compositor arrives in Stage B (plot-node.tsx).
-        const root: PlotNode = descriptor.root;
-        if (root.kind !== "plot") {
-          throw new Error(`unsupported root node kind "${root.kind}"`);
-        }
-        // NOTE (O2): do NOT reject an unregistered renderer here. With the
-        // bundle split a `figure` addon may still be parsing; the render path
-        // below waits for registration (bounded) instead of throwing.
-        const source = dataSourceFor(descriptor);
-        const dataProps = await resolveDataProps(root.data, source);
+        const descriptor = normalizeDescriptor(await readPageDescriptor());
         if (cancelled) return;
         setState({
           status: "ready",
-          renderer: root.renderer,
-          props: { ...(root.props ?? {}), ...dataProps },
+          descriptor,
+          source: dataSourceFor(descriptor),
         });
       } catch (err) {
         if (cancelled) return;
@@ -195,47 +174,18 @@ export function PlotApp({ descriptor: given }: { descriptor?: PlotDescriptor }) 
     };
   }, [given]);
 
-  // Wait-for-registration: when the data is ready but the descriptor's renderer
-  // is not yet in the registry (its addon `<script>` hasn't executed), subscribe
-  // and re-render the instant it arrives; after a bounded wait, surface the
-  // existing visible "unknown renderer" error for a genuinely missing renderer.
-  const rendererMissing = state.status === "ready" && !getRenderer(state.renderer);
-  useEffect(() => {
-    if (state.status !== "ready" || getRenderer(state.renderer)) return;
-    const name = state.renderer;
-    let settled = false;
-    const unsub = onRegister(() => {
-      if (!settled && getRenderer(name)) {
-        settled = true;
-        bumpRegistry((n) => n + 1);
-      }
-    });
-    const timer = setTimeout(() => {
-      if (!settled) {
-        settled = true;
-        setState({ status: "error", message: `unknown renderer "${name}"` });
-      }
-    }, RENDERER_WAIT_MS);
-    return () => {
-      settled = true;
-      unsub();
-      clearTimeout(timer);
-    };
-  }, [state, rendererMissing]);
-
   let body: React.ReactNode;
   if (state.status === "loading") {
     body = <Message text="Loading…" />;
   } else if (state.status === "error") {
     body = <Message text={`Plot error: ${state.message}`} error />;
   } else {
-    const Renderer = getRenderer(state.renderer);
-    body = Renderer ? (
-      <Suspense fallback={<Message text="Loading renderer…" />}>
-        <Renderer {...state.props} />
-      </Suspense>
-    ) : (
-      <Message text="Loading renderer…" />
+    body = (
+      <SharedPlotContext.Provider
+        value={{ source: state.source, shared: undefined }}
+      >
+        <PlotNodeView node={state.descriptor.root} />
+      </SharedPlotContext.Provider>
     );
   }
 
