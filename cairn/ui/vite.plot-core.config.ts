@@ -30,12 +30,13 @@ import { resolve } from "node:path";
  * `style.css` — the exact name `cairn/sdk/_plot_bundle.py` (`_INLINE_CSS`)
  * reads. No latent trap where an upgrade silently renames the CSS.
  *
- * BUILD ORDER: this config runs SECOND (with `emptyOutDir: false`) AFTER the
- * figure addon build (which runs FIRST with `emptyOutDir: true` and cleans
- * `dist/plot-inline`). That way core's `style.css` + `core.iife.js` are the
- * FINAL writes — so even if the figure build ever emitted a `style.css`, core's
- * design-token CSS overwrites it — while the figure `figure.iife.js` from the
- * first build survives. See package.json `build:plot-inline`.
+ * BUILD ORDER: this config runs LAST (with `emptyOutDir: false`) AFTER the
+ * figure build (FIRST, `emptyOutDir: true`, cleans `dist/plot-inline`) and the
+ * three.js addon build (`emptyOutDir: false`). That way core's `style.css` +
+ * `core.iife.js` are the FINAL writes — so even if an addon build ever emitted
+ * a `style.css`, core's design-token CSS overwrites it — while the addon
+ * `figure.iife.js`/`three.iife.js` from the earlier builds survive. See
+ * package.json `build:plot-inline`.
  */
 export default defineConfig({
   plugins: [react()],
