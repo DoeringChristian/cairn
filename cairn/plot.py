@@ -59,6 +59,16 @@ from .sdk.card_spec import (
     SeriesRef,
 )
 from .sdk.elements import CardElement, HtmlElement, PlotElement
+from .sdk.plot_components import (
+    Compare,
+    Component,
+    Figure,
+    Grid,
+    Image,
+    Scalar,
+    Shared,
+    Table,
+)
 from .sdk.reader import ArtifactInfo, DataRef
 
 # The app's categorical series palette — mirrors `SERIES_COLORS` in

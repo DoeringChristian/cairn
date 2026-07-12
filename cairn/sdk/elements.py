@@ -303,6 +303,19 @@ class CardElement(Element):
         return f"CardElement(type={self.spec.get('type')!r}, series={len(self.spec.get('series', []))})"
 
 
+def _node_has_figure(node: Any) -> bool:
+    """Recursively: does this ``PlotNode`` dict (leaf/grid/compare) contain a
+    ``figure`` renderer? Only ``plot`` leaves carry a renderer; ``compare`` frames
+    are images, never figures."""
+    if not isinstance(node, dict):
+        return False
+    if node.get("kind") == "plot":
+        return node.get("renderer") == "figure"
+    if node.get("kind") == "grid":
+        return any(_node_has_figure(c) for c in node.get("children", []))
+    return False
+
+
 class PlotElement(Element):
     """A plots-only display object that mounts a PURE ``cairn-plot`` renderer
     (WS-PLOT / design spec §6) — the default return of the ``cairn.plot.*``
@@ -357,6 +370,21 @@ class PlotElement(Element):
         except Exception:  # noqa: BLE001 - never break the display path
             return ""
 
+    def _descriptor_has_figure(self) -> bool:
+        """Whether the descriptor carries a ``figure`` renderer ANYWHERE — a flat
+        leaf (``renderer=="figure"``) OR a ``figure`` leaf nested in the recursive
+        ``root`` tree (grid/compare). Gates the Plotly figure addon so a tree that
+        contains a figure still inlines Plotly, while a scalar/table/image tree
+        never does."""
+        try:
+            desc = self._descriptor_dict()
+        except Exception:  # noqa: BLE001 - never break the display path
+            return False
+        if desc.get("renderer") == "figure":
+            return True
+        root = desc.get("root")
+        return _node_has_figure(root) if isinstance(root, dict) else False
+
     # ---- rendering ----
 
     def _bundle_html(self) -> str:
@@ -396,7 +424,7 @@ class PlotElement(Element):
         (inline mode) — so a scalar/table/image plot never carries Plotly. The
         addon reuses core's React (`window.__cairnPlotReact`), so it MUST come
         after `_bundle_html` (the core script) in the emitted HTML."""
-        if self._bundle != "inline" or self._renderer_name() != "figure":
+        if self._bundle != "inline" or not self._descriptor_has_figure():
             return ""
         from . import _plot_bundle as pb
 
