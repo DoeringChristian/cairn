@@ -1010,17 +1010,7 @@ def scalar(data: Any, *, data_mode: str = "local") -> Any:
 
     Returns a `PlotElement` (design spec §6).
     """
-    _check_data_mode(data_mode)
-    if isinstance(data, DataRef):
-        series = _scalar_series_from_ref(data)
-        return _plot_element_inline(
-            "scalar", {"series": [series]}, data_mode=data_mode, source=data,
-            label="scalar",
-        )
-    series = _scalar_series_from_raw(data)
-    return _plot_element_inline(
-        "scalar", {"series": [series]}, data_mode="local", label="scalar",
-    )
+    return Scalar(data, data_mode=data_mode)._build_element()
 
 
 def figure(data: Any, *, data_mode: str = "local") -> Any:
@@ -1034,17 +1024,7 @@ def figure(data: Any, *, data_mode: str = "local") -> Any:
 
     Returns a `PlotElement`.
     """
-    _check_data_mode(data_mode)
-    if isinstance(data, DataRef):
-        fig_json = _figure_json_from_ref(data)
-        return _plot_element_inline(
-            "figure", {"figure": fig_json}, data_mode=data_mode, source=data,
-            label="figure",
-        )
-    fig_json = _figure_json_from_plotly(data)
-    return _plot_element_inline(
-        "figure", {"figure": fig_json}, data_mode="local", label="figure",
-    )
+    return Figure(data, data_mode=data_mode)._build_element()
 
 
 def table(data: Any, *, data_mode: str = "local") -> Any:
@@ -1058,17 +1038,7 @@ def table(data: Any, *, data_mode: str = "local") -> Any:
 
     Returns a `PlotElement`.
     """
-    _check_data_mode(data_mode)
-    if isinstance(data, DataRef):
-        tbl = _table_json_from_ref(data)
-        return _plot_element_inline(
-            "table", {"table": tbl}, data_mode=data_mode, source=data,
-            label="table", height=200,
-        )
-    tbl = _table_json_from_raw(data)
-    return _plot_element_inline(
-        "table", {"table": tbl}, data_mode="local", label="table", height=200,
-    )
+    return Table(data, data_mode=data_mode)._build_element()
 
 
 def image(data: Any, *, data_mode: str = "local") -> Any:
@@ -1085,8 +1055,7 @@ def image(data: Any, *, data_mode: str = "local") -> Any:
 
     Returns a `PlotElement`.
     """
-    _check_data_mode(data_mode)
-    return _image_element(data, data_mode=data_mode, label="image")
+    return Image(data, data_mode=data_mode)._build_element()
 
 
 def mesh(data: Any) -> Any:
