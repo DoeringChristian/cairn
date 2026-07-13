@@ -129,7 +129,46 @@ def build_gallery() -> list[tuple[str, object]]:
         cp.PointCloud(_sphere_pointcloud(3000), point_size=0.03),
     ))
 
-    # ── composition: Grid + Compare ───────────────────────────────────────
+    # ── image processing: exposure / gamma (display adjustments) ──────────
+    # NOTE: with the current 8-bit image pipeline these are display-space
+    # adjustments (exposure = brightness × 2^EV, gamma tone curve), not true
+    # float-HDR tone-mapping. They still demonstrate the control surface.
+    base = _gradient_image(120, 80)
+    items.append((
+        "Image processing — exposure & gamma sweep",
+        cp.Grid(
+            [[cp.Image(base, exposure=-2.0), cp.Image(base), cp.Image(base, exposure=2.0)],
+             [cp.Image(base, gamma=0.5), cp.Image(base, colormap="viridis"),
+              cp.Image(base, gamma=2.2)]],
+        ),
+    ))
+
+    # ── image comparison: all four modes + diff submodes ──────────────────
+    img_a = _gradient_image(120, 80)
+    img_b = _gradient_image(120, 80, shift=0.18)  # a shifted variant to compare
+    items.append((
+        "Compare — all modes (side · split · blend · diff)",
+        cp.Grid(
+            [[cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="side"),
+              cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="split",
+                         split_position=0.5)],
+             [cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="blend",
+                         blend_alpha=0.5),
+              cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="diff",
+                         diff_submode="signed", colormap="red-blue")]],
+        ),
+    ))
+    items.append((
+        "Compare — diff submodes (signed vs absolute)",
+        cp.Grid([[
+            cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="diff",
+                       diff_submode="signed", colormap="red-blue"),
+            cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="diff",
+                       diff_submode="absolute", colormap="viridis"),
+        ]]),
+    ))
+
+    # ── composition: nested Grid ──────────────────────────────────────────
     items.append((
         "Grid — 2×2 with per-column widths",
         cp.Grid(
@@ -138,12 +177,6 @@ def build_gallery() -> list[tuple[str, object]]:
               cp.Histogram(rng.normal(size=500), bins=20)]],
             col_widths=[0.6, 0.4],
         ),
-    ))
-    items.append((
-        "Compare — pixel diff of two images",
-        cp.Compare(cp.Image(_gradient_image(96, 64)),
-                   cp.Image(_gradient_image(96, 64, shift=0.15)),
-                   mode="diff"),
     ))
 
     return items

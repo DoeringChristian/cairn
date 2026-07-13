@@ -209,6 +209,43 @@ def test_compare_store_merges_up():
     assert len(store) == 2
 
 
+def test_image_forwards_processing_and_display_props():
+    node = cp.Image(_PNG, exposure=1.5, gamma=2.2, brightness=0.1,
+                    colormap="viridis", interpolation="pixelated",
+                    show_axes=True).to_node()
+    p = node["props"]
+    assert p["processing"] == {
+        "brightness": 0.1, "contrast": 0.0, "gamma": 2.2,
+        "exposure": 1.5, "offset": 0.0, "flipSign": False,
+    }
+    assert p["colormap"] == "viridis"
+    assert p["interpolation"] == "pixelated"
+    assert p["showAxes"] is True
+
+
+def test_image_no_processing_props_when_unset():
+    # A plain image emits no props key (byte-identical to the legacy leaf).
+    assert "props" not in cp.Image(_PNG).to_node()
+
+
+def test_compare_typed_kwargs_populate_node():
+    node = cp.Compare(cp.Image(_PNG), cp.Image(_PNG2), mode="split",
+                      split_position=0.4, baseline=1, exposure=1.0).to_node()
+    assert node["baselineIndex"] == 1
+    assert node["props"]["splitPosition"] == 0.4
+    assert node["props"]["processing"]["exposure"] == 1.0
+
+    diff = cp.Compare(cp.Image(_PNG), cp.Image(_PNG2), mode="diff",
+                      diff_submode="absolute", colormap="red-blue").to_node()
+    assert diff["props"]["diffSubmode"] == "absolute"
+    assert diff["props"]["colormap"] == "red-blue"
+
+
+def test_compare_baseline_must_be_0_or_1():
+    with pytest.raises(ValueError, match="baseline"):
+        cp.Compare(cp.Image(_PNG), cp.Image(_PNG2), mode="diff", baseline=2)
+
+
 # ---------------------------------------------------------------------------
 # Lowercase aliases — return a PlotElement, render identically.
 # ---------------------------------------------------------------------------

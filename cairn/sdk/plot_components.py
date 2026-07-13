@@ -592,6 +592,44 @@ class Table(Component):
         }
 
 
+def _image_display_props(
+    *,
+    exposure: float | None = None,
+    gamma: float | None = None,
+    brightness: float | None = None,
+    contrast: float | None = None,
+    offset: float | None = None,
+    flip_sign: bool | None = None,
+    colormap: str | None = None,
+    interpolation: str | None = None,
+    show_axes: bool | None = None,
+) -> dict[str, Any]:
+    """Build the non-data ``props`` an image / image-compare renderer honours:
+    a full ``processing`` block (exposure EV, gamma, brightness, contrast,
+    offset, sign-flip) when any is set, plus ``colormap`` / ``interpolation`` /
+    ``showAxes``. Matches ``ImageProcessing`` + ``ImagePane`` props in the TS
+    library. NOTE: with the current 8-bit image pipeline these are display
+    adjustments applied to already-8-bit pixels (true float HDR is a separate,
+    future path)."""
+    props: dict[str, Any] = {}
+    if any(v is not None for v in (exposure, gamma, brightness, contrast, offset, flip_sign)):
+        props["processing"] = {
+            "brightness": float(brightness) if brightness is not None else 0.0,
+            "contrast": float(contrast) if contrast is not None else 0.0,
+            "gamma": float(gamma) if gamma is not None else 1.0,
+            "exposure": float(exposure) if exposure is not None else 0.0,
+            "offset": float(offset) if offset is not None else 0.0,
+            "flipSign": bool(flip_sign) if flip_sign is not None else False,
+        }
+    if colormap is not None:
+        props["colormap"] = colormap
+    if interpolation is not None:
+        props["interpolation"] = interpolation
+    if show_axes is not None:
+        props["showAxes"] = bool(show_axes)
+    return props
+
+
 class Image(Component):
     """A single-view ``image`` plot (mounts the pure ``ImagePane`` renderer).
 
@@ -606,8 +644,28 @@ class Image(Component):
 
     _label = "image"
 
-    def __init__(self, data: Any, *, data_mode: str = "local") -> None:
+    def __init__(
+        self,
+        data: Any,
+        *,
+        data_mode: str = "local",
+        exposure: float | None = None,
+        gamma: float | None = None,
+        brightness: float | None = None,
+        contrast: float | None = None,
+        offset: float | None = None,
+        flip_sign: bool | None = None,
+        colormap: str | None = None,
+        interpolation: str | None = None,
+        show_axes: bool | None = None,
+    ) -> None:
         import json as _json
+
+        self._props = _image_display_props(
+            exposure=exposure, gamma=gamma, brightness=brightness,
+            contrast=contrast, offset=offset, flip_sign=flip_sign,
+            colormap=colormap, interpolation=interpolation, show_axes=show_axes,
+        )
 
         from ..plot import (
             _artifact_info_of,
@@ -662,7 +720,10 @@ class Image(Component):
         self._data_mode = "local"
 
     def to_node(self) -> dict[str, Any]:
-        return {"kind": "plot", "renderer": "image", "data": self._data}
+        node: dict[str, Any] = {"kind": "plot", "renderer": "image", "data": self._data}
+        if self._props:
+            node["props"] = dict(self._props)
+        return node
 
     def _collect_store(self) -> dict[str, dict[str, str]]:
         return dict(self._store)
@@ -903,9 +964,49 @@ class Compare(Component):
 
     _label = "compare"
 
-    def __init__(self, a: Any, b: Any, *, mode: str = "side", props: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        a: Any,
+        b: Any,
+        *,
+        mode: str = "side",
+        baseline: int = 0,
+        split_position: float | None = None,
+        blend_alpha: float | None = None,
+        diff_submode: str | None = None,
+        colormap: str | None = None,
+        exposure: float | None = None,
+        gamma: float | None = None,
+        brightness: float | None = None,
+        contrast: float | None = None,
+        offset: float | None = None,
+        flip_sign: bool | None = None,
+        interpolation: str | None = None,
+        show_axes: bool | None = None,
+        props: dict[str, Any] | None = None,
+    ) -> None:
         self._mode = mode
-        self._props = props
+        if baseline not in (0, 1):
+            raise ValueError(f"cp.Compare(baseline=...) must be 0 or 1, got {baseline!r}")
+        self._baseline = baseline
+        # Typed kwargs → the compare node's `props` (interpolation/colormap/diff
+        # submode/split/blend/processing…); a hand-passed `props` dict merges on
+        # top (escape hatch).
+        built = _image_display_props(
+            exposure=exposure, gamma=gamma, brightness=brightness,
+            contrast=contrast, offset=offset, flip_sign=flip_sign,
+            colormap=colormap, interpolation=interpolation, show_axes=show_axes,
+        )
+        if split_position is not None:
+            built["splitPosition"] = float(split_position)
+        if blend_alpha is not None:
+            built["blendAlpha"] = float(blend_alpha)
+        if diff_submode is not None:
+            built["diffSubmode"] = diff_submode
+        if props:
+            built.update(props)
+        self._props = built or None
+
         if mode == "side":
             self._delegate: Grid | None = Grid([_as_component(a), _as_component(b)], cols=2)
             self._a = self._b = None
@@ -933,7 +1034,7 @@ class Compare(Component):
             "mode": self._mode,
             "a": self._a._leaf_dataspec(),
             "b": self._b._leaf_dataspec(),
-            "baselineIndex": 0,
+            "baselineIndex": self._baseline,
         }
         if self._props:
             node["props"] = self._props
