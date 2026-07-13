@@ -903,6 +903,8 @@ class PointCloud(Component):
         color_mode: str | None = None,
         background: str | None = None,
         show_axes: bool | None = None,
+        show_planes: bool | None = None,
+        camera_mode: str | None = None,
     ) -> None:
         from ..plot import (
             _artifact_info_of,
@@ -925,6 +927,10 @@ class PointCloud(Component):
             self._props["background"] = background
         if show_axes is not None:
             self._props["showAxes"] = bool(show_axes)
+        if show_planes is not None:
+            self._props["showPlanes"] = bool(show_planes)
+        if camera_mode is not None:
+            self._props["cameraMode"] = camera_mode
 
         if isinstance(data, DataRef):
             ai = _artifact_info_of(data)
@@ -1025,6 +1031,8 @@ class Mesh(Component):
         double_sided: bool | None = None,
         background: str | None = None,
         show_axes: bool | None = None,
+        show_planes: bool | None = None,
+        camera_mode: str | None = None,
     ) -> None:
         from ..plot import (
             _artifact_info_of,
@@ -1051,6 +1059,10 @@ class Mesh(Component):
             self._props["background"] = background
         if show_axes is not None:
             self._props["showAxes"] = bool(show_axes)
+        if show_planes is not None:
+            self._props["showPlanes"] = bool(show_planes)
+        if camera_mode is not None:
+            self._props["cameraMode"] = camera_mode
 
         if isinstance(vertices, DataRef):
             ai = _artifact_info_of(vertices)
@@ -1154,6 +1166,8 @@ class Volume(Component):
         steps: int | None = None,
         background: str | None = None,
         show_axes: bool | None = None,
+        show_planes: bool | None = None,
+        camera_mode: str | None = None,
     ) -> None:
         from ..plot import (
             _artifact_info_of,
@@ -1180,6 +1194,10 @@ class Volume(Component):
             self._props["background"] = background
         if show_axes is not None:
             self._props["showAxes"] = bool(show_axes)
+        if show_planes is not None:
+            self._props["showPlanes"] = bool(show_planes)
+        if camera_mode is not None:
+            self._props["cameraMode"] = camera_mode
 
         if isinstance(grid, DataRef):
             ai = _artifact_info_of(grid)
@@ -1275,6 +1293,8 @@ class Boxes(Component):
         color_mode: str | None = None,
         background: str | None = None,
         show_axes: bool | None = None,
+        show_planes: bool | None = None,
+        camera_mode: str | None = None,
     ) -> None:
         from ..plot import (
             _artifact_info_of,
@@ -1295,6 +1315,10 @@ class Boxes(Component):
             self._props["background"] = background
         if show_axes is not None:
             self._props["showAxes"] = bool(show_axes)
+        if show_planes is not None:
+            self._props["showPlanes"] = bool(show_planes)
+        if camera_mode is not None:
+            self._props["cameraMode"] = camera_mode
 
         if isinstance(mins, DataRef):
             ai = _artifact_info_of(mins)

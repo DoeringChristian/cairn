@@ -228,6 +228,29 @@ def test_image_no_processing_props_when_unset():
     assert "props" not in cp.Image(_PNG).to_node()
 
 
+def test_mesh_forwards_3d_camera_and_planes_props():
+    # #69 S1+S2: camera_mode/show_planes ride in the untyped leaf props as
+    # cameraMode/showPlanes, exactly like show_axes → showAxes.
+    import numpy as np
+
+    verts = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=np.float32)
+    faces = np.array([[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]], dtype=np.int32)
+    props = cp.Mesh(verts, faces, camera_mode="turntable", show_planes=True).to_node()["props"]
+    assert props["cameraMode"] == "turntable"
+    assert props["showPlanes"] is True
+    # Absent kwargs → keys omitted (byte-identical to the pre-#69 leaf).
+    assert "props" not in cp.Mesh(verts, faces).to_node()
+
+
+def test_pointcloud_forwards_planes_prop():
+    import numpy as np
+
+    xyz = np.random.rand(8, 3).astype(np.float32)
+    props = cp.PointCloud(xyz, show_planes=True, camera_mode="turntable").to_node()["props"]
+    assert props["showPlanes"] is True
+    assert props["cameraMode"] == "turntable"
+
+
 # ---------------------------------------------------------------------------
 # HDR (float) image — the `imagehdr` renderer + `imghdr` DataSpec.
 # ---------------------------------------------------------------------------
