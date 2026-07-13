@@ -170,24 +170,44 @@ def test_media_compare_rejects_bad_mode(two_runs):
         cplot.media_compare(run_a["loss"], run_b["loss"], mode="not-a-mode")
 
 
+def _mesh_raw():
+    v = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype="float32")
+    f = np.array([[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]], dtype="int64")
+    return (v, f)
+
+
+def _volume_raw():
+    return (np.random.default_rng(0).random((8, 8, 8)).astype("float32"),)
+
+
+def _boxes_raw():
+    mins = np.array([[0, 0, 0], [1, 1, 1]], dtype="float32")
+    maxs = np.array([[0.5, 0.5, 0.5], [1.5, 1.5, 1.5]], dtype="float32")
+    return (mins, maxs)
+
+
 @pytest.mark.parametrize(
-    "fn,card_type",
+    "fn,args,object_type",
     [
-        # mesh/volume/boxes single-view builders remain CardElement (iframe)
-        # until G3b; pointcloud is now a self-contained PlotElement (G3a).
-        (cplot.mesh, "mesh"),
-        (cplot.volume, "volume"),
-        (cplot.boxes, "boxes3d"),
+        # G3b: mesh/volume/boxes single-view builders are now self-contained
+        # PlotElements (npz DataSpec + the three.js addon), mirroring the G3a
+        # pointcloud change — they used to emit a server-backed CardElement.
+        (cplot.mesh, _mesh_raw(), "mesh"),
+        (cplot.volume, _volume_raw(), "volume"),
+        (cplot.boxes, _boxes_raw(), "boxes3d"),
     ],
 )
-def test_single_view_3d_builders_still_emit_cardelement(two_runs, fn, card_type):
-    _reader, run_a, _run_b = two_runs
-    el = fn(run_a["thing"])
-    assert isinstance(el, CardElement)
-    spec = _validate_card_spec(el.spec)
-    assert spec.type == card_type
-    assert spec.series[0].runId == run_a.id
-    assert spec.series[0].name == "thing"
+def test_single_view_3d_builders_emit_self_contained_plotelement(fn, args, object_type):
+    el = fn(*args)
+    assert isinstance(el, PlotElement)
+    html = el._repr_html_()
+    assert "__cairnPlotThreeLoaded" in html  # three addon emitted
+    assert "cairn-plot-store" in html  # bytes baked into the page store
+    desc = _descriptor_of(el)
+    data = desc["data"]
+    assert data["kind"] == "npz"
+    assert data["objectType"] == object_type
+    assert data["hash"]  # content-addressed store key present
 
 
 @pytest.mark.parametrize(
@@ -209,23 +229,14 @@ def test_typed_compare_wrappers_delegate_to_media_compare(two_runs, fn, card_typ
 
 
 def test_dataref_step_becomes_settings_step(two_runs):
-    # Step→settings threading is a CardElement (3D/compare) concern; scalar is
-    # now a PlotElement that bakes the whole sequence.
-    _reader, run_a, _run_b = two_runs
-    el = cplot.mesh(run_a["loss"][2])
+    # Step→settings threading is a CardElement (compare) concern. All 3D
+    # single-view builders are now self-contained PlotElements (G3b), so the
+    # remaining CardElement path is `media_compare` — which still threads step.
+    _reader, run_a, run_b = two_runs
+    el = cplot.media_compare(run_a["loss"][2], run_b["loss"], mode="blend")
     spec = _validate_card_spec(el.spec)
     assert spec.settings is not None
     assert spec.settings.model_dump(exclude_none=True).get("step") == 2.0
-
-
-@pytest.mark.parametrize("fn", [cplot.mesh, cplot.volume, cplot.boxes])
-def test_raw_media_data_raises_notimplemented_pointing_at_ws_inline(fn):
-    # mesh/volume/boxes raw data still has no self-contained render path (G3b).
-    # `image` and `pointcloud` are now supported (raw → baked LOCAL PlotElement)
-    # — tested separately.
-    raw = np.zeros((4, 4, 3), dtype=np.uint8)
-    with pytest.raises(NotImplementedError, match="WS-INLINE"):
-        fn(raw)
 
 
 def test_pointcloud_raw_emits_self_contained_plotelement():
@@ -363,9 +374,9 @@ def test_table_dataref_shapes_columns_and_rows(tmp_path):
 def test_card_element_spec_is_reusable_in_a_cairn_fence_shaped_doc(two_runs):
     """Sanity check that a built spec composes into a `CardsSpec` (the
     ```cairn fence root) without further translation — no card-spec fork.
-    (Uses a 3D builder, which still emits a `CardElement` spec.)"""
-    _reader, run_a, _run_b = two_runs
-    el = cplot.mesh(run_a["loss"])
+    (Uses `media_compare`, the remaining `CardElement`-emitting builder.)"""
+    _reader, run_a, run_b = two_runs
+    el = cplot.media_compare(run_a["loss"], run_b["loss"])
     doc = CardsSpec(runs=RunsSpec(ids=[run_a.id]), cards=[CardSpec.model_validate(el.spec)])
     assert doc.cards[0].series[0].runId == run_a.id
 
@@ -473,9 +484,9 @@ def test_plot_builder_threads_repo_path_and_autodiscovers_live_server(two_runs, 
     dd = DataDir(repo_path)
     dd.add_live_server("ui", host=parts.hostname, port=parts.port)
     try:
-        # A 3D builder still returns a CardElement (iframe) whose server is
+        # `media_compare` returns a CardElement (iframe) whose server is
         # auto-discovered from the Reader's repo — the path this fix targets.
-        el = cplot.mesh(run_a["loss"])
+        el = cplot.media_compare(run_a["loss"], run_a["loss"])
         assert el._repo_path == repo_path
         html = el._repr_html_()
         assert f"http://localhost:{parts.port}/embed/card?sid=" in html
@@ -514,8 +525,8 @@ def test_plot_builder_threads_reader_server_end_to_end(two_runs_http_reader):
     from urllib.parse import urlsplit
 
     port = urlsplit(reader._backend.server_url).port
-    # 3D builder → CardElement iframe against the reader's own server.
-    el = cplot.mesh(run_a["loss"])
+    # media_compare → CardElement iframe against the reader's own server.
+    el = cplot.media_compare(run_a["loss"], run_a["loss"])
     html = el._repr_html_()
     assert f":{port}/embed/card?sid=" in html
     sid = html.split("sid=", 1)[1].split('"', 1)[0]

@@ -843,6 +843,378 @@ class PointCloud(Component):
         return dict(self._store)
 
 
+class Mesh(Component):
+    """A 3D triangle-mesh plot (mounts the pure mesh viewer, key ``mesh`` —
+    carried by the three.js addon).
+
+    Raw data is the primary input:
+
+    * ``cp.Mesh(vertices, faces)`` — ``vertices`` an ``(N, 3)`` array,
+      ``faces`` an ``(M, 3)`` index array; baked self-contained (LOCAL);
+    * ``cp.Mesh(run[tag])`` — a tracked ``mesh`` artifact; LOCAL bakes the
+      ``.npz`` bytes, ENDPOINT emits by reference.
+
+    ``values`` attaches per-vertex scalar properties (a single array or a
+    ``{name: array}`` dict), ``colors`` an ``(N, 3)`` vertex-color array,
+    ``normals`` an ``(N, 3)`` normal array (raw input only). Optional view
+    overrides: ``color_mode`` (``"solid"``/``"vertex-colors"``/``"values"``),
+    ``shading`` (``"smooth"``/``"flat"``), ``wireframe``, ``double_sided``,
+    ``background`` (``"dark"``/``"light"``), ``show_axes``.
+    """
+
+    _label = "mesh"
+    _height = 400
+
+    def __init__(
+        self,
+        vertices: Any,
+        faces: Any = None,
+        *,
+        values: Any = None,
+        colors: Any = None,
+        normals: Any = None,
+        data_mode: str = "local",
+        color_mode: str | None = None,
+        shading: str | None = None,
+        wireframe: bool | None = None,
+        double_sided: bool | None = None,
+        background: str | None = None,
+        show_axes: bool | None = None,
+    ) -> None:
+        from ..plot import (
+            _artifact_info_of,
+            _check_data_mode,
+            _content_hash,
+            _parse_meta,
+        )
+
+        _check_data_mode(data_mode)
+        self._source: Any = None
+        self._store: dict[str, dict[str, str]] = {}
+        self._data_mode = data_mode
+
+        self._props: dict[str, Any] = {}
+        if color_mode is not None:
+            self._props["colorMode"] = color_mode
+        if shading is not None:
+            self._props["shading"] = shading
+        if wireframe is not None:
+            self._props["wireframe"] = bool(wireframe)
+        if double_sided is not None:
+            self._props["doubleSided"] = bool(double_sided)
+        if background is not None:
+            self._props["background"] = background
+        if show_axes is not None:
+            self._props["showAxes"] = bool(show_axes)
+
+        if isinstance(vertices, DataRef):
+            ai = _artifact_info_of(vertices)
+            hash_ = ai.hash
+            meta = _parse_meta(ai.metadata)
+            self._data: dict[str, Any] = {
+                "kind": "npz",
+                "hash": hash_,
+                "objectType": "mesh",
+                "meta": meta,
+            }
+            if data_mode == "endpoint":
+                self._source = vertices
+            else:
+                raw = vertices.run.artifact_bytes(vertices.tag, step=vertices.step)
+                self._store = {
+                    hash_: {
+                        "mime": "application/octet-stream",
+                        "b64": _base64.b64encode(raw).decode("ascii"),
+                    }
+                }
+            return
+
+        # Raw arrays — LOCAL only. `MeshHandler().serialize` gives the exact
+        # `.npz` bytes + meta the viewer's parseNpz already consumes.
+        if data_mode == "endpoint":
+            raise ValueError(
+                "cp.Mesh(raw, data_mode='endpoint') is unsupported: raw arrays "
+                "have no server reference. Use data_mode='local'."
+            )
+        from .handlers.mesh import MeshHandler
+
+        raw, meta = MeshHandler().serialize(
+            {
+                "vertices": vertices,
+                "faces": faces,
+                "values": values,
+                "colors": colors,
+                "normals": normals,
+            }
+        )
+        hash_ = _content_hash(raw)
+        self._store = {
+            hash_: {
+                "mime": "application/octet-stream",
+                "b64": _base64.b64encode(raw).decode("ascii"),
+            }
+        }
+        self._data = {
+            "kind": "npz",
+            "hash": hash_,
+            "objectType": "mesh",
+            "meta": meta,
+        }
+        self._data_mode = "local"
+
+    def to_node(self) -> dict[str, Any]:
+        node: dict[str, Any] = {
+            "kind": "plot",
+            "renderer": "mesh",
+            "data": self._data,
+        }
+        if self._props:
+            node["props"] = dict(self._props)
+        return node
+
+    def _collect_store(self) -> dict[str, dict[str, str]]:
+        return dict(self._store)
+
+
+class Volume(Component):
+    """A 3D scalar-volume plot (mounts the pure raymarch viewer, key
+    ``volume`` — carried by the three.js addon).
+
+    Raw data is the primary input:
+
+    * ``cp.Volume(grid)`` — a ``(D, H, W)`` scalar array; baked self-contained
+      (LOCAL);
+    * ``cp.Volume(run[tag])`` — a tracked ``volume`` artifact; LOCAL bakes the
+      ``.npz`` bytes, ENDPOINT emits by reference.
+
+    ``spacing`` / ``origin`` are optional 3-element voxel spacing / world
+    origin (raw input only). Optional view overrides: ``render_mode``
+    (``"mip"``/…), ``isovalue``, ``colormap``, ``steps``, ``background``,
+    ``show_axes``.
+    """
+
+    _label = "volume"
+    _height = 400
+
+    def __init__(
+        self,
+        grid: Any,
+        *,
+        spacing: Any = None,
+        origin: Any = None,
+        data_mode: str = "local",
+        render_mode: str | None = None,
+        isovalue: float | None = None,
+        colormap: str | None = None,
+        steps: int | None = None,
+        background: str | None = None,
+        show_axes: bool | None = None,
+    ) -> None:
+        from ..plot import (
+            _artifact_info_of,
+            _check_data_mode,
+            _content_hash,
+            _parse_meta,
+        )
+
+        _check_data_mode(data_mode)
+        self._source: Any = None
+        self._store: dict[str, dict[str, str]] = {}
+        self._data_mode = data_mode
+
+        self._props: dict[str, Any] = {}
+        if render_mode is not None:
+            self._props["mode"] = render_mode
+        if isovalue is not None:
+            self._props["isovalue"] = float(isovalue)
+        if colormap is not None:
+            self._props["colormap"] = colormap
+        if steps is not None:
+            self._props["steps"] = int(steps)
+        if background is not None:
+            self._props["background"] = background
+        if show_axes is not None:
+            self._props["showAxes"] = bool(show_axes)
+
+        if isinstance(grid, DataRef):
+            ai = _artifact_info_of(grid)
+            hash_ = ai.hash
+            meta = _parse_meta(ai.metadata)
+            self._data: dict[str, Any] = {
+                "kind": "npz",
+                "hash": hash_,
+                "objectType": "volume",
+                "meta": meta,
+            }
+            if data_mode == "endpoint":
+                self._source = grid
+            else:
+                raw = grid.run.artifact_bytes(grid.tag, step=grid.step)
+                self._store = {
+                    hash_: {
+                        "mime": "application/octet-stream",
+                        "b64": _base64.b64encode(raw).decode("ascii"),
+                    }
+                }
+            return
+
+        # Raw grid — LOCAL only. `VolumeHandler().serialize` gives the exact
+        # `.npz` bytes + meta the viewer's parseNpz already consumes.
+        if data_mode == "endpoint":
+            raise ValueError(
+                "cp.Volume(raw, data_mode='endpoint') is unsupported: raw arrays "
+                "have no server reference. Use data_mode='local'."
+            )
+        from .handlers.volume import VolumeHandler
+
+        raw, meta = VolumeHandler().serialize(grid, spacing=spacing, origin=origin)
+        hash_ = _content_hash(raw)
+        self._store = {
+            hash_: {
+                "mime": "application/octet-stream",
+                "b64": _base64.b64encode(raw).decode("ascii"),
+            }
+        }
+        self._data = {
+            "kind": "npz",
+            "hash": hash_,
+            "objectType": "volume",
+            "meta": meta,
+        }
+        self._data_mode = "local"
+
+    def to_node(self) -> dict[str, Any]:
+        node: dict[str, Any] = {
+            "kind": "plot",
+            "renderer": "volume",
+            "data": self._data,
+        }
+        if self._props:
+            node["props"] = dict(self._props)
+        return node
+
+    def _collect_store(self) -> dict[str, dict[str, str]]:
+        return dict(self._store)
+
+
+class Boxes(Component):
+    """A 3D axis-aligned-boxes plot (mounts the pure boxes viewer, key
+    ``boxes3d`` — carried by the three.js addon).
+
+    Raw data is the primary input:
+
+    * ``cp.Boxes(mins, maxs)`` — two ``(N, 3)`` corner arrays; baked
+      self-contained (LOCAL);
+    * ``cp.Boxes(run[tag])`` — a tracked ``boxes3d`` artifact; LOCAL bakes the
+      ``.npz`` bytes, ENDPOINT emits by reference.
+
+    ``depth`` attaches a per-box integer depth (octree/BVH level), ``values``
+    per-box scalar properties (raw input only). ``kind`` labels the structure
+    (``"boxes"``/``"octree"``/``"bvh"``). Optional view overrides: ``color_mode``
+    (``"depth"``/``"value"``), ``background`` (``"dark"``/``"light"``),
+    ``show_axes``.
+    """
+
+    _label = "boxes"
+    _height = 400
+
+    def __init__(
+        self,
+        mins: Any,
+        maxs: Any = None,
+        *,
+        depth: Any = None,
+        values: Any = None,
+        kind: str = "boxes",
+        data_mode: str = "local",
+        color_mode: str | None = None,
+        background: str | None = None,
+        show_axes: bool | None = None,
+    ) -> None:
+        from ..plot import (
+            _artifact_info_of,
+            _check_data_mode,
+            _content_hash,
+            _parse_meta,
+        )
+
+        _check_data_mode(data_mode)
+        self._source: Any = None
+        self._store: dict[str, dict[str, str]] = {}
+        self._data_mode = data_mode
+
+        self._props: dict[str, Any] = {}
+        if color_mode is not None:
+            self._props["colorMode"] = color_mode
+        if background is not None:
+            self._props["background"] = background
+        if show_axes is not None:
+            self._props["showAxes"] = bool(show_axes)
+
+        if isinstance(mins, DataRef):
+            ai = _artifact_info_of(mins)
+            hash_ = ai.hash
+            meta = _parse_meta(ai.metadata)
+            self._data: dict[str, Any] = {
+                "kind": "npz",
+                "hash": hash_,
+                "objectType": "boxes3d",
+                "meta": meta,
+            }
+            if data_mode == "endpoint":
+                self._source = mins
+            else:
+                raw = mins.run.artifact_bytes(mins.tag, step=mins.step)
+                self._store = {
+                    hash_: {
+                        "mime": "application/octet-stream",
+                        "b64": _base64.b64encode(raw).decode("ascii"),
+                    }
+                }
+            return
+
+        # Raw arrays — LOCAL only. `Boxes3DHandler().serialize` gives the exact
+        # `.npz` bytes + meta the viewer's parseNpz already consumes.
+        if data_mode == "endpoint":
+            raise ValueError(
+                "cp.Boxes(raw, data_mode='endpoint') is unsupported: raw arrays "
+                "have no server reference. Use data_mode='local'."
+            )
+        from .handlers.boxes3d import Boxes3DHandler
+
+        raw, meta = Boxes3DHandler().serialize(
+            {"mins": mins, "maxs": maxs, "depth": depth, "values": values},
+            kind=kind,
+        )
+        hash_ = _content_hash(raw)
+        self._store = {
+            hash_: {
+                "mime": "application/octet-stream",
+                "b64": _base64.b64encode(raw).decode("ascii"),
+            }
+        }
+        self._data = {
+            "kind": "npz",
+            "hash": hash_,
+            "objectType": "boxes3d",
+            "meta": meta,
+        }
+        self._data_mode = "local"
+
+    def to_node(self) -> dict[str, Any]:
+        node: dict[str, Any] = {
+            "kind": "plot",
+            "renderer": "boxes3d",
+            "data": self._data,
+        }
+        if self._props:
+            node["props"] = dict(self._props)
+        return node
+
+    def _collect_store(self) -> dict[str, dict[str, str]]:
+        return dict(self._store)
+
+
 # ---------------------------------------------------------------------------
 # Containers — cp.Grid / cp.Compare. (Stage B)
 # ---------------------------------------------------------------------------
@@ -854,7 +1226,8 @@ def _as_component(obj: Any) -> Component:
     raise TypeError(
         f"cp.Grid/Compare children must be cairn.plot Components "
         f"(cp.Line/Scatter/Bar/Histogram/Heatmap/ParallelCoordinates/Image/"
-        f"Figure/Table/Compare/Grid), got {type(obj).__name__}"
+        f"PointCloud/Mesh/Volume/Boxes/Figure/Table/Compare/Grid), got "
+        f"{type(obj).__name__}"
     )
 
 

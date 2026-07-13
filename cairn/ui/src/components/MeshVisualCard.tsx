@@ -6,7 +6,8 @@ import type { CardSettingsKey } from "../lib/card-settings";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { safeJsonParse } from "../lib/format";
 import {
-  parseNpz,
+  createEndpointDataSource,
+  fetchMeshArrays,
   isCoreCompareMode,
   type MediaCompareModeKind,
   type DiffMode,
@@ -33,8 +34,7 @@ import {
   type MeshViewState,
   type MeshNativeMode,
 } from "../lib/cairn-plot/viewport/mesh-viewport";
-import type { PropertyMap } from "../lib/cairn-plot/three/properties";
-import { extractProperties, propertyNames, resolveActiveProperty } from "../lib/cairn-plot/three/properties";
+import { propertyNames, resolveActiveProperty } from "../lib/cairn-plot/three/properties";
 import type { DiffColormap } from "../lib/cairn-plot/three/diff";
 import { resetScene3DViews, type Scene3DSyncOptions } from "../lib/cairn-plot/three/use-scene3d";
 import type { ViewportPaneProps } from "../lib/cairn-plot/viewport/types";
@@ -53,29 +53,12 @@ import VisualContentCard from "./VisualContentCard";
 // `MeshCard.tsx`).
 // ---------------------------------------------------------------------------
 
-interface MeshArrays {
-  positions: Float32Array;
-  faces: Uint32Array;
-  properties: PropertyMap;
-  colors: Float32Array | null;
-  normals: Float32Array | null;
-}
-
-async function fetchMeshArrays(hash: string): Promise<MeshArrays> {
-  const res = await fetch(api.artifactUrl(hash));
-  if (!res.ok) throw new Error(`failed to fetch mesh (${res.status})`);
-  const npz = await parseNpz(await res.arrayBuffer());
-  if (!npz.positions || !npz.faces) {
-    throw new Error("mesh blob missing positions/faces");
-  }
-  return {
-    positions: Float32Array.from(npz.positions.data),
-    faces: Uint32Array.from(npz.faces.data),
-    properties: extractProperties(npz),
-    colors: npz.colors ? Float32Array.from(npz.colors.data) : null,
-    normals: npz.normals ? Float32Array.from(npz.normals.data) : null,
-  };
-}
+// The fetch+parse core (`fetchMeshArrays`) now lives in
+// `cairn-plot/viewport/data-sources.ts`, parameterized by a `DataSource`
+// instead of calling `api.artifactUrl` directly — this file just supplies
+// the app's endpoint-backed `DataSource` and the react-query wiring (mirrors
+// PointCloudVisualCard's G3a extraction).
+const dataSource = createEndpointDataSource((hash) => api.artifactUrl(hash));
 
 function useMeshBlobs(hashes: (string | null)[]) {
   return useQueries({
@@ -83,7 +66,7 @@ function useMeshBlobs(hashes: (string | null)[]) {
       queryKey: ["mesh-npz", h],
       enabled: !!h,
       staleTime: Infinity,
-      queryFn: () => fetchMeshArrays(h!),
+      queryFn: () => fetchMeshArrays(h!, dataSource),
     })),
   });
 }

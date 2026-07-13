@@ -153,6 +153,9 @@ export {
   createEndpointDataSource,
   resolveImageViewportItems,
   fetchPointCloudArrays,
+  fetchMeshArrays,
+  fetchVolumeArray,
+  fetchBoxesArrays,
   parseOverlay,
   createLocalDataSource,
   registerPlotStore,
@@ -176,4 +179,6 @@ export type {
   ImageViewportSettings,
   DataSource,
   PointCloudArrays,
+  MeshArrays,
+  BoxesArrays,
 } from "./viewport";

@@ -20,6 +20,9 @@
 import {
   resolveImageViewportItems,
   fetchPointCloudArrays,
+  fetchMeshArrays,
+  fetchVolumeArray,
+  fetchBoxesArrays,
   parseOverlay,
   parseNpy,
   type DataSource,
@@ -191,24 +194,40 @@ export async function resolveDataProps(
       };
     }
     case "npz": {
-      // 3D binary artifact (G3). Dispatch on `objectType`; only `pointcloud`
-      // is wired in G3a — the other three land in G3b. `fetchPointCloudArrays`
+      // 3D binary artifact (G3). Dispatch on `objectType` — G3a wired
+      // `pointcloud`, G3b adds `mesh`/`volume`/`boxes3d`. Each fetch core
       // (source-agnostic: LOCAL store bytes or ENDPOINT fetch) parses the
-      // `.npy`/`.npz` into `{data, properties}`; bundle it with the inline
-      // `meta` into the `{arrays, meta}` `item` the 3D standalone consumes.
-      // NOTE: this path pulls NO three.js into core — the parsers are pure;
-      // three lives only in the standalone renderer (the three addon bundle).
-      if (data.objectType !== "pointcloud") {
-        throw new Error(
-          `npz objectType "${data.objectType}" is not supported yet ` +
-            "(coming in G3b).",
-        );
-      }
+      // `.npy`/`.npz` into its typed arrays; bundle them with the inline
+      // `meta` into the `{arrays, meta}` `item` the matching 3D standalone
+      // consumes. NOTE: this path pulls NO three.js into core — the parsers
+      // are pure; three lives only in the standalone renderers (the three
+      // addon bundle).
       if (!data.hash) {
         throw new Error("npz DataSpec has no hash to resolve.");
       }
-      const arrays = await fetchPointCloudArrays(data.hash, source);
-      return { item: { arrays, meta: data.meta } };
+      switch (data.objectType) {
+        case "pointcloud": {
+          const arrays = await fetchPointCloudArrays(data.hash, source);
+          return { item: { arrays, meta: data.meta } };
+        }
+        case "mesh": {
+          const arrays = await fetchMeshArrays(data.hash, source);
+          return { item: { arrays, meta: data.meta } };
+        }
+        case "volume": {
+          // The volume renderer's `arrays` is `{ data: Float32Array }`.
+          const data32 = await fetchVolumeArray(data.hash, source);
+          return { item: { arrays: { data: data32 }, meta: data.meta } };
+        }
+        case "boxes3d": {
+          const arrays = await fetchBoxesArrays(data.hash, source);
+          return { item: { arrays, meta: data.meta } };
+        }
+        default: {
+          const _exhaustive: never = data.objectType;
+          throw new Error(`npz objectType "${_exhaustive}" is not supported.`);
+        }
+      }
     }
     case "imghdr": {
       // Float-HDR image (HDR-A). Fetch the float `.npy` bytes (source-agnostic:

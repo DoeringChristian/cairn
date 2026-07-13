@@ -6,7 +6,8 @@ import type { CardSettingsKey } from "../lib/card-settings";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { safeJsonParse } from "../lib/format";
 import {
-  parseNpz,
+  createEndpointDataSource,
+  fetchBoxesArrays,
   isCoreCompareMode,
   type MediaCompareModeKind,
   type DiffMode,
@@ -34,7 +35,6 @@ import {
   type BoxesNativeMode,
 } from "../lib/cairn-plot/viewport/boxes-viewport";
 import {
-  extractProperties,
   propertyNames,
   resolveActiveProperty,
 } from "../lib/cairn-plot/three/properties";
@@ -54,20 +54,10 @@ import VisualContentCard from "./VisualContentCard";
 // PointCloudVisualCard.tsx exactly — replaces the deleted BoxesCard.tsx.
 // ---------------------------------------------------------------------------
 
-async function fetchBoxesArrays(hash: string): Promise<BoxesViewportItem["arrays"]> {
-  const res = await fetch(api.artifactUrl(hash));
-  if (!res.ok) throw new Error(`failed to fetch boxes3d (${res.status})`);
-  const npz = await parseNpz(await res.arrayBuffer());
-  if (!npz.mins || !npz.maxs || !npz.depth) {
-    throw new Error("boxes blob missing mins/maxs/depth");
-  }
-  return {
-    mins: Float32Array.from(npz.mins.data),
-    maxs: Float32Array.from(npz.maxs.data),
-    depth: Float32Array.from(npz.depth.data),
-    properties: extractProperties(npz),
-  };
-}
+// The fetch+parse core (`fetchBoxesArrays`) now lives in
+// `cairn-plot/viewport/data-sources.ts`, parameterized by a `DataSource`
+// (mirrors PointCloudVisualCard's G3a extraction).
+const dataSource = createEndpointDataSource((hash) => api.artifactUrl(hash));
 
 function useBoxesBlobs(hashes: (string | null)[]) {
   return useQueries({
@@ -75,7 +65,7 @@ function useBoxesBlobs(hashes: (string | null)[]) {
       queryKey: ["boxes3d-npz", h],
       enabled: !!h,
       staleTime: Infinity,
-      queryFn: () => fetchBoxesArrays(h!),
+      queryFn: () => fetchBoxesArrays(h!, dataSource),
     })),
   });
 }

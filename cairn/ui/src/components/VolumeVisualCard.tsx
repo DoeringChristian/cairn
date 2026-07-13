@@ -6,6 +6,8 @@ import type { CardSettingsKey } from "../lib/card-settings";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { safeJsonParse } from "../lib/format";
 import {
+  createEndpointDataSource,
+  fetchVolumeArray,
   isCoreCompareMode,
   type MediaCompareModeKind,
   type DiffMode,
@@ -21,7 +23,6 @@ import VolumeViewer, {
   type VolumeQuality,
   type VolumeBackground,
 } from "../lib/cairn-plot/three/VolumeViewer";
-import { parseNpz } from "../lib/cairn-plot/transforms/parse-npz";
 import {
   VolumeSingleView,
   VolumeSideBySideView,
@@ -50,15 +51,10 @@ import VisualContentCard from "./VisualContentCard";
 // PointCloudVisualCard.tsx exactly — replaces the deleted VolumeCard.tsx.
 // ---------------------------------------------------------------------------
 
-async function fetchVolumeArray(hash: string): Promise<Float32Array> {
-  const res = await fetch(api.artifactUrl(hash));
-  if (!res.ok) throw new Error(`failed to fetch volume (${res.status})`);
-  const npz = await parseNpz(await res.arrayBuffer());
-  if (!npz.data) throw new Error("volume artifact is missing its 'data' array");
-  // The shared parser returns Float64Array for uniform downstream math;
-  // three.js Data3DTexture needs Float32Array, so narrow once here.
-  return Float32Array.from(npz.data.data);
-}
+// The fetch+parse core (`fetchVolumeArray`) now lives in
+// `cairn-plot/viewport/data-sources.ts`, parameterized by a `DataSource`
+// (mirrors PointCloudVisualCard's G3a extraction).
+const dataSource = createEndpointDataSource((hash) => api.artifactUrl(hash));
 
 function useVolumeBlobs(hashes: (string | null)[]) {
   return useQueries({
@@ -66,7 +62,7 @@ function useVolumeBlobs(hashes: (string | null)[]) {
       queryKey: ["volume-npz", h],
       enabled: !!h,
       staleTime: Infinity,
-      queryFn: () => fetchVolumeArray(h!),
+      queryFn: () => fetchVolumeArray(h!, dataSource),
     })),
   });
 }

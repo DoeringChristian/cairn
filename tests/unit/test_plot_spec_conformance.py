@@ -261,17 +261,28 @@ def test_shared_props_sync_matches_schema(defs):
     assert model_sync_props == schema_sync_props, "SharedProps.sync field mismatch"
 
 
-def test_npz_dataspec_round_trips():
-    # G3a: the `npz` DataSpec (3D binary artifact for the three.js renderers).
+@pytest.mark.parametrize(
+    "renderer,object_type",
+    [
+        # G3a wired `pointcloud`; G3b adds mesh/volume/boxes3d — all share the
+        # one `npz` DataSpec, dispatched by `objectType`.
+        ("pointcloud", "pointcloud"),
+        ("mesh", "mesh"),
+        ("volume", "volume"),
+        ("boxes3d", "boxes3d"),
+    ],
+)
+def test_npz_dataspec_round_trips(renderer, object_type):
+    # The `npz` DataSpec (3D binary artifact for the three.js renderers).
     spec = cs.PlotDescriptorSpec(
         root=cs.PlotLeafSpec(
             kind="plot",
-            renderer="pointcloud",
+            renderer=renderer,
             props={"pointSize": 0.02},
             data=cs.NpzDataSpec(
                 kind="npz",
                 hash="sha256:abc",
-                objectType="pointcloud",
+                objectType=object_type,
                 meta={
                     "n_points": 100,
                     "channels": "xyz",
@@ -283,7 +294,7 @@ def test_npz_dataspec_round_trips():
     )
     dumped = spec.model_dump(exclude_none=True, mode="json")
     assert dumped["root"]["data"]["kind"] == "npz"
-    assert dumped["root"]["data"]["objectType"] == "pointcloud"
+    assert dumped["root"]["data"]["objectType"] == object_type
     assert dumped["root"]["data"]["meta"]["n_points"] == 100
     assert cs.PlotDescriptorSpec.model_validate(dumped) == spec
 

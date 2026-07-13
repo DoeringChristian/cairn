@@ -61,6 +61,7 @@ from .sdk.card_spec import (
 from .sdk.elements import CardElement, HtmlElement, PlotElement
 from .sdk.plot_components import (
     Bar,
+    Boxes,
     Compare,
     Component,
     Figure,
@@ -69,12 +70,14 @@ from .sdk.plot_components import (
     Histogram,
     Image,
     Line,
+    Mesh,
     ParallelCoordinates,
     PointCloud,
     Scalar,
     Scatter,
     Shared,
     Table,
+    Volume,
 )
 from .sdk.reader import ArtifactInfo, DataRef
 
@@ -1349,9 +1352,11 @@ def image(data: Any, *, data_mode: str = "local") -> Any:
     return Image(data, data_mode=data_mode)._build_element()
 
 
-def mesh(data: Any) -> Any:
-    """A single-view `mesh` card. `data` must be a `run[tag]` handle."""
-    return _card_element("mesh", [data], builder="mesh")
+def mesh(data: Any, faces: Any = None, **kwargs: Any) -> Any:
+    """A single-view mesh plot (self-contained). Lowercase alias for
+    :class:`~cairn.sdk.plot_components.Mesh`; accepts raw ``vertices``/``faces``
+    arrays or a ``run[tag]`` handle. Returns a ``PlotElement``."""
+    return Mesh(data, faces, **kwargs)._build_element()
 
 
 def pointcloud(data: Any, **kwargs: Any) -> Any:
@@ -1361,14 +1366,18 @@ def pointcloud(data: Any, **kwargs: Any) -> Any:
     return PointCloud(data, **kwargs)._build_element()
 
 
-def volume(data: Any) -> Any:
-    """A single-view `volume` card. `data` must be a `run[tag]` handle."""
-    return _card_element("volume", [data], builder="volume")
+def volume(data: Any, **kwargs: Any) -> Any:
+    """A single-view volume plot (self-contained). Lowercase alias for
+    :class:`~cairn.sdk.plot_components.Volume`; accepts a raw ``(D,H,W)`` array
+    or a ``run[tag]`` handle. Returns a ``PlotElement``."""
+    return Volume(data, **kwargs)._build_element()
 
 
-def boxes(data: Any) -> Any:
-    """A single-view `boxes3d` card. `data` must be a `run[tag]` handle."""
-    return _card_element("boxes3d", [data], builder="boxes")
+def boxes(data: Any, maxs: Any = None, **kwargs: Any) -> Any:
+    """A single-view boxes plot (self-contained). Lowercase alias for
+    :class:`~cairn.sdk.plot_components.Boxes`; accepts raw ``mins``/``maxs``
+    arrays or a ``run[tag]`` handle. Returns a ``PlotElement``."""
+    return Boxes(data, maxs, **kwargs)._build_element()
 
 
 def media_compare(a: Any, b: Any, *, mode: str = "diff", card_type: str = "image") -> Any:
@@ -1411,24 +1420,50 @@ def image_compare(a: Any, b: Any, *, mode: str = "side") -> Any:
     return media_compare(a, b, mode=mode, card_type="image")
 
 
+def _compare_3d(component: Any, a: Any, b: Any, mode: str, card_type: str) -> Any:
+    """Shared body for the four 3D ``*_compare`` helpers.
+
+    ``mode="side"`` lowers to a self-contained ``cp.Compare(component(a),
+    component(b), mode="side")`` — which itself becomes a 2-cell ``cp.Grid``,
+    so both cells render as standalone 3D leaves (G3b, no server). ``mode`` in
+    ``{split, blend, diff}`` (image-space compositing of two rendered frames)
+    has no standalone 3D path yet (deferred G3c), so it KEEPS delegating to the
+    server-backed ``media_compare`` ``CardElement`` iframe."""
+    if mode == "side":
+        return Compare(component(a), component(b), mode="side")._build_element()
+    return media_compare(a, b, mode=mode, card_type=card_type)
+
+
 def mesh_compare(a: Any, b: Any, *, mode: str = "side") -> Any:
-    """`media_compare(a, b, mode=mode, card_type="mesh")`."""
-    return media_compare(a, b, mode=mode, card_type="mesh")
+    """Compare two meshes. ``mode="side"`` renders both as self-contained
+    standalone 3D leaves (via ``cp.Compare``/``cp.Mesh``, no server);
+    ``split``/``blend``/``diff`` delegate to the server-backed
+    ``media_compare`` iframe (standalone 3D compositing is deferred to G3c)."""
+    return _compare_3d(Mesh, a, b, mode, "mesh")
 
 
 def pointcloud_compare(a: Any, b: Any, *, mode: str = "side") -> Any:
-    """`media_compare(a, b, mode=mode, card_type="pointcloud")`."""
-    return media_compare(a, b, mode=mode, card_type="pointcloud")
+    """Compare two point clouds. ``mode="side"`` renders both as
+    self-contained standalone 3D leaves (via ``cp.Compare``/``cp.PointCloud``,
+    no server); ``split``/``blend``/``diff`` delegate to the server-backed
+    ``media_compare`` iframe (standalone 3D compositing is deferred to G3c)."""
+    return _compare_3d(PointCloud, a, b, mode, "pointcloud")
 
 
 def volume_compare(a: Any, b: Any, *, mode: str = "side") -> Any:
-    """`media_compare(a, b, mode=mode, card_type="volume")`."""
-    return media_compare(a, b, mode=mode, card_type="volume")
+    """Compare two volumes. ``mode="side"`` renders both as self-contained
+    standalone 3D leaves (via ``cp.Compare``/``cp.Volume``, no server);
+    ``split``/``blend``/``diff`` delegate to the server-backed
+    ``media_compare`` iframe (standalone 3D compositing is deferred to G3c)."""
+    return _compare_3d(Volume, a, b, mode, "volume")
 
 
 def boxes_compare(a: Any, b: Any, *, mode: str = "side") -> Any:
-    """`media_compare(a, b, mode=mode, card_type="boxes3d")`."""
-    return media_compare(a, b, mode=mode, card_type="boxes3d")
+    """Compare two boxes plots. ``mode="side"`` renders both as self-contained
+    standalone 3D leaves (via ``cp.Compare``/``cp.Boxes``, no server);
+    ``split``/``blend``/``diff`` delegate to the server-backed
+    ``media_compare`` iframe (standalone 3D compositing is deferred to G3c)."""
+    return _compare_3d(Boxes, a, b, mode, "boxes3d")
 
 
 # ---------------------------------------------------------------------------
@@ -1449,6 +1484,9 @@ __all__ = [
     "ParallelCoordinates",
     "Image",
     "PointCloud",
+    "Mesh",
+    "Volume",
+    "Boxes",
     "Table",
     "Figure",
     "Compare",

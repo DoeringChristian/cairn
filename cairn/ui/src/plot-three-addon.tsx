@@ -13,16 +13,23 @@
  * (required for hooks — see `plot-core-main.tsx` / the figure addon). This is
  * the SAME generic addon shape as `plot-figure-addon.tsx`.
  *
- * G3a wires ONE renderer: `pointcloud`. `mesh`/`volume`/`boxes3d` land in G3b
- * (add their standalone adapters + register them here); until then those names
- * are unregistered and a mesh/volume/boxes leaf shows the core "renderer not
- * available" wait state rather than mis-rendering.
+ * It wires ALL FOUR 3D renderers: `pointcloud` (G3a) + `mesh` / `volume` /
+ * `boxes3d` (G3b). They share the one bundled `three` copy, so a 3D element of
+ * any type triggers this single addon include-once.
  */
-import { PointCloudStandalone } from "./plot-three-renderers";
+import {
+  PointCloudStandalone,
+  MeshStandalone,
+  VolumeStandalone,
+  BoxesStandalone,
+} from "./plot-three-renderers";
 
 if (!window.__cairnPlotThreeLoaded) {
   if (typeof window.__cairnPlotRegisterRenderer === "function") {
     window.__cairnPlotRegisterRenderer("pointcloud", PointCloudStandalone);
+    window.__cairnPlotRegisterRenderer("mesh", MeshStandalone);
+    window.__cairnPlotRegisterRenderer("volume", VolumeStandalone);
+    window.__cairnPlotRegisterRenderer("boxes3d", BoxesStandalone);
     window.__cairnPlotThreeLoaded = true;
   } else {
     // Core must run first (Python emits it before this addon). If it somehow

@@ -132,3 +132,72 @@ export async function fetchPointCloudArrays(
   // three.js BufferAttributes require Float32Array, so narrow once here.
   return { data: Float32Array.from(parsed.data), properties: {} };
 }
+
+// ---------------------------------------------------------------------------
+// mesh — fetch + parse a single mesh artifact (G3b). Mirrors
+// `MeshVisualCard.tsx`'s pre-extraction `fetchMeshArrays` exactly, just
+// resolving bytes via `source.bytes` instead of
+// `fetch(api.artifactUrl(hash))` directly. Meshes are always `.npz`
+// (positions + faces + optional colors/normals/values), so no `.npy`
+// content-sniff branch is needed. React-query wiring stays card-owned; this
+// is only the pure fetch+parse core, also driven by the LOCAL plot bundle.
+// ---------------------------------------------------------------------------
+export interface MeshArrays {
+  positions: Float32Array;
+  faces: Uint32Array;
+  properties: PropertyMap;
+  colors: Float32Array | null;
+  normals: Float32Array | null;
+}
+
+export async function fetchMeshArrays(hash: string, source: DataSource): Promise<MeshArrays> {
+  const npz = await parseNpz(await source.bytes(hash));
+  if (!npz.positions || !npz.faces) {
+    throw new Error("mesh blob missing positions/faces");
+  }
+  return {
+    positions: Float32Array.from(npz.positions.data),
+    faces: Uint32Array.from(npz.faces.data),
+    properties: extractProperties(npz),
+    colors: npz.colors ? Float32Array.from(npz.colors.data) : null,
+    normals: npz.normals ? Float32Array.from(npz.normals.data) : null,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// volume — fetch + parse a single volume artifact (G3b). Mirrors
+// `VolumeVisualCard.tsx`'s pre-extraction `fetchVolumeArray` exactly. Returns
+// the raw scalar grid as a Float32Array (three.js Data3DTexture needs f32);
+// shape/vmin/vmax/spacing/origin/bounds live in the inline `meta`.
+// ---------------------------------------------------------------------------
+export async function fetchVolumeArray(hash: string, source: DataSource): Promise<Float32Array> {
+  const npz = await parseNpz(await source.bytes(hash));
+  if (!npz.data) throw new Error("volume artifact is missing its 'data' array");
+  // The shared parser returns Float64Array for uniform downstream math;
+  // three.js Data3DTexture needs Float32Array, so narrow once here.
+  return Float32Array.from(npz.data.data);
+}
+
+// ---------------------------------------------------------------------------
+// boxes3d — fetch + parse a single boxes artifact (G3b). Mirrors
+// `BoxesVisualCard.tsx`'s pre-extraction `fetchBoxesArrays` exactly.
+// ---------------------------------------------------------------------------
+export interface BoxesArrays {
+  mins: Float32Array;
+  maxs: Float32Array;
+  depth: Float32Array;
+  properties: PropertyMap;
+}
+
+export async function fetchBoxesArrays(hash: string, source: DataSource): Promise<BoxesArrays> {
+  const npz = await parseNpz(await source.bytes(hash));
+  if (!npz.mins || !npz.maxs || !npz.depth) {
+    throw new Error("boxes blob missing mins/maxs/depth");
+  }
+  return {
+    mins: Float32Array.from(npz.mins.data),
+    maxs: Float32Array.from(npz.maxs.data),
+    depth: Float32Array.from(npz.depth.data),
+    properties: extractProperties(npz),
+  };
+}

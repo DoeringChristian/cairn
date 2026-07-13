@@ -27,8 +27,13 @@ export {
   createEndpointDataSource,
   resolveImageViewportItems,
   fetchPointCloudArrays,
+  fetchMeshArrays,
+  fetchVolumeArray,
+  fetchBoxesArrays,
   type DataSource,
   type PointCloudArrays,
+  type MeshArrays,
+  type BoxesArrays,
 } from "./data-sources";
 
 // Overlay-metadata parser (shared by the app's viewport-registry and the
