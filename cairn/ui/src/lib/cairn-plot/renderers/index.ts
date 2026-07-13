@@ -11,6 +11,12 @@ export {
 } from "./ParallelCoords";
 export { default as ScalarPlot, type ScalarPlotProps } from "./ScalarPlot";
 export { default as ImagePane, type ImagePaneProps } from "./ImagePane";
+export {
+  default as HdrImagePane,
+  tonemapToImageData,
+  type HdrImagePaneProps,
+  type HdrData,
+} from "./HdrImagePane";
 export { default as Heatmap, type HeatmapProps } from "./Heatmap";
 export {
   default as HistogramPlot,

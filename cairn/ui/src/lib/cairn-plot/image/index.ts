@@ -2,3 +2,13 @@ export { computeDiff, loadImageData, DIFF_MODE_LABELS, type DiffMode } from "./d
 export { webglRenderDiffToCanvas, isWebGL2Available, type WebGLDiffOptions } from "./webgl-diff";
 export { getRenderMode, setRenderMode, type RenderMode } from "./render-mode";
 export { getCachedImageData, setCachedImageData } from "./cache";
+export {
+  TONEMAP_OPERATORS,
+  DEFAULT_TONEMAP,
+  getTonemapOperator,
+  applyExposure,
+  srgbOetf,
+  outputEncode,
+  type TonemapOperator,
+  type RgbTriple,
+} from "./tonemap";

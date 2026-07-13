@@ -41,6 +41,17 @@ export type { NpyArray, HistogramData } from "./transforms";
 export { getRenderMode, setRenderMode } from "./image";
 export type { RenderMode } from "./image";
 
+// HDR tone-mapping operators (extensible; see image/tonemap.ts)
+export {
+  TONEMAP_OPERATORS,
+  DEFAULT_TONEMAP,
+  getTonemapOperator,
+  applyExposure,
+  srgbOetf,
+  outputEncode,
+} from "./image";
+export type { TonemapOperator, RgbTriple } from "./image";
+
 // Transforms
 export {
   mapToXAxis,
@@ -79,6 +90,8 @@ export {
 export { ParallelCoords } from "./renderers";
 export { ScalarPlot } from "./renderers";
 export { ImagePane } from "./renderers";
+export { HdrImagePane, tonemapToImageData } from "./renderers";
+export type { HdrImagePaneProps, HdrData } from "./renderers";
 export { Heatmap } from "./renderers";
 export { HistogramPlot } from "./renderers";
 export { ImageOverlay } from "./renderers";

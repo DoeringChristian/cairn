@@ -32,6 +32,7 @@ import BarChart from "./lib/cairn-plot/renderers/BarChart";
 import HistogramPlot from "./lib/cairn-plot/renderers/HistogramPlot";
 import Heatmap from "./lib/cairn-plot/renderers/Heatmap";
 import ImagePane from "./lib/cairn-plot/renderers/ImagePane";
+import HdrImagePane from "./lib/cairn-plot/renderers/HdrImagePane";
 import Table from "./lib/cairn-plot/renderers/Table";
 import type { Viewport, PromotedSeriesConfig } from "./lib/cairn-plot/types";
 import { ChartBox } from "./plot-standalone-helpers";
@@ -140,6 +141,29 @@ function ImageStandalone(p: P) {
   );
 }
 
+// --- HdrImagePane: float-HDR image, tone-mapped client-side (canvas only) ---
+// Data (`hdr`) arrives already-resolved from the `imghdr` DataSpec; the config
+// props (`tonemap`/`exposure`/`gamma`) come from the descriptor. Wrapped in a
+// ChartBox so it has a sizing box on a bare standalone page (like the charts) —
+// the pane fills its container. NO three.js / Plotly: pure canvas 2D, so it
+// lives in the CORE bundle.
+function ImageHdrStandalone(p: P) {
+  const { height, ...rest } = p;
+  return (
+    <ChartBox height={height}>
+      <HdrImagePane
+        hdr={rest.hdr}
+        tonemap={rest.tonemap ?? "srgb"}
+        exposure={rest.exposure ?? 0}
+        gamma={rest.gamma ?? 1}
+        showAxes={rest.showAxes ?? false}
+        label={rest.label ?? ""}
+        interpolation={rest.interpolation ?? "auto"}
+      />
+    </ChartBox>
+  );
+}
+
 function TableStandalone(p: P) {
   return (
     <Table
@@ -166,6 +190,7 @@ export const CORE_RENDERERS: Record<string, ComponentType<any>> = {
   histogram: HistogramStandalone,
   heatmap: HeatmapStandalone,
   image: ImageStandalone,
+  imagehdr: ImageHdrStandalone,
   table: TableStandalone,
 };
 
