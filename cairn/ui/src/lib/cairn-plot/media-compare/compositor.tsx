@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   Colormap,
   DiffMode,
@@ -11,6 +11,8 @@ import { useImageViewport, type Viewport as ImageViewport } from "../hooks/use-i
 import { useGammaFilter, GammaFilterSvg } from "./post-processing";
 import ImageOverlay from "../renderers/ImageOverlay";
 import ImagePane from "../renderers/ImagePane";
+import PixelValueOverlay, { type PixelSample } from "../primitives/PixelValueOverlay";
+import { loadImageData } from "../image";
 import type { MediaCompareModeKind } from "./mode";
 import { alignFrameSourcesForDiff } from "./cross-type-align";
 
@@ -83,6 +85,44 @@ export function MediaComparePane({
   const paneRef = useRef<HTMLDivElement>(null);
   const [naturalDims, setNaturalDims] = useState<{ w: number; h: number } | null>(null);
 
+  // TEV-style per-pixel value overlay (foreground image). The split/blend
+  // compositor draws raw <img>s (not ImagePane), so it carries its own overlay
+  // so pixel values still appear when you zoom in far enough here too.
+  const fgImgRef = useRef<HTMLImageElement | null>(null);
+  const fgDataRef = useRef<ImageData | null>(null);
+  const [pixelDataVersion, setPixelDataVersion] = useState(0);
+  useEffect(() => {
+    if (!imageUrl) {
+      fgDataRef.current = null;
+      setPixelDataVersion((v) => v + 1);
+      return;
+    }
+    let cancelled = false;
+    loadImageData(imageUrl).then((d) => {
+      if (cancelled) return;
+      fgDataRef.current = d;
+      setPixelDataVersion((v) => v + 1);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [imageUrl]);
+  const samplePixel = useCallback(
+    (px: number, py: number): PixelSample | null => {
+      const d = fgDataRef.current;
+      if (!d || px < 0 || py < 0 || px >= d.width || py >= d.height) return null;
+      const i = (py * d.width + px) * 4;
+      const r = d.data[i]!;
+      const g = d.data[i + 1]!;
+      const b = d.data[i + 2]!;
+      const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+      const single = r === g && g === b;
+      const lines = single ? [String(r)] : [String(r), String(g), String(b)];
+      return { lines, luminance };
+    },
+    [],
+  );
+
   const showOverlay =
     !!overlay &&
     !!overlaySettings?.enabled &&
@@ -107,7 +147,7 @@ export function MediaComparePane({
 
       <div
         ref={paneRef}
-        className="flex-1 min-h-0 min-w-0 flex items-center justify-center overflow-hidden rounded cairn-checkerboard"
+        className="relative flex-1 min-h-0 min-w-0 flex items-center justify-center overflow-hidden rounded cairn-checkerboard"
         style={{ padding: "4px", ...viewportProps.style }}
         onPointerDown={viewportProps.onPointerDown}
         onPointerMove={viewportProps.onPointerMove}
@@ -117,6 +157,7 @@ export function MediaComparePane({
         <div className="relative w-full h-full">
           <div className="relative w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
             <img
+              ref={fgImgRef}
               src={imageUrl ?? undefined}
               alt="pred"
               className="w-full h-full object-contain block"
@@ -183,6 +224,17 @@ export function MediaComparePane({
             </div>
           )}
         </div>
+        {imageUrl && naturalDims && (
+          <PixelValueOverlay
+            imageElRef={fgImgRef}
+            naturalWidth={naturalDims.w}
+            naturalHeight={naturalDims.h}
+            zoom={zoom}
+            pan={pan}
+            sample={samplePixel}
+            version={pixelDataVersion}
+          />
+        )}
       </div>
       <span className="absolute top-1 left-1 z-10 rounded bg-accent/20 px-1 py-0.5 text-[10px] text-accent backdrop-blur-sm">
         REF

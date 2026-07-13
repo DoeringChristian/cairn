@@ -1,5 +1,0 @@
-<<<<<<<< HEAD:cairn/ui/dist/assets/use-iframe-auto-height-D9D8Tg5m.js
-import{r as c}from"./index-BBPFn1ea.js";function g(r,{min:n,max:i,enabled:s=!0}){const[h,f]=c.useState(void 0);return c.useEffect(()=>{if(!s)return;function o(e){var u,a;if(e.source!==((u=r.current)==null?void 0:u.contentWindow)||((a=e.data)==null?void 0:a.type)!=="cairn:resize")return;const t=Number(e.data.height);Number.isFinite(t)&&t>0&&f(Math.min(i,Math.max(n,t)))}return window.addEventListener("message",o),()=>window.removeEventListener("message",o)},[s,n,i,r]),h}export{g as u};
-========
-import{r as c}from"./index-Bcfn3xoO.js";function g(r,{min:n,max:i,enabled:s=!0}){const[h,f]=c.useState(void 0);return c.useEffect(()=>{if(!s)return;function o(e){var u,a;if(e.source!==((u=r.current)==null?void 0:u.contentWindow)||((a=e.data)==null?void 0:a.type)!=="cairn:resize")return;const t=Number(e.data.height);Number.isFinite(t)&&t>0&&f(Math.min(i,Math.max(n,t)))}return window.addEventListener("message",o),()=>window.removeEventListener("message",o)},[s,n,i,r]),h}export{g as u};
->>>>>>>> 2d438f68 (WIP: TEV pixel-value overlay):cairn/ui/dist/assets/use-iframe-auto-height-iRkcUSEA.js
