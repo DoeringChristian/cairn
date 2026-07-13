@@ -1,12 +1,13 @@
-import { useMemo, useState } from "react";
+import { useId, useMemo, useRef, useState } from "react";
 import type { ColormapName } from "../types";
 import { useContainerSize } from "../hooks/use-container-size";
 import { formatNum } from "../format";
-import { niceTicks } from "../theme";
+import { niceTicks, paddedDomain } from "../theme";
 import { rebinHistograms, type HistogramData } from "../transforms/histogram";
 import Tooltip from "../primitives/Tooltip";
 import { Axis, PlotFrame, type AxisTick } from "../primitives/Axis";
 import { anchorFromRect, type TooltipAnchor } from "../primitives/tooltip-position";
+import { useChartViewport, type PlotRect } from "../viewport/use-chart-viewport";
 import Heatmap from "./Heatmap";
 
 export type HistogramPlotProps = { className?: string } & (
@@ -48,6 +49,8 @@ function HistogramBars({
   logY?: boolean;
   className?: string;
 }) {
+  const rawId = useId();
+  const clipId = `hist-clip-${rawId.replace(/:/g, "")}`;
   const { ref: containerRef, size } = useContainerSize();
   const [hover, setHover] = useState<{ i: number; anchor: TooltipAnchor } | null>(
     null,
@@ -57,21 +60,48 @@ function HistogramBars({
   const plotW = Math.max(0, w - PAD.left - PAD.right);
   const plotH = Math.max(0, h - PAD.top - PAD.bottom);
 
-  const xMin = edges[0] ?? 0;
-  const xMax = edges[edges.length - 1] ?? 1;
-  const xRange = xMax - xMin || 1;
+  const rawXMin = edges[0] ?? 0;
+  const rawXMax = edges[edges.length - 1] ?? 1;
 
   const yMax = useMemo(() => {
     const m = counts.reduce((a, b) => Math.max(a, b), 0);
     return m > 0 ? m : 1;
   }, [counts]);
-  const yScaleMax = logY ? Math.log10(yMax + 1) : yMax;
+  // Count value mapped into axis space (log-compressed when logY).
+  const mapY = (c: number) => (logY ? Math.log10(c + 1) : c);
+  const yScaleMax = mapY(yMax);
+
+  // HOME domain: x = ~5%-padded bin range; y = [0, top-padded max count]. The
+  // bar baseline (count 0) stays anchored at the bottom in the home view.
+  const homeX = paddedDomain(rawXMin, rawXMax);
+  const homeYTop = yScaleMax > 0 ? yScaleMax * 1.05 : 1;
+  const home = useMemo(
+    () => ({ xDomain: homeX, yDomain: [0, homeYTop] as [number, number] }),
+    [homeX[0], homeX[1], homeYTop],
+  );
+
+  // One-bin minimum x-span (a max-zoom floor so you can't zoom past a bin).
+  const binWidth =
+    counts.length > 0 ? (rawXMax - rawXMin) / counts.length : undefined;
+
+  const plotRectRef = useRef<PlotRect | null>(null);
+  plotRectRef.current = { x: PAD.left, y: PAD.top, width: plotW, height: plotH };
+
+  const { domain, containerProps, dragRect } = useChartViewport({
+    containerRef,
+    plotRectRef,
+    home,
+    minSpan: binWidth ? { x: binWidth } : undefined,
+  });
+
+  const [xMin, xMax] = domain.xDomain;
+  const [yLo, yHi] = domain.yDomain;
+  const xRange = xMax - xMin || 1;
+  const yRange = yHi - yLo || 1;
 
   const toX = (v: number) => PAD.left + ((v - xMin) / xRange) * plotW;
-  const barH = (c: number) => {
-    const val = logY ? Math.log10(c + 1) : c;
-    return (val / (yScaleMax || 1)) * plotH;
-  };
+  const toY = (mapped: number) =>
+    PAD.top + plotH - ((mapped - yLo) / yRange) * plotH;
 
   const plotRect = { x: PAD.left, y: PAD.top, width: plotW, height: plotH };
   const eps = 0.5;
@@ -79,15 +109,15 @@ function HistogramBars({
     .map((v) => ({ pos: toX(v), label: formatNum(v) }))
     .filter((t) => t.pos >= PAD.left - eps && t.pos <= PAD.left + plotW + eps);
   const yTicks: AxisTick[] = logY
-    ? [0, 0.5, 1].map((t) => ({
-        pos: PAD.top + plotH - t * plotH,
-        label: formatNum(Math.pow(10, t * yScaleMax) - 1),
-      }))
-    : niceTicks(0, yScaleMax)
-        .map((v) => ({
-          pos: PAD.top + plotH - (v / (yScaleMax || 1)) * plotH,
-          label: formatNum(v),
-        }))
+    ? [0, 0.25, 0.5, 0.75, 1].map((t) => {
+        const mapped = yLo + t * yRange;
+        return {
+          pos: toY(mapped),
+          label: formatNum(Math.pow(10, mapped) - 1),
+        };
+      })
+    : niceTicks(yLo, yHi)
+        .map((v) => ({ pos: toY(v), label: formatNum(v) }))
         .filter((t) => t.pos >= PAD.top - eps && t.pos <= PAD.top + plotH + eps);
 
   const handleMove = (e: React.MouseEvent) => {
@@ -98,9 +128,23 @@ function HistogramBars({
       setHover(null);
       return;
     }
-    const i = Math.min(counts.length - 1, Math.floor((mx / plotW) * counts.length));
-    setHover({ i, anchor: anchorFromRect(e, rect) });
+    // Invert through the live domain: pixel → data x → bin index.
+    const dataX = xMin + (mx / plotW) * xRange;
+    let bin = -1;
+    for (let i = 0; i < counts.length; i++) {
+      if (dataX >= edges[i]! && dataX < edges[i + 1]!) {
+        bin = i;
+        break;
+      }
+    }
+    if (bin < 0) {
+      setHover(null);
+      return;
+    }
+    setHover({ i: bin, anchor: anchorFromRect(e, rect) });
   };
+
+  const yBase = toY(0);
 
   return (
     <div
@@ -108,29 +152,54 @@ function HistogramBars({
       className={`relative h-full w-full ${className ?? ""}`}
       onMouseMove={handleMove}
       onMouseLeave={() => setHover(null)}
+      {...containerProps}
     >
       {plotW > 0 && plotH > 0 && (
         <svg width={w} height={h} className="select-none">
+          <defs>
+            <clipPath id={clipId}>
+              <rect x={PAD.left} y={PAD.top} width={plotW} height={plotH} />
+            </clipPath>
+          </defs>
           <Axis orientation="left" plot={plotRect} ticks={yTicks} showGrid />
           <Axis orientation="bottom" plot={plotRect} ticks={xTicks} showGrid />
           <PlotFrame x={PAD.left} y={PAD.top} width={plotW} height={plotH} />
+          <g clipPath={`url(#${clipId})`}>
           {counts.map((c, i) => {
             const x0 = toX(edges[i]!);
             const x1 = toX(edges[i + 1]!);
             const bw = Math.max(0.5, x1 - x0 - 0.5);
-            const bh = barH(c);
+            const yTop = toY(mapY(c));
+            const yA = Math.min(yTop, yBase);
+            const bh = Math.abs(yBase - yTop);
             return (
               <rect
                 key={i}
                 x={x0}
-                y={PAD.top + plotH - bh}
+                y={yA}
                 width={bw}
                 height={bh}
                 className={hover?.i === i ? "fill-accent" : "fill-accent/70"}
               />
             );
           })}
+          </g>
         </svg>
+      )}
+      {dragRect && (
+        <div
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            left: dragRect.x,
+            top: dragRect.y,
+            width: dragRect.width,
+            height: dragRect.height,
+            border: "1px solid #0969da",
+            background: "rgba(83, 155, 245, 0.12)",
+            pointerEvents: "none",
+          }}
+        />
       )}
       {hover && counts[hover.i] != null && (
         <Tooltip
