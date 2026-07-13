@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { SERIES_COLORS } from "../types";
 import { formatNum } from "../format";
 import { niceTicks } from "../theme";
@@ -6,6 +6,7 @@ import { Axis, type AxisTick } from "../primitives/Axis";
 import { useContainerSize } from "../hooks/use-container-size";
 import Tooltip from "../primitives/Tooltip";
 import { pointerAnchor, type TooltipAnchor } from "../primitives/tooltip-position";
+import { useChartViewport, type PlotRect } from "../viewport/use-chart-viewport";
 
 const DEFAULT_COLORS = SERIES_COLORS;
 
@@ -85,6 +86,8 @@ export default function BarChart({
   className,
 }: BarChartProps) {
   const { ref: containerRef, size } = useContainerSize();
+  const rawId = useId();
+  const clipId = `bar-clip-${rawId.replace(/:/g, "")}`;
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [tooltipPos, setTooltipPos] = useState<TooltipAnchor | null>(null);
 
@@ -183,8 +186,35 @@ export default function BarChart({
   const plotW = w - pad.left - pad.right;
   const plotH = h - pad.top - pad.bottom;
 
-  const dMin = logX ? logSafe(domain.min) : domain.min;
-  const dMax = logX ? logSafe(domain.max) : domain.max;
+  // HOME value-domain (mapped space); the row (y) axis is categorical, so the
+  // viewport is x-only (`constrainTo:'x'`) — zoom/pan the value axis, never the
+  // rows. yDomain is a dummy the hook leaves untouched.
+  const dMinHome = logX ? logSafe(domain.min) : domain.min;
+  const dMaxHome = logX ? logSafe(domain.max) : domain.max;
+  const home = useMemo(
+    () => ({
+      xDomain: [dMinHome, dMaxHome] as [number, number],
+      yDomain: [0, 1] as [number, number],
+    }),
+    [dMinHome, dMaxHome],
+  );
+
+  const plotRectRef = useRef<PlotRect | null>(null);
+  plotRectRef.current = { x: pad.left, y: pad.top, width: plotW, height: plotH };
+
+  const {
+    domain: viewport,
+    containerProps,
+    dragRect,
+    wasDragRef,
+  } = useChartViewport({
+    containerRef,
+    plotRectRef,
+    home,
+    constrainTo: "x",
+  });
+
+  const [dMin, dMax] = viewport.xDomain;
   const range = dMax - dMin || 1;
   const toX = (v: number) => {
     const mapped = logX ? logSafe(Math.max(v, 1e-10)) : v;
@@ -194,14 +224,14 @@ export default function BarChart({
   const baseX = logX ? pad.left : Math.max(pad.left, Math.min(pad.left + plotW, toX(0)));
 
   // Value-axis ticks: "nice"-rounded on a linear axis, evenly-spaced fractions
-  // on a log axis. Positions map through the same `toX` as the bars.
+  // on a log axis. Recomputed from the LIVE value domain so they track zoom/pan.
   const eps = 0.5;
   const valueTicks: AxisTick[] = logX
     ? [0, 0.25, 0.5, 0.75, 1].map((t) => ({
         pos: pad.left + t * plotW,
         label: formatNum(Math.pow(10, dMin + t * range)),
       }))
-    : niceTicks(domain.min, domain.max)
+    : niceTicks(dMin, dMax)
         .map((v) => ({ pos: toX(v), label: formatNum(v) }))
         .filter((t) => t.pos >= pad.left - eps && t.pos <= pad.left + plotW + eps);
 
@@ -226,6 +256,14 @@ export default function BarChart({
     setHoveredId(null);
     setTooltipPos(null);
   };
+  // Suppress the click that ends a box-zoom/pan drag (mirrors ScalarPlot).
+  const suppressAfterDrag = () => {
+    if (wasDragRef.current) {
+      wasDragRef.current = false;
+      return true;
+    }
+    return false;
+  };
 
   const hoveredBar = hoveredId
     ? (bars.find((b) => b.id === hoveredId) ?? null)
@@ -241,9 +279,15 @@ export default function BarChart({
       ref={containerRef}
       className={`relative ${className ?? ""}`}
       onMouseLeave={handleLeave}
+      {...containerProps}
     >
       {plotW > 0 && plotH > 0 && (
         <svg width={w} height={h} className="select-none">
+          <defs>
+            <clipPath id={clipId}>
+              <rect x={pad.left} y={pad.top} width={plotW} height={plotH} />
+            </clipPath>
+          </defs>
           {/* Background — clears selection on click. */}
           <rect
             x={0}
@@ -251,7 +295,10 @@ export default function BarChart({
             width={w}
             height={h}
             fill="transparent"
-            onClick={onBackgroundClick}
+            onClick={() => {
+              if (suppressAfterDrag()) return;
+              onBackgroundClick?.();
+            }}
           />
 
           {/* Value axis: gridlines + ticks + caption (shared primitive). */}
@@ -325,7 +372,10 @@ export default function BarChart({
                 <g
                   key={b.id}
                   className="cursor-pointer"
-                  onClick={() => onClick?.(b.id)}
+                  onClick={() => {
+                    if (suppressAfterDrag()) return;
+                    onClick?.(b.id);
+                  }}
                   onMouseEnter={(e) => handleEnter(b.id, e)}
                   onMouseMove={handleMove}
                   onMouseLeave={handleLeave}
@@ -341,6 +391,7 @@ export default function BarChart({
                     {b.label.length > 24 ? b.label.slice(0, 23) + "…" : b.label}
                   </text>
                   <rect
+                    clipPath={`url(#${clipId})`}
                     x={x0}
                     y={rowCy - barH / 2}
                     width={Math.max(0, x1 - x0)}
@@ -384,6 +435,7 @@ export default function BarChart({
                 return (
                   <rect
                     key={seg.bar.id}
+                    clipPath={`url(#${clipId})`}
                     className="cursor-pointer"
                     x={Math.min(x0, x1)}
                     y={cy - barH / 2}
@@ -395,7 +447,10 @@ export default function BarChart({
                       isSelected ? "var(--color-accent, #0969da)" : "rgba(0,0,0,0.15)"
                     }
                     strokeWidth={isSelected ? 2 : 0.5}
-                    onClick={() => onClick?.(seg.bar.id)}
+                    onClick={() => {
+                      if (suppressAfterDrag()) return;
+                      onClick?.(seg.bar.id);
+                    }}
                     onMouseEnter={(e) => handleEnter(seg.bar.id, e)}
                     onMouseMove={handleMove}
                     onMouseLeave={handleLeave}
@@ -445,6 +500,7 @@ export default function BarChart({
                 return (
                   <rect
                     key={b.id}
+                    clipPath={`url(#${clipId})`}
                     className="cursor-pointer"
                     x={x0}
                     y={cy - barH / 2}
@@ -455,7 +511,10 @@ export default function BarChart({
                     fillOpacity={isHovered ? 0.75 : 0.45}
                     stroke={isSelected ? "var(--color-accent, #0969da)" : color}
                     strokeWidth={isSelected ? 2 : 1}
-                    onClick={() => onClick?.(b.id)}
+                    onClick={() => {
+                      if (suppressAfterDrag()) return;
+                      onClick?.(b.id);
+                    }}
                     onMouseEnter={(e) => handleEnter(b.id, e)}
                     onMouseMove={handleMove}
                     onMouseLeave={handleLeave}
@@ -465,6 +524,22 @@ export default function BarChart({
             </g>
           )}
         </svg>
+      )}
+
+      {dragRect && (
+        <div
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            left: dragRect.x,
+            top: dragRect.y,
+            width: dragRect.width,
+            height: dragRect.height,
+            border: "1px solid #0969da",
+            background: "rgba(83, 155, 245, 0.12)",
+            pointerEvents: "none",
+          }}
+        />
       )}
 
       {hoveredBar && tooltipPos && (
