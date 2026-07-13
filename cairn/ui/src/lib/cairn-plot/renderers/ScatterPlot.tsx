@@ -5,7 +5,7 @@ import { computeParetoFront } from "../transforms/pareto";
 import { viridis } from "../colormaps/viridis";
 import { useContainerSize } from "../hooks/use-container-size";
 import { formatNum } from "../format";
-import { AXIS, niceTicks } from "../theme";
+import { AXIS, niceTicks, paddedDomain } from "../theme";
 import { Axis, PlotFrame, type AxisTick } from "../primitives/Axis";
 import Tooltip from "../primitives/Tooltip";
 import { pointerAnchor, type TooltipAnchor } from "../primitives/tooltip-position";
@@ -120,10 +120,17 @@ export default function ScatterPlot({
 
   const logSafe = (v: number) => Math.log10(Math.max(v, 1e-10));
 
-  const xMin = xLog ? logSafe(xDomain.min) : xDomain.min;
-  const xMax = xLog ? logSafe(xDomain.max) : xDomain.max;
-  const yMin = yLog ? logSafe(yDomain.min) : yDomain.min;
-  const yMax = yLog ? logSafe(yDomain.max) : yDomain.max;
+  // The scatter domain is always auto-computed (no user-set viewport), so pad
+  // it ~5% on each side of the data extent — points never touch the frame in
+  // the home position. Padding is applied in the mapped (log or linear) space.
+  const [xMin, xMax] = paddedDomain(
+    xLog ? logSafe(xDomain.min) : xDomain.min,
+    xLog ? logSafe(xDomain.max) : xDomain.max,
+  );
+  const [yMin, yMax] = paddedDomain(
+    yLog ? logSafe(yDomain.min) : yDomain.min,
+    yLog ? logSafe(yDomain.max) : yDomain.max,
+  );
   const xRange = xMax - xMin || 1;
   const yRange = yMax - yMin || 1;
 

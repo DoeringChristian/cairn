@@ -21,6 +21,7 @@ import type { AxisSource } from "../transforms/x-axis";
 import { resolveAxisDomain } from "../transforms/domain";
 import { mergeToRows } from "../transforms/merge-rows";
 import { formatXTick } from "../format";
+import { AXIS, GRID, paddedDomain } from "../theme";
 import { useModifierKey } from "../hooks/use-modifier-key";
 import { CustomLegend } from "./scalar/scalar-legend";
 import { CustomTooltip } from "./scalar/scalar-tooltip";
@@ -114,6 +115,24 @@ export default function ScalarPlot({
     typeof yDomain[0] === "number" ? yDomain[0] : dataYs[0],
     typeof yDomain[1] === "number" ? yDomain[1] : dataYs[1],
   ];
+
+  // Edge padding for the HOME position only: when a domain is fully auto
+  // (both ends are the "dataMin"/"dataMax"/"auto" sentinels — no explicit
+  // range and no zoom/pan viewport), pass a ~5%-padded numeric domain so the
+  // line doesn't touch the frame. An explicit range or a viewport (numbers)
+  // passes through untouched. Log domains aren't padded (linear padding could
+  // push a bound ≤ 0).
+  const padAutoDomain = (
+    domain: [number | string, number | string],
+    data: readonly [number, number],
+    scale: AxisScale,
+  ): [number | string, number | string] => {
+    if (typeof domain[0] === "number" || typeof domain[1] === "number") return domain;
+    if (scale === "log") return domain;
+    return paddedDomain(data[0], data[1]);
+  };
+  const xDomainPadded = padAutoDomain(xDomain, dataXs, xScale);
+  const yDomainPadded = padAutoDomain(yDomain, dataYs, yScale);
 
   // ── Promoted axes ──
   const promotedKeysOrdered = useMemo(
@@ -254,24 +273,35 @@ export default function ScalarPlot({
           }}
           onMouseLeave={() => setHoveredSeries(null)}
         >
-          <CartesianGrid stroke="var(--color-border, #d0d7de)" strokeDasharray="2 4" />
+          {/* Recharts axes/grid are token-styled (NOT migrated off Recharts —
+              that would risk the zoom/pan gesture code) so they visually match
+              the SVG renderers' shared <Axis>. */}
+          <CartesianGrid stroke={GRID.color} strokeDasharray={GRID.dash} />
           <XAxis
             dataKey="x"
             type="number"
             scale={xScale === "log" ? "log" : "linear"}
-            domain={xDomain as [number | string, number | string]}
+            domain={xDomainPadded}
             allowDataOverflow
-            stroke="var(--color-fg-muted, #656d76)"
-            fontSize={11}
+            stroke={AXIS.lineColor}
+            tick={{
+              fontSize: AXIS.tickFontSize,
+              fontFamily: AXIS.tickFontFamily,
+              fill: AXIS.tickColor,
+            }}
             tickFormatter={(v: number) => formatXTick(v, xAxis)}
           />
           <YAxis
             yAxisId="__left__"
             scale={yScale === "log" ? "log" : "linear"}
-            domain={yDomain as [number | string, number | string]}
+            domain={yDomainPadded}
             allowDataOverflow
-            stroke="var(--color-fg-muted, #656d76)"
-            fontSize={11}
+            stroke={AXIS.lineColor}
+            tick={{
+              fontSize: AXIS.tickFontSize,
+              fontFamily: AXIS.tickFontFamily,
+              fill: AXIS.tickColor,
+            }}
             width={46}
           />
           {promotedKeysOrdered.map((key) => {
@@ -287,8 +317,11 @@ export default function ScalarPlot({
                 domain={[cfg.min, cfg.max]}
                 allowDataOverflow
                 stroke={color}
-                tick={{ fill: color }}
-                fontSize={11}
+                tick={{
+                  fill: color,
+                  fontSize: AXIS.tickFontSize,
+                  fontFamily: AXIS.tickFontFamily,
+                }}
                 width={PROMOTED_AXIS_WIDTH}
               />
             );
