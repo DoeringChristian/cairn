@@ -2,9 +2,10 @@ import { useMemo, useState } from "react";
 import type { ColormapName } from "../types";
 import { useContainerSize } from "../hooks/use-container-size";
 import { formatNum } from "../format";
-import { AXIS } from "../theme";
+import { niceTicks } from "../theme";
 import { rebinHistograms, type HistogramData } from "../transforms/histogram";
 import Tooltip from "../primitives/Tooltip";
+import { Axis, PlotFrame, type AxisTick } from "../primitives/Axis";
 import { anchorFromRect, type TooltipAnchor } from "../primitives/tooltip-position";
 import Heatmap from "./Heatmap";
 
@@ -72,6 +73,23 @@ function HistogramBars({
     return (val / (yScaleMax || 1)) * plotH;
   };
 
+  const plotRect = { x: PAD.left, y: PAD.top, width: plotW, height: plotH };
+  const eps = 0.5;
+  const xTicks: AxisTick[] = niceTicks(xMin, xMax)
+    .map((v) => ({ pos: toX(v), label: formatNum(v) }))
+    .filter((t) => t.pos >= PAD.left - eps && t.pos <= PAD.left + plotW + eps);
+  const yTicks: AxisTick[] = logY
+    ? [0, 0.5, 1].map((t) => ({
+        pos: PAD.top + plotH - t * plotH,
+        label: formatNum(Math.pow(10, t * yScaleMax) - 1),
+      }))
+    : niceTicks(0, yScaleMax)
+        .map((v) => ({
+          pos: PAD.top + plotH - (v / (yScaleMax || 1)) * plotH,
+          label: formatNum(v),
+        }))
+        .filter((t) => t.pos >= PAD.top - eps && t.pos <= PAD.top + plotH + eps);
+
   const handleMove = (e: React.MouseEvent) => {
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect || counts.length === 0) return;
@@ -93,43 +111,9 @@ function HistogramBars({
     >
       {plotW > 0 && plotH > 0 && (
         <svg width={w} height={h} className="select-none">
-          <rect
-            x={PAD.left}
-            y={PAD.top}
-            width={plotW}
-            height={plotH}
-            fill="none"
-            stroke={AXIS.lineColor}
-          />
-          {[0, 0.5, 1].map((t) => {
-            const val = logY
-              ? Math.pow(10, t * yScaleMax) - 1
-              : t * yScaleMax;
-            return (
-              <text
-                key={t}
-                x={PAD.left - 4}
-                y={PAD.top + plotH - t * plotH + 3}
-                textAnchor="end"
-                className="mono fill-fg-subtle"
-                style={{ fontSize: AXIS.tickFontSize }}
-              >
-                {formatNum(val)}
-              </text>
-            );
-          })}
-          {[0, 0.5, 1].map((t) => (
-            <text
-              key={`x${t}`}
-              x={PAD.left + t * plotW}
-              y={PAD.top + plotH + 12}
-              textAnchor="middle"
-              className="mono fill-fg-subtle"
-              style={{ fontSize: AXIS.tickFontSize }}
-            >
-              {formatNum(xMin + t * xRange)}
-            </text>
-          ))}
+          <Axis orientation="left" plot={plotRect} ticks={yTicks} showGrid />
+          <Axis orientation="bottom" plot={plotRect} ticks={xTicks} showGrid />
+          <PlotFrame x={PAD.left} y={PAD.top} width={plotW} height={plotH} />
           {counts.map((c, i) => {
             const x0 = toX(edges[i]!);
             const x1 = toX(edges[i + 1]!);

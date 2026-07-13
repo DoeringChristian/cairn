@@ -6,6 +6,7 @@ import { useContainerSize } from "../hooks/use-container-size";
 import { formatNum } from "../format";
 import { AXIS } from "../theme";
 import Tooltip from "../primitives/Tooltip";
+import { TickText, AxisTitle } from "../primitives/Axis";
 import { pointerAnchor, type TooltipAnchor } from "../primitives/tooltip-position";
 
 export interface ParallelCoordsProps {
@@ -106,33 +107,15 @@ export default function ParallelCoords({
                   stroke={AXIS.lineColor}
                   strokeWidth={AXIS.lineWidth}
                 />
-                <text
-                  x={x}
-                  y={pad.top - 8}
-                  textAnchor="middle"
-                  className="fill-fg-muted"
-                  style={{ fontSize: AXIS.titleFontSize }}
-                >
+                <AxisTitle x={x} y={pad.top - 8}>
                   {col.key}
-                </text>
-                <text
-                  x={x}
-                  y={pad.top + plotH + 14}
-                  textAnchor="middle"
-                  className="mono fill-fg-subtle"
-                  style={{ fontSize: AXIS.tickFontSize }}
-                >
+                </AxisTitle>
+                <TickText x={x} y={pad.top + plotH + 14}>
                   {formatNum(d.min)}
-                </text>
-                <text
-                  x={x}
-                  y={pad.top - 1}
-                  textAnchor="middle"
-                  className="mono fill-fg-subtle"
-                  style={{ fontSize: AXIS.tickFontSize }}
-                >
+                </TickText>
+                <TickText x={x} y={pad.top - 1}>
                   {formatNum(d.max)}
-                </text>
+                </TickText>
               </g>
             );
           })}

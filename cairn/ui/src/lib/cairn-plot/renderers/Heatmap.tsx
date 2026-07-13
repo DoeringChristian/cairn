@@ -5,6 +5,7 @@ import { useContainerSize } from "../hooks/use-container-size";
 import { formatNum } from "../format";
 import { AXIS } from "../theme";
 import Tooltip from "../primitives/Tooltip";
+import { Axis, PlotFrame, type AxisTick } from "../primitives/Axis";
 import { anchorFromRect, type TooltipAnchor } from "../primitives/tooltip-position";
 
 export interface HeatmapProps {
@@ -29,7 +30,7 @@ export interface HeatmapProps {
   className?: string;
 }
 
-const PAD = { top: 14, right: 64, bottom: 26, left: 46 };
+const PAD = { top: 14, right: 64, bottom: 34, left: 46 };
 
 export default function Heatmap({
   matrix,
@@ -142,8 +143,19 @@ export default function Heatmap({
     return stops;
   }, [colormap]);
 
-  const xTicks = tickPositions(cols);
-  const yTicks = tickPositions(rows);
+  const plotRect = { x: PAD.left, y: PAD.top, width: plotW, height: plotH };
+  // Categorical ticks at cell centers (indices → shared Axis primitive).
+  const xAxisTicks: AxisTick[] = tickPositions(cols).map((i) => ({
+    pos: PAD.left + ((i + 0.5) / cols) * plotW,
+    label: xTickLabel ? xTickLabel(i) : String(i),
+  }));
+  const yAxisTicks: AxisTick[] = tickPositions(rows).map((i) => {
+    const viewRow = originTop ? i : rows - 1 - i;
+    return {
+      pos: PAD.top + ((viewRow + 0.5) / rows) * plotH,
+      label: yTickLabel ? yTickLabel(i) : String(i),
+    };
+  });
 
   return (
     <div
@@ -166,64 +178,9 @@ export default function Heatmap({
             }}
           />
           <svg width={w} height={h} className="pointer-events-none absolute inset-0 select-none">
-            <rect
-              x={PAD.left}
-              y={PAD.top}
-              width={plotW}
-              height={plotH}
-              fill="none"
-              stroke={AXIS.lineColor}
-            />
-            {xLabel && (
-              <text
-                x={PAD.left + plotW / 2}
-                y={h - 2}
-                textAnchor="middle"
-                className="fill-fg-muted"
-                style={{ fontSize: AXIS.titleFontSize }}
-              >
-                {xLabel}
-              </text>
-            )}
-            {yLabel && (
-              <text
-                x={10}
-                y={PAD.top + plotH / 2}
-                textAnchor="middle"
-                className="fill-fg-muted"
-                style={{ fontSize: AXIS.titleFontSize }}
-                transform={`rotate(-90, 10, ${PAD.top + plotH / 2})`}
-              >
-                {yLabel}
-              </text>
-            )}
-            {xTicks.map((i) => (
-              <text
-                key={`x${i}`}
-                x={PAD.left + ((i + 0.5) / cols) * plotW}
-                y={PAD.top + plotH + 12}
-                textAnchor="middle"
-                className="mono fill-fg-subtle"
-                style={{ fontSize: AXIS.tickFontSize }}
-              >
-                {xTickLabel ? xTickLabel(i) : i}
-              </text>
-            ))}
-            {yTicks.map((i) => {
-              const viewRow = originTop ? i : rows - 1 - i;
-              return (
-                <text
-                  key={`y${i}`}
-                  x={PAD.left - 4}
-                  y={PAD.top + ((viewRow + 0.5) / rows) * plotH + 3}
-                  textAnchor="end"
-                  className="mono fill-fg-subtle"
-                  style={{ fontSize: AXIS.tickFontSize }}
-                >
-                  {yTickLabel ? yTickLabel(i) : i}
-                </text>
-              );
-            })}
+            <Axis orientation="left" plot={plotRect} ticks={yAxisTicks} title={yLabel} />
+            <Axis orientation="bottom" plot={plotRect} ticks={xAxisTicks} title={xLabel} />
+            <PlotFrame x={PAD.left} y={PAD.top} width={plotW} height={plotH} />
             {/* Colorbar */}
             <defs>
               <linearGradient id="heatmap-cbar" x1="0" y1="1" x2="0" y2="0">

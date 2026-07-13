@@ -5,7 +5,8 @@ import { computeParetoFront } from "../transforms/pareto";
 import { viridis } from "../colormaps/viridis";
 import { useContainerSize } from "../hooks/use-container-size";
 import { formatNum } from "../format";
-import { AXIS } from "../theme";
+import { AXIS, niceTicks } from "../theme";
+import { Axis, PlotFrame, type AxisTick } from "../primitives/Axis";
 import Tooltip from "../primitives/Tooltip";
 import { pointerAnchor, type TooltipAnchor } from "../primitives/tooltip-position";
 
@@ -135,6 +136,28 @@ export default function ScatterPlot({
     return pad.top + plotH - ((mapped - yMin) / yRange) * plotH;
   };
 
+  // Tick values: "nice"-rounded on a linear axis; evenly-spaced fractions on a
+  // log axis (pretty log ticks are out of scope). Positions come from the same
+  // toX/toY scale as the marks so ticks and points always line up.
+  const plotRect = { x: pad.left, y: pad.top, width: plotW, height: plotH };
+  const eps = 0.5;
+  const xTicks: AxisTick[] = xLog
+    ? [0, 0.25, 0.5, 0.75, 1].map((t) => ({
+        pos: pad.left + t * plotW,
+        label: formatNum(Math.pow(10, xMin + t * xRange)),
+      }))
+    : niceTicks(xDomain.min, xDomain.max)
+        .map((v) => ({ pos: toX(v), label: formatNum(v) }))
+        .filter((t) => t.pos >= pad.left - eps && t.pos <= pad.left + plotW + eps);
+  const yTicks: AxisTick[] = yLog
+    ? [0, 0.25, 0.5, 0.75, 1].map((t) => ({
+        pos: pad.top + plotH - t * plotH,
+        label: formatNum(Math.pow(10, yMin + t * yRange)),
+      }))
+    : niceTicks(yDomain.min, yDomain.max)
+        .map((v) => ({ pos: toY(v), label: formatNum(v) }))
+        .filter((t) => t.pos >= pad.top - eps && t.pos <= pad.top + plotH + eps);
+
   let paretoPath = "";
   if (pareto?.show && paretoFront.length >= 2) {
     const dir = pareto.direction;
@@ -165,73 +188,17 @@ export default function ScatterPlot({
     >
       {plotW > 0 && plotH > 0 && (
         <svg width={w} height={h} className="select-none">
-          <rect
+          <Axis orientation="left" plot={plotRect} ticks={yTicks} title={yLabel} showGrid />
+          <Axis orientation="bottom" plot={plotRect} ticks={xTicks} title={xLabel} showGrid />
+          <PlotFrame
             x={pad.left}
             y={pad.top}
             width={plotW}
             height={plotH}
-            fill="transparent"
-            stroke={AXIS.lineColor}
+            interactive
             onClick={onBackgroundClick}
             className="cursor-default"
           />
-
-          {xLabel && (
-            <text
-              x={pad.left + plotW / 2}
-              y={h - 4}
-              textAnchor="middle"
-              className="fill-fg-muted"
-              style={{ fontSize: AXIS.titleFontSize }}
-            >
-              {xLabel}
-            </text>
-          )}
-          {yLabel && (
-            <text
-              x={12}
-              y={pad.top + plotH / 2}
-              textAnchor="middle"
-              className="fill-fg-muted"
-              style={{ fontSize: AXIS.titleFontSize }}
-              transform={`rotate(-90, 12, ${pad.top + plotH / 2})`}
-            >
-              {yLabel}
-            </text>
-          )}
-
-          {[0, 0.25, 0.5, 0.75, 1].map((t) => {
-            const xTickLog = xMin + t * xRange;
-            const yTickLog = yMin + t * yRange;
-            const xTickLabel = xLog
-              ? formatNum(Math.pow(10, xTickLog))
-              : formatNum(xDomain.min + t * (xDomain.max - xDomain.min));
-            const yTickLabel = yLog
-              ? formatNum(Math.pow(10, yTickLog))
-              : formatNum(yDomain.min + t * (yDomain.max - yDomain.min));
-            return (
-              <g key={t}>
-                <text
-                  x={pad.left + t * plotW}
-                  y={pad.top + plotH + 14}
-                  textAnchor="middle"
-                  className="mono fill-fg-subtle"
-                  style={{ fontSize: AXIS.tickFontSize }}
-                >
-                  {xTickLabel}
-                </text>
-                <text
-                  x={pad.left - 4}
-                  y={pad.top + plotH - t * plotH + 3}
-                  textAnchor="end"
-                  className="mono fill-fg-subtle"
-                  style={{ fontSize: AXIS.tickFontSize }}
-                >
-                  {yTickLabel}
-                </text>
-              </g>
-            );
-          })}
 
           {paretoPath && (
             <path

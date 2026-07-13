@@ -1,7 +1,8 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { SERIES_COLORS } from "../types";
 import { formatNum } from "../format";
-import { AXIS, GRID } from "../theme";
+import { niceTicks } from "../theme";
+import { Axis, type AxisTick } from "../primitives/Axis";
 import { useContainerSize } from "../hooks/use-container-size";
 import Tooltip from "../primitives/Tooltip";
 import { pointerAnchor, type TooltipAnchor } from "../primitives/tooltip-position";
@@ -173,7 +174,7 @@ export default function BarChart({
   const showLegend = bars.length > 1;
   const pad = {
     top: showLegend ? 26 : 12,
-    bottom: 28,
+    bottom: 34,
     left: composed
       ? Math.max(60, rowLabel.length * 6.2 + 12)
       : Math.min(160, Math.max(60, longestLabel * 6.2 + 12)),
@@ -191,6 +192,18 @@ export default function BarChart({
   };
   // Baseline: value 0 for linear (clamped into the plot), left edge for log.
   const baseX = logX ? pad.left : Math.max(pad.left, Math.min(pad.left + plotW, toX(0)));
+
+  // Value-axis ticks: "nice"-rounded on a linear axis, evenly-spaced fractions
+  // on a log axis. Positions map through the same `toX` as the bars.
+  const eps = 0.5;
+  const valueTicks: AxisTick[] = logX
+    ? [0, 0.25, 0.5, 0.75, 1].map((t) => ({
+        pos: pad.left + t * plotW,
+        label: formatNum(Math.pow(10, dMin + t * range)),
+      }))
+    : niceTicks(domain.min, domain.max)
+        .map((v) => ({ pos: toX(v), label: formatNum(v) }))
+        .filter((t) => t.pos >= pad.left - eps && t.pos <= pad.left + plotW + eps);
 
   // Row count: one row per bar when grouped (today's layout), a single
   // composed row for stacked/overlay.
@@ -241,47 +254,14 @@ export default function BarChart({
             onClick={onBackgroundClick}
           />
 
-          {/* Value axis gridlines + ticks. */}
-          {[0, 0.25, 0.5, 0.75, 1].map((t) => {
-            const gx = pad.left + t * plotW;
-            const dv = dMin + t * range;
-            const label = logX ? Math.pow(10, dv) : dv;
-            return (
-              <g key={t}>
-                <line
-                  x1={gx}
-                  y1={pad.top}
-                  x2={gx}
-                  y2={pad.top + plotH}
-                  stroke={GRID.color}
-                  strokeWidth={AXIS.lineWidth}
-                  strokeDasharray={GRID.dash}
-                  opacity={GRID.opacity}
-                />
-                <text
-                  x={gx}
-                  y={pad.top + plotH + 12}
-                  textAnchor="middle"
-                  className="mono fill-fg-subtle"
-                  style={{ fontSize: AXIS.tickFontSize }}
-                >
-                  {formatNum(label)}
-                </text>
-              </g>
-            );
-          })}
-
-          {valueLabel && (
-            <text
-              x={pad.left + plotW / 2}
-              y={h - 2}
-              textAnchor="middle"
-              className="fill-fg-muted"
-              style={{ fontSize: AXIS.titleFontSize }}
-            >
-              {valueLabel}
-            </text>
-          )}
+          {/* Value axis: gridlines + ticks + caption (shared primitive). */}
+          <Axis
+            orientation="bottom"
+            plot={{ x: pad.left, y: pad.top, width: plotW, height: plotH }}
+            ticks={valueTicks}
+            title={valueLabel}
+            showGrid
+          />
 
           {showLegend && (
             <g>
