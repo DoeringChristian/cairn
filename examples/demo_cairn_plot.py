@@ -229,6 +229,22 @@ def build_gallery() -> list[tuple[str, object]]:
         ]),
     ))
 
+    # ── zoomable split of a SMALL image → TEV-style per-pixel values ──────
+    # Two tiny 16×16 gradients: hold Alt/Ctrl and wheel-zoom the split pane.
+    # BOTH sides zoom together and the divider stays aligned; once each source
+    # pixel is big enough on screen the renderer draws its RGB value centred on
+    # the pixel (TEV-style), with auto-contrast text. Drag (with modifier) to
+    # pan. This one section exercises Feature-1 (split zoom) + Feature-2 (pixel
+    # values) together — pick a small image so a normal zoom-in triggers it.
+    small_a = _gradient_image(16, 16)
+    small_b = _gradient_image(16, 16, shift=0.25)
+    items.append((
+        "Compare — zoomable split w/ TEV-style pixel values "
+        "(Alt/Ctrl + wheel to zoom; per-pixel RGB appears when pixels get big)",
+        cp.Compare(cp.Image(small_a), cp.Image(small_b), mode="split",
+                   split_position=0.5),
+    ))
+
     # ── image comparison: all four modes + diff submodes ──────────────────
     img_a = _gradient_image(120, 80)
     img_b = _gradient_image(120, 80, shift=0.18)  # a shifted variant to compare
