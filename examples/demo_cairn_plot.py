@@ -10,7 +10,8 @@ network requests beyond the HTML document itself.
 
 Types covered: ``Line``, ``Scatter``, ``Bar``, ``Histogram``, ``Heatmap``,
 ``ParallelCoordinates``, ``Image``, ``Table``, ``Figure`` (Plotly passthrough),
-``PointCloud`` (3D / WebGL), plus the ``Grid`` compositor and ``Compare``.
+``PointCloud`` / ``Mesh`` / ``Volume`` / ``Boxes`` (3D / WebGL), plus the
+``Grid`` compositor and ``Compare`` (all modes + every diff submode).
 
 Usage::
 
@@ -72,6 +73,56 @@ def _sphere_pointcloud(n: int) -> np.ndarray:
     pts /= np.linalg.norm(pts, axis=1, keepdims=True)
     rgb = (pts + 1) / 2  # map position → color
     return np.hstack([pts, rgb]).astype(np.float32)
+
+
+def _mesh() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """A unit icosahedron: ``(12, 3)`` vertices, ``(20, 3)`` triangle indices,
+    plus a per-vertex scalar (vertex height ``z``) used to COLOR the mesh via a
+    colormap (``color_mode="values"``)."""
+    phi = (1.0 + np.sqrt(5.0)) / 2.0
+    vertices = np.array(
+        [
+            [-1, phi, 0], [1, phi, 0], [-1, -phi, 0], [1, -phi, 0],
+            [0, -1, phi], [0, 1, phi], [0, -1, -phi], [0, 1, -phi],
+            [phi, 0, -1], [phi, 0, 1], [-phi, 0, -1], [-phi, 0, 1],
+        ],
+        dtype=np.float32,
+    )
+    vertices /= np.linalg.norm(vertices, axis=1, keepdims=True)  # onto unit sphere
+    faces = np.array(
+        [
+            [0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11],
+            [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8],
+            [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9],
+            [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1],
+        ],
+        dtype=np.int64,
+    )
+    values = vertices[:, 2].astype(np.float32)  # colour by height
+    return vertices, faces, values
+
+
+def _volume(d: int = 32) -> np.ndarray:
+    """A ``(D, H, W)`` scalar volume holding a soft Gaussian blob at the centre —
+    the raymarch viewer renders it as a glowing cloud."""
+    lin = np.linspace(-1.0, 1.0, d)
+    zz, yy, xx = np.meshgrid(lin, lin, lin, indexing="ij")
+    r2 = xx**2 + yy**2 + zz**2
+    return np.exp(-r2 / 0.15).astype(np.float32)
+
+
+def _boxes() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """A small stack of axis-aligned 3D boxes on a 2×2×2 lattice: ``(8, 3)``
+    ``mins``/``maxs`` corner arrays + a per-box scalar for value-coloring."""
+    centers = np.array(
+        [[x, y, z] for x in (0, 1) for y in (0, 1) for z in (0, 1)],
+        dtype=np.float32,
+    )
+    half = 0.35
+    mins = centers - half
+    maxs = centers + half
+    values = np.linalg.norm(centers - 0.5, axis=1).astype(np.float32)
+    return mins, maxs, values
 
 
 def build_gallery() -> list[tuple[str, object]]:
@@ -193,14 +244,51 @@ def build_gallery() -> list[tuple[str, object]]:
                          diff_submode="signed", colormap="red-blue")]],
         ),
     ))
+    # Every diff submode the renderer supports (see DiffMode in types.ts /
+    # image/diff.ts), laid out row-major in a 3×2 Grid. Diverging errors
+    # (signed / relative_signed) use the red-blue diverging map; magnitude
+    # errors use viridis / red-green. The two source images differ by a real
+    # red-channel shift, so every submode renders a visibly distinct field.
     items.append((
-        "Compare — diff submodes (signed vs absolute)",
-        cp.Grid([[
-            cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="diff",
-                       diff_submode="signed", colormap="red-blue"),
-            cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="diff",
-                       diff_submode="absolute", colormap="viridis"),
-        ]]),
+        "Compare — all 6 diff submodes "
+        "(row-major: signed · absolute · squared / "
+        "relative_signed · relative_absolute · relative_squared)",
+        cp.Grid(
+            [
+                [
+                    cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="diff",
+                               diff_submode="signed", colormap="red-blue"),
+                    cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="diff",
+                               diff_submode="absolute", colormap="viridis"),
+                    cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="diff",
+                               diff_submode="squared", colormap="viridis"),
+                ],
+                [
+                    cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="diff",
+                               diff_submode="relative_signed", colormap="red-blue"),
+                    cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="diff",
+                               diff_submode="relative_absolute", colormap="viridis"),
+                    cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="diff",
+                               diff_submode="relative_squared", colormap="red-green"),
+                ],
+            ],
+        ),
+    ))
+
+    # ── 3D (WebGL): mesh / volume / boxes ─────────────────────────────────
+    verts, faces, vals = _mesh()
+    items.append((
+        "Mesh — 3D icosahedron, colored per-vertex by height (WebGL)",
+        cp.Mesh(verts, faces, values=vals, color_mode="values", show_axes=True),
+    ))
+    items.append((
+        "Volume — 3D scalar grid, Gaussian blob (WebGL raymarch)",
+        cp.Volume(_volume(), colormap="viridis", show_axes=True),
+    ))
+    b_mins, b_maxs, b_vals = _boxes()
+    items.append((
+        "Boxes — 3D axis-aligned boxes, colored by value (WebGL)",
+        cp.Boxes(b_mins, b_maxs, values=b_vals, color_mode="value", show_axes=True),
     ))
 
     # ── composition: nested Grid ──────────────────────────────────────────

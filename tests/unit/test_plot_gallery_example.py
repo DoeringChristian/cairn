@@ -3,7 +3,7 @@
 Drives ``examples/demo_cairn_plot.py`` headlessly (no browser, no server) so CI
 catches any regression in the standalone self-contained emit across ALL plot
 types at once — Line/Scatter/Bar/Histogram/Heatmap/ParallelCoordinates/Image/
-Table/Figure/PointCloud + Grid + Compare.
+Table/Figure/PointCloud/Mesh/Volume/Boxes + Grid + Compare.
 """
 
 from __future__ import annotations
@@ -36,11 +36,13 @@ def test_gallery_renders_every_type_self_contained():
 
     items = mod.build_gallery()
     titles = [t for t, _ in items]
-    # All 2D + media + 3D + composition types present (11 core + Figure = 12).
+    # All 2D + media + 3D + composition types present.
     for expected in ("Line", "Scatter", "Bar", "Histogram", "Heatmap",
                      "ParallelCoordinates", "Image", "Table", "Figure",
-                     "PointCloud", "Grid", "Compare"):
+                     "PointCloud", "Mesh", "Volume", "Boxes", "Grid", "Compare"):
         assert any(t.startswith(expected) for t in titles), f"missing {expected}"
+    # The all-diff-submodes section enumerates every DiffMode.
+    assert any("diff submodes" in t for t in titles), "missing diff-submodes section"
     # The HDR section (true-float, real tone-mapping) is present.
     assert any("HDR image" in t for t in titles), "missing HDR section"
 
