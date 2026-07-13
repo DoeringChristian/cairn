@@ -20,6 +20,32 @@ export {
 
 export { CROSS_TYPE_VISUAL_OBJECT_TYPES, canCrossTypeCompare } from "./cross-type";
 
+// Unified Plotly-style chart viewport (zoom/pan) shared by the 2D SVG/canvas
+// chart renderers. Pure React + pure math, no heavy deps — eager-safe.
+export {
+  useChartViewport,
+  CHART_CAPABILITIES,
+  type ChartDomain,
+  type ChartDragMode,
+  type ChartCapabilities,
+  type ChartViewportActions,
+  type ChartViewportResult,
+  type PlotRect,
+  type UseChartViewportArgs,
+} from "./use-chart-viewport";
+export {
+  applyConstraints,
+  boxToDomain,
+  panByPixels,
+  wheelZoom,
+  zoomAboutAnchor,
+  WHEEL_FACTOR,
+  BOX_THRESHOLD_PX,
+  type ConstrainAxis,
+  type DomainClamp,
+  type MinSpan,
+} from "./chart-viewport-math";
+
 // The DataSource seam (hash -> TData mapping cores) — no heavy dependencies
 // (parseNpy/parseNpz/PropertyMap are already eager-safe, see their own
 // barrels), safe to re-export from this eagerly-reached barrel.
