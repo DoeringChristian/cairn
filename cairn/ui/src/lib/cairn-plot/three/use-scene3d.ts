@@ -30,6 +30,41 @@ export interface Scene3DSyncOptions {
 }
 
 /**
+ * Camera orientation mode (#69 S1).
+ *
+ * - `"orbital"` (default) — free orbit: the full `OrbitControls` polar range
+ *   (`0 … π`), so the camera can swing directly over either pole and view the
+ *   model from straight above/below. Byte-identical to pre-#69 behavior.
+ * - `"turntable"` — the conventional "record turntable" feel: horizontal drag
+ *   spins the model about world-up (azimuth), vertical drag tilts elevation,
+ *   and the up-vector stays locked (`camera.up=(0,1,0)`, which OrbitControls
+ *   already enforces — the horizon never rolls in EITHER mode). What turntable
+ *   adds on top is a small polar-angle margin at each pole so the camera can
+ *   never reach or cross straight-up/straight-down, preventing the disorienting
+ *   "flip over the top" tumble that free orbit allows.
+ */
+export type Scene3DCameraMode = "orbital" | "turntable";
+
+/** Polar-angle margin (radians) kept from each pole in `"turntable"` mode, so
+ *  the camera stops just shy of straight-up / straight-down and never flips
+ *  over the pole. Small enough to still reach a near-top/near-bottom view. */
+const TURNTABLE_POLE_MARGIN = 0.05;
+
+/** Applies a `Scene3DCameraMode` to a live `OrbitControls`: turntable clamps
+ *  the polar range away from both poles; orbital restores the full free-orbit
+ *  range. Shared by the mode effect and any future caller. */
+function applyCameraMode(controls: OrbitControls, mode: Scene3DCameraMode): void {
+  if (mode === "turntable") {
+    controls.minPolarAngle = TURNTABLE_POLE_MARGIN;
+    controls.maxPolarAngle = Math.PI - TURNTABLE_POLE_MARGIN;
+  } else {
+    controls.minPolarAngle = 0;
+    controls.maxPolarAngle = Math.PI;
+  }
+  controls.update();
+}
+
+/**
  * Resolves the sync group a "side" mode's reference+foreground pair of live
  * viewers should share (WS-VCP fix 3).
  *
@@ -71,6 +106,19 @@ export interface UseScene3DOptions {
    * setting).
    */
   showAxes?: boolean;
+  /**
+   * Show three semi-transparent XY / YZ / XZ reference planes through the
+   * origin (#69 S2), sized off the current `fitToBounds` bounding radius and
+   * tinted toward each plane's normal axis (YZ=red, XZ=green, XY=blue). `false`/
+   * absent (default) — no planes, byte-identical to pre-#69 rendering. Purely
+   * visual chrome; plumbed exactly like `showAxes` (see its docstring).
+   */
+  showPlanes?: boolean;
+  /**
+   * Camera orientation mode (#69 S1). `"orbital"` (default) = free orbit;
+   * `"turntable"` = up-locked spin with a pole margin. See `Scene3DCameraMode`.
+   */
+  cameraMode?: Scene3DCameraMode;
   /**
    * Called with the live `<canvas>` element after every `requestRender()`
    * (including camera-sync-driven re-renders). Opt-in — absent by default,
@@ -159,7 +207,17 @@ export interface Scene3DHandle {
  * in their own effect and dispose it in their own cleanup.
  */
 export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
-  const { background, fov = 50, near = 0.01, far = 1000, sync = null, showAxes = false, onFrame } = options;
+  const {
+    background,
+    fov = 50,
+    near = 0.01,
+    far = 1000,
+    sync = null,
+    showAxes = false,
+    showPlanes = false,
+    cameraMode = "orbital",
+    onFrame,
+  } = options;
 
   const { ref: containerRef, size } = useContainerSize<HTMLDivElement>();
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -170,11 +228,14 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
   const controlsRef = useRef<OrbitControls | null>(null);
   const axesHelperRef = useRef<THREE.AxesHelper | null>(null);
   const gridHelperRef = useRef<THREE.GridHelper | null>(null);
+  const planesRef = useRef<THREE.Mesh[]>([]);
 
   const boundsRef = useRef<Scene3DBounds | null>(null);
   const applyingRemoteRef = useRef(false);
   const syncRef = useRef<Scene3DSyncOptions | null>(sync);
   const showAxesRef = useRef(showAxes);
+  const showPlanesRef = useRef(showPlanes);
+  const cameraModeRef = useRef(cameraMode);
   const onFrameRef = useRef<((canvas: HTMLCanvasElement) => void) | undefined>(onFrame);
   const sourceIdRef = useRef<string>();
   if (!sourceIdRef.current) sourceIdRef.current = makeCameraSyncSourceId();
@@ -374,6 +435,59 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
     gridHelperRef.current = grid;
   }, []);
 
+  /** Removes+disposes any existing reference planes, then (if `showPlanes`)
+   *  recreates the three origin-centered XY / YZ / XZ planes sized off the
+   *  current `boundsRef` radius (same radius the axes/grid use). Each is a
+   *  double-sided, depth-write-disabled, ~0.06-opacity `MeshBasicMaterial`
+   *  tinted toward its NORMAL axis (YZ→red X, XZ→green Y, XY→blue Z), so the
+   *  planes read as faint colored "walls/floor" without occluding the data.
+   *  Called on every `fitToBounds` (new data → new size) and whenever
+   *  `showPlanes` toggles — mirrors `updateAxesHelpers`. */
+  const updateReferencePlanes = useCallback(() => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+    for (const plane of planesRef.current) {
+      scene.remove(plane);
+      plane.geometry.dispose();
+      (plane.material as THREE.Material).dispose();
+    }
+    planesRef.current = [];
+    if (!showPlanesRef.current) return;
+    const bounds = boundsRef.current;
+    const radius = bounds
+      ? Math.max(
+          new THREE.Vector3(...bounds.max).sub(new THREE.Vector3(...bounds.min)).length() * 0.5,
+          1e-3,
+        )
+      : 1;
+    const size = radius * 2;
+    // PlaneGeometry lies in the XY plane (normal +Z) by default. Rotate each
+    // copy onto its target plane; tint by the axis it's perpendicular to.
+    const specs: Array<{ color: number; rotate: (m: THREE.Mesh) => void }> = [
+      // XY plane (normal Z → blue): no rotation.
+      { color: 0x3b82f6, rotate: () => {} },
+      // XZ plane (normal Y → green): rotate -90° about X.
+      { color: 0x22c55e, rotate: (m) => m.rotateX(-Math.PI / 2) },
+      // YZ plane (normal X → red): rotate 90° about Y.
+      { color: 0xef4444, rotate: (m) => m.rotateY(Math.PI / 2) },
+    ];
+    for (const spec of specs) {
+      const mesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(size, size),
+        new THREE.MeshBasicMaterial({
+          color: spec.color,
+          transparent: true,
+          opacity: 0.06,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        }),
+      );
+      spec.rotate(mesh);
+      scene.add(mesh);
+      planesRef.current.push(mesh);
+    }
+  }, []);
+
   /**
    * Re-acquires a live WebGL context for this viewer's (one, persistent)
    * renderer if it's currently parked, and registers with the pool. No-op
@@ -444,9 +558,10 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
       controls.target.copy(center);
       controls.update();
       updateAxesHelpers();
+      updateReferencePlanes();
       requestRender();
     },
-    [requestRender, updateAxesHelpers],
+    [requestRender, updateAxesHelpers, updateReferencePlanes],
   );
 
   // ── Mount: scene + camera + controls (persistent) + initial live renderer
@@ -479,6 +594,10 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
 
     const controls = new OrbitControls(camera, canvas);
     controls.enableDamping = false;
+    // #69 S1: apply the initial orientation mode (turntable clamps the polar
+    // range; orbital leaves the full range). The dedicated effect below keeps
+    // it in sync on later `cameraMode` changes.
+    applyCameraMode(controls, cameraModeRef.current);
     controlsRef.current = controls;
 
     const onChange = () => {
@@ -602,6 +721,11 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
         (gridHelperRef.current.material as THREE.Material).dispose();
         gridHelperRef.current = null;
       }
+      for (const plane of planesRef.current) {
+        plane.geometry.dispose();
+        (plane.material as THREE.Material).dispose();
+      }
+      planesRef.current = [];
       sceneRef.current = null;
       cameraRef.current = null;
       controlsRef.current = null;
@@ -649,6 +773,23 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
     requestRender();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showAxes]);
+
+  // ── Reference-planes toggle (#69 S2) ────────────────────────────────────
+  useEffect(() => {
+    showPlanesRef.current = showPlanes;
+    updateReferencePlanes();
+    requestRender();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showPlanes]);
+
+  // ── Camera orientation mode (#69 S1) ────────────────────────────────────
+  useEffect(() => {
+    cameraModeRef.current = cameraMode;
+    const controls = controlsRef.current;
+    if (controls) applyCameraMode(controls, cameraMode);
+    requestRender();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cameraMode]);
 
   // ── Background ─────────────────────────────────────────────────────────
   useEffect(() => {

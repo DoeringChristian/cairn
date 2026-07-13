@@ -36,7 +36,7 @@ import {
   type VolumeNativeMode,
 } from "../lib/cairn-plot/viewport/volume-viewport";
 import type { DiffColormap } from "../lib/cairn-plot/three/diff";
-import { resetScene3DViews, type Scene3DSyncOptions } from "../lib/cairn-plot/three/use-scene3d";
+import { resetScene3DViews, type Scene3DCameraMode, type Scene3DSyncOptions } from "../lib/cairn-plot/three/use-scene3d";
 import type { ViewportPaneProps } from "../lib/cairn-plot/viewport/types";
 import { OffscreenComparePanes, useOffscreenSnapshot, type VisualCompareSettings } from "./card-kit";
 import type { ForeignFrameProps } from "./card-kit/cross-type-frame";
@@ -133,6 +133,8 @@ export function VolumeForeignFrame({ hash, metadata, onFrame }: ForeignFrameProp
       clip={{ min: view.clipMin, max: view.clipMax }}
       background={view.background}
       showAxes={view.showAxes}
+      showPlanes={view.showPlanes}
+      cameraMode={view.cameraMode}
       onFrame={snap.onFrame}
     />
   );
@@ -162,6 +164,10 @@ export interface VolumeFullSettings extends VisualCompareSettings {
   diffColormap?: DiffColormap;
   /** Persisted "Show axes" setting (WS-3DR2). */
   showAxes?: boolean;
+  /** Persisted "Show planes" setting (#69 S2). */
+  showPlanes?: boolean;
+  /** Persisted camera orientation mode (#69 S1). */
+  cameraMode?: Scene3DCameraMode;
 }
 
 function defaultVolumeSettings(): Omit<VolumeFullSettings, "metrics" | "version"> {
@@ -174,6 +180,8 @@ function defaultVolumeSettings(): Omit<VolumeFullSettings, "metrics" | "version"
     clipMax: [1, 1, 1],
     background: "dark",
     showAxes: false,
+    showPlanes: false,
+    cameraMode: "orbital",
     // 3D views linked by default (WS-VCP fix 1) — see MeshVisualCard's
     // identical comment; only affects cards without an explicit persisted
     // `syncViews` value.
@@ -274,6 +282,8 @@ function VolumeViewportPane(
         clip={{ min: view.clipMin, max: view.clipMax }}
         background={view.background}
         showAxes={view.showAxes}
+        showPlanes={view.showPlanes}
+        cameraMode={view.cameraMode}
         sync={syncOpts}
         onFrame={cb}
       />
@@ -352,6 +362,8 @@ function VolumeViewportPane(
                 clip={{ min: view.clipMin, max: view.clipMax }}
                 background={view.background}
                 showAxes={view.showAxes}
+                showPlanes={view.showPlanes}
+                cameraMode={view.cameraMode}
                 sync={syncOpts}
                 onFrame={cb}
               />
@@ -407,6 +419,11 @@ const QUALITY_OPTIONS: Array<{ value: "64" | "128" | "256"; label: string }> = [
   { value: "64", label: "64 steps (fast)" },
   { value: "128", label: "128 steps" },
   { value: "256", label: "256 steps (fine)" },
+];
+
+const ORIENTATION_OPTIONS: Array<{ value: Scene3DCameraMode; label: string }> = [
+  { value: "orbital", label: "Orbital" },
+  { value: "turntable", label: "Turntable" },
 ];
 
 const BACKGROUND_OPTIONS: Array<{ value: VolumeBackground; label: string }> = [
@@ -476,6 +493,19 @@ function VolumeSettingsControls({
         checked={!!settings.showAxes}
         onChange={(v) => update({ showAxes: v })}
         description="Colored XYZ origin lines + grid, sized to the fitted view"
+      />
+      <Toggle
+        label="Show planes"
+        checked={!!settings.showPlanes}
+        onChange={(v) => update({ showPlanes: v })}
+        description="Faint XY/YZ/XZ reference planes through the origin"
+      />
+      <Select
+        label="Orientation"
+        value={settings.cameraMode ?? "orbital"}
+        onChange={(v) => update({ cameraMode: v })}
+        options={ORIENTATION_OPTIONS}
+        description="Turntable locks world-up and spins about it; orbital is free orbit"
       />
       <div className="mt-2 border-t border-border-subtle pt-2">
         <div className="mb-1 text-xs font-semibold text-fg-muted">

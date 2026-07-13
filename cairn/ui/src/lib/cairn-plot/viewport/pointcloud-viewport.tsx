@@ -5,7 +5,7 @@ import PointCloudViewer, {
   type PointColorMode,
   extractPositions,
 } from "../renderers/PointCloudViewer";
-import { usePairedSideBySideSync, type Scene3DSyncOptions } from "../three/use-scene3d";
+import { usePairedSideBySideSync, type Scene3DCameraMode, type Scene3DSyncOptions } from "../three/use-scene3d";
 import {
   computeDelta,
   computeDisplacementMagnitude,
@@ -118,6 +118,10 @@ export interface PointCloudViewportSettings {
    *  grid, sized off the fitted bounds. `undefined` (old persisted cards) =
    *  off, matching pre-WS-3DR2 rendering. */
   showAxes?: boolean;
+  /** Persisted "Show planes" setting (#69 S2) — XY/YZ/XZ reference planes. */
+  showPlanes?: boolean;
+  /** Persisted camera orientation mode (#69 S1). `undefined` = "orbital". */
+  cameraMode?: Scene3DCameraMode;
 }
 
 interface PointCloudViewConfig {
@@ -126,6 +130,8 @@ interface PointCloudViewConfig {
   background: PointCloudBackground;
   property: string | null;
   showAxes: boolean;
+  showPlanes: boolean;
+  cameraMode: Scene3DCameraMode;
 }
 
 function resolveViewConfig(settings: PointCloudViewportSettings): PointCloudViewConfig {
@@ -135,6 +141,8 @@ function resolveViewConfig(settings: PointCloudViewportSettings): PointCloudView
     background: settings.background,
     property: settings.property ?? null,
     showAxes: settings.showAxes ?? false,
+    showPlanes: settings.showPlanes ?? false,
+    cameraMode: settings.cameraMode ?? "orbital",
   };
 }
 
@@ -179,6 +187,8 @@ export function PointCloudSingleView({
           pointSize={view.pointSize}
           background={view.background}
           showAxes={view.showAxes}
+          showPlanes={view.showPlanes}
+          cameraMode={view.cameraMode}
           sync={sync}
           onFrame={onFrame}
         />
@@ -237,6 +247,8 @@ export function PointCloudSideBySideView({
           pointSize={view.pointSize}
           background={view.background}
           showAxes={view.showAxes}
+          showPlanes={view.showPlanes}
+          cameraMode={view.cameraMode}
           sync={pairedSync}
         />
         <LabelChip label="REF" />
@@ -252,6 +264,8 @@ export function PointCloudSideBySideView({
             pointSize={view.pointSize}
             background={view.background}
             showAxes={view.showAxes}
+          showPlanes={view.showPlanes}
+          cameraMode={view.cameraMode}
             sync={pairedSync}
           />
         ) : (
@@ -350,6 +364,8 @@ export function PointCloudNativeDiffPane({
           pointSize={view.pointSize}
           background={view.background}
           showAxes={view.showAxes}
+          showPlanes={view.showPlanes}
+          cameraMode={view.cameraMode}
           sync={sync}
           overrideColors={colors}
         />

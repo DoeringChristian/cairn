@@ -37,6 +37,8 @@ const DEFAULT_POINTCLOUD_VIEW = {
   background: "dark" as const,
   property: null,
   showAxes: false,
+  showPlanes: false,
+  cameraMode: "orbital" as const,
 };
 
 export function PointCloudStandalone(p: P) {
@@ -48,6 +50,8 @@ export function PointCloudStandalone(p: P) {
     ...(rest.background ? { background: rest.background } : {}),
     ...(rest.property !== undefined ? { property: rest.property } : {}),
     ...(rest.showAxes !== undefined ? { showAxes: rest.showAxes } : {}),
+    ...(rest.showPlanes !== undefined ? { showPlanes: rest.showPlanes } : {}),
+    ...(rest.cameraMode ? { cameraMode: rest.cameraMode } : {}),
   };
   return (
     <ChartBox height={height}>
@@ -74,6 +78,8 @@ const DEFAULT_MESH_VIEW = {
   background: "dark" as const,
   property: null as string | null,
   showAxes: false,
+  showPlanes: false,
+  cameraMode: "orbital" as const,
 };
 
 export function MeshStandalone(p: P) {
@@ -87,6 +93,8 @@ export function MeshStandalone(p: P) {
     ...(rest.background ? { background: rest.background } : {}),
     ...(rest.property !== undefined ? { property: rest.property } : {}),
     ...(rest.showAxes !== undefined ? { showAxes: rest.showAxes } : {}),
+    ...(rest.showPlanes !== undefined ? { showPlanes: rest.showPlanes } : {}),
+    ...(rest.cameraMode ? { cameraMode: rest.cameraMode } : {}),
   };
   return (
     <ChartBox height={height}>
@@ -113,6 +121,8 @@ const DEFAULT_VOLUME_VIEW = {
   clipMax: [1, 1, 1] as [number, number, number],
   background: "dark" as const,
   showAxes: false,
+  showPlanes: false,
+  cameraMode: "orbital" as const,
 };
 
 export function VolumeStandalone(p: P) {
@@ -127,6 +137,8 @@ export function VolumeStandalone(p: P) {
     ...(rest.clipMax ? { clipMax: rest.clipMax } : {}),
     ...(rest.background ? { background: rest.background } : {}),
     ...(rest.showAxes !== undefined ? { showAxes: rest.showAxes } : {}),
+    ...(rest.showPlanes !== undefined ? { showPlanes: rest.showPlanes } : {}),
+    ...(rest.cameraMode ? { cameraMode: rest.cameraMode } : {}),
   };
   return (
     <ChartBox height={height}>
@@ -149,6 +161,8 @@ const DEFAULT_BOXES_VIEW = {
   background: "dark" as const,
   property: null as string | null,
   showAxes: false,
+  showPlanes: false,
+  cameraMode: "orbital" as const,
 };
 
 export function BoxesStandalone(p: P) {
@@ -159,6 +173,8 @@ export function BoxesStandalone(p: P) {
     ...(rest.background ? { background: rest.background } : {}),
     ...(rest.property !== undefined ? { property: rest.property } : {}),
     ...(rest.showAxes !== undefined ? { showAxes: rest.showAxes } : {}),
+    ...(rest.showPlanes !== undefined ? { showPlanes: rest.showPlanes } : {}),
+    ...(rest.cameraMode ? { cameraMode: rest.cameraMode } : {}),
     ...(typeof rest.depthMin === "number" ? { depthMin: rest.depthMin } : {}),
     ...(typeof rest.depthMax === "number" ? { depthMax: rest.depthMax } : {}),
   };

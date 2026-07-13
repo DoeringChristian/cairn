@@ -4,7 +4,7 @@ import MeshViewer, {
   type MeshColorMode,
   type MeshShading,
 } from "../three/MeshViewer";
-import { usePairedSideBySideSync, type Scene3DSyncOptions } from "../three/use-scene3d";
+import { usePairedSideBySideSync, type Scene3DCameraMode, type Scene3DSyncOptions } from "../three/use-scene3d";
 import {
   computeDelta,
   computeDisplacementMagnitude,
@@ -92,6 +92,10 @@ export interface MeshViewportSettings {
    *  grid, sized off the fitted bounds. `undefined` (old persisted cards) =
    *  off, matching pre-WS-3DR2 rendering. */
   showAxes?: boolean;
+  /** Persisted "Show planes" setting (#69 S2) — XY/YZ/XZ reference planes. */
+  showPlanes?: boolean;
+  /** Persisted camera orientation mode (#69 S1). `undefined` = "orbital". */
+  cameraMode?: Scene3DCameraMode;
 }
 
 interface MeshViewConfig {
@@ -102,6 +106,8 @@ interface MeshViewConfig {
   background: MeshBackground;
   property: string | null;
   showAxes: boolean;
+  showPlanes: boolean;
+  cameraMode: Scene3DCameraMode;
 }
 
 function resolveViewConfig(settings: MeshViewportSettings): MeshViewConfig {
@@ -113,6 +119,8 @@ function resolveViewConfig(settings: MeshViewportSettings): MeshViewConfig {
     background: settings.background,
     property: settings.property ?? null,
     showAxes: settings.showAxes ?? false,
+    showPlanes: settings.showPlanes ?? false,
+    cameraMode: settings.cameraMode ?? "orbital",
   };
 }
 
@@ -173,6 +181,8 @@ export function MeshSingleView({
             doubleSided={view.doubleSided}
             background={view.background}
             showAxes={view.showAxes}
+          showPlanes={view.showPlanes}
+          cameraMode={view.cameraMode}
             sync={sync}
             onFrame={onFrame}
           />
@@ -261,6 +271,8 @@ export function MeshSideBySideView({
           doubleSided={view.doubleSided}
           background={view.background}
           showAxes={view.showAxes}
+          showPlanes={view.showPlanes}
+          cameraMode={view.cameraMode}
           sync={pairedSync}
         />
         <LabelChip label="REF" />
@@ -287,6 +299,8 @@ export function MeshSideBySideView({
               doubleSided={view.doubleSided}
               background={view.background}
               showAxes={view.showAxes}
+          showPlanes={view.showPlanes}
+          cameraMode={view.cameraMode}
               sync={pairedSync}
             />
           );
@@ -393,6 +407,8 @@ export function MeshNativeDiffPane({
           doubleSided={view.doubleSided}
           background={view.background}
           showAxes={view.showAxes}
+          showPlanes={view.showPlanes}
+          cameraMode={view.cameraMode}
           sync={sync}
         />
       </div>

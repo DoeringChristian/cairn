@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
-import { useScene3D, type Scene3DSyncOptions } from "../three/use-scene3d";
+import { useScene3D, type Scene3DCameraMode, type Scene3DSyncOptions } from "../three/use-scene3d";
 import { Scene3DCanvas } from "../three/Scene3DCanvas";
 import { valuesToColors, categoriesToColors, packRgbColors } from "../three/value-colors";
 
@@ -34,6 +34,10 @@ export interface PointCloudViewerProps {
   onFrame?: (canvas: HTMLCanvasElement) => void;
   /** Forwarded to `useScene3D` — persisted "Show axes" setting (WS-3DR2). */
   showAxes?: boolean;
+  /** Forwarded to `useScene3D` — reference planes (#69 S2). */
+  showPlanes?: boolean;
+  /** Forwarded to `useScene3D` — camera orientation mode (#69 S1). */
+  cameraMode?: Scene3DCameraMode;
   /**
    * Precomputed per-point RGB (`(nPoints*3)`, 0..1), bypassing `colorMode`
    * entirely when present. Used by the card's native `diff-property`/
@@ -129,12 +133,16 @@ export default function PointCloudViewer({
   sync = null,
   onFrame,
   showAxes = false,
+  showPlanes = false,
+  cameraMode = "orbital",
   overrideColors = null,
 }: PointCloudViewerProps) {
   const handle = useScene3D({
     background: BG_COLORS[background],
     sync,
     showAxes,
+    showPlanes,
+    cameraMode,
     onFrame,
   });
   const { requestRender, fitToBounds, refs } = handle;

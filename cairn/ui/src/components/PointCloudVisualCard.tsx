@@ -33,7 +33,7 @@ import {
 } from "../lib/cairn-plot/viewport/pointcloud-viewport";
 import { propertyNames } from "../lib/cairn-plot/three/properties";
 import type { DiffColormap } from "../lib/cairn-plot/three/diff";
-import { resetScene3DViews, type Scene3DSyncOptions } from "../lib/cairn-plot/three/use-scene3d";
+import { resetScene3DViews, type Scene3DCameraMode, type Scene3DSyncOptions } from "../lib/cairn-plot/three/use-scene3d";
 import type { ViewportPaneProps } from "../lib/cairn-plot/viewport/types";
 import { OffscreenComparePanes, PropertySelector, useOffscreenSnapshot, type VisualCompareSettings } from "./card-kit";
 import type { ForeignFrameProps } from "./card-kit/cross-type-frame";
@@ -171,6 +171,10 @@ export interface PointCloudFullSettings extends VisualCompareSettings {
   diffColormap?: DiffColormap;
   /** Persisted "Show axes" setting (WS-3DR2) — see `PointCloudViewportSettings`. */
   showAxes?: boolean;
+  /** Persisted "Show planes" setting (#69 S2). */
+  showPlanes?: boolean;
+  /** Persisted camera orientation mode (#69 S1). */
+  cameraMode?: Scene3DCameraMode;
 }
 
 function defaultPointCloudSettings(): Omit<PointCloudFullSettings, "metrics" | "version"> {
@@ -179,6 +183,8 @@ function defaultPointCloudSettings(): Omit<PointCloudFullSettings, "metrics" | "
     colorMode: "auto",
     background: "dark",
     showAxes: false,
+    showPlanes: false,
+    cameraMode: "orbital",
     // 3D views linked by default (WS-VCP fix 1) — see MeshVisualCard's
     // identical comment; only affects cards without an explicit persisted
     // `syncViews` value.
@@ -265,6 +271,8 @@ function PointCloudViewportPane(
     background: settings.background,
     property: settings.property ?? null,
     showAxes: settings.showAxes ?? false,
+    showPlanes: settings.showPlanes ?? false,
+    cameraMode: settings.cameraMode ?? "orbital",
   };
   const hasCrossTypeRef = crossTypeReferenceUrl != null;
   // Mirrors CompositeMediaPane's own rule: no reference resolved -> always
@@ -288,6 +296,8 @@ function PointCloudViewportPane(
       pointSize={view.pointSize}
       background={view.background}
       showAxes={view.showAxes}
+      showPlanes={view.showPlanes}
+      cameraMode={view.cameraMode}
       sync={syncOpts}
       onFrame={cb}
     />
@@ -357,6 +367,8 @@ function PointCloudViewportPane(
               pointSize={view.pointSize}
               background={view.background}
               showAxes={view.showAxes}
+              showPlanes={view.showPlanes}
+              cameraMode={view.cameraMode}
               sync={syncOpts}
               onFrame={cb}
             />
@@ -408,6 +420,11 @@ const BACKGROUND_OPTIONS: Array<{ value: PointCloudBackground; label: string }> 
   { value: "light", label: "Light" },
 ];
 
+const ORIENTATION_OPTIONS: Array<{ value: Scene3DCameraMode; label: string }> = [
+  { value: "orbital", label: "Orbital" },
+  { value: "turntable", label: "Turntable" },
+];
+
 function PointCloudSettingsControls({
   settings,
   update,
@@ -454,6 +471,19 @@ function PointCloudSettingsControls({
         checked={!!settings.showAxes}
         onChange={(v) => update({ showAxes: v })}
         description="Colored XYZ origin lines + grid, sized to the fitted view"
+      />
+      <Toggle
+        label="Show planes"
+        checked={!!settings.showPlanes}
+        onChange={(v) => update({ showPlanes: v })}
+        description="Faint XY/YZ/XZ reference planes through the origin"
+      />
+      <Select
+        label="Orientation"
+        value={settings.cameraMode ?? "orbital"}
+        onChange={(v) => update({ cameraMode: v })}
+        options={ORIENTATION_OPTIONS}
+        description="Turntable locks world-up and spins about it; orbital is free orbit"
       />
       {/* "Diff colormap" (red-green/viridis) now lives in the shared
           Compare section (VisualContentCard.tsx, WS-MFIX Bug 2) — rendering

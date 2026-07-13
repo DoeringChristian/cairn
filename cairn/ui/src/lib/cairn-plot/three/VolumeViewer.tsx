@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
-import { useScene3D, type Scene3DBounds, type Scene3DSyncOptions } from "./use-scene3d";
+import { useScene3D, type Scene3DBounds, type Scene3DCameraMode, type Scene3DSyncOptions } from "./use-scene3d";
 import { Scene3DCanvas } from "./Scene3DCanvas";
 import { getColormapLUT } from "../colormaps";
 import type { ColormapName } from "../types";
@@ -44,6 +44,10 @@ export interface VolumeViewerProps {
   onFrame?: (canvas: HTMLCanvasElement) => void;
   /** Forwarded to `useScene3D` — persisted "Show axes" setting (WS-3DR2). */
   showAxes?: boolean;
+  /** Forwarded to `useScene3D` — reference planes (#69 S2). */
+  showPlanes?: boolean;
+  /** Forwarded to `useScene3D` — camera orientation mode (#69 S1). */
+  cameraMode?: Scene3DCameraMode;
 }
 
 const BG_COLORS: Record<VolumeBackground, number> = {
@@ -354,11 +358,15 @@ function VolumeViewerInner({
   sync = null,
   onFrame,
   showAxes = false,
+  showPlanes = false,
+  cameraMode = "orbital",
 }: VolumeViewerProps) {
   const handle = useScene3D({
     background: BG_COLORS[background],
     sync,
     showAxes,
+    showPlanes,
+    cameraMode,
     onFrame,
   });
   const { requestRender, fitToBounds, refs } = handle;

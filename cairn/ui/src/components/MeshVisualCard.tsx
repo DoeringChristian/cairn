@@ -36,7 +36,7 @@ import {
 } from "../lib/cairn-plot/viewport/mesh-viewport";
 import { propertyNames, resolveActiveProperty } from "../lib/cairn-plot/three/properties";
 import type { DiffColormap } from "../lib/cairn-plot/three/diff";
-import { resetScene3DViews, type Scene3DSyncOptions } from "../lib/cairn-plot/three/use-scene3d";
+import { resetScene3DViews, type Scene3DCameraMode, type Scene3DSyncOptions } from "../lib/cairn-plot/three/use-scene3d";
 import type { ViewportPaneProps } from "../lib/cairn-plot/viewport/types";
 import { OffscreenComparePanes, PropertySelector, useOffscreenSnapshot, type VisualCompareSettings } from "./card-kit";
 import type { ForeignFrameProps } from "./card-kit/cross-type-frame";
@@ -165,6 +165,10 @@ export interface MeshFullSettings extends VisualCompareSettings {
   diffColormap?: DiffColormap;
   /** Persisted "Show axes" setting (WS-3DR2). */
   showAxes?: boolean;
+  /** Persisted "Show planes" setting (#69 S2). */
+  showPlanes?: boolean;
+  /** Persisted camera orientation mode (#69 S1). */
+  cameraMode?: Scene3DCameraMode;
 }
 
 function defaultMeshSettings(): Omit<MeshFullSettings, "metrics" | "version"> {
@@ -175,6 +179,8 @@ function defaultMeshSettings(): Omit<MeshFullSettings, "metrics" | "version"> {
     doubleSided: true,
     background: "dark",
     showAxes: false,
+    showPlanes: false,
+    cameraMode: "orbital",
     // 3D views linked by default (WS-VCP fix 1) — `useCardSettings` merges
     // this under any persisted value, so a card that already has an explicit
     // `syncViews` (on OR off) keeps it; only brand-new/never-toggled cards
@@ -255,6 +261,8 @@ function MeshViewportPane(
     background: settings.background,
     property: settings.property ?? null,
     showAxes: settings.showAxes ?? false,
+    showPlanes: settings.showPlanes ?? false,
+    cameraMode: settings.cameraMode ?? "orbital",
   };
   const hasCrossTypeRef = crossTypeReferenceUrl != null;
   const effectiveMode: MediaCompareModeKind = reference == null && !hasCrossTypeRef ? "normal" : mode;
@@ -285,6 +293,8 @@ function MeshViewportPane(
         doubleSided={view.doubleSided}
         background={view.background}
         showAxes={view.showAxes}
+        showPlanes={view.showPlanes}
+        cameraMode={view.cameraMode}
         sync={syncOpts}
         onFrame={cb}
       />
@@ -367,6 +377,8 @@ function MeshViewportPane(
                 doubleSided={view.doubleSided}
                 background={view.background}
                 showAxes={view.showAxes}
+        showPlanes={view.showPlanes}
+        cameraMode={view.cameraMode}
                 sync={syncOpts}
                 onFrame={cb}
               />
@@ -417,6 +429,11 @@ const SHADING_OPTIONS: Array<{ value: MeshShading; label: string }> = [
 const BACKGROUND_OPTIONS: Array<{ value: MeshBackground; label: string }> = [
   { value: "dark", label: "Dark" },
   { value: "light", label: "Light" },
+];
+
+const ORIENTATION_OPTIONS: Array<{ value: Scene3DCameraMode; label: string }> = [
+  { value: "orbital", label: "Orbital" },
+  { value: "turntable", label: "Turntable" },
 ];
 
 function MeshSettingsControls({
@@ -473,6 +490,19 @@ function MeshSettingsControls({
         checked={!!settings.showAxes}
         onChange={(v) => update({ showAxes: v })}
         description="Colored XYZ origin lines + grid, sized to the fitted view"
+      />
+      <Toggle
+        label="Show planes"
+        checked={!!settings.showPlanes}
+        onChange={(v) => update({ showPlanes: v })}
+        description="Faint XY/YZ/XZ reference planes through the origin"
+      />
+      <Select
+        label="Orientation"
+        value={settings.cameraMode ?? "orbital"}
+        onChange={(v) => update({ cameraMode: v })}
+        options={ORIENTATION_OPTIONS}
+        description="Turntable locks world-up and spins about it; orbital is free orbit"
       />
       {/* "Diff colormap" (red-green/viridis) now lives in the shared
           Compare section (VisualContentCard.tsx, WS-MFIX Bug 2) — rendering

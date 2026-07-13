@@ -4,7 +4,7 @@ import BoxesViewer, {
   type BoxesBackground,
   type BoxesColorMode,
 } from "../three/BoxesViewer";
-import { usePairedSideBySideSync, type Scene3DSyncOptions } from "../three/use-scene3d";
+import { usePairedSideBySideSync, type Scene3DCameraMode, type Scene3DSyncOptions } from "../three/use-scene3d";
 import { computeDelta, diffColorsForDomain, diffDomain, unionDiffDomain, type DiffColormap } from "../three/diff";
 import {
   resolveActiveProperty,
@@ -76,6 +76,10 @@ export interface BoxesViewportSettings {
   diffColormap?: DiffColormap;
   /** Persisted "Show axes" setting (WS-3DR2). */
   showAxes?: boolean;
+  /** Persisted "Show planes" setting (#69 S2) — XY/YZ/XZ reference planes. */
+  showPlanes?: boolean;
+  /** Persisted camera orientation mode (#69 S1). `undefined` = "orbital". */
+  cameraMode?: Scene3DCameraMode;
 }
 
 interface BoxesViewConfig {
@@ -88,6 +92,8 @@ interface BoxesViewConfig {
   valueMax?: number;
   property: string | null;
   showAxes: boolean;
+  showPlanes: boolean;
+  cameraMode: Scene3DCameraMode;
 }
 
 export function resolveBoxesViewConfig(settings: BoxesViewportSettings): BoxesViewConfig {
@@ -101,6 +107,8 @@ export function resolveBoxesViewConfig(settings: BoxesViewportSettings): BoxesVi
     valueMax: settings.valueMax,
     property: settings.property ?? null,
     showAxes: settings.showAxes ?? false,
+    showPlanes: settings.showPlanes ?? false,
+    cameraMode: settings.cameraMode ?? "orbital",
   };
 }
 
@@ -180,6 +188,8 @@ export function BoxesSingleView({
             valueThreshold={valueThreshold}
             background={view.background}
             showAxes={view.showAxes}
+          showPlanes={view.showPlanes}
+          cameraMode={view.cameraMode}
             sync={sync}
             onVisibleCount={(visible) => setVisibleCount(visible)}
             onFrame={onFrame}
@@ -257,6 +267,8 @@ export function BoxesSideBySideView({
           depthRange={[0, reference.meta.max_depth]}
           background={view.background}
           showAxes={view.showAxes}
+          showPlanes={view.showPlanes}
+          cameraMode={view.cameraMode}
           sync={pairedSync}
         />
         <LabelChip label="REF" />
@@ -361,6 +373,8 @@ export function BoxesNativeDiffPane({
           depthRange={[0, data.meta.max_depth]}
           background={view.background}
           showAxes={view.showAxes}
+          showPlanes={view.showPlanes}
+          cameraMode={view.cameraMode}
           sync={sync}
           overrideColors={colors}
         />

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
-import { useScene3D, type Scene3DSyncOptions } from "./use-scene3d";
+import { useScene3D, type Scene3DCameraMode, type Scene3DSyncOptions } from "./use-scene3d";
 import { Scene3DCanvas } from "./Scene3DCanvas";
 import { valuesToColors } from "./value-colors";
 
@@ -46,6 +46,10 @@ export interface BoxesViewerProps {
   onFrame?: (canvas: HTMLCanvasElement) => void;
   /** Forwarded to `useScene3D` — persisted "Show axes" setting (WS-3DR2). */
   showAxes?: boolean;
+  /** Forwarded to `useScene3D` — reference planes (#69 S2). */
+  showPlanes?: boolean;
+  /** Forwarded to `useScene3D` — camera orientation mode (#69 S1). */
+  cameraMode?: Scene3DCameraMode;
   /**
    * Precomputed per-box RGB (`(nBoxes*3)`, 0..1), indexed like `depth`/
    * `values` (i.e. BEFORE the depth/value filter), bypassing `colorMode`
@@ -192,12 +196,16 @@ export default function BoxesViewer({
   onVisibleCount,
   onFrame,
   showAxes = false,
+  showPlanes = false,
+  cameraMode = "orbital",
   overrideColors = null,
 }: BoxesViewerProps) {
   const handle = useScene3D({
     background: BG_COLORS[background],
     sync,
     showAxes,
+    showPlanes,
+    cameraMode,
     onFrame,
   });
   const { requestRender, fitToBounds, refs } = handle;

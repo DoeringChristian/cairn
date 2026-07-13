@@ -3,7 +3,7 @@ import VolumeViewer, {
   type VolumeQuality,
   type VolumeRenderMode,
 } from "../three/VolumeViewer";
-import { usePairedSideBySideSync, type Scene3DSyncOptions } from "../three/use-scene3d";
+import { usePairedSideBySideSync, type Scene3DCameraMode, type Scene3DSyncOptions } from "../three/use-scene3d";
 import { absArray, computeDelta, diffDomain, unionDiffDomain, type DiffColormap } from "../three/diff";
 import type { PropertyMeta } from "../three/properties";
 import { LabelChip } from "../primitives";
@@ -72,6 +72,10 @@ export interface VolumeViewportSettings {
   diffColormap?: DiffColormap;
   /** Persisted "Show axes" setting (WS-3DR2). */
   showAxes?: boolean;
+  /** Persisted "Show planes" setting (#69 S2) — XY/YZ/XZ reference planes. */
+  showPlanes?: boolean;
+  /** Persisted camera orientation mode (#69 S1). `undefined` = "orbital". */
+  cameraMode?: Scene3DCameraMode;
 }
 
 interface VolumeViewConfig {
@@ -83,6 +87,8 @@ interface VolumeViewConfig {
   clipMax: [number, number, number];
   background: VolumeBackground;
   showAxes: boolean;
+  showPlanes: boolean;
+  cameraMode: Scene3DCameraMode;
 }
 
 export function resolveVolumeViewConfig(settings: VolumeViewportSettings): VolumeViewConfig {
@@ -95,6 +101,8 @@ export function resolveVolumeViewConfig(settings: VolumeViewportSettings): Volum
     clipMax: settings.clipMax,
     background: settings.background,
     showAxes: settings.showAxes ?? false,
+    showPlanes: settings.showPlanes ?? false,
+    cameraMode: settings.cameraMode ?? "orbital",
   };
 }
 
@@ -151,6 +159,8 @@ export function VolumeSingleView({
             clip={{ min: view.clipMin, max: view.clipMax }}
             background={view.background}
             showAxes={view.showAxes}
+          showPlanes={view.showPlanes}
+          cameraMode={view.cameraMode}
             sync={sync}
             onFrame={onFrame}
           />
@@ -227,6 +237,8 @@ export function VolumeSideBySideView({
           clip={{ min: view.clipMin, max: view.clipMax }}
           background={view.background}
           showAxes={view.showAxes}
+          showPlanes={view.showPlanes}
+          cameraMode={view.cameraMode}
           sync={pairedSync}
         />
         <LabelChip label="REF" />
@@ -318,6 +330,8 @@ export function VolumeNativeDiffPane({
           clip={{ min: view.clipMin, max: view.clipMax }}
           background={view.background}
           showAxes={view.showAxes}
+          showPlanes={view.showPlanes}
+          cameraMode={view.cameraMode}
           sync={sync}
         />
       </div>
