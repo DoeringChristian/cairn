@@ -3,6 +3,7 @@ import PointCloudViewer, {
   type PointCloudBounds,
   type PointCloudChannels,
   type PointColorMode,
+  type PointSizeMode,
   extractPositions,
 } from "../renderers/PointCloudViewer";
 import { usePairedSideBySideSync, type Scene3DCameraMode, type Scene3DSyncOptions } from "../three/use-scene3d";
@@ -106,6 +107,9 @@ export type PointCloudNativeMode = "diff-property" | "diff-position";
  */
 export interface PointCloudViewportSettings {
   pointSize: number;
+  /** Screen (constant-pixel, default) vs world (perspective-attenuated) point
+   *  sizing. `undefined` (old persisted cards) = "screen". */
+  pointSizeMode?: PointSizeMode;
   colorMode: PointColorMode;
   background: PointCloudBackground;
   /** Selected named property (Property selector); undefined = first available. */
@@ -126,6 +130,7 @@ export interface PointCloudViewportSettings {
 
 interface PointCloudViewConfig {
   pointSize: number;
+  pointSizeMode: PointSizeMode;
   colorMode: PointColorMode;
   background: PointCloudBackground;
   property: string | null;
@@ -137,6 +142,7 @@ interface PointCloudViewConfig {
 function resolveViewConfig(settings: PointCloudViewportSettings): PointCloudViewConfig {
   return {
     pointSize: settings.pointSize,
+    pointSizeMode: settings.pointSizeMode ?? "screen",
     colorMode: settings.colorMode,
     background: settings.background,
     property: settings.property ?? null,
@@ -185,6 +191,7 @@ export function PointCloudSingleView({
           bounds={meta.bounds}
           colorMode={view.colorMode}
           pointSize={view.pointSize}
+          pointSizeMode={view.pointSizeMode}
           background={view.background}
           showAxes={view.showAxes}
           showPlanes={view.showPlanes}
@@ -245,6 +252,7 @@ export function PointCloudSideBySideView({
           bounds={reference.meta.bounds}
           colorMode={view.colorMode}
           pointSize={view.pointSize}
+          pointSizeMode={view.pointSizeMode}
           background={view.background}
           showAxes={view.showAxes}
           showPlanes={view.showPlanes}
@@ -262,6 +270,7 @@ export function PointCloudSideBySideView({
             bounds={item.meta.bounds}
             colorMode={view.colorMode}
             pointSize={view.pointSize}
+            pointSizeMode={view.pointSizeMode}
             background={view.background}
             showAxes={view.showAxes}
           showPlanes={view.showPlanes}
@@ -362,6 +371,7 @@ export function PointCloudNativeDiffPane({
           bounds={data.meta.bounds}
           colorMode={view.colorMode}
           pointSize={view.pointSize}
+          pointSizeMode={view.pointSizeMode}
           background={view.background}
           showAxes={view.showAxes}
           showPlanes={view.showPlanes}

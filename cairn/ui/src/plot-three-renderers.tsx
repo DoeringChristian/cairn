@@ -28,11 +28,20 @@ import { ChartBox } from "./plot-standalone-helpers";
 type P = Record<string, any>;
 
 /** The standalone default view config for a point cloud. `colorMode:"auto"`
- *  lets the viewer pick rgb / category / height from the channels; the point
- *  size and dark background match the app card's sensible defaults. Any field
- *  is overridable via the descriptor's `props`. */
+ *  lets the viewer pick rgb / category / height from the channels; the dark
+ *  background matches the app card's sensible defaults. Any field is
+ *  overridable via the descriptor's `props`.
+ *
+ *  `pointSizeMode:"screen"` (default) interprets `pointSize` as PIXELS, so
+ *  `pointSize:2.5` matches the app card's default and renders clearly-visible
+ *  constant-size dots (the old `0.02` was a WORLD-scale value carried over
+ *  before the screen/world split existed — as pixels it was sub-pixel and
+ *  effectively invisible). In `"world"` mode `pointSize` is world units and
+ *  should be sized to the cloud (e.g. pass `point_size≈0.02` for a unit-scale
+ *  cloud) — there's no single sensible world default, so callers set it. */
 const DEFAULT_POINTCLOUD_VIEW = {
-  pointSize: 0.02,
+  pointSize: 2.5,
+  pointSizeMode: "screen" as const,
   colorMode: "auto" as const,
   background: "dark" as const,
   property: null,
@@ -46,6 +55,7 @@ export function PointCloudStandalone(p: P) {
   const view = {
     ...DEFAULT_POINTCLOUD_VIEW,
     ...(typeof rest.pointSize === "number" ? { pointSize: rest.pointSize } : {}),
+    ...(rest.pointSizeMode ? { pointSizeMode: rest.pointSizeMode } : {}),
     ...(rest.colorMode ? { colorMode: rest.colorMode } : {}),
     ...(rest.background ? { background: rest.background } : {}),
     ...(rest.property !== undefined ? { property: rest.property } : {}),

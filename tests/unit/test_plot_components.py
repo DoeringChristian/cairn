@@ -251,6 +251,20 @@ def test_pointcloud_forwards_planes_prop():
     assert props["cameraMode"] == "turntable"
 
 
+def test_pointcloud_forwards_point_size_mode_prop():
+    # point_size_mode rides in the untyped leaf props as pointSizeMode, exactly
+    # like camera_mode → cameraMode (guarded `if is not None`).
+    import numpy as np
+
+    xyz = np.random.rand(8, 3).astype(np.float32)
+    props = cp.PointCloud(xyz, point_size_mode="world", point_size=0.02).to_node()["props"]
+    assert props["pointSizeMode"] == "world"
+    assert props["pointSize"] == 0.02
+    # Unset → key omitted (default screen mode is applied UI-side, matching the
+    # cameraMode pattern) — a plain cloud emits no pointSizeMode prop.
+    assert "pointSizeMode" not in cp.PointCloud(xyz).to_node().get("props", {})
+
+
 # ---------------------------------------------------------------------------
 # HDR (float) image — the `imagehdr` renderer + `imghdr` DataSpec.
 # ---------------------------------------------------------------------------

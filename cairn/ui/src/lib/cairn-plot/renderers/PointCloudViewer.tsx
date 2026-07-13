@@ -7,6 +7,19 @@ import { valuesToColors, categoriesToColors, packRgbColors } from "../three/valu
 export type PointCloudChannels = "xyz" | "xyzc" | "xyzrgb";
 export type PointColorMode = "auto" | "rgb" | "category" | "height";
 export type PointCloudBackground = "dark" | "light";
+/**
+ * How `pointSize` is interpreted / how points scale with camera distance:
+ *
+ *  - `"screen"` (default) → constant IMAGE-space size: points stay the same
+ *    on-screen size regardless of camera distance (`sizeAttenuation:false`).
+ *    `pointSize` is in PIXELS.
+ *  - `"world"` → perspective attenuation: points shrink with distance like
+ *    real geometry (`sizeAttenuation:true`). `pointSize` is in WORLD units.
+ *
+ * `sizeAttenuation` is baked into three's PointsMaterial shader program, so
+ * flipping this mode requires recreating the material (see the size effect).
+ */
+export type PointSizeMode = "screen" | "world";
 
 export interface PointCloudBounds {
   min: [number, number, number];
@@ -20,8 +33,12 @@ export interface PointCloudViewerProps {
   nPoints: number;
   bounds: PointCloudBounds;
   colorMode: PointColorMode;
-  /** Point size in pixels. */
+  /** Point size — PIXELS when `pointSizeMode` is `"screen"` (default), WORLD
+   *  units when `"world"`. */
   pointSize: number;
+  /** Screen-space (constant-pixel, default) vs world-space (perspective
+   *  attenuation) point sizing. See `PointSizeMode`. */
+  pointSizeMode?: PointSizeMode;
   background: PointCloudBackground;
   className?: string;
   /**
@@ -128,6 +145,7 @@ export default function PointCloudViewer({
   bounds,
   colorMode,
   pointSize,
+  pointSizeMode = "screen",
   background,
   className,
   sync = null,
@@ -175,7 +193,10 @@ export default function PointCloudViewer({
 
     const material = new THREE.PointsMaterial({
       size: pointSize,
-      sizeAttenuation: false,
+      // `false` (screen mode) → constant-pixel size; `true` (world mode) →
+      // perspective attenuation. Baked into the shader, so a mode flip later
+      // recreates the material (see the size/mode effect).
+      sizeAttenuation: pointSizeMode === "world",
       vertexColors: true,
     });
 
@@ -201,15 +222,32 @@ export default function PointCloudViewer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [colorMode, overrideColors]);
 
-  // ── Point size ─────────────────────────────────────────────────────────
+  // ── Point size + size mode ─────────────────────────────────────────────
+  // A plain `.size` update covers pointSize changes, but `sizeAttenuation`
+  // (screen↔world) is compiled into three's PointsMaterial shader, so a mode
+  // flip needs a FRESH material — recreate it, swap it onto the Points, and
+  // dispose the old one (mirrors the geometry effect's material lifecycle).
   useEffect(() => {
+    const points = pointsRef.current;
     const material = materialRef.current;
-    if (!material) return;
-    material.size = pointSize;
-    material.needsUpdate = true;
+    if (!points || !material) return;
+    const wantAttenuation = pointSizeMode === "world";
+    if (material.sizeAttenuation !== wantAttenuation) {
+      const next = new THREE.PointsMaterial({
+        size: pointSize,
+        sizeAttenuation: wantAttenuation,
+        vertexColors: true,
+      });
+      points.material = next;
+      material.dispose();
+      materialRef.current = next;
+    } else {
+      material.size = pointSize;
+      material.needsUpdate = true;
+    }
     requestRender();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pointSize]);
+  }, [pointSize, pointSizeMode]);
 
   // ── Dispose this viewer's own geometry/material on unmount (the renderer
   // / controls / WebGL context lifecycle is owned by useScene3D) ─────────

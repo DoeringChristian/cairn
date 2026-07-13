@@ -14,6 +14,7 @@ import {
   type DiffMode,
   type Colormap,
   type PointColorMode,
+  type PointSizeMode,
   type PointCloudBackground,
   type ViewportDataArgs,
   type ViewportDataResult,
@@ -165,6 +166,8 @@ export function PointCloudForeignFrame({ hash, metadata, onFrame }: ForeignFrame
 
 export interface PointCloudFullSettings extends VisualCompareSettings {
   pointSize: number;
+  /** Screen (constant-pixel, default) vs world (perspective) point sizing. */
+  pointSizeMode?: PointSizeMode;
   colorMode: PointColorMode;
   background: PointCloudBackground;
   property?: string;
@@ -180,6 +183,7 @@ export interface PointCloudFullSettings extends VisualCompareSettings {
 function defaultPointCloudSettings(): Omit<PointCloudFullSettings, "metrics" | "version"> {
   return {
     pointSize: 2.5,
+    pointSizeMode: "screen",
     colorMode: "auto",
     background: "dark",
     showAxes: false,
@@ -267,6 +271,7 @@ function PointCloudViewportPane(
   const sync: Scene3DSyncOptions | null = cameraSyncGroupId ? { groupId: cameraSyncGroupId } : null;
   const view = {
     pointSize: settings.pointSize,
+    pointSizeMode: settings.pointSizeMode ?? "screen",
     colorMode: settings.colorMode,
     background: settings.background,
     property: settings.property ?? null,
@@ -294,6 +299,7 @@ function PointCloudViewportPane(
       bounds={data!.meta.bounds}
       colorMode={view.colorMode}
       pointSize={view.pointSize}
+      pointSizeMode={view.pointSizeMode}
       background={view.background}
       showAxes={view.showAxes}
       showPlanes={view.showPlanes}
@@ -365,6 +371,7 @@ function PointCloudViewportPane(
               bounds={reference.meta.bounds}
               colorMode={view.colorMode}
               pointSize={view.pointSize}
+              pointSizeMode={view.pointSizeMode}
               background={view.background}
               showAxes={view.showAxes}
               showPlanes={view.showPlanes}
@@ -425,6 +432,11 @@ const ORIENTATION_OPTIONS: Array<{ value: Scene3DCameraMode; label: string }> = 
   { value: "turntable", label: "Turntable" },
 ];
 
+const POINT_SIZE_MODE_OPTIONS: Array<{ value: PointSizeMode; label: string }> = [
+  { value: "screen", label: "Screen (constant pixels)" },
+  { value: "world", label: "World (shrinks with distance)" },
+];
+
 function PointCloudSettingsControls({
   settings,
   update,
@@ -446,7 +458,18 @@ function PointCloudSettingsControls({
         max={8}
         step={0.5}
         format={(v) => v.toFixed(1)}
-        description="Point radius in pixels"
+        description={
+          (settings.pointSizeMode ?? "screen") === "world"
+            ? "Point radius in world units"
+            : "Point radius in pixels"
+        }
+      />
+      <Select
+        label="Point size mode"
+        value={settings.pointSizeMode ?? "screen"}
+        onChange={(v) => update({ pointSizeMode: v })}
+        options={POINT_SIZE_MODE_OPTIONS}
+        description="Screen keeps a constant on-screen size; world attenuates with camera distance"
       />
       <Select
         label="Color mode"

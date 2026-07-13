@@ -32,6 +32,7 @@ export {
   type PointCloudViewerProps,
   type PointCloudChannels,
   type PointColorMode,
+  type PointSizeMode,
   type PointCloudBackground,
   type PointCloudBounds,
 } from "./PointCloudViewer";

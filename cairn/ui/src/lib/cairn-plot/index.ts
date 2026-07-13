@@ -100,6 +100,7 @@ export type {
   PointCloudViewerProps,
   PointCloudChannels,
   PointColorMode,
+  PointSizeMode,
   PointCloudBackground,
   PointCloudBounds,
 } from "./renderers";

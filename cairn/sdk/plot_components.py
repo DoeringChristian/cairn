@@ -886,8 +886,15 @@ class PointCloud(Component):
       bakes the ``.npy``/``.npz`` bytes, ENDPOINT emits by reference.
 
     ``values`` attaches named per-point scalar properties (raw input only).
-    Optional view overrides: ``point_size``, ``color_mode`` (``"auto"``/…),
-    ``background`` (``"dark"``/``"light"``), ``show_axes``.
+    Optional view overrides: ``point_size``, ``point_size_mode``
+    (``"screen"``/``"world"``), ``color_mode`` (``"auto"``/…), ``background``
+    (``"dark"``/``"light"``), ``show_axes``.
+
+    ``point_size_mode`` controls how ``point_size`` is interpreted and how
+    points scale with camera distance: ``"screen"`` (default) keeps a constant
+    IMAGE-space size (``point_size`` in PIXELS — points stay the same on-screen
+    size as you orbit/zoom); ``"world"`` gives perspective attenuation
+    (``point_size`` in WORLD units — points shrink with distance).
     """
 
     _label = "pointcloud"
@@ -900,6 +907,7 @@ class PointCloud(Component):
         values: Any = None,
         data_mode: str = "local",
         point_size: float | None = None,
+        point_size_mode: str | None = None,
         color_mode: str | None = None,
         background: str | None = None,
         show_axes: bool | None = None,
@@ -921,6 +929,8 @@ class PointCloud(Component):
         self._props: dict[str, Any] = {}
         if point_size is not None:
             self._props["pointSize"] = float(point_size)
+        if point_size_mode is not None:
+            self._props["pointSizeMode"] = point_size_mode
         if color_mode is not None:
             self._props["colorMode"] = color_mode
         if background is not None:
