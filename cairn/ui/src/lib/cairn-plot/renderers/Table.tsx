@@ -92,6 +92,31 @@ export default function Table({
     return copy;
   }, [filtered, sort, columns, rows]);
 
+  // ── Shared column model ────────────────────────────────────────────────
+  // `table-layout: fixed` + an explicit <colgroup> give the <th> and every
+  // <td> in a column ONE width, so the sticky header can never drift out of
+  // alignment with the scrolled body and columns don't jitter as pages/filters
+  // change the visible content. Widths are content-HINTED (proportional to the
+  // widest value seen ACROSS THE WHOLE dataset, not just the current page — so
+  // they're stable across pagination), each clamped to a sane char range, then
+  // normalized to percentages of the table width.
+  const colWidths = useMemo(() => {
+    const MIN_CH = 6;
+    const MAX_CH = 40;
+    const SAMPLE = Math.min(rows.length, 500); // cap the scan for wide datasets
+    const hints = visibleCols.map((c) => {
+      // +2 leaves room for the sort arrow appended to the header.
+      let w = columns[c]!.name.length + 2;
+      for (let r = 0; r < SAMPLE; r++) {
+        const len = formatCell(rows[r]![c]).length;
+        if (len > w) w = len;
+      }
+      return Math.min(MAX_CH, Math.max(MIN_CH, w));
+    });
+    const total = hints.reduce((a, b) => a + b, 0) || 1;
+    return hints.map((w) => (w / total) * 100);
+  }, [visibleCols, columns, rows]);
+
   const perPage = Math.max(1, rowsPerPage);
   const pageCount = Math.max(1, Math.ceil(sorted.length / perPage));
   // Clamp page when the underlying data shrinks (filter/sort/step change).
@@ -135,8 +160,21 @@ export default function Table({
         </span>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-auto rounded border border-border">
-        <table className="w-full border-collapse text-xs">
+      {/* `scrollbar-gutter: stable` reserves the vertical-scrollbar gutter
+          whether or not a scrollbar is showing, so the sticky header and the
+          body stay aligned (and don't reflow) when the scrollbar appears on
+          scroll or between pages — this matters on platforms with classic,
+          space-taking scrollbars (Windows/Linux, macOS "always show"). */}
+      <div
+        className="flex-1 min-h-0 overflow-auto rounded border border-border"
+        style={{ scrollbarGutter: "stable" }}
+      >
+        <table className="w-full table-fixed border-collapse text-xs">
+          <colgroup>
+            {visibleCols.map((c, i) => (
+              <col key={c} style={{ width: `${colWidths[i]}%` }} />
+            ))}
+          </colgroup>
           <thead className="sticky top-0 z-10 bg-bg-elevated">
             <tr>
               {visibleCols.map((c) => {
@@ -148,10 +186,14 @@ export default function Table({
                     key={c}
                     onClick={() => toggleSort(c)}
                     title={col.name}
-                    className="cursor-pointer select-none whitespace-nowrap border-b border-border px-2 py-1 text-left font-semibold text-fg-muted hover:text-fg"
+                    className="cursor-pointer select-none border-b border-border px-2 py-1 text-left font-semibold text-fg-muted hover:text-fg"
                   >
-                    <span className="mono">{col.name}</span>
-                    <span className="text-accent">{arrow}</span>
+                    {/* flex row: name truncates within the fixed column width,
+                        the sort arrow never gets clipped off. */}
+                    <span className="flex items-center">
+                      <span className="mono truncate">{col.name}</span>
+                      <span className="shrink-0 text-accent">{arrow}</span>
+                    </span>
                   </th>
                 );
               })}
@@ -174,7 +216,7 @@ export default function Table({
                       <td
                         key={c}
                         title={text}
-                        className={`max-w-[16rem] truncate border-b border-border px-2 py-1 text-fg ${
+                        className={`truncate border-b border-border px-2 py-1 text-fg ${
                           numeric ? "mono text-right" : ""
                         } ${diffCls}`}
                       >
