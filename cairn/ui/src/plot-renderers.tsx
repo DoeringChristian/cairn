@@ -160,6 +160,10 @@ function ImageStandalone(p: P) {
 // lives in the CORE bundle.
 function ImageHdrStandalone(p: P) {
   const { height, ...rest } = p;
+  const [viewport, setViewport] = useState<ImageViewport>({
+    zoom: rest.zoom ?? 1,
+    pan: rest.pan ?? { x: 0, y: 0 },
+  });
   return (
     <ChartBox height={height}>
       <HdrImagePane
@@ -170,6 +174,9 @@ function ImageHdrStandalone(p: P) {
         showAxes={rest.showAxes ?? false}
         label={rest.label ?? ""}
         interpolation={rest.interpolation ?? "auto"}
+        zoom={viewport.zoom}
+        pan={viewport.pan}
+        onViewportChange={setViewport}
       />
     </ChartBox>
   );

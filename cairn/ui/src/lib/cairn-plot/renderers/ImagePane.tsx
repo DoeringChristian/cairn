@@ -20,6 +20,7 @@ import {
 import { applyColormap, getColormapLUT, DIVERGING_COLORMAPS } from "../colormaps";
 import PixelAxes from "../primitives/PixelAxes";
 import LabelChip from "../primitives/LabelChip";
+import PixelValueOverlay, { type PixelSample } from "../primitives/PixelValueOverlay";
 import { useImageViewport, type Viewport as ImageViewport } from "../hooks/use-image-viewport";
 
 const DEFAULT_PROCESSING: ImageProcessing = {
@@ -80,6 +81,33 @@ export default function ImagePane({
   const falseColorRef = useRef<HTMLCanvasElement | null>(null);
   const imgWrapperRef = useRef<HTMLDivElement | null>(null);
   const paneRef = useRef<HTMLDivElement | null>(null);
+
+  // -----------------------------------------------------------------------
+  // TEV-style per-pixel value overlay — source buffers.
+  //   valueDataRef: RAW source pixels (the numbers we print).
+  //   dispDataRef:  the pixels actually SHOWN (for auto-contrast luminance).
+  // The displayed element (img|canvas) is tracked via `displayElRef` so the
+  // overlay can read its live on-screen rect (post zoom/pan).
+  // -----------------------------------------------------------------------
+  const displayElRef = useRef<HTMLElement | null>(null);
+  const valueDataRef = useRef<ImageData | null>(null);
+  const dispDataRef = useRef<ImageData | null>(null);
+  const [pixelDataVersion, setPixelDataVersion] = useState(0);
+  const bumpPixelData = useCallback(() => setPixelDataVersion((v) => v + 1), []);
+
+  // Callback refs that also record the currently-displayed element (only one
+  // of img/canvas/falseColor is mounted at a time) for the overlay's geometry.
+  const setCanvasEl = useCallback((el: HTMLCanvasElement | null) => {
+    canvasRef.current = el;
+    if (el) displayElRef.current = el;
+  }, []);
+  const setFalseColorEl = useCallback((el: HTMLCanvasElement | null) => {
+    falseColorRef.current = el;
+    if (el) displayElRef.current = el;
+  }, []);
+  const setImgEl = useCallback((el: HTMLImageElement | null) => {
+    if (el) displayElRef.current = el;
+  }, []);
   const [diffReady, setDiffReady] = useState(false);
   const [falseColorReady, setFalseColorReady] = useState(false);
   const [naturalDims, setNaturalDims] = useState<{
@@ -141,6 +169,8 @@ export default function ImagePane({
         fc.height = cached.height;
         const fctx = fc.getContext("2d");
         if (fctx) fctx.putImageData(cached, 0, 0);
+        dispDataRef.current = cached;
+        bumpPixelData();
         setNaturalDims({ w: cached.width, h: cached.height });
         onNaturalSize?.(cached.width, cached.height);
         setFalseColorReady(true);
@@ -171,6 +201,8 @@ export default function ImagePane({
       fc.height = mapped.height;
       const fctx = fc.getContext("2d");
       if (fctx) fctx.putImageData(mapped, 0, 0);
+      dispDataRef.current = mapped;
+      bumpPixelData();
       setNaturalDims({ w: mapped.width, h: mapped.height });
       onNaturalSize?.(mapped.width, mapped.height);
       setFalseColorReady(true);
@@ -189,6 +221,55 @@ export default function ImagePane({
     onNaturalSize?.(w, h);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Decode the RAW source image once per url so the pixel-value overlay can
+  // read true pixel values (independent of the display mode). In plain/diff
+  // modes the shown pixels equal the source, so luminance reads from it too;
+  // the colormap effect overrides `dispDataRef` with the mapped pixels.
+  useEffect(() => {
+    if (!imageUrl) {
+      valueDataRef.current = null;
+      dispDataRef.current = null;
+      bumpPixelData();
+      return;
+    }
+    let cancelled = false;
+    loadImageData(imageUrl).then((d) => {
+      if (cancelled) return;
+      valueDataRef.current = d;
+      if (colormap === "none") dispDataRef.current = d;
+      bumpPixelData();
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [imageUrl, colormap, bumpPixelData]);
+
+  const samplePixel = useCallback(
+    (px: number, py: number): PixelSample | null => {
+      const vd = valueDataRef.current;
+      if (!vd || px < 0 || py < 0 || px >= vd.width || py >= vd.height) return null;
+      const i = (py * vd.width + px) * 4;
+      const r = vd.data[i]!;
+      const g = vd.data[i + 1]!;
+      const b = vd.data[i + 2]!;
+      // Luminance from the DISPLAYED pixels when available (colormap-mapped),
+      // else from the raw source (plain path shows the source unchanged).
+      const dd = dispDataRef.current;
+      let lr = r, lg = g, lb = b;
+      if (dd && dd.width === vd.width && dd.height === vd.height) {
+        const j = (py * dd.width + px) * 4;
+        lr = dd.data[j]!;
+        lg = dd.data[j + 1]!;
+        lb = dd.data[j + 2]!;
+      }
+      const luminance = (0.299 * lr + 0.587 * lg + 0.114 * lb) / 255;
+      const single = colormap !== "none" || (r === g && g === b);
+      const lines = single ? [String(r)] : [String(r), String(g), String(b)];
+      return { lines, luminance };
+    },
+    [colormap],
+  );
 
   useEffect(() => {
     if (!showDiff) {
@@ -320,7 +401,7 @@ export default function ImagePane({
 
       <div
         ref={paneRef}
-        className="flex-1 min-h-0 min-w-0 flex items-center justify-center overflow-hidden rounded cairn-checkerboard"
+        className="relative flex-1 min-h-0 min-w-0 flex items-center justify-center overflow-hidden rounded cairn-checkerboard"
         style={{
           padding:
             showAxes && naturalDims ? "16px 4px 4px 28px" : "4px",
@@ -346,7 +427,7 @@ export default function ImagePane({
                 </span>
               )}
               <canvas
-                ref={canvasRef}
+                ref={setCanvasEl}
                 className="w-full h-full object-contain block"
                 style={{
                   display: diffReady ? "block" : "none",
@@ -363,7 +444,7 @@ export default function ImagePane({
                 </span>
               )}
               <canvas
-                ref={falseColorRef}
+                ref={setFalseColorEl}
                 className="w-full h-full object-contain block"
                 style={{
                   display: falseColorReady ? "block" : "none",
@@ -374,6 +455,7 @@ export default function ImagePane({
             </>
           ) : (
             <img
+              ref={setImgEl}
               src={imageUrl}
               alt={label}
               className="w-full h-full object-contain block"
@@ -414,6 +496,17 @@ export default function ImagePane({
               />
             )}
         </div>
+        {imageUrl && naturalDims && (
+          <PixelValueOverlay
+            imageElRef={displayElRef}
+            naturalWidth={naturalDims.w}
+            naturalHeight={naturalDims.h}
+            zoom={zoomProp}
+            pan={panProp}
+            sample={samplePixel}
+            version={pixelDataVersion}
+          />
+        )}
       </div>
       <LabelChip label={label} isDraggable={isDraggable} onDragStart={onDragStart} />
     </div>

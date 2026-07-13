@@ -23,7 +23,7 @@
  * NaN/Inf pixels are treated as 0. The pane fills its container (like
  * ImagePane); the standalone adapter's `ChartBox` provides the sizing box.
  */
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   getTonemapOperator,
   applyExposure,
@@ -33,6 +33,17 @@ import {
 import type { Interpolation } from "../types";
 import PixelAxes from "../primitives/PixelAxes";
 import LabelChip from "../primitives/LabelChip";
+import PixelValueOverlay, { type PixelSample } from "../primitives/PixelValueOverlay";
+import { useImageViewport, type Viewport as ImageViewport } from "../hooks/use-image-viewport";
+
+/** Compact float formatting for the pixel-value overlay: 3 sig figs, with
+ *  scientific notation for very small / very large magnitudes. */
+function formatHdrValue(v: number): string {
+  if (!Number.isFinite(v)) return "0";
+  const a = Math.abs(v);
+  if (a !== 0 && (a < 1e-3 || a >= 1e4)) return v.toExponential(1);
+  return String(Number(v.toPrecision(3)));
+}
 
 export interface HdrData {
   /** Flattened float samples in row-major order (from `parseNpy`). */
@@ -54,6 +65,12 @@ export interface HdrImagePaneProps {
   showAxes?: boolean;
   label?: string;
   interpolation?: Interpolation;
+
+  /** Viewport (modifier-gated wheel-zoom + drag-pan). Controlled; the adapter
+   *  owns the state. Defaults to identity so the pane renders un-zoomed. */
+  zoom?: number;
+  pan?: { x: number; y: number };
+  onViewportChange?: (v: ImageViewport) => void;
 }
 
 /** Decode HDR shape into (H, W, C). Grayscale `[H,W]` is treated as C=1. */
@@ -129,10 +146,17 @@ export default function HdrImagePane({
   showAxes = false,
   label = "",
   interpolation = "auto",
+  zoom = 1,
+  pan = { x: 0, y: 0 },
+  onViewportChange,
 }: HdrImagePaneProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const imgWrapperRef = useRef<HTMLDivElement | null>(null);
+  const paneRef = useRef<HTMLDivElement | null>(null);
   const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
+  // Retained tone-mapped pixels — used for the overlay's auto-contrast.
+  const dispDataRef = useRef<ImageData | null>(null);
+  const [pixelDataVersion, setPixelDataVersion] = useState(0);
 
   // Single CPU tone-map pass; reruns on data / tonemap / exposure / gamma.
   useEffect(() => {
@@ -152,6 +176,8 @@ export default function HdrImagePane({
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     ctx.putImageData(imageData, 0, 0);
+    dispDataRef.current = imageData;
+    setPixelDataVersion((v) => v + 1);
     setDims((prev) =>
       prev && prev.w === imageData.width && prev.h === imageData.height
         ? prev
@@ -159,18 +185,65 @@ export default function HdrImagePane({
     );
   }, [hdr, tonemap, exposure, gamma]);
 
+  const { containerProps: viewportProps } = useImageViewport({
+    containerRef: paneRef,
+    zoom,
+    pan,
+    onViewportChange,
+  });
+
+  // TEV-style per-pixel value overlay: reads the RAW float samples so the
+  // numbers are the true scene values (not the tone-mapped display pixels).
+  const samplePixel = useCallback(
+    (px: number, py: number): PixelSample | null => {
+      const d = dims;
+      if (!d || px < 0 || py < 0 || px >= d.w || py >= d.h) return null;
+      const c = hdr.shape.length === 2 ? 1 : (hdr.shape[2] ?? 1);
+      const base = (py * d.w + px) * c;
+      const src = hdr.data;
+      let lines: string[];
+      if (c === 1) {
+        lines = [formatHdrValue(src[base] ?? 0)];
+      } else {
+        lines = [
+          formatHdrValue(src[base] ?? 0),
+          formatHdrValue(src[base + 1] ?? 0),
+          formatHdrValue(src[base + 2] ?? 0),
+        ];
+      }
+      const disp = dispDataRef.current;
+      let luminance = 0.5;
+      if (disp && disp.width === d.w && disp.height === d.h) {
+        const j = (py * d.w + px) * 4;
+        luminance =
+          (0.299 * disp.data[j]! +
+            0.587 * disp.data[j + 1]! +
+            0.114 * disp.data[j + 2]!) /
+          255;
+      }
+      return { lines, luminance };
+    },
+    [hdr, dims],
+  );
+
   const imgRendering = interpolation === "auto" ? undefined : interpolation;
+  const transformStr = `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`;
 
   return (
     <div className="relative flex flex-col h-full">
       <div
-        className="flex-1 min-h-0 min-w-0 flex items-center justify-center overflow-hidden rounded cairn-checkerboard"
-        style={{ padding: showAxes && dims ? "16px 4px 4px 28px" : "4px" }}
+        ref={paneRef}
+        className="relative flex-1 min-h-0 min-w-0 flex items-center justify-center overflow-hidden rounded cairn-checkerboard"
+        style={{ padding: showAxes && dims ? "16px 4px 4px 28px" : "4px", ...viewportProps.style }}
+        onPointerDown={viewportProps.onPointerDown}
+        onPointerMove={viewportProps.onPointerMove}
+        onPointerUp={viewportProps.onPointerUp}
+        onPointerCancel={viewportProps.onPointerCancel}
       >
         <div
           ref={imgWrapperRef}
           className="relative w-full h-full"
-          style={{ transformOrigin: "0 0" }}
+          style={{ transform: transformStr, transformOrigin: "0 0" }}
         >
           <canvas
             ref={canvasRef}
@@ -181,11 +254,22 @@ export default function HdrImagePane({
             <PixelAxes
               naturalWidth={dims.w}
               naturalHeight={dims.h}
-              zoom={1}
+              zoom={zoom}
               containerRef={imgWrapperRef}
             />
           )}
         </div>
+        {dims && (
+          <PixelValueOverlay
+            imageElRef={canvasRef}
+            naturalWidth={dims.w}
+            naturalHeight={dims.h}
+            zoom={zoom}
+            pan={pan}
+            sample={samplePixel}
+            version={pixelDataVersion}
+          />
+        )}
       </div>
       {label ? <LabelChip label={label} /> : null}
     </div>
