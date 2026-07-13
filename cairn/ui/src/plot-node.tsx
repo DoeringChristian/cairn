@@ -203,6 +203,16 @@ function CompareView({ node }: { node: CompareNode }) {
     (node.diffSubmode as DiffMode | undefined) ??
     "signed";
 
+  // The split-view separator is a CONTROLLED drag handle: MediaComparePane's
+  // divider calls `onSplitPositionChange` but renders `splitPosition` from
+  // props, so without local state the separator has nowhere to write and can't
+  // move. Own the split position here, seeded from the node's own prop.
+  // (`blendAlpha` has no interactive control in the compositor — the blend is a
+  // static opacity — so it stays a plain prop.)
+  const [splitPos, setSplitPos] = useState<number>(
+    (props.splitPosition as number | undefined) ?? 0.5,
+  );
+
   return (
     <ChartBox>
       <CompositeMediaPane
@@ -214,7 +224,8 @@ function CompareView({ node }: { node: CompareNode }) {
         interpolation={(props.interpolation as Interpolation | undefined) ?? "auto"}
         showAxes={(props.showAxes as boolean | undefined) ?? false}
         processing={props.processing as ImageProcessing | undefined}
-        splitPosition={props.splitPosition as number | undefined}
+        splitPosition={splitPos}
+        onSplitPositionChange={setSplitPos}
         blendAlpha={props.blendAlpha as number | undefined}
         zoom={1}
         pan={{ x: 0, y: 0 }}

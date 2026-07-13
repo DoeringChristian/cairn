@@ -35,6 +35,7 @@ import ImagePane from "./lib/cairn-plot/renderers/ImagePane";
 import HdrImagePane from "./lib/cairn-plot/renderers/HdrImagePane";
 import Table from "./lib/cairn-plot/renderers/Table";
 import type { Viewport, PromotedSeriesConfig } from "./lib/cairn-plot/types";
+import type { Viewport as ImageViewport } from "./lib/cairn-plot/hooks/use-image-viewport";
 import { ChartBox } from "./plot-standalone-helpers";
 import { registerRenderer } from "./plot-registry";
 
@@ -122,7 +123,16 @@ function HeatmapStandalone(p: P) {
 }
 
 // --- ImagePane: content/aspect-sized, fills required config with defaults ---
+// Like ScalarPlotStandalone, owns the interactive viewport locally: ImagePane's
+// wheel-zoom (modifier-gated) + drag-pan are CONTROLLED — they need a
+// `zoom`/`pan` value plus an `onViewportChange` callback to persist the gesture.
+// Standalone has no settings store, so the adapter holds the state itself,
+// seeded from any descriptor-provided `zoom`/`pan`.
 function ImageStandalone(p: P) {
+  const [viewport, setViewport] = useState<ImageViewport>({
+    zoom: p.zoom ?? 1,
+    pan: p.pan ?? { x: 0, y: 0 },
+  });
   return (
     <ImagePane
       imageUrl={p.imageUrl ?? null}
@@ -135,8 +145,9 @@ function ImageStandalone(p: P) {
       overlay={p.overlay}
       overlaySettings={p.overlaySettings}
       processing={p.processing}
-      zoom={p.zoom}
-      pan={p.pan}
+      zoom={viewport.zoom}
+      pan={viewport.pan}
+      onViewportChange={setViewport}
     />
   );
 }
