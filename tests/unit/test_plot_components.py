@@ -228,6 +228,126 @@ def test_image_no_processing_props_when_unset():
     assert "props" not in cp.Image(_PNG).to_node()
 
 
+# ---------------------------------------------------------------------------
+# HDR (float) image — the `imagehdr` renderer + `imghdr` DataSpec.
+# ---------------------------------------------------------------------------
+
+import numpy as np  # noqa: E402
+
+
+def _hdr_arr() -> np.ndarray:
+    """A float32 (H,W,3) image with a genuine >1 range (peak 8.0)."""
+    arr = np.zeros((6, 8, 3), dtype=np.float32)
+    arr[3, 4] = 8.0
+    return arr
+
+
+def test_image_hdr_autodetect_emits_imagehdr_renderer():
+    img = cp.Image(_hdr_arr())  # values outside [0,1] → HDR auto-detected
+    node = img.to_node()
+    assert node["renderer"] == "imagehdr"
+    assert node["data"]["kind"] == "imghdr"
+    assert node["data"]["meta"]["dtype"] == "float32"
+    assert node["data"]["meta"]["channels"] == 3
+    assert node["data"]["meta"]["vmax"] == 8.0
+    # a store blob is baked, keyed by the content hash
+    h = node["data"]["hash"]
+    store = img._collect_store()
+    assert h in store and store[h]["mime"] == "application/octet-stream"
+    # default props: tonemap present (srgb), exposure 0, gamma OMITTED
+    assert node["props"]["tonemap"] == "srgb"
+    assert node["props"]["exposure"] == 0.0
+    assert "gamma" not in node["props"]
+    # round-trips through the pydantic PlotSpec (the anti-drift gate)
+    spec = PlotSpec.model_validate(_descriptor_from_html(img._repr_html_()))
+    assert spec.renderer == "imagehdr"
+
+
+def test_image_hdr_force_flag_on_low_range_float():
+    # A float array in [0,1] is 8-bit by default; hdr=True forces the HDR path.
+    lo = (np.linspace(0, 1, 24).reshape(4, 6)).astype(np.float32)
+    assert cp.Image(lo).to_node()["renderer"] == "image"
+    assert cp.Image(lo, hdr=True).to_node()["renderer"] == "imagehdr"
+
+
+def test_image_hdr_false_forces_8bit():
+    assert cp.Image(_hdr_arr(), hdr=False).to_node()["renderer"] == "image"
+
+
+def test_image_uint8_and_png_stay_8bit():
+    u8 = (np.random.default_rng(0).random((4, 5, 3)) * 255).astype(np.uint8)
+    assert cp.Image(u8).to_node()["renderer"] == "image"
+    assert cp.Image(_PNG).to_node()["renderer"] == "image"
+
+
+def test_image_hdr_tonemap_selects_operator():
+    for op in ("linear", "srgb", "reinhard", "aces"):
+        assert cp.Image(_hdr_arr(), tonemap=op).to_node()["props"]["tonemap"] == op
+
+
+def test_image_hdr_gamma_only_when_explicit():
+    assert "gamma" not in cp.Image(_hdr_arr()).to_node()["props"]
+    assert cp.Image(_hdr_arr(), gamma=2.2).to_node()["props"]["gamma"] == 2.2
+
+
+def test_image_hdr_exposure_and_axes_props():
+    node = cp.Image(_hdr_arr(), exposure=2.0, show_axes=True,
+                    interpolation="pixelated").to_node()
+    assert node["props"]["exposure"] == 2.0
+    assert node["props"]["showAxes"] is True
+    assert node["props"]["interpolation"] == "pixelated"
+
+
+def test_image_hdr_bakes_c_contiguous_npy():
+    # A Fortran-order input must still bake C-order bytes (M2 guarantee).
+    f = np.asfortranarray(_hdr_arr())
+    assert not f.flags["C_CONTIGUOUS"]
+    img = cp.Image(f, hdr=True)
+    h = img.to_node()["data"]["hash"]
+    import base64 as _b64
+    raw = _b64.b64decode(img._collect_store()[h]["b64"])
+    # parse the .npy header dict — fortran_order must be False
+    header = raw[10 : 10 + int.from_bytes(raw[8:10], "little")].decode("latin1")
+    assert "'fortran_order': False" in header
+    assert "'descr': '<f4'" in header
+    # and the array actually round-trips C-contiguous
+    import io as _io
+    loaded = np.load(_io.BytesIO(raw))
+    assert loaded.flags["C_CONTIGUOUS"] and loaded.dtype == np.float32
+
+
+def test_image_tonemap_on_non_hdr_raises():
+    with pytest.raises(ValueError, match="HDR-only"):
+        cp.Image(_PNG, tonemap="aces")
+
+
+def test_image_hdr_true_on_non_float_raises():
+    with pytest.raises(ValueError, match="float numpy array"):
+        cp.Image(_PNG, hdr=True)
+
+
+def test_image_hdr_bad_shape_raises():
+    with pytest.raises(ValueError, match="H,W"):
+        cp.Image(np.zeros((4, 5, 2), dtype=np.float32), hdr=True)
+
+
+def test_image_hdr_gray_and_channel_shapes():
+    assert cp.Image(np.full((4, 5), 3.0, np.float32), hdr=True).to_node()[
+        "data"]["meta"]["channels"] == 1
+    assert cp.Image(np.full((4, 5, 4), 3.0, np.float32), hdr=True).to_node()[
+        "data"]["meta"]["channels"] == 4
+
+
+def test_image_hdr_ignores_8bit_only_args(caplog):
+    # colormap/brightness/... are 8-bit concepts — ignored (with a note) on HDR.
+    import logging
+    with caplog.at_level(logging.WARNING):
+        node = cp.Image(_hdr_arr(), colormap="viridis", brightness=0.5).to_node()
+    assert "colormap" not in node["props"]
+    assert "processing" not in node["props"]
+    assert any("HDR path ignores" in r.message for r in caplog.records)
+
+
 def test_compare_typed_kwargs_populate_node():
     node = cp.Compare(cp.Image(_PNG), cp.Image(_PNG2), mode="split",
                       split_position=0.4, baseline=1, exposure=1.0).to_node()

@@ -630,16 +630,67 @@ def _image_display_props(
     return props
 
 
+_HDR_TONEMAP_OPERATORS = ("linear", "srgb", "reinhard", "aces")
+
+
+def _image_hdr_props(
+    *,
+    tonemap: str | None = None,
+    exposure: float | None = None,
+    gamma: float | None = None,
+    interpolation: str | None = None,
+    show_axes: bool | None = None,
+) -> dict[str, Any]:
+    """Build the ``imagehdr`` renderer props (real HDR tone-map, NOT the 8-bit
+    CSS-filter ``processing`` block). ``tonemap`` defaults to ``"srgb"`` and
+    ``exposure`` to ``0`` (always emitted). ``gamma`` is an OPTIONAL override —
+    it is included ONLY when the caller explicitly passes it, so the renderer's
+    correct sRGB output-encode (HDR-A M1) stays the default. ``showAxes`` /
+    ``interpolation`` are the two extra ``HdrImagePane`` props honoured."""
+    tm = tonemap if tonemap is not None else "srgb"
+    if tm not in _HDR_TONEMAP_OPERATORS:
+        raise ValueError(
+            f"cp.Image(tonemap={tm!r}) must be one of {_HDR_TONEMAP_OPERATORS!r}."
+        )
+    props: dict[str, Any] = {
+        "tonemap": tm,
+        "exposure": float(exposure) if exposure is not None else 0.0,
+    }
+    if gamma is not None:
+        props["gamma"] = float(gamma)
+    if interpolation is not None:
+        props["interpolation"] = interpolation
+    if show_axes is not None:
+        props["showAxes"] = bool(show_axes)
+    return props
+
+
 class Image(Component):
-    """A single-view ``image`` plot (mounts the pure ``ImagePane`` renderer).
+    """A single-view image plot.
 
-    ``data`` accepts:
+    Two pipelines share one leaf, routed by the data:
 
-    * a ``run[tag]`` image artifact — LOCAL bakes the bytes into the
-      content-addressed store; ENDPOINT emits an ``image`` DataSpec by reference;
-    * a raw image (``PIL.Image`` / numpy array / PNG-JPEG ``bytes``) — baked
-      LOCAL only (no server reference);
-    * a raw URL ``str`` — emitted verbatim as a ``url`` DataSpec.
+    * **8-bit** (``image`` renderer, the default) — mounts the pure ``ImagePane``.
+      ``data`` accepts a ``run[tag]`` image artifact (LOCAL bakes the bytes into
+      the content-addressed store; ENDPOINT emits an ``image`` DataSpec by
+      reference), a raw image (``PIL.Image`` / numpy array / PNG-JPEG ``bytes``,
+      baked LOCAL only), or a raw URL ``str`` (a ``url`` DataSpec). ``exposure``/
+      ``gamma``/``brightness``/``contrast``/``offset``/``flip_sign``/``colormap``
+      map to the display-space ``processing`` CSS-filter block.
+    * **float-HDR** (``imagehdr`` renderer) — a genuine float array is baked to a
+      float ``.npy`` (``imghdr`` DataSpec) and tone-mapped client-side. Entered
+      when ``data`` is a **float** numpy array AND (``hdr=True`` OR (``hdr`` unset
+      AND the array has values outside ``[0,1]``)). ``hdr=False`` forces the
+      8-bit clamp path; a uint8 array or a float array in ``[0,1]`` (``hdr``
+      unset) stays 8-bit. HDR props route to the real tone-map: ``tonemap`` ∈
+      ``{linear,srgb,reinhard,aces}`` (default ``srgb``), ``exposure`` (EV
+      stops), and an OPTIONAL ``gamma`` override; ``showAxes``/``interpolation``
+      are honoured; ``colormap``/``brightness``/``contrast``/``offset``/
+      ``flip_sign`` are 8-bit-only and ignored (with a note) on the HDR path.
+
+    NOTE: a ``run[tag]`` handle always takes the 8-bit path — the tracking
+    ingest clamps images to 8-bit, so no float artifact exists yet. Real HDR is
+    from raw float arrays only, for now.
     """
 
     _label = "image"
@@ -649,6 +700,8 @@ class Image(Component):
         data: Any,
         *,
         data_mode: str = "local",
+        hdr: bool | None = None,
+        tonemap: str | None = None,
         exposure: float | None = None,
         gamma: float | None = None,
         brightness: float | None = None,
@@ -661,11 +714,7 @@ class Image(Component):
     ) -> None:
         import json as _json
 
-        self._props = _image_display_props(
-            exposure=exposure, gamma=gamma, brightness=brightness,
-            contrast=contrast, offset=offset, flip_sign=flip_sign,
-            colormap=colormap, interpolation=interpolation, show_axes=show_axes,
-        )
+        import numpy as np
 
         from ..plot import (
             _artifact_info_of,
@@ -678,6 +727,100 @@ class Image(Component):
         self._source: Any = None
         self._store: dict[str, dict[str, str]] = {}
         self._data_mode = data_mode
+        self._renderer = "image"
+
+        # ── HDR routing ──────────────────────────────────────────────────
+        # HDR applies only to a raw float ndarray (never a DataRef/URL/bytes/
+        # PIL). `hdr=True` forces it for any float array; `hdr is None`
+        # auto-detects genuine HDR range (values outside [0,1]); `hdr=False`
+        # forces the 8-bit clamp path.
+        is_float_ndarray = isinstance(data, np.ndarray) and data.dtype.kind == "f"
+        if hdr is True and not is_float_ndarray:
+            raise ValueError(
+                "cp.Image(hdr=True) requires a float numpy array (dtype kind "
+                f"'f'); got {type(data).__name__}"
+                + (f" of dtype {data.dtype}" if isinstance(data, np.ndarray) else "")
+                + "."
+            )
+        want_hdr = False
+        if is_float_ndarray and hdr is not False:
+            if hdr is True:
+                want_hdr = True
+            elif data.size and (float(data.min()) < 0.0 or float(data.max()) > 1.0):
+                want_hdr = True  # auto-detect: genuine HDR range
+        if tonemap is not None and not want_hdr:
+            raise ValueError(
+                "cp.Image(tonemap=...) is HDR-only: pass a float numpy array "
+                "with values outside [0,1], or hdr=True to force the HDR path."
+            )
+
+        if want_hdr:
+            if data_mode == "endpoint":
+                raise ValueError(
+                    "cp.Image(float_hdr, data_mode='endpoint') is unsupported: "
+                    "a baked float array has no server reference. Use "
+                    "data_mode='local' (bakes the .npy self-contained)."
+                )
+            ignored = [
+                n for n, v in (
+                    ("colormap", colormap), ("brightness", brightness),
+                    ("contrast", contrast), ("offset", offset),
+                    ("flip_sign", flip_sign),
+                ) if v is not None
+            ]
+            if ignored:
+                log.warning(
+                    "cp.Image HDR path ignores 8-bit-only args %s "
+                    "(the imagehdr renderer honours tonemap/exposure/gamma/"
+                    "showAxes/interpolation).",
+                    ignored,
+                )
+            self._props = _image_hdr_props(
+                tonemap=tonemap, exposure=exposure, gamma=gamma,
+                interpolation=interpolation, show_axes=show_axes,
+            )
+            # M2: guarantee C-contiguous float32 (halves size vs float64; the
+            # renderer's parseNpy reads C-order, ROW-MAJOR bytes).
+            arr = np.ascontiguousarray(data, dtype=np.float32)
+            if arr.ndim == 2:
+                channels = 1
+            elif arr.ndim == 3 and arr.shape[2] in (1, 3, 4):
+                channels = int(arr.shape[2])
+            else:
+                raise ValueError(
+                    "cp.Image(float_hdr): array must be (H,W) or (H,W,C) with "
+                    f"C in {{1,3,4}}; got shape {tuple(int(s) for s in arr.shape)}."
+                )
+            meta = {
+                "shape": [int(s) for s in arr.shape],
+                "dtype": "float32",
+                "channels": channels,
+                "vmin": float(arr.min()),
+                "vmax": float(arr.max()),
+            }
+            import io as _io
+
+            buf = _io.BytesIO()
+            np.save(buf, arr)
+            raw = buf.getvalue()
+            hash_ = _content_hash(raw)
+            self._store = {
+                hash_: {
+                    "mime": "application/octet-stream",
+                    "b64": _base64.b64encode(raw).decode("ascii"),
+                }
+            }
+            self._data: dict[str, Any] = {"kind": "imghdr", "hash": hash_, "meta": meta}
+            self._renderer = "imagehdr"
+            self._data_mode = "local"
+            return
+
+        # ── 8-bit path (unchanged) ───────────────────────────────────────
+        self._props = _image_display_props(
+            exposure=exposure, gamma=gamma, brightness=brightness,
+            contrast=contrast, offset=offset, flip_sign=flip_sign,
+            colormap=colormap, interpolation=interpolation, show_axes=show_axes,
+        )
 
         if isinstance(data, DataRef):
             ai = _artifact_info_of(data)
@@ -720,7 +863,9 @@ class Image(Component):
         self._data_mode = "local"
 
     def to_node(self) -> dict[str, Any]:
-        node: dict[str, Any] = {"kind": "plot", "renderer": "image", "data": self._data}
+        node: dict[str, Any] = {
+            "kind": "plot", "renderer": self._renderer, "data": self._data
+        }
         if self._props:
             node["props"] = dict(self._props)
         return node

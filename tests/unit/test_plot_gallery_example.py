@@ -41,6 +41,8 @@ def test_gallery_renders_every_type_self_contained():
                      "ParallelCoordinates", "Image", "Table", "Figure",
                      "PointCloud", "Grid", "Compare"):
         assert any(t.startswith(expected) for t in titles), f"missing {expected}"
+    # The HDR section (true-float, real tone-mapping) is present.
+    assert any("HDR image" in t for t in titles), "missing HDR section"
 
     # render_html self-checks each component (raises SystemExit on a bad emit).
     html = mod.render_html(items)
@@ -48,6 +50,8 @@ def test_gallery_renders_every_type_self_contained():
     # Self-contained + each renderer bundle inlined.
     assert "cairn-plot-" in html
     assert "could not render" not in html
+    # the imagehdr renderer is in CORE (no new addon) — it appears in the page.
+    assert "imagehdr" in html
     assert "__cairnPlotBundleLoaded" in html          # core bundle inlined
     assert "__cairnPlotThreeLoaded" in html           # three addon (PointCloud)
     assert "__cairnPlotFigureLoaded" in html          # figure addon (Figure)

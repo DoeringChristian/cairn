@@ -48,6 +48,23 @@ def _gradient_image(w: int, h: int, *, shift: float = 0.0) -> np.ndarray:
     return (np.stack([r, g, b], axis=-1) * 255).astype(np.uint8)
 
 
+def _hdr_image(w: int = 128, h: int = 96) -> np.ndarray:
+    """A synthetic TRUE-float HDR image as ``(H, W, 3)`` float32 with a genuine
+    >1 range (peak ~8.0): a dim radial background plus a very bright core, so
+    tone-map operators roll the highlight off differently and lowering exposure
+    visibly recovers detail that is blown out at higher exposure."""
+    ys = np.linspace(-1, 1, h)[:, None]
+    xs = np.linspace(-1, 1, w)[None, :]
+    r2 = xs**2 + ys**2
+    # a warm low-dynamic background (~0..0.6) + a bright hot core peaking ~8.
+    background = 0.15 + 0.45 * np.clip(1.0 - r2, 0.0, 1.0)
+    core = 8.0 * np.exp(-r2 / 0.02)
+    lum = background + core
+    # tint the channels so the roll-off is visible in color, not just luma.
+    rgb = np.stack([lum, lum * 0.85, lum * 0.6], axis=-1)
+    return rgb.astype(np.float32)
+
+
 def _sphere_pointcloud(n: int) -> np.ndarray:
     """An ``(n, 6)`` colored point cloud (xyz on a unit sphere + rgb)."""
     rng = np.random.default_rng(7)
@@ -141,6 +158,24 @@ def build_gallery() -> list[tuple[str, object]]:
              [cp.Image(base, gamma=0.5), cp.Image(base, colormap="viridis"),
               cp.Image(base, gamma=2.2)]],
         ),
+    ))
+
+    # ── HDR: true float, real tone-mapping (imagehdr renderer) ────────────
+    # Unlike the 8-bit "Image processing" sweep above, these bake the genuine
+    # float array (an `imghdr` DataSpec) and tone-map it CLIENT-SIDE — real HDR.
+    hdr = _hdr_image()
+    items.append((
+        "HDR image — tone-map operators & exposure (true float, real tone-mapping)",
+        cp.Grid([
+            # the four tone-map operators side by side (highlight roll-off differs)
+            [cp.Image(hdr, tonemap="linear"), cp.Image(hdr, tonemap="srgb"),
+             cp.Image(hdr, tonemap="reinhard"), cp.Image(hdr, tonemap="aces")],
+            # an exposure sweep: lowering exposure recovers blown-out highlights
+            [cp.Image(hdr, tonemap="srgb", exposure=-2.0),
+             cp.Image(hdr, tonemap="srgb", exposure=0.0),
+             cp.Image(hdr, tonemap="srgb", exposure=2.0),
+             cp.Image(hdr, tonemap="aces", exposure=2.0)],
+        ]),
     ))
 
     # ── image comparison: all four modes + diff submodes ──────────────────
