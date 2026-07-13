@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import type { ColormapName } from "../types";
 import { useContainerSize } from "../hooks/use-container-size";
 import { formatNum } from "../format";
+import { AXIS } from "../theme";
 import { rebinHistograms, type HistogramData } from "../transforms/histogram";
 import Tooltip from "../primitives/Tooltip";
 import { anchorFromRect, type TooltipAnchor } from "../primitives/tooltip-position";
@@ -98,7 +99,7 @@ function HistogramBars({
             width={plotW}
             height={plotH}
             fill="none"
-            stroke="#d0d7de"
+            stroke={AXIS.lineColor}
           />
           {[0, 0.5, 1].map((t) => {
             const val = logY
@@ -111,7 +112,7 @@ function HistogramBars({
                 y={PAD.top + plotH - t * plotH + 3}
                 textAnchor="end"
                 className="mono fill-fg-subtle"
-                style={{ fontSize: 8 }}
+                style={{ fontSize: AXIS.tickFontSize }}
               >
                 {formatNum(val)}
               </text>
@@ -124,7 +125,7 @@ function HistogramBars({
               y={PAD.top + plotH + 12}
               textAnchor="middle"
               className="mono fill-fg-subtle"
-              style={{ fontSize: 8 }}
+              style={{ fontSize: AXIS.tickFontSize }}
             >
               {formatNum(xMin + t * xRange)}
             </text>

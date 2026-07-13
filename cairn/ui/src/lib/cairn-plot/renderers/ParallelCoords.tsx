@@ -3,6 +3,8 @@ import type { ParallelColumn, ParallelRow } from "../types";
 import { normalizeValue } from "../transforms/normalize";
 import { viridis } from "../colormaps/viridis";
 import { useContainerSize } from "../hooks/use-container-size";
+import { formatNum } from "../format";
+import { AXIS } from "../theme";
 import Tooltip from "../primitives/Tooltip";
 import { pointerAnchor, type TooltipAnchor } from "../primitives/tooltip-position";
 
@@ -101,15 +103,15 @@ export default function ParallelCoords({
                   y1={pad.top}
                   x2={x}
                   y2={pad.top + plotH}
-                  stroke="#d0d7de"
-                  strokeWidth={1}
+                  stroke={AXIS.lineColor}
+                  strokeWidth={AXIS.lineWidth}
                 />
                 <text
                   x={x}
                   y={pad.top - 8}
                   textAnchor="middle"
-                  className="text-[10px] fill-fg-muted"
-                  style={{ fontSize: 10 }}
+                  className="fill-fg-muted"
+                  style={{ fontSize: AXIS.titleFontSize }}
                 >
                   {col.key}
                 </text>
@@ -117,19 +119,19 @@ export default function ParallelCoords({
                   x={x}
                   y={pad.top + plotH + 14}
                   textAnchor="middle"
-                  className="mono text-[9px] fill-fg-subtle"
-                  style={{ fontSize: 9 }}
+                  className="mono fill-fg-subtle"
+                  style={{ fontSize: AXIS.tickFontSize }}
                 >
-                  {d.min.toPrecision(3)}
+                  {formatNum(d.min)}
                 </text>
                 <text
                   x={x}
                   y={pad.top - 1}
                   textAnchor="middle"
-                  className="mono text-[9px] fill-fg-subtle"
-                  style={{ fontSize: 9 }}
+                  className="mono fill-fg-subtle"
+                  style={{ fontSize: AXIS.tickFontSize }}
                 >
-                  {d.max.toPrecision(3)}
+                  {formatNum(d.max)}
                 </text>
               </g>
             );

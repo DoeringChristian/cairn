@@ -1,6 +1,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { SERIES_COLORS } from "../types";
 import { formatNum } from "../format";
+import { AXIS, GRID } from "../theme";
 import { useContainerSize } from "../hooks/use-container-size";
 import Tooltip from "../primitives/Tooltip";
 import { pointerAnchor, type TooltipAnchor } from "../primitives/tooltip-position";
@@ -252,18 +253,17 @@ export default function BarChart({
                   y1={pad.top}
                   x2={gx}
                   y2={pad.top + plotH}
-                  stroke="currentColor"
-                  className="text-border-subtle"
-                  strokeWidth={1}
-                  strokeDasharray="2 3"
-                  opacity={0.5}
+                  stroke={GRID.color}
+                  strokeWidth={AXIS.lineWidth}
+                  strokeDasharray={GRID.dash}
+                  opacity={GRID.opacity}
                 />
                 <text
                   x={gx}
                   y={pad.top + plotH + 12}
                   textAnchor="middle"
-                  className="mono text-[8px] fill-fg-subtle"
-                  style={{ fontSize: 8 }}
+                  className="mono fill-fg-subtle"
+                  style={{ fontSize: AXIS.tickFontSize }}
                 >
                   {formatNum(label)}
                 </text>
@@ -276,8 +276,8 @@ export default function BarChart({
               x={pad.left + plotW / 2}
               y={h - 2}
               textAnchor="middle"
-              className="text-[10px] fill-fg-muted"
-              style={{ fontSize: 10 }}
+              className="fill-fg-muted"
+              style={{ fontSize: AXIS.titleFontSize }}
             >
               {valueLabel}
             </text>

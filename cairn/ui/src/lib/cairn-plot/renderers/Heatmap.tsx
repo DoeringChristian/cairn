@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ColormapName } from "../types";
 import { getColormapLUT } from "../colormaps";
 import { useContainerSize } from "../hooks/use-container-size";
+import { formatNum } from "../format";
+import { AXIS } from "../theme";
 import Tooltip from "../primitives/Tooltip";
 import { anchorFromRect, type TooltipAnchor } from "../primitives/tooltip-position";
 
@@ -170,7 +172,7 @@ export default function Heatmap({
               width={plotW}
               height={plotH}
               fill="none"
-              stroke="#d0d7de"
+              stroke={AXIS.lineColor}
             />
             {xLabel && (
               <text
@@ -178,7 +180,7 @@ export default function Heatmap({
                 y={h - 2}
                 textAnchor="middle"
                 className="fill-fg-muted"
-                style={{ fontSize: 10 }}
+                style={{ fontSize: AXIS.titleFontSize }}
               >
                 {xLabel}
               </text>
@@ -189,7 +191,7 @@ export default function Heatmap({
                 y={PAD.top + plotH / 2}
                 textAnchor="middle"
                 className="fill-fg-muted"
-                style={{ fontSize: 10 }}
+                style={{ fontSize: AXIS.titleFontSize }}
                 transform={`rotate(-90, 10, ${PAD.top + plotH / 2})`}
               >
                 {yLabel}
@@ -202,7 +204,7 @@ export default function Heatmap({
                 y={PAD.top + plotH + 12}
                 textAnchor="middle"
                 className="mono fill-fg-subtle"
-                style={{ fontSize: 8 }}
+                style={{ fontSize: AXIS.tickFontSize }}
               >
                 {xTickLabel ? xTickLabel(i) : i}
               </text>
@@ -216,7 +218,7 @@ export default function Heatmap({
                   y={PAD.top + ((viewRow + 0.5) / rows) * plotH + 3}
                   textAnchor="end"
                   className="mono fill-fg-subtle"
-                  style={{ fontSize: 8 }}
+                  style={{ fontSize: AXIS.tickFontSize }}
                 >
                   {yTickLabel ? yTickLabel(i) : i}
                 </text>
@@ -240,23 +242,23 @@ export default function Heatmap({
               width={10}
               height={plotH}
               fill="url(#heatmap-cbar)"
-              stroke="#d0d7de"
+              stroke={AXIS.lineColor}
             />
             <text
               x={w - PAD.right + 26}
               y={PAD.top + 6}
               className="mono fill-fg-subtle"
-              style={{ fontSize: 8 }}
+              style={{ fontSize: AXIS.tickFontSize }}
             >
-              {fmt(hi)}
+              {formatNum(hi)}
             </text>
             <text
               x={w - PAD.right + 26}
               y={PAD.top + plotH}
               className="mono fill-fg-subtle"
-              style={{ fontSize: 8 }}
+              style={{ fontSize: AXIS.tickFontSize }}
             >
-              {fmt(lo)}
+              {formatNum(lo)}
             </text>
             {valueLabel && (
               <text
@@ -264,7 +266,7 @@ export default function Heatmap({
                 y={PAD.top + plotH / 2}
                 textAnchor="middle"
                 className="fill-fg-muted"
-                style={{ fontSize: 9 }}
+                style={{ fontSize: AXIS.titleFontSize }}
                 transform={`rotate(90, ${w - 6}, ${PAD.top + plotH / 2})`}
               >
                 {valueLabel}
@@ -292,7 +294,7 @@ export default function Heatmap({
               <span className="text-fg-muted">
                 [{hover.y}, {hover.x}]
               </span>
-              <span className="mono">{fmt(matrix[hover.y]?.[hover.x] ?? NaN)}</span>
+              <span className="mono">{formatNum(matrix[hover.y]?.[hover.x] ?? NaN)}</span>
             </div>
           )}
         </Tooltip>
@@ -309,12 +311,4 @@ function tickPositions(n: number): number[] {
   const out: number[] = [];
   for (let i = 0; i < n; i += step) out.push(i);
   return out;
-}
-
-function fmt(v: number): string {
-  if (!Number.isFinite(v)) return String(v);
-  if (v === 0) return "0";
-  const a = Math.abs(v);
-  if (a >= 1000 || a < 1e-3) return v.toExponential(2);
-  return Number(v.toPrecision(4)).toString();
 }

@@ -4,6 +4,8 @@ import type { ParetoDirection } from "../transforms/pareto";
 import { computeParetoFront } from "../transforms/pareto";
 import { viridis } from "../colormaps/viridis";
 import { useContainerSize } from "../hooks/use-container-size";
+import { formatNum } from "../format";
+import { AXIS } from "../theme";
 import Tooltip from "../primitives/Tooltip";
 import { pointerAnchor, type TooltipAnchor } from "../primitives/tooltip-position";
 
@@ -169,7 +171,7 @@ export default function ScatterPlot({
             width={plotW}
             height={plotH}
             fill="transparent"
-            stroke="#d0d7de"
+            stroke={AXIS.lineColor}
             onClick={onBackgroundClick}
             className="cursor-default"
           />
@@ -179,8 +181,8 @@ export default function ScatterPlot({
               x={pad.left + plotW / 2}
               y={h - 4}
               textAnchor="middle"
-              className="text-[10px] fill-fg-muted"
-              style={{ fontSize: 10 }}
+              className="fill-fg-muted"
+              style={{ fontSize: AXIS.titleFontSize }}
             >
               {xLabel}
             </text>
@@ -190,8 +192,8 @@ export default function ScatterPlot({
               x={12}
               y={pad.top + plotH / 2}
               textAnchor="middle"
-              className="text-[10px] fill-fg-muted"
-              style={{ fontSize: 10 }}
+              className="fill-fg-muted"
+              style={{ fontSize: AXIS.titleFontSize }}
               transform={`rotate(-90, 12, ${pad.top + plotH / 2})`}
             >
               {yLabel}
@@ -202,19 +204,19 @@ export default function ScatterPlot({
             const xTickLog = xMin + t * xRange;
             const yTickLog = yMin + t * yRange;
             const xTickLabel = xLog
-              ? Math.pow(10, xTickLog).toPrecision(3)
-              : (xDomain.min + t * (xDomain.max - xDomain.min)).toPrecision(3);
+              ? formatNum(Math.pow(10, xTickLog))
+              : formatNum(xDomain.min + t * (xDomain.max - xDomain.min));
             const yTickLabel = yLog
-              ? Math.pow(10, yTickLog).toPrecision(3)
-              : (yDomain.min + t * (yDomain.max - yDomain.min)).toPrecision(3);
+              ? formatNum(Math.pow(10, yTickLog))
+              : formatNum(yDomain.min + t * (yDomain.max - yDomain.min));
             return (
               <g key={t}>
                 <text
                   x={pad.left + t * plotW}
                   y={pad.top + plotH + 14}
                   textAnchor="middle"
-                  className="mono text-[8px] fill-fg-subtle"
-                  style={{ fontSize: 8 }}
+                  className="mono fill-fg-subtle"
+                  style={{ fontSize: AXIS.tickFontSize }}
                 >
                   {xTickLabel}
                 </text>
@@ -222,8 +224,8 @@ export default function ScatterPlot({
                   x={pad.left - 4}
                   y={pad.top + plotH - t * plotH + 3}
                   textAnchor="end"
-                  className="mono text-[8px] fill-fg-subtle"
-                  style={{ fontSize: 8 }}
+                  className="mono fill-fg-subtle"
+                  style={{ fontSize: AXIS.tickFontSize }}
                 >
                   {yTickLabel}
                 </text>
@@ -300,41 +302,41 @@ export default function ScatterPlot({
                   width={barW}
                   height={plotH}
                   fill={`url(#${gradientId})`}
-                  stroke="#d0d7de"
+                  stroke={AXIS.lineColor}
                 />
                 <text
                   x={barX + barW + 4}
                   y={pad.top + plotH + 3}
                   textAnchor="start"
-                  className="mono text-[8px] fill-fg-subtle"
-                  style={{ fontSize: 8 }}
+                  className="mono fill-fg-subtle"
+                  style={{ fontSize: AXIS.tickFontSize }}
                 >
-                  {colorDomain.min.toPrecision(3)}
+                  {formatNum(colorDomain.min)}
                 </text>
                 <text
                   x={barX + barW + 4}
                   y={pad.top + plotH / 2 + 3}
                   textAnchor="start"
-                  className="mono text-[8px] fill-fg-subtle"
-                  style={{ fontSize: 8 }}
+                  className="mono fill-fg-subtle"
+                  style={{ fontSize: AXIS.tickFontSize }}
                 >
-                  {cMid.toPrecision(3)}
+                  {formatNum(cMid)}
                 </text>
                 <text
                   x={barX + barW + 4}
                   y={pad.top + 3}
                   textAnchor="start"
-                  className="mono text-[8px] fill-fg-subtle"
-                  style={{ fontSize: 8 }}
+                  className="mono fill-fg-subtle"
+                  style={{ fontSize: AXIS.tickFontSize }}
                 >
-                  {colorDomain.max.toPrecision(3)}
+                  {formatNum(colorDomain.max)}
                 </text>
                 <text
                   x={barX + barW + 18}
                   y={pad.top + plotH / 2}
                   textAnchor="middle"
-                  className="text-[9px] fill-fg-muted"
-                  style={{ fontSize: 9 }}
+                  className="fill-fg-muted"
+                  style={{ fontSize: AXIS.titleFontSize }}
                   transform={`rotate(90, ${barX + barW + 18}, ${pad.top + plotH / 2})`}
                 >
                   {colorLabel}
