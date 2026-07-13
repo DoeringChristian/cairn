@@ -4,6 +4,7 @@ import { useContainerSize } from "../hooks/use-container-size";
 import { formatNum } from "../format";
 import { rebinHistograms, type HistogramData } from "../transforms/histogram";
 import Tooltip from "../primitives/Tooltip";
+import { anchorFromRect, type TooltipAnchor } from "../primitives/tooltip-position";
 import Heatmap from "./Heatmap";
 
 export type HistogramPlotProps = { className?: string } & (
@@ -46,7 +47,7 @@ function HistogramBars({
   className?: string;
 }) {
   const { ref: containerRef, size } = useContainerSize();
-  const [hover, setHover] = useState<{ i: number; px: number; py: number } | null>(
+  const [hover, setHover] = useState<{ i: number; anchor: TooltipAnchor } | null>(
     null,
   );
 
@@ -79,7 +80,7 @@ function HistogramBars({
       return;
     }
     const i = Math.min(counts.length - 1, Math.floor((mx / plotW) * counts.length));
-    setHover({ i, px: e.clientX - rect.left, py: e.clientY - rect.top });
+    setHover({ i, anchor: anchorFromRect(e, rect) });
   };
 
   return (
@@ -147,7 +148,12 @@ function HistogramBars({
         </svg>
       )}
       {hover && counts[hover.i] != null && (
-        <Tooltip x={hover.px} y={hover.py} containerW={w} containerH={h}>
+        <Tooltip
+          x={hover.anchor.x}
+          y={hover.anchor.y}
+          containerW={hover.anchor.containerW}
+          containerH={hover.anchor.containerH}
+        >
           <div className="mb-1 mono font-semibold">
             [{formatNum(edges[hover.i]!)}, {formatNum(edges[hover.i + 1]!)})
           </div>

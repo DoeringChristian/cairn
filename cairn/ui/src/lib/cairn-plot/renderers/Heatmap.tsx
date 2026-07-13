@@ -3,6 +3,7 @@ import type { ColormapName } from "../types";
 import { getColormapLUT } from "../colormaps";
 import { useContainerSize } from "../hooks/use-container-size";
 import Tooltip from "../primitives/Tooltip";
+import { anchorFromRect, type TooltipAnchor } from "../primitives/tooltip-position";
 
 export interface HeatmapProps {
   /** `matrix[y][x]` cell values. Rows may be ragged only if all same length. */
@@ -48,8 +49,7 @@ export default function Heatmap({
   const [hover, setHover] = useState<{
     x: number;
     y: number;
-    px: number;
-    py: number;
+    anchor: TooltipAnchor;
   } | null>(null);
 
   const rows = matrix.length;
@@ -127,12 +127,7 @@ export default function Heatmap({
     const cx = Math.min(cols - 1, Math.floor((mx / plotW) * cols));
     const cyView = Math.min(rows - 1, Math.floor((my / plotH) * rows));
     const cy = originTop ? cyView : rows - 1 - cyView;
-    setHover({
-      x: cx,
-      y: cy,
-      px: e.clientX - rect.left,
-      py: e.clientY - rect.top,
-    });
+    setHover({ x: cx, y: cy, anchor: anchorFromRect(e, rect) });
   };
 
   const gradientStops = useMemo(() => {
@@ -280,7 +275,12 @@ export default function Heatmap({
       )}
 
       {hover && (
-        <Tooltip x={hover.px} y={hover.py} containerW={w} containerH={h}>
+        <Tooltip
+          x={hover.anchor.x}
+          y={hover.anchor.y}
+          containerW={hover.anchor.containerW}
+          containerH={hover.anchor.containerH}
+        >
           {tooltipContent ? (
             tooltipContent({
               x: hover.x,

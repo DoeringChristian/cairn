@@ -4,6 +4,7 @@ import { normalizeValue } from "../transforms/normalize";
 import { viridis } from "../colormaps/viridis";
 import { useContainerSize } from "../hooks/use-container-size";
 import Tooltip from "../primitives/Tooltip";
+import { pointerAnchor, type TooltipAnchor } from "../primitives/tooltip-position";
 
 export interface ParallelCoordsProps {
   columns: ParallelColumn[];
@@ -41,30 +42,20 @@ export default function ParallelCoords({
   const gradientId = `pc-cbar-${rawId.replace(/:/g, "")}`;
   const { ref: containerRef, size } = useContainerSize();
   const [hoveredId, setHoveredId] = useState<string | null>(null);
-  const [tooltipPos, setTooltipPos] = useState<{
-    x: number;
-    y: number;
-  } | null>(null);
+  const [tooltipPos, setTooltipPos] = useState<TooltipAnchor | null>(null);
 
   const handleRowEnter = (row: ParallelRow, e: React.MouseEvent) => {
     setHoveredId(row.id);
-    const rect = containerRef.current?.getBoundingClientRect();
-    if (rect) {
-      const pos = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-      setTooltipPos(pos);
-      onHover?.(row.id, {
-        ...pos,
-        containerW: rect.width,
-        containerH: rect.height,
-      });
+    const anchor = pointerAnchor(e, containerRef);
+    if (anchor) {
+      setTooltipPos(anchor);
+      onHover?.(row.id, anchor);
     }
   };
 
   const handleRowMove = (e: React.MouseEvent) => {
-    const rect = containerRef.current?.getBoundingClientRect();
-    if (rect) {
-      setTooltipPos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
-    }
+    const anchor = pointerAnchor(e, containerRef);
+    if (anchor) setTooltipPos(anchor);
   };
 
   const handleLeave = () => {
@@ -244,8 +235,8 @@ export default function ParallelCoords({
         <Tooltip
           x={tooltipPos.x}
           y={tooltipPos.y}
-          containerW={w}
-          containerH={h}
+          containerW={tooltipPos.containerW}
+          containerH={tooltipPos.containerH}
         >
           {tooltipContent ? (
             tooltipContent(hoveredRow, columns)

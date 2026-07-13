@@ -5,6 +5,7 @@ import { computeParetoFront } from "../transforms/pareto";
 import { viridis } from "../colormaps/viridis";
 import { useContainerSize } from "../hooks/use-container-size";
 import Tooltip from "../primitives/Tooltip";
+import { pointerAnchor, type TooltipAnchor } from "../primitives/tooltip-position";
 
 const DEFAULT_COLORS = SERIES_COLORS;
 
@@ -53,10 +54,7 @@ export default function ScatterPlot({
   const gradientId = `scatter-cbar-${rawId.replace(/:/g, "")}`;
   const { ref: containerRef, size } = useContainerSize();
   const [hoveredId, setHoveredId] = useState<string | null>(null);
-  const [tooltipPos, setTooltipPos] = useState<{
-    x: number;
-    y: number;
-  } | null>(null);
+  const [tooltipPos, setTooltipPos] = useState<TooltipAnchor | null>(null);
 
   const { xDomain, yDomain, colorDomain } = useMemo(() => {
     const makeDomain = (vals: number[]) => {
@@ -88,23 +86,16 @@ export default function ScatterPlot({
 
   const handlePointEnter = (pt: ScatterPoint, e: React.MouseEvent) => {
     setHoveredId(pt.id);
-    const rect = containerRef.current?.getBoundingClientRect();
-    if (rect) {
-      const pos = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-      setTooltipPos(pos);
-      onHover?.(pt.id, {
-        ...pos,
-        containerW: rect.width,
-        containerH: rect.height,
-      });
+    const anchor = pointerAnchor(e, containerRef);
+    if (anchor) {
+      setTooltipPos(anchor);
+      onHover?.(pt.id, anchor);
     }
   };
 
   const handlePointMove = (e: React.MouseEvent) => {
-    const rect = containerRef.current?.getBoundingClientRect();
-    if (rect) {
-      setTooltipPos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
-    }
+    const anchor = pointerAnchor(e, containerRef);
+    if (anchor) setTooltipPos(anchor);
   };
 
   const handleLeave = () => {
@@ -358,8 +349,8 @@ export default function ScatterPlot({
         <Tooltip
           x={tooltipPos.x}
           y={tooltipPos.y}
-          containerW={w}
-          containerH={h}
+          containerW={tooltipPos.containerW}
+          containerH={tooltipPos.containerH}
         >
           {tooltipContent ? (
             tooltipContent(hoveredPoint)

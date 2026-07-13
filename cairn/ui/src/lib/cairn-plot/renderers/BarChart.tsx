@@ -3,6 +3,7 @@ import { SERIES_COLORS } from "../types";
 import { formatNum } from "../format";
 import { useContainerSize } from "../hooks/use-container-size";
 import Tooltip from "../primitives/Tooltip";
+import { pointerAnchor, type TooltipAnchor } from "../primitives/tooltip-position";
 
 const DEFAULT_COLORS = SERIES_COLORS;
 
@@ -83,9 +84,7 @@ export default function BarChart({
 }: BarChartProps) {
   const { ref: containerRef, size } = useContainerSize();
   const [hoveredId, setHoveredId] = useState<string | null>(null);
-  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(
-    null,
-  );
+  const [tooltipPos, setTooltipPos] = useState<TooltipAnchor | null>(null);
 
   const requestedMode: BarCompareMode = compareMode ?? "grouped";
   // Stacking totals in log space is misleading — fall back to grouped and
@@ -202,12 +201,12 @@ export default function BarChart({
 
   const handleEnter = (id: string, e: React.MouseEvent) => {
     setHoveredId(id);
-    const rect = containerRef.current?.getBoundingClientRect();
-    if (rect) setTooltipPos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+    const anchor = pointerAnchor(e, containerRef);
+    if (anchor) setTooltipPos(anchor);
   };
   const handleMove = (e: React.MouseEvent) => {
-    const rect = containerRef.current?.getBoundingClientRect();
-    if (rect) setTooltipPos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+    const anchor = pointerAnchor(e, containerRef);
+    if (anchor) setTooltipPos(anchor);
   };
   const handleLeave = () => {
     setHoveredId(null);
@@ -489,7 +488,12 @@ export default function BarChart({
       )}
 
       {hoveredBar && tooltipPos && (
-        <Tooltip x={tooltipPos.x} y={tooltipPos.y} containerW={w} containerH={h}>
+        <Tooltip
+          x={tooltipPos.x}
+          y={tooltipPos.y}
+          containerW={tooltipPos.containerW}
+          containerH={tooltipPos.containerH}
+        >
           {tooltipContent ? (
             tooltipContent(hoveredBar)
           ) : (
