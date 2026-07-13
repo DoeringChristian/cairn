@@ -29,6 +29,7 @@ import {
   type ImageProcessing,
   type Interpolation,
 } from "./lib/cairn-plot";
+import type { Viewport as ImageViewport } from "./lib/cairn-plot/hooks/use-image-viewport";
 import {
   resolveDataProps,
   type CompareNode,
@@ -213,6 +214,16 @@ function CompareView({ node }: { node: CompareNode }) {
     (props.splitPosition as number | undefined) ?? 0.5,
   );
 
+  // Own the live viewport (zoom/pan) locally so wheel-zoom + drag-pan work in
+  // the compare view exactly like the single ImageStandalone pane. The
+  // compositor forwards this SAME zoom/pan to BOTH the baseline and comparison
+  // panes, so split/blend/diff zoom in lock-step and the split divider stays
+  // aligned. (Previously hardcoded zoom=1/pan=0, so zoom never worked here.)
+  const [viewport, setViewport] = useState<ImageViewport>({
+    zoom: 1,
+    pan: { x: 0, y: 0 },
+  });
+
   return (
     <ChartBox>
       <CompositeMediaPane
@@ -227,8 +238,9 @@ function CompareView({ node }: { node: CompareNode }) {
         splitPosition={splitPos}
         onSplitPositionChange={setSplitPos}
         blendAlpha={props.blendAlpha as number | undefined}
-        zoom={1}
-        pan={{ x: 0, y: 0 }}
+        zoom={viewport.zoom}
+        pan={viewport.pan}
+        onViewportChange={setViewport}
         label=""
         overlay={foreground.overlay}
       />
