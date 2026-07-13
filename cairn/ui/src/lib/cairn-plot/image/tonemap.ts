@@ -99,16 +99,18 @@ export function srgbOetf(x: number): number {
 
 /**
  * OUTPUT-ENCODE: map DISPLAY-LINEAR [0,1] → display code value [0,1].
- *  - `tonemap === "srgb"` → sRGB OETF (the physically-correct display encode);
- *  - otherwise → `pow(x, 1/gamma)` (gamma defaults to 1 = identity for
- *    linear/reinhard/aces unless the caller opts into a gamma curve).
+ *
+ * Display encoding is INDEPENDENT of the tone-map operator: every operator
+ * (`linear`/`srgb`/`reinhard`/`aces`) produces display-LINEAR light, which must
+ * be encoded for the sRGB 8-bit framebuffer. So the default is the sRGB OETF for
+ * ALL operators — writing raw display-linear values into an sRGB buffer would
+ * render midtones too dark. `gamma` is an OPTIONAL override: when the caller
+ * passes a positive number, a pure `pow(x, 1/gamma)` curve is used instead of
+ * sRGB (gamma=1 → linear/no-encode, for data already in display space).
  */
-export function outputEncode(
-  x: number,
-  tonemap: string | undefined,
-  gamma: number,
-): number {
-  if (tonemap === "srgb") return srgbOetf(x);
-  const g = gamma && gamma > 0 ? gamma : 1;
-  return clamp01(Math.pow(clamp01(x), 1 / g));
+export function outputEncode(x: number, gamma?: number): number {
+  if (typeof gamma === "number" && gamma > 0) {
+    return clamp01(Math.pow(clamp01(x), 1 / gamma));
+  }
+  return srgbOetf(x);
 }

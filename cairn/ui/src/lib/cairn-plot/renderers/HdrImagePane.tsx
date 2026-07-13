@@ -9,7 +9,7 @@
  *   float scene-linear pixel
  *     → applyExposure(v, EV)               (× 2**exposure)
  *     → TONEMAP_OPERATORS[tonemap](rgb)    (HDR [0,∞) → display-linear [0,1])
- *     → outputEncode(x, tonemap, gamma)    (sRGB OETF, else pow(x,1/gamma))
+ *     → outputEncode(x, gamma)            (sRGB OETF by default; pow(x,1/gamma) if gamma set)
  *     → 8-bit RGBA into an ImageData → putImageData onto a <canvas>.
  *
  * The decode is a single CPU pass recomputed whenever the data OR any of
@@ -49,7 +49,7 @@ export interface HdrImagePaneProps {
   tonemap?: string;
   /** Exposure in EV stops (× 2**exposure). Default `0`. */
   exposure?: number;
-  /** Output-encode gamma for non-sRGB operators (`pow(x,1/gamma)`). Default `1`. */
+  /** Optional output-encode gamma override (`pow(x,1/gamma)`). Unset = sRGB OETF (correct for all operators). */
   gamma?: number;
   showAxes?: boolean;
   label?: string;
@@ -77,7 +77,7 @@ export function tonemapToImageData(
   hdr: HdrData,
   tonemap: string,
   exposure: number,
-  gamma: number,
+  gamma?: number,
 ): ImageData {
   const { h, w, c } = shapeDims(hdr.shape);
   const src = hdr.data;
@@ -112,9 +112,9 @@ export function tonemapToImageData(
     ];
     const [tr, tg, tb] = op(lit);
     const o = i * 4;
-    out[o] = 255 * outputEncode(tr, tonemap, gamma);
-    out[o + 1] = 255 * outputEncode(tg, tonemap, gamma);
-    out[o + 2] = 255 * outputEncode(tb, tonemap, gamma);
+    out[o] = 255 * outputEncode(tr, gamma);
+    out[o + 1] = 255 * outputEncode(tg, gamma);
+    out[o + 2] = 255 * outputEncode(tb, gamma);
     // Alpha is a coverage value, not light — clamp to [0,1], no tone-map.
     out[o + 3] = 255 * (a < 0 ? 0 : a > 1 ? 1 : a);
   }
@@ -125,7 +125,7 @@ export default function HdrImagePane({
   hdr,
   tonemap = "srgb",
   exposure = 0,
-  gamma = 1,
+  gamma,
   showAxes = false,
   label = "",
   interpolation = "auto",

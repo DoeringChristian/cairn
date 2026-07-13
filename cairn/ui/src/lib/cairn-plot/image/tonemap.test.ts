@@ -80,12 +80,14 @@ test("srgbOetf matches known reference points", () => {
   approx(srgbOetf(0.5), 1.055 * Math.pow(0.5, 1 / 2.4) - 0.055, 1e-12);
 });
 
-test("outputEncode: srgb uses OETF, else gamma pow(x,1/g)", () => {
-  approx(outputEncode(0.5, "srgb", 1), srgbOetf(0.5));
-  // gamma=1 identity for non-srgb
-  approx(outputEncode(0.5, "linear", 1), 0.5);
+test("outputEncode: sRGB OETF by default (all operators), gamma overrides", () => {
+  // Default (no gamma) → sRGB OETF for EVERY operator (encoding is independent
+  // of the tone-map operator; raw display-linear would be too dark).
+  approx(outputEncode(0.5), srgbOetf(0.5));
+  // Explicit gamma → pure power curve override. gamma=1 = linear/identity.
+  approx(outputEncode(0.5, 1), 0.5);
   // gamma=2 => sqrt
-  approx(outputEncode(0.25, "linear", 2), 0.5);
-  // gamma<=0 guarded to identity
-  approx(outputEncode(0.3, "aces", 0), 0.3);
+  approx(outputEncode(0.25, 2), 0.5);
+  // gamma<=0 falls back to sRGB (not identity)
+  approx(outputEncode(0.3, 0), srgbOetf(0.3));
 });

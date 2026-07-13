@@ -155,7 +155,7 @@ function ImageHdrStandalone(p: P) {
         hdr={rest.hdr}
         tonemap={rest.tonemap ?? "srgb"}
         exposure={rest.exposure ?? 0}
-        gamma={rest.gamma ?? 1}
+        gamma={rest.gamma}
         showAxes={rest.showAxes ?? false}
         label={rest.label ?? ""}
         interpolation={rest.interpolation ?? "auto"}
