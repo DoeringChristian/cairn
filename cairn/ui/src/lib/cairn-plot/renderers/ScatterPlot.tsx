@@ -1,4 +1,4 @@
-import { useId, useMemo, useState, type ReactNode } from "react";
+import { useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { SERIES_COLORS, type ScatterPoint } from "../types";
 import type { ParetoDirection } from "../transforms/pareto";
 import { computeParetoFront } from "../transforms/pareto";
@@ -9,6 +9,7 @@ import { AXIS, niceTicks, paddedDomain } from "../theme";
 import { Axis, PlotFrame, type AxisTick } from "../primitives/Axis";
 import Tooltip from "../primitives/Tooltip";
 import { pointerAnchor, type TooltipAnchor } from "../primitives/tooltip-position";
+import { useChartViewport, type PlotRect } from "../viewport/use-chart-viewport";
 
 const DEFAULT_COLORS = SERIES_COLORS;
 
@@ -120,20 +121,39 @@ export default function ScatterPlot({
 
   const logSafe = (v: number) => Math.log10(Math.max(v, 1e-10));
 
-  // The scatter domain is always auto-computed (no user-set viewport), so pad
-  // it ~5% on each side of the data extent — points never touch the frame in
-  // the home position. Padding is applied in the mapped (log or linear) space.
-  const [xMin, xMax] = paddedDomain(
+  // The scatter HOME domain is the ~5%-padded data extent (in mapped log/linear
+  // space) — points never touch the frame in the home position. The live
+  // viewport (zoom/pan) starts here and is owned by useChartViewport.
+  const homeX = paddedDomain(
     xLog ? logSafe(xDomain.min) : xDomain.min,
     xLog ? logSafe(xDomain.max) : xDomain.max,
   );
-  const [yMin, yMax] = paddedDomain(
+  const homeY = paddedDomain(
     yLog ? logSafe(yDomain.min) : yDomain.min,
     yLog ? logSafe(yDomain.max) : yDomain.max,
   );
+  const home = useMemo(
+    () => ({ xDomain: homeX, yDomain: homeY }),
+    [homeX[0], homeX[1], homeY[0], homeY[1]],
+  );
+
+  // Publish the plot inset (container-local px) every render so the viewport
+  // hook can hit-test wheel/pointer gestures against it.
+  const plotRectRef = useRef<PlotRect | null>(null);
+  plotRectRef.current = { x: pad.left, y: pad.top, width: plotW, height: plotH };
+
+  const { domain, containerProps, dragRect, wasDragRef } = useChartViewport({
+    containerRef,
+    plotRectRef,
+    home,
+  });
+
+  const [xMin, xMax] = domain.xDomain;
+  const [yMin, yMax] = domain.yDomain;
   const xRange = xMax - xMin || 1;
   const yRange = yMax - yMin || 1;
 
+  // toX/toY map raw data through the LIVE viewport domain (mapped space).
   const toX = (v: number) => {
     const mapped = xLog ? logSafe(v) : v;
     return pad.left + ((mapped - xMin) / xRange) * plotW;
@@ -144,8 +164,9 @@ export default function ScatterPlot({
   };
 
   // Tick values: "nice"-rounded on a linear axis; evenly-spaced fractions on a
-  // log axis (pretty log ticks are out of scope). Positions come from the same
-  // toX/toY scale as the marks so ticks and points always line up.
+  // log axis (pretty log ticks are out of scope). Recomputed from the LIVE
+  // domain so ticks update as the view zooms/pans; the range-filter drops any
+  // that fall outside the frame.
   const plotRect = { x: pad.left, y: pad.top, width: plotW, height: plotH };
   const eps = 0.5;
   const xTicks: AxisTick[] = xLog
@@ -153,7 +174,7 @@ export default function ScatterPlot({
         pos: pad.left + t * plotW,
         label: formatNum(Math.pow(10, xMin + t * xRange)),
       }))
-    : niceTicks(xDomain.min, xDomain.max)
+    : niceTicks(xMin, xMax)
         .map((v) => ({ pos: toX(v), label: formatNum(v) }))
         .filter((t) => t.pos >= pad.left - eps && t.pos <= pad.left + plotW + eps);
   const yTicks: AxisTick[] = yLog
@@ -161,7 +182,7 @@ export default function ScatterPlot({
         pos: pad.top + plotH - t * plotH,
         label: formatNum(Math.pow(10, yMin + t * yRange)),
       }))
-    : niceTicks(yDomain.min, yDomain.max)
+    : niceTicks(yMin, yMax)
         .map((v) => ({ pos: toY(v), label: formatNum(v) }))
         .filter((t) => t.pos >= pad.top - eps && t.pos <= pad.top + plotH + eps);
 
@@ -187,14 +208,21 @@ export default function ScatterPlot({
     ? (points.find((p) => p.id === hoveredId) ?? null)
     : null;
 
+  const clipId = `scatter-clip-${rawId.replace(/:/g, "")}`;
   return (
     <div
       ref={containerRef}
       className={`relative ${className ?? ""}`}
       onMouseLeave={handleLeave}
+      {...containerProps}
     >
       {plotW > 0 && plotH > 0 && (
         <svg width={w} height={h} className="select-none">
+          <defs>
+            <clipPath id={clipId}>
+              <rect x={pad.left} y={pad.top} width={plotW} height={plotH} />
+            </clipPath>
+          </defs>
           <Axis orientation="left" plot={plotRect} ticks={yTicks} title={yLabel} showGrid />
           <Axis orientation="bottom" plot={plotRect} ticks={xTicks} title={xLabel} showGrid />
           <PlotFrame
@@ -203,10 +231,18 @@ export default function ScatterPlot({
             width={plotW}
             height={plotH}
             interactive
-            onClick={onBackgroundClick}
+            onClick={() => {
+              if (wasDragRef.current) {
+                wasDragRef.current = false;
+                return;
+              }
+              onBackgroundClick?.();
+            }}
             className="cursor-default"
           />
 
+          {/* Marks clip to the plot rect so zoomed content never overflows. */}
+          <g clipPath={`url(#${clipId})`}>
           {paretoPath && (
             <path
               d={paretoPath}
@@ -249,13 +285,20 @@ export default function ScatterPlot({
                 }
                 strokeWidth={isSelected ? 2.5 : isHovered ? 2 : 1.5}
                 className="cursor-pointer"
-                onClick={() => onClick?.(pt.id)}
+                onClick={() => {
+                  if (wasDragRef.current) {
+                    wasDragRef.current = false;
+                    return;
+                  }
+                  onClick?.(pt.id);
+                }}
                 onMouseEnter={(e) => handlePointEnter(pt, e)}
                 onMouseMove={handlePointMove}
                 onMouseLeave={handleLeave}
               />
             );
           })}
+          </g>
 
           {hasColorbar && (() => {
             const barX = w - pad.right + 10;
@@ -319,6 +362,22 @@ export default function ScatterPlot({
             );
           })()}
         </svg>
+      )}
+
+      {dragRect && (
+        <div
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            left: dragRect.x,
+            top: dragRect.y,
+            width: dragRect.width,
+            height: dragRect.height,
+            border: "1px solid #0969da",
+            background: "rgba(83, 155, 245, 0.12)",
+            pointerEvents: "none",
+          }}
+        />
       )}
 
       {hoveredPoint && tooltipPos && (
