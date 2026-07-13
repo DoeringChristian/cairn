@@ -162,6 +162,30 @@
           "properties": {
             "kind": {
               "type": "string",
+              "const": "imghdr"
+            },
+            "hash": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "meta": {
+              "$ref": "#/definitions/Record%3Cstring%2Cunknown%3E"
+            }
+          },
+          "required": [
+            "kind",
+            "hash",
+            "meta"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
               "const": "url"
             },
             "src": {

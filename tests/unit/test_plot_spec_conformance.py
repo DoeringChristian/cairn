@@ -129,8 +129,9 @@ def _dataspec_branches(defs) -> dict:
         (cs.ImageDataSpec, "image"),
         (cs.UrlDataSpec, "url"),
         (cs.NpzDataSpec, "npz"),
+        (cs.ImgHdrDataSpec, "imghdr"),
     ],
-    ids=["inline", "image", "url", "npz"],
+    ids=["inline", "image", "url", "npz", "imghdr"],
 )
 def test_dataspec_variant_matches_schema(model, kind, defs):
     branch = _dataspec_branches(defs)[kind]
@@ -284,6 +285,33 @@ def test_npz_dataspec_round_trips():
     assert dumped["root"]["data"]["kind"] == "npz"
     assert dumped["root"]["data"]["objectType"] == "pointcloud"
     assert dumped["root"]["data"]["meta"]["n_points"] == 100
+    assert cs.PlotDescriptorSpec.model_validate(dumped) == spec
+
+
+def test_imghdr_dataspec_round_trips():
+    # HDR-A: the `imghdr` DataSpec (true float-HDR image artifact).
+    spec = cs.PlotDescriptorSpec(
+        root=cs.PlotLeafSpec(
+            kind="plot",
+            renderer="imagehdr",
+            props={"tonemap": "aces", "exposure": 0, "gamma": 1},
+            data=cs.ImgHdrDataSpec(
+                kind="imghdr",
+                hash="sha256:hdr",
+                meta={
+                    "shape": [4, 4, 3],
+                    "dtype": "<f4",
+                    "channels": 3,
+                    "vmin": 0.0,
+                    "vmax": 8.0,
+                },
+            ),
+        ),
+    )
+    dumped = spec.model_dump(exclude_none=True, mode="json")
+    assert dumped["root"]["data"]["kind"] == "imghdr"
+    assert dumped["root"]["data"]["meta"]["shape"] == [4, 4, 3]
+    assert dumped["root"]["renderer"] == "imagehdr"
     assert cs.PlotDescriptorSpec.model_validate(dumped) == spec
 
 

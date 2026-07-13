@@ -37,6 +37,7 @@ __all__ = [
     "ImageDataSpec",
     "UrlDataSpec",
     "NpzDataSpec",
+    "ImgHdrDataSpec",
     "DataSpec",
     "PlotSpec",
     "PlotLeafSpec",
@@ -198,9 +199,25 @@ class NpzDataSpec(_Strict):
     meta: dict[str, Any]
 
 
+class ImgHdrDataSpec(_Strict):
+    """`DataSpec{kind:"imghdr"}` — a true float-HDR image artifact (HDR-A).
+
+    The bytes are a float ``.npy`` (float32/float64) with shape ``[H,W]``
+    (grayscale) or ``[H,W,C]`` (``C∈{1,3,4}``), tone-mapped client-side by the
+    ``"imagehdr"`` renderer — NOT min-max-normalized to 8-bit at ingest like the
+    ``image`` path. ``hash`` keys the LOCAL store / ENDPOINT artifact (required-
+    but-nullable, matching the TS `string | null`); ``meta`` is informational
+    provenance (``{shape,dtype,channels,vmin,vmax}``) carried inline for tooling
+    parity with ``npz`` (the renderer reads shape from the npy header itself)."""
+
+    kind: Literal["imghdr"]
+    hash: Optional[str]
+    meta: dict[str, Any]
+
+
 # Discriminated on ``kind`` (mirrors the TS `DataSpec` discriminated union).
 DataSpec = Annotated[
-    Union[InlineDataSpec, ImageDataSpec, UrlDataSpec, NpzDataSpec],
+    Union[InlineDataSpec, ImageDataSpec, UrlDataSpec, NpzDataSpec, ImgHdrDataSpec],
     Field(discriminator="kind"),
 ]
 

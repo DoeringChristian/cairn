@@ -18,5 +18,7 @@
     "allowSyntheticDefaultImports": true,
     "resolveJsonModule": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  "//exclude": "Pure Node test files (run via `node --experimental-strip-types --test`) use node: builtins and .ts import specifiers; they are not part of the shipped bundle and @types/node is not a dependency, so keep them out of the app typecheck.",
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
 }

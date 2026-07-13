@@ -21,6 +21,7 @@ import {
   resolveImageViewportItems,
   fetchPointCloudArrays,
   parseOverlay,
+  parseNpy,
   type DataSource,
 } from "./lib/cairn-plot";
 
@@ -54,6 +55,20 @@ export type DataSpec =
       kind: "npz";
       hash: string | null;
       objectType: "pointcloud" | "mesh" | "volume" | "boxes3d";
+      meta: Record<string, unknown>;
+    }
+  | {
+      // A true float-HDR image artifact (HDR-A). The bytes are a float `.npy`
+      // (float32/float64) with shape `[H,W]` (grayscale), `[H,W,1|3|4]`; parsed
+      // by `parseNpy` and tone-mapped client-side by the `"imagehdr"` renderer
+      // (`HdrImagePane`) — NOT min-max-normalized to 8-bit at ingest like the
+      // `image` path. `hash` keys the LOCAL store / ENDPOINT artifact
+      // (required-but-nullable, matching `image`/`npz`). `meta` is informational
+      // provenance (`{shape,dtype,channels,vmin,vmax}`) baked by Python — the
+      // renderer reads shape from the npy header itself, so `meta` is for
+      // tooling parity with `npz`, not required for rendering.
+      kind: "imghdr";
+      hash: string | null;
       meta: Record<string, unknown>;
     }
   | {
@@ -194,6 +209,22 @@ export async function resolveDataProps(
       }
       const arrays = await fetchPointCloudArrays(data.hash, source);
       return { item: { arrays, meta: data.meta } };
+    }
+    case "imghdr": {
+      // Float-HDR image (HDR-A). Fetch the float `.npy` bytes (source-agnostic:
+      // LOCAL store or ENDPOINT), parse into `{dtype, shape, data:Float64Array}`,
+      // and hand the HDR renderer (`HdrImagePane`) the `hdr` prop it consumes —
+      // exposure/tone-mapping happen client-side, no 8-bit normalization. Mirror
+      // of the `npz` branch (single bytes fetch; `meta` carried inline).
+      if (!data.hash) {
+        throw new Error("imghdr DataSpec has no hash to resolve.");
+      }
+      const buf = await source.bytes(data.hash);
+      const npy = parseNpy(buf);
+      return {
+        hdr: { data: npy.data, shape: npy.shape, dtype: npy.dtype },
+        meta: data.meta,
+      };
     }
   }
 }
