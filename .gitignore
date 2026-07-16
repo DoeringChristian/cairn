@@ -26,6 +26,9 @@ cairn/ui/node_modules/
 cairn/ui/*.tsbuildinfo
 # cairn/ui/dist/ is COMMITTED so pip install doesn't need Node.
 !cairn/ui/dist/
+# Generated browser-test bundles (esbuild output for engine/__tests__/*.browser.ts
+# harnesses run via claude-in-chrome) — regenerate from source, never committed.
+cairn/ui/src/**/__tests__/*.browser.bundle.js
 
 # Cairn runtime
 .cairn/

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>engine backend readback harness</title>
+    <style>
+      body { font-family: ui-monospace, monospace; font-size: 13px; padding: 16px; background: #111; color: #eee; }
+      #status { font-size: 28px; font-weight: bold; margin-bottom: 12px; }
+      #result div { white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <h1>engine/webgl2/device.ts — backend-readback harness</h1>
+    <div id="status">RUNNING&hellip;</div>
+    <div id="result"></div>
+    <!--
+      This file loads the ESM bundle produced from
+      backend-readback.browser.ts (see the RUNNING instructions in that
+      file's header comment) — NOT the raw .ts (browsers can't strip types).
+    -->
+    <script type="module" src="./backend-readback.browser.bundle.js"></script>
+  </body>
+</html>
