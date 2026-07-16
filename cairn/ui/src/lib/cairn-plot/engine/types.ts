@@ -31,6 +31,22 @@ export interface Device {
   createSurface(canvas: HTMLCanvasElement, opts: { hdr: boolean }): Surface;
   renderFullscreen(target: Surface | Texture, pipeline: RenderPipeline, bindGroup: BindGroup): void;
   readback(source: Surface | Texture): Promise<Uint8Array | Float32Array>;
+  /**
+   * GPU-side parallel reduction (Task 7) over the `[0,width)x[0,height)`
+   * region of `texA`/`texB` (RGB channels only): sum of squared per-channel
+   * diffs (`sumSq`) and sum of absolute per-channel diffs (`sumAbs`), used by
+   * `engine/image-engine.ts`'s `computeMetrics`. WebGPU-only (see
+   * `engine/shaders/reduce.wgsl.ts`'s module doc for why) — `undefined` on
+   * WebGL2, where `computeMetrics` falls back to `readback()` + a CPU loop
+   * instead. `width`/`height` may be smaller than either texture's own
+   * dimensions (the caller passes the `min(texA,texB)` comparison region).
+   */
+  reduceDiffSumSquaredAbs?(
+    texA: Texture,
+    texB: Texture,
+    width: number,
+    height: number,
+  ): Promise<{ sumSq: number; sumAbs: number }>;
   destroy(): void;
   /**
    * True while this device's underlying GPU context is LOST and awaiting

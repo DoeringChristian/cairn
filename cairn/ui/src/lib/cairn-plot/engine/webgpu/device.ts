@@ -101,6 +101,7 @@ import type {
   Capabilities,
 } from "../types";
 import { configureHDRSurface, configureSDRSurface, type SurfaceConfigResult } from "./surface";
+import { reduceWGSL } from "../shaders/reduce.wgsl";
 
 function gpuFormatFor(format: TextureFormat): GPUTextureFormat {
   switch (format) {
@@ -494,6 +495,32 @@ export async function createWebGPUDevice(): Promise<Device> {
 
   let destroyed = false;
 
+  // Lazily-built, memoized (one per GPUDevice, not per call) compute pipeline
+  // for `reduceDiffSumSquaredAbs` — see `engine/shaders/reduce.wgsl.ts`'s
+  // module doc comment for the reduction design.
+  const REDUCE_WORKGROUP_SIZE = 256;
+  let reducePipeline: GPUComputePipeline | null = null;
+  let reduceBindGroupLayout: GPUBindGroupLayout | null = null;
+  function getReducePipeline(): { pipeline: GPUComputePipeline; layout: GPUBindGroupLayout } {
+    if (!reducePipeline || !reduceBindGroupLayout) {
+      const module = gpuDevice.createShaderModule({ code: reduceWGSL });
+      reduceBindGroupLayout = gpuDevice.createBindGroupLayout({
+        entries: [
+          { binding: 0, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "unfilterable-float" } },
+          { binding: 1, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "unfilterable-float" } },
+          { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+          { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+        ],
+      });
+      const layout = gpuDevice.createPipelineLayout({ bindGroupLayouts: [reduceBindGroupLayout] });
+      reducePipeline = gpuDevice.createComputePipeline({
+        layout,
+        compute: { module, entryPoint: "cs_main" },
+      });
+    }
+    return { pipeline: reducePipeline, layout: reduceBindGroupLayout };
+  }
+
   const device: Device = {
     backend: "webgpu",
     capabilities,
@@ -731,6 +758,65 @@ export async function createWebGPUDevice(): Promise<Device> {
       }
       // rgba32float / r32float: raw bytes are already IEEE754 float32.
       return new Float32Array(tight.buffer, tight.byteOffset, tight.byteLength / 4);
+    },
+
+    async reduceDiffSumSquaredAbs(texA, texB, width, height) {
+      const a = texA as WGPUTexture;
+      const b = texB as WGPUTexture;
+      const count = Math.max(0, width * height);
+      const numWorkgroups = Math.max(1, Math.ceil(count / REDUCE_WORKGROUP_SIZE));
+      const { pipeline, layout } = getReducePipeline();
+
+      const partialSize = numWorkgroups * 2 * 4; // 2 f32 (sumSq, sumAbs) per workgroup
+      const partialBuffer = gpuDevice.createBuffer({
+        size: partialSize,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+      });
+      const dimsBuffer = gpuDevice.createBuffer({
+        size: 16, // Dims struct: 4x u32, std140/std430-aligned
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
+      gpuDevice.queue.writeBuffer(dimsBuffer, 0, new Uint32Array([Math.max(1, width), Math.max(1, height), count, 0]));
+
+      const bindGroup = gpuDevice.createBindGroup({
+        layout,
+        entries: [
+          { binding: 0, resource: a.gpuTexture.createView() },
+          { binding: 1, resource: b.gpuTexture.createView() },
+          { binding: 2, resource: { buffer: partialBuffer } },
+          { binding: 3, resource: { buffer: dimsBuffer } },
+        ],
+      });
+
+      const readBuffer = gpuDevice.createBuffer({
+        size: partialSize,
+        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+      });
+
+      const encoder = gpuDevice.createCommandEncoder();
+      const pass = encoder.beginComputePass();
+      pass.setPipeline(pipeline);
+      pass.setBindGroup(0, bindGroup);
+      pass.dispatchWorkgroups(numWorkgroups);
+      pass.end();
+      encoder.copyBufferToBuffer(partialBuffer, 0, readBuffer, 0, partialSize);
+      gpuDevice.queue.submit([encoder.finish()]);
+
+      await readBuffer.mapAsync(GPUMapMode.READ);
+      const mapped = new Float32Array(readBuffer.getMappedRange());
+      const partial = mapped.slice(); // copy out before unmap invalidates `mapped`
+      readBuffer.unmap();
+      readBuffer.destroy();
+      partialBuffer.destroy();
+      dimsBuffer.destroy();
+
+      let sumSq = 0;
+      let sumAbs = 0;
+      for (let i = 0; i < numWorkgroups; i++) {
+        sumSq += partial[i * 2]!;
+        sumAbs += partial[i * 2 + 1]!;
+      }
+      return { sumSq, sumAbs };
     },
 
     destroy() {
