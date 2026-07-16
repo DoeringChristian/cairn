@@ -242,6 +242,70 @@ def test_mesh_forwards_3d_camera_and_planes_props():
     assert "props" not in cp.Mesh(verts, faces).to_node()
 
 
+def _tetra():
+    import numpy as np
+
+    verts = np.array([[1, 1, 1], [1, -1, -1], [-1, 1, -1], [-1, -1, 1]], dtype=np.float32)
+    faces = np.array([[0, 1, 2], [0, 3, 1], [0, 2, 3], [1, 3, 2]], dtype=np.int64)
+    return verts, faces
+
+
+def test_mesh_face_colors_pack_into_store_and_meta():
+    # S9/D3: per-face colors pack an (F, 3) `face_colors` array into the mesh
+    # .npz store + meta flags, and default color_mode to "face-colors".
+    import base64
+    import io
+
+    import numpy as np
+
+    verts, faces = _tetra()
+    fc = np.array(
+        [[1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 0]], dtype=np.float32
+    )  # one color per face
+    mesh = cp.Mesh(verts, faces, face_colors=fc)
+
+    node = mesh.to_node()
+    meta = node["data"]["meta"]
+    assert meta["has_face_colors"] is True
+    assert meta["face_color_channels"] == 3
+    # Precedence default: face_colors present + no explicit color_mode →
+    # colorMode "face-colors" rides in the leaf props.
+    assert node["props"]["colorMode"] == "face-colors"
+
+    # The packed .npz carries a `face_colors` array shaped (n_faces, 3).
+    store = mesh._collect_store()
+    (blob,) = store.values()
+    raw = base64.b64decode(blob["b64"])
+    npz = np.load(io.BytesIO(raw))
+    assert "face_colors" in npz.files
+    assert npz["face_colors"].shape == (4, 3)
+    np.testing.assert_allclose(npz["face_colors"], fc)
+
+    # An explicit color_mode always wins over the face_colors default.
+    forced = cp.Mesh(verts, faces, face_colors=fc, color_mode="solid")
+    assert forced.to_node()["props"]["colorMode"] == "solid"
+
+
+def test_mesh_face_colors_rgba_channels():
+    import numpy as np
+
+    verts, faces = _tetra()
+    fc = np.zeros((4, 4), dtype=np.float32)
+    meta = cp.Mesh(verts, faces, face_colors=fc).to_node()["data"]["meta"]
+    assert meta["face_color_channels"] == 4
+
+
+def test_mesh_face_colors_shape_mismatch_is_graceful():
+    # A wrong-length face_colors array surfaces a clear ValueError (not a numpy
+    # traceback), and the display hook still never raises.
+    import numpy as np
+
+    verts, faces = _tetra()  # 4 faces
+    bad = np.zeros((3, 3), dtype=np.float32)  # 3 colors ≠ 4 faces
+    with pytest.raises(ValueError, match=r"face_colors"):
+        cp.Mesh(verts, faces, face_colors=bad)
+
+
 def test_pointcloud_forwards_planes_prop():
     import numpy as np
 

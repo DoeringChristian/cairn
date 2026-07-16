@@ -297,6 +297,22 @@ def build_gallery() -> list[tuple[str, object]]:
         "Mesh — 3D icosahedron, colored per-vertex by height (WebGL)",
         cp.Mesh(verts, faces, values=vals, color_mode="values", show_axes=True),
     ))
+    # Per-FACE colors: a tetrahedron whose 4 triangular faces each render one
+    # distinct flat color (non-indexed expansion — not vertex-interpolated).
+    tetra_v = np.array(
+        [[1, 1, 1], [1, -1, -1], [-1, 1, -1], [-1, -1, 1]], dtype=np.float32
+    )
+    tetra_f = np.array(
+        [[0, 1, 2], [0, 3, 1], [0, 2, 3], [1, 3, 2]], dtype=np.int64
+    )
+    tetra_face_colors = np.array(
+        [[0.90, 0.20, 0.20], [0.20, 0.80, 0.30], [0.25, 0.45, 0.95], [0.95, 0.80, 0.20]],
+        dtype=np.float32,
+    )  # (4, 3) — one color per face
+    items.append((
+        "Mesh — 3D tetrahedron, distinct per-face (per-triangle) colors (WebGL)",
+        cp.Mesh(tetra_v, tetra_f, face_colors=tetra_face_colors, show_axes=True),
+    ))
     items.append((
         "Volume — 3D scalar grid, Gaussian blob (WebGL raymarch)",
         cp.Volume(_volume(), colormap="viridis", show_axes=True),
