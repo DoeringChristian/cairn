@@ -30,7 +30,7 @@
  *
  *   logical binding 2 (`u_bind2: vec4<f32>`, native binding 2*3+2=8):
  *     .x = exposureEV        (f32, EV stops)
- *     .y = operator           (f32, rounded to int: 0=linear,1=srgb,2=reinhard,3=aces)
+ *     .y = operator           (f32, rounded to int: 0=linear,1=srgb,2=reinhard,3=aces,4=extended)
  *     .z = gamma               (f32; <=0 means "unset" -> sRGB OETF encode)
  *     .w = isScalar            (f32, 0/1 boolean flag)
  *   logical binding 3 (`u_bind3: vec4<f32>`, native binding 3*3+2=11):
@@ -144,15 +144,21 @@ fn acesCurve(x: f32) -> f32 {
   return clamp(num / den, 0.0, 1.0);
 }
 
-// operatorId: 0=linear, 1=srgb, 2=reinhard, 3=aces (matches TONEMAP_OPERATORS
-// key order in image/tonemap.ts). linear/srgb are the SAME clamp — the sRGB
-// OETF lives in outputEncodeF, not here.
+// operatorId: 0=linear, 1=srgb, 2=reinhard, 3=aces, 4=extended (matches
+// TONEMAP_OPERATORS key order in image/tonemap.ts). linear/srgb are the SAME
+// clamp — the sRGB OETF lives in outputEncodeF, not here. 4 (extended) is a
+// pure identity — no compression, no clamp — deliberately preserving values
+// above 1.0 for a real HDR (hdrOut) target; see image/tonemap.ts's doc
+// comment on the "extended" entry for why.
 fn applyOperator(rgb: vec3<f32>, operatorId: i32) -> vec3<f32> {
   if (operatorId == 2) {
     return vec3<f32>(reinhardCurve(rgb.x), reinhardCurve(rgb.y), reinhardCurve(rgb.z));
   }
   if (operatorId == 3) {
     return vec3<f32>(acesCurve(rgb.x), acesCurve(rgb.y), acesCurve(rgb.z));
+  }
+  if (operatorId == 4) {
+    return rgb;
   }
   // 0 (linear) and 1 (srgb), and any unrecognized id, fall back to the clamp.
   return clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0));

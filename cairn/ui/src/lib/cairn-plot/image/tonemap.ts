@@ -42,7 +42,7 @@ export type RgbTriple = [number, number, number];
  * (pre-gamma / pre-sRGB). Keep it a plain object so adding an operator is a
  * one-line addition (see module doc).
  */
-export type TonemapOperator = "linear" | "srgb" | "reinhard" | "aces";
+export type TonemapOperator = "linear" | "srgb" | "reinhard" | "aces" | "extended";
 
 const clamp01 = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x);
 
@@ -74,6 +74,16 @@ export const TONEMAP_OPERATORS: Record<string, (rgb: RgbTriple) => RgbTriple> = 
   reinhard: ([r, g, b]) => [reinhardCurve(r), reinhardCurve(g), reinhardCurve(b)],
   // ACES filmic (Narkowicz), per channel.
   aces: ([r, g, b]) => [acesCurve(r), acesCurve(g), acesCurve(b)],
+  // Extended (HDR-out only): pure identity — no compression, no clamp.
+  // Values stay in scene-linear [0, ∞) so a real HDR surface (`rgba16float`
+  // + `toneMapping:{mode:'extended'}`, see `engine/webgpu/surface.ts`'s
+  // `configureHDRSurface`) can preserve them past 1.0 — Chrome's `'extended'`
+  // canvas tone-mapping mode expects EXACTLY this: the shader hands over raw
+  // scene-referred values and the OS/display compositor (not this pipeline)
+  // maps them to the panel's actual peak brightness. NOT reachable from any
+  // user-facing tonemap picker — only `engine/image-engine.ts`'s HDR-out
+  // render path selects it (see `renderers/GpuImagePane.tsx`'s `useHdr`).
+  extended: ([r, g, b]) => [r, g, b],
 };
 
 /** The default operator when none / an unknown key is supplied. */

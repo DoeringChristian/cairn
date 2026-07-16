@@ -84,13 +84,18 @@ float acesCurve(float x) {
   return clamp(num / den, 0.0, 1.0);
 }
 
-// operatorId: 0=linear, 1=srgb, 2=reinhard, 3=aces — matches image.wgsl.ts.
+// operatorId: 0=linear, 1=srgb, 2=reinhard, 3=aces, 4=extended — matches
+// image.wgsl.ts (4=extended is a pure identity, no clamp — see that file's
+// doc comment / image/tonemap.ts's "extended" entry).
 vec3 applyOperator(vec3 rgb, int operatorId) {
   if (operatorId == 2) {
     return vec3(reinhardCurve(rgb.x), reinhardCurve(rgb.y), reinhardCurve(rgb.z));
   }
   if (operatorId == 3) {
     return vec3(acesCurve(rgb.x), acesCurve(rgb.y), acesCurve(rgb.z));
+  }
+  if (operatorId == 4) {
+    return rgb;
   }
   return clamp(rgb, 0.0, 1.0);
 }

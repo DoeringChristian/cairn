@@ -98,6 +98,7 @@ import PixelValueOverlay, {
 } from "../primitives/PixelValueOverlay";
 import { useImageViewport, type Viewport as ImageViewport } from "../hooks/use-image-viewport";
 import { acquirePane, releasePane, type PaneHandle, type SourceUpload } from "../engine/pool";
+import { getSharedDevice } from "../engine/device";
 import type { ImageOperator, ImageParams } from "../engine/image-engine";
 
 // ---------------------------------------------------------------------------
@@ -240,6 +241,14 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
   const paneRef = useRef<HTMLDivElement | null>(null);
   const imgWrapperRef = useRef<HTMLDivElement | null>(null);
   const paneHandleRef = useRef<PaneHandle | null>(null);
+  // True once the acquire effect below has resolved a real HDR (rgba16float/
+  // display-p3/extended-tonemap) surface for this pane — see `useHdr`'s
+  // computation just below. Read by the render effect to decide `hdrOut`
+  // (skip the SDR encode) so the two stay in lockstep with the surface the
+  // pool actually configured; a ref (not state) because it must be settled
+  // BEFORE the render effect's first pass and never itself needs to trigger
+  // a re-render (paneReady already does that once acquisition resolves).
+  const useHdrRef = useRef(false);
 
   const [paneReady, setPaneReady] = useState(false);
   const [naturalDims, setNaturalDims] = useState<{ w: number; h: number } | null>(null);
@@ -271,13 +280,31 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
     const canvas = canvasRef.current;
     if (!canvas) return;
     let cancelled = false;
-    acquirePane(canvas).then((handle) => {
-      if (cancelled) {
-        releasePane(handle);
-        return;
-      }
-      paneHandleRef.current = handle;
-      setPaneReady(true);
+    // HDR-out gate: requires (1) a WebGPU backend with `capabilities.hdr`
+    // (WebGL2 is always SDR — see `types.ts`'s `Capabilities` doc), (2) the
+    // OS/display actually reporting extended dynamic range (an HDR surface
+    // on a plain SDR panel just re-clips at the OS compositor, so there's no
+    // point paying for it), and (3) this pane rendering the FLOAT `HdrData`
+    // path (`hdrMode`, i.e. the `imagehdr` prop shape) — plain 8-bit
+    // `imageUrl` images have no values >1.0 to preserve, so they stay SDR
+    // unconditionally. `hdrMode` is read from the closure (stable for a
+    // given pane instance — the two prop shapes never swap mid-life, per
+    // this file's module doc) rather than a dep, matching this effect's
+    // existing run-once-on-mount contract.
+    getSharedDevice().then((device) => {
+      if (cancelled) return;
+      const hasHighDynamicRangeDisplay =
+        typeof matchMedia !== "undefined" && matchMedia("(dynamic-range: high)").matches;
+      const useHdr = device.backend === "webgpu" && device.capabilities.hdr && hasHighDynamicRangeDisplay && hdrMode;
+      useHdrRef.current = useHdr;
+      acquirePane(canvas, { hdr: useHdr }).then((handle) => {
+        if (cancelled) {
+          releasePane(handle);
+          return;
+        }
+        paneHandleRef.current = handle;
+        setPaneReady(true);
+      });
     });
     return () => {
       cancelled = true;
@@ -447,8 +474,25 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
     if (handle.backend === "webgl2") {
       uv = { x: uv.x, y: uv.y + uv.h, w: uv.w, h: -uv.h };
     }
+    // On the true-HDR-out path, the user-selected `tonemap` operator is
+    // BYPASSED in favor of `"extended"` (a pure identity — see
+    // `image/tonemap.ts`'s doc comment on that entry): with a real HDR
+    // surface (`hdrOut:true` -> `rgba16float` + `toneMapping:'extended'`,
+    // `engine/webgpu/surface.ts`'s `configureHDRSurface`) there is nothing
+    // to compress — Chrome's extended tone-mapping mode expects raw
+    // scene-linear values and maps them to the panel's actual peak
+    // brightness itself. `gamma`/`tonemapName` remain irrelevant here too
+    // (the shader's output-encode stage, which is the only place they're
+    // read, is skipped whenever `hdrOut` is set).
     const params: ImageParams = hdrMode
-      ? { exposureEV: exposure, operator: toOperator(tonemapName), gamma, isScalar: false, hdrOut: false, uv }
+      ? {
+          exposureEV: exposure,
+          operator: useHdrRef.current ? "extended" : toOperator(tonemapName),
+          gamma,
+          isScalar: false,
+          hdrOut: useHdrRef.current,
+          uv,
+        }
       : { exposureEV: 0, operator: "linear", gamma: 1, isScalar: false, hdrOut: false, uv };
     handle.render(params);
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -14,7 +14,11 @@
  *   3. [scalar]:  rgb = colormapLUT(rgb.r)                 (GPU-only stage;
  *      no existing CPU renderer applies a colormap at this pipeline point —
  *      see image.wgsl.ts's doc comment)
- *   4. operator:  rgb = TONEMAP_OPERATORS[operator](rgb)   (HDR -> [0,1])
+ *   4. operator:  rgb = TONEMAP_OPERATORS[operator](rgb)   (HDR [0,∞) -> [0,1]
+ *      for every operator EXCEPT `"extended"`, which is a pure identity —
+ *      see `image/tonemap.ts`'s doc comment on that entry — so values above
+ *      1.0 survive this stage on purpose when paired with `hdrOut:true` and
+ *      a real HDR (`rgba16float`/`toneMapping:'extended'`) target.)
  *   5. encode:    out = hdrOut ? rgb : outputEncode(rgb, gamma)
  *
  * ## Not wired into any renderer/bundle entry point yet
@@ -30,7 +34,7 @@ import { imageGLSL } from "./shaders/image.glsl";
 import { compareWGSL } from "./shaders/compare.wgsl";
 import { compareGLSL } from "./shaders/compare.glsl";
 
-export type ImageOperator = "linear" | "srgb" | "reinhard" | "aces";
+export type ImageOperator = "linear" | "srgb" | "reinhard" | "aces" | "extended";
 
 export interface ImageParams {
   /** Exposure in EV stops, applied in scene-linear space: v * 2**ev. */
@@ -50,7 +54,7 @@ export interface ImageParams {
 }
 
 /** Matches TONEMAP_OPERATORS' key order in image/tonemap.ts — see image.wgsl.ts's doc comment. */
-const OPERATOR_ID: Record<ImageOperator, number> = { linear: 0, srgb: 1, reinhard: 2, aces: 3 };
+const OPERATOR_ID: Record<ImageOperator, number> = { linear: 0, srgb: 1, reinhard: 2, aces: 3, extended: 4 };
 
 /** One compiled pipeline per (Device, target TextureFormat) — pipelines are format-specific (targetFormat is baked into createRenderPipeline). */
 const pipelineCache = new WeakMap<Device, Map<TextureFormat, RenderPipeline>>();
