@@ -196,6 +196,7 @@ export default function ScalarPlot({
     onChartPointerDown,
     onChartPointerMove,
     onChartPointerUp,
+    onChartDoubleClick,
     onAxisStripPointerDown,
     clearDrag,
   } = usePlotGestures({
@@ -218,11 +219,12 @@ export default function ScalarPlot({
         userSelect: "none",
         WebkitUserSelect: "none",
       } as CSSProperties}
-      aria-label="Scalar plot. Drag to box-zoom. Alt+drag to pan. Alt+wheel to zoom."
+      aria-label="Scalar plot. Drag to box-zoom. Alt+drag to pan. Wheel to zoom. Double-click to reset."
       onPointerDown={onChartPointerDown}
       onPointerMove={onChartPointerMove}
       onPointerUp={onChartPointerUp}
       onPointerCancel={onChartPointerUp}
+      onDoubleClick={onChartDoubleClick}
       onClick={() => {
         if (wasDragRef.current) { wasDragRef.current = false; return; }
         const hk = hoveredSeriesRef.current;

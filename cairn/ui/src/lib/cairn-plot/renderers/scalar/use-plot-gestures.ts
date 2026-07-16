@@ -99,7 +99,10 @@ export function usePlotGestures({
     const el = chartBoxRef.current;
     if (!el) return;
     const handler = (e: WheelEvent) => {
-      if (!e.altKey && !e.ctrlKey && !e.metaKey) return;
+      // No modifier required — wheel-over-plot zooms directly, matching the
+      // unified chart viewport (useChartViewport). The cursor-inside-plot-rect
+      // test below already scopes the gesture to the drawing area; page scroll
+      // resumes as soon as the cursor leaves it (we only preventDefault inside).
       const po = plotOffsetRef.current;
       if (!po) return; // geometry not measured yet — bail rather than guess
       const rect = el.getBoundingClientRect();
@@ -314,6 +317,16 @@ export function usePlotGestures({
     [onViewportChange],
   );
 
+  // ── Double-click: reset the viewport to autoscale (home) ──
+  // Emit the all-null sentinel; ScalarPlot reads null bounds as "follow the
+  // autoscaled data extent", matching the charts' dblclick-to-home reset.
+  const onChartDoubleClick = useCallback(() => {
+    plotDragRef.current = null;
+    rightAxisDragRef.current = null;
+    setSelection(null);
+    onViewportChange({ xMin: null, xMax: null, yMin: null, yMax: null });
+  }, [onViewportChange]);
+
   // For the container's onLostPointerCapture: abort any in-flight gesture.
   const clearDrag = useCallback(() => {
     plotDragRef.current = null;
@@ -327,6 +340,7 @@ export function usePlotGestures({
     onChartPointerDown,
     onChartPointerMove,
     onChartPointerUp,
+    onChartDoubleClick,
     onAxisStripPointerDown,
     clearDrag,
   };
