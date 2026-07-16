@@ -3,8 +3,10 @@
  * the WebGPU engine, Sub-project 1). Replaces `MediaComparePane`'s CPU
  * compositing (CSS clip-path split + opacity blend) and `ImagePane`'s
  * `image/webgl-diff.ts` diff path with ONE `engine/image-engine.ts`
- * `renderCompare()` GPU pass sampling two source textures (foreground/texA +
- * reference/texB), plus `computeMetrics()` for the MSE/PSNR/MAE readout.
+ * `renderCompare()` GPU pass sampling two source textures (reference/texA +
+ * foreground/texB — texA is the shader's "A" role: left side / alpha=0
+ * endpoint / diff `a` operand, matching legacy semantics), plus
+ * `computeMetrics()` for the MSE/PSNR/MAE readout.
  *
  * ## Gating (mirrors GpuImagePane / plot-gpu-image-addon)
  * Like `renderers/GpuImagePane.tsx`, this pane is NOT wired into any live page
@@ -212,8 +214,14 @@ export default function GpuComparePane({
         t.write(d.data);
         return t;
       };
-      res.texA = uploadTex(fg ?? primary);
-      res.texB = uploadTex(ref ?? primary);
+      // texA = reference/baseline (the shader's "A" role: left side / alpha=0
+      // endpoint / diff `a` operand — matches legacy `compositor.tsx`'s
+      // left-clipped reference pane, `ImagePane.tsx`'s blend alpha=0 side, and
+      // `image/webgl-diff.ts`'s `computeDiffChannel(base.*, other.*, ...)`
+      // where `base` = baselineUrl). texB = foreground/comparison ("B": right
+      // side / alpha=1 / diff `b`).
+      res.texA = uploadTex(ref ?? primary);
+      res.texB = uploadTex(fg ?? primary);
 
       const canvas = canvasRef.current!;
       canvas.width = primary.width;
@@ -382,8 +390,12 @@ export default function GpuComparePane({
           )}
         </div>
 
-        {/* Per-side TEV overlays. split -> each side clipped at the divider;
-            blend/diff -> single foreground overlay. */}
+        {/* Per-side TEV overlays. split -> each side clipped at the divider,
+            LEFT (x<split) = reference, RIGHT (x>=split) = foreground —
+            matching the corrected texA(=reference)/texB(=foreground) binding
+            and legacy `compositor.tsx`'s left-clipped-reference /
+            right-clipped-foreground panes; blend/diff -> single foreground
+            overlay (also matches legacy). */}
         {mode === "split" ? (
           <>
             {baselineUrl && dims && (
@@ -397,7 +409,7 @@ export default function GpuComparePane({
                   naturalHeight={dims.h}
                   zoom={zoom}
                   pan={pan}
-                  sample={sampleFg}
+                  sample={sampleRef}
                   notation={notation}
                   version={pixelDataVersion}
                 />
@@ -414,7 +426,7 @@ export default function GpuComparePane({
                   naturalHeight={dims.h}
                   zoom={zoom}
                   pan={pan}
-                  sample={sampleRef}
+                  sample={sampleFg}
                   notation={notation}
                   version={pixelDataVersion}
                   onActiveChange={setOverlayActive}

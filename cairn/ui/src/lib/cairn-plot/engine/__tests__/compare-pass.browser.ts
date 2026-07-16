@@ -7,20 +7,60 @@
  * this directory — this is NOT a unit test, it's a browser page driven via
  * claude-in-chrome.
  *
- * The reference for each case is computed IN THIS FILE by mirroring the
- * compare shader's math (which itself ports `image/tonemap.ts`'s per-side
- * pipeline + `image/webgl-diff.ts`'s `computeDiffChannel`), then compared to
- * the GPU readback within 1/255. The `computeMetrics` reference is a plain CPU
- * MSE/PSNR/MAE loop over the same source pixels.
+ * ## Reference derivation — LEGACY semantics, NOT the shader
+ * A prior version of this harness built its JS reference by literally
+ * mirroring the compare shader's own branch structure (`cA`/`cB` combined the
+ * same way `compare.wgsl.ts` combines `colorA`/`colorB`). That made the test
+ * self-referential: it could only ever prove "the GPU executes this shader
+ * faithfully," never "this shader's A/B roles mean what the app requires."
+ * A review (Task 7 fix pass) caught a real bug hiding behind exactly that gap
+ * — `media-compare/GpuComparePane.tsx` bound `texA = foreground`,
+ * `texB = reference` (backwards), and this harness's shader-mirrored
+ * reference happily "confirmed" the backwards output because it used the same
+ * (backwards) A/B convention.
+ *
+ * This version derives `expectedPixel` from the INDEPENDENT legacy sources of
+ * truth instead: `media-compare/compositor.tsx` (split divider clips the
+ * REFERENCE pane on the left / FOREGROUND shows through on the right; blend
+ * opacity: foreground=`alpha`, reference=`1-alpha`, so `alpha=0` -> reference,
+ * `alpha=1` -> foreground) and `renderers/ImagePane.tsx` +
+ * `image/webgl-diff.ts` (`webglRenderDiffToCanvas(baseData, otherData, ...)`
+ * where `baseData` = `loadImageData(baselineUrl)` feeds `computeDiffChannel`'s
+ * `a` operand, `otherData` = `loadImageData(imageUrl)` feeds `b`). Sources are
+ * named `PIXELS_REF`/`PIXELS_FG` (not `PIXELS_A`/`PIXELS_B`) to keep the
+ * reference/foreground *role* — the thing that must be bound correctly — in
+ * the variable names, independent of whichever engine bind slot ends up
+ * carrying it. `runCase` builds `texRef`/`texFg` and calls
+ * `renderCompare(device, target, texRef, texFg, params)` in that order —
+ * the SAME order the (fixed) `GpuComparePane.tsx` now uses
+ * (`texA = uploadTex(reference)`, `texB = uploadTex(foreground)`) — so this
+ * harness's calling convention is a faithful proxy for the pane's binding.
+ * `runSwapGuardCase` then renders the SAME sources with the two arguments
+ * SWAPPED (`texFg` first, `texRef` second — i.e. reproducing the exact bug)
+ * and asserts the result *disagrees* with the legacy reference for every
+ * asymmetric submode (`signed`/`relative_*`, split, blend) — the class of
+ * case where `absolute`/`squared` (swap-invariant) would have stayed silent.
+ * That regression case is what makes this file catch the C1 bug: reverting
+ * `GpuComparePane.tsx`'s `texA`/`texB` swap is, bind-for-bind, the same
+ * change as swapping `runCase`'s two texture arguments, and this file now
+ * has an assertion that fails under exactly that swap.
+ *
+ * The `computeMetrics` reference is a plain CPU MSE/PSNR/MAE loop over the
+ * same source pixels (symmetric — order-invariant, so no swap-guard needed).
  *
  * CASES (each rendered to an offscreen `rgba8unorm` texture, sources are
  * `rgba32float` so the per-side pipeline is exercised on real float input):
- *   split @ {0.0, 0.25, 0.5, 0.75, 1.0} — foreground on the left of the
- *       divider, reference on the right (divider is DEST-space uv.x).
- *   blend @ {0.0, 0.25, 0.5, 1.0}       — mix(A, B, alpha).
- *   diff  × all 6 submodes (no colormap) — raw per-channel diff.
+ *   split @ {0.0, 0.25, 0.5, 0.75, 1.0} — reference on the left of the
+ *       divider, foreground/comparison on the right (divider is DEST-space
+ *       uv.x), matching `compositor.tsx`.
+ *   blend @ {0.0, 0.25, 0.5, 1.0}       — mix(reference, foreground, alpha).
+ *   diff  × all 6 submodes (no colormap) — raw per-channel diff, `a`=reference.
  *   diff  + viridis colormap (absolute submode, "positive" cmap mode).
  *   computeMetrics — {mse,psnr,mae} vs a CPU reference, within tolerance.
+ *   SWAP GUARD: split@0.25, blend@0.25, diff/{signed,relative_signed,
+ *       relative_absolute,relative_squared} re-rendered with texRef/texFg
+ *       swapped — asserts the output DIFFERS from the legacy reference
+ *       (proves this harness is sensitive to the exact C1 binding bug).
  *
  * RUNNING:
  *   1. Bundle to plain JS:
@@ -103,7 +143,13 @@ function processSide(px: number[], params: CompareParams): RgbTriple {
   ];
 }
 
-/** Mirror of compare.wgsl.ts's `diffChannel` (== image/webgl-diff.ts's computeDiffChannel). */
+/** `image/webgl-diff.ts`'s `computeDiffChannel(base, other, mode)` verbatim —
+ *  `a` = `base` = reference/baseline, `b` = `other` = foreground/comparison
+ *  (see `renderers/ImagePane.tsx`'s `webglRenderDiffToCanvas(baseData,
+ *  otherData, ...)` call, `baseData = loadImageData(baselineUrl)`). This is
+ *  the LEGACY source of truth this harness's diff reference is derived from
+ *  — `compare.wgsl.ts`'s `diffChannel` happens to be a verbatim port of it,
+ *  but that's a property we're checking, not assuming. */
 function diffChannel(a: number, b: number, mode: CompareDiffSubmode): number {
   const diff = a - b;
   const absDiff = Math.abs(diff);
@@ -124,22 +170,28 @@ function diffChannel(a: number, b: number, mode: CompareDiffSubmode): number {
   }
 }
 
-/** Full JS reference for one output pixel at destination `uvX` (screen-space [0,1)). */
-function expectedPixel(pxA: number[], pxB: number[], uvX: number, params: CompareParams): RgbTriple {
-  const cA = processSide(pxA, params);
-  const cB = processSide(pxB, params);
+/** Full JS reference for one output pixel at destination `uvX` (screen-space
+ *  [0,1)), derived from LEGACY semantics: `pxRef` = reference/baseline (the
+ *  `compositor.tsx` left/split, `alpha=0` blend endpoint, diff `a` operand),
+ *  `pxFg` = foreground/comparison (right/split, `alpha=1` endpoint, diff `b`
+ *  operand). */
+function expectedPixel(pxRef: number[], pxFg: number[], uvX: number, params: CompareParams): RgbTriple {
+  const refColor = processSide(pxRef, params);
+  const fgColor = processSide(pxFg, params);
   if (params.mode === "blend") {
+    // compositor.tsx: foreground opacity=alpha, reference opacity=1-alpha,
+    // foreground drawn OVER reference -> alpha=0 shows pure reference.
     return [
-      cA[0] + (cB[0] - cA[0]) * params.alpha,
-      cA[1] + (cB[1] - cA[1]) * params.alpha,
-      cA[2] + (cB[2] - cA[2]) * params.alpha,
+      refColor[0] + (fgColor[0] - refColor[0]) * params.alpha,
+      refColor[1] + (fgColor[1] - refColor[1]) * params.alpha,
+      refColor[2] + (fgColor[2] - refColor[2]) * params.alpha,
     ];
   }
   if (params.mode === "diff") {
     const d: RgbTriple = [
-      clamp01(diffChannel(cA[0], cB[0], params.diffSubmode)),
-      clamp01(diffChannel(cA[1], cB[1], params.diffSubmode)),
-      clamp01(diffChannel(cA[2], cB[2], params.diffSubmode)),
+      clamp01(diffChannel(refColor[0], fgColor[0], params.diffSubmode)),
+      clamp01(diffChannel(refColor[1], fgColor[1], params.diffSubmode)),
+      clamp01(diffChannel(refColor[2], fgColor[2], params.diffSubmode)),
     ];
     if (params.diffColormap) {
       const avg = (d[0] + d[1] + d[2]) / 3;
@@ -151,8 +203,10 @@ function expectedPixel(pxA: number[], pxB: number[], uvX: number, params: Compar
     }
     return d;
   }
-  // split
-  return uvX < params.split ? cA : cB;
+  // split: compositor.tsx clips the REFERENCE pane on the left
+  // (`inset(0 ${(1-split)*100}% 0 0)`), revealing the FOREGROUND underneath
+  // on the right.
+  return uvX < params.split ? refColor : fgColor;
 }
 
 function buildRowTexture(device: Device, pixels: number[][]): Texture {
@@ -164,21 +218,23 @@ function buildRowTexture(device: Device, pixels: number[][]): Texture {
   return tex;
 }
 
-// Two distinct scene-linear rows (foreground vs reference). Width 4; the
-// per-column DEST uv.x centers are (i+0.5)/4 = 0.125, 0.375, 0.625, 0.875.
-const PIXELS_A: number[][] = [
+// Two distinct scene-linear rows: PIXELS_REF = reference/baseline,
+// PIXELS_FG = foreground/comparison (see the module doc comment for why
+// these are named by ROLE, not by engine bind slot). Width 4; the per-column
+// DEST uv.x centers are (i+0.5)/4 = 0.125, 0.375, 0.625, 0.875.
+const PIXELS_REF: number[][] = [
   [0.0, 0.1, 0.2, 1.0],
   [0.3, 0.4, 0.5, 1.0],
   [0.6, 0.7, 0.8, 1.0],
   [1.0, 1.2, 0.9, 1.0],
 ];
-const PIXELS_B: number[][] = [
+const PIXELS_FG: number[][] = [
   [0.2, 0.2, 0.2, 1.0],
   [0.1, 0.5, 0.3, 1.0],
   [0.9, 0.4, 0.7, 1.0],
   [0.5, 0.5, 0.5, 1.0],
 ];
-const WIDTH = PIXELS_A.length;
+const WIDTH = PIXELS_REF.length;
 const uvXOfCol = (i: number): number => (i + 0.5) / WIDTH;
 const uvFull = { x: 0, y: 0, w: 1, h: 1 };
 
@@ -190,14 +246,33 @@ const BASE: Omit<CompareParams, "mode" | "split" | "alpha" | "diffSubmode"> = {
   uv: uvFull,
 };
 
-async function runCase(device: Device, label: string, params: CompareParams): Promise<boolean> {
-  const texA = buildRowTexture(device, PIXELS_A);
-  const texB = buildRowTexture(device, PIXELS_B);
+/**
+ * Renders `renderCompare(device, target, texRef, texFg, params)` — texRef
+ * FIRST, texFg SECOND, the same order the (fixed) `GpuComparePane.tsx` uses
+ * (`texA = uploadTex(reference)`, `texB = uploadTex(foreground)`) — and
+ * checks the readback against the legacy-derived `expectedPixel`. When
+ * `swapped` is true, the two texture arguments are passed in the OPPOSITE
+ * order (reproducing the exact C1 binding bug); `allOk` then reports whether
+ * the (still legacy-derived) expectation was met, which for asymmetric modes
+ * it should NOT be — see `runSwapGuardCase`.
+ */
+async function runCase(
+  device: Device,
+  label: string,
+  params: CompareParams,
+  swapped = false,
+): Promise<boolean> {
+  const texRef = buildRowTexture(device, PIXELS_REF);
+  const texFg = buildRowTexture(device, PIXELS_FG);
   const target = device.createTexture(WIDTH, 1, "rgba8unorm");
-  renderCompare(device, target, texA, texB, params);
+  if (swapped) {
+    renderCompare(device, target, texFg, texRef, params); // reproduces the C1 bug
+  } else {
+    renderCompare(device, target, texRef, texFg, params); // matches the fixed pane
+  }
   const out = await device.readback(target);
-  texA.destroy();
-  texB.destroy();
+  texRef.destroy();
+  texFg.destroy();
   target.destroy();
 
   if (!(out instanceof Uint8Array)) {
@@ -206,7 +281,7 @@ async function runCase(device: Device, label: string, params: CompareParams): Pr
   }
   let allOk = true;
   for (let i = 0; i < WIDTH; i++) {
-    const expected = expectedPixel(PIXELS_A[i]!, PIXELS_B[i]!, uvXOfCol(i), params);
+    const expected = expectedPixel(PIXELS_REF[i]!, PIXELS_FG[i]!, uvXOfCol(i), params);
     for (let c = 0; c < 3; c++) {
       const eByte = byteOf(expected[c]!);
       const aByte = out[i * 4 + c]!;
@@ -218,8 +293,23 @@ async function runCase(device: Device, label: string, params: CompareParams): Pr
       }
     }
   }
-  report(allOk, `[${label}] all pixels within 1/255 of JS reference`);
+  report(allOk, `[${label}] all pixels within 1/255 of legacy-derived JS reference`);
   return allOk;
+}
+
+/**
+ * Regression guard for the C1 binding bug: runs the SAME case with texRef/
+ * texFg SWAPPED and asserts the output now DISAGREES with the legacy
+ * reference (i.e. `runCase(..., swapped: true)` must come back `false`). Only
+ * meaningful for modes/submodes that are NOT symmetric in (a,b) — `absolute`
+ * and `squared` diff are swap-invariant (`|a-b|`/`(a-b)^2`) and would stay
+ * silent, matching the review's note that only `signed`/`relative_*` (plus
+ * split/blend) exposed the bug visibly.
+ */
+async function runSwapGuardCase(device: Device, label: string, params: CompareParams): Promise<boolean> {
+  const disagreed = !(await runCase(device, `${label} [SWAP GUARD]`, params, true));
+  report(disagreed, `[${label}] swapped texRef/texFg DISAGREES with legacy reference (bug would be caught)`);
+  return disagreed;
 }
 
 /** CPU MSE/PSNR/MAE reference over the raw source floats (RGB, peak 1.0). */
@@ -241,13 +331,15 @@ function cpuMetrics(a: number[][], b: number[][]): { mse: number; psnr: number; 
 }
 
 async function runMetricsCase(device: Device, label: string): Promise<boolean> {
-  const texA = buildRowTexture(device, PIXELS_A);
-  const texB = buildRowTexture(device, PIXELS_B);
-  const got = await computeMetrics(device, texA, texB);
-  texA.destroy();
-  texB.destroy();
+  const texRef = buildRowTexture(device, PIXELS_REF);
+  const texFg = buildRowTexture(device, PIXELS_FG);
+  const got = await computeMetrics(device, texRef, texFg);
+  texRef.destroy();
+  texFg.destroy();
 
-  const ref = cpuMetrics(PIXELS_A, PIXELS_B);
+  // MSE/MAE/PSNR are symmetric in (a,b), so argument order doesn't matter
+  // here — no swap-guard case needed for metrics.
+  const ref = cpuMetrics(PIXELS_REF, PIXELS_FG);
   const mseOk = Math.abs(got.mse - ref.mse) <= 1e-4;
   const maeOk = Math.abs(got.mae - ref.mae) <= 1e-4;
   const psnrOk = Math.abs(got.psnr - ref.psnr) <= 1e-2;
@@ -294,6 +386,31 @@ async function runAll(device: Device, label: string): Promise<boolean> {
     ok = (await runCase(device, `${label}/diff/absolute+viridis`, p)) && ok;
   }
   ok = (await runMetricsCase(device, `${label}/metrics`)) && ok;
+
+  // ---- SWAP GUARD (C1 regression): texRef/texFg swapped must DISAGREE with
+  // the legacy reference for asymmetric modes — this is what makes the
+  // harness sensitive to the exact GpuComparePane.tsx binding bug (see
+  // module doc comment). `absolute`/`squared` are swap-invariant, so they're
+  // skipped here (matches the review's finding).
+  {
+    const p: CompareParams = { ...BASE, mode: "split", split: 0.25, alpha: 0.5, diffSubmode: "absolute" };
+    ok = (await runSwapGuardCase(device, `${label}/split@0.25`, p)) && ok;
+  }
+  {
+    const p: CompareParams = { ...BASE, mode: "blend", split: 0.5, alpha: 0.25, diffSubmode: "absolute" };
+    ok = (await runSwapGuardCase(device, `${label}/blend@0.25`, p)) && ok;
+  }
+  const asymmetricSubmodes: CompareDiffSubmode[] = [
+    "signed",
+    "relative_signed",
+    "relative_absolute",
+    "relative_squared",
+  ];
+  for (const sm of asymmetricSubmodes) {
+    const p: CompareParams = { ...BASE, mode: "diff", split: 0.5, alpha: 0.5, diffSubmode: sm };
+    ok = (await runSwapGuardCase(device, `${label}/diff/${sm}`, p)) && ok;
+  }
+
   return ok;
 }
 

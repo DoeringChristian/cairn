@@ -183,7 +183,7 @@ const COMPARE_MODE_ID: Record<CompareMode, number> = { split: 0, blend: 1, diff:
 export interface CompareParams extends ImageParams {
   /** Composite mode: `split` (draggable divider), `blend` (mix), `diff` (colormapped per-channel diff). */
   mode: CompareMode;
-  /** Split-divider screen-space fraction `[0,1]` — foreground (texA) shown where `uv.x < split`. */
+  /** Split-divider screen-space fraction `[0,1]` — reference (texA) shown where `uv.x < split`. */
   split: number;
   /** Blend factor `[0,1]` for `mode:"blend"` — `mix(texA, texB, alpha)`. */
   alpha: number;
@@ -214,8 +214,10 @@ function getComparePipeline(device: Device, targetFormat: TextureFormat): Render
 }
 
 /**
- * Runs the COMPARE render pass: samples `texA` (foreground/prediction) and
- * `texB` (reference/baseline) through the shared exposure/scalar-LUT/tonemap/
+ * Runs the COMPARE render pass: samples `texA` (reference/baseline, the "A"
+ * role: left side / alpha=0 endpoint / diff `a` operand — see
+ * `media-compare/GpuComparePane.tsx`'s doc comment) and `texB`
+ * (foreground/comparison) through the shared exposure/scalar-LUT/tonemap/
  * encode pipeline, then composites them per `params.mode` (split/blend/diff)
  * and writes the result to `target`. Allocates (and frees) a per-call LUT
  * texture + bind group, like `renderImage`.
