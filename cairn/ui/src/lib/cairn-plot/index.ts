@@ -1,3 +1,18 @@
+// Engine types (RHI interface — consumed by WebGPU/WebGL2 backends)
+export type {
+  Backend,
+  Capabilities,
+  TextureFormat,
+  Texture,
+  Sampler,
+  RenderPipeline,
+  ComputePipeline,
+  BindGroupEntry,
+  BindGroup,
+  Surface,
+  Device,
+} from "./engine/types";
+
 // Types
 export type {
   Series,
