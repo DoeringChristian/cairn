@@ -22,6 +22,18 @@
  *      1/255 (scale's alpha component is 1, not 2, so the alpha channel is
  *      intentionally NOT the same expected byte as case 1 — proves the vec4
  *      was uploaded per-component, not broadcast).
+ *   3. SDR Surface channel order (WebGPU-only, `runSurfaceChannelOrderTest`):
+ *      regression test for a fixed bug — `configureSDRSurface` configures the
+ *      canvas with `navigator.gpu.getPreferredCanvasFormat()`, which is
+ *      commonly `bgra8unorm`, not `rgba8unorm`. Renders a distinctive
+ *      R!=G!=B color to a real `Surface` (not an offscreen `Texture`, unlike
+ *      cases 1/2) and asserts `readback()` returns it in RGBA order — this
+ *      is the one path a swapped R/B would be visible on.
+ *   4. Bind-group lifecycle (`runBindGroupLifecycleTest`, both backends):
+ *      regression test for a fixed bug — WebGPU's `createBindGroup` used to
+ *      allocate fresh `GPUBuffer`s per call with no free path short of
+ *      `device.destroy()`. Creates+`destroy?.()`s many bind groups (double-
+ *      destroy included) and asserts it never throws.
  *
  * Beyond each backend individually matching the JS-computed expected
  * values, `main()` ALSO cross-compares WebGL2's raw readback bytes against
@@ -250,6 +262,120 @@ async function runUniformSamplerTest(device: Device, label: string): Promise<Tes
 }
 
 /**
+ * Regression test for the fixed "SDR surface readback swaps R/B" bug
+ * (`engine/webgpu/device.ts`'s `readback()`). WebGPU-only — WebGL2's SDR
+ * surface always readbacks via `gl.readPixels(..., gl.RGBA, ...)`, which
+ * has no channel-order ambiguity. Renders a distinctive `R != G != B` color
+ * to a REAL `Surface` (not an offscreen `Texture`, unlike every other case
+ * in this file — a surface is the only target whose native GPU format can
+ * legitimately differ from the `TextureFormat` requested) and asserts
+ * `readback()` returns RGBA order. Before the fix, a `bgra8unorm`-preferred
+ * canvas (the common case on Chrome/macOS) would return this color with R
+ * and B swapped.
+ */
+async function runSurfaceChannelOrderTest(device: Device, label: string): Promise<boolean> {
+  if (device.backend !== "webgpu") {
+    report(true, `[${label}][surface-channel-order] SKIPPED — only WebGPU's SDR surface format can differ from rgba8unorm`);
+    return true;
+  }
+
+  // R, G, B, A all distinct so an R/B swap is unambiguously detectable
+  // (distinguishable from e.g. a G/B swap too, though that's not the bug
+  // being guarded against here).
+  const COLOR = [0.8, 0.4, 0.2, 1.0];
+  const data = new Float32Array(WIDTH * HEIGHT * 4);
+  for (let i = 0; i < WIDTH * HEIGHT; i++) data.set(COLOR, i * 4);
+
+  const canvas = document.createElement("canvas");
+  const surface = device.createSurface(canvas, { hdr: false });
+  surface.configure(WIDTH, HEIGHT);
+
+  const srcTexture = device.createTexture(WIDTH, HEIGHT, "rgba32float");
+  srcTexture.write(data);
+
+  const pipeline = device.createRenderPipeline({
+    shaderWGSL: passthroughWGSL,
+    shaderGLSL: passthroughGLSL,
+    targetFormat: "rgba8unorm",
+  });
+  const bindGroup = device.createBindGroup(pipeline, [{ binding: 0, resource: srcTexture }]);
+
+  device.renderFullscreen(surface, pipeline, bindGroup);
+
+  const out = await device.readback(surface);
+  let allOk = true;
+  if (!(out instanceof Uint8Array)) {
+    report(false, `[${label}][surface-channel-order] readback() of an SDR surface should return Uint8Array, got ${out.constructor.name}`);
+    allOk = false;
+  } else {
+    for (let c = 0; c < 4; c++) {
+      const expected = expectedByteFor(COLOR[c]!);
+      const actual = out[c]!;
+      const diff = Math.abs(actual - expected);
+      const ok = diff <= 1; // within 1/255
+      if (!ok) allOk = false;
+      report(
+        ok,
+        `[${label}][surface-channel-order] pixel[0].channel[${c}] expected=${expected} actual=${actual} (diff=${diff})`,
+      );
+    }
+  }
+
+  bindGroup.destroy?.();
+  srcTexture.destroy();
+
+  return allOk;
+}
+
+/**
+ * Regression test for the fixed "unbounded per-`createBindGroup()` GPU
+ * buffer allocation" bug (`engine/webgpu/device.ts`'s `WGPUBindGroup`).
+ * Creates many bind groups against the same pipeline (mimicking a per-frame
+ * render loop rebuilding its bind group every frame) and `destroy?.()`s
+ * each one — including a deliberate DOUBLE `destroy?.()` per bind group, to
+ * confirm idempotency. Runs on both backends: WebGPU's `destroy()` frees
+ * owned `GPUBuffer`s; WebGL2's is a documented no-op (`GLBindGroup` owns no
+ * GPU resources) — the assertion is simply "never throws", proving the
+ * optional `BindGroup.destroy?()` RHI contract is honored uniformly.
+ */
+async function runBindGroupLifecycleTest(device: Device, label: string): Promise<boolean> {
+  const ITERATIONS = 50;
+  try {
+    const pipeline = device.createRenderPipeline({
+      shaderWGSL: scaleBiasWGSL,
+      shaderGLSL: scaleBiasGLSL,
+      targetFormat: "rgba8unorm",
+    });
+    const texture = device.createTexture(1, 1, "rgba32float");
+    texture.write(new Float32Array([0.5, 0.5, 0.5, 1]));
+    const sampler = device.createSampler({ filter: "nearest" });
+
+    for (let i = 0; i < ITERATIONS; i++) {
+      const bindGroup = device.createBindGroup(pipeline, [
+        { binding: 0, resource: sampler },
+        { binding: 0, resource: texture },
+        { binding: 1, resource: { uniform: new Float32Array([1, 1, 1, 1]) } },
+      ]);
+      bindGroup.destroy?.();
+      bindGroup.destroy?.(); // idempotency: a second destroy must not throw.
+    }
+
+    texture.destroy();
+    report(
+      true,
+      `[${label}][bindgroup-lifecycle] created+double-destroyed ${ITERATIONS} bind groups without throwing`,
+    );
+    return true;
+  } catch (err) {
+    report(
+      false,
+      `[${label}][bindgroup-lifecycle] threw: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
+    );
+    return false;
+  }
+}
+
+/**
  * Cross-backend parity check: compares two `Uint8Array` readbacks
  * (typically one from WebGL2, one from WebGPU) byte-for-byte within 1/255.
  * This is the assertion that proves "both backends produce identical
@@ -285,8 +411,10 @@ async function main(): Promise<void> {
     const glDevice = createWebGL2Device();
     const glTexture = await runReadbackTest(glDevice, "webgl2");
     const glUniformSampler = await runUniformSamplerTest(glDevice, "webgl2");
+    const glSurfaceChannelOrderOk = await runSurfaceChannelOrderTest(glDevice, "webgl2");
+    const glBindGroupLifecycleOk = await runBindGroupLifecycleTest(glDevice, "webgl2");
     glDevice.destroy();
-    const webgl2Ok = glTexture.ok && glUniformSampler.ok;
+    const webgl2Ok = glTexture.ok && glUniformSampler.ok && glSurfaceChannelOrderOk && glBindGroupLifecycleOk;
 
     // --- WebGPU (the primary/full-featured backend) — SKIP gracefully if
     // navigator.gpu isn't available in this browser, per the Task 3 brief. ---
@@ -299,8 +427,10 @@ async function main(): Promise<void> {
       const gpuDevice = await createWebGPUDevice();
       gpuTexture = await runReadbackTest(gpuDevice, "webgpu");
       gpuUniformSampler = await runUniformSamplerTest(gpuDevice, "webgpu");
+      const gpuSurfaceChannelOrderOk = await runSurfaceChannelOrderTest(gpuDevice, "webgpu");
+      const gpuBindGroupLifecycleOk = await runBindGroupLifecycleTest(gpuDevice, "webgpu");
       gpuDevice.destroy();
-      webgpuOk = gpuTexture.ok && gpuUniformSampler.ok;
+      webgpuOk = gpuTexture.ok && gpuUniformSampler.ok && gpuSurfaceChannelOrderOk && gpuBindGroupLifecycleOk;
     } else {
       report(true, "[webgpu] SKIPPED — navigator.gpu is not available in this browser");
     }

@@ -246,6 +246,19 @@ class GLBindGroup implements BindGroup {
     this.entries = entries;
     this._b = entries;
   }
+
+  /**
+   * No-op: a `GLBindGroup` owns no GPU resources — it's just the captured
+   * `BindGroupEntry[]` replayed against borrowed textures/samplers/program
+   * uniforms in `renderFullscreen` (see module doc comment). Implemented
+   * (rather than left `undefined`) so callers that unconditionally call
+   * `bindGroup.destroy?.()` after a WebGPU-authored render loop behave
+   * identically on this backend. Compare `engine/webgpu/device.ts`'s
+   * `WGPUBindGroup.destroy()`, which DOES own `GPUBuffer`s and must free them.
+   */
+  destroy(): void {
+    // Nothing to release.
+  }
 }
 
 class GLSurface implements Surface {

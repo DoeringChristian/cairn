@@ -45,6 +45,23 @@
  *      silently dropped (mirrors the WebGL2 backend's "uniform location
  *      doesn't exist in the compiled program -> skip", i.e. a bind group
  *      may be a superset of what a given pipeline reads).
+ * Every `GPUBuffer` allocated in steps 1/2 is owned by the returned
+ * `WGPUBindGroup` (see that class's doc comment) and freed by its
+ * `destroy()` — a per-frame render loop MUST call `bindGroup.destroy?.()`
+ * once done with a bind group, or one `GPUBuffer` per uniform binding leaks
+ * per `createBindGroup()` call.
+ *
+ * ## SDR surface readback channel order (`bgra8unorm` vs `rgba8unorm`)
+ * `configureSDRSurface` (`./surface.ts`) configures the canvas with
+ * `navigator.gpu.getPreferredCanvasFormat()`, which is commonly
+ * `bgra8unorm` (e.g. Chrome/macOS), NOT `rgba8unorm`. `WGPUSurface.format`
+ * records whatever `SurfaceConfigResult.format` the last `configure()` call
+ * actually got. `readback()` always returns bytes in RGBA order regardless
+ * of the backend's native format — for a `bgra8unorm` surface it swaps the
+ * B/R bytes of the raw `copyTextureToBuffer` result back into place before
+ * returning. Offscreen `Texture`s never hit this path (`gpuFormatFor`
+ * always creates the exact requested `TextureFormat`); an HDR surface is
+ * always `rgba16float` (correct order already).
  *
  * ## Texel fetch (`textureLoad`), not filtered `textureSample`
  * See `engine/shaders/passthrough.wgsl.ts`'s module doc comment: our two
@@ -83,7 +100,7 @@ import type {
   TextureFormat,
   Capabilities,
 } from "../types";
-import { configureHDRSurface, configureSDRSurface } from "./surface";
+import { configureHDRSurface, configureSDRSurface, type SurfaceConfigResult } from "./surface";
 
 function gpuFormatFor(format: TextureFormat): GPUTextureFormat {
   switch (format) {
@@ -257,15 +274,93 @@ class WGPUSampler implements Sampler {
   }
 }
 
+/**
+ * `gpuPipeline`'s fragment target is baked to whatever `GPUTextureFormat`
+ * `createRenderPipeline`'s `spec.targetFormat` mapped to (via `gpuFormatFor`)
+ * — always one of the four `TextureFormat`s, NEVER `bgra8unorm`. But
+ * `renderFullscreen` can be asked to draw onto a `Surface` whose ACTUAL
+ * native format (`WGPUSurface.format`) is `bgra8unorm` (the common
+ * `getPreferredCanvasFormat()` result — see `readback()`'s "SDR surface
+ * readback channel order" doc note). A `GPURenderPipeline`'s fragment
+ * target format must EXACTLY match its render pass's color attachment
+ * format or WebGPU raises a validation error and the draw is silently
+ * dropped (empirically confirmed while adding the surface-channel-order
+ * regression test — this was a real, previously-unexercised gap: SDR-surface
+ * rendering was silently broken any time the preferred format wasn't
+ * `rgba8unorm`, independent of the readback byte-order bug).
+ *
+ * `pipelineFor(format)` lazily compiles+caches a same-shader pipeline
+ * VARIANT targeting a different format, all sharing ONE EXPLICIT
+ * `bindGroupLayout` (built by `createRenderPipeline` from the parsed
+ * `BindingInfo`, NOT `layout: 'auto'`) so a `BindGroup` created once against
+ * that shared layout stays valid across every variant. An auto-derived
+ * layout (`gpuPipeline.getBindGroupLayout(0)`) can NOT be reused this way —
+ * empirically, Chrome's WebGPU implementation rejects
+ * `createPipelineLayout({bindGroupLayouts:[autoLayout]})` with "it was
+ * created as part of a pipeline's default layout", so every variant (the
+ * primary pipeline included) is built with `layout: pipelineLayout`
+ * (explicit), never `'auto'`.
+ */
 class WGPURenderPipeline implements RenderPipeline {
   readonly _p: unknown;
   readonly gpuPipeline: GPURenderPipeline;
   readonly bindings: Map<number, BindingInfo>;
-  constructor(gpuPipeline: GPURenderPipeline, bindings: Map<number, BindingInfo>) {
+  readonly bindGroupLayout: GPUBindGroupLayout;
+  private readonly variants: Map<GPUTextureFormat, GPURenderPipeline>;
+  private readonly buildVariant: (format: GPUTextureFormat) => GPURenderPipeline;
+
+  constructor(
+    gpuPipeline: GPURenderPipeline,
+    bindings: Map<number, BindingInfo>,
+    bindGroupLayout: GPUBindGroupLayout,
+    primaryFormat: GPUTextureFormat,
+    buildVariant: (format: GPUTextureFormat) => GPURenderPipeline,
+  ) {
     this.gpuPipeline = gpuPipeline;
     this.bindings = bindings;
+    this.bindGroupLayout = bindGroupLayout;
+    this.buildVariant = buildVariant;
+    this.variants = new Map([[primaryFormat, gpuPipeline]]);
     this._p = gpuPipeline;
   }
+
+  pipelineFor(format: GPUTextureFormat): GPURenderPipeline {
+    let variant = this.variants.get(format);
+    if (!variant) {
+      variant = this.buildVariant(format);
+      this.variants.set(format, variant);
+    }
+    return variant;
+  }
+}
+
+/**
+ * Builds an EXPLICIT `GPUBindGroupLayout` from the `BindingInfo` map
+ * `parseWGSLBindings` produces — see `WGPURenderPipeline`'s doc comment for
+ * why this replaces `layout: 'auto'` for render pipelines (auto-derived
+ * layouts can't be shared across the format-variant pipelines
+ * `renderFullscreen` needs for `Surface` targets). `texture` bindings always
+ * declare `sampleType: 'unfilterable-float'` — per `passthrough.wgsl.ts`'s
+ * doc comment, every texture-kind binding is read via `textureLoad` (never
+ * `textureSample`), and `'unfilterable-float'` is compatible with binding
+ * ANY float-ish texture format (filterable or not), so this is never overly
+ * restrictive for how these shaders actually sample. `sampler` bindings
+ * (declared as `'filtering'`) are similarly unexercised by either
+ * hand-authored shader today — see `WGSL_UNIFORM_TYPE_SIZE`'s doc comment
+ * for the same "intentionally minimal" caveat.
+ */
+function buildExplicitBindGroupLayout(gpuDevice: GPUDevice, bindings: Map<number, BindingInfo>): GPUBindGroupLayout {
+  const entries: GPUBindGroupLayoutEntry[] = [];
+  for (const [native, info] of bindings) {
+    if (info.kind === "uniform") {
+      entries.push({ binding: native, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } });
+    } else if (info.kind === "sampler") {
+      entries.push({ binding: native, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "filtering" } });
+    } else {
+      entries.push({ binding: native, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "unfilterable-float" } });
+    }
+  }
+  return gpuDevice.createBindGroupLayout({ entries });
 }
 
 class WGPUComputePipeline implements ComputePipeline {
@@ -277,32 +372,70 @@ class WGPUComputePipeline implements ComputePipeline {
   }
 }
 
+/**
+ * Owns the `GPUBuffer`(s) `createBindGroup` allocates for `{uniform}`
+ * bindings (both the default zero-fill buffers and the caller-supplied-value
+ * buffers — see module doc comment's `createBindGroup` section). `destroy()`
+ * releases them; callers that rebuild bind groups per frame (a real render
+ * loop, Task 6+) MUST call this once a bind group is no longer needed, or
+ * these buffers leak until `Device.destroy()`. Idempotent — a second
+ * `destroy()` call is a no-op, matching `WGPUTexture`/`Device`'s convention.
+ */
 class WGPUBindGroup implements BindGroup {
   readonly _b: unknown;
   readonly gpuBindGroup: GPUBindGroup;
-  constructor(gpuBindGroup: GPUBindGroup) {
+  private readonly ownedBuffers: GPUBuffer[];
+  private destroyed = false;
+
+  constructor(gpuBindGroup: GPUBindGroup, ownedBuffers: GPUBuffer[]) {
     this.gpuBindGroup = gpuBindGroup;
+    this.ownedBuffers = ownedBuffers;
     this._b = gpuBindGroup;
+  }
+
+  destroy(): void {
+    if (this.destroyed) return;
+    for (const buffer of this.ownedBuffers) buffer.destroy();
+    this.destroyed = true;
   }
 }
 
 class WGPUSurface implements Surface {
   readonly canvas: HTMLCanvasElement;
-  readonly hdr: boolean;
+  hdr: boolean;
+  /**
+   * The ACTUAL `GPUTextureFormat` this surface's canvas context is
+   * configured with (from `SurfaceConfigResult.format`) — NOT necessarily
+   * `"rgba8unorm"` for an SDR surface. `configureSDRSurface` uses
+   * `navigator.gpu.getPreferredCanvasFormat()`, which is commonly
+   * `"bgra8unorm"` on Chrome/macOS. `Device.readback` reads this to know
+   * whether it must swap the B/R bytes of a raw `copyTextureToBuffer` result
+   * back into the RHI's RGBA contract. Non-interface escape hatch, like
+   * `getCurrentGPUTexture()` below.
+   */
+  format: GPUTextureFormat;
   private readonly context: GPUCanvasContext;
-  private readonly reconfigure: () => { hdr: boolean };
+  private readonly reconfigure: () => SurfaceConfigResult;
 
-  constructor(canvas: HTMLCanvasElement, context: GPUCanvasContext, hdr: boolean, reconfigure: () => { hdr: boolean }) {
+  constructor(
+    canvas: HTMLCanvasElement,
+    context: GPUCanvasContext,
+    initial: SurfaceConfigResult,
+    reconfigure: () => SurfaceConfigResult,
+  ) {
     this.canvas = canvas;
     this.context = context;
-    this.hdr = hdr;
+    this.hdr = initial.hdr;
+    this.format = initial.format;
     this.reconfigure = reconfigure;
   }
 
   configure(width: number, height: number): void {
     this.canvas.width = width;
     this.canvas.height = height;
-    this.reconfigure();
+    const result = this.reconfigure();
+    this.hdr = result.hdr;
+    this.format = result.format;
   }
 
   getCurrentTextureView(): unknown {
@@ -383,17 +516,22 @@ export async function createWebGPUDevice(): Promise<Device> {
     createRenderPipeline(spec) {
       const module = gpuDevice.createShaderModule({ code: spec.shaderWGSL });
       const bindings = parseWGSLBindings(spec.shaderWGSL);
-      const gpuPipeline = gpuDevice.createRenderPipeline({
-        layout: "auto",
-        vertex: { module, entryPoint: "vs_main" },
-        fragment: {
-          module,
-          entryPoint: "fs_main",
-          targets: [{ format: gpuFormatFor(spec.targetFormat) }],
-        },
-        primitive: { topology: "triangle-list" },
-      });
-      return new WGPURenderPipeline(gpuPipeline, bindings);
+      const primaryFormat = gpuFormatFor(spec.targetFormat);
+      // Explicit (never 'auto') bind group layout, shared by the primary
+      // pipeline and every lazily-built format variant — see
+      // `WGPURenderPipeline`'s doc comment for why 'auto' can't be reused
+      // across pipelines here.
+      const bindGroupLayout = buildExplicitBindGroupLayout(gpuDevice, bindings);
+      const pipelineLayout = gpuDevice.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] });
+      const buildVariant = (format: GPUTextureFormat): GPURenderPipeline =>
+        gpuDevice.createRenderPipeline({
+          layout: pipelineLayout,
+          vertex: { module, entryPoint: "vs_main" },
+          fragment: { module, entryPoint: "fs_main", targets: [{ format }] },
+          primitive: { topology: "triangle-list" },
+        });
+      const gpuPipeline = buildVariant(primaryFormat);
+      return new WGPURenderPipeline(gpuPipeline, bindings, bindGroupLayout, primaryFormat, buildVariant);
     },
 
     createComputePipeline(spec) {
@@ -411,6 +549,14 @@ export async function createWebGPUDevice(): Promise<Device> {
     createBindGroup(pipeline, entries) {
       const p = pipeline as WGPURenderPipeline;
       const resolved = new Map<number, GPUBindGroupEntry>();
+      // Every `GPUBuffer` allocated below (defaults AND caller-value
+      // buffers) is owned by the returned `WGPUBindGroup` and freed by its
+      // `destroy()` — see that class's doc comment. `createBindGroup` itself
+      // never reuses a buffer across calls (each call gets its own set), so
+      // callers driving a per-frame render loop must destroy the bind group
+      // once done with it to avoid leaking one `GPUBuffer` per uniform
+      // binding per frame.
+      const ownedBuffers: GPUBuffer[] = [];
 
       // 1. Seed every binding the shader actually declares with a default
       //    resource (zero-filled uniform buffer / shared nearest sampler —
@@ -421,6 +567,7 @@ export async function createWebGPUDevice(): Promise<Device> {
             size: info.sizeBytes,
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
           });
+          ownedBuffers.push(buffer);
           resolved.set(native, { binding: native, resource: { buffer } });
         } else if (info.kind === "sampler") {
           resolved.set(native, { binding: native, resource: getDefaultSampler() });
@@ -454,16 +601,21 @@ export async function createWebGPUDevice(): Promise<Device> {
               usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
             });
             gpuDevice.queue.writeBuffer(buffer, 0, view.buffer as ArrayBuffer, view.byteOffset, view.byteLength);
+            // The default buffer allocated for this native binding in step 1
+            // is now unreferenced by `resolved` (about to be overwritten
+            // below) but was already pushed to `ownedBuffers` — it still
+            // gets destroyed alongside the replacement, just one call early.
+            ownedBuffers.push(buffer);
             resolved.set(native, { binding: native, resource: { buffer } });
           }
         }
       }
 
       const gpuBindGroup = gpuDevice.createBindGroup({
-        layout: p.gpuPipeline.getBindGroupLayout(0),
+        layout: p.bindGroupLayout,
         entries: Array.from(resolved.values()),
       });
-      return new WGPUBindGroup(gpuBindGroup);
+      return new WGPUBindGroup(gpuBindGroup, ownedBuffers);
     },
 
     createSurface(canvas, opts) {
@@ -473,7 +625,7 @@ export async function createWebGPUDevice(): Promise<Device> {
       const reconfigure = () =>
         wantsHDR ? configureHDRSurface(context, gpuDevice) : configureSDRSurface(context, gpuDevice);
       const result = reconfigure();
-      return new WGPUSurface(canvas, context, result.hdr, reconfigure);
+      return new WGPUSurface(canvas, context, result, reconfigure);
     },
 
     renderFullscreen(target, pipeline, bindGroup) {
@@ -481,6 +633,17 @@ export async function createWebGPUDevice(): Promise<Device> {
       const bg = bindGroup as WGPUBindGroup;
       const view = targetView(target);
       const { width, height } = targetSize(target);
+      // The pipeline's fragment target format must EXACTLY match the actual
+      // attachment format or WebGPU raises a validation error and silently
+      // drops the draw — see `WGPURenderPipeline`'s doc comment. A `Surface`
+      // can be `bgra8unorm`-native even though `p.gpuPipeline`'s default
+      // format is always one of the four `TextureFormat`s (never
+      // `bgra8unorm`), so resolve the correct pipeline VARIANT for
+      // whatever `target` actually is.
+      const nativeFormat: GPUTextureFormat = isSurface(target)
+        ? (target as WGPUSurface).format
+        : gpuFormatFor((target as WGPUTexture).format);
+      const gpuPipeline = p.pipelineFor(nativeFormat);
       const encoder = gpuDevice.createCommandEncoder();
       const pass = encoder.beginRenderPass({
         colorAttachments: [
@@ -492,7 +655,7 @@ export async function createWebGPUDevice(): Promise<Device> {
           },
         ],
       });
-      pass.setPipeline(p.gpuPipeline);
+      pass.setPipeline(gpuPipeline);
       pass.setBindGroup(0, bg.gpuBindGroup);
       pass.setViewport(0, 0, width, height, 0, 1);
       pass.draw(3);
@@ -504,6 +667,18 @@ export async function createWebGPUDevice(): Promise<Device> {
       const surfaceMode = isSurface(source);
       const { width, height } = targetSize(source);
       const format: TextureFormat = surfaceMode ? ((source as WGPUSurface).hdr ? "rgba16float" : "rgba8unorm") : (source as WGPUTexture).format;
+      // The RHI's `readback()` contract is always RGBA byte order, but an
+      // SDR `Surface`'s ACTUAL native format (`WGPUSurface.format`, set from
+      // `configureSDRSurface`'s `navigator.gpu.getPreferredCanvasFormat()`)
+      // is commonly `bgra8unorm`, not `rgba8unorm` — see module doc's "SDR
+      // surface readback channel order" note. `copyTextureToBuffer` below
+      // copies raw texel bytes with no reordering, so a `bgra8unorm` source
+      // needs its B/R bytes swapped back into RGBA order after the copy.
+      // Offscreen `Texture`s are never `bgra8unorm` (`gpuFormatFor` only
+      // ever produces the exact `TextureFormat` requested), and an HDR
+      // surface is always `rgba16float` (already correct byte order) — so
+      // only this one case needs the swap.
+      const needsBGRASwap = surfaceMode && (source as WGPUSurface).format === "bgra8unorm";
       const sourceTexture: GPUTexture = surfaceMode
         ? (source as WGPUSurface).getCurrentGPUTexture()
         : (source as WGPUTexture).gpuTexture;
@@ -538,6 +713,14 @@ export async function createWebGPUDevice(): Promise<Device> {
       readBuffer.destroy();
 
       if (format === "rgba8unorm") {
+        if (needsBGRASwap) {
+          for (let i = 0; i < tight.length; i += 4) {
+            const b = tight[i]!;
+            const r = tight[i + 2]!;
+            tight[i] = r;
+            tight[i + 2] = b;
+          }
+        }
         return tight;
       }
       if (format === "rgba16float") {
