@@ -7,6 +7,7 @@ import { AXIS } from "../theme";
 import Tooltip from "../primitives/Tooltip";
 import { Axis, PlotFrame, type AxisTick } from "../primitives/Axis";
 import { anchorFromRect, type TooltipAnchor } from "../primitives/tooltip-position";
+import { useChartViewport, type PlotRect } from "../viewport/use-chart-viewport";
 
 export interface HeatmapProps {
   /** `matrix[y][x]` cell values. Rows may be ragged only if all same length. */
@@ -27,6 +28,8 @@ export interface HeatmapProps {
   yTickLabel?: (i: number) => string;
   /** Tooltip body for a hovered cell; falls back to a default value readout. */
   tooltipContent?: (cell: { x: number; y: number; value: number }) => ReactNode;
+  /** Keep cells square by locking the viewport aspect ratio (opt-in). */
+  lockAspect?: boolean;
   className?: string;
 }
 
@@ -45,6 +48,7 @@ export default function Heatmap({
   xTickLabel,
   yTickLabel,
   tooltipContent,
+  lockAspect = false,
   className,
 }: HeatmapProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -118,6 +122,50 @@ export default function Heatmap({
   const plotW = Math.max(0, w - PAD.left - PAD.right);
   const plotH = Math.max(0, h - PAD.top - PAD.bottom);
 
+  // Continuous cell-index viewport. x ∈ [0, cols] (columns, 0 = left edge),
+  // y ∈ [0, rows] in VIEW space (0 = top of the painted canvas — the axis-flip
+  // for originTop happens at the label/hover boundary, below). No padding: the
+  // home view is exactly the full grid. Zoom = re-CSS-positioning the pixelated
+  // canvas inside an overflow:hidden wrapper the size of the plot rect.
+  const home = useMemo(
+    () => ({
+      xDomain: [0, Math.max(1, cols)] as [number, number],
+      yDomain: [0, Math.max(1, rows)] as [number, number],
+    }),
+    [cols, rows],
+  );
+  const plotRectRef = useRef<PlotRect | null>(null);
+  plotRectRef.current = { x: PAD.left, y: PAD.top, width: plotW, height: plotH };
+
+  const { domain, containerProps, dragRect } = useChartViewport({
+    containerRef,
+    plotRectRef,
+    home,
+    minSpan: { x: 1, y: 1 }, // never zoom past a single cell
+    clamp: {
+      xDomain: [0, Math.max(1, cols)],
+      yDomain: [0, Math.max(1, rows)],
+    },
+    lockAspect,
+  });
+
+  const [xLo, xHi] = domain.xDomain;
+  const [yLo, yHi] = domain.yDomain;
+  const xSpan = xHi - xLo || 1;
+  const ySpan = yHi - yLo || 1;
+
+  // Canvas CSS box inside the plot-rect wrapper: scale the native cols×rows
+  // canvas so the visible column/row span fills the wrapper, then offset it so
+  // column xLo / view-row yLo sits at the wrapper's top-left.
+  const canvasStyle = {
+    position: "absolute" as const,
+    left: cols > 0 ? -(xLo / xSpan) * plotW : 0,
+    top: rows > 0 ? -(yLo / ySpan) * plotH : 0,
+    width: cols > 0 ? (cols / xSpan) * plotW : plotW,
+    height: rows > 0 ? (rows / ySpan) * plotH : plotH,
+    imageRendering: "pixelated" as const,
+  };
+
   const handleMove = (e: React.MouseEvent) => {
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect || cols === 0 || rows === 0) return;
@@ -127,8 +175,11 @@ export default function Heatmap({
       setHover(null);
       return;
     }
-    const cx = Math.min(cols - 1, Math.floor((mx / plotW) * cols));
-    const cyView = Math.min(rows - 1, Math.floor((my / plotH) * rows));
+    // Invert pixel → cell index through the live domain.
+    const dataCol = xLo + (mx / plotW) * xSpan;
+    const dataViewRow = yLo + (my / plotH) * ySpan;
+    const cx = Math.max(0, Math.min(cols - 1, Math.floor(dataCol)));
+    const cyView = Math.max(0, Math.min(rows - 1, Math.floor(dataViewRow)));
     const cy = originTop ? cyView : rows - 1 - cyView;
     setHover({ x: cx, y: cy, anchor: anchorFromRect(e, rect) });
   };
@@ -144,18 +195,23 @@ export default function Heatmap({
   }, [colormap]);
 
   const plotRect = { x: PAD.left, y: PAD.top, width: plotW, height: plotH };
-  // Categorical ticks at cell centers (indices → shared Axis primitive).
-  const xAxisTicks: AxisTick[] = tickPositions(cols).map((i) => ({
-    pos: PAD.left + ((i + 0.5) / cols) * plotW,
+  const eps = 0.5;
+  // Cell-center ticks over the VISIBLE index range, mapped through the live
+  // domain (x = columns, y = view-rows), so ticks track zoom/pan. The label
+  // for a y tick converts the view-row back to a data-row via originTop.
+  const xAxisTicks: AxisTick[] = visibleTickIndices(xLo, xHi, cols).map((i) => ({
+    pos: PAD.left + ((i + 0.5 - xLo) / xSpan) * plotW,
     label: xTickLabel ? xTickLabel(i) : String(i),
-  }));
-  const yAxisTicks: AxisTick[] = tickPositions(rows).map((i) => {
-    const viewRow = originTop ? i : rows - 1 - i;
+  }))
+    .filter((t) => t.pos >= PAD.left - eps && t.pos <= PAD.left + plotW + eps);
+  const yAxisTicks: AxisTick[] = visibleTickIndices(yLo, yHi, rows).map((vr) => {
+    const dataRow = originTop ? vr : rows - 1 - vr;
     return {
-      pos: PAD.top + ((viewRow + 0.5) / rows) * plotH,
-      label: yTickLabel ? yTickLabel(i) : String(i),
+      pos: PAD.top + ((vr + 0.5 - yLo) / ySpan) * plotH,
+      label: yTickLabel ? yTickLabel(dataRow) : String(dataRow),
     };
-  });
+  })
+    .filter((t) => t.pos >= PAD.top - eps && t.pos <= PAD.top + plotH + eps);
 
   return (
     <div
@@ -163,20 +219,17 @@ export default function Heatmap({
       className={`relative h-full w-full ${className ?? ""}`}
       onMouseMove={handleMove}
       onMouseLeave={() => setHover(null)}
+      {...containerProps}
     >
       {plotW > 0 && plotH > 0 && rows > 0 && cols > 0 && (
         <>
-          <canvas
-            ref={canvasRef}
-            className="absolute"
-            style={{
-              left: PAD.left,
-              top: PAD.top,
-              width: plotW,
-              height: plotH,
-              imageRendering: "pixelated",
-            }}
-          />
+          {/* Plot-rect wrapper clips the zoomed canvas to the frame. */}
+          <div
+            className="absolute overflow-hidden"
+            style={{ left: PAD.left, top: PAD.top, width: plotW, height: plotH }}
+          >
+            <canvas ref={canvasRef} style={canvasStyle} />
+          </div>
           <svg width={w} height={h} className="pointer-events-none absolute inset-0 select-none">
             <Axis orientation="left" plot={plotRect} ticks={yAxisTicks} title={yLabel} />
             <Axis orientation="bottom" plot={plotRect} ticks={xAxisTicks} title={xLabel} />
@@ -233,6 +286,22 @@ export default function Heatmap({
         </>
       )}
 
+      {dragRect && (
+        <div
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            left: dragRect.x,
+            top: dragRect.y,
+            width: dragRect.width,
+            height: dragRect.height,
+            border: "1px solid #0969da",
+            background: "rgba(83, 155, 245, 0.12)",
+            pointerEvents: "none",
+          }}
+        />
+      )}
+
       {hover && (
         <Tooltip
           x={hover.anchor.x}
@@ -260,12 +329,21 @@ export default function Heatmap({
   );
 }
 
-/** Up to 6 roughly-even tick indices across `n` cells. */
-function tickPositions(n: number): number[] {
+/**
+ * Up to ~6 roughly-even integer cell indices whose cell-center (i + 0.5) falls
+ * within the live [lo, hi] view span. As the viewport zooms in, `lo`/`hi`
+ * tighten and the returned indices densify over the visible range; when zoomed
+ * out to the full grid this reduces to evenly-spaced ticks across all `n` cells.
+ */
+function visibleTickIndices(lo: number, hi: number, n: number): number[] {
   if (n <= 0) return [];
-  const maxTicks = Math.min(6, n);
-  const step = Math.max(1, Math.floor(n / maxTicks));
+  const first = Math.max(0, Math.ceil(lo - 0.5));
+  const last = Math.min(n - 1, Math.floor(hi - 0.5));
+  if (last < first) return [];
+  const count = last - first + 1;
+  const maxTicks = Math.min(6, count);
+  const step = Math.max(1, Math.round(count / maxTicks));
   const out: number[] = [];
-  for (let i = 0; i < n; i += step) out.push(i);
+  for (let i = first; i <= last; i += step) out.push(i);
   return out;
 }

@@ -1,8 +1,4 @@
-<<<<<<<< HEAD:cairn/ui/dist/assets/diff-B1EwoAcM.js
-import{u as ac,r as Pe,j as Dn,C as oc,a1 as lc}from"./index-BCJmveFO.js";/**
-========
-import{u as ac,r as Pe,j as Dn,C as oc,a0 as lc}from"./index-V7BHW2i0.js";/**
->>>>>>>> 57f20ff8 (cairn-plot zoom Step 3: HistogramPlot bars unified viewport):cairn/ui/dist/assets/diff-pkTenWgv.js
+import{u as ac,r as Pe,j as Dn,C as oc,a0 as lc}from"./index-CbUx8sU3.js";/**
  * @license
  * Copyright 2010-2026 Three.js Authors
  * SPDX-License-Identifier: MIT
