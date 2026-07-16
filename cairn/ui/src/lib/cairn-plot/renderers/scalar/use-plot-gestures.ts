@@ -99,10 +99,11 @@ export function usePlotGestures({
     const el = chartBoxRef.current;
     if (!el) return;
     const handler = (e: WheelEvent) => {
-      // No modifier required — wheel-over-plot zooms directly, matching the
-      // unified chart viewport (useChartViewport). The cursor-inside-plot-rect
-      // test below already scopes the gesture to the drawing area; page scroll
-      // resumes as soon as the cursor leaves it (we only preventDefault inside).
+      // Alt-gated, matching the unified chart viewport (useChartViewport): only
+      // Alt+wheel zooms. A plain wheel does nothing and never calls
+      // preventDefault, so it bubbles and scrolls the page normally. Ctrl/Cmd+
+      // wheel is left alone (browser page-zoom); Alt is the sole zoom modifier.
+      if (!e.altKey) return; // plain wheel → let the page scroll (no preventDefault)
       const po = plotOffsetRef.current;
       if (!po) return; // geometry not measured yet — bail rather than guess
       const rect = el.getBoundingClientRect();

@@ -239,10 +239,14 @@ export function useChartViewport({
   }, [home, onChange, controlled]);
 
   // ── Wheel zoom (non-passive so preventDefault sticks) ──
+  // Alt-gated: only Alt+wheel zooms. A plain wheel does nothing and never calls
+  // preventDefault, so it bubbles and scrolls the page normally. Ctrl/Cmd+wheel
+  // is left alone (browser page-zoom); Alt is the sole zoom modifier.
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     const handler = (e: WheelEvent) => {
+      if (!e.altKey) return; // plain wheel → let the page scroll (no preventDefault)
       const rect = rectToClient(containerRef, plotRectRef);
       if (!rect) return;
       const next = wheelZoom(
