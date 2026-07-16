@@ -47,7 +47,7 @@
 import { getSharedDevice } from "./device";
 import { createWebGL2Device } from "./webgl2/device";
 import { renderImage, type ImageParams } from "./image-engine";
-import type { Device, Surface, Texture, TextureFormat } from "./types";
+import type { Backend, Device, Surface, Texture, TextureFormat } from "./types";
 
 /**
  * Cap on simultaneously-LIVE GPU swapchains (configured `Surface` + source
@@ -68,6 +68,16 @@ export interface SourceUpload {
 
 export interface PaneHandle {
   readonly canvas: HTMLCanvasElement;
+  /**
+   * The page-wide shared device's backend (`"webgpu"` | `"webgl2"`). Exposed
+   * because on-screen ORIENTATION differs by backend: the engine's shaders
+   * (`shaders/passthrough.wgsl.ts`'s doc) guarantee `readback` row-order
+   * parity, which forces the WebGL2 COMPOSITED canvas to be vertically
+   * mirrored (texel row 0 → bottom scanline) while WebGPU displays row 0 at
+   * top. A canvas-displaying consumer (`GpuImagePane`) must correct the
+   * WebGL2 flip — see its render effect — so it needs to know the backend.
+   */
+  readonly backend: Backend;
   /** True while this pane's GPU resources are freed (parked). */
   readonly isParked: boolean;
   /**
@@ -185,6 +195,7 @@ function activateEntry(entry: PaneEntry): void {
 function makeHandle(entry: PaneEntry): PaneHandle {
   return {
     canvas: entry.canvas,
+    backend: entry.sharedDevice.backend,
     get isParked() {
       return entry.parked;
     },

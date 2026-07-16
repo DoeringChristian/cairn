@@ -411,7 +411,19 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
     if (!handle || !paneReady || !naturalDims) return;
     const paneEl = paneRef.current;
     const box = paneEl ? paneEl.getBoundingClientRect() : { width: naturalDims.w, height: naturalDims.h };
-    const uv = viewportToUvRect({ zoom, pan }, box, naturalDims.w, naturalDims.h);
+    let uv = viewportToUvRect({ zoom, pan }, box, naturalDims.w, naturalDims.h);
+    // WebGL2 display Y-flip correction (see PaneHandle.backend's doc + the
+    // engine's `passthrough.wgsl.ts` orientation note): on WebGL2 the
+    // composited canvas is vertically mirrored (texel row 0 lands on the
+    // BOTTOM scanline), so the shader's `srcUV.y = uvRect.y + rawUV.y*uvRect.h`
+    // would show source row 0 at the canvas BOTTOM. Flipping the y/h of the
+    // sampled window (start at the bottom edge `uv.y+uv.h`, walk UP with a
+    // negative height) cancels that, putting source row 0 back at the top —
+    // matching WebGPU and the CPU `HdrImagePane`. WebGPU already renders row 0
+    // at top (its WGSL flips `uv.y`), so it is left unmodified.
+    if (handle.backend === "webgl2") {
+      uv = { x: uv.x, y: uv.y + uv.h, w: uv.w, h: -uv.h };
+    }
     const params: ImageParams = hdrMode
       ? { exposureEV: exposure, operator: toOperator(tonemapName), gamma, isScalar: false, hdrOut: false, uv }
       : { exposureEV: 0, operator: "linear", gamma: 1, isScalar: false, hdrOut: false, uv };
