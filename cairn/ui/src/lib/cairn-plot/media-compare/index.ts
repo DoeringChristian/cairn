@@ -42,6 +42,8 @@ export {
   CrossTypeCompositeMediaPane,
 } from "./compositor";
 
+export { default as GpuComparePane, type GpuComparePaneProps } from "./GpuComparePane";
+
 export {
   migrateLegacyMode,
   type LegacyModeInputs,

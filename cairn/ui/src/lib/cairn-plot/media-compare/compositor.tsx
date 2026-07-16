@@ -21,6 +21,19 @@ import PixelValueOverlay, {
 import { loadImageData } from "../image";
 import type { MediaCompareModeKind } from "./mode";
 import { alignFrameSourcesForDiff } from "./cross-type-align";
+import GpuComparePane from "./GpuComparePane";
+
+/**
+ * Opt-in flag (same one `plot-gpu-image-addon.tsx` gates `GpuImagePane` on):
+ * when `true`, split/blend/diff route through the engine-backed
+ * `GpuComparePane` (`renderCompare` GPU pass + `computeMetrics`) instead of
+ * the legacy CPU `MediaComparePane` / `ImagePane` diff path. Unset/false keeps
+ * the CPU path, so production behavior is unchanged until Task 8 flips it on.
+ */
+function useGpuCompareEnabled(): boolean {
+  if (typeof window === "undefined") return false;
+  return (window as unknown as { __cairnPlotUseGpuImage?: boolean }).__cairnPlotUseGpuImage === true;
+}
 
 const DEFAULT_PROCESSING: ImageProcessing = {
   brightness: 0,
@@ -440,6 +453,36 @@ export function CompositeMediaPane({
   pixelValueNotation,
 }: CompositeMediaPaneProps) {
   const effectiveMode: MediaCompareModeKind = baselineUrl == null ? "normal" : mode;
+  const gpuCompare = useGpuCompareEnabled();
+
+  // Engine-backed split/blend/diff (opt-in — see `useGpuCompareEnabled`). One
+  // `renderCompare` GPU pass replaces the CPU clip-path split / opacity blend /
+  // webgl-diff path, plus a `computeMetrics` MSE/PSNR/MAE readout. Q17
+  // double-click-resets the shared viewport inside GpuComparePane.
+  if (
+    gpuCompare &&
+    baselineUrl != null &&
+    (effectiveMode === "split" || effectiveMode === "blend" || effectiveMode === "diff")
+  ) {
+    return (
+      <GpuComparePane
+        imageUrl={imageUrl}
+        baselineUrl={baselineUrl}
+        mode={effectiveMode}
+        splitPosition={splitPosition ?? 0.5}
+        blendAlpha={blendAlpha ?? 0.5}
+        onSplitPositionChange={onSplitPositionChange}
+        diffSubmode={diffSubmode}
+        colormap={colormap}
+        zoom={zoom}
+        pan={pan}
+        onViewportChange={onViewportChange}
+        interpolation={interpolation}
+        label={label}
+        pixelValueNotation={pixelValueNotation}
+      />
+    );
+  }
 
   if (effectiveMode === "side") {
     return (
