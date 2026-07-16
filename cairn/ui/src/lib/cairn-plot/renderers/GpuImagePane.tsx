@@ -245,6 +245,11 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
   const [naturalDims, setNaturalDims] = useState<{ w: number; h: number } | null>(null);
   const [uploadVersion, setUploadVersion] = useState(0);
   const [containerTick, setContainerTick] = useState(0);
+  // The DISPLAYED (pre-backend-flip) uv window, for `PixelValueOverlay`'s
+  // `sourceWindow` — see that prop's doc for why the GPU pane must supply
+  // this explicitly (its canvas CSS box doesn't grow with zoom the way the
+  // legacy CSS-transform panes' <img>/<canvas> does).
+  const [overlayWindow, setOverlayWindow] = useState({ x: 0, y: 0, w: 1, h: 1 });
 
   // TEV overlay source buffers (retained CPU pixels, mirrors ImagePane's
   // valueDataRef / HdrImagePane's `hdr.data`).
@@ -421,7 +426,15 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
     if (!handle || !paneReady || !naturalDims) return;
     const paneEl = paneRef.current;
     const box = paneEl ? paneEl.getBoundingClientRect() : { width: naturalDims.w, height: naturalDims.h };
-    let uv = viewportToUvRect({ zoom, pan }, box, naturalDims.w, naturalDims.h);
+    const rawUv = viewportToUvRect({ zoom, pan }, box, naturalDims.w, naturalDims.h);
+    // The overlay wants the DISPLAYED (top-down, pre-flip) window — same
+    // rectangle on both backends, since the flip below is purely a GPU
+    // sampling-convention correction that both backends already display
+    // identically (row 0 at top).
+    setOverlayWindow((prev) =>
+      prev.x === rawUv.x && prev.y === rawUv.y && prev.w === rawUv.w && prev.h === rawUv.h ? prev : rawUv,
+    );
+    let uv = rawUv;
     // WebGL2 display Y-flip correction (see PaneHandle.backend's doc + the
     // engine's `passthrough.wgsl.ts` orientation note): on WebGL2 the
     // composited canvas is vertically mirrored (texel row 0 lands on the
@@ -552,6 +565,7 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
             naturalHeight={naturalDims.h}
             zoom={zoom}
             pan={pan}
+            sourceWindow={overlayWindow}
             sample={samplePixel}
             notation={notation}
             version={pixelDataVersion}

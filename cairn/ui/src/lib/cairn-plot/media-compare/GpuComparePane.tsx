@@ -137,6 +137,9 @@ export default function GpuComparePane({
   const [metrics, setMetrics] = useState<DiffMetrics | null>(null);
   const [notation, setNotation] = useState<PixelValueNotation>(pixelValueNotation);
   const [overlayActive, setOverlayActive] = useState(false);
+  // The DISPLAYED (pre-backend-flip) uv window, for `PixelValueOverlay`'s
+  // `sourceWindow` — same reasoning as `GpuImagePane`'s `overlayWindow`.
+  const [overlayWindow, setOverlayWindow] = useState({ x: 0, y: 0, w: 1, h: 1 });
 
   // TEV per-side source pixels (raw ImageData), like MediaComparePane.
   const fgDataRef = useRef<ImageData | null>(null);
@@ -253,7 +256,11 @@ export default function GpuComparePane({
     if (!ready || !r || !r.surface || !r.texA || !r.texB || !dims) return;
     const paneEl = paneRef.current;
     const box = paneEl ? paneEl.getBoundingClientRect() : { width: dims.w, height: dims.h };
-    let uv = viewportToUvRect({ zoom, pan }, box, dims.w, dims.h);
+    const rawUv = viewportToUvRect({ zoom, pan }, box, dims.w, dims.h);
+    setOverlayWindow((prev) =>
+      prev.x === rawUv.x && prev.y === rawUv.y && prev.w === rawUv.w && prev.h === rawUv.h ? prev : rawUv,
+    );
+    let uv = rawUv;
     // WebGL2 display Y-flip correction — identical to GpuImagePane's.
     if (r.device.backend === "webgl2") {
       uv = { x: uv.x, y: uv.y + uv.h, w: uv.w, h: -uv.h };
@@ -409,6 +416,7 @@ export default function GpuComparePane({
                   naturalHeight={dims.h}
                   zoom={zoom}
                   pan={pan}
+                  sourceWindow={overlayWindow}
                   sample={sampleRef}
                   notation={notation}
                   version={pixelDataVersion}
@@ -426,6 +434,7 @@ export default function GpuComparePane({
                   naturalHeight={dims.h}
                   zoom={zoom}
                   pan={pan}
+                  sourceWindow={overlayWindow}
                   sample={sampleFg}
                   notation={notation}
                   version={pixelDataVersion}
@@ -442,6 +451,7 @@ export default function GpuComparePane({
               naturalHeight={dims.h}
               zoom={zoom}
               pan={pan}
+              sourceWindow={overlayWindow}
               sample={sampleFg}
               notation={notation}
               version={pixelDataVersion}
@@ -462,7 +472,13 @@ export default function GpuComparePane({
       ) : null}
       {metrics && (
         <span
-          className="absolute top-1 right-1 z-10 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm font-mono"
+          // Task 8 fix: the TEV notation toggle (`PixelNotationToggle`, shared
+          // primitive) also anchors `top-1 right-1` — when BOTH are visible
+          // (zoomed in far enough for per-pixel numbers, AND a baseline is
+          // present) they overlapped. Drop the chip below the toggle's row
+          // whenever the overlay is active; both stay `top-1` otherwise so
+          // outside a zoomed state the chip keeps its usual corner spot.
+          className={`absolute right-1 z-10 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm font-mono ${overlayActive ? "top-8" : "top-1"}`}
           data-gpu-compare-metrics
         >
           MSE {metrics.mse.toExponential(2)} · PSNR {Number.isFinite(metrics.psnr) ? metrics.psnr.toFixed(1) : "∞"} dB · MAE{" "}

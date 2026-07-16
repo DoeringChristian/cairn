@@ -114,7 +114,28 @@ export interface PixelValueOverlayProps {
    *  enough that per-pixel numbers are being drawn). Lets the host show a
    *  notation toggle only while the numbers are visible. */
   onActiveChange?: (active: boolean) => void;
+  /**
+   * The currently-DISPLAYED portion of the source image, as a `[0,1]`-normalized
+   * `{x,y,w,h}` window over `[naturalWidth, naturalHeight]` — top-down, same
+   * convention as `renderers/GpuImagePane.tsx`'s `viewportToUvRect()` BEFORE
+   * any backend-specific display flip. Default `{x:0,y:0,w:1,h:1}` (the whole
+   * image, matching every prior caller's behaviour exactly).
+   *
+   * Needed by the GPU panes (`GpuImagePane`/`GpuComparePane`): unlike the
+   * legacy CSS-`transform:scale(zoom)` panes — whose `imageElRef` element
+   * physically GROWS on screen at higher zoom, so `getBoundingClientRect()`
+   * already encodes the zoom and the old naturalWidth/Height-only math was
+   * correct — the GPU panes zoom by sampling a smaller crop into an
+   * UNCHANGING canvas CSS box (`w-full h-full`, sized by the container, never
+   * by zoom). Without this, `draw()` would always compute the SAME
+   * zoom-invariant scale (as if the whole image were shown at zoom=1), so the
+   * "zoom in until pixels are big enough" trigger could never fire and no
+   * per-pixel numbers would ever appear on a GPU pane, however far zoomed in.
+   */
+  sourceWindow?: { x: number; y: number; w: number; h: number };
 }
+
+const FULL_SOURCE_WINDOW = { x: 0, y: 0, w: 1, h: 1 };
 
 export default function PixelValueOverlay({
   imageElRef,
@@ -126,6 +147,7 @@ export default function PixelValueOverlay({
   notation = "decimal",
   version = 0,
   onActiveChange,
+  sourceWindow = FULL_SOURCE_WINDOW,
 }: PixelValueOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const activeRef = useRef(false);
@@ -165,24 +187,38 @@ export default function PixelValueOverlay({
       return;
     }
 
+    // The DISPLAYED sub-image, in source pixels: `sourceWindow` (default the
+    // whole image) selects a `[0,1]`-normalized crop of
+    // `[naturalWidth, naturalHeight]` — object-contain fits THIS crop into
+    // `box` (not necessarily the full natural size; see the prop doc for why
+    // GPU panes need this).
+    const srcOriginX = sourceWindow.x * naturalWidth;
+    const srcOriginY = sourceWindow.y * naturalHeight;
+    const visibleW = sourceWindow.w * naturalWidth;
+    const visibleH = sourceWindow.h * naturalHeight;
+    if (visibleW <= 0 || visibleH <= 0) {
+      reportActive(false);
+      return;
+    }
+
     // object-contain fit: image region + screen px per source pixel.
-    const scale = Math.min(box.width / naturalWidth, box.height / naturalHeight);
+    const scale = Math.min(box.width / visibleW, box.height / visibleH);
     if (scale < PIXEL_VALUE_MIN_SCREEN_PX) {
       reportActive(false); // below threshold: nothing drawn.
       return;
     }
 
-    const dispW = naturalWidth * scale;
-    const dispH = naturalHeight * scale;
+    const dispW = visibleW * scale;
+    const dispH = visibleH * scale;
     // image top-left in canvas-local (CSS px) coords.
     const imgLeft = box.left + (box.width - dispW) / 2 - canvasRect.left;
     const imgTop = box.top + (box.height - dispH) / 2 - canvasRect.top;
 
-    // Visible source-pixel window (clip to the canvas viewport).
-    const x0 = Math.max(0, Math.floor((0 - imgLeft) / scale));
-    const x1 = Math.min(naturalWidth, Math.ceil((cssW - imgLeft) / scale));
-    const y0 = Math.max(0, Math.floor((0 - imgTop) / scale));
-    const y1 = Math.min(naturalHeight, Math.ceil((cssH - imgTop) / scale));
+    // Visible source-pixel window (clip to both the crop and the canvas viewport).
+    const x0 = Math.max(Math.floor(srcOriginX), Math.floor(srcOriginX + (0 - imgLeft) / scale));
+    const x1 = Math.min(Math.ceil(srcOriginX + visibleW), Math.ceil(srcOriginX + (cssW - imgLeft) / scale));
+    const y0 = Math.max(Math.floor(srcOriginY), Math.floor(srcOriginY + (0 - imgTop) / scale));
+    const y1 = Math.min(Math.ceil(srcOriginY + visibleH), Math.ceil(srcOriginY + (cssH - imgTop) / scale));
     if (x1 <= x0 || y1 <= y0) {
       reportActive(false);
       return;
@@ -209,8 +245,8 @@ export default function PixelValueOverlay({
         const fontH = Math.min(byHeight, byWidth, 24);
         if (fontH < 6) continue; // too small to be legible — skip this pixel.
 
-        const cx = imgLeft + (px + 0.5) * scale;
-        const cy = imgTop + (py + 0.5) * scale;
+        const cx = imgLeft + (px - srcOriginX + 0.5) * scale;
+        const cy = imgTop + (py - srcOriginY + 0.5) * scale;
         const lineH = fontH * 1.15;
         const dark = s.luminance <= 0.55;
         const autoFill = dark ? "#ffffff" : "#000000";
@@ -230,12 +266,12 @@ export default function PixelValueOverlay({
         }
       }
     }
-  }, [imageElRef, naturalWidth, naturalHeight, sample, notation, reportActive]);
+  }, [imageElRef, naturalWidth, naturalHeight, sample, notation, reportActive, sourceWindow]);
 
   // Redraw on viewport / data / notation / mount changes.
   useEffect(() => {
     draw();
-  }, [draw, zoom, pan.x, pan.y, version, notation]);
+  }, [draw, zoom, pan.x, pan.y, version, notation, sourceWindow]);
 
   // Redraw on container resize (fit box changes -> pixel size changes).
   useEffect(() => {
