@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   Colormap,
   DiffMode,
@@ -94,14 +94,20 @@ export function MediaComparePane({
 }: MediaComparePaneProps) {
   const paneRef = useRef<HTMLDivElement>(null);
   const [naturalDims, setNaturalDims] = useState<{ w: number; h: number } | null>(null);
+  const [refDims, setRefDims] = useState<{ w: number; h: number } | null>(null);
   const [notation, setNotation] = useState<PixelValueNotation>(pixelValueNotation);
   const [overlayActive, setOverlayActive] = useState(false);
 
-  // TEV-style per-pixel value overlay (foreground image). The split/blend
-  // compositor draws raw <img>s (not ImagePane), so it carries its own overlay
-  // so pixel values still appear when you zoom in far enough here too.
+  // TEV-style per-pixel value overlay. The split/blend compositor draws raw
+  // <img>s (not ImagePane), so it carries its own overlay so pixel values still
+  // appear when you zoom in far enough here too. In SPLIT mode BOTH sources are
+  // sampled: the reference (left of the divider) and the foreground/comparison
+  // (right of the divider), each clipped to its own side and re-read live as the
+  // divider moves.
   const fgImgRef = useRef<HTMLImageElement | null>(null);
+  const refImgRef = useRef<HTMLImageElement | null>(null);
   const fgDataRef = useRef<ImageData | null>(null);
+  const refDataRef = useRef<ImageData | null>(null);
   const [pixelDataVersion, setPixelDataVersion] = useState(0);
   useEffect(() => {
     if (!imageUrl) {
@@ -119,9 +125,29 @@ export function MediaComparePane({
       cancelled = true;
     };
   }, [imageUrl]);
-  const samplePixel = useCallback(
+  useEffect(() => {
+    if (!baselineUrl) {
+      refDataRef.current = null;
+      setPixelDataVersion((v) => v + 1);
+      return;
+    }
+    let cancelled = false;
+    loadImageData(baselineUrl).then((d) => {
+      if (cancelled) return;
+      refDataRef.current = d;
+      setPixelDataVersion((v) => v + 1);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [baselineUrl]);
+
+  // One sampler factory over an ImageData ref — identical formatting/tinting for
+  // the foreground and the reference source.
+  const makeSampler =
+    (dataRef: React.RefObject<ImageData | null>) =>
     (px: number, py: number, notation: PixelValueNotation): PixelSample | null => {
-      const d = fgDataRef.current;
+      const d = dataRef.current;
       if (!d || px < 0 || py < 0 || px >= d.width || py >= d.height) return null;
       const i = (py * d.width + px) * 4;
       const r = d.data[i]!;
@@ -140,9 +166,9 @@ export function MediaComparePane({
         luminance,
         colors: [CHANNEL_COLORS[0], CHANNEL_COLORS[1], CHANNEL_COLORS[2]],
       };
-    },
-    [],
-  );
+    };
+  const sampleFg = useMemo(() => makeSampler(fgDataRef), []);
+  const sampleRef = useMemo(() => makeSampler(refDataRef), []);
 
   const showOverlay =
     !!overlay &&
@@ -208,6 +234,7 @@ export function MediaComparePane({
           >
             <div className="w-full h-full" style={{ transform: transformStr, transformOrigin: "0 0" }}>
               <img
+                ref={refImgRef}
                 src={baselineUrl ?? undefined}
                 alt="ref"
                 className="w-full h-full object-contain block"
@@ -216,6 +243,10 @@ export function MediaComparePane({
                   filter: filterStr,
                   imageRendering: imgRendering,
                   ...(mode === "blend" ? { opacity: 1 - blendAlpha } : {}),
+                }}
+                onLoad={(e) => {
+                  const img = e.currentTarget;
+                  setRefDims({ w: img.naturalWidth, h: img.naturalHeight });
                 }}
               />
             </div>
@@ -245,18 +276,64 @@ export function MediaComparePane({
             </div>
           )}
         </div>
-        {imageUrl && naturalDims && (
-          <PixelValueOverlay
-            imageElRef={fgImgRef}
-            naturalWidth={naturalDims.w}
-            naturalHeight={naturalDims.h}
-            zoom={zoom}
-            pan={pan}
-            sample={samplePixel}
-            notation={notation}
-            version={pixelDataVersion}
-            onActiveChange={setOverlayActive}
-          />
+        {/* Per-pixel value overlay. In SPLIT mode each side samples its OWN
+            source, clipped at the divider so the numbers under the divider
+            always match the image actually shown there; the clip is driven by
+            `splitPosition`, so it re-reveals per side live as the divider moves.
+            Blend/normal show a single foreground overlay. */}
+        {mode === "split" ? (
+          <>
+            {baselineUrl && refDims && (
+              <div
+                className="absolute inset-0 overflow-hidden pointer-events-none"
+                style={{ clipPath: `inset(0 ${(1 - splitPosition) * 100}% 0 0)` }}
+              >
+                <PixelValueOverlay
+                  imageElRef={refImgRef}
+                  naturalWidth={refDims.w}
+                  naturalHeight={refDims.h}
+                  zoom={zoom}
+                  pan={pan}
+                  sample={sampleRef}
+                  notation={notation}
+                  version={pixelDataVersion}
+                />
+              </div>
+            )}
+            {imageUrl && naturalDims && (
+              <div
+                className="absolute inset-0 overflow-hidden pointer-events-none"
+                style={{ clipPath: `inset(0 0 0 ${splitPosition * 100}%)` }}
+              >
+                <PixelValueOverlay
+                  imageElRef={fgImgRef}
+                  naturalWidth={naturalDims.w}
+                  naturalHeight={naturalDims.h}
+                  zoom={zoom}
+                  pan={pan}
+                  sample={sampleFg}
+                  notation={notation}
+                  version={pixelDataVersion}
+                  onActiveChange={setOverlayActive}
+                />
+              </div>
+            )}
+          </>
+        ) : (
+          imageUrl &&
+          naturalDims && (
+            <PixelValueOverlay
+              imageElRef={fgImgRef}
+              naturalWidth={naturalDims.w}
+              naturalHeight={naturalDims.h}
+              zoom={zoom}
+              pan={pan}
+              sample={sampleFg}
+              notation={notation}
+              version={pixelDataVersion}
+              onActiveChange={setOverlayActive}
+            />
+          )
         )}
         {overlayActive && (
           <PixelNotationToggle notation={notation} onChange={setNotation} />
