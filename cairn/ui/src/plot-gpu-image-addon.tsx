@@ -33,6 +33,7 @@
  */
 import { getSharedDevice } from "./lib/cairn-plot/engine/device";
 import GpuImagePane from "./lib/cairn-plot/renderers/GpuImagePane";
+import GpuComparePane from "./lib/cairn-plot/media-compare/GpuComparePane";
 
 declare global {
   interface Window {
@@ -64,6 +65,12 @@ async function tryRegister(): Promise<void> {
     await getSharedDevice();
     window.__cairnPlotRegisterRenderer("image", GpuImagePane);
     window.__cairnPlotRegisterRenderer("imagehdr", GpuImagePane);
+    // Inject the engine-backed split/blend/diff compare pane for
+    // `media-compare/compositor.tsx` to pick up at runtime (Task 7). Kept off
+    // the static `core` graph — see that file's `__cairnPlotGpuComparePane`
+    // doc — so the engine ships here in the addon, not in core.iife.js.
+    (window as unknown as { __cairnPlotGpuComparePane?: typeof GpuComparePane }).__cairnPlotGpuComparePane =
+      GpuComparePane;
     window.__cairnPlotGpuImageLoaded = true;
   } catch (err) {
     // Neither WebGPU nor WebGL2 available — the legacy CPU panes core already

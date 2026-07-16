@@ -21,18 +21,36 @@ import PixelValueOverlay, {
 import { loadImageData } from "../image";
 import type { MediaCompareModeKind } from "./mode";
 import { alignFrameSourcesForDiff } from "./cross-type-align";
-import GpuComparePane from "./GpuComparePane";
+import type { GpuComparePaneProps } from "./GpuComparePane";
+
+declare global {
+  interface Window {
+    /** Opt-in flag (same one `plot-gpu-image-addon.tsx` gates `GpuImagePane`
+     *  on): `true` routes split/blend/diff through the engine. */
+    __cairnPlotUseGpuImage?: boolean;
+    /**
+     * The engine-backed compare pane, injected at RUNTIME by the lazy
+     * gpu-image addon (`plot-gpu-image-addon.tsx`) — NOT a static import, so
+     * `core` stays free of the WebGPU/WebGL2 engine (the bundle guard: core
+     * carries no `engine/*`; it ships in the addon IIFE). `compositor.tsx` is
+     * reachable from `core`, so this indirection is REQUIRED: a static
+     * `import GpuComparePane` here would pull `renderCompare`/`computeMetrics`
+     * and both backend devices into `core.iife.js`.
+     */
+    __cairnPlotGpuComparePane?: (props: GpuComparePaneProps) => JSX.Element | null;
+  }
+}
 
 /**
- * Opt-in flag (same one `plot-gpu-image-addon.tsx` gates `GpuImagePane` on):
- * when `true`, split/blend/diff route through the engine-backed
- * `GpuComparePane` (`renderCompare` GPU pass + `computeMetrics`) instead of
- * the legacy CPU `MediaComparePane` / `ImagePane` diff path. Unset/false keeps
- * the CPU path, so production behavior is unchanged until Task 8 flips it on.
+ * Resolve the runtime-injected engine compare pane, but only when the opt-in
+ * flag is set AND the gpu-image addon has registered it. Unset/false (or addon
+ * absent) keeps the legacy CPU `MediaComparePane` / `ImagePane` diff path, so
+ * production behavior is unchanged until Task 8 flips the flag on.
  */
-function useGpuCompareEnabled(): boolean {
-  if (typeof window === "undefined") return false;
-  return (window as unknown as { __cairnPlotUseGpuImage?: boolean }).__cairnPlotUseGpuImage === true;
+function resolveGpuComparePane(): ((props: GpuComparePaneProps) => JSX.Element | null) | null {
+  if (typeof window === "undefined") return null;
+  if (window.__cairnPlotUseGpuImage !== true) return null;
+  return window.__cairnPlotGpuComparePane ?? null;
 }
 
 const DEFAULT_PROCESSING: ImageProcessing = {
@@ -453,19 +471,19 @@ export function CompositeMediaPane({
   pixelValueNotation,
 }: CompositeMediaPaneProps) {
   const effectiveMode: MediaCompareModeKind = baselineUrl == null ? "normal" : mode;
-  const gpuCompare = useGpuCompareEnabled();
+  const GpuCompare = resolveGpuComparePane();
 
-  // Engine-backed split/blend/diff (opt-in — see `useGpuCompareEnabled`). One
+  // Engine-backed split/blend/diff (opt-in — see `resolveGpuComparePane`). One
   // `renderCompare` GPU pass replaces the CPU clip-path split / opacity blend /
   // webgl-diff path, plus a `computeMetrics` MSE/PSNR/MAE readout. Q17
   // double-click-resets the shared viewport inside GpuComparePane.
   if (
-    gpuCompare &&
+    GpuCompare &&
     baselineUrl != null &&
     (effectiveMode === "split" || effectiveMode === "blend" || effectiveMode === "diff")
   ) {
     return (
-      <GpuComparePane
+      <GpuCompare
         imageUrl={imageUrl}
         baselineUrl={baselineUrl}
         mode={effectiveMode}
