@@ -738,6 +738,14 @@ export async function createWebGPUDevice(): Promise<Device> {
       gpuDevice.destroy();
       destroyed = true;
     },
+
+    // WebGPU's `createSurface` is always a safe, idempotent re-configure
+    // (see this module's doc comment) — there is no WebGL2-style "canvas
+    // already has a lost context bound to it" state to recover from, so
+    // this is always `false`. See `types.ts`'s `Device.isContextLost` doc.
+    isContextLost() {
+      return false;
+    },
   };
 
   return device;

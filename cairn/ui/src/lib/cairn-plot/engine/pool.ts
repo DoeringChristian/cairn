@@ -29,10 +29,19 @@
  * a scroll-back-into-view **restore** can re-upload without the caller
  * re-supplying the data. `render()` auto-restores a parked pane (marking it
  * most-recently-used) and — if that pushes the live count over the cap —
- * evicts (parks) the least-recently-used OTHER live pane. `GpuImagePane`
- * additionally drives explicit `park()`/`restore()` from its own
- * `IntersectionObserver` so off-screen panes free GPU memory promptly instead
- * of only reactively at the next over-cap render.
+ * evicts (parks) the least-recently-used OTHER live pane, PREFERRING an
+ * off-screen victim (`PaneHandle.setVisible`/`evictOverCap`) — only reaching
+ * into the visible set when every live slot is visible (more visible panes
+ * than the cap, the many-panes-gallery case this pool exists for). Critically,
+ * `render()`'s auto-restore is unconditional: a pane the LRU parked while it
+ * was STILL ON-SCREEN (visible-set eviction) transparently restores on its
+ * very next render request (a viewport zoom/pan, an exposure/operator change,
+ * the double-click reset, ...) — a re-render never paints into a parked/
+ * destroyed GPU context. `GpuImagePane` additionally drives explicit
+ * `park()`/`restore()`/`setVisible()` from its own `IntersectionObserver` so
+ * off-screen panes free GPU memory promptly instead of only reactively at the
+ * next over-cap render, and the pool always knows which live panes are
+ * actually on-screen.
  *
  * `Surface` (`engine/types.ts`) exposes no explicit teardown (WebGPU's
  * `GPUCanvasContext` has no public "release the swapchain" call short of
@@ -103,6 +112,18 @@ export interface PaneHandle {
    *  marking this pane most-recently-used (may evict another pane over cap).
    *  Safe to call on an already-live or disposed handle (no-op). */
   restore(): void;
+  /**
+   * Report this pane's current on-screen visibility (driven by
+   * `GpuImagePane`'s `IntersectionObserver`). Purely informational for the
+   * LRU: `evictOverCap` prefers parking an OFF-SCREEN (`visible: false`)
+   * entry over a visible one, so a still-on-screen pane that got LRU-parked
+   * only because MORE panes are visible than `MAX_LIVE_SWAPCHAINS` (the
+   * many-panes-gallery case this pool exists for) survives longer than an
+   * off-screen one. Does NOT itself park/restore anything — no-op on a
+   * disposed handle. Defaults to visible (`true`) until the caller reports
+   * otherwise, since a freshly-acquired pane is typically on-screen.
+   */
+  setVisible(visible: boolean): void;
   /** Permanently release this pane: frees GPU resources AND drops the
    *  retained CPU buffer. The handle is unusable after this. */
   dispose(): void;
@@ -121,6 +142,12 @@ interface PaneEntry {
   source: SourceUpload | null;
   parked: boolean;
   disposed: boolean;
+  /** Last-reported on-screen visibility (`PaneHandle.setVisible`) — read by
+   *  `evictOverCap` to prefer parking off-screen panes first. */
+  visible: boolean;
+  /** Bounds the `render()` WebGL2-context-restore retry loop (see `render()`
+   *  below) so a genuinely-unrecoverable context doesn't retry forever. */
+  restoreRetries: number;
 }
 
 // Module-singleton LRU of currently-LIVE (non-parked) entries, oldest first.
@@ -156,11 +183,18 @@ function parkEntry(entry: PaneEntry): void {
   entry.parked = true;
 }
 
-/** Evict (park) the least-recently-used live entry other than `except`,
- *  repeating until at/under `MAX_LIVE_SWAPCHAINS`. */
+/**
+ * Evict (park) the least-recently-used live entry other than `except`,
+ * repeating until at/under `MAX_LIVE_SWAPCHAINS`. Prefers the LRU entry among
+ * OFF-SCREEN (`visible: false`) panes — parking a pane nobody can see is
+ * always preferable to parking one that's on-screen. Only reaches into the
+ * visible set when every other live slot is ALSO visible (the many-panes
+ * gallery case: more visible panes than the cap, so an eviction among them is
+ * unavoidable) — falls back to plain LRU across all live entries then.
+ */
 function evictOverCap(except: PaneEntry): void {
   while (live.length > MAX_LIVE_SWAPCHAINS) {
-    const victim = live.find((e) => e !== except);
+    const victim = live.find((e) => e !== except && !e.visible) ?? live.find((e) => e !== except);
     if (!victim) break;
     parkEntry(victim);
   }
@@ -192,6 +226,61 @@ function activateEntry(entry: PaneEntry): void {
   evictOverCap(entry);
 }
 
+/** Bounds the WebGL2-context-restore retry loop in `attemptRender` below —
+ *  ~0.5s at 60fps, generous for the browser's async restoration to
+ *  complete, but finite so a genuinely-unrecoverable context doesn't retry
+ *  forever. */
+const MAX_CONTEXT_RESTORE_RETRIES = 30;
+
+/**
+ * Runs the IMAGE render pass for `entry`, transparently retrying via
+ * `requestAnimationFrame` if the pane's (WebGL2) device reports its context
+ * is still LOST after `activateEntry()` — see `webgl2/device.ts`'s
+ * `createSurface` doc: re-adopting a canvas whose context was explicitly
+ * PARKED (`WEBGL_lose_context.loseContext()`'d) triggers `restoreContext()`
+ * but that completes ASYNCHRONOUSLY, so the very next `render()` call after
+ * a restore can race a context that isn't usable YET. Each retry fully
+ * re-parks (`parkEntry`) and re-attempts `activateEntry()` from scratch —
+ * objects (texture/fbo/vao) created while the context was still lost are
+ * dead per-spec placeholders even once restoration completes, so simply
+ * retrying the SAME `renderImage()` call is not enough. WebGPU's
+ * `isContextLost()` always returns `false` (see `types.ts`'s doc), so this
+ * is a no-op there — `renderImage()` runs immediately, same as before.
+ */
+function attemptRender(entry: PaneEntry, params: ImageParams): void {
+  if (entry.disposed || !entry.source) return;
+  activateEntry(entry);
+  if (!entry.device || !entry.surface || !entry.srcTexture) return;
+  if (entry.device.isContextLost()) {
+    retryAfterContextRestore(entry, params);
+    return;
+  }
+  try {
+    renderImage(entry.device, entry.surface, entry.srcTexture, params);
+    entry.restoreRetries = 0;
+  } catch (err) {
+    // Belt-and-suspenders: the pre-check above should already have caught
+    // a still-lost context, but treat a render-time throw on a (now/still)
+    // lost context the same way rather than crashing the caller.
+    if (entry.device.isContextLost()) {
+      retryAfterContextRestore(entry, params);
+      return;
+    }
+    throw err;
+  }
+}
+
+function retryAfterContextRestore(entry: PaneEntry, params: ImageParams): void {
+  if (entry.disposed) return;
+  if (entry.restoreRetries >= MAX_CONTEXT_RESTORE_RETRIES) {
+    entry.restoreRetries = 0;
+    return; // Give up silently — a subsequent render() call starts fresh.
+  }
+  entry.restoreRetries++;
+  parkEntry(entry);
+  requestAnimationFrame(() => attemptRender(entry, params));
+}
+
 function makeHandle(entry: PaneEntry): PaneHandle {
   return {
     canvas: entry.canvas,
@@ -214,10 +303,7 @@ function makeHandle(entry: PaneEntry): PaneHandle {
       // Parked: the new source is picked up by the next activateEntry().
     },
     render(params: ImageParams): void {
-      if (entry.disposed || !entry.source) return;
-      activateEntry(entry);
-      if (!entry.device || !entry.surface || !entry.srcTexture) return;
-      renderImage(entry.device, entry.surface, entry.srcTexture, params);
+      attemptRender(entry, params);
     },
     park(): void {
       if (entry.disposed) return;
@@ -226,6 +312,10 @@ function makeHandle(entry: PaneEntry): PaneHandle {
     restore(): void {
       if (entry.disposed || !entry.source) return;
       activateEntry(entry);
+    },
+    setVisible(visible: boolean): void {
+      if (entry.disposed) return;
+      entry.visible = visible;
     },
     dispose(): void {
       if (entry.disposed) return;
@@ -259,6 +349,8 @@ export async function acquirePane(
     source: null,
     parked: true,
     disposed: false,
+    visible: true,
+    restoreRetries: 0,
   };
   return makeHandle(entry);
 }
@@ -272,4 +364,11 @@ export function releasePane(handle: PaneHandle): void {
  *  test/introspection hook (mirrors `engine/device.ts`'s test helpers). */
 export function getLiveSwapchainCount(): number {
   return live.length;
+}
+
+/** True if `canvas`'s pane is currently LIVE (not parked) — test/introspection
+ *  hook, used by the many-panes-gallery harness to find a pane the LRU cap
+ *  parked without needing access to its `PaneHandle`. */
+export function isCanvasLive(canvas: HTMLCanvasElement): boolean {
+  return live.some((e) => e.canvas === canvas);
 }

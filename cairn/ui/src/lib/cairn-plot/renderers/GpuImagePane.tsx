@@ -64,7 +64,16 @@
  * An `IntersectionObserver` on the pane container calls the pool handle's
  * `park()`/`restore()` as the pane leaves/enters the viewport, proactively
  * freeing GPU memory (and, on WebGL2, the scarce per-pane GL context)
- * instead of waiting for LRU cap pressure from other panes.
+ * instead of waiting for LRU cap pressure from other panes. It also reports
+ * every transition to `handle.setVisible()` so `engine/pool.ts`'s LRU can
+ * prefer evicting an OFF-SCREEN pane over an on-screen one when the cap is
+ * hit by pane count alone (more visible panes than `MAX_LIVE_SWAPCHAINS` — a
+ * gallery bigger than the cap). A pane the LRU parks that way stays fully
+ * on-screen-looking (its canvas keeps showing its last frame) until it's
+ * next asked to render, at which point `PaneHandle.render()` transparently
+ * restores it first (see `engine/pool.ts`'s module doc) — so a viewport zoom/
+ * pan, an exposure/operator change, or the double-click reset on a
+ * cap-parked-but-visible pane always paints a live, correct frame.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
@@ -313,6 +322,7 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
         if (!entry) return;
         const handle = paneHandleRef.current;
         if (!handle) return;
+        handle.setVisible(entry.isIntersecting);
         if (entry.isIntersecting) {
           if (handle.isParked) {
             handle.restore();

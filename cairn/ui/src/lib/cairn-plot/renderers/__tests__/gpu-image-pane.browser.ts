@@ -24,6 +24,15 @@
  *   4. Double-click resets the viewport to `{zoom:1, pan:{x:0,y:0}}` (Q17).
  *   5. Mounting ~30 panes never leaves more than `MAX_LIVE_SWAPCHAINS` (12)
  *      panes with LIVE GPU resources at once (`engine/pool.ts`'s LRU cap).
+ *   5b. Park-aware render: mount MORE visible (on-screen, never scrolled
+ *      away) panes than `MAX_LIVE_SWAPCHAINS`, so the LRU cap PARKS some of
+ *      them while they stay on-screen (`engine/pool.ts`'s `isCanvasLive`
+ *      finds one). Triggering a re-render on that still-parked pane (an
+ *      exposure change) must transparently RESTORE it first — readback (under
+ *      `?forceWebGL2`) must match the `tonemap.ts` reference for the NEW
+ *      exposure, and must NOT match the stale old-exposure frame (negative
+ *      control). Proves a re-render on a cap-parked-but-visible pane never
+ *      paints into a destroyed/parked GPU context.
  *   6. The gpu-image addon's CAPABILITY-GATED registration
  *      (`plot-gpu-image-addon.tsx`): stub `__cairnPlotRegisterRenderer`,
  *      import the addon module, and assert it registers `"image"`/
@@ -50,7 +59,7 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import GpuImagePane, { type HdrData } from "../GpuImagePane";
-import { getLiveSwapchainCount, MAX_LIVE_SWAPCHAINS } from "../../engine/pool";
+import { getLiveSwapchainCount, isCanvasLive, MAX_LIVE_SWAPCHAINS } from "../../engine/pool";
 import { applyExposure, TONEMAP_OPERATORS, outputEncode, type RgbTriple } from "../../image/tonemap";
 import type { Viewport as ImageViewport } from "../../hooks/use-image-viewport";
 
@@ -338,6 +347,161 @@ async function runPoolCapCase(): Promise<boolean> {
   return capOk;
 }
 
+// ---------------------------------------------------------------------------
+// Case 5b: park-aware render — a pane PARKED by LRU cap pressure (NOT by
+// scrolling off-screen; every pane here stays on-screen the whole time) must
+// RESTORE before rendering, so a re-render (an exposure change, here) shows
+// the CORRECT new frame — never stale content from before it was parked.
+// This is the many-panes-gallery scenario `engine/pool.ts`'s module doc
+// describes: more visible panes than `MAX_LIVE_SWAPCHAINS`, so the LRU parks
+// some of them even though nothing ever left the viewport.
+// ---------------------------------------------------------------------------
+async function runParkAwareRenderCase(forceWebGL2: boolean): Promise<boolean> {
+  let ok = true;
+  const N = MAX_LIVE_SWAPCHAINS + 4; // over-cap by 4 with everything visible
+  const size = 56;
+  const cols = 8;
+  const container = document.createElement("div");
+  container.id = "harness-park-aware";
+  container.style.display = "grid";
+  container.style.gridTemplateColumns = `repeat(${cols}, ${size}px)`;
+  container.style.gap = "4px";
+  // Pinned to the viewport (NOT normal document flow): `#result` above
+  // accumulates one line per `report()` call as this run progresses, which
+  // would otherwise keep pushing an in-flow container further down the page
+  // — eventually scrolling some panes below the fold MID-TEST and flipping
+  // their `IntersectionObserver` state to "not intersecting" for real
+  // (parking them off-screen instead of by LRU-cap pressure alone), which
+  // this case does not intend to exercise.
+  container.style.position = "fixed";
+  container.style.top = "0";
+  container.style.left = "0";
+  container.style.zIndex = "9999";
+  container.style.background = "#000";
+  document.body.appendChild(container);
+
+  const hdrValues = [0.0, 0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 0.05, 0.3, 0.6, 0.9, 1.2, 1.8, 2.5, 3.0];
+  const buildHdrN = (): HdrData => ({ data: new Float32Array(hdrValues), shape: [4, 4], dtype: "<f4" });
+  const operator = "srgb";
+  const initialExposure = 0.2;
+  const newExposure = 1.7;
+
+  const setExposureFns: Array<(e: number) => void> = new Array(N);
+  const roots: ReturnType<typeof createRoot>[] = [];
+
+  function Pane({ index }: { index: number }) {
+    const [exposure, setExposure] = React.useState(initialExposure);
+    setExposureFns[index] = setExposure;
+    return h(GpuImagePane, {
+      hdr: buildHdrN(),
+      tonemap: operator,
+      exposure,
+      label: `park-pane-${index}`,
+    });
+  }
+
+  for (let i = 0; i < N; i++) {
+    const paneEl = document.createElement("div");
+    paneEl.style.width = `${size}px`;
+    paneEl.style.height = `${size}px`;
+    container.appendChild(paneEl);
+    const root = createRoot(paneEl);
+    roots.push(root);
+    root.render(h(Pane, { index: i }));
+  }
+
+  const cleanup = () => {
+    for (const root of roots) root.unmount();
+    container.remove();
+  };
+
+  const mounted = await waitFor(() => container.querySelectorAll("canvas[data-gpu-image-canvas]").length === N);
+  report(mounted, `[park-aware] mounted ${N} visible panes (cap=${MAX_LIVE_SWAPCHAINS})`);
+  if (!mounted) {
+    cleanup();
+    return false;
+  }
+  // Let the mount-time acquire/upload/render chain (and its LRU eviction) settle.
+  await sleep(2000);
+
+  const canvases = Array.from(container.querySelectorAll("canvas[data-gpu-image-canvas]")) as HTMLCanvasElement[];
+  const liveCountAfterMount = getLiveSwapchainCount();
+  const overCapPresent = liveCountAfterMount <= MAX_LIVE_SWAPCHAINS && N > MAX_LIVE_SWAPCHAINS;
+  report(
+    overCapPresent,
+    `[park-aware] ${N} visible panes -> ${liveCountAfterMount} live (cap=${MAX_LIVE_SWAPCHAINS}), so some MUST be parked while still visible`,
+  );
+
+  let parkedIndex = -1;
+  for (let i = 0; i < canvases.length; i++) {
+    if (!isCanvasLive(canvases[i]!)) {
+      parkedIndex = i;
+      break;
+    }
+  }
+  const foundParked = parkedIndex !== -1;
+  report(foundParked, `[park-aware] found an on-screen pane the LRU parked (index=${parkedIndex})`);
+  if (!foundParked) {
+    cleanup();
+    return false;
+  }
+
+  // Trigger a RE-RENDER on the still-parked, still-visible pane (an exposure
+  // change) — the pool must transparently restore it before rendering.
+  setExposureFns[parkedIndex]!(newExposure);
+  await sleep(1000);
+
+  const targetCanvas = canvases[parkedIndex]!;
+  const restoredLive = isCanvasLive(targetCanvas);
+  report(restoredLive, `[park-aware] pane[${parkedIndex}] restored to LIVE after its re-render request`);
+  ok = ok && restoredLive;
+
+  const img = await readbackCanvas(targetCanvas);
+  if (forceWebGL2) {
+    let allOk = true;
+    for (let i = 0; i < hdrValues.length; i++) {
+      const expected = computeExpectedByte(hdrValues[i]!, newExposure, operator);
+      const actual = img.data[i * 4]!;
+      const diff = Math.abs(actual - expected);
+      const pxOk = diff <= 2;
+      if (!pxOk) allOk = false;
+      report(
+        pxOk,
+        `[park-aware][webgl2] pane[${parkedIndex}] pixel[${i}] expected(new exposure)=${expected} actual=${actual} (diff=${diff})`,
+      );
+    }
+    report(
+      allOk,
+      "[park-aware][webgl2] re-rendered parked pane matches tonemap.ts reference for the NEW exposure (not stale)",
+    );
+    ok = ok && allOk;
+
+    // Negative control: confirm this is NOT just showing the OLD exposure's
+    // frame (i.e. the assertion above is actually discriminating).
+    let matchesStaleOldFrame = true;
+    for (let i = 0; i < hdrValues.length; i++) {
+      const staleExpected = computeExpectedByte(hdrValues[i]!, initialExposure, operator);
+      const actual = img.data[i * 4]!;
+      if (Math.abs(actual - staleExpected) > 2) {
+        matchesStaleOldFrame = false;
+        break;
+      }
+    }
+    report(
+      !matchesStaleOldFrame,
+      `[park-aware][webgl2] re-rendered pane content differs from the STALE old-exposure frame (matchesStale=${matchesStaleOldFrame})`,
+    );
+    ok = ok && !matchesStaleOldFrame;
+  } else {
+    const nonBlank = isNonBlank(img);
+    report(nonBlank, "[park-aware][default] re-rendered parked pane has non-blank content");
+    ok = ok && nonBlank;
+  }
+
+  cleanup();
+  return ok;
+}
+
 /**
  * Case 6 (addon capability-gated registration) is intentionally NOT tested
  * from this bundle: `plot-gpu-image-addon.tsx`'s top-level side effect
@@ -363,12 +527,17 @@ async function main(): Promise<void> {
 
     const singleOk = await runSingleCase(forceWebGL2);
     const poolOk = await runPoolCapCase();
+    const parkAwareOk = await runParkAwareRenderCase(forceWebGL2);
 
     const noConsoleErrors = consoleErrors.length === 0;
     report(noConsoleErrors, `no console.error calls during the run (got ${consoleErrors.length})`);
-    for (const e of consoleErrors) report(false, `console.error: ${e}`);
+    // Snapshot first: `report(false, ...)` itself calls `console.error` (see
+    // its `console[pass ? "log" : "error"]` below), which the override above
+    // re-appends to `consoleErrors` — iterating the LIVE array here would
+    // pick up each freshly-appended entry and never terminate.
+    for (const e of consoleErrors.slice()) report(false, `console.error: ${e}`);
 
-    setOverallStatus(singleOk && poolOk && noConsoleErrors);
+    setOverallStatus(singleOk && poolOk && parkAwareOk && noConsoleErrors);
   } catch (err) {
     report(false, `threw: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
     setOverallStatus(false);

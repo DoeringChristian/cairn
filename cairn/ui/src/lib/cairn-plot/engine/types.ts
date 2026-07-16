@@ -32,4 +32,16 @@ export interface Device {
   renderFullscreen(target: Surface | Texture, pipeline: RenderPipeline, bindGroup: BindGroup): void;
   readback(source: Surface | Texture): Promise<Uint8Array | Float32Array>;
   destroy(): void;
+  /**
+   * True while this device's underlying GPU context is LOST and awaiting
+   * (asynchronous) browser restoration — meaningful for WebGL2 only, where
+   * `engine/webgl2/device.ts`'s `createSurface` may hand back a canvas's
+   * previously-lost context (a canvas can host only ONE context per type)
+   * and proactively call `restoreContext()`, which does not complete
+   * synchronously. WebGPU never has this state (`createSurface` is always a
+   * safe idempotent re-configure — see `webgpu/device.ts`'s doc), so its
+   * implementation always returns `false`. Callers (`engine/pool.ts`'s
+   * `render()`) must not issue GL/GPU work while this is `true`.
+   */
+  isContextLost(): boolean;
 }

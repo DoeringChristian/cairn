@@ -332,6 +332,36 @@ function applyUniformEntry(gl: WebGL2RenderingContext, program: WebGLProgram, bi
   }
 }
 
+// Module-level (NOT per-`createWebGL2Device()` call) — `engine/pool.ts`
+// creates a FRESH `createWebGL2Device()` instance on every park/restore
+// cycle for the SAME canvas, but the canvas element itself (and any
+// `addEventListener` on it) persists across those cycles. Tracking
+// registration at module scope means the `webglcontextlost` handler that
+// makes restoration POSSIBLE AT ALL (see `ensureLoseContextListener` below)
+// gets attached exactly once per canvas, ever — not once per Device.
+const listenerRegisteredCanvases = new WeakSet<HTMLCanvasElement>();
+
+/**
+ * Per the WebGL spec, a lost context is only eligible for `restoreContext()`
+ * recovery if something called `event.preventDefault()` in its
+ * `webglcontextlost` handler — without this, the browser treats every loss
+ * as PERMANENT and `restoreContext()` silently does nothing. Must be
+ * registered before the canvas's context is EVER lost, so this runs from
+ * `bindContext` on every `createSurface`/`ensureGL` adoption (idempotent —
+ * the `WeakSet` guard skips re-registering).
+ */
+function ensureLoseContextListener(canvas: HTMLCanvasElement): void {
+  if (listenerRegisteredCanvases.has(canvas)) return;
+  listenerRegisteredCanvases.add(canvas);
+  canvas.addEventListener(
+    "webglcontextlost",
+    (e) => {
+      e.preventDefault();
+    },
+    false,
+  );
+}
+
 export function createWebGL2Device(): Device {
   let gl: WebGL2RenderingContext | null = null;
   let ownCanvas: HTMLCanvasElement | null = null;
@@ -339,15 +369,38 @@ export function createWebGL2Device(): Device {
   let vao: WebGLVertexArrayObject | null = null;
   const capabilities = probeCapabilities();
 
-  function bindContext(ctx: WebGL2RenderingContext, canvas: HTMLCanvasElement): void {
-    gl = ctx;
-    ownCanvas = canvas;
+  function createFboAndVao(ctx: WebGL2RenderingContext): void {
     fbo = ctx.createFramebuffer();
     vao = ctx.createVertexArray();
     // Opportunistic — improves float texture sampling quality when available;
     // absence never blocks anything (NEAREST filtering always works).
     ctx.getExtension("OES_texture_float_linear");
     ctx.getExtension("EXT_color_buffer_float");
+  }
+
+  function bindContext(ctx: WebGL2RenderingContext, canvas: HTMLCanvasElement): void {
+    gl = ctx;
+    ownCanvas = canvas;
+    ensureLoseContextListener(canvas);
+    if (!ctx.isContextLost()) {
+      createFboAndVao(ctx);
+      return;
+    }
+    // Context is still lost (`createSurface`'s caller — `engine/pool.ts`'s
+    // `render()` — already triggered `restoreContext()` and will retry once
+    // `isContextLost()` reports false). `createFramebuffer`/`createVertexArray`
+    // called NOW would return non-null but non-functional placeholder
+    // objects per the WebGL spec's lost-context rules — defer creating them
+    // for real until the browser's `webglcontextrestored` event confirms
+    // this SAME context object is actually usable again.
+    fbo = null;
+    vao = null;
+    const onRestored = (): void => {
+      canvas.removeEventListener("webglcontextrestored", onRestored);
+      if (gl !== ctx) return; // a newer bindContext() call already took over.
+      createFboAndVao(ctx);
+    };
+    canvas.addEventListener("webglcontextrestored", onRestored, false);
   }
 
   function ensureGL(): WebGL2RenderingContext {
@@ -428,6 +481,23 @@ export function createWebGL2Device(): Device {
           premultipliedAlpha: false,
         }) as WebGL2RenderingContext | null;
         if (!ctx) throw new Error("webgl2 device: WebGL2 is not supported on the given canvas");
+        // A canvas that previously hosted a WebGL2 context — e.g. one
+        // `engine/pool.ts` PARKED (this device's earlier `destroy()` freed
+        // the real GL context via `WEBGL_lose_context.loseContext()`, per
+        // this module's doc comment) — has that SAME (now-lost) context
+        // object handed back here; `getContext()` never mints a fresh one
+        // for a canvas that already has one. Kick off the browser's
+        // restoration explicitly (`loseContext()` is an intentional,
+        // programmatic loss — Chrome does not auto-recover it on its own).
+        // Restoration completes ASYNCHRONOUSLY (a `webglcontextrestored`
+        // event some frames later); callers must not issue GL work until
+        // `device.isContextLost()` reports false again — see
+        // `engine/pool.ts`'s `render()`, which retries via
+        // `requestAnimationFrame` rather than drawing into a still-lost
+        // context.
+        if (ctx.isContextLost()) {
+          ctx.getExtension("WEBGL_lose_context")?.restoreContext();
+        }
         bindContext(ctx, canvas);
       }
       // SDR only; best-effort wide-gamut color space when the browser supports it.
@@ -498,6 +568,10 @@ export function createWebGL2Device(): Device {
       ownCanvas = null;
       fbo = null;
       vao = null;
+    },
+
+    isContextLost() {
+      return gl ? gl.isContextLost() : false;
     },
   };
 
