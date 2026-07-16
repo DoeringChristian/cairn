@@ -194,8 +194,12 @@ export function MediaComparePane({
 
       <div
         ref={paneRef}
+        // No padding: the reference (left) side must fill exactly [0..split]
+        // edge-to-edge (no checkerboard seam), the full-height divider must
+        // reach the top/bottom edges, and the divider-drag math maps the
+        // pointer across the FULL pane width so splitPosition stays exact.
         className="relative flex-1 min-h-0 min-w-0 flex items-center justify-center overflow-hidden rounded cairn-checkerboard"
-        style={{ padding: "4px", ...viewportProps.style }}
+        style={{ padding: 0, ...viewportProps.style }}
         onPointerDown={viewportProps.onPointerDown}
         onPointerMove={viewportProps.onPointerMove}
         onPointerUp={viewportProps.onPointerUp}
