@@ -25,11 +25,20 @@
  *      normalized RGBA float) — `isScalar: true`, operator "linear" (a
  *      clamp no-op, so the LUT's own [0,1] values pass through unchanged
  *      before output-encode).
- *   7. Gamma override (2.2) instead of the default sRGB OETF.
- *   8. `uv` viewport window (zoom/pan): samples only a sub-rect of a wider
+ *   7. LUT-index rounding parity: scalar values whose `*255` lands EXACTLY
+ *      on a `k+0.5` boundary (0.5/1.5/127.5/254.5), against an alternating
+ *      black/white LUT (`BOUNDARY_LUT`) so a wrong adjacent index is
+ *      unmistakable. Catches the shader-native `round()` (WGSL:
+ *      round-half-to-EVEN, GLSL: implementation-defined) disagreeing with
+ *      the CPU reference's `Math.round` (round-half-up) — and disagreeing
+ *      with EACH OTHER — exactly at these boundaries; a smooth LUT (like
+ *      case 6's viridis) can't catch this because neighboring stops are too
+ *      close in color to distinguish an off-by-one index within 1/255.
+ *   8. Gamma override (2.2) instead of the default sRGB OETF.
+ *   9. `uv` viewport window (zoom/pan): samples only a sub-rect of a wider
  *      source texture, proving the windowing math (not just full-frame
  *      sampling) is wired correctly.
- *   9. `hdrOut: true` to an `rgba32float` target — output-encode is
+ *   10. `hdrOut: true` to an `rgba32float` target — output-encode is
  *      SKIPPED; compared as floats (looser epsilon; no 8-bit quantization
  *      to absorb GPU-vs-CPU float32/float64 precision differences).
  *
@@ -102,6 +111,26 @@ function buildFloatColormap(): Float32Array {
   return out;
 }
 const VIRIDIS_FLOAT_LUT = buildFloatColormap();
+
+/**
+ * Alternating black/white 256x4 LUT — every ADJACENT index pair differs
+ * maximally (0 vs 1 per channel), so a LUT index that rounds to the WRONG
+ * neighbor is unmistakable in the readback (diff ~255, not ~1), unlike a
+ * smooth LUT (e.g. viridis) where neighboring stops are too close in color
+ * to distinguish an off-by-one index within the 1/255 comparison epsilon.
+ */
+function buildBoundaryColormap(): Float32Array {
+  const out = new Float32Array(256 * 4);
+  for (let i = 0; i < 256; i++) {
+    const v = i % 2 === 0 ? 0 : 1;
+    out[i * 4 + 0] = v;
+    out[i * 4 + 1] = v;
+    out[i * 4 + 2] = v;
+    out[i * 4 + 3] = 1;
+  }
+  return out;
+}
+const BOUNDARY_LUT = buildBoundaryColormap();
 
 /**
  * JS mirror of `image.wgsl.ts`'s fragment shader, computed with the REAL
@@ -231,6 +260,19 @@ const SCALAR_PIXELS: number[][] = [
   [1.2, 0, 0, 1.0],
 ];
 
+// Scalar values whose exposure-applied `*255` lands EXACTLY on a `k+0.5`
+// index boundary (0.5, 1.5, 127.5, 254.5) — see `BOUNDARY_LUT`'s doc comment
+// and CASES item 7 above. `k/255` reproduces `k+...` exactly through the
+// float32 texture round-trip (verified: `Math.fround(Math.fround(k/255) *
+// 255) === k+0.5` for all four values), so any mismatch is the shader's
+// rounding choice, not incidental float32/float64 precision noise.
+const BOUNDARY_SCALAR_PIXELS: number[][] = [
+  [0.5 / 255, 0, 0, 1.0],
+  [1.5 / 255, 0, 0, 1.0],
+  [127.5 / 255, 0, 0, 1.0],
+  [254.5 / 255, 0, 0, 1.0],
+];
+
 const uvFull = { x: 0, y: 0, w: 1, h: 1 };
 
 async function runAllCases(device: Device, label: string): Promise<Map<string, CaseResult>> {
@@ -262,6 +304,21 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
       colormap: VIRIDIS_FLOAT_LUT,
     };
     results.set(caseLabel, await runByteCaseAsync(device, caseLabel, SCALAR_PIXELS, params, VIRIDIS_FLOAT_LUT));
+  }
+
+  {
+    // LUT-index rounding parity boundary case — see CASES item 7 above and
+    // BOUNDARY_LUT/BOUNDARY_SCALAR_PIXELS's doc comments.
+    const caseLabel = `${label}/lut-rounding-boundary`;
+    const params: ImageParams = {
+      exposureEV: 0,
+      operator: "linear",
+      isScalar: true,
+      hdrOut: false,
+      uv: uvFull,
+      colormap: BOUNDARY_LUT,
+    };
+    results.set(caseLabel, await runByteCaseAsync(device, caseLabel, BOUNDARY_SCALAR_PIXELS, params, BOUNDARY_LUT));
   }
 
   {

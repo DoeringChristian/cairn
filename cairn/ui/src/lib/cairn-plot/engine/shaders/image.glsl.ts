@@ -115,7 +115,11 @@ void main() {
   // 2) scalar image + colormap LUT (GPU-only pipeline stage; see image.wgsl.ts doc).
   if (isScalar) {
     float idxF = clamp(rgb.x, 0.0, 1.0) * 255.0;
-    int idx = int(round(idxF));
+    // Deterministic round-half-up (matches CPU Math.round for non-negative
+    // inputs) — GLSL's round() is implementation-defined at k+0.5 boundaries
+    // (and can disagree with both Math.round AND WGSL's round-half-to-EVEN).
+    // See image.wgsl.ts for the mirrored fix.
+    int idx = clamp(int(floor(idxF + 0.5)), 0, 255);
     vec4 lutColor = texelFetch(t_bind1, ivec2(idx, 0), 0);
     rgb = lutColor.rgb;
   }

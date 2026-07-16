@@ -81,12 +81,24 @@ function targetFormatOf(target: Surface | Texture): TextureFormat {
  * binding to have a bound resource (see `webgpu/device.ts`'s
  * `createBindGroup` doc note), and the shader never reads it unless
  * `isScalar` is set, so its contents are irrelevant in that case.
+ *
+ * When a `colormap` IS provided it must be EXACTLY `256*4` floats (a 256x4
+ * RGBA-float LUT, per `ImageParams.colormap`'s doc comment) — the shader's
+ * LUT index is clamped to `[0, 255]` (see `image.wgsl.ts`/`image.glsl.ts`),
+ * so a shorter/longer/mis-shaped array would either silently truncate (data
+ * loss, no error) or leave the tail out of range; both are caller bugs
+ * that are cheap to catch here instead of surfacing as a subtly-wrong
+ * render.
  */
 function buildColormapTexture(device: Device, colormap: Float32Array | undefined): Texture {
-  if (colormap && colormap.length >= 4) {
-    const width = Math.floor(colormap.length / 4);
-    const tex = device.createTexture(width, 1, "rgba32float");
-    tex.write(colormap.length === width * 4 ? colormap : colormap.subarray(0, width * 4));
+  if (colormap) {
+    if (colormap.length !== 256 * 4) {
+      throw new Error(
+        `renderImage: params.colormap must have exactly 256*4=1024 floats (256x4 RGBA LUT), got ${colormap.length}`,
+      );
+    }
+    const tex = device.createTexture(256, 1, "rgba32float");
+    tex.write(colormap);
     return tex;
   }
   const tex = device.createTexture(1, 1, "rgba32float");

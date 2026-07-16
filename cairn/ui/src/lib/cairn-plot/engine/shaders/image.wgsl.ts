@@ -66,8 +66,13 @@
  * `isScalar` is set, the scalar value is taken from `rgb.x` AFTER exposure
  * is applied (matching the brief's pipeline order: `v*=2^exposureEV; if
  * (isScalar) v.rgb = colormapLUT(v.r)`), clamped to `[0,1]`, scaled to
- * `[0,255]`, rounded, and used as an EXACT integer texel-fetch index
- * (nearest, no interpolation) — this is a new GPU-only pipeline stage (no
+ * `[0,255]`, rounded via `floor(idxF + 0.5)` (deterministic round-half-UP,
+ * matching the CPU/test reference's `Math.round` — NOT the shader-native
+ * `round()`, which is round-half-to-EVEN in WGSL and implementation-defined
+ * in GLSL, so either could disagree with `Math.round`, and with each other,
+ * exactly at `k+0.5` index boundaries), clamped to `[0,255]`, and used as an
+ * EXACT integer texel-fetch index (nearest, no interpolation) — this is a
+ * new GPU-only pipeline stage (no
  * existing CPU renderer applies a colormap at this point in the pipeline;
  * `colormaps/apply.ts`'s `applyColormap` operates on already-8-bit,
  * already-tone-mapped diff visualizations, a different use case), so its
@@ -174,7 +179,11 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   // 2) scalar image + colormap LUT (GPU-only pipeline stage; see module doc).
   if (isScalar) {
     let idxF = clamp(rgb.x, 0.0, 1.0) * 255.0;
-    let idx = i32(round(idxF));
+    // Deterministic round-half-up (matches CPU Math.round for non-negative
+    // inputs) — WGSL's round() is round-half-to-EVEN, which disagrees with
+    // Math.round (and with GLSL's implementation-defined round()) exactly at
+    // k+0.5 boundaries. See image.glsl.ts for the mirrored fix.
+    let idx = clamp(i32(floor(idxF + 0.5)), 0, 255);
     let lutColor = textureLoad(t_bind1, vec2<i32>(idx, 0), 0);
     rgb = lutColor.rgb;
   }
