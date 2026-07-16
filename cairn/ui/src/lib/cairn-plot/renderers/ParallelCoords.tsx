@@ -8,6 +8,25 @@ import { AXIS } from "../theme";
 import Tooltip from "../primitives/Tooltip";
 import { TickText, AxisTitle } from "../primitives/Axis";
 import { pointerAnchor, type TooltipAnchor } from "../primitives/tooltip-position";
+import type { ChartCapabilities } from "../viewport/use-chart-viewport";
+
+/**
+ * Parallel-coordinates deliberately opts OUT of the shared chart-zoom (no
+ * `useChartViewport`). Each of the N vertical axes is an independent 1D scale,
+ * so a single shared 2D box-zoom/pan domain is undefined here — Plotly handles
+ * exploration on this plot via per-axis brushing (range selection along one
+ * axis), not a global viewport. Until per-axis brushing lands, this renderer
+ * exposes only the non-viewport capabilities so a future toolbar (S5) can
+ * honestly hide the zoom/pan/box controls for PC.
+ */
+export const PARALLEL_COORDS_CAPABILITIES: ChartCapabilities = {
+  zoom: false,
+  pan: false,
+  boxZoom: false,
+  autoscale: false,
+  reset: false,
+  screenshot: true,
+};
 
 export interface ParallelCoordsProps {
   columns: ParallelColumn[];
