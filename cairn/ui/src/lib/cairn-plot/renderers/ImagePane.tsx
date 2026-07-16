@@ -20,7 +20,10 @@ import {
 import { applyColormap, getColormapLUT, DIVERGING_COLORMAPS } from "../colormaps";
 import PixelAxes from "../primitives/PixelAxes";
 import LabelChip from "../primitives/LabelChip";
-import PixelValueOverlay, { type PixelSample } from "../primitives/PixelValueOverlay";
+import PixelValueOverlay, {
+  CHANNEL_COLORS,
+  type PixelSample,
+} from "../primitives/PixelValueOverlay";
 import { useImageViewport, type Viewport as ImageViewport } from "../hooks/use-image-viewport";
 
 const DEFAULT_PROCESSING: ImageProcessing = {
@@ -265,8 +268,13 @@ export default function ImagePane({
       }
       const luminance = (0.299 * lr + 0.587 * lg + 0.114 * lb) / 255;
       const single = colormap !== "none" || (r === g && g === b);
-      const lines = single ? [String(r)] : [String(r), String(g), String(b)];
-      return { lines, luminance };
+      if (single) return { lines: [String(r)], luminance };
+      // Multi-channel: tint each digit line by its channel (R/G/B).
+      return {
+        lines: [String(r), String(g), String(b)],
+        luminance,
+        colors: [CHANNEL_COLORS[0], CHANNEL_COLORS[1], CHANNEL_COLORS[2]],
+      };
     },
     [colormap],
   );

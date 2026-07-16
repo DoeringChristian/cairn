@@ -27,11 +27,26 @@ import { useCallback, useEffect, useRef } from "react";
 /** A source pixel covering at least this many screen px triggers the overlay. */
 export const PIXEL_VALUE_MIN_SCREEN_PX = 30;
 
+/**
+ * Per-channel tint colours for R / G / B digits. Vivid but bright enough to
+ * stay readable on any pixel background — the contrast halo drawn behind them
+ * (an opposite-luminance stroke) guarantees legibility even when a channel's
+ * tint matches the underlying pixel (e.g. a red digit over a red pixel).
+ */
+export const CHANNEL_COLORS = ["#ff5a5a", "#39d353", "#5b9bff"] as const;
+
 export interface PixelSample {
   /** One text line per value (e.g. `["255","128","0"]` or `["1.23e+02"]`). */
   lines: string[];
   /** Displayed-pixel luminance in [0,1], used to pick a legible text colour. */
   luminance: number;
+  /**
+   * Optional per-line fill colours (index-aligned to `lines`). A non-null
+   * entry tints that line (channel-coloured R/G/B digits); `null`/`undefined`
+   * falls back to per-pixel auto-contrast (black on light, white on dark).
+   * The legibility halo is always contrast-based, independent of this.
+   */
+  colors?: (string | null)[];
 }
 
 export type PixelSampler = (px: number, py: number) => PixelSample | null;
@@ -124,14 +139,18 @@ export default function PixelValueOverlay({
         const cy = imgTop + (py + 0.5) * scale;
         const lineH = fontH * 1.15;
         const dark = s.luminance <= 0.55;
+        const autoFill = dark ? "#ffffff" : "#000000";
         ctx.font = `${fontH}px ui-monospace, SFMono-Regular, Menlo, monospace`;
         ctx.lineWidth = Math.max(1.4, fontH * 0.16);
-        ctx.strokeStyle = dark ? "rgba(0,0,0,0.75)" : "rgba(255,255,255,0.85)";
-        ctx.fillStyle = dark ? "#ffffff" : "#000000";
+        // Halo/outline is always the opposite-luminance stroke so channel-tinted
+        // digits stay readable on ANY pixel background.
+        ctx.strokeStyle = dark ? "rgba(0,0,0,0.85)" : "rgba(255,255,255,0.9)";
 
         let ly = cy - (lc * lineH) / 2 + lineH / 2;
-        for (const ln of s.lines) {
+        for (let k = 0; k < s.lines.length; k++) {
+          const ln = s.lines[k]!;
           ctx.strokeText(ln, cx, ly);
+          ctx.fillStyle = s.colors?.[k] ?? autoFill;
           ctx.fillText(ln, cx, ly);
           ly += lineH;
         }
