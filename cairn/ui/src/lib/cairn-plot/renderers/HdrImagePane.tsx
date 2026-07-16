@@ -33,7 +33,10 @@ import {
 import type { Interpolation } from "../types";
 import PixelAxes from "../primitives/PixelAxes";
 import LabelChip from "../primitives/LabelChip";
-import PixelValueOverlay, { type PixelSample } from "../primitives/PixelValueOverlay";
+import PixelValueOverlay, {
+  CHANNEL_COLORS,
+  type PixelSample,
+} from "../primitives/PixelValueOverlay";
 import { useImageViewport, type Viewport as ImageViewport } from "../hooks/use-image-viewport";
 
 /** Compact float formatting for the pixel-value overlay: 3 sig figs, with
@@ -201,16 +204,6 @@ export default function HdrImagePane({
       const c = hdr.shape.length === 2 ? 1 : (hdr.shape[2] ?? 1);
       const base = (py * d.w + px) * c;
       const src = hdr.data;
-      let lines: string[];
-      if (c === 1) {
-        lines = [formatHdrValue(src[base] ?? 0)];
-      } else {
-        lines = [
-          formatHdrValue(src[base] ?? 0),
-          formatHdrValue(src[base + 1] ?? 0),
-          formatHdrValue(src[base + 2] ?? 0),
-        ];
-      }
       const disp = dispDataRef.current;
       let luminance = 0.5;
       if (disp && disp.width === d.w && disp.height === d.h) {
@@ -221,7 +214,19 @@ export default function HdrImagePane({
             0.114 * disp.data[j + 2]!) /
           255;
       }
-      return { lines, luminance };
+      if (c === 1) {
+        return { lines: [formatHdrValue(src[base] ?? 0)], luminance };
+      }
+      // Multi-channel HDR: tint each float line by its channel (R/G/B).
+      return {
+        lines: [
+          formatHdrValue(src[base] ?? 0),
+          formatHdrValue(src[base + 1] ?? 0),
+          formatHdrValue(src[base + 2] ?? 0),
+        ],
+        luminance,
+        colors: [CHANNEL_COLORS[0], CHANNEL_COLORS[1], CHANNEL_COLORS[2]],
+      };
     },
     [hdr, dims],
   );

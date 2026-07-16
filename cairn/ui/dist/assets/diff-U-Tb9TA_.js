@@ -1,8 +1,12 @@
+<<<<<<< HEAD:cairn/ui/dist/assets/diff-R2YchYze.js
 <<<<<<<< HEAD:cairn/ui/dist/assets/diff-2dl0V8cn.js
 import{u as ac,r as Pe,j as Dn,C as oc,a2 as lc}from"./index-CssMAwZj.js";/**
 ========
 import{u as ac,r as Pe,j as Dn,C as oc,a1 as lc}from"./index-DIij9EpJ.js";/**
 >>>>>>>> 47a89040 (cairn-plot overlay: per-channel R/G/B tinted digits (Q1)):cairn/ui/dist/assets/diff-R2YchYze.js
+=======
+import{u as ac,r as Pe,j as Dn,C as oc,a2 as lc}from"./index-Chd_hzon.js";/**
+>>>>>>> 5a7262be (cairn-plot HDR overlay: per-channel tinted float values (Q2)):cairn/ui/dist/assets/diff-U-Tb9TA_.js
  * @license
  * Copyright 2010-2026 Three.js Authors
  * SPDX-License-Identifier: MIT
