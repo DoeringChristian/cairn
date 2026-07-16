@@ -11,7 +11,13 @@ import { useImageViewport, type Viewport as ImageViewport } from "../hooks/use-i
 import { useGammaFilter, GammaFilterSvg } from "./post-processing";
 import ImageOverlay from "../renderers/ImageOverlay";
 import ImagePane from "../renderers/ImagePane";
-import PixelValueOverlay, { type PixelSample } from "../primitives/PixelValueOverlay";
+import PixelValueOverlay, {
+  CHANNEL_COLORS,
+  PixelNotationToggle,
+  formatChannelValue,
+  type PixelSample,
+  type PixelValueNotation,
+} from "../primitives/PixelValueOverlay";
 import { loadImageData } from "../image";
 import type { MediaCompareModeKind } from "./mode";
 import { alignFrameSourcesForDiff } from "./cross-type-align";
@@ -56,6 +62,9 @@ export interface MediaComparePaneProps {
   /** Overlay annotations — applied to the FOREGROUND (prediction) image only. */
   overlay?: ImageOverlayData;
   overlaySettings?: ImageOverlaySettings;
+
+  /** Initial notation for the pixel-value overlay (user-toggleable in-pane). */
+  pixelValueNotation?: PixelValueNotation;
 }
 
 /**
@@ -81,9 +90,12 @@ export function MediaComparePane({
   onDragStart,
   overlay,
   overlaySettings,
+  pixelValueNotation = "decimal",
 }: MediaComparePaneProps) {
   const paneRef = useRef<HTMLDivElement>(null);
   const [naturalDims, setNaturalDims] = useState<{ w: number; h: number } | null>(null);
+  const [notation, setNotation] = useState<PixelValueNotation>(pixelValueNotation);
+  const [overlayActive, setOverlayActive] = useState(false);
 
   // TEV-style per-pixel value overlay (foreground image). The split/blend
   // compositor draws raw <img>s (not ImagePane), so it carries its own overlay
@@ -108,7 +120,7 @@ export function MediaComparePane({
     };
   }, [imageUrl]);
   const samplePixel = useCallback(
-    (px: number, py: number): PixelSample | null => {
+    (px: number, py: number, notation: PixelValueNotation): PixelSample | null => {
       const d = fgDataRef.current;
       if (!d || px < 0 || py < 0 || px >= d.width || py >= d.height) return null;
       const i = (py * d.width + px) * 4;
@@ -116,9 +128,18 @@ export function MediaComparePane({
       const g = d.data[i + 1]!;
       const b = d.data[i + 2]!;
       const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-      const single = r === g && g === b;
-      const lines = single ? [String(r)] : [String(r), String(g), String(b)];
-      return { lines, luminance };
+      if (r === g && g === b) {
+        return { lines: [formatChannelValue(r, "uint8", notation)], luminance };
+      }
+      return {
+        lines: [
+          formatChannelValue(r, "uint8", notation),
+          formatChannelValue(g, "uint8", notation),
+          formatChannelValue(b, "uint8", notation),
+        ],
+        luminance,
+        colors: [CHANNEL_COLORS[0], CHANNEL_COLORS[1], CHANNEL_COLORS[2]],
+      };
     },
     [],
   );
@@ -232,8 +253,13 @@ export function MediaComparePane({
             zoom={zoom}
             pan={pan}
             sample={samplePixel}
+            notation={notation}
             version={pixelDataVersion}
+            onActiveChange={setOverlayActive}
           />
+        )}
+        {overlayActive && (
+          <PixelNotationToggle notation={notation} onChange={setNotation} />
         )}
       </div>
       <span className="absolute top-1 left-1 z-10 rounded bg-accent/20 px-1 py-0.5 text-[10px] text-accent backdrop-blur-sm">
@@ -303,6 +329,9 @@ export interface CompositeMediaPaneProps {
 
   overlay?: ImageOverlayData;
   overlaySettings?: ImageOverlaySettings;
+
+  /** Initial notation for the pixel-value overlay (user-toggleable in-pane). */
+  pixelValueNotation?: PixelValueNotation;
 }
 
 export function CompositeMediaPane({
@@ -327,6 +356,7 @@ export function CompositeMediaPane({
   onNaturalSize,
   overlay,
   overlaySettings,
+  pixelValueNotation,
 }: CompositeMediaPaneProps) {
   const effectiveMode: MediaCompareModeKind = baselineUrl == null ? "normal" : mode;
 
@@ -347,6 +377,7 @@ export function CompositeMediaPane({
             pan={pan}
             onViewportChange={onViewportChange}
             label="REF"
+            pixelValueNotation={pixelValueNotation}
           />
         </div>
         <div className="relative flex-1 min-w-0 overflow-hidden">
@@ -368,6 +399,7 @@ export function CompositeMediaPane({
             label={label}
             overlay={overlay}
             overlaySettings={overlaySettings}
+            pixelValueNotation={pixelValueNotation}
           />
         </div>
       </div>
@@ -393,6 +425,7 @@ export function CompositeMediaPane({
         onDragStart={onDragStart}
         overlay={overlay}
         overlaySettings={overlaySettings}
+        pixelValueNotation={pixelValueNotation}
       />
     );
   }
@@ -419,6 +452,7 @@ export function CompositeMediaPane({
       label={label}
       overlay={overlay}
       overlaySettings={overlaySettings}
+      pixelValueNotation={pixelValueNotation}
     />
   );
 }

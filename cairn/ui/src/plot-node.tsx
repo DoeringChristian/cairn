@@ -243,6 +243,9 @@ function CompareView({ node }: { node: CompareNode }) {
         onViewportChange={setViewport}
         label=""
         overlay={foreground.overlay}
+        pixelValueNotation={
+          props.pixelValueNotation as "decimal" | "int" | undefined
+        }
       />
     </ChartBox>
   );

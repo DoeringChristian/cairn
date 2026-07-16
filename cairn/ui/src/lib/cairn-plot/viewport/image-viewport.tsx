@@ -56,6 +56,7 @@ export interface ImageViewportSettings {
   colormap?: Colormap;
   showAxes?: boolean;
   overlay?: ImageOverlaySettings;
+  pixelValueNotation?: "decimal" | "int";
 }
 
 function toProcessing(s: ImageViewportSettings): ImageProcessing {
@@ -131,6 +132,7 @@ export function ImageViewportPane({
       onNaturalSize={onNaturalSize}
       overlay={data?.overlay ?? undefined}
       overlaySettings={settings.overlay}
+      pixelValueNotation={settings.pixelValueNotation}
     />
   );
 }

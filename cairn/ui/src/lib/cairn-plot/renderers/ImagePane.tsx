@@ -22,7 +22,10 @@ import PixelAxes from "../primitives/PixelAxes";
 import LabelChip from "../primitives/LabelChip";
 import PixelValueOverlay, {
   CHANNEL_COLORS,
+  PixelNotationToggle,
+  formatChannelValue,
   type PixelSample,
+  type PixelValueNotation,
 } from "../primitives/PixelValueOverlay";
 import { useImageViewport, type Viewport as ImageViewport } from "../hooks/use-image-viewport";
 
@@ -59,6 +62,9 @@ export interface ImagePaneProps {
   /** Optional bounding-box / segmentation-mask annotations for this image. */
   overlay?: ImageOverlayData;
   overlaySettings?: ImageOverlaySettings;
+
+  /** Initial notation for the pixel-value overlay (user-toggleable in-pane). */
+  pixelValueNotation?: PixelValueNotation;
 }
 
 export default function ImagePane({
@@ -79,6 +85,7 @@ export default function ImagePane({
   onDragStart,
   overlay,
   overlaySettings,
+  pixelValueNotation = "decimal",
 }: ImagePaneProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const falseColorRef = useRef<HTMLCanvasElement | null>(null);
@@ -97,6 +104,10 @@ export default function ImagePane({
   const dispDataRef = useRef<ImageData | null>(null);
   const [pixelDataVersion, setPixelDataVersion] = useState(0);
   const bumpPixelData = useCallback(() => setPixelDataVersion((v) => v + 1), []);
+  // Notation is owned locally (seeded from the prop) so the pane is
+  // self-contained; the toggle shows only while the overlay is active.
+  const [notation, setNotation] = useState<PixelValueNotation>(pixelValueNotation);
+  const [overlayActive, setOverlayActive] = useState(false);
 
   // Callback refs that also record the currently-displayed element (only one
   // of img/canvas/falseColor is mounted at a time) for the overlay's geometry.
@@ -249,7 +260,7 @@ export default function ImagePane({
   }, [imageUrl, colormap, bumpPixelData]);
 
   const samplePixel = useCallback(
-    (px: number, py: number): PixelSample | null => {
+    (px: number, py: number, notation: PixelValueNotation): PixelSample | null => {
       const vd = valueDataRef.current;
       if (!vd || px < 0 || py < 0 || px >= vd.width || py >= vd.height) return null;
       const i = (py * vd.width + px) * 4;
@@ -268,10 +279,16 @@ export default function ImagePane({
       }
       const luminance = (0.299 * lr + 0.587 * lg + 0.114 * lb) / 255;
       const single = colormap !== "none" || (r === g && g === b);
-      if (single) return { lines: [String(r)], luminance };
+      if (single) {
+        return { lines: [formatChannelValue(r, "uint8", notation)], luminance };
+      }
       // Multi-channel: tint each digit line by its channel (R/G/B).
       return {
-        lines: [String(r), String(g), String(b)],
+        lines: [
+          formatChannelValue(r, "uint8", notation),
+          formatChannelValue(g, "uint8", notation),
+          formatChannelValue(b, "uint8", notation),
+        ],
         luminance,
         colors: [CHANNEL_COLORS[0], CHANNEL_COLORS[1], CHANNEL_COLORS[2]],
       };
@@ -512,8 +529,13 @@ export default function ImagePane({
             zoom={zoomProp}
             pan={panProp}
             sample={samplePixel}
+            notation={notation}
             version={pixelDataVersion}
+            onActiveChange={setOverlayActive}
           />
+        )}
+        {overlayActive && (
+          <PixelNotationToggle notation={notation} onChange={setNotation} />
         )}
       </div>
       <LabelChip label={label} isDraggable={isDraggable} onDragStart={onDragStart} />

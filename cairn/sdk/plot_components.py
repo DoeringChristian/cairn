@@ -603,6 +603,7 @@ def _image_display_props(
     colormap: str | None = None,
     interpolation: str | None = None,
     show_axes: bool | None = None,
+    pixel_value_notation: str | None = None,
 ) -> dict[str, Any]:
     """Build the non-data ``props`` an image / image-compare renderer honours:
     a full ``processing`` block (exposure EV, gamma, brightness, contrast,
@@ -627,7 +628,25 @@ def _image_display_props(
         props["interpolation"] = interpolation
     if show_axes is not None:
         props["showAxes"] = bool(show_axes)
+    if pixel_value_notation is not None:
+        props["pixelValueNotation"] = _check_pixel_value_notation(pixel_value_notation)
     return props
+
+
+_PIXEL_VALUE_NOTATIONS = ("decimal", "int")
+
+
+def _check_pixel_value_notation(value: str) -> str:
+    """Validate the TEV pixel-value overlay notation kwarg. ``"decimal"`` prints
+    floats where 1.0 = SDR white (HDR > 1.0 shown); ``"int"`` prints an integer
+    scale where 255 = 1.0 = SDR white (HDR > 255 shown). The default is the
+    renderer's own ``"decimal"`` — omit the kwarg to inherit it."""
+    if value not in _PIXEL_VALUE_NOTATIONS:
+        raise ValueError(
+            f"pixel_value_notation must be one of {_PIXEL_VALUE_NOTATIONS!r}, "
+            f"got {value!r}"
+        )
+    return value
 
 
 _HDR_TONEMAP_OPERATORS = ("linear", "srgb", "reinhard", "aces")
@@ -640,6 +659,7 @@ def _image_hdr_props(
     gamma: float | None = None,
     interpolation: str | None = None,
     show_axes: bool | None = None,
+    pixel_value_notation: str | None = None,
 ) -> dict[str, Any]:
     """Build the ``imagehdr`` renderer props (real HDR tone-map, NOT the 8-bit
     CSS-filter ``processing`` block). ``tonemap`` defaults to ``"srgb"`` and
@@ -662,6 +682,8 @@ def _image_hdr_props(
         props["interpolation"] = interpolation
     if show_axes is not None:
         props["showAxes"] = bool(show_axes)
+    if pixel_value_notation is not None:
+        props["pixelValueNotation"] = _check_pixel_value_notation(pixel_value_notation)
     return props
 
 
@@ -711,6 +733,7 @@ class Image(Component):
         colormap: str | None = None,
         interpolation: str | None = None,
         show_axes: bool | None = None,
+        pixel_value_notation: str | None = None,
     ) -> None:
         import json as _json
 
@@ -778,6 +801,7 @@ class Image(Component):
             self._props = _image_hdr_props(
                 tonemap=tonemap, exposure=exposure, gamma=gamma,
                 interpolation=interpolation, show_axes=show_axes,
+                pixel_value_notation=pixel_value_notation,
             )
             # M2: guarantee C-contiguous float32 (halves size vs float64; the
             # renderer's parseNpy reads C-order, ROW-MAJOR bytes).
@@ -820,6 +844,7 @@ class Image(Component):
             exposure=exposure, gamma=gamma, brightness=brightness,
             contrast=contrast, offset=offset, flip_sign=flip_sign,
             colormap=colormap, interpolation=interpolation, show_axes=show_axes,
+            pixel_value_notation=pixel_value_notation,
         )
 
         if isinstance(data, DataRef):
@@ -1549,6 +1574,7 @@ class Compare(Component):
         flip_sign: bool | None = None,
         interpolation: str | None = None,
         show_axes: bool | None = None,
+        pixel_value_notation: str | None = None,
         props: dict[str, Any] | None = None,
     ) -> None:
         self._mode = mode
@@ -1562,6 +1588,7 @@ class Compare(Component):
             exposure=exposure, gamma=gamma, brightness=brightness,
             contrast=contrast, offset=offset, flip_sign=flip_sign,
             colormap=colormap, interpolation=interpolation, show_axes=show_axes,
+            pixel_value_notation=pixel_value_notation,
         )
         if split_position is not None:
             built["splitPosition"] = float(split_position)

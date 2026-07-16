@@ -35,18 +35,12 @@ import PixelAxes from "../primitives/PixelAxes";
 import LabelChip from "../primitives/LabelChip";
 import PixelValueOverlay, {
   CHANNEL_COLORS,
+  PixelNotationToggle,
+  formatChannelValue,
   type PixelSample,
+  type PixelValueNotation,
 } from "../primitives/PixelValueOverlay";
 import { useImageViewport, type Viewport as ImageViewport } from "../hooks/use-image-viewport";
-
-/** Compact float formatting for the pixel-value overlay: 3 sig figs, with
- *  scientific notation for very small / very large magnitudes. */
-function formatHdrValue(v: number): string {
-  if (!Number.isFinite(v)) return "0";
-  const a = Math.abs(v);
-  if (a !== 0 && (a < 1e-3 || a >= 1e4)) return v.toExponential(1);
-  return String(Number(v.toPrecision(3)));
-}
 
 export interface HdrData {
   /** Flattened float samples in row-major order (from `parseNpy`). */
@@ -74,6 +68,9 @@ export interface HdrImagePaneProps {
   zoom?: number;
   pan?: { x: number; y: number };
   onViewportChange?: (v: ImageViewport) => void;
+
+  /** Initial notation for the pixel-value overlay (user-toggleable in-pane). */
+  pixelValueNotation?: PixelValueNotation;
 }
 
 /** Decode HDR shape into (H, W, C). Grayscale `[H,W]` is treated as C=1. */
@@ -152,6 +149,7 @@ export default function HdrImagePane({
   zoom = 1,
   pan = { x: 0, y: 0 },
   onViewportChange,
+  pixelValueNotation = "decimal",
 }: HdrImagePaneProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const imgWrapperRef = useRef<HTMLDivElement | null>(null);
@@ -160,6 +158,8 @@ export default function HdrImagePane({
   // Retained tone-mapped pixels — used for the overlay's auto-contrast.
   const dispDataRef = useRef<ImageData | null>(null);
   const [pixelDataVersion, setPixelDataVersion] = useState(0);
+  const [notation, setNotation] = useState<PixelValueNotation>(pixelValueNotation);
+  const [overlayActive, setOverlayActive] = useState(false);
 
   // Single CPU tone-map pass; reruns on data / tonemap / exposure / gamma.
   useEffect(() => {
@@ -198,7 +198,7 @@ export default function HdrImagePane({
   // TEV-style per-pixel value overlay: reads the RAW float samples so the
   // numbers are the true scene values (not the tone-mapped display pixels).
   const samplePixel = useCallback(
-    (px: number, py: number): PixelSample | null => {
+    (px: number, py: number, notation: PixelValueNotation): PixelSample | null => {
       const d = dims;
       if (!d || px < 0 || py < 0 || px >= d.w || py >= d.h) return null;
       const c = hdr.shape.length === 2 ? 1 : (hdr.shape[2] ?? 1);
@@ -215,14 +215,17 @@ export default function HdrImagePane({
           255;
       }
       if (c === 1) {
-        return { lines: [formatHdrValue(src[base] ?? 0)], luminance };
+        return {
+          lines: [formatChannelValue(src[base] ?? 0, "unit", notation)],
+          luminance,
+        };
       }
       // Multi-channel HDR: tint each float line by its channel (R/G/B).
       return {
         lines: [
-          formatHdrValue(src[base] ?? 0),
-          formatHdrValue(src[base + 1] ?? 0),
-          formatHdrValue(src[base + 2] ?? 0),
+          formatChannelValue(src[base] ?? 0, "unit", notation),
+          formatChannelValue(src[base + 1] ?? 0, "unit", notation),
+          formatChannelValue(src[base + 2] ?? 0, "unit", notation),
         ],
         luminance,
         colors: [CHANNEL_COLORS[0], CHANNEL_COLORS[1], CHANNEL_COLORS[2]],
@@ -272,8 +275,13 @@ export default function HdrImagePane({
             zoom={zoom}
             pan={pan}
             sample={samplePixel}
+            notation={notation}
             version={pixelDataVersion}
+            onActiveChange={setOverlayActive}
           />
+        )}
+        {overlayActive && (
+          <PixelNotationToggle notation={notation} onChange={setNotation} />
         )}
       </div>
       {label ? <LabelChip label={label} /> : null}

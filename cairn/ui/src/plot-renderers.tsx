@@ -145,6 +145,7 @@ function ImageStandalone(p: P) {
       overlay={p.overlay}
       overlaySettings={p.overlaySettings}
       processing={p.processing}
+      pixelValueNotation={p.pixelValueNotation}
       zoom={viewport.zoom}
       pan={viewport.pan}
       onViewportChange={setViewport}
@@ -174,6 +175,7 @@ function ImageHdrStandalone(p: P) {
         showAxes={rest.showAxes ?? false}
         label={rest.label ?? ""}
         interpolation={rest.interpolation ?? "auto"}
+        pixelValueNotation={rest.pixelValueNotation}
         zoom={viewport.zoom}
         pan={viewport.pan}
         onViewportChange={setViewport}

@@ -228,6 +228,33 @@ def test_image_no_processing_props_when_unset():
     assert "props" not in cp.Image(_PNG).to_node()
 
 
+def test_image_forwards_pixel_value_notation():
+    # 8-bit path threads the TEV overlay notation into the leaf props.
+    for n in ("decimal", "int"):
+        node = cp.Image(_PNG, pixel_value_notation=n).to_node()
+        assert node["props"]["pixelValueNotation"] == n
+    # Unset → key omitted (renderer defaults to "decimal").
+    assert "pixelValueNotation" not in cp.Image(_PNG, colormap="viridis").to_node()["props"]
+
+
+def test_image_hdr_forwards_pixel_value_notation():
+    node = cp.Image(_hdr_arr(), pixel_value_notation="int").to_node()
+    assert node["renderer"] == "imagehdr"
+    assert node["props"]["pixelValueNotation"] == "int"
+
+
+def test_compare_forwards_pixel_value_notation():
+    node = cp.Compare(
+        cp.Image(_PNG), cp.Image(_PNG2), mode="split", pixel_value_notation="int"
+    ).to_node()
+    assert node["props"]["pixelValueNotation"] == "int"
+
+
+def test_pixel_value_notation_rejects_bad_value():
+    with pytest.raises(ValueError, match="pixel_value_notation"):
+        cp.Image(_PNG, pixel_value_notation="hex")
+
+
 def test_mesh_forwards_3d_camera_and_planes_props():
     # #69 S1+S2: camera_mode/show_planes ride in the untyped leaf props as
     # cameraMode/showPlanes, exactly like show_axes → showAxes.
