@@ -41,6 +41,7 @@ import {
   type DomainClamp,
   type MinSpan,
 } from "./chart-viewport-math";
+import { useModifierKey } from "../hooks/use-modifier-key";
 
 export type { ChartDomain } from "./chart-viewport-math";
 
@@ -205,6 +206,12 @@ export function useChartViewport({
   dragModeRef.current = dragMode2;
   const constrainRef = useRef(constrainTo);
   constrainRef.current = constrainTo;
+  // Keyboard-tracked modifier (Alt/Ctrl/Meta) — the same mechanism the image
+  // viewport uses. WheelEvent.altKey is unreliable during scroll on some
+  // platforms, so gate wheel-zoom on this ref rather than e.altKey.
+  const modifierDown = useModifierKey();
+  const modifierDownRef = useRef(modifierDown);
+  modifierDownRef.current = modifierDown;
   const rectRef = useRef<{ width: number; height: number } | null>(null);
   rectRef.current = plotRectRef.current
     ? { width: plotRectRef.current.width, height: plotRectRef.current.height }
@@ -239,14 +246,14 @@ export function useChartViewport({
   }, [home, onChange, controlled]);
 
   // ── Wheel zoom (non-passive so preventDefault sticks) ──
-  // Alt-gated: only Alt+wheel zooms. A plain wheel does nothing and never calls
-  // preventDefault, so it bubbles and scrolls the page normally. Ctrl/Cmd+wheel
-  // is left alone (browser page-zoom); Alt is the sole zoom modifier.
+  // Modifier-gated (Alt/Ctrl/Meta via useModifierKey, matching the image
+  // viewport): only modifier+wheel zooms. A plain wheel does nothing and never
+  // calls preventDefault, so it bubbles and scrolls the page normally.
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     const handler = (e: WheelEvent) => {
-      if (!e.altKey) return; // plain wheel → let the page scroll (no preventDefault)
+      if (!modifierDownRef.current) return; // plain wheel → let the page scroll (no preventDefault)
       const rect = rectToClient(containerRef, plotRectRef);
       if (!rect) return;
       const next = wheelZoom(

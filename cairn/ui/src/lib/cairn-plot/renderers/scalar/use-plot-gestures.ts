@@ -28,6 +28,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MutableRefObject, RefObject } from "react";
 import type { PromotedSeriesConfig, Viewport } from "../../types";
+import { useModifierKey } from "../../hooks/use-modifier-key";
 
 export interface PlotOffset {
   top: number;
@@ -95,15 +96,19 @@ export function usePlotGestures({
   const [selection, setSelection] = useState<Selection | null>(null);
 
   // ── Wheel zoom (centers on cursor) ──
+  // Modifier-gated (Alt/Ctrl/Meta via useModifierKey, matching useChartViewport
+  // + the image viewport): only modifier+wheel zooms. A plain wheel does nothing
+  // and never calls preventDefault, so it bubbles and scrolls the page normally.
+  // WheelEvent.altKey is unreliable during scroll on some platforms, so we gate
+  // on the keyboard-tracked modifier state instead.
+  const modifierDown = useModifierKey();
+  const modifierDownRef = useRef(modifierDown);
+  modifierDownRef.current = modifierDown;
   useEffect(() => {
     const el = chartBoxRef.current;
     if (!el) return;
     const handler = (e: WheelEvent) => {
-      // Alt-gated, matching the unified chart viewport (useChartViewport): only
-      // Alt+wheel zooms. A plain wheel does nothing and never calls
-      // preventDefault, so it bubbles and scrolls the page normally. Ctrl/Cmd+
-      // wheel is left alone (browser page-zoom); Alt is the sole zoom modifier.
-      if (!e.altKey) return; // plain wheel → let the page scroll (no preventDefault)
+      if (!modifierDownRef.current) return; // plain wheel → let the page scroll (no preventDefault)
       const po = plotOffsetRef.current;
       if (!po) return; // geometry not measured yet — bail rather than guess
       const rect = el.getBoundingClientRect();
