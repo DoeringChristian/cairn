@@ -274,7 +274,7 @@ function MeshViewportPane(
   // the generalized OffscreenComparePanes).
   const renderMeshLive = (cb: (canvas: HTMLCanvasElement) => void, syncOpts: Scene3DSyncOptions) => {
     const active = resolveActiveProperty(data!.arrays.properties, view.property, data!.meta.properties ?? null);
-    const resolvedMode = resolveMeshColorMode(view.colorMode, !!data!.arrays.colors, !!active.values);
+    const resolvedMode = resolveMeshColorMode(view.colorMode, !!data!.arrays.colors, !!active.values, !!data!.arrays.faceColors);
     const valueRange = resolvedMode === "values" ? (colorRange ?? active.range) : active.range;
     return (
       <MeshViewer
@@ -285,6 +285,7 @@ function MeshViewportPane(
         values={active.values}
         valueRange={valueRange}
         colors={data!.arrays.colors}
+        faceColors={data!.arrays.faceColors}
         normals={data!.arrays.normals}
         bounds={data!.meta.bounds}
         colorMode={view.colorMode}
@@ -358,7 +359,7 @@ function MeshViewportPane(
           kind: "live",
           render: (cb, syncOpts) => {
             const active = resolveActiveProperty(reference.arrays.properties, view.property, reference.meta.properties ?? null);
-            const resolvedMode = resolveMeshColorMode(view.colorMode, !!reference.arrays.colors, !!active.values);
+            const resolvedMode = resolveMeshColorMode(view.colorMode, !!reference.arrays.colors, !!active.values, !!reference.arrays.faceColors);
             const valueRange = resolvedMode === "values" ? (colorRange ?? active.range) : active.range;
             return (
               <MeshViewer
@@ -369,6 +370,7 @@ function MeshViewportPane(
                 values={active.values}
                 valueRange={valueRange}
                 colors={reference.arrays.colors}
+                faceColors={reference.arrays.faceColors}
                 normals={reference.arrays.normals}
                 bounds={reference.meta.bounds}
                 colorMode={view.colorMode}
@@ -418,6 +420,7 @@ function MeshViewportPane(
 const COLOR_MODE_OPTIONS: Array<{ value: MeshColorMode; label: string }> = [
   { value: "solid", label: "Solid" },
   { value: "vertex-colors", label: "Vertex colors" },
+  { value: "face-colors", label: "Face colors" },
   { value: "values", label: "Values (viridis)" },
 ];
 

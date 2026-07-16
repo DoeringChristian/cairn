@@ -52,6 +52,9 @@ export interface MeshMeta {
   n_faces: number;
   bounds: { min: [number, number, number]; max: [number, number, number] };
   has_colors: boolean;
+  has_face_colors?: boolean;
+  /** 3 (RGB) or 4 (RGBA); present only when `has_face_colors`. */
+  face_color_channels?: number;
   has_normals: boolean;
   value_range?: { min: number; max: number; mean: number };
   properties?: PropertyMeta[];
@@ -65,6 +68,7 @@ export interface MeshViewportItem {
     faces: Uint32Array;
     properties: PropertyMap;
     colors: Float32Array | null;
+    faceColors: Float32Array | null;
     normals: Float32Array | null;
   };
   meta: MeshMeta;
@@ -159,7 +163,12 @@ export function MeshSingleView({
   }
   const { arrays, meta } = item;
   const active = resolveActiveProperty(arrays.properties, view.property, meta.properties ?? null);
-  const resolvedMode = resolveMeshColorMode(view.colorMode, !!arrays.colors, !!active.values);
+  const resolvedMode = resolveMeshColorMode(
+    view.colorMode,
+    !!arrays.colors,
+    !!active.values,
+    !!arrays.faceColors,
+  );
   const valueRange = resolvedMode === "values" ? (colorRange ?? active.range) : active.range;
   return (
     <div className="relative flex h-full w-full flex-col overflow-hidden rounded bg-bg">
@@ -173,6 +182,7 @@ export function MeshSingleView({
             values={active.values}
             valueRange={valueRange}
             colors={arrays.colors}
+            faceColors={arrays.faceColors}
             normals={arrays.normals}
             bounds={meta.bounds}
             colorMode={view.colorMode}
@@ -250,7 +260,12 @@ export function MeshSideBySideView({
     view.property,
     reference.meta.properties ?? null,
   );
-  const refResolvedMode = resolveMeshColorMode(view.colorMode, !!reference.arrays.colors, !!refActive.values);
+  const refResolvedMode = resolveMeshColorMode(
+    view.colorMode,
+    !!reference.arrays.colors,
+    !!refActive.values,
+    !!reference.arrays.faceColors,
+  );
   const refValueRange = refResolvedMode === "values" ? (colorRange ?? refActive.range) : refActive.range;
   return (
     <div className="flex h-full w-full gap-0.5">
@@ -263,6 +278,7 @@ export function MeshSideBySideView({
           values={refActive.values}
           valueRange={refValueRange}
           colors={reference.arrays.colors}
+          faceColors={reference.arrays.faceColors}
           normals={reference.arrays.normals}
           bounds={reference.meta.bounds}
           colorMode={view.colorMode}
@@ -280,7 +296,12 @@ export function MeshSideBySideView({
       <div className="relative flex-1 min-w-0 overflow-hidden rounded bg-bg">
         {item ? (() => {
           const active = resolveActiveProperty(item.arrays.properties, view.property, item.meta.properties ?? null);
-          const resolvedMode = resolveMeshColorMode(view.colorMode, !!item.arrays.colors, !!active.values);
+          const resolvedMode = resolveMeshColorMode(
+            view.colorMode,
+            !!item.arrays.colors,
+            !!active.values,
+            !!item.arrays.faceColors,
+          );
           const valueRange = resolvedMode === "values" ? (colorRange ?? active.range) : active.range;
           return (
             <MeshViewer
@@ -291,6 +312,7 @@ export function MeshSideBySideView({
               values={active.values}
               valueRange={valueRange}
               colors={item.arrays.colors}
+              faceColors={item.arrays.faceColors}
               normals={item.arrays.normals}
               bounds={item.meta.bounds}
               colorMode={view.colorMode}

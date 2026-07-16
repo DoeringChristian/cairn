@@ -147,6 +147,9 @@ export interface MeshArrays {
   faces: Uint32Array;
   properties: PropertyMap;
   colors: Float32Array | null;
+  /** Flat per-FACE RGB(A) (0-1), `(nFaces * 3)` or `(nFaces * 4)`; drives the
+   *  viewer's "face-colors" mode. `null` when the blob has no `face_colors`. */
+  faceColors: Float32Array | null;
   normals: Float32Array | null;
 }
 
@@ -160,6 +163,7 @@ export async function fetchMeshArrays(hash: string, source: DataSource): Promise
     faces: Uint32Array.from(npz.faces.data),
     properties: extractProperties(npz),
     colors: npz.colors ? Float32Array.from(npz.colors.data) : null,
+    faceColors: npz.face_colors ? Float32Array.from(npz.face_colors.data) : null,
     normals: npz.normals ? Float32Array.from(npz.normals.data) : null,
   };
 }
