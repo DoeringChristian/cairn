@@ -18,6 +18,13 @@ npz arrays:
 - ``colors`` f4 ``(N, 3)`` — optional per-vertex RGB; accepts either ``0-255``
   or ``0-1`` and auto-normalizes to ``0-1`` (same convention as
   ``PointCloud``'s ``xyzrgb``).
+- ``face_colors`` f4 ``(M, 3)`` or ``(M, 4)`` — optional per-FACE (per-triangle)
+  RGB(A); one color per face, ``M == n_faces``. Accepts ``0-255`` or ``0-1``
+  and auto-normalizes to ``0-1``. When present the UI expands the indexed mesh
+  to a non-indexed geometry (3 unique verts per face sharing the face color)
+  so each triangle renders one flat color. Precedence at render time is
+  ``face_colors`` > ``colors`` (per-vertex) > uniform solid. ``meta`` records
+  ``has_face_colors`` and ``face_color_channels`` (3 or 4).
 - ``normals`` f4 ``(N, 3)`` — optional per-vertex normals; the UI computes
   smooth-shading normals itself when absent (after winding normalization —
   see below — so it never inherits a bad face orientation).
@@ -232,6 +239,7 @@ class MeshHandler:
         faces = _to_numpy(obj.get("faces"))
         raw_values = obj.get("values")
         colors = _to_numpy(obj.get("colors"))
+        face_colors = _to_numpy(obj.get("face_colors"))
         normals = _to_numpy(obj.get("normals"))
 
         if vertices is None or vertices.ndim != 2 or vertices.shape[1] != 3:
@@ -269,6 +277,17 @@ class MeshHandler:
                 f"mesh normals must be an ({n_vertices}, 3) array; got "
                 f"{tuple(normals.shape)}"
             )
+        # Per-face (per-triangle) colors: exactly one RGB(A) per face.
+        if face_colors is not None and (
+            face_colors.ndim != 2
+            or face_colors.shape[0] != n_faces
+            or face_colors.shape[1] not in (3, 4)
+        ):
+            raise ValueError(
+                f"mesh face_colors must be an ({n_faces}, 3) or ({n_faces}, 4) "
+                f"array (one color per face); got "
+                f"{None if face_colors is None else tuple(face_colors.shape)}"
+            )
 
         # Winding normalization: the UI (and computeVertexNormals when no
         # normals are supplied) assumes CCW-from-outside faces. We don't
@@ -301,6 +320,20 @@ class MeshHandler:
             arrays["colors"] = colors_f4
             total_bytes += colors_f4.nbytes
 
+        # Per-face colors survive winding normalization untouched: _normalize_
+        # winding only reorders each face's own index triple, never the row
+        # order of `faces`, so `face_colors[i]` still describes face `i`.
+        has_face_colors = face_colors is not None
+        face_color_channels = 0
+        if has_face_colors:
+            face_colors_f4 = np.ascontiguousarray(face_colors, dtype=np.float32)
+            if face_colors_f4.size and float(face_colors_f4.max()) > 1.0:
+                face_colors_f4 = face_colors_f4 / 255.0
+            face_colors_f4 = np.clip(face_colors_f4, 0.0, 1.0)
+            arrays["face_colors"] = face_colors_f4
+            total_bytes += face_colors_f4.nbytes
+            face_color_channels = int(face_colors_f4.shape[1])
+
         has_normals = normals is not None
         if has_normals:
             normals_f4 = np.ascontiguousarray(normals, dtype=np.float32)
@@ -329,9 +362,12 @@ class MeshHandler:
             "n_faces": n_faces,
             "bounds": bounds,
             "has_colors": has_colors,
+            "has_face_colors": has_face_colors,
             "has_normals": has_normals,
             "size_bytes": int(total_bytes),
         }
+        if has_face_colors:
+            meta["face_color_channels"] = face_color_channels
         if winding_ok:
             meta["winding_normalized"] = n_flipped
         else:

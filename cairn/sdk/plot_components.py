@@ -1017,10 +1017,18 @@ class Mesh(Component):
 
     ``values`` attaches per-vertex scalar properties (a single array or a
     ``{name: array}`` dict), ``colors`` an ``(N, 3)`` vertex-color array,
+    ``face_colors`` an ``(M, 3)`` or ``(M, 4)`` per-FACE (per-triangle) color
+    array (``M == n_faces``; each triangle renders one flat color),
     ``normals`` an ``(N, 3)`` normal array (raw input only). Optional view
-    overrides: ``color_mode`` (``"solid"``/``"vertex-colors"``/``"values"``),
+    overrides: ``color_mode``
+    (``"solid"``/``"vertex-colors"``/``"face-colors"``/``"values"``),
     ``shading`` (``"smooth"``/``"flat"``), ``wireframe``, ``double_sided``,
     ``background`` (``"dark"``/``"light"``), ``show_axes``.
+
+    Color precedence when ``color_mode`` is left unset: ``face_colors`` >
+    ``colors`` (per-vertex) > uniform solid. Passing ``face_colors`` therefore
+    defaults ``color_mode`` to ``"face-colors"`` (explicitly setting
+    ``color_mode`` always wins).
     """
 
     _label = "mesh"
@@ -1033,6 +1041,7 @@ class Mesh(Component):
         *,
         values: Any = None,
         colors: Any = None,
+        face_colors: Any = None,
         normals: Any = None,
         data_mode: str = "local",
         color_mode: str | None = None,
@@ -1059,6 +1068,10 @@ class Mesh(Component):
         self._props: dict[str, Any] = {}
         if color_mode is not None:
             self._props["colorMode"] = color_mode
+        elif face_colors is not None:
+            # Precedence default: face_colors > vertex colors > solid. An
+            # explicit color_mode (handled above) always wins.
+            self._props["colorMode"] = "face-colors"
         if shading is not None:
             self._props["shading"] = shading
         if wireframe is not None:
@@ -1111,6 +1124,7 @@ class Mesh(Component):
                 "faces": faces,
                 "values": values,
                 "colors": colors,
+                "face_colors": face_colors,
                 "normals": normals,
             }
         )
