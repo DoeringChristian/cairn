@@ -42,15 +42,41 @@ declare global {
 }
 
 /**
+ * Dispatched by `plot-gpu-image-addon.tsx` once its capability check
+ * resolves and it has set `__cairnPlotGpuComparePane`/`__cairnPlotUseGpuImage`
+ * (Task 8). Name duplicated (not imported) — `compositor.tsx` is a CORE file
+ * an addon may depend on, never the reverse.
+ */
+const GPU_IMAGE_READY_EVENT = "cairn-plot:gpu-image-ready";
+
+/**
  * Resolve the runtime-injected engine compare pane, but only when the opt-in
  * flag is set AND the gpu-image addon has registered it. Unset/false (or addon
- * absent) keeps the legacy CPU `MediaComparePane` / `ImagePane` diff path, so
- * production behavior is unchanged until Task 8 flips the flag on.
+ * absent) keeps the legacy CPU `MediaComparePane` / `ImagePane` diff path —
+ * the Task 8 brief's required fallback (either the addon never loaded, the
+ * host opted out, or `getSharedDevice()` found no GPU backend).
  */
 function resolveGpuComparePane(): ((props: GpuComparePaneProps) => JSX.Element | null) | null {
   if (typeof window === "undefined") return null;
   if (window.__cairnPlotUseGpuImage !== true) return null;
   return window.__cairnPlotGpuComparePane ?? null;
+}
+
+/**
+ * The addon's `getSharedDevice()` capability check is async and can resolve
+ * AFTER `CompositeMediaPane`'s first paint, so a pane that mounted before
+ * then would otherwise render on the legacy path forever (nothing else
+ * re-renders it). This hook forces one re-render the instant the addon
+ * finishes, so the engine pane picks up as soon as it's available.
+ */
+function useGpuCompareReadyTick(): void {
+  const [, bump] = useState(0);
+  useEffect(() => {
+    if (typeof window === "undefined" || window.__cairnPlotGpuComparePane) return;
+    const onReady = () => bump((n) => n + 1);
+    window.addEventListener(GPU_IMAGE_READY_EVENT, onReady);
+    return () => window.removeEventListener(GPU_IMAGE_READY_EVENT, onReady);
+  }, []);
 }
 
 const DEFAULT_PROCESSING: ImageProcessing = {
@@ -471,6 +497,7 @@ export function CompositeMediaPane({
   pixelValueNotation,
 }: CompositeMediaPaneProps) {
   const effectiveMode: MediaCompareModeKind = baselineUrl == null ? "normal" : mode;
+  useGpuCompareReadyTick();
   const GpuCompare = resolveGpuComparePane();
 
   // Engine-backed split/blend/diff (opt-in — see `resolveGpuComparePane`). One

@@ -24,7 +24,7 @@
  * DATA props arrive already-resolved from the descriptor (`resolveDataProps`)
  * merged over the descriptor's config `props`; adapters spread that as `p`.
  */
-import { useState, type ComponentType } from "react";
+import { useEffect, useState, type ComponentType } from "react";
 import ScalarPlot from "./lib/cairn-plot/renderers/ScalarPlot";
 import ScatterPlot from "./lib/cairn-plot/renderers/ScatterPlot";
 import ParallelCoords from "./lib/cairn-plot/renderers/ParallelCoords";
@@ -41,6 +41,53 @@ import { registerRenderer } from "./plot-registry";
 
 /** Loose prop bag — resolved data props + descriptor config, unified. */
 type P = Record<string, any>;
+
+// ---------------------------------------------------------------------------
+// Engine-backed image pane seam (Task 8, WebGPU engine Sub-project 1).
+//
+// `core` (this file) must never statically import the engine or
+// `GpuImagePane` — that would pull the WebGPU/WebGL2 RHI into `core.iife.js`,
+// which the bundle guard forbids. Instead, the lazy `gpu-image` addon
+// (`plot-gpu-image-addon.tsx`, emitted only on pages with an image/HDR-image/
+// compare node) sets `window.__cairnPlotGpuImagePane` once its capability
+// check (`getSharedDevice()`) resolves, and dispatches
+// `GPU_IMAGE_READY_EVENT` so an already-mounted adapter re-renders onto it —
+// see that file's module doc for why a `registerRenderer("image", …)`
+// registry overwrite (the Task 6 approach) doesn't work here: `GpuImagePane`
+// needs a CALLER-OWNED `zoom`/`pan`/`onViewportChange` (it has no internal
+// viewport state), which only `ImageStandalone`/`ImageHdrStandalone` (below)
+// can supply, not a bare registry swap.
+const GPU_IMAGE_READY_EVENT = "cairn-plot:gpu-image-ready"; // must match plot-gpu-image-addon.tsx's dispatch
+
+declare global {
+  interface Window {
+    __cairnPlotGpuImagePane?: ComponentType<any>;
+    __cairnPlotUseGpuImage?: boolean;
+  }
+}
+
+/**
+ * The engine-backed image pane, if the gpu-image addon has loaded AND the
+ * capability flag is on (`__cairnPlotUseGpuImage === true`, set by the addon
+ * itself on success — see its module doc). Returns `null` (legacy CPU pane)
+ * when the addon hasn't run yet, opted out, or `getSharedDevice()` rejected
+ * (no WebGPU/WebGL2 available) — the Task 8 brief's required fallback.
+ * Re-renders the caller once, the instant the addon finishes, via the
+ * `GPU_IMAGE_READY_EVENT` it dispatches (fixes the async-registration race:
+ * the addon's `getSharedDevice()` check can resolve after this component's
+ * first paint).
+ */
+function useGpuImagePane(): ComponentType<any> | null {
+  const [, bump] = useState(0);
+  useEffect(() => {
+    if (typeof window === "undefined" || window.__cairnPlotGpuImagePane) return;
+    const onReady = () => bump((n) => n + 1);
+    window.addEventListener(GPU_IMAGE_READY_EVENT, onReady);
+    return () => window.removeEventListener(GPU_IMAGE_READY_EVENT, onReady);
+  }, []);
+  if (typeof window === "undefined" || window.__cairnPlotUseGpuImage !== true) return null;
+  return window.__cairnPlotGpuImagePane ?? null;
+}
 
 // --- ScalarPlot: owns viewport + promotedSeries interactive state ----------
 function ScalarPlotStandalone(p: P) {
@@ -133,8 +180,12 @@ function ImageStandalone(p: P) {
     zoom: p.zoom ?? 1,
     pan: p.pan ?? { x: 0, y: 0 },
   });
+  // Engine-backed pane when available (Task 8) — SAME prop shape as
+  // `ImagePane` (`renderers/GpuImagePane.tsx`'s `SdrGpuImagePaneProps`), so
+  // the swap below is a drop-in replacement; legacy fallback otherwise.
+  const Pane = (useGpuImagePane() ?? ImagePane) as typeof ImagePane;
   return (
-    <ImagePane
+    <Pane
       imageUrl={p.imageUrl ?? null}
       baselineUrl={p.baselineUrl ?? null}
       diffMode={p.diffMode ?? "none"}
@@ -157,17 +208,23 @@ function ImageStandalone(p: P) {
 // Data (`hdr`) arrives already-resolved from the `imghdr` DataSpec; the config
 // props (`tonemap`/`exposure`/`gamma`) come from the descriptor. Wrapped in a
 // ChartBox so it has a sizing box on a bare standalone page (like the charts) —
-// the pane fills its container. NO three.js / Plotly: pure canvas 2D, so it
-// lives in the CORE bundle.
+// the pane fills its container. NO static three.js / Plotly / engine import:
+// this file stays in the CORE bundle; the GPU pane below (Task 8) is only
+// ever reached through the runtime `window.__cairnPlotGpuImagePane` seam, so
+// core.iife.js never carries the engine even though this adapter can render
+// through it.
 function ImageHdrStandalone(p: P) {
   const { height, ...rest } = p;
   const [viewport, setViewport] = useState<ImageViewport>({
     zoom: rest.zoom ?? 1,
     pan: rest.pan ?? { x: 0, y: 0 },
   });
+  // Engine-backed pane when available (Task 8) — SAME prop shape as
+  // `HdrImagePane` (`renderers/GpuImagePane.tsx`'s `HdrGpuImagePaneProps`).
+  const Pane = (useGpuImagePane() ?? HdrImagePane) as typeof HdrImagePane;
   return (
     <ChartBox height={height}>
-      <HdrImagePane
+      <Pane
         hdr={rest.hdr}
         tonemap={rest.tonemap ?? "srgb"}
         exposure={rest.exposure ?? 0}

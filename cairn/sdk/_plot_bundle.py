@@ -48,6 +48,7 @@ _CORE_JS = _INLINE_DIR / "core.iife.js"
 _CORE_CSS = _INLINE_DIR / "style.css"
 _FIGURE_JS = _INLINE_DIR / "figure.iife.js"
 _THREE_JS = _INLINE_DIR / "three.iife.js"
+_GPU_IMAGE_JS = _INLINE_DIR / "gpu-image.iife.js"
 _PLOT_HTML = _DIST / "plot.html"
 
 
@@ -140,6 +141,23 @@ def inline_three_addon_js() -> str:
             "`cd cairn/ui && npm run build:plot-inline` (and commit dist/)."
         )
     return js_inline_safe(_THREE_JS.read_text(encoding="utf-8"))
+
+
+@lru_cache(maxsize=1)
+def inline_gpu_image_addon_js() -> str:
+    """The self-contained **gpu-image addon** IIFE JS (the WebGPU/WebGL2 RHI +
+    ``GpuImagePane``/``GpuComparePane``; reuses core's React via
+    ``window.__cairnPlotReact``), ``</script``-guarded. Emitted ONLY for a
+    page containing an ``image``/``imagehdr`` leaf or a ``compare`` node
+    (Task 8 of the WebGPU engine Sub-project). The addon is itself
+    capability-gated at runtime: if neither WebGPU nor WebGL2 is available it
+    leaves the legacy CPU panes core already registered in place."""
+    if not _GPU_IMAGE_JS.exists():
+        raise BundleUnavailable(
+            f"cairn-plot gpu-image addon missing at {_GPU_IMAGE_JS}. Rebuild with "
+            "`cd cairn/ui && npm run build:plot-inline` (and commit dist/)."
+        )
+    return js_inline_safe(_GPU_IMAGE_JS.read_text(encoding="utf-8"))
 
 
 # Backward-compatible aliases (pre-O2 names) → the core bundle. Kept so the

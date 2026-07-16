@@ -14,23 +14,12 @@
     <h1>renderers/GpuImagePane.tsx + engine/pool.ts — Task 6 harness</h1>
     <div id="status">RUNNING&hellip;</div>
     <div id="result"></div>
-    <!--
-      1) Inline, non-module, synchronous stub for the addon->core registration
-         seam — MUST run before either module script below (regular <script>
-         tags execute synchronously during HTML parsing; type="module"
-         scripts are deferred to after parsing, in document order).
-    -->
-    <script>
-      window.__gpuAddonRegistered = [];
-      window.__cairnPlotRegisterRenderer = function (name, component) {
-        window.__gpuAddonRegistered.push(name);
-      };
-    </script>
-    <!-- 2) Cases 1-5: mount + readback + interaction + pool cap.
+    <!-- 1) Cases 1-5: mount + readback + interaction + pool cap.
          (The `?v=` query is a manual cache-bust — bump it if you rebundle
          and the browser serves a stale module.) -->
     <script type="module" src="./gpu-image-pane.browser.bundle.js?v=3"></script>
-    <!-- 3) Case 6: addon capability-gated registration; also finalizes #status. -->
+    <!-- 2) Case 6: addon capability-gated activation (window-seam contract,
+         Task 8); also finalizes #status. -->
     <script type="module" src="./gpu-image-addon-check.browser.bundle.js?v=3"></script>
   </body>
 </html>
