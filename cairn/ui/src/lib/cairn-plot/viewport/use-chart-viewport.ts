@@ -45,7 +45,13 @@ import { useModifierKey } from "../hooks/use-modifier-key";
 
 export type { ChartDomain } from "./chart-viewport-math";
 
-export type ChartDragMode = "box" | "pan";
+// The internal drag vocabulary. `"box"` (box-zoom) is deliberately kept as the
+// internal token — the toolbar's PUBLIC name `"zoom"` is translated to `"box"`
+// at the controller adapter (renderers/use-chart-controller.ts). `"select"` and
+// `"lasso"` are admitted so later slices typecheck; today the pointer handlers
+// treat any non-`"pan"` mode exactly as box (see the pointer-down/up paths).
+// TODO(S5): implement real select/lasso drag behavior (hit-test → emit ids).
+export type ChartDragMode = "box" | "pan" | "select" | "lasso";
 
 /** A plot rectangle in CONTAINER-LOCAL px (origin = container top-left), the
  *  same space `plotRectRef` is written in each render. */
@@ -356,7 +362,10 @@ export function useChartViewport({
       } catch {
         /* ok */
       }
-      if (s.mode === "box") {
+      // TODO(S5): select/lasso drag — for now any non-"pan" mode (box and the
+      // newly-admitted select/lasso) falls through to the box-zoom path, so the
+      // widened enum is a strict no-behavior-change.
+      if (s.mode !== "pan") {
         const dx = Math.abs(e.clientX - s.startClientX);
         const dy = Math.abs(e.clientY - s.startClientY);
         // Require a real 2D box on unconstrained axes; a 1D drag on a

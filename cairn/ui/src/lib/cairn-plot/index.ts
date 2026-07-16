@@ -117,6 +117,23 @@ export type { TableProps, TableData, TableColumn, ColumnType } from "./renderers
 // (only reached by the lazy FigureInteractiveCard) to keep it in its own
 // async chunk.
 
+// Controls — the renderer-agnostic PlotController facade + toolbar config
+// (2D Plotly-parity, S0 foundation; see controls/types.ts).
+export type {
+  DragMode,
+  HoverMode,
+  AxisScale as ControllerAxisScale,
+  ControllerAxis,
+  ToPNGOptions,
+  ControllerCapabilities,
+  PlotController,
+} from "./controls/types";
+export type { ToolbarConfig } from "./controls/ToolbarConfig";
+
+// Controller adapter (SVG charts) — projects useChartViewport onto PlotController.
+export { useChartController } from "./renderers/use-chart-controller";
+export type { UseChartControllerArgs } from "./renderers/use-chart-controller";
+
 // media-compare — unified visual-media comparison core (see media-compare/index.ts)
 export {
   MEDIA_COMPARE_MODE_KINDS,
