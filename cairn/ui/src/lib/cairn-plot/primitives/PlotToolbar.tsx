@@ -13,7 +13,7 @@
  * `group` class). Icons + button chrome follow CardHeader's Font Awesome
  * convention (`fa-solid fa-*`, `h-[22px] min-w-[22px] …`).
  */
-import type { CSSProperties } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import type { DragMode, PlotController } from "../controls/types";
 import type { ToolbarConfig } from "../controls/ToolbarConfig";
 
@@ -33,6 +33,62 @@ const POSITION_STYLE: Record<
   "bottom-right": { bottom: 6, right: 6 },
   "bottom-left": { bottom: 6, left: 6 },
 };
+
+// Inline SVG icons. The standalone / self-contained plot bundle can't use the
+// app's Font Awesome (it's loaded from a CDN stylesheet, and the emitted HTML's
+// CSP blocks external requests), so the modebar ships its own icons. Each uses
+// `currentColor` so it inherits the button's text color (active/hover states).
+const ICON_PATHS: Record<string, ReactNode> = {
+  boxZoom: <rect x="3.5" y="3.5" width="17" height="17" rx="1.5" strokeDasharray="4 3" />,
+  pan: (
+    <>
+      <path d="M12 2v20M2 12h20" />
+      <path d="M9 5l3-3 3 3M9 19l3 3 3-3M5 9l-3 3 3 3M19 9l3 3-3 3" />
+    </>
+  ),
+  zoomIn: (
+    <>
+      <circle cx="10.5" cy="10.5" r="7" />
+      <path d="M21 21l-5.2-5.2M10.5 7.5v6M7.5 10.5h6" />
+    </>
+  ),
+  zoomOut: (
+    <>
+      <circle cx="10.5" cy="10.5" r="7" />
+      <path d="M21 21l-5.2-5.2M7.5 10.5h6" />
+    </>
+  ),
+  autoscale: (
+    <path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3" />
+  ),
+  home: (
+    <path d="M3 11l9-8 9 8M5 9.5V20a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9.5M9.5 21v-6h5v6" />
+  ),
+  camera: (
+    <>
+      <path d="M4 8h3l1.5-2.5h7L17 8h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z" />
+      <circle cx="12" cy="13.5" r="3.3" />
+    </>
+  ),
+};
+
+function Icon({ name }: { name: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="13"
+      height="13"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {ICON_PATHS[name] ?? null}
+    </svg>
+  );
+}
 
 function ToolbarButton({
   icon,
@@ -66,7 +122,7 @@ function ToolbarButton({
           : "text-fg-muted hover:text-fg hover:bg-bg-hover",
       ].join(" ")}
     >
-      <i className={`fa-solid ${icon}`} aria-hidden="true" />
+      <Icon name={icon} />
     </button>
   );
 }
@@ -124,7 +180,7 @@ export default function PlotToolbar({ controller, config }: PlotToolbarProps) {
         <>
           {shown("zoom", caps.zoom) && (
             <ToolbarButton
-              icon="fa-crop-simple"
+              icon="boxZoom"
               title="Box zoom"
               active={controller.dragMode === "zoom"}
               onClick={setMode("zoom")}
@@ -132,7 +188,7 @@ export default function PlotToolbar({ controller, config }: PlotToolbarProps) {
           )}
           {shown("pan", caps.pan) && (
             <ToolbarButton
-              icon="fa-up-down-left-right"
+              icon="pan"
               title="Pan"
               active={controller.dragMode === "pan"}
               onClick={setMode("pan")}
@@ -146,14 +202,14 @@ export default function PlotToolbar({ controller, config }: PlotToolbarProps) {
           {dragGroup && <Divider />}
           {shown("zoomIn", caps.zoom) && (
             <ToolbarButton
-              icon="fa-magnifying-glass-plus"
+              icon="zoomIn"
               title="Zoom in"
               onClick={() => controller.zoomIn()}
             />
           )}
           {shown("zoomOut", caps.zoom) && (
             <ToolbarButton
-              icon="fa-magnifying-glass-minus"
+              icon="zoomOut"
               title="Zoom out"
               onClick={() => controller.zoomOut()}
             />
@@ -166,14 +222,14 @@ export default function PlotToolbar({ controller, config }: PlotToolbarProps) {
           {(dragGroup || zoomGroup) && <Divider />}
           {shown("autoscale", caps.autoscale) && (
             <ToolbarButton
-              icon="fa-expand"
+              icon="autoscale"
               title="Autoscale"
               onClick={() => controller.autoscale()}
             />
           )}
           {shown("reset", caps.reset) && controller.isModified && (
             <ToolbarButton
-              icon="fa-house"
+              icon="home"
               title="Reset view"
               onClick={() => controller.reset()}
             />
@@ -185,7 +241,7 @@ export default function PlotToolbar({ controller, config }: PlotToolbarProps) {
         <>
           {(dragGroup || zoomGroup || viewGroup) && <Divider />}
           <ToolbarButton
-            icon="fa-camera"
+            icon="camera"
             title="Download plot as PNG"
             onClick={() => {
               // Screenshot export lands in a later slice (S10); until then the
