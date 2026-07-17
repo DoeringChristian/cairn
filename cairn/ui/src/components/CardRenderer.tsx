@@ -93,48 +93,22 @@ export type CardDescriptor =
     };
 
 /**
- * WS-SCHEMA drift guard: the set of `object_type` values the `switch` in
- * `CardRenderer` handles as a per-metric ("series") card. Combined with the
- * multi-run branch (`MultiRunCardType`: parallel/scatter/bar/tile), this is
- * the renderer's declared coverage of the canonical `CardType`
- * (lib/cards/card-spec.ts). The `_AssertRendererCoversAllCardTypes` type
- * below fails to compile if the two ever disagree — so adding a member to
- * `CARD_TYPES` without a matching case here (or vice-versa) is a build
- * error, not a silent runtime fall-through to `UnknownTypeCard`.
+ * WS-SCHEMA exhaustiveness (follow-up #61): the per-metric ("series") card
+ * types are exactly the canonical `CardType`s (lib/cards/card-spec.ts) that
+ * are NOT workspace-level multi-run cards (`MultiRunCardType`:
+ * parallel/scatter/bar/tile). Deriving this set with `Exclude` — rather than
+ * re-listing the switch's `case` labels in a hand-maintained mirror — means
+ * there is ONE source of truth: `CARD_TYPES`.
  *
- * CAUTION: `SeriesRendererCase` below is a HAND-MAINTAINED MIRROR of the
- * render switch's `case` labels, not a type derived from the switch itself.
- * `AssertRendererCoversAllCardTypes` only checks `CARD_TYPES` against THIS
- * list — if a `case` in the switch is removed or renamed without updating
- * this list to match, the compiler will not catch the mismatch. Follow-up
- * #61 tracks hardening this with a `default: assertNever(...)` branch in the
- * switch so the two can never drift apart silently.
+ * The `switch` below casts `metric.object_type` to this union and its
+ * `default` branch asserts the residual type is `never`. So omitting a
+ * `case` (or adding a `CardType` without one, or a `case` for a label that
+ * isn't a `SeriesCardType`) is a COMPILE error AT THE SWITCH ITSELF — not a
+ * silent runtime fall-through to `UnknownTypeCard`. The cast is erased at
+ * runtime, so genuinely-unknown `object_type` strings still reach `default`
+ * and render `UnknownTypeCard`; behavior is unchanged.
  */
-type SeriesRendererCase =
-  | "scalar"
-  | "image"
-  | "figure"
-  | "audio"
-  | "video"
-  | "histogram"
-  | "tensor"
-  | "text"
-  | "table"
-  | "html"
-  | "markdown"
-  | "artifact"
-  | "pointcloud"
-  | "mesh"
-  | "boxes3d"
-  | "volume"
-  | "plugin";
-
-type MutualExtends<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
-type AssertTrue<T extends true> = T;
-/** Exported only so it counts as "used" — its sole purpose is the compile-time assertion above. */
-export type AssertRendererCoversAllCardTypes = AssertTrue<
-  MutualExtends<CardType, SeriesRendererCase | MultiRunCardType>
->;
+type SeriesCardType = Exclude<CardType, MultiRunCardType>;
 
 /** Loading placeholder shared by the lazily-loaded card variants. */
 function LazyCardFallback({ label }: { label: string }) {
@@ -219,7 +193,13 @@ export default function CardRenderer(props: CardDescriptor) {
   } = props;
   const baseProps = { runId, metric, autoOpenSettings };
 
-  switch (metric.object_type) {
+  // Cast the runtime `object_type` (typed `string`) to the closed
+  // `SeriesCardType` union so the `default` branch below can assert
+  // exhaustiveness with a `never` guard tied to these exact `case`s. The
+  // cast is compile-time only — unknown strings still fall through to
+  // `UnknownTypeCard` at runtime, so behavior is identical.
+  const objectType = metric.object_type as SeriesCardType;
+  switch (objectType) {
     case "scalar":
       return (
         <ScalarPlotCard
@@ -362,7 +342,15 @@ export default function CardRenderer(props: CardDescriptor) {
           <PluginCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />
         </Suspense>
       );
-    default:
+    default: {
+      // Exhaustiveness guard tied to the actual switch: if a `SeriesCardType`
+      // case above is removed/renamed (or a new `CardType` is added without a
+      // matching case), `objectType` is not narrowed to `never` here and this
+      // assignment fails to compile. No runtime effect — genuinely-unknown
+      // `object_type` strings still render `UnknownTypeCard`.
+      const _exhaustive: never = objectType;
+      void _exhaustive;
       return <UnknownTypeCard {...baseProps} />;
+    }
   }
 }
