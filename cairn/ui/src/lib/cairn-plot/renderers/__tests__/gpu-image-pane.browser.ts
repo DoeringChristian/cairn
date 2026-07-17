@@ -45,14 +45,29 @@
  * RUNNING:
  *   1. Bundle: cd cairn/ui && npx esbuild \
  *        src/lib/cairn-plot/renderers/__tests__/gpu-image-pane.browser.ts \
- *        --bundle --format=esm \
+ *        --bundle --format=esm --jsx=automatic \
  *        --outfile=src/lib/cairn-plot/renderers/__tests__/gpu-image-pane.browser.bundle.js
+ *      (`--jsx=automatic` is REQUIRED — same gotcha as
+ *      `engine-fallback.browser.ts`'s RUNNING doc: the project's root
+ *      `tsconfig.json` is a references-only stub esbuild's standalone CLI
+ *      does not resolve through to `tsconfig.app.json`'s `"jsx": "react-jsx"`,
+ *      so without this flag esbuild falls back to the classic
+ *      `React.createElement` factory, which throws `ReferenceError: React is
+ *      not defined` for `GpuImagePane` — Q25 root-caused this file's own
+ *      long-standing FAIL tab to exactly this missing flag, not a product
+ *      regression.)
+ *   1b. Bundle Case 6's separate script the same way:
+ *        npx esbuild \
+ *        src/lib/cairn-plot/renderers/__tests__/gpu-image-addon-check.browser.ts \
+ *        --bundle --format=esm --jsx=automatic \
+ *        --outfile=src/lib/cairn-plot/renderers/__tests__/gpu-image-addon-check.browser.bundle.js
  *   2. Serve: cd cairn/ui/src/lib/cairn-plot/renderers/__tests__ && python3 -m http.server 8937
  *   3. Open in Chrome (claude-in-chrome):
  *        http://localhost:8937/gpu-image-pane.browser.html
  *
- * The generated `.bundle.js` is NOT committed (gitignored) — regenerate with
- * the command above whenever this harness or its imports change.
+ * The generated `.bundle.js` files are NOT committed (gitignored) —
+ * regenerate with the commands above whenever this harness, its sibling
+ * Case-6 script, or their imports change.
  */
 import React from "react";
 import { createRoot } from "react-dom/client";

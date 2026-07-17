@@ -7,7 +7,21 @@ export interface Viewport {
 }
 
 const DEFAULT_MIN_ZOOM = 0.25;
-const DEFAULT_MAX_ZOOM = 16;
+// Q25 fix: was 16 — too low to GUARANTEE the TEV pixel-value overlay
+// (`PixelValueOverlay`'s `PIXEL_VALUE_MIN_SCREEN_PX = 30`) is ever reachable.
+// A pane's max on-screen scale at this cap is `homeScale * DEFAULT_MAX_ZOOM`,
+// where `homeScale = min(box.width/naturalW, box.height/naturalH)` — for a
+// modest image (e.g. 128x96) inside a narrow multi-column grid cell
+// (~230px wide), `homeScale` can be as low as ~1.8px/texel, giving a max
+// reachable scale of only ~28.75px/texel: JUST under the 30px threshold, so
+// the per-pixel numbers NEVER appear no matter how far the user zooms (the
+// zoom is already pinned at its cap) — this affects ANY image pane using
+// this shared hook (`ImagePane`/`HdrImagePane`/`GpuImagePane`/
+// `CompositeMediaPane`/`GpuComparePane` alike; it is not specific to any one
+// of them), it just happens to bite tighter/smaller-image layouts first. 64x
+// (a common upper bound for TEV-style pixel inspectors) gives generous
+// headroom for typical grid layouts instead of a near-miss.
+const DEFAULT_MAX_ZOOM = 64;
 
 /**
  * Image-viewport interaction: modifier-gated wheel zoom-to-cursor and
