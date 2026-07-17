@@ -196,7 +196,10 @@ export function BoxesSingleView({
           />
         </div>
       </div>
-      <div className="mono px-1 py-0.5 text-[10px] text-fg-subtle">
+      {/* Pinned top-left (not bottom-left) so it never collides with the
+          bottom-left draggable `LabelChip` — see mesh-viewport.tsx's
+          identical fix for the shared rationale. */}
+      <div className="pointer-events-none absolute left-1 top-1 z-10 mono rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-subtle backdrop-blur-sm">
         {`${(visibleCount ?? meta.n_boxes).toLocaleString()} of ${meta.n_boxes.toLocaleString()} boxes · ${meta.kind}`}
       </div>
       <LabelChip label={label} isDraggable={isDraggable} onDragStart={onDragStart} />

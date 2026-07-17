@@ -171,8 +171,11 @@ export function VolumeSingleView({
           migration, mesh's/volume's didn't). Mirrors the pre-VC5
           VolumeCard.tsx caption verbatim (voxel shape + this pane's OWN
           blob's data range — not the card-unified `colorRange`, so the
-          caption always reflects what's actually in this artifact). */}
-      <div className="mono px-1 py-0.5 text-[10px] text-fg-subtle">
+          caption always reflects what's actually in this artifact).
+          Pinned top-left (not bottom-left) so it never collides with the
+          bottom-left draggable `LabelChip` — see mesh-viewport.tsx's
+          identical fix for the shared rationale. */}
+      <div className="pointer-events-none absolute left-1 top-1 z-10 mono rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-subtle backdrop-blur-sm">
         {`${meta.shape.join("×")} · vmin ${meta.vmin.toFixed(3)} · vmax ${meta.vmax.toFixed(3)}`}
       </div>
       <LabelChip label={label} isDraggable={isDraggable} onDragStart={onDragStart} />

@@ -202,8 +202,11 @@ export function MeshSingleView({
           off the bespoke MeshCard; boxes3d kept its equivalent
           ("N of M boxes · kind") through the migration, mesh's/volume's
           didn't). Mirrors the pre-VC5 MeshCard.tsx caption verbatim
-          (vertex/face counts + the active property name, when any). */}
-      <div className="mono px-1 py-0.5 text-[10px] text-fg-subtle">
+          (vertex/face counts + the active property name, when any).
+          Pinned top-left (not bottom-left, `absolute`/`pointer-events-none`
+          like `LabelChip`) so it never collides with the bottom-left
+          draggable `LabelChip` — both used to sit in that same corner. */}
+      <div className="pointer-events-none absolute left-1 top-1 z-10 mono rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-subtle backdrop-blur-sm">
         {`${meta.n_vertices.toLocaleString()} verts · ${meta.n_faces.toLocaleString()} faces`}
         {active.name ? ` · ${active.name}` : ""}
       </div>
