@@ -1,4 +1,5 @@
-import type { Scene3DHandle } from "./use-scene3d";
+import { useState } from "react";
+import { isValidPngDataUrl, type Scene3DHandle } from "./use-scene3d";
 
 export interface Scene3DCanvasProps {
   handle: Scene3DHandle;
@@ -22,14 +23,28 @@ export interface Scene3DCanvasProps {
  * here.
  */
 export function Scene3DCanvas({ handle, className }: Scene3DCanvasProps) {
+  // WS-3DR2 frowny-face guard: a src that already failed to decode is remembered
+  // so we never re-render it (which would repaint the browser's broken-image
+  // icon on top of the live canvas). Reset implicitly whenever `cachedImageUrl`
+  // becomes a NEW value — the render guard below compares against it, so a fresh
+  // good capture always shows.
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+
+  // Only overlay the cached snapshot when it is a real, decodable PNG data url
+  // (not the degenerate "data:," / 0-pixel readback a blank/released WebGL
+  // context can produce) AND it isn't a src we've already seen fail to decode.
+  const showCached =
+    isValidPngDataUrl(handle.cachedImageUrl) && handle.cachedImageUrl !== failedSrc;
+
   return (
     <div ref={handle.containerRef} className={className ?? "relative h-full w-full"}>
       <canvas ref={handle.canvasRef} className="block h-full w-full rounded" />
-      {handle.cachedImageUrl && (
+      {showCached && (
         <img
-          src={handle.cachedImageUrl}
+          src={handle.cachedImageUrl!}
           alt=""
           aria-hidden
+          onError={() => setFailedSrc(handle.cachedImageUrl)}
           className="pointer-events-none absolute inset-0 block h-full w-full rounded object-fill"
         />
       )}

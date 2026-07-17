@@ -19,6 +19,29 @@ import { poolAcquire, poolRelease, poolTouch } from "./context-pool";
  */
 const IDLE_PARK_MS = 1200;
 
+/**
+ * WS-3DR2 frowny-face guard: is `url` a real, decodable PNG data URL (as
+ * opposed to a degenerate readback)?
+ *
+ * `HTMLCanvasElement.toDataURL()` off a blank / just-released WebGL context can
+ * return the empty sentinel `"data:,"` or a 0-pixel PNG whose base64 payload is
+ * only a handful of bytes. Committed to `cachedImageUrl` and rendered as an
+ * `<img src>` OVER the (correctly rendering) live canvas, either produces the
+ * browser's broken-image "frowny face" icon painted on top of a working view.
+ * A genuine PNG capture of a real viewport is many kilobytes, so a
+ * `"data:image/"` prefix plus a generous minimum length reliably separates the
+ * two. Kept intentionally loose (>100 chars) — well below any real capture,
+ * well above every degenerate one — so it never rejects a legitimate frame.
+ */
+export function isValidPngDataUrl(url: string | null | undefined): url is string {
+  return (
+    typeof url === "string" &&
+    url !== "data:," &&
+    url.startsWith("data:image/") &&
+    url.length > 100
+  );
+}
+
 export interface Scene3DBounds {
   min: [number, number, number];
   max: [number, number, number];
@@ -424,10 +447,20 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
       const c = cameraRef.current;
       if (s && c) r.render(s, c);
       try {
+        // WS-3DR2 frowny-face guard: even with a non-lost context and a
+        // render() in the same tick, `toDataURL()` can hand back a degenerate
+        // url ("data:," or a 0-pixel PNG) — e.g. mid-restore, or a drawing
+        // buffer the browser cleared post-composite. Committing that would
+        // OVERWRITE a perfectly good cached image with one that renders as the
+        // broken-image frowny face. Only commit a valid PNG data url; a
+        // degenerate readback is treated as "not captured" (captured stays
+        // false), keeping whatever previous good url is already set.
         const url = r.domElement.toDataURL("image/png");
-        setCachedImageUrl(url);
-        cachedImageUrlRef.current = url;
-        captured = true;
+        if (isValidPngDataUrl(url)) {
+          setCachedImageUrl(url);
+          cachedImageUrlRef.current = url;
+          captured = true;
+        }
       } catch {
         // Tainted/unreadable canvas (shouldn't happen — same-origin app) —
         // fall through to the "already have a cached image?" check below,
