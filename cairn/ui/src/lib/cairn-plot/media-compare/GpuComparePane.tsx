@@ -55,7 +55,7 @@ import { getColormapLUT } from "../colormaps";
 import { loadImageData } from "../image";
 import { useImageViewport, type Viewport as ImageViewport } from "../hooks/use-image-viewport";
 import { useDevicePixelRatio } from "../hooks/use-device-pixel-ratio";
-import { computeCanvasDisplaySize, screenPxPerTexel, viewportToUvRect } from "../renderers/GpuImagePane";
+import { screenPxPerTexel, viewportToUvRect } from "../renderers/GpuImagePane";
 import PixelValueOverlay, {
   CHANNEL_COLORS,
   PIXEL_VALUE_MIN_SCREEN_PX,
@@ -255,12 +255,9 @@ export default function GpuComparePane({
       if (!primary) {
         setDims(null);
         setPixelDataVersion((v) => v + 1);
-        // Q22 fix: drop the explicit letterboxed CSS size — see
-        // `GpuImagePane`'s identical reset for the `imageUrl:null` case.
-        if (canvasRef.current) {
-          canvasRef.current.style.width = "";
-          canvasRef.current.style.height = "";
-        }
+        // Q24 fix: no explicit inline CSS size to drop — the canvas is
+        // always `w-full h-full` of its wrapper (see `GpuImagePane`'s
+        // identical reasoning for the `imageUrl:null` case).
         return;
       }
       const uploadTex = (d: ImageData): Texture => {
@@ -311,23 +308,21 @@ export default function GpuComparePane({
       prev.x === rawUv.x && prev.y === rawUv.y && prev.w === rawUv.w && prev.h === rawUv.h ? prev : rawUv,
     );
 
-    // Q22 fix: size the canvas's OWN CSS box to the object-contain
-    // letterboxed display size within `box` (padding is 0 for this pane, so
-    // `box` doubles as the padding-free content box), then size the backing
-    // store / surface to that CSS size x `devicePixelRatio` — NOT the source
-    // images' resolution. Same fixed-CSS-box-across-zoom reasoning as
-    // `GpuImagePane`'s identical block (see that effect's doc comment).
-    const disp = computeCanvasDisplaySize(box, dims.w, dims.h);
+    // Q24 fix: size the canvas's backing store / surface to the FULL pane
+    // box (`box` — padding is 0 for this pane, so it's already the
+    // padding-free content box) x `devicePixelRatio` — NOT a computed
+    // letterboxed sub-rect (Q22's approach, which confined zoom/pan to the
+    // image's own aspect box, leaving dead canvas space at any zoom, AND
+    // desynced the SPLIT divider — positioned as a percentage of this SAME
+    // `box`/wrapper — from the shader's `split` uniform, since the render
+    // target no longer spanned the divider's own reference frame; see
+    // `viewportToUvRect`'s doc comment for the matching uv-math fix — Q23).
+    // The canvas's CSS LAYOUT box is just `w-full h-full` of its wrapper (no
+    // inline style needed), so it already equals `box`.
     const canvasEl = canvasRef.current;
-    if (disp.width > 0 && disp.height > 0 && canvasEl && r.surface) {
-      const cssW = Math.round(disp.width);
-      const cssH = Math.round(disp.height);
-      const cssWidthPx = `${cssW}px`;
-      const cssHeightPx = `${cssH}px`;
-      if (canvasEl.style.width !== cssWidthPx) canvasEl.style.width = cssWidthPx;
-      if (canvasEl.style.height !== cssHeightPx) canvasEl.style.height = cssHeightPx;
-      const backingW = Math.max(1, Math.round(cssW * dpr));
-      const backingH = Math.max(1, Math.round(cssH * dpr));
+    if (box.width > 0 && box.height > 0 && canvasEl && r.surface) {
+      const backingW = Math.max(1, Math.round(box.width * dpr));
+      const backingH = Math.max(1, Math.round(box.height * dpr));
       if (canvasEl.width !== backingW || canvasEl.height !== backingH) {
         canvasEl.width = backingW;
         canvasEl.height = backingH;
@@ -336,12 +331,11 @@ export default function GpuComparePane({
     }
 
     // Q20: same nearest/linear threshold GpuImagePane uses — see
-    // `screenPxPerTexel`'s doc comment. Uses the canvas's OWN (now
-    // display-resolution, Q22) box (matches what `PixelValueOverlay` queries
-    // via `imageElRef={canvasRef}`), not `box`/paneEl.
-    const canvasBox = disp.width > 0 ? disp : canvasEl ? canvasEl.getBoundingClientRect() : box;
+    // `screenPxPerTexel`'s doc comment. Uses `box` directly — the canvas's
+    // own box now matches it exactly (Q24), so no separate measurement is
+    // needed.
     const filter: "nearest" | "linear" =
-      screenPxPerTexel(rawUv, canvasBox, dims.w, dims.h) >= PIXEL_VALUE_MIN_SCREEN_PX ? "nearest" : "linear";
+      screenPxPerTexel(rawUv, box, dims.w, dims.h) >= PIXEL_VALUE_MIN_SCREEN_PX ? "nearest" : "linear";
     const uv = rawUv;
     const params: CompareParams = {
       exposureEV: 0,
@@ -497,15 +491,20 @@ export default function GpuComparePane({
         data-gpu-compare-viewport
       >
         <div className="relative w-full h-full flex items-center justify-center">
-          {/* Q22 fix: same as `GpuImagePane` — the canvas's CSS box is set
-              EXPLICITLY (inline style, in the render-pass effect) to the
-              object-contain-equivalent letterboxed size instead of relying
-              on `object-fit:contain` inferring it from the backing store's
-              aspect ratio (the backing store now tracks display resolution,
-              not the source images'); this flex-centered wrapper positions
-              it exactly where `object-contain` used to. Note: the split
-              divider below is positioned as a percentage of THIS wrapper's
-              full width (pre-existing behavior, unchanged by Q22). */}
+          {/* Q23/Q24 fix: the canvas is the FULL viewport — `w-full h-full`
+              of this wrapper, always (no inline CSS size, no object-fit) —
+              its device-pixel backing store tracks this box's measured CSS
+              size x devicePixelRatio (the render-pass effect above; Q22's
+              crispness fix, preserved). The image quads are placed inside
+              this full-canvas viewport by `viewportToUvRect` (letterboxed at
+              rest, filling/pannable at any zoom). Crucially, the split
+              divider below is ALSO positioned as a percentage of THIS SAME
+              wrapper's full width — since the canvas (and hence the
+              shader's screen-space `uv.x` the `split` uniform is compared
+              against) now spans exactly that same box, the divider and the
+              rendered A|B boundary are guaranteed to agree at any zoom/pane
+              aspect, by construction (Q23) — no separate coordinate
+              conversion needed here. */}
           <canvas
             ref={canvasRef}
             className="w-full h-full block"

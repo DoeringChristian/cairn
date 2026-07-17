@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Q23/Q24 geometry harness</title>
+    <!-- Real compiled Tailwind CSS (copied from ../../../../../dist/plot-inline/style.css)
+         — the components under test use `h-full`/`flex-1`/`min-h-0`/`w-full`
+         etc. for layout; without the real utility classes this bare test
+         page would give every box an unconstrained content-based height,
+         invalidating the pixel-geometry assertions below. Not committed —
+         regenerate (cp from dist) alongside the bundle if it drifts. -->
+    <link rel="stylesheet" href="./harness-style.css" />
+    <style>
+      body { font-family: ui-monospace, monospace; font-size: 13px; padding: 16px; background: #111; color: #eee; }
+      #status { font-size: 28px; font-weight: bold; margin-bottom: 12px; }
+      #result div { white-space: pre-wrap; }
+      #split-harness, #zoom-harness { background: #222; margin: 8px 0; }
+    </style>
+  </head>
+  <body>
+    <h1>Q23/Q24 GpuComparePane / GpuImagePane geometry harness</h1>
+    <div id="status">RUNNING&hellip;</div>
+    <div id="result"></div>
+    <script type="module" src="./gpu-compare-geometry.browser.bundle.js?v=1"></script>
+  </body>
+</html>

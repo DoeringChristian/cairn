@@ -29,6 +29,11 @@ cairn/ui/*.tsbuildinfo
 # Generated browser-test bundles (esbuild output for engine/__tests__/*.browser.ts
 # harnesses run via claude-in-chrome) — regenerate from source, never committed.
 cairn/ui/src/**/__tests__/*.browser.bundle.js
+# Real compiled Tailwind CSS copied into a __tests__/ dir so a bare
+# claude-in-chrome harness page gets real `h-full`/`flex-1`/`w-full` layout
+# (see media-compare/__tests__/gpu-compare-geometry.browser.ts's doc comment)
+# — regenerate via `cp dist/plot-inline/style.css`, never committed.
+cairn/ui/src/**/__tests__/harness-style.css
 
 # Cairn runtime
 .cairn/

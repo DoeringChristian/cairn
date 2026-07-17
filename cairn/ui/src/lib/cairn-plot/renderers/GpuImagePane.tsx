@@ -230,12 +230,50 @@ function hdrToRGBAFloat32(hdr: HdrData): SourceUpload {
 }
 
 /**
- * Converts the CSS-px `{zoom,pan}` viewport (owned by `useImageViewport`,
- * same coordinate system as the CSS-transform legacy panes used) into the
- * source-space `[0,1]` `uv` window `renderImage` samples, so a fixed-size
- * (natural-dims) GPU canvas reproduces the same crop the legacy CSS
- * `translate(pan) scale(zoom)` transform on an object-contain-fitted element
- * would have shown. See this file's module doc for the derivation.
+ * Converts the CSS-px `{zoom,pan}` viewport (owned by `useImageViewport`)
+ * into the source-space `uv` window `renderImage` samples — for a render
+ * target that spans the FULL PANE/canvas (Q24 fix). `paneBox` here MUST be
+ * the same box the canvas's own CSS size is measured against (the render
+ * effect below uses `imgWrapperRef`'s rect for both) — see this function's
+ * derivation below for why a mismatch there breaks the mapping.
+ *
+ * ## Model: the canvas IS the viewport; the image is a quad placed inside it
+ * Q22 (a prior fix) shrank the GPU canvas's own CSS box to the object-contain
+ * LETTERBOXED sub-rect of the image, to fix upscaling blur (the backing store
+ * now tracks display resolution, not source resolution — a good fix, kept).
+ * But that made the canvas element itself the size of the image's home rect,
+ * which then CONFINED zoom/pan to the image's own aspect box: zooming in
+ * only ever cropped tighter within that fixed small rect, so the checkerboard
+ * margins around it were permanently dead space that could never fill in
+ * (Q24), and the split/compare shader's screen-space `uv.x` (spanning the
+ * SMALL canvas) no longer matched the separator/pointer math (still expressed
+ * as a fraction of the full pane) — Q23. Fix: the canvas backing store always
+ * covers the FULL pane (see the render-pass effect below); THIS function
+ * places the image as a quad inside that full-canvas viewport instead —
+ * at `zoom:1, pan:{0,0}` the quad sits at its object-contain "home" rect
+ * (letterboxed, centered, checkerboard in the margins via Q18's existing
+ * OOB -> transparent path); `zoom`/`pan` then transform the WHOLE viewport
+ * (`translate(pan) scale(zoom)`, origin `(0,0)` of the pane — the SAME
+ * convention `useImageViewport`'s wheel-zoom-to-cursor math already assumes,
+ * since `cx = clientX - paneRect.left` there is measured against that same
+ * origin), so the user can zoom toward / pan into the checkerboard margins
+ * exactly like a standard image viewer (TEV) — never confined to the image's
+ * own aspect box, and no explicit pan/zoom clamp is needed: whatever the
+ * quad doesn't cover is genuinely-empty canvas, and Q18 already renders that
+ * as transparent (checkerboard shows through).
+ *
+ * ## Derivation
+ * Home fit: `scale = min(paneBox.w/naturalW, paneBox.h/naturalH)`,
+ * `dispW/dispH` = the letterboxed on-screen size, `imgLeft/imgTop` = its
+ * centered offset within `paneBox`. A canvas-space fragment at `shaderUV`
+ * (spanning `[0,1]` across the FULL pane) must sample source-uv
+ * `-imgLeft/dispW` at `shaderUV=0` and `(paneBox.w-imgLeft)/dispW` at
+ * `shaderUV=1` when at rest — i.e. `uvRect.x = -imgLeft/dispW`,
+ * `uvRect.w = paneBox.w/dispW` (>=1 whenever the image is letterboxed on that
+ * axis: the SAME "sample past `[0,1]`" mechanism Q18 already uses for
+ * zoom<1). Composing that with the `translate(pan) scale(zoom)`-on-the-
+ * whole-viewport transform (origin `(0,0)`) gives `w = paneBox.w/(z*dispW)`,
+ * `x = -imgLeft/dispW - pan.x/(z*dispW)`.
  */
 export function viewportToUvRect(
   viewport: ImageViewport,
@@ -252,10 +290,10 @@ export function viewportToUvRect(
   const imgLeft = (paneBox.width - dispW) / 2;
   const imgTop = (paneBox.height - dispH) / 2;
   const z = Math.max(viewport.zoom, 1e-6);
-  const w = 1 / z;
-  const h = 1 / z;
-  const x = (imgLeft * (1 - z) - viewport.pan.x) / (dispW * z);
-  const y = (imgTop * (1 - z) - viewport.pan.y) / (dispH * z);
+  const w = paneBox.width / (z * dispW);
+  const h = paneBox.height / (z * dispH);
+  const x = -imgLeft / dispW - viewport.pan.x / (z * dispW);
+  const y = -imgTop / dispH - viewport.pan.y / (z * dispH);
   return { x, y, w, h };
 }
 
@@ -280,32 +318,6 @@ export function screenPxPerTexel(
   const visibleH = rawUv.h * naturalH;
   if (visibleW <= 0 || visibleH <= 0 || box.width <= 0 || box.height <= 0) return 0;
   return Math.min(box.width / visibleW, box.height / visibleH);
-}
-
-/**
- * Q22 fix — the object-contain LETTERBOXED display size (CSS px) of the
- * image within `containerBox` (the un-transformed, un-zoomed fit box —
- * SAME formula `viewportToUvRect`/`PixelAxes`/`ImageOverlay` already use for
- * their own object-contain math, extracted here so `GpuImagePane` and
- * `GpuComparePane` size their CANVAS'S OWN on-screen box to it explicitly,
- * instead of relying on CSS `object-fit:contain` inferring the aspect ratio
- * from the canvas's backing-store dimensions (`canvas.width/height`) — that
- * inference is exactly the trick this fix removes: the backing store must
- * now track the DISPLAY resolution (`* devicePixelRatio`), not the source
- * image's, so it can no longer double as the "natural size" CSS reads for
- * `object-fit`. Returns `{width:0, height:0}` when either box has no
- * measurable size yet (caller keeps the CSS 100%-of-parent fallback then).
- */
-export function computeCanvasDisplaySize(
-  containerBox: { width: number; height: number },
-  naturalW: number,
-  naturalH: number,
-): { width: number; height: number } {
-  if (containerBox.width <= 0 || containerBox.height <= 0 || naturalW <= 0 || naturalH <= 0) {
-    return { width: 0, height: 0 };
-  }
-  const scale = Math.min(containerBox.width / naturalW, containerBox.height / naturalH);
-  return { width: naturalW * scale, height: naturalH * scale };
 }
 
 const HOME_VIEWPORT: ImageViewport = { zoom: 1, pan: { x: 0, y: 0 } };
@@ -510,14 +522,12 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
       sdrImageDataRef.current = null;
       setNaturalDims(null);
       setPixelDataVersion((v) => v + 1);
-      // Q22 fix: drop the explicit letterboxed CSS size the render-pass
-      // effect set — with no image, fall back to the `w-full h-full` class
-      // default (the render-pass effect's early-return on `!naturalDims`
-      // means it won't otherwise reset this).
-      if (canvasRef.current) {
-        canvasRef.current.style.width = "";
-        canvasRef.current.style.height = "";
-      }
+      // Q24 fix: no explicit inline CSS size to drop anymore — the canvas is
+      // always `w-full h-full` of `imgWrapperRef` (see the JSX below); only
+      // its device-pixel backing store is set imperatively, and the
+      // render-pass effect's early-return on `!naturalDims` simply leaves
+      // that backing store at whatever it last was, which is harmless (no
+      // source to render into it).
       return;
     }
     let cancelled = false;
@@ -570,47 +580,46 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
     const handle = paneHandleRef.current;
     if (!handle || !paneReady || !naturalDims) return;
     const paneEl = paneRef.current;
-    const box = paneEl ? paneEl.getBoundingClientRect() : { width: naturalDims.w, height: naturalDims.h };
-    const rawUv = viewportToUvRect({ zoom, pan }, box, naturalDims.w, naturalDims.h);
+    // Q24 fix: `viewportToUvRect`'s `paneBox` and the canvas's own CSS/
+    // backing-store size below now BOTH key off `imgWrapperRef` (the
+    // padding-free content box `PixelAxes`/`ImageOverlay` already measure
+    // for their own letterbox math) — previously the uv math used `paneEl`'s
+    // box (WITH padding, whenever `showAxes` is on) while the canvas was
+    // sized against `wrapEl` (WITHOUT padding), a second coordinate-space
+    // mismatch on top of the canvas-vs-pane one below.
+    const wrapEl = imgWrapperRef.current;
+    const wrapBox = wrapEl
+      ? wrapEl.getBoundingClientRect()
+      : paneEl
+        ? paneEl.getBoundingClientRect()
+        : { width: naturalDims.w, height: naturalDims.h };
+    const rawUv = viewportToUvRect({ zoom, pan }, wrapBox, naturalDims.w, naturalDims.h);
     setOverlayWindow((prev) =>
       prev.x === rawUv.x && prev.y === rawUv.y && prev.w === rawUv.w && prev.h === rawUv.h ? prev : rawUv,
     );
 
-    // Q22 fix: size the CANVAS ITSELF (its CSS box) to the object-contain
-    // LETTERBOXED display size within `imgWrapperRef` (the padding-free
-    // content box object-contain used to fit against — SAME box
-    // `PixelAxes`/`ImageOverlay` already measure for their own letterbox
-    // math), then size the backing store / WebGPU surface to that CSS size
-    // times `devicePixelRatio` (`handle.resize()`) — NOT the source image's
-    // resolution. This canvas box does NOT grow with zoom (only the sampled
-    // `uv` crop shrinks — see `viewportToUvRect`'s doc comment), so this only
-    // needs to run on container-resize / natural-dims / dpr changes, exactly
-    // this effect's existing triggers.
-    const wrapEl = imgWrapperRef.current;
-    const wrapBox = wrapEl ? wrapEl.getBoundingClientRect() : box;
-    const disp = computeCanvasDisplaySize(wrapBox, naturalDims.w, naturalDims.h);
-    const canvasEl = canvasRef.current;
-    if (disp.width > 0 && disp.height > 0 && canvasEl) {
-      const cssW = Math.round(disp.width);
-      const cssH = Math.round(disp.height);
-      const cssWidthPx = `${cssW}px`;
-      const cssHeightPx = `${cssH}px`;
-      if (canvasEl.style.width !== cssWidthPx) canvasEl.style.width = cssWidthPx;
-      if (canvasEl.style.height !== cssHeightPx) canvasEl.style.height = cssHeightPx;
-      handle.resize(cssW * dpr, cssH * dpr);
+    // Q24 fix: size the canvas's backing store / WebGPU surface to the FULL
+    // content box (`wrapBox`) x `devicePixelRatio` — NOT a computed
+    // letterboxed sub-rect (Q22's approach, which confined zoom/pan to the
+    // image's own aspect box, leaving dead canvas space at any zoom — see
+    // `viewportToUvRect`'s doc comment for the matching uv-math fix). The
+    // canvas's CSS LAYOUT box is just `w-full h-full` of `imgWrapperRef`
+    // (the JSX below) — no inline style needed — so it already equals
+    // `wrapBox`; only the DEVICE-PIXEL backing store needs computing here
+    // (Q22's crispness fix, preserved). Letterboxing at rest, and
+    // checkerboard in any genuinely-empty region at any zoom, is now
+    // entirely the shader's job (Q18's existing OOB -> transparent path).
+    if (wrapBox.width > 0 && wrapBox.height > 0) {
+      handle.resize(Math.round(wrapBox.width * dpr), Math.round(wrapBox.height * dpr));
     }
 
     // Q20: nearest once a source texel is >= PIXEL_VALUE_MIN_SCREEN_PX on
     // screen (the SAME threshold that makes PixelValueOverlay start drawing
     // per-pixel numbers), linear below it — see `screenPxPerTexel`'s doc
-    // comment for why the CANVAS's own (now display-resolution, Q22) box —
-    // not `box`/paneEl, which includes padding — is used here. Uses the
-    // just-computed `disp` (CSS px) directly rather than re-reading
-    // `getBoundingClientRect()` (a forced layout) since it's already exactly
-    // that value once the resize above has applied.
-    const canvasBox = disp.width > 0 ? disp : canvasEl ? canvasEl.getBoundingClientRect() : box;
+    // comment. Uses `wrapBox` directly — the canvas's own box now matches it
+    // exactly (Q24), so no separate measurement/fallback is needed.
     const filter: "nearest" | "linear" =
-      screenPxPerTexel(rawUv, canvasBox, naturalDims.w, naturalDims.h) >= PIXEL_VALUE_MIN_SCREEN_PX
+      screenPxPerTexel(rawUv, wrapBox, naturalDims.w, naturalDims.h) >= PIXEL_VALUE_MIN_SCREEN_PX
         ? "nearest"
         : "linear";
     const uv = rawUv;
@@ -781,15 +790,17 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
       >
         <div ref={imgWrapperRef} className="relative w-full h-full flex items-center justify-center">
           {/*
-            Q22 fix: the canvas no longer relies on `object-fit:contain`
-            inferring the letterbox from its backing-store aspect ratio (the
-            backing store is now sized to the DISPLAY resolution, not the
-            source image's — see the render-pass effect above) — its CSS
-            box is instead set EXPLICITLY (inline `style.width/height`, in
-            the same effect) to the object-contain-equivalent letterboxed
-            size, and this flex-centered wrapper positions it exactly where
-            `object-contain` used to. `w-full h-full` here is only the
-            pre-first-measurement fallback (before that effect has run).
+            Q24 fix: the canvas is the FULL viewport — `w-full h-full` of
+            this wrapper, always (no inline CSS size override, no
+            object-fit) — its device-pixel backing store tracks this box's
+            measured CSS size x devicePixelRatio (the render-pass effect
+            above; Q22's crispness fix, preserved). The image is placed
+            inside this full-canvas viewport as a quad by `viewportToUvRect`
+            (letterboxed at rest, filling/pannable at any zoom — see that
+            function's doc comment); Q18's OOB -> transparent shader path
+            paints checkerboard (this wrapper has no background of its own,
+            so `paneRef`'s `cairn-checkerboard` shows through) wherever the
+            quad doesn't cover the canvas.
           */}
           <canvas
             ref={canvasRef}
