@@ -24,6 +24,28 @@ const DEFAULT_MIN_ZOOM = 0.25;
 const DEFAULT_MAX_ZOOM = 64;
 
 /**
+ * Q29: adaptive max-zoom — the zoom at which a single source texel fills the
+ * viewport (spans its larger dimension), rather than a fixed multiple of the
+ * home view. `homeScale = min(boxW/naturalW, boxH/naturalH)` is px-per-texel at
+ * zoom 1; a texel is `homeScale * zoom` px on screen, so it fills
+ * `max(boxW,boxH)` at `zoom = max(boxW,boxH)/homeScale`. This scales with the
+ * image's native resolution — a 4K image gets a huge cap (inspect any pixel), a
+ * 16x16 a small one — so ANY resolution can be zoomed to "1 pixel fills the
+ * viewport". Floored so you can always zoom in a bit even for near-1:1 layouts.
+ */
+export function adaptiveMaxZoom(
+  naturalW: number,
+  naturalH: number,
+  boxW: number,
+  boxH: number,
+): number {
+  if (naturalW <= 0 || naturalH <= 0 || boxW <= 0 || boxH <= 0) return DEFAULT_MAX_ZOOM;
+  const homeScale = Math.min(boxW / naturalW, boxH / naturalH);
+  if (homeScale <= 0) return DEFAULT_MAX_ZOOM;
+  return Math.max(Math.max(boxW, boxH) / homeScale, 8);
+}
+
+/**
  * Image-viewport interaction: modifier-gated wheel zoom-to-cursor and
  * pointer-capture panning. Self-contained — the wheel listener is attached
  * natively (non-passive) to `containerRef` so it can `preventDefault`.
@@ -37,6 +59,10 @@ export function useImageViewport(args: {
   onViewportChange?: (v: Viewport) => void;
   minZoom?: number;
   maxZoom?: number;
+  /** Q29: when the image's natural pixel size is known, the max zoom becomes
+   *  adaptive (zoom until one texel fills the viewport) instead of `maxZoom`. */
+  naturalWidth?: number;
+  naturalHeight?: number;
 }): {
   containerProps: {
     onPointerDown: (e: React.PointerEvent) => void;
@@ -54,6 +80,8 @@ export function useImageViewport(args: {
     onViewportChange,
     minZoom = DEFAULT_MIN_ZOOM,
     maxZoom = DEFAULT_MAX_ZOOM,
+    naturalWidth,
+    naturalHeight,
   } = args;
 
   // -----------------------------------------------------------------------
@@ -82,9 +110,16 @@ export function useImageViewport(args: {
       e.stopPropagation();
       const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
       const s = viewportRef.current;
-      const nextZoom = Math.max(minZoom, Math.min(maxZoom, s.zoom * factor));
-      if (s.zoom === nextZoom) return;
       const rect = el.getBoundingClientRect();
+      // Q29: cap zoom by the FINAL resolution (one texel fills the viewport),
+      // not a fixed multiple — falls back to `maxZoom` when natural size is
+      // unknown. Uses the LIVE container rect so it tracks resizes.
+      const effMax =
+        naturalWidth && naturalHeight
+          ? adaptiveMaxZoom(naturalWidth, naturalHeight, rect.width, rect.height)
+          : maxZoom;
+      const nextZoom = Math.max(minZoom, Math.min(effMax, s.zoom * factor));
+      if (s.zoom === nextZoom) return;
       const cx = e.clientX - rect.left;
       const cy = e.clientY - rect.top;
       const newPanX = cx - ((cx - s.pan.x) / s.zoom) * nextZoom;
@@ -96,7 +131,7 @@ export function useImageViewport(args: {
     };
     el.addEventListener("wheel", handler, { passive: false });
     return () => el.removeEventListener("wheel", handler);
-  }, [containerRef, !!onViewportChange, minZoom, maxZoom]);
+  }, [containerRef, !!onViewportChange, minZoom, maxZoom, naturalWidth, naturalHeight]);
 
   // -----------------------------------------------------------------------
   // Pointer pan (local)

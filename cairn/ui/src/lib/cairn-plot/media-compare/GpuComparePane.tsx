@@ -428,6 +428,9 @@ export default function GpuComparePane({
     zoom,
     pan,
     onViewportChange,
+    // Q29: adaptive max-zoom — zoom until one source texel fills the viewport.
+    naturalWidth: dims?.w,
+    naturalHeight: dims?.h,
   });
 
   const resetViewport = useCallback(() => onViewportChange?.(HOME_VIEWPORT), [onViewportChange]);

@@ -448,6 +448,9 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
     zoom,
     pan,
     onViewportChange,
+    // Q29: adaptive max-zoom — zoom until one source texel fills the viewport.
+    naturalWidth: naturalDims?.w,
+    naturalHeight: naturalDims?.h,
   });
 
   const resetViewport = useCallback(() => {
