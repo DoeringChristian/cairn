@@ -24,9 +24,11 @@ import { formatXTick } from "../format";
 import { AXIS, GRID, paddedDomain } from "../theme";
 import { useModifierKey } from "../hooks/use-modifier-key";
 import { useSeriesVisibility } from "../hooks/use-series-visibility";
+import PlotToolbar from "../primitives/PlotToolbar";
 import { CustomLegend } from "./scalar/scalar-legend";
 import { CustomTooltip } from "./scalar/scalar-tooltip";
 import { usePlotGestures, type PlotOffset } from "./scalar/use-plot-gestures";
+import { useScalarController } from "./scalar/use-scalar-controller";
 
 const CHART_MARGIN = { top: 4, right: 8, left: 0, bottom: 4 } as const;
 const PROMOTED_AXIS_WIDTH = 35;
@@ -197,6 +199,24 @@ export default function ScalarPlot({
 
   const altDown = useModifierKey();
 
+  // ── Toolbar controller ──
+  // Bridge the Viewport substrate onto the renderer-agnostic PlotController the
+  // <PlotToolbar> drives. `dataBounds` (the full data extent) seeds zoomIn/Out
+  // when the viewport is still auto; `dragMode` feeds the gesture base mode.
+  const dataBounds = useMemo(
+    () => ({
+      x: [dataXs[0], dataXs[1]] as [number, number],
+      y: [dataYs[0], dataYs[1]] as [number, number],
+    }),
+    [dataXs, dataYs],
+  );
+  const controller = useScalarController({
+    viewport,
+    onViewportChange,
+    rootRef: chartBoxRef,
+    dataBounds,
+  });
+
   const {
     selection,
     wasDragRef,
@@ -213,13 +233,14 @@ export default function ScalarPlot({
     promotedRef,
     onViewportChange,
     onPromotedSeriesChange,
+    baseDragMode: controller.dragMode === "pan" ? "pan" : "zoom",
   });
 
   // ── Render ──
   return (
     <div
       ref={chartBoxRef}
-      className={`relative overflow-hidden ${className ?? ""}`}
+      className={`group relative overflow-hidden ${className ?? ""}`}
       style={{
         touchAction: "none",
         cursor: altDown ? "move" : hoveredSeries ? "pointer" : "crosshair",
@@ -480,6 +501,7 @@ export default function ScalarPlot({
           }}
         />
       )}
+      <PlotToolbar controller={controller} />
     </div>
   );
 }

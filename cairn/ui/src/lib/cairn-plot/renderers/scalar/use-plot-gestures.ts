@@ -54,6 +54,11 @@ interface UsePlotGesturesArgs {
   promotedRef: MutableRefObject<Record<string, PromotedSeriesConfig>>;
   onViewportChange: (v: Viewport) => void;
   onPromotedSeriesChange: (p: Record<string, PromotedSeriesConfig>) => void;
+  /** Base gesture for a plain (no-modifier) drag. `"zoom"` (the default,
+   *  preserving prior behavior) box-zooms; `"pan"` pans. An Alt/Ctrl/Meta drag
+   *  ALWAYS pans regardless — the modifier wins. Toolbar-driven via the scalar
+   *  PlotController's `dragMode`. */
+  baseDragMode?: "zoom" | "pan";
 }
 
 export function usePlotGestures({
@@ -63,7 +68,12 @@ export function usePlotGestures({
   promotedRef,
   onViewportChange,
   onPromotedSeriesChange,
+  baseDragMode = "zoom",
 }: UsePlotGesturesArgs) {
+  // The base drag mode is read live (via a ref) inside the pointer-down
+  // callback so a toolbar toggle takes effect without re-binding handlers.
+  const baseDragModeRef = useRef(baseDragMode);
+  baseDragModeRef.current = baseDragMode;
   // `wasDragRef` distinguishes a drag from a click so the container's onClick
   // can suppress selection when a gesture just finished.
   const wasDragRef = useRef(false);
@@ -194,7 +204,14 @@ export function usePlotGestures({
         e.clientY < plotTop || e.clientY > plotBottom
       ) return;
       if (e.button !== 0) return;
-      const mode: PlotDragMode = (e.altKey || e.ctrlKey || e.metaKey) ? "pan" : "select";
+      // Alt/Ctrl/Meta always pans (modifier wins); otherwise the base drag mode
+      // decides — "pan" pans, "zoom" box-zooms (the hook's internal "select").
+      const modifierPan = e.altKey || e.ctrlKey || e.metaKey;
+      const mode: PlotDragMode = modifierPan
+        ? "pan"
+        : baseDragModeRef.current === "pan"
+          ? "pan"
+          : "select";
       plotDragRef.current = {
         pointerId: e.pointerId,
         mode,
