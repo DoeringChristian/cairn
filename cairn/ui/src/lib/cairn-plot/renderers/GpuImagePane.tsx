@@ -779,8 +779,8 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
     <div className="relative flex flex-col h-full" data-gpu-image-pane data-gpu-backend-ready={paneReady}>
       <div
         ref={paneRef}
-        className="relative flex-1 min-h-0 min-w-0 flex items-center justify-center overflow-hidden rounded cairn-checkerboard"
-        style={{ padding: showAxes && naturalDims ? "16px 4px 4px 28px" : "4px", ...viewportProps.style }}
+        className="relative flex-1 min-h-0 min-w-0 flex items-center justify-center overflow-hidden rounded"
+        style={{ padding: showAxes && naturalDims ? "16px 4px 4px 28px" : 0, ...viewportProps.style }}
         onPointerDown={viewportProps.onPointerDown}
         onPointerMove={viewportProps.onPointerMove}
         onPointerUp={viewportProps.onPointerUp}
@@ -788,7 +788,10 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
         onDoubleClick={resetViewport}
         data-gpu-image-viewport
       >
-        <div ref={imgWrapperRef} className="relative w-full h-full flex items-center justify-center">
+        <div
+          ref={imgWrapperRef}
+          className="relative w-full h-full flex items-center justify-center cairn-checkerboard"
+        >
           {/*
             Q24 fix: the canvas is the FULL viewport — `w-full h-full` of
             this wrapper, always (no inline CSS size override, no
@@ -798,9 +801,18 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
             inside this full-canvas viewport as a quad by `viewportToUvRect`
             (letterboxed at rest, filling/pannable at any zoom — see that
             function's doc comment); Q18's OOB -> transparent shader path
-            paints checkerboard (this wrapper has no background of its own,
-            so `paneRef`'s `cairn-checkerboard` shows through) wherever the
-            quad doesn't cover the canvas.
+            paints checkerboard (this wrapper itself now carries
+            `cairn-checkerboard` — Q26 fix: it used to live on `paneRef`,
+            which fills the PADDED pane including the axis-label gutter,
+            producing a permanent checkerboard RING at the pane edge that no
+            zoom could ever cover, since zoom only affects the canvas inside
+            that padding. Moving the class onto this padding-free wrapper —
+            and dropping `paneRef`'s padding to 0 whenever `showAxes` is off,
+            so the wrapper spans the full pane edge-to-edge — confines the
+            checkerboard to exactly the canvas's own box, so it now appears
+            ONLY where the image quad genuinely doesn't cover the canvas
+            (letterbox margins / under-zoomed pan), never as a fixed border)
+            wherever the quad doesn't cover the canvas.
           */}
           <canvas
             ref={canvasRef}
