@@ -16,6 +16,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import type { DragMode, PlotController } from "../controls/types";
 import type { ToolbarConfig } from "../controls/ToolbarConfig";
+import { downloadBlob } from "./plot-to-png";
 
 export interface PlotToolbarProps {
   /** The imperative facade this modebar drives (the only real input). */
@@ -94,32 +95,43 @@ function ToolbarButton({
   icon,
   title,
   active,
+  disabled,
   onClick,
 }: {
   icon: string;
   title: string;
   active?: boolean;
+  disabled?: boolean;
   onClick: () => void;
 }) {
   return (
     <button
       type="button"
+      disabled={disabled}
       onClick={(e) => {
         // The toolbar floats over the plot surface; keep clicks from reaching
         // the chart's pointer/gesture handlers underneath.
         e.stopPropagation();
+        // A disabled button (e.g. the always-shown "home" button while the view
+        // is already at home) must never fire its action.
+        if (disabled) return;
         onClick();
       }}
       onPointerDown={(e) => e.stopPropagation()}
       onDoubleClick={(e) => e.stopPropagation()}
       aria-label={title}
       aria-pressed={active}
+      aria-disabled={disabled}
       title={title}
       className={[
+        // Fixed box size so the toolbar width never changes and buttons don't
+        // shift under the cursor (a disabled button keeps its footprint).
         "h-[22px] min-w-[22px] inline-flex items-center justify-center rounded text-xs",
-        active
-          ? "bg-bg-hover text-accent"
-          : "text-fg-muted hover:text-fg hover:bg-bg-hover",
+        disabled
+          ? "opacity-40 cursor-default text-fg-muted"
+          : active
+            ? "bg-bg-hover text-accent"
+            : "text-fg-muted hover:text-fg hover:bg-bg-hover",
       ].join(" ")}
     >
       <Icon name={icon} />
@@ -149,9 +161,12 @@ export default function PlotToolbar({ controller, config }: PlotToolbarProps) {
   const dragGroup = shown("zoom", caps.zoom) || shown("pan", caps.pan);
   const zoomGroup =
     shown("zoomIn", caps.zoom) || shown("zoomOut", caps.zoom);
+  // The reset ("home") button is ALWAYS shown when reset is available (it just
+  // renders disabled when the view is already at home), so the group's presence
+  // must not depend on `isModified` — otherwise the toolbar width would still
+  // flip and shift buttons under the cursor.
   const viewGroup =
-    shown("autoscale", caps.autoscale) ||
-    (shown("reset", caps.reset) && controller.isModified);
+    shown("autoscale", caps.autoscale) || shown("reset", caps.reset);
   const exportGroup = shown("screenshot", caps.screenshot);
 
   if (!dragGroup && !zoomGroup && !viewGroup && !exportGroup) return null;
@@ -227,10 +242,13 @@ export default function PlotToolbar({ controller, config }: PlotToolbarProps) {
               onClick={() => controller.autoscale()}
             />
           )}
-          {shown("reset", caps.reset) && controller.isModified && (
+          {shown("reset", caps.reset) && (
             <ToolbarButton
               icon="home"
-              title="Reset view"
+              title={
+                controller.isModified ? "Reset view" : "Reset view (at home)"
+              }
+              disabled={!controller.isModified}
               onClick={() => controller.reset()}
             />
           )}
@@ -244,10 +262,12 @@ export default function PlotToolbar({ controller, config }: PlotToolbarProps) {
             icon="camera"
             title="Download plot as PNG"
             onClick={() => {
-              // Screenshot export lands in a later slice (S10); until then the
-              // controller's toPNG rejects. Swallow so the placeholder button
-              // never throws an unhandled rejection.
-              controller.toPNG().catch(() => {});
+              // Rasterize the chart and trigger a browser download. Swallow any
+              // failure so a rejected export never throws an unhandled rejection.
+              controller
+                .toPNG({ filename: "plot" })
+                .then((b) => downloadBlob(b, "plot.png"))
+                .catch(() => {});
             }}
           />
         </>

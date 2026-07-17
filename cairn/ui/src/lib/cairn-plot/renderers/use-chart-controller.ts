@@ -10,12 +10,14 @@
  *  - setDragMode(public "zoom")      → translate "zoom"→"box", call the hook.
  *  - dragMode getter                 → translate internal "box"→"zoom".
  *  - hoverMode / spikelines          → local state, VISUALLY INERT until S4.
- *  - toPNG                           → passed-in impl, else rejects (S10).
+ *  - toPNG                           → passed-in impl, else the shared
+ *                                      `plotToPng(rootRef.current)` default.
  *  - capabilities                    → hook's ChartCapabilities widened, with
  *                                      every not-yet-implemented flag = false.
  */
 import { useCallback, useMemo, useState } from "react";
 import type { RefObject } from "react";
+import { plotToPng } from "../primitives/plot-to-png";
 import type { ChartDragMode, ChartViewportResult } from "../viewport/use-chart-viewport";
 import type {
   ControllerCapabilities,
@@ -72,10 +74,17 @@ export function useChartController({
 
   const toPNG = useCallback(
     (opts?: ToPNGOptions): Promise<Blob> => {
+      // An explicitly-passed exporter always wins.
       if (toPNGImpl) return toPNGImpl(opts);
-      // rootRef is the export target for the S10 client-side PNG pipeline.
-      void rootRef;
-      return Promise.reject(new Error("toPNG not implemented (S10)"));
+      // Default: rasterize the renderer root (which contains the chart <svg>
+      // and any <canvas> layers) with the shared, self-contained helper.
+      const root = rootRef.current;
+      if (!root) {
+        return Promise.reject(
+          new Error("toPNG: export target not mounted (rootRef is null)"),
+        );
+      }
+      return plotToPng(root, opts);
     },
     [toPNGImpl, rootRef],
   );
