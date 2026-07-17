@@ -27,8 +27,11 @@ import {
 import type { CSSProperties, MutableRefObject, RefObject } from "react";
 import {
   applyConstraints,
+  axisScale1D,
   boxToDomain,
+  boxZoomAxis,
   BOX_THRESHOLD_PX,
+  constrainDragRect,
   DRAG_START_PX,
   domainsEqual,
   panByPixels,
@@ -149,15 +152,35 @@ export interface ChartViewportResult {
   capabilities: ChartCapabilities;
 }
 
+/**
+ * A drag begun in an axis GUTTER (the margin band below the x-axis / left of
+ * the y-axis, outside the plot rect). `axis` names which domain it drives;
+ * `sub` is pan (middle third of the axis) or scale (an outer third, pinned at
+ * the opposite end). For scale, `grabFrac` is the grabbed point's fraction
+ * along the axis at pointer-down and `anchorFrac` (0 = low end, 1 = high end)
+ * is the pinned end. See FEATURE B in the hook body.
+ */
+interface GutterDrag {
+  axis: ConstrainAxis; // "x" | "y"
+  sub: "pan" | "scale";
+  grabFrac: number;
+  anchorFrac: 0 | 1;
+}
+
 interface DragState {
   pointerId: number;
+  /** `"plot"` = pan/box-zoom inside the plot rect; `"gutter"` = an axis-element
+   *  (margin) pan/scale. The pointer handlers branch on this first. */
+  kind: "plot" | "gutter";
   mode: ChartDragMode;
   startClientX: number;
   startClientY: number;
   startDomain: ChartDomain;
-  /** Plot rect in client space at pointer-down (for box/pan mapping). */
+  /** Plot rect in client space at pointer-down (for box/pan/scale mapping). */
   rectClient: ClientRect;
   moved: boolean;
+  /** Present only when `kind === "gutter"`. */
+  gutter?: GutterDrag;
 }
 
 /** Read the local `plotRectRef` and lift it into client space via the
@@ -176,6 +199,17 @@ function rectToClient(
     width: pr.width,
     height: pr.height,
   };
+}
+
+/** Classify an axis-gutter grab (`grabFrac` = fraction 0..1 along the axis) as
+ *  a pan (middle third) or a scale pinned at the opposite end (outer thirds:
+ *  near the low end → pin the high end, and vice-versa). */
+function gutterFromFrac(axis: "x" | "y", grabFrac: number): GutterDrag {
+  const f = Math.max(0, Math.min(1, grabFrac));
+  if (f > 1 / 3 && f < 2 / 3) {
+    return { axis, sub: "pan", grabFrac: f, anchorFrac: 0 };
+  }
+  return { axis, sub: "scale", grabFrac: f, anchorFrac: f < 1 / 3 ? 1 : 0 };
 }
 
 export function useChartViewport({
@@ -278,38 +312,92 @@ export function useChartViewport({
     return () => el.removeEventListener("wheel", handler);
   }, [containerRef, plotRectRef, commit]);
 
-  // ── Pointer down: begin pan or box-zoom (modifier inverts the mode) ──
+  // ── Pointer down: begin a plot pan/box-zoom, or an axis-gutter pan/scale ──
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
       wasDragRef.current = false;
       if (e.button !== 0) return;
-      const rect = rectToClient(containerRef, plotRectRef);
-      if (!rect) return;
-      if (
-        e.clientX < rect.left ||
-        e.clientX > rect.left + rect.width ||
-        e.clientY < rect.top ||
-        e.clientY > rect.top + rect.height
-      ) {
-        return; // gesture only starts inside the plot rect
+      const el = containerRef.current;
+      const pr = plotRectRef.current;
+      if (!el || !pr) return;
+      const box = el.getBoundingClientRect();
+      const rect: ClientRect = {
+        left: box.left + pr.x,
+        top: box.top + pr.y,
+        width: pr.width,
+        height: pr.height,
+      };
+      const right = rect.left + rect.width;
+      const bottom = rect.top + rect.height;
+      const inPlotX = e.clientX >= rect.left && e.clientX <= right;
+      const inPlotY = e.clientY >= rect.top && e.clientY <= bottom;
+
+      if (inPlotX && inPlotY) {
+        // Inside the plot rect: pan or box-zoom (modifier inverts the mode).
+        const modifier = e.altKey || e.ctrlKey || e.metaKey;
+        const base = dragModeRef.current;
+        const mode: ChartDragMode = modifier
+          ? base === "pan"
+            ? "box"
+            : "pan"
+          : base;
+        dragRef.current = {
+          pointerId: e.pointerId,
+          kind: "plot",
+          mode,
+          startClientX: e.clientX,
+          startClientY: e.clientY,
+          startDomain: domainRef.current,
+          rectClient: rect,
+          moved: false,
+        };
+        return;
       }
-      const modifier = e.altKey || e.ctrlKey || e.metaKey;
-      const base = dragModeRef.current;
-      // modifier XOR base: box↔pan.
-      const mode: ChartDragMode = modifier
-        ? base === "pan"
-          ? "box"
-          : "pan"
-        : base;
+
+      // ── FEATURE B: axis-gutter (margin) drag ──
+      // X gutter = below the plot within its x-extent → drives X.
+      // Y gutter = left of the plot within its y-extent → drives Y.
+      // Middle third of the axis pans; an outer third scales, pinned at the
+      // opposite end. The base `constrainTo` gates which gutters are live.
+      const constrainAxis = constrainRef.current;
+      let gutter: GutterDrag | null = null;
+      if (
+        constrainAxis !== "y" &&
+        inPlotX &&
+        e.clientY > bottom &&
+        e.clientY <= box.bottom
+      ) {
+        const grabFrac = (e.clientX - rect.left) / Math.max(1, rect.width);
+        gutter = gutterFromFrac("x", grabFrac);
+      } else if (
+        constrainAxis !== "x" &&
+        inPlotY &&
+        e.clientX < rect.left &&
+        e.clientX >= box.left
+      ) {
+        // Fraction from the BOTTOM (data increases upward).
+        const grabFrac = (bottom - e.clientY) / Math.max(1, rect.height);
+        gutter = gutterFromFrac("y", grabFrac);
+      }
+      if (!gutter) return;
+
       dragRef.current = {
         pointerId: e.pointerId,
-        mode,
+        kind: "gutter",
+        mode: "pan", // unused for gutter drags
         startClientX: e.clientX,
         startClientY: e.clientY,
         startDomain: domainRef.current,
         rectClient: rect,
         moved: false,
+        gutter,
       };
+      // Capture immediately so a scale/pan keeps tracking outside the gutter.
+      try {
+        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      } catch {
+        /* best-effort */
+      }
     },
     [containerRef, plotRectRef],
   );
@@ -323,34 +411,75 @@ export function useChartViewport({
       if (!s.moved && (Math.abs(dx) >= DRAG_START_PX || Math.abs(dy) >= DRAG_START_PX)) {
         s.moved = true;
         wasDragRef.current = true;
-        try {
-          (e.currentTarget as HTMLElement).setPointerCapture(s.pointerId);
-        } catch {
-          /* capture is best-effort */
+        if (s.kind === "plot") {
+          try {
+            (e.currentTarget as HTMLElement).setPointerCapture(s.pointerId);
+          } catch {
+            /* capture is best-effort (gutter captured at pointer-down) */
+          }
         }
       }
+
+      // ── FEATURE B: axis-gutter pan / scale (X-only or Y-only) ──
+      if (s.kind === "gutter" && s.gutter) {
+        if (!s.moved) return;
+        const g = s.gutter;
+        const rc = s.rectClient;
+        if (g.sub === "pan") {
+          commit(
+            g.axis === "x"
+              ? panByPixels(dx, 0, rc, s.startDomain, "x")
+              : panByPixels(0, dy, rc, s.startDomain, "y"),
+          );
+          return;
+        }
+        // scale: the grabbed data value tracks the cursor, opposite end pinned.
+        if (g.axis === "x") {
+          const nowFrac = (e.clientX - rc.left) / Math.max(1, rc.width);
+          const nx = axisScale1D(
+            s.startDomain.xDomain[0],
+            s.startDomain.xDomain[1],
+            g.grabFrac,
+            nowFrac,
+            g.anchorFrac,
+          );
+          if (nx) commit({ xDomain: nx, yDomain: s.startDomain.yDomain });
+        } else {
+          const bottom = rc.top + rc.height;
+          const nowFrac = (bottom - e.clientY) / Math.max(1, rc.height);
+          const ny = axisScale1D(
+            s.startDomain.yDomain[0],
+            s.startDomain.yDomain[1],
+            g.grabFrac,
+            nowFrac,
+            g.anchorFrac,
+          );
+          if (ny) commit({ xDomain: s.startDomain.xDomain, yDomain: ny });
+        }
+        return;
+      }
+
       if (s.mode === "pan") {
         commit(panByPixels(dx, dy, s.rectClient, s.startDomain, constrainRef.current));
         return;
       }
       // box: draw the live rectangle (container-local px) once past threshold.
+      // FEATURE A: when thin on one axis the hook snaps the band to a full-width
+      // / full-height 1D band so renderers draw the already-constrained rect.
       if (Math.abs(dx) >= BOX_THRESHOLD_PX || Math.abs(dy) >= BOX_THRESHOLD_PX) {
         const el = containerRef.current;
         const box = el?.getBoundingClientRect();
-        if (!box) return;
+        const plot = plotRectRef.current;
+        if (!box || !plot) return;
         const x0 = s.startClientX - box.left;
         const y0 = s.startClientY - box.top;
         const x1 = e.clientX - box.left;
         const y1 = e.clientY - box.top;
-        setDragRect({
-          x: Math.min(x0, x1),
-          y: Math.min(y0, y1),
-          width: Math.abs(x1 - x0),
-          height: Math.abs(y1 - y0),
-        });
+        const axis = boxZoomAxis(constrainRef.current, dx, dy);
+        setDragRect(constrainDragRect(x0, y0, x1, y1, plot, axis));
       }
     },
-    [commit, containerRef],
+    [commit, containerRef, plotRectRef],
   );
 
   const endDrag = useCallback(
@@ -362,16 +491,22 @@ export function useChartViewport({
       } catch {
         /* ok */
       }
+      // Gutter drags commit live during the move — nothing to finalize here.
+      if (s.kind === "gutter") {
+        dragRef.current = null;
+        return;
+      }
       // TODO(S5): select/lasso drag — for now any non-"pan" mode (box and the
       // newly-admitted select/lasso) falls through to the box-zoom path, so the
       // widened enum is a strict no-behavior-change.
       if (s.mode !== "pan") {
         const dx = Math.abs(e.clientX - s.startClientX);
         const dy = Math.abs(e.clientY - s.startClientY);
-        // Require a real 2D box on unconstrained axes; a 1D drag on a
-        // constrained axis (BarChart x-only) needs width only.
-        const okX = constrainRef.current === "y" || dx >= BOX_THRESHOLD_PX;
-        const okY = constrainRef.current === "x" || dy >= BOX_THRESHOLD_PX;
+        // FEATURE A: a thin drag snaps to a 1D zoom on the thick axis; only the
+        // axis/axes actually zoomed must clear the box threshold.
+        const axis = boxZoomAxis(constrainRef.current, dx, dy);
+        const okX = axis === "y" || dx >= BOX_THRESHOLD_PX;
+        const okY = axis === "x" || dy >= BOX_THRESHOLD_PX;
         if (okX && okY) {
           const next = boxToDomain(
             s.startClientX,
@@ -380,7 +515,7 @@ export function useChartViewport({
             e.clientY,
             s.rectClient,
             s.startDomain,
-            constrainRef.current,
+            axis,
           );
           if (next) commit(next);
         }

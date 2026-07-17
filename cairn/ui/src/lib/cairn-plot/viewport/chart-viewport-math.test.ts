@@ -12,11 +12,15 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   applyConstraints,
+  axisScale1D,
   boxToDomain,
+  boxZoomAxis,
+  constrainDragRect,
   panByPixels,
   wheelZoom,
   zoomAboutAnchor,
   fracToValue,
+  THIN_BAND_PX,
   WHEEL_FACTOR,
   type ChartDomain,
   type ClientRect,
@@ -124,4 +128,81 @@ test("applyConstraints clamps an over-wide span to full bounds", () => {
     clamp: { xDomain: [0, 10] },
   });
   assert.deepEqual(out.xDomain, [0, 10]);
+});
+
+// ── FEATURE A: constrained 1D box-zoom ──
+
+test("boxZoomAxis snaps a thin-x / thick-y drag to Y-only", () => {
+  // width below THIN, height at/above it → zoom Y only.
+  assert.equal(boxZoomAxis("both", THIN_BAND_PX - 1, THIN_BAND_PX + 5), "y");
+});
+
+test("boxZoomAxis snaps a thick-x / thin-y drag to X-only", () => {
+  assert.equal(boxZoomAxis("both", THIN_BAND_PX + 5, THIN_BAND_PX - 1), "x");
+});
+
+test("boxZoomAxis keeps a genuine 2D drag as both", () => {
+  assert.equal(boxZoomAxis("both", 40, 40), "both");
+  // Both extents thin (ambiguous tiny drag) also stays 'both'.
+  assert.equal(boxZoomAxis("both", 4, 4), "both");
+});
+
+test("boxZoomAxis ignores drag shape for an already-1D chart", () => {
+  // A BarChart (base 'x') never snaps to 'y' no matter how thin in x.
+  assert.equal(boxZoomAxis("x", 1, 100), "x");
+  assert.equal(boxZoomAxis("y", 100, 1), "y");
+});
+
+test("boxZoomAxis uses magnitudes (sign-agnostic)", () => {
+  assert.equal(boxZoomAxis("both", -2, -40), "y");
+  assert.equal(boxZoomAxis("both", -40, -2), "x");
+});
+
+const plot = { x: 100, y: 50, width: 200, height: 100 };
+
+test("constrainDragRect: Y-only snaps to a full-width horizontal band", () => {
+  const out = constrainDragRect(150, 70, 156, 130, plot, "y");
+  assert.deepEqual(out, { x: 100, y: 70, width: 200, height: 60 });
+});
+
+test("constrainDragRect: X-only snaps to a full-height vertical band", () => {
+  const out = constrainDragRect(150, 70, 220, 76, plot, "x");
+  assert.deepEqual(out, { x: 150, y: 50, width: 70, height: 100 });
+});
+
+test("constrainDragRect: both keeps the literal (normalized) rectangle", () => {
+  const out = constrainDragRect(220, 130, 150, 70, plot, "both");
+  assert.deepEqual(out, { x: 150, y: 70, width: 70, height: 60 });
+});
+
+// ── FEATURE B: axis-element (gutter) scale ──
+
+test("axisScale1D is the identity when the cursor hasn't moved", () => {
+  // grabFrac === nowFrac → span unchanged, anchor end fixed.
+  const out = axisScale1D(0, 10, 0.8, 0.8, 0)!;
+  approx(out[0], 0);
+  approx(out[1], 10);
+});
+
+test("axisScale1D pins the low end and zooms in as the cursor moves outward", () => {
+  // Right-third grab (high end), low end pinned at frac 0. Cursor moves from
+  // 0.8 → 0.9 (outward) → span shrinks, lo stays 0.
+  const out = axisScale1D(0, 10, 0.8, 0.9, 0)!;
+  approx(out[0], 0);
+  // grabbed value = 8; must sit at frac 0.9 now → span = 8/0.9.
+  approx(out[1], 8 / 0.9);
+  assert.ok(out[1] - out[0] < 10, "span shrank (zoom in)");
+});
+
+test("axisScale1D pins the high end for a left-third grab", () => {
+  // Left-third grab (low end at frac 0.2), high end pinned (anchorFrac 1).
+  const out = axisScale1D(0, 10, 0.2, 0.1, 1)!;
+  approx(out[1], 10); // high end fixed
+  // grabbed value = 2; sits at frac 0.1 now: 10 + (0.1-1)*span = 2 → span = 8/0.9.
+  approx(out[1] - out[0], 8 / 0.9);
+});
+
+test("axisScale1D returns null at/over the pinned end (degenerate)", () => {
+  assert.equal(axisScale1D(0, 10, 0.8, 0, 0), null); // cursor on the anchor
+  assert.equal(axisScale1D(0, 10, 0.8, -0.1, 0), null); // past the anchor → inverted
 });

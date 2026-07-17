@@ -29,6 +29,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { MutableRefObject, RefObject } from "react";
 import type { PromotedSeriesConfig, Viewport } from "../../types";
 import { useModifierKey } from "../../hooks/use-modifier-key";
+import { boxZoomAxis } from "../../viewport/chart-viewport-math";
 
 export interface PlotOffset {
   top: number;
@@ -286,7 +287,28 @@ export function usePlotGestures({
       if (wPx >= 6 || hPx >= 6) {
         const startLocalX = s.startClientX - rect2.left;
         const startLocalY = s.startClientY - rect2.top;
-        setSelection({ x0: startLocalX, y0: startLocalY, x1: localX, y1: localY });
+        // FEATURE A: a thin drag snaps to a full-width (Y-only) / full-height
+        // (X-only) 1D band, mirroring useChartViewport's constrained box-zoom.
+        const axis = boxZoomAxis("both", wPx, hPx);
+        const plotLeftLocal = s.plotLeft - rect2.left;
+        const plotTopLocal = s.plotTop - rect2.top;
+        if (axis === "y") {
+          setSelection({
+            x0: plotLeftLocal,
+            y0: startLocalY,
+            x1: plotLeftLocal + s.plotW,
+            y1: localY,
+          });
+        } else if (axis === "x") {
+          setSelection({
+            x0: startLocalX,
+            y0: plotTopLocal,
+            x1: localX,
+            y1: plotTopLocal + s.plotH,
+          });
+        } else {
+          setSelection({ x0: startLocalX, y0: startLocalY, x1: localX, y1: localY });
+        }
       }
     },
     [chartBoxRef, promotedRef, onViewportChange, onPromotedSeriesChange],
@@ -308,7 +330,12 @@ export function usePlotGestures({
       if (s.mode === "select") {
         const wPx = Math.abs(e.clientX - s.startClientX);
         const hPx = Math.abs(e.clientY - s.startClientY);
-        if (wPx >= 6 && hPx >= 6) {
+        // FEATURE A: snap a thin drag to a 1D zoom on the thick axis; only the
+        // axis/axes actually zoomed must clear the 6px threshold.
+        const axis = boxZoomAxis("both", wPx, hPx);
+        const okX = axis === "y" || wPx >= 6;
+        const okY = axis === "x" || hPx >= 6;
+        if (okX && okY) {
           wasDragRef.current = true;
           const x0c = Math.min(s.startClientX, e.clientX);
           const x1c = Math.max(s.startClientX, e.clientX);
@@ -321,10 +348,12 @@ export function usePlotGestures({
           const fyHi = (plotBottom - y0c) / s.plotH;
           const [xa, xb] = s.startXDomain;
           const [ya, yb] = s.startYDomain;
-          const xMinNew = xa + fxLo * (xb - xa);
-          const xMaxNew = xa + fxHi * (xb - xa);
-          const yMinNew = ya + fyLo * (yb - ya);
-          const yMaxNew = ya + fyHi * (yb - ya);
+          // Leave the thin axis's domain untouched (1D zoom); pin it to its
+          // current extent so the other axis zooms alone.
+          const xMinNew = axis === "y" ? xa : xa + fxLo * (xb - xa);
+          const xMaxNew = axis === "y" ? xb : xa + fxHi * (xb - xa);
+          const yMinNew = axis === "x" ? ya : ya + fyLo * (yb - ya);
+          const yMaxNew = axis === "x" ? yb : ya + fyHi * (yb - ya);
           if (
             Number.isFinite(xMinNew) && Number.isFinite(xMaxNew) &&
             Number.isFinite(yMinNew) && Number.isFinite(yMaxNew) &&

@@ -25,6 +25,13 @@ export const WHEEL_FACTOR = 1.1;
 export const BOX_THRESHOLD_PX = 6;
 /** Minimum drag (px) before a gesture counts as a drag (vs. a click). */
 export const DRAG_START_PX = 3;
+/**
+ * Box-zoom "thinness" floor (px). When a drag's extent is below this on ONE
+ * axis (and at/above it on the other) the box snaps to a single-axis (1D) zoom
+ * on the thick axis — Plotly's constrained box-zoom. The Scalar chart mirrors
+ * this exact threshold in `renderers/scalar/use-plot-gestures.ts`.
+ */
+export const THIN_BAND_PX = 12;
 
 export interface ChartDomain {
   xDomain: [number, number];
@@ -154,6 +161,96 @@ export function boxToDomain(
       : [fracToValue(fyLo, ya, yb), fracToValue(fyHi, ya, yb)];
   if (!isPair(nx) || !isPair(ny)) return null;
   return { xDomain: nx, yDomain: ny };
+}
+
+/** A rectangle in a renderer's CONTAINER-LOCAL px space (origin = container
+ *  top-left) — the same shape the viewport hook draws as its `dragRect`. */
+export interface PixelRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Decide which axis (or both) a box-zoom should touch, given the chart's base
+ * axis constraint and the drag's pixel extents. A `'both'`-constrained chart
+ * SNAPS to a single axis when the drag is thin (< `thin` px) in the OTHER axis
+ * — Plotly's constrained box-zoom:
+ *
+ *   thin in x, thick in y → `'y'` (zoom Y only, X domain untouched)
+ *   thin in y, thick in x → `'x'` (zoom X only, Y domain untouched)
+ *   otherwise             → `'both'` (a genuine 2D box)
+ *
+ * An already-1D chart (`base` = `'x'`/`'y'`) is returned unchanged — its
+ * gesture never spans the constrained axis regardless of the drag shape.
+ * `dxPx`/`dyPx` may be signed; only magnitudes matter.
+ */
+export function boxZoomAxis(
+  base: ConstrainAxis,
+  dxPx: number,
+  dyPx: number,
+  thin: number = THIN_BAND_PX,
+): ConstrainAxis {
+  if (base !== "both") return base;
+  const adx = Math.abs(dxPx);
+  const ady = Math.abs(dyPx);
+  if (adx < thin && ady >= thin) return "y";
+  if (ady < thin && adx >= thin) return "x";
+  return "both";
+}
+
+/**
+ * Snap a raw drag rectangle (two container-local corners) to the band the
+ * effective box `axis` implies: a FULL-WIDTH horizontal band for a Y-only
+ * zoom, a FULL-HEIGHT vertical band for an X-only zoom, or the literal 2D
+ * rectangle for `'both'`. `plot` is the plot rect in the SAME container-local
+ * px space as the corners. The hook hands this straight to `dragRect` so
+ * renderers draw the already-constrained band with zero extra logic.
+ */
+export function constrainDragRect(
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  plot: PixelRect,
+  axis: ConstrainAxis,
+): PixelRect {
+  const loX = Math.min(x0, x1);
+  const loY = Math.min(y0, y1);
+  const w = Math.abs(x1 - x0);
+  const h = Math.abs(y1 - y0);
+  if (axis === "y") return { x: plot.x, y: loY, width: plot.width, height: h };
+  if (axis === "x") return { x: loX, y: plot.y, width: w, height: plot.height };
+  return { x: loX, y: loY, width: w, height: h };
+}
+
+/**
+ * Follow-cursor 1D axis scale for an axis-gutter drag. The data value grabbed
+ * at pointer-down (`grabFrac` = its fraction 0..1 along the axis through the
+ * START domain) tracks the cursor (`nowFrac` = the cursor's fraction now) while
+ * the OPPOSITE end stays pinned (`anchorFrac`: 0 = low end fixed, 1 = high end
+ * fixed). Returns the new `[lo, hi]`, or `null` when the result is degenerate
+ * (cursor at/over the anchor, or a non-positive/inverted span) so the caller
+ * can simply skip the update.
+ */
+export function axisScale1D(
+  startLo: number,
+  startHi: number,
+  grabFrac: number,
+  nowFrac: number,
+  anchorFrac: 0 | 1,
+): [number, number] | null {
+  const grabbed = startLo + grabFrac * (startHi - startLo);
+  const anchorValue = anchorFrac === 0 ? startLo : startHi;
+  const denom = nowFrac - anchorFrac;
+  if (Math.abs(denom) < 1e-4) return null; // cursor reached the pinned end
+  const span = (grabbed - anchorValue) / denom;
+  if (!(span > 0) || !Number.isFinite(span)) return null;
+  const lo = anchorValue - anchorFrac * span;
+  const hi = lo + span;
+  if (!(hi > lo)) return null;
+  return [lo, hi];
 }
 
 /**
