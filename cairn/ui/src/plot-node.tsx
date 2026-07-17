@@ -15,6 +15,7 @@ import React, {
   createContext,
   useContext,
   useEffect,
+  useId,
   useState,
 } from "react";
 import {
@@ -51,11 +52,17 @@ import { ChartBox, ChartFillContext } from "./plot-standalone-helpers";
  */
 const RENDERER_WAIT_MS = 4000;
 
-/** Root-provided context shared by the whole tree: the single `DataSource` and
- *  the nearest grid's `shared` block (colormap/colorRange/reference/…). */
+/** Root-provided context shared by the whole tree: the single `DataSource`,
+ *  the nearest grid's `shared` block (colormap/colorRange/reference/…), and
+ *  (when that grid opted in via `shared.sync.viewport`) the live image
+ *  viewport-sync group id for that grid — see `GridView`'s derivation and
+ *  `image-viewport-sync.ts`'s pub/sub bus. Mirrors the 3D `cameraSyncGroupId`
+ *  mechanism (`lib/camera-sync.ts`'s `useCameraSync`), scoped per grid
+ *  instead of per card. */
 export interface SharedPlotCtx {
   source: DataSource;
   shared?: SharedProps;
+  viewportSyncGroupId?: string | null;
 }
 export const SharedPlotContext = createContext<SharedPlotCtx | null>(null);
 
@@ -80,7 +87,7 @@ function Message({ text, error }: { text: string; error?: boolean }) {
 // BELOW the leaf's own props (leaf props win).
 // ---------------------------------------------------------------------------
 function LeafView({ node }: { node: PlotLeafNode }) {
-  const { source, shared } = useSharedPlot();
+  const { source, shared, viewportSyncGroupId } = useSharedPlot();
   const [state, setState] = useState<
     | { status: "loading" }
     | { status: "error"; message: string }
@@ -97,6 +104,12 @@ function LeafView({ node }: { node: PlotLeafNode }) {
         const sharedProps: Record<string, unknown> = {};
         if (shared?.colormap != null) sharedProps.colormap = shared.colormap;
         if (shared?.colorRange != null) sharedProps.colorRange = shared.colorRange;
+        // Image viewport sync (`shared.sync.viewport`) — threaded down as a
+        // group id the `image`/`imagehdr` standalone adapters subscribe to
+        // (see `plot-renderers.tsx`'s `useSyncedImageViewport`). Harmless on
+        // non-image leaves (an unused prop), same as `colormap`/`colorRange`
+        // above.
+        if (viewportSyncGroupId) sharedProps.viewportSyncGroupId = viewportSyncGroupId;
         setState({
           status: "ready",
           props: { ...sharedProps, ...(node.props ?? {}), ...dataProps },
@@ -112,7 +125,7 @@ function LeafView({ node }: { node: PlotLeafNode }) {
     return () => {
       cancelled = true;
     };
-  }, [node, source, shared]);
+  }, [node, source, shared, viewportSyncGroupId]);
 
   // Wait-for-registration: re-render the instant the renderer arrives, else
   // surface a bounded "unknown renderer" error.
@@ -267,6 +280,14 @@ function trackList(
 
 function GridView({ node }: { node: GridNode }) {
   const { source, shared: parentShared } = useSharedPlot();
+  // Image viewport sync (`shared.sync.viewport`, SharedProps in
+  // plot-descriptor.ts) — mirrors `lib/camera-sync.ts`'s `useCameraSync`: a
+  // stable id (`useId()`) scoped to THIS grid instance, so a grid's own image
+  // leaves mirror each other's zoom/pan, but two different (sibling or
+  // nested) synced grids never share a group by default. Called
+  // unconditionally (rules-of-hooks) but only consulted when this node
+  // actually declares its own `shared.sync.viewport` below.
+  const localId = useId();
   const children = node.children ?? [];
   const cols = node.cols ?? node.colWidths?.length ?? children.length ?? 1;
   const fill = !!node.rowHeights && node.rowHeights.length > 0;
@@ -285,6 +306,12 @@ function GridView({ node }: { node: GridNode }) {
   // falling back to the parent's for nesting).
   const shared = node.shared ?? parentShared;
 
+  // The group id is derived fresh from THIS node's own `shared.sync.viewport`
+  // (never inherited from a parent grid — same "no accidental cross-grid
+  // link" scoping `useCameraSync` documents) and only when this node actually
+  // re-seeds the context below (`node.shared && node.shared !== parentShared`).
+  const viewportSyncGroupId = node.shared?.sync?.viewport ? `plot-grid-viewport-${localId}` : null;
+
   const grid = (
     <ChartFillContext.Provider value={fill}>
       <div style={gridStyle}>
@@ -299,7 +326,7 @@ function GridView({ node }: { node: GridNode }) {
 
   const body =
     node.shared && node.shared !== parentShared ? (
-      <SharedPlotContext.Provider value={{ source, shared }}>
+      <SharedPlotContext.Provider value={{ source, shared, viewportSyncGroupId }}>
         {grid}
       </SharedPlotContext.Provider>
     ) : (

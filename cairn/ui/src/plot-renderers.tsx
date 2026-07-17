@@ -24,7 +24,7 @@
  * DATA props arrive already-resolved from the descriptor (`resolveDataProps`)
  * merged over the descriptor's config `props`; adapters spread that as `p`.
  */
-import { useEffect, useState, type ComponentType } from "react";
+import { useCallback, useEffect, useRef, useState, type ComponentType } from "react";
 import ScalarPlot from "./lib/cairn-plot/renderers/ScalarPlot";
 import ScatterPlot from "./lib/cairn-plot/renderers/ScatterPlot";
 import ParallelCoords from "./lib/cairn-plot/renderers/ParallelCoords";
@@ -36,6 +36,12 @@ import HdrImagePane from "./lib/cairn-plot/renderers/HdrImagePane";
 import Table from "./lib/cairn-plot/renderers/Table";
 import type { Viewport, PromotedSeriesConfig } from "./lib/cairn-plot/types";
 import type { Viewport as ImageViewport } from "./lib/cairn-plot/hooks/use-image-viewport";
+import {
+  getLastImageViewportState,
+  makeImageViewportSyncSourceId,
+  publishImageViewportState,
+  subscribeImageViewportState,
+} from "./lib/cairn-plot/viewport/image-viewport-sync";
 import { ChartBox } from "./plot-standalone-helpers";
 import { registerRenderer } from "./plot-registry";
 // TYPE-ONLY import — erased at compile time, so this does NOT pull the
@@ -196,14 +202,66 @@ function HeatmapStandalone(p: P) {
   );
 }
 
+/**
+ * Owns a pane's local `{zoom,pan}` viewport state, optionally linked to a
+ * `viewportSyncGroupId` (threaded down from a grid's `shared.sync.viewport` —
+ * see `plot-node.tsx`'s `GridView`) via `image-viewport-sync.ts`'s group
+ * pub/sub bus — the IMAGE mirror of the 3D `cameraSyncGroupId` mechanism
+ * (`lib/camera-sync.ts` / `three/camera-sync.ts`). Shared by
+ * `ImageStandalone`/`ImageHdrStandalone` so BOTH the WebGPU engine pane and
+ * the legacy CPU panes (`ImagePane`/`HdrImagePane`/`GpuImagePane` are all
+ * fully controlled via `zoom`/`pan`/`onViewportChange`, owning no viewport
+ * state of their own) get sync for free — neither pane component needs to
+ * know sync exists, only the adapter that already owns the viewport state.
+ *
+ * - Joining a group adopts the last-published state immediately, so a pane
+ *   that mounts after its peers have already zoomed/panned doesn't snap them
+ *   back to home.
+ * - A LOCAL gesture (the pane's own `onViewportChange`, returned here) both
+ *   updates local state and publishes to the group.
+ * - A REMOTE update (another pane's publish, delivered via `subscribe`) only
+ *   updates local state — it is never re-published, so there's no feedback
+ *   loop (see `image-viewport-sync.ts`'s module doc for why no second
+ *   "suppress while applying" guard is needed here, unlike the 3D bus).
+ */
+function useSyncedImageViewport(
+  groupId: string | null | undefined,
+  seed: ImageViewport,
+): [ImageViewport, (v: ImageViewport) => void] {
+  const [viewport, setViewport] = useState<ImageViewport>(seed);
+  const sourceIdRef = useRef<string>();
+  if (!sourceIdRef.current) sourceIdRef.current = makeImageViewportSyncSourceId();
+
+  useEffect(() => {
+    if (!groupId) return;
+    const last = getLastImageViewportState(groupId);
+    if (last) setViewport(last);
+    return subscribeImageViewportState(groupId, sourceIdRef.current!, (state) => {
+      setViewport(state);
+    });
+  }, [groupId]);
+
+  const onViewportChange = useCallback(
+    (v: ImageViewport) => {
+      setViewport(v);
+      if (groupId) publishImageViewportState(groupId, sourceIdRef.current!, v);
+    },
+    [groupId],
+  );
+
+  return [viewport, onViewportChange];
+}
+
 // --- ImagePane: content/aspect-sized, fills required config with defaults ---
 // Like ScalarPlotStandalone, owns the interactive viewport locally: ImagePane's
 // wheel-zoom (modifier-gated) + drag-pan are CONTROLLED — they need a
 // `zoom`/`pan` value plus an `onViewportChange` callback to persist the gesture.
 // Standalone has no settings store, so the adapter holds the state itself,
-// seeded from any descriptor-provided `zoom`/`pan`.
+// seeded from any descriptor-provided `zoom`/`pan`. `p.viewportSyncGroupId`
+// (threaded from a grid's `shared.sync.viewport` — see `plot-node.tsx`) links
+// this viewport to every other synced pane in the same grid.
 function ImageStandalone(p: P) {
-  const [viewport, setViewport] = useState<ImageViewport>({
+  const [viewport, onViewportChange] = useSyncedImageViewport(p.viewportSyncGroupId, {
     zoom: p.zoom ?? 1,
     pan: p.pan ?? { x: 0, y: 0 },
   });
@@ -227,7 +285,7 @@ function ImageStandalone(p: P) {
       pixelValueNotation={p.pixelValueNotation}
       zoom={viewport.zoom}
       pan={viewport.pan}
-      onViewportChange={setViewport}
+      onViewportChange={onViewportChange}
     />
   );
 }
@@ -243,7 +301,7 @@ function ImageStandalone(p: P) {
 // through it.
 function ImageHdrStandalone(p: P) {
   const { height, ...rest } = p;
-  const [viewport, setViewport] = useState<ImageViewport>({
+  const [viewport, onViewportChange] = useSyncedImageViewport(rest.viewportSyncGroupId, {
     zoom: rest.zoom ?? 1,
     pan: rest.pan ?? { x: 0, y: 0 },
   });
@@ -264,7 +322,7 @@ function ImageHdrStandalone(p: P) {
         pixelValueNotation={rest.pixelValueNotation}
         zoom={viewport.zoom}
         pan={viewport.pan}
-        onViewportChange={setViewport}
+        onViewportChange={onViewportChange}
       />
     </ChartBox>
   );
