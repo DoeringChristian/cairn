@@ -54,7 +54,10 @@ const GPU_IMAGE_READY_EVENT = "cairn-plot:gpu-image-ready";
  * flag is set AND the gpu-image addon has registered it. Unset/false (or addon
  * absent) keeps the legacy CPU `MediaComparePane` / `ImagePane` diff path —
  * the Task 8 brief's required fallback (either the addon never loaded, the
- * host opted out, or `getSharedDevice()` found no GPU backend).
+ * host opted out, or `getSharedDevice()` found WebGPU unavailable). The
+ * compare-pane counterpart to `plot-renderers.tsx`'s `resolveImageRenderer`
+ * — same capability-gated seam, same WebGPU-or-legacy-CPU-pane fallback
+ * boundary (see `docs/superpowers/specs/2026-07-16-webgpu-engine-design.md`).
  */
 function resolveGpuComparePane(): ((props: GpuComparePaneProps) => JSX.Element | null) | null {
   if (typeof window === "undefined") return null;

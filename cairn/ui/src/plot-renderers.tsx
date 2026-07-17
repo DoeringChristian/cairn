@@ -38,16 +38,33 @@ import type { Viewport, PromotedSeriesConfig } from "./lib/cairn-plot/types";
 import type { Viewport as ImageViewport } from "./lib/cairn-plot/hooks/use-image-viewport";
 import { ChartBox } from "./plot-standalone-helpers";
 import { registerRenderer } from "./plot-registry";
+// TYPE-ONLY import — erased at compile time, so this does NOT pull the
+// engine's runtime code (or `GpuImagePane` itself) into `core.iife.js`; see
+// `ImageRenderProps`'s own doc comment for why this is safe. Mirrors
+// `media-compare/compositor.tsx`'s identical `import type { GpuComparePaneProps }`.
+import type { ImageRenderProps } from "./lib/cairn-plot/renderers/GpuImagePane";
 
 /** Loose prop bag — resolved data props + descriptor config, unified. */
 type P = Record<string, any>;
 
 // ---------------------------------------------------------------------------
-// Engine-backed image pane seam (Task 8, WebGPU engine Sub-project 1).
+// resolveImageRenderer — the formalized WebGPU-engine-or-legacy-CPU-pane
+// SEAM for the standalone image path (Task 8, WebGPU engine Sub-project 1;
+// named/formalized when the WebGL2 backend was removed — see
+// `docs/superpowers/specs/2026-07-16-webgpu-engine-design.md`).
+//
+// This is the CAPABILITY-GATED half of the engine's fallback boundary: an
+// up-front check, resolved once per page load, that decides WebGPU engine
+// vs. legacy CPU pane BEFORE either ever mounts. The RUNTIME safety net
+// (a mounted `GpuImagePane` that throws mid-render self-heals to the legacy
+// pane — the C1 fix, `renderers/GpuImagePane.tsx`'s `engineFailed` state) is
+// a SEPARATE, later line of defense — both land on the same legacy
+// `ImagePane`/`HdrImagePane` pane, so a page never blanks whether WebGPU is
+// simply unavailable (this seam) or available-but-fails-at-runtime (C1).
 //
 // `core` (this file) must never statically import the engine or
-// `GpuImagePane` — that would pull the WebGPU/WebGL2 RHI into `core.iife.js`,
-// which the bundle guard forbids. Instead, the lazy `gpu-image` addon
+// `GpuImagePane` — that would pull the WebGPU RHI into `core.iife.js`, which
+// the bundle guard forbids. Instead, the lazy `gpu-image` addon
 // (`plot-gpu-image-addon.tsx`, emitted only on pages with an image/HDR-image/
 // compare node) sets `window.__cairnPlotGpuImagePane` once its capability
 // check (`getSharedDevice()`) resolves, and dispatches
@@ -67,17 +84,27 @@ declare global {
 }
 
 /**
- * The engine-backed image pane, if the gpu-image addon has loaded AND the
+ * Resolves the image-pane component to render THIS mount: the WebGPU
+ * engine's `GpuImagePane` if the gpu-image addon has loaded AND the
  * capability flag is on (`__cairnPlotUseGpuImage === true`, set by the addon
- * itself on success — see its module doc). Returns `null` (legacy CPU pane)
- * when the addon hasn't run yet, opted out, or `getSharedDevice()` rejected
- * (no WebGPU/WebGL2 available) — the Task 8 brief's required fallback.
- * Re-renders the caller once, the instant the addon finishes, via the
- * `GPU_IMAGE_READY_EVENT` it dispatches (fixes the async-registration race:
- * the addon's `getSharedDevice()` check can resolve after this component's
- * first paint).
+ * itself once `getSharedDevice()` resolves — see its module doc), else
+ * `null` (caller falls back to the legacy `ImagePane`/`HdrImagePane` CPU
+ * pane) — covering "addon hasn't run yet", "opted out", and
+ * "`getSharedDevice()` rejected (no WebGPU available)" uniformly, with ZERO
+ * extra branching at the call site (`ImageStandalone`/`ImageHdrStandalone`
+ * below just do `resolveImageRenderer() ?? LegacyPane`).
+ *
+ * Implemented as a React hook (despite the name — no `use` prefix, since
+ * this is the seam's public name, not just an internal implementation
+ * detail) because it must re-render the caller once, the instant the addon
+ * finishes, via the `GPU_IMAGE_READY_EVENT` it dispatches — fixing the
+ * async-registration race where the addon's `getSharedDevice()` check
+ * resolves AFTER this component's first paint. Return type is the
+ * formalized `ImageRenderProps` contract (`GpuImagePane`'s doc comment) —
+ * both the engine pane and the legacy panes this resolves between accept
+ * that same shape.
  */
-function useGpuImagePane(): ComponentType<any> | null {
+function resolveImageRenderer(): ComponentType<ImageRenderProps> | null {
   const [, bump] = useState(0);
   useEffect(() => {
     if (typeof window === "undefined" || window.__cairnPlotGpuImagePane) return;
@@ -86,7 +113,7 @@ function useGpuImagePane(): ComponentType<any> | null {
     return () => window.removeEventListener(GPU_IMAGE_READY_EVENT, onReady);
   }, []);
   if (typeof window === "undefined" || window.__cairnPlotUseGpuImage !== true) return null;
-  return window.__cairnPlotGpuImagePane ?? null;
+  return (window.__cairnPlotGpuImagePane as ComponentType<ImageRenderProps> | undefined) ?? null;
 }
 
 // --- ScalarPlot: owns viewport + promotedSeries interactive state ----------
@@ -180,10 +207,11 @@ function ImageStandalone(p: P) {
     zoom: p.zoom ?? 1,
     pan: p.pan ?? { x: 0, y: 0 },
   });
-  // Engine-backed pane when available (Task 8) — SAME prop shape as
-  // `ImagePane` (`renderers/GpuImagePane.tsx`'s `SdrGpuImagePaneProps`), so
-  // the swap below is a drop-in replacement; legacy fallback otherwise.
-  const Pane = (useGpuImagePane() ?? ImagePane) as typeof ImagePane;
+  // resolveImageRenderer: the WebGPU engine pane when available (both sides
+  // satisfy the shared `ImageRenderProps` contract, so the swap below is a
+  // drop-in replacement — see that type's doc comment), else `null` and this
+  // falls back to the legacy `ImagePane`.
+  const Pane = (resolveImageRenderer() ?? ImagePane) as typeof ImagePane;
   return (
     <Pane
       imageUrl={p.imageUrl ?? null}
@@ -219,9 +247,10 @@ function ImageHdrStandalone(p: P) {
     zoom: rest.zoom ?? 1,
     pan: rest.pan ?? { x: 0, y: 0 },
   });
-  // Engine-backed pane when available (Task 8) — SAME prop shape as
-  // `HdrImagePane` (`renderers/GpuImagePane.tsx`'s `HdrGpuImagePaneProps`).
-  const Pane = (useGpuImagePane() ?? HdrImagePane) as typeof HdrImagePane;
+  // resolveImageRenderer: the WebGPU engine pane when available (shared
+  // `ImageRenderProps` contract, same as `ImageStandalone` above), else the
+  // legacy `HdrImagePane`.
+  const Pane = (resolveImageRenderer() ?? HdrImagePane) as typeof HdrImagePane;
   return (
     <ChartBox height={height}>
       <Pane

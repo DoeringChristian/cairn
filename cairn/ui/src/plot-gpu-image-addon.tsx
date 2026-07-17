@@ -5,9 +5,8 @@
  * addon SHAPE as `plot-figure-addon.tsx`/`plot-three-addon.tsx` (an
  * include-once guard flag, reuses core's React), with ONE difference:
  * activation is gated behind a CAPABILITY CHECK, not just the include-once
- * guard, because unlike Plotly/three (always safe to run), the WebGPU/WebGL2
- * engine can fail to initialize in an environment with neither backend
- * available.
+ * guard, because unlike Plotly/three (always safe to run), the WebGPU-only
+ * engine can fail to initialize in an environment without WebGPU.
  *
  * ## Task 8 — wired into the real emit path
  * `cairn/sdk/elements.py`'s `_gpu_image_addon_html()` now includes this
@@ -33,7 +32,8 @@
  * PANE COMPONENT on a window seam (`__cairnPlotGpuImagePane`) instead of
  * mutating the registry, and let `plot-renderers.tsx`'s `ImageStandalone`/
  * `ImageHdrStandalone` (which keep owning the local viewport state) pick it
- * up via `useGpuImagePane()` — a small hook that also listens for the
+ * up via `resolveImageRenderer()` — the formalized capability-gated seam
+ * (see that function's doc comment) that also listens for the
  * `GPU_IMAGE_READY_EVENT` this addon dispatches on success, so an
  * already-mounted leaf re-renders onto the engine pane the instant it becomes
  * available instead of only picking it up on a later, unrelated re-render.
@@ -41,16 +41,15 @@
  * ## Capability gate + legacy fallback
  * Two independent opt-outs, checked BEFORE anything GPU-related runs:
  *   1. `window.__cairnPlotUseGpuImage === false` — an explicit escape hatch
- *      (harness/host can force the legacy CPU panes even when a GPU backend
- *      IS available).
- *   2. `getSharedDevice()` rejecting — no WebGPU AND no WebGL2 available (the
- *      "engine can't init" case). `getSharedDevice()` itself already falls
- *      back WebGPU → WebGL2 silently (`engine/device.ts`'s module doc); a
- *      REJECTION here means neither backend exists, so the window seams are
- *      never set and `__cairnPlotUseGpuImage` is never flipped to `true` —
- *      `ImageStandalone`/`ImageHdrStandalone`/`CompositeMediaPane` all keep
- *      rendering the legacy CPU panes, with ZERO extra code on their side:
- *      they simply never see a truthy seam.
+ *      (harness/host can force the legacy CPU panes even when WebGPU IS
+ *      available).
+ *   2. `getSharedDevice()` rejecting — no WebGPU available (the engine is
+ *      WebGPU-ONLY; there is no second GPU backend to fall back to inside
+ *      the engine — see `engine/device.ts`'s module doc). A REJECTION here
+ *      means the window seams are never set and `__cairnPlotUseGpuImage` is
+ *      never flipped to `true` — `ImageStandalone`/`ImageHdrStandalone`/
+ *      `CompositeMediaPane` all keep rendering the legacy CPU panes, with
+ *      ZERO extra code on their side: they simply never see a truthy seam.
  * On success (capability check passes and neither opt-out fired),
  * `__cairnPlotUseGpuImage` defaults to `true` — the standalone gallery uses
  * the engine BY DEFAULT once it's available, per the Task 8 brief — unless
@@ -116,8 +115,8 @@ async function tryRegister(): Promise<void> {
     // this async capability check settled.
     window.dispatchEvent(new Event(GPU_IMAGE_READY_EVENT));
   } catch (err) {
-    // Neither WebGPU nor WebGL2 available — the legacy CPU panes stay in
-    // place. This is an expected, non-fatal path.
+    // WebGPU not available (or failed to initialize) — the legacy CPU panes
+    // stay in place. This is an expected, non-fatal path.
     console.warn("cairn-plot gpu-image addon: engine init failed, staying on legacy panes", err);
   }
 }

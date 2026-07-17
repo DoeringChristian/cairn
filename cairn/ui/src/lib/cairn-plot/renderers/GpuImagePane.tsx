@@ -160,6 +160,23 @@ export interface SdrGpuImagePaneProps {
 
 export type GpuImagePaneProps = HdrGpuImagePaneProps | SdrGpuImagePaneProps;
 
+/**
+ * The formalized prop CONTRACT shared between the two interchangeable
+ * image-pane implementations this codebase ships: the LEGACY CPU/2D-canvas
+ * pane (`ImagePane`/`HdrImagePane`) and this WebGPU engine pane
+ * (`GpuImagePane`). `plot-renderers.tsx`'s `resolveImageRenderer` is the
+ * capability-gated seam that picks ONE implementation per mount — the
+ * WebGPU-or-legacy-CPU-pane fallback boundary (see
+ * `docs/superpowers/specs/2026-07-16-webgpu-engine-design.md`) — and both
+ * sides accept this same shape (`ImagePaneProps`/`HdrImagePaneProps` are the
+ * legacy panes' own required-field-stricter version of the same two prop
+ * shapes), so the swap is prop-compatible. Exported as a TYPE ONLY — core
+ * files (`plot-renderers.tsx`) import just this type, never a value, from
+ * this file, so the bundle guard (core stays free of the engine's runtime
+ * code) holds even though core reasons about the contract's shape.
+ */
+export type ImageRenderProps = GpuImagePaneProps;
+
 function isHdrProps(p: GpuImagePaneProps): p is HdrGpuImagePaneProps {
   return "hdr" in p && p.hdr != null;
 }
