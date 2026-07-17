@@ -1,4 +1,4 @@
-// Engine types (RHI interface — consumed by WebGPU/WebGL2 backends)
+// Engine types (RHI interface — consumed by the WebGPU backend)
 export type {
   Backend,
   Capabilities,

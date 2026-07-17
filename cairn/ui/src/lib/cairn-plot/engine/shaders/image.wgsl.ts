@@ -1,32 +1,32 @@
 /**
- * IMAGE render-pass WGSL fragment shader (WebGPU backend only — mirrors
- * `image.glsl.ts` exactly). Turns a float/8-bit source image texture into
- * displayed pixels via `exposure -> [colormap] -> tone-map operator ->
- * output-encode`, bit-for-bit (within 1/255) with the CPU reference in
- * `image/tonemap.ts`. See `engine/image-engine.ts`'s module doc comment for
- * the full pipeline description and `ImageParams` contract; this file only
- * documents the SHADER-level details (uniform layout, operator porting,
- * colormap LUT convention).
+ * IMAGE render-pass WGSL fragment shader (the engine's only backend, WebGPU).
+ * Turns a float/8-bit source image texture into displayed pixels via
+ * `exposure -> [colormap] -> tone-map operator -> output-encode`,
+ * bit-for-bit (within 1/255) with the CPU reference in `image/tonemap.ts`.
+ * See `engine/image-engine.ts`'s module doc comment for the full pipeline
+ * description and `ImageParams` contract; this file only documents the
+ * SHADER-level details (uniform layout, operator porting, colormap LUT
+ * convention).
  *
  * ## Fullscreen triangle + Y-flip
  * Reuses the exact vertex stage from `passthrough.wgsl.ts` (see that file's
- * doc comment for the full WebGPU-vs-WebGL2 Y-flip rationale): `uv.y` is
- * flipped (`1.0 - yRaw`) so `readback()` row order matches the WebGL2
- * backend's for the same input, which is what the parity test harness
- * (`engine/__tests__/image-pass.browser.ts`) checks pixel-for-pixel across
- * BOTH backends.
+ * doc comment for the Y-flip rationale): `uv.y` is flipped (`1.0 - yRaw`) so
+ * `readback()`'s row order matches on-screen top-down expectations for the
+ * same input — originally cross-checked pixel-for-pixel against a since-
+ * removed WebGL2 backend by the parity test harness
+ * (`engine/__tests__/image-pass.browser.ts`), now a same-backend regression
+ * check against the CPU `image/tonemap.ts` reference.
  *
- * ## Uniform "block" layout (std140-compatible, matches `image.glsl.ts`)
- * The RHI (`engine/webgl2/device.ts`'s doc comment) maps each
- * `BindGroupEntry.binding = N` onto ONE named uniform (`u_bindN`), not a
- * literal single packed byte-blob — so the six `ImageParams` fields the task
- * brief describes as "one uniform block" are split across THREE named
- * uniform bindings, each a natural GLSL/WGSL type already supported by both
- * backends' bind-group builders (`WGSL_UNIFORM_TYPE_SIZE` in
+ * ## Uniform "block" layout (std140-compatible)
+ * The RHI maps each `BindGroupEntry.binding = N` onto ONE named uniform
+ * (`u_bindN`), not a literal single packed byte-blob — so the six
+ * `ImageParams` fields the task brief describes as "one uniform block" are
+ * split across THREE named uniform bindings, each a natural WGSL type
+ * already supported by the bind-group builder (`WGSL_UNIFORM_TYPE_SIZE` in
  * `webgpu/device.ts` only knows scalar/vecN/mat4 types, no arrays/structs —
  * reusing exactly the vec4-uniform convention `scalebias.wgsl.ts` already
  * established avoids extending that table). Every field keeps IDENTICAL
- * component order between this file and `image.glsl.ts`:
+ * component order:
  *
  *   logical binding 2 (`u_bind2: vec4<f32>`, native binding 2*3+2=8):
  *     .x = exposureEV        (f32, EV stops)

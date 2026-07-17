@@ -1,12 +1,14 @@
 /**
  * C1 fix (whole-branch review) — fault-injection harness: a per-pane GPU
- * hard failure (realistically: WebGL2 `getContext` returning `null` under
- * browser live-context exhaustion — see `engine/pool.ts`'s
+ * hard failure (any GPU init/render failure — see `engine/pool.ts`'s
  * `MAX_LIVE_SWAPCHAINS` doc) must NEVER blank a pane. It must fall back to
- * the legacy CPU pane instead.
+ * the legacy CPU pane instead. This is also the runtime safety net half of
+ * the WebGPU-only engine's fallback boundary — the capability-gated half
+ * (`resolveImageRenderer` in `plot-renderers.tsx`) is exercised by
+ * `gpu-image-addon-check.browser.ts`.
  *
- * jsdom has no WebGL2/WebGPU, so — like every other `*.browser.ts` harness in
- * this tree — this is NOT a unit test, it's a browser page driven via
+ * jsdom has no WebGPU, so — like every other `*.browser.ts` harness in this
+ * tree — this is NOT a unit test, it's a browser page driven via
  * claude-in-chrome. Uses `React.createElement` (no JSX) per the existing
  * harness convention.
  *
@@ -15,8 +17,8 @@
  * `engine/pool.ts`'s `activateEntry()` and `media-compare/GpuComparePane.tsx`'s
  * device/surface acquisition — see both files' C1-fix doc comments) —
  * deterministically forces every pane-activation attempt to throw, exactly
- * the "non-context-lost hard failure" branch the C1 fix targets, without
- * needing to actually exhaust the browser's real WebGL2 context cap.
+ * the hard-failure branch the C1 fix targets, without needing to actually
+ * exhaust a real GPU resource cap.
  *
  * CASES (all run under `?forceEngineFail`):
  *   1. `GpuImagePane` (SDR `imageUrl` prop shape) — asserts NO

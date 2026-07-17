@@ -43,7 +43,7 @@ export {
 } from "./compositor";
 
 // NB: `GpuComparePane` is intentionally NOT re-exported from this barrel — it
-// imports the WebGPU/WebGL2 engine, and this barrel is reachable from `core`
+// imports the WebGPU engine, and this barrel is reachable from `core`
 // (the bundle guard keeps `engine/*` out of `core.iife.js`). The lazy
 // gpu-image addon imports it directly by path and injects it at runtime via
 // `window.__cairnPlotGpuComparePane` (see `plot-gpu-image-addon.tsx` /

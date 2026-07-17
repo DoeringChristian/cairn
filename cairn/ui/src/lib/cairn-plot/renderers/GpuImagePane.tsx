@@ -44,8 +44,8 @@
  * whenever viewport (zoom/pan → `uvRect`), `exposure`, `tonemap`/`operator`,
  * or `gamma` change, or the container resizes (object-contain fit depends on
  * the live box). `engine/pool.ts`'s `acquirePane`/`releasePane` own the
- * GPU-resource lifecycle (shared WebGPU device / per-pane WebGL2 device, LRU
- * park/restore, the live-swapchain cap).
+ * GPU-resource lifecycle (the shared WebGPU device, LRU park/restore, the
+ * live-swapchain cap).
  *
  * ## Zoom/pan -> uvRect
  * `useImageViewport` (unchanged — same Alt-gated wheel-zoom-to-cursor +
@@ -63,8 +63,8 @@
  * ## Off-screen park/restore
  * An `IntersectionObserver` on the pane container calls the pool handle's
  * `park()`/`restore()` as the pane leaves/enters the viewport, proactively
- * freeing GPU memory (and, on WebGL2, the scarce per-pane GL context)
- * instead of waiting for LRU cap pressure from other panes. It also reports
+ * freeing GPU memory instead of waiting for LRU cap pressure from other
+ * panes. It also reports
  * every transition to `handle.setVisible()` so `engine/pool.ts`'s LRU can
  * prefer evicting an OFF-SCREEN pane over an on-screen one when the cap is
  * hit by pane count alone (more visible panes than `MAX_LIVE_SWAPCHAINS` — a
@@ -295,7 +295,7 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
   const [naturalDims, setNaturalDims] = useState<{ w: number; h: number } | null>(null);
   const [uploadVersion, setUploadVersion] = useState(0);
   const [containerTick, setContainerTick] = useState(0);
-  // The DISPLAYED (pre-backend-flip) uv window, for `PixelValueOverlay`'s
+  // The DISPLAYED uv window, for `PixelValueOverlay`'s
   // `sourceWindow` — see that prop's doc for why the GPU pane must supply
   // this explicitly (its canvas CSS box doesn't grow with zoom the way the
   // legacy CSS-transform panes' <img>/<canvas> does).
@@ -321,9 +321,8 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
     const canvas = canvasRef.current;
     if (!canvas) return;
     let cancelled = false;
-    // HDR-out gate: requires (1) a WebGPU backend with `capabilities.hdr`
-    // (WebGL2 is always SDR — see `types.ts`'s `Capabilities` doc), (2) the
-    // OS/display actually reporting extended dynamic range (an HDR surface
+    // HDR-out gate: requires (1) the WebGPU device reporting `capabilities.hdr`,
+    // (2) the OS/display actually reporting extended dynamic range (an HDR surface
     // on a plain SDR panel just re-clips at the OS compositor, so there's no
     // point paying for it), and (3) this pane rendering the FLOAT `HdrData`
     // path (`hdrMode`, i.e. the `imagehdr` prop shape) — plain 8-bit
@@ -337,7 +336,7 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
         if (cancelled) return;
         const hasHighDynamicRangeDisplay =
           typeof matchMedia !== "undefined" && matchMedia("(dynamic-range: high)").matches;
-        const useHdr = device.backend === "webgpu" && device.capabilities.hdr && hasHighDynamicRangeDisplay && hdrMode;
+        const useHdr = device.capabilities.hdr && hasHighDynamicRangeDisplay && hdrMode;
         useHdrRef.current = useHdr;
         acquirePane(canvas, { hdr: useHdr })
           .then((handle) => {
@@ -350,7 +349,7 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
           })
           .catch((err) => {
             // C1 fix (whole-branch review): defense-in-depth — `acquirePane`
-            // is not expected to reject in practice (the WebGL2/WebGPU hard
+            // is not expected to reject in practice (the hard GPU-init
             // failures this fix targets surface later, from `handle.render()`
             // — see the render effect below), but a promise rejection here
             // would otherwise be an unhandled rejection that leaves the pane
@@ -515,10 +514,6 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
     const paneEl = paneRef.current;
     const box = paneEl ? paneEl.getBoundingClientRect() : { width: naturalDims.w, height: naturalDims.h };
     const rawUv = viewportToUvRect({ zoom, pan }, box, naturalDims.w, naturalDims.h);
-    // The overlay wants the DISPLAYED (top-down, pre-flip) window — same
-    // rectangle on both backends, since the flip below is purely a GPU
-    // sampling-convention correction that both backends already display
-    // identically (row 0 at top).
     setOverlayWindow((prev) =>
       prev.x === rawUv.x && prev.y === rawUv.y && prev.w === rawUv.w && prev.h === rawUv.h ? prev : rawUv,
     );
@@ -532,19 +527,7 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
       screenPxPerTexel(rawUv, canvasBox, naturalDims.w, naturalDims.h) >= PIXEL_VALUE_MIN_SCREEN_PX
         ? "nearest"
         : "linear";
-    let uv = rawUv;
-    // WebGL2 display Y-flip correction (see PaneHandle.backend's doc + the
-    // engine's `passthrough.wgsl.ts` orientation note): on WebGL2 the
-    // composited canvas is vertically mirrored (texel row 0 lands on the
-    // BOTTOM scanline), so the shader's `srcUV.y = uvRect.y + rawUV.y*uvRect.h`
-    // would show source row 0 at the canvas BOTTOM. Flipping the y/h of the
-    // sampled window (start at the bottom edge `uv.y+uv.h`, walk UP with a
-    // negative height) cancels that, putting source row 0 back at the top —
-    // matching WebGPU and the CPU `HdrImagePane`. WebGPU already renders row 0
-    // at top (its WGSL flips `uv.y`), so it is left unmodified.
-    if (handle.backend === "webgl2") {
-      uv = { x: uv.x, y: uv.y + uv.h, w: uv.w, h: -uv.h };
-    }
+    const uv = rawUv;
     // On the true-HDR-out path, the user-selected `tonemap` operator is
     // BYPASSED in favor of `"extended"` (a pure identity — see
     // `image/tonemap.ts`'s doc comment on that entry): with a real HDR

@@ -2,9 +2,9 @@
  * IMAGE render-pass readback-vs-CPU-reference harness (Task 5 of the WebGPU
  * engine, Sub-project 1) — `engine/image-engine.ts`'s `renderImage()`.
  *
- * jsdom has no WebGL2/WebGPU, so — like every other `*.browser.ts` harness
- * in this directory — this is NOT a unit test, it's a browser page driven
- * via claude-in-chrome.
+ * jsdom has no WebGPU, so — like every other `*.browser.ts` harness in this
+ * directory — this is NOT a unit test, it's a browser page driven via
+ * claude-in-chrome.
  *
  * PARITY-CRITICAL: every case's expected value is computed by IMPORTING the
  * real `applyExposure`/`TONEMAP_OPERATORS`/`outputEncode` from
@@ -42,12 +42,6 @@
  *      SKIPPED; compared as floats (looser epsilon; no 8-bit quantization
  *      to absorb GPU-vs-CPU float32/float64 precision differences).
  *
- * Beyond each backend independently matching the CPU reference, `main()`
- * ALSO cross-compares WebGL2's raw readback bytes against WebGPU's
- * (`runCrossBackendParity`, mirroring `backend-readback.browser.ts`'s
- * `compareBackends`) for the byte-target cases, on the default (non-forced)
- * page load when `navigator.gpu` is available.
- *
  * RUNNING:
  *   1. Bundle this file to plain JS:
  *        cd cairn/ui && npx esbuild \
@@ -56,17 +50,13 @@
  *          --outfile=src/lib/cairn-plot/engine/__tests__/image-pass.browser.bundle.js
  *   2. Serve over http (file:// is blocked for module scripts):
  *        cd cairn/ui/src/lib/cairn-plot/engine/__tests__ && python3 -m http.server 8936
- *   3. Open BOTH of these in Chrome (claude-in-chrome) and read the
- *      PASS/FAIL lines from the DOM/console on each:
- *        http://localhost:8936/image-pass.browser.html
- *        http://localhost:8936/image-pass.browser.html?forceWebGL2
+ *   3. Open http://localhost:8936/image-pass.browser.html in Chrome
+ *      (claude-in-chrome) and read the PASS/FAIL lines from the DOM/console.
  *
  * The generated `.bundle.js` is NOT committed (gitignored) — regenerate with
  * the command above whenever this harness or its imports change.
  */
 import { getSharedDevice } from "../device";
-import { createWebGL2Device } from "../webgl2/device";
-import { createWebGPUDevice } from "../webgpu/device";
 import { renderImage, type ImageParams, type ImageOperator } from "../image-engine";
 import { applyExposure, TONEMAP_OPERATORS, outputEncode, type RgbTriple } from "../../image/tonemap";
 import { buildLUT, COLORMAP_STOPS } from "../../colormaps/lut";
@@ -486,71 +476,13 @@ function allResultsOk(results: Map<string, CaseResult>): boolean {
   return true;
 }
 
-/**
- * Cross-backend parity: directly instantiates BOTH backends in this one
- * page load (bypassing the page-wide `getSharedDevice()` singleton, which
- * only ever picks one backend per page) and compares WebGL2's vs WebGPU's
- * raw readback bytes, byte-for-byte within 1/255, for every byte-target
- * case. Only meaningful when `navigator.gpu` is available.
- */
-async function runCrossBackendParity(): Promise<boolean> {
-  if (!("gpu" in navigator) || !navigator.gpu) {
-    report(true, "[parity] SKIPPED — navigator.gpu is not available in this browser");
-    return true;
-  }
-  const glDevice = createWebGL2Device();
-  const gpuDevice = await createWebGPUDevice();
-
-  const glResults = await runAllCases(glDevice, "parity-webgl2");
-  const gpuResults = await runAllCases(gpuDevice, "parity-webgpu");
-
-  glDevice.destroy();
-  gpuDevice.destroy();
-
-  let allOk = true;
-  for (const [key, glResult] of glResults) {
-    const gpuKey = key.replace("parity-webgl2", "parity-webgpu");
-    const gpuResult = gpuResults.get(gpuKey);
-    const a = glResult.out;
-    const b = gpuResult?.out ?? null;
-    if (!(a instanceof Uint8Array) || !(b instanceof Uint8Array)) {
-      // hdrOut case reads back Float32Array — compare with a float epsilon instead.
-      if (a instanceof Float32Array && b instanceof Float32Array) {
-        let ok = a.length === b.length;
-        for (let i = 0; ok && i < a.length; i++) ok = Math.abs(a[i]! - b[i]!) <= 0.01;
-        report(ok, `[parity][${key}] WebGL2 vs WebGPU float readback identical within 0.01`);
-        if (!ok) allOk = false;
-        continue;
-      }
-      report(false, `[parity][${key}] cannot compare — missing readback (webgl2=${!!a}, webgpu=${!!b})`);
-      allOk = false;
-      continue;
-    }
-    let ok = a.length === b.length;
-    for (let i = 0; ok && i < a.length; i++) ok = Math.abs(a[i]! - b[i]!) <= 1;
-    report(ok, `[parity][${key}] WebGL2 vs WebGPU readback identical within 1/255`);
-    if (!ok) allOk = false;
-  }
-  return allOk;
-}
-
 async function main(): Promise<void> {
   try {
-    const forceWebGL2 = new URLSearchParams(location.search).has("forceWebGL2");
-    report(true, `location.search = "${location.search}" -> forceWebGL2 URL param present: ${forceWebGL2}`);
-
     const device = await getSharedDevice();
     const results = await runAllCases(device, "shared");
     const sharedOk = allResultsOk(results);
 
-    let parityOk = true;
-    if (!forceWebGL2) {
-      parityOk = await runCrossBackendParity();
-    } else {
-      report(true, "[parity] SKIPPED on ?forceWebGL2 page load (runs only on the default page load)");
-    }
-
-    setOverallStatus(sharedOk && parityOk);
+    setOverallStatus(sharedOk);
   } catch (err) {
     report(false, `threw: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
     setOverallStatus(false);

@@ -37,7 +37,6 @@ const SURFACE_USAGE = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_S
 /**
  * SDR canvas config: the browser's preferred (always 8-bit, e.g.
  * `bgra8unorm`) canvas format, no `colorSpace`/`toneMapping` override.
- * Mirrors the WebGL2 backend's always-SDR surface.
  */
 export function configureSDRSurface(context: GPUCanvasContext, device: GPUDevice): SurfaceConfigResult {
   const format = navigator.gpu.getPreferredCanvasFormat();

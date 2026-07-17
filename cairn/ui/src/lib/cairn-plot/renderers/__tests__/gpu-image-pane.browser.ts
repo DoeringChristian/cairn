@@ -2,7 +2,7 @@
  * `GpuImagePane` (Task 6 of the WebGPU engine, Sub-project 1) — the first
  * LIVE on-screen browser harness for a React component built on the RHI.
  *
- * jsdom has no WebGL2/WebGPU, so — like every other `*.browser.ts` harness in
+ * jsdom has no WebGPU, so — like every other `*.browser.ts` harness in
  * `engine/__tests__/` — this is NOT a unit test, it's a browser page driven
  * via claude-in-chrome. Uses `React.createElement` (no JSX) so this stays a
  * plain `.ts` file per the existing harness convention.
@@ -12,12 +12,12 @@
  *      (`[data-gpu-image-canvas]`) and the TEV overlay `<canvas>` is present.
  *   2. Readback (via `createImageBitmap` + an offscreen 2D canvas — NOT
  *      `canvas.getContext("2d")` on the pane's own canvas, which already owns
- *      a webgpu/webgl2 context) matches the CPU `image/tonemap.ts` reference
- *      (same exposure/operator/gamma pipeline `HdrImagePane` uses) within a
- *      1/255 epsilon. Run under `?forceWebGL2` for deterministic readback
- *      (per the task brief) — the default WebGPU path is checked only
- *      structurally (canvas non-blank), since canvas-compositing color
- *      management can introduce small non-deterministic differences.
+ *      a webgpu context) checked structurally (canvas non-blank); a
+ *      pixel-exact comparison against `image/tonemap.ts` is NOT asserted here
+ *      since canvas-compositing color management can introduce small
+ *      non-deterministic differences (the byte-exact parity checks live in
+ *      `engine/__tests__/image-pass.browser.ts`, which reads back an
+ *      offscreen texture directly, bypassing canvas compositing).
  *   3. Alt+wheel changes the viewport (zoom != 1); a plain wheel (no Alt)
  *      leaves it unchanged (the `useModifierKey` Alt-gate — plain wheel must
  *      keep scrolling the PAGE, never hijacked).
@@ -28,11 +28,10 @@
  *      away) panes than `MAX_LIVE_SWAPCHAINS`, so the LRU cap PARKS some of
  *      them while they stay on-screen (`engine/pool.ts`'s `isCanvasLive`
  *      finds one). Triggering a re-render on that still-parked pane (an
- *      exposure change) must transparently RESTORE it first — readback (under
- *      `?forceWebGL2`) must match the `tonemap.ts` reference for the NEW
- *      exposure, and must NOT match the stale old-exposure frame (negative
- *      control). Proves a re-render on a cap-parked-but-visible pane never
- *      paints into a destroyed/parked GPU context.
+ *      exposure change) must transparently RESTORE it first — checked
+ *      structurally (non-blank content) for the same canvas-compositing
+ *      reason as case 2. Proves a re-render on a cap-parked-but-visible pane
+ *      never paints into a destroyed/parked GPU context.
  *   6. The gpu-image addon's CAPABILITY-GATED registration
  *      (`plot-gpu-image-addon.tsx`): stub `__cairnPlotRegisterRenderer`,
  *      import the addon module, and assert it registers `"image"`/
@@ -51,7 +50,6 @@
  *   2. Serve: cd cairn/ui/src/lib/cairn-plot/renderers/__tests__ && python3 -m http.server 8937
  *   3. Open in Chrome (claude-in-chrome):
  *        http://localhost:8937/gpu-image-pane.browser.html
- *        http://localhost:8937/gpu-image-pane.browser.html?forceWebGL2
  *
  * The generated `.bundle.js` is NOT committed (gitignored) — regenerate with
  * the command above whenever this harness or its imports change.
@@ -60,7 +58,6 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import GpuImagePane, { type HdrData } from "../GpuImagePane";
 import { getLiveSwapchainCount, isCanvasLive, MAX_LIVE_SWAPCHAINS } from "../../engine/pool";
-import { applyExposure, TONEMAP_OPERATORS, outputEncode, type RgbTriple } from "../../image/tonemap";
 import type { Viewport as ImageViewport } from "../../hooks/use-image-viewport";
 
 declare global {
@@ -129,22 +126,10 @@ function buildHdr(): HdrData {
   return { data: new Float32Array(values), shape: [4, 4], dtype: "<f4" };
 }
 
-const clamp01 = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x);
-const byteOf = (x: number): number => Math.round(clamp01(x) * 255);
-
-function computeExpectedByte(v: number, exposureEV: number, operator: string, gamma?: number): number {
-  const exposed = applyExposure(v, exposureEV);
-  const rgb: RgbTriple = [exposed, exposed, exposed];
-  const opFn = TONEMAP_OPERATORS[operator] ?? TONEMAP_OPERATORS.srgb!;
-  const toned = opFn(rgb);
-  const encoded = outputEncode(toned[0], gamma);
-  return byteOf(encoded);
-}
-
 /** Read back a canvas's CURRENT bitmap via createImageBitmap (works
- *  regardless of the canvas's own context type — webgpu/webgl2/2d — unlike
- *  calling `canvas.getContext("2d")`, which would conflict with an
- *  already-created webgpu/webgl2 context on the SAME canvas). */
+ *  regardless of the canvas's own context type — webgpu/2d — unlike calling
+ *  `canvas.getContext("2d")`, which would conflict with an already-created
+ *  webgpu context on the SAME canvas). */
 async function readbackCanvas(canvas: HTMLCanvasElement): Promise<ImageData> {
   const bitmap = await createImageBitmap(canvas);
   const tmp = document.createElement("canvas");
@@ -165,7 +150,7 @@ function isNonBlank(img: ImageData): boolean {
 // ---------------------------------------------------------------------------
 // Case 1-4: mount one HDR pane, readback + interaction.
 // ---------------------------------------------------------------------------
-async function runSingleCase(forceWebGL2: boolean): Promise<boolean> {
+async function runSingleCase(): Promise<boolean> {
   let ok = true;
   const container = document.createElement("div");
   container.id = "harness-single";
@@ -202,7 +187,7 @@ async function runSingleCase(forceWebGL2: boolean): Promise<boolean> {
   root.render(h(Harness));
 
   const gpuCanvasFound = await waitFor(() => !!container.querySelector("canvas[data-gpu-image-canvas]"));
-  report(gpuCanvasFound, `[${forceWebGL2 ? "webgl2" : "default"}] GPU canvas mounts`);
+  report(gpuCanvasFound, "GPU canvas mounts");
   ok = ok && gpuCanvasFound;
   if (!gpuCanvasFound) {
     root.unmount();
@@ -214,51 +199,27 @@ async function runSingleCase(forceWebGL2: boolean): Promise<boolean> {
   const readyAttr = await waitFor(
     () => container.querySelector('[data-gpu-backend-ready="true"]') !== null,
   );
-  report(readyAttr, `[${forceWebGL2 ? "webgl2" : "default"}] pane's pool handle acquired (data-gpu-backend-ready)`);
+  report(readyAttr, "pane's pool handle acquired (data-gpu-backend-ready)");
   ok = ok && readyAttr;
 
   const overlayCanvases = container.querySelectorAll("canvas");
   const hasOverlayCanvas = overlayCanvases.length >= 2;
-  report(hasOverlayCanvas, `[${forceWebGL2 ? "webgl2" : "default"}] TEV overlay canvas present (found ${overlayCanvases.length} canvases, want >=2)`);
+  report(hasOverlayCanvas, `TEV overlay canvas present (found ${overlayCanvases.length} canvases, want >=2)`);
   ok = ok && hasOverlayCanvas;
 
-  // Wait for the GPU canvas to actually have non-blank content.
-  let img: ImageData | null = null;
-  const rendered = await waitFor(() => {
-    return true; // presence check happens via the async readback loop below
-  }, 100);
-  void rendered;
+  // Wait for the GPU canvas to actually have non-blank content. Checked
+  // structurally (not pixel-exact) — see this file's module doc note on why.
   const gotNonBlank = await (async () => {
     const deadline = Date.now() + 6000;
     while (Date.now() < deadline) {
-      img = await readbackCanvas(gpuCanvas);
+      const img = await readbackCanvas(gpuCanvas);
       if (isNonBlank(img)) return true;
       await sleep(50);
     }
     return false;
   })();
-  report(gotNonBlank, `[${forceWebGL2 ? "webgl2" : "default"}] GPU canvas has non-blank rendered content`);
+  report(gotNonBlank, "GPU canvas has non-blank rendered content");
   ok = ok && gotNonBlank;
-
-  if (gotNonBlank && img) {
-    if (forceWebGL2) {
-      // Pixel-exact parity check vs the CPU tonemap.ts reference.
-      const values = [0.0, 0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 0.05, 0.3, 0.6, 0.9, 1.2, 1.8, 2.5, 3.0];
-      let allOk = true;
-      for (let i = 0; i < values.length; i++) {
-        const expected = computeExpectedByte(values[i]!, exposureEV, operator);
-        const actual = (img as ImageData).data[i * 4]!;
-        const diff = Math.abs(actual - expected);
-        const pxOk = diff <= 2;
-        if (!pxOk) allOk = false;
-        report(pxOk, `[webgl2] pixel[${i}] expected=${expected} actual=${actual} (diff=${diff})`);
-      }
-      report(allOk, "[webgl2] all pixels within 2/255 of tonemap.ts reference");
-      ok = ok && allOk;
-    } else {
-      report(true, "[default] SKIPPED pixel-exact parity (canvas-compositing color mgmt may differ) — structural non-blank check above stands in");
-    }
-  }
 
   // --- Interaction: alt+wheel zooms, plain wheel does not ---
   const viewportEl = container.querySelector("[data-gpu-image-viewport]") as HTMLElement;
@@ -356,7 +317,7 @@ async function runPoolCapCase(): Promise<boolean> {
 // describes: more visible panes than `MAX_LIVE_SWAPCHAINS`, so the LRU parks
 // some of them even though nothing ever left the viewport.
 // ---------------------------------------------------------------------------
-async function runParkAwareRenderCase(forceWebGL2: boolean): Promise<boolean> {
+async function runParkAwareRenderCase(): Promise<boolean> {
   let ok = true;
   const N = MAX_LIVE_SWAPCHAINS + 4; // over-cap by 4 with everything visible
   const size = 56;
@@ -456,47 +417,13 @@ async function runParkAwareRenderCase(forceWebGL2: boolean): Promise<boolean> {
   report(restoredLive, `[park-aware] pane[${parkedIndex}] restored to LIVE after its re-render request`);
   ok = ok && restoredLive;
 
+  // Checked structurally (not pixel-exact) — see this file's module doc note
+  // on why (canvas-compositing color management can introduce small
+  // non-deterministic differences).
   const img = await readbackCanvas(targetCanvas);
-  if (forceWebGL2) {
-    let allOk = true;
-    for (let i = 0; i < hdrValues.length; i++) {
-      const expected = computeExpectedByte(hdrValues[i]!, newExposure, operator);
-      const actual = img.data[i * 4]!;
-      const diff = Math.abs(actual - expected);
-      const pxOk = diff <= 2;
-      if (!pxOk) allOk = false;
-      report(
-        pxOk,
-        `[park-aware][webgl2] pane[${parkedIndex}] pixel[${i}] expected(new exposure)=${expected} actual=${actual} (diff=${diff})`,
-      );
-    }
-    report(
-      allOk,
-      "[park-aware][webgl2] re-rendered parked pane matches tonemap.ts reference for the NEW exposure (not stale)",
-    );
-    ok = ok && allOk;
-
-    // Negative control: confirm this is NOT just showing the OLD exposure's
-    // frame (i.e. the assertion above is actually discriminating).
-    let matchesStaleOldFrame = true;
-    for (let i = 0; i < hdrValues.length; i++) {
-      const staleExpected = computeExpectedByte(hdrValues[i]!, initialExposure, operator);
-      const actual = img.data[i * 4]!;
-      if (Math.abs(actual - staleExpected) > 2) {
-        matchesStaleOldFrame = false;
-        break;
-      }
-    }
-    report(
-      !matchesStaleOldFrame,
-      `[park-aware][webgl2] re-rendered pane content differs from the STALE old-exposure frame (matchesStale=${matchesStaleOldFrame})`,
-    );
-    ok = ok && !matchesStaleOldFrame;
-  } else {
-    const nonBlank = isNonBlank(img);
-    report(nonBlank, "[park-aware][default] re-rendered parked pane has non-blank content");
-    ok = ok && nonBlank;
-  }
+  const nonBlank = isNonBlank(img);
+  report(nonBlank, `[park-aware] pane[${parkedIndex}] re-rendered parked pane has non-blank content`);
+  ok = ok && nonBlank;
 
   cleanup();
   return ok;
@@ -522,12 +449,9 @@ window.__gpuImagePaneMainDone = false;
 
 async function main(): Promise<void> {
   try {
-    const forceWebGL2 = new URLSearchParams(location.search).has("forceWebGL2");
-    report(true, `location.search = "${location.search}" -> forceWebGL2: ${forceWebGL2}`);
-
-    const singleOk = await runSingleCase(forceWebGL2);
+    const singleOk = await runSingleCase();
     const poolOk = await runPoolCapCase();
-    const parkAwareOk = await runParkAwareRenderCase(forceWebGL2);
+    const parkAwareOk = await runParkAwareRenderCase();
 
     const noConsoleErrors = consoleErrors.length === 0;
     report(noConsoleErrors, `no console.error calls during the run (got ${consoleErrors.length})`);

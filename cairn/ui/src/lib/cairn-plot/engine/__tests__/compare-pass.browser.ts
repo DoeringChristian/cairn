@@ -3,8 +3,8 @@
  * the WebGPU engine, Sub-project 1) — `engine/image-engine.ts`'s
  * `renderCompare()` / `computeMetrics()`.
  *
- * jsdom has no WebGL2/WebGPU, so — like every other `*.browser.ts` harness in
- * this directory — this is NOT a unit test, it's a browser page driven via
+ * jsdom has no WebGPU, so — like every other `*.browser.ts` harness in this
+ * directory — this is NOT a unit test, it's a browser page driven via
  * claude-in-chrome.
  *
  * ## Reference derivation — LEGACY semantics, NOT the shader
@@ -70,9 +70,8 @@
  *          --outfile=src/lib/cairn-plot/engine/__tests__/compare-pass.browser.bundle.js
  *   2. Serve over http (file:// blocks module scripts):
  *        cd cairn/ui/src/lib/cairn-plot/engine/__tests__ && python3 -m http.server 8938
- *   3. Open BOTH in Chrome and read the PASS/FAIL status:
+ *   3. Open in Chrome and read the PASS/FAIL status:
  *        http://localhost:8938/compare-pass.browser.html
- *        http://localhost:8938/compare-pass.browser.html?forceWebGL2
  *
  * The generated `.bundle.js` is NOT committed (gitignored).
  */
@@ -351,8 +350,8 @@ async function runMetricsCase(device: Device, label: string): Promise<boolean> {
 
 /**
  * Q18: zoomed-out (uv window outside [0,1]) -> fully transparent, for the
- * COMPARE pass too (`compare.wgsl.ts`/`compare.glsl.ts` share the same
- * `rawSrcUV` OOB check `image.wgsl.ts` uses — see `image-pass.browser.ts`'s
+ * COMPARE pass too (`compare.wgsl.ts` shares the same `rawSrcUV` OOB check
+ * `image.wgsl.ts` uses — see `image-pass.browser.ts`'s
  * `oob-transparent` case for the identical single-shader version). Same
  * 2-texel source / 4-wide target / `uv:{x:-1,w:2}` window as that case;
  * texels 0-1 land outside [0,1] (transparent), texels 2-3 land inside.
@@ -468,8 +467,6 @@ async function runAll(device: Device, label: string): Promise<boolean> {
 
 async function main(): Promise<void> {
   try {
-    const forceWebGL2 = new URLSearchParams(location.search).has("forceWebGL2");
-    report(true, `location.search = "${location.search}" -> forceWebGL2: ${forceWebGL2}`);
     const device = await getSharedDevice();
     const ok = await runAll(device, "shared");
     setOverallStatus(ok);

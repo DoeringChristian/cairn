@@ -31,11 +31,11 @@ declare global {
     /**
      * The engine-backed compare pane, injected at RUNTIME by the lazy
      * gpu-image addon (`plot-gpu-image-addon.tsx`) — NOT a static import, so
-     * `core` stays free of the WebGPU/WebGL2 engine (the bundle guard: core
+     * `core` stays free of the WebGPU engine (the bundle guard: core
      * carries no `engine/*`; it ships in the addon IIFE). `compositor.tsx` is
      * reachable from `core`, so this indirection is REQUIRED: a static
      * `import GpuComparePane` here would pull `renderCompare`/`computeMetrics`
-     * and both backend devices into `core.iife.js`.
+     * and the WebGPU device into `core.iife.js`.
      */
     __cairnPlotGpuComparePane?: (props: GpuComparePaneProps) => JSX.Element | null;
   }

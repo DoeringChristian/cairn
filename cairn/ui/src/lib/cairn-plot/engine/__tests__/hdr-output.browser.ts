@@ -9,8 +9,8 @@
  * code; screenshots clip HDR by construction, so that check is a manual
  * eyeball, not this harness's job).
  *
- * jsdom has no WebGL2/WebGPU, so — like every other `*.browser.ts` harness in
- * this directory — this is NOT a unit test, it's a browser page driven via
+ * jsdom has no WebGPU, so — like every other `*.browser.ts` harness in this
+ * directory — this is NOT a unit test, it's a browser page driven via
  * claude-in-chrome.
  *
  * ## Why this harness exists (beyond `image-pass.browser.ts`'s `hdrOut` case)
@@ -43,9 +43,6 @@
  *   3. Open in Chrome (claude-in-chrome) and read the PASS/FAIL lines from
  *      the DOM/console:
  *        http://localhost:8939/hdr-output.browser.html
- *      WebGPU only — `capabilities.hdr` is always `false` on WebGL2 (see
- *      `types.ts`'s `Capabilities` doc), so there is nothing HDR-specific to
- *      prove there; a `?forceWebGL2` load is not exercised by this harness.
  *
  * The generated `.bundle.js` is NOT committed (gitignored) — regenerate with
  * the command above whenever this harness or its imports change.
@@ -142,10 +139,9 @@ async function main(): Promise<void> {
     const device = await getSharedDevice();
     report(true, `getSharedDevice() resolved backend="${device.backend}", capabilities.hdr=${device.capabilities.hdr}`);
 
-    if (device.backend !== "webgpu" || !device.capabilities.hdr) {
-      // WebGL2 (or a WebGPU device without HDR support) has no extended-range
-      // target to prove anything with — see this file's module doc's RUNNING
-      // note. Report a clean SKIP rather than a false FAIL.
+    if (!device.capabilities.hdr) {
+      // A WebGPU device without HDR support has no extended-range target to
+      // prove anything with. Report a clean SKIP rather than a false FAIL.
       report(true, "[hdr] SKIPPED — backend has no HDR capability (capabilities.hdr=false); nothing to prove here");
       setOverallStatus(true);
       return;

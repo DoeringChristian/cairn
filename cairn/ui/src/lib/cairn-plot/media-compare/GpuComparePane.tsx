@@ -22,11 +22,9 @@
  * `engine/pool.ts` manages ONE source texture per pane; a compare pane needs
  * TWO plus a render target, so this component owns its device/surface/textures
  * directly (a compare view is singular/few, not gallery-scale, so it doesn't
- * need the pool's LRU park/restore). It resolves `getSharedDevice()` for the
- * backend, then — for WebGL2 (one-context-per-canvas, see
- * `engine/webgl2/device.ts`) — creates a dedicated `createWebGL2Device()`
- * bound to its own canvas; for WebGPU it uses the shared device directly (one
- * device backs many canvases). Everything is torn down on unmount.
+ * need the pool's LRU park/restore). It resolves `getSharedDevice()` (the one
+ * shared WebGPU device — it backs many canvases, so this pane uses it
+ * directly rather than creating its own). Everything is torn down on unmount.
  *
  * ## What it reproduces from the CPU compositor
  *   - split: a full-height, gapless divider (`splitPosition * 100%`) driving
@@ -43,7 +41,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Colormap, DiffMode, Interpolation } from "../types";
 import { getSharedDevice } from "../engine/device";
-import { createWebGL2Device } from "../engine/webgl2/device";
 import { forceEngineFailRequested } from "../engine/test-hooks";
 import {
   renderCompare,
@@ -118,7 +115,6 @@ function floatLutFor(colormap: Exclude<Colormap, "none">): Float32Array {
 
 interface GpuResources {
   device: Device;
-  ownsDevice: boolean; // WebGL2 dedicated device -> destroy on teardown
   surface: Surface | null;
   texA: Texture | null;
   texB: Texture | null;
@@ -145,9 +141,8 @@ export default function GpuComparePane({
   const resRef = useRef<GpuResources | null>(null);
 
   // C1 fix (whole-branch review): true once the engine has definitively
-  // failed to activate or render this compare pane (a non-context-lost hard
-  // failure, e.g. WebGL2 `getContext` returning `null` under live-context
-  // exhaustion). Once set, this component permanently renders the LEGACY
+  // failed to activate or render this compare pane (a hard GPU-init/render
+  // failure). Once set, this component permanently renders the LEGACY
   // compare pane (`MediaComparePane` for split/blend, `ImagePane` for diff)
   // instead of the GPU canvas — see the bailout branch near the bottom of
   // this component's render body. A pane never blanks.
@@ -159,7 +154,7 @@ export default function GpuComparePane({
   const [metrics, setMetrics] = useState<DiffMetrics | null>(null);
   const [notation, setNotation] = useState<PixelValueNotation>(pixelValueNotation);
   const [overlayActive, setOverlayActive] = useState(false);
-  // The DISPLAYED (pre-backend-flip) uv window, for `PixelValueOverlay`'s
+  // The DISPLAYED uv window, for `PixelValueOverlay`'s
   // `sourceWindow` — same reasoning as `GpuImagePane`'s `overlayWindow`.
   const [overlayWindow, setOverlayWindow] = useState({ x: 0, y: 0, w: 1, h: 1 });
 
@@ -176,23 +171,20 @@ export default function GpuComparePane({
     // C1 fix (whole-branch review): this file is self-contained (module doc:
     // "NOT the pool") — unlike `renderers/GpuImagePane.tsx`, there is no
     // `engine/pool.ts` to catch a hard GPU-init failure here.
-    // `device.createSurface()` can throw the SAME way `engine/pool.ts`'s
-    // `activateEntry` can (most realistically WebGL2's `getContext`
-    // returning `null` under live-context exhaustion), and this used to run
-    // with NO try/catch at all. `?forceEngineFail` (test-only, `./test-hooks`,
-    // matches the same hook `engine/pool.ts` reads) deterministically
-    // triggers this same failure path.
+    // `device.createSurface()` can throw under real GPU-context exhaustion or
+    // driver failure, and this used to run with NO try/catch at all.
+    // `?forceEngineFail` (test-only, `./test-hooks`, matches the same hook
+    // `engine/pool.ts` reads) deterministically triggers this same failure
+    // path.
     getSharedDevice()
-      .then((shared) => {
+      .then((device) => {
         if (cancelled) return;
         try {
           if (forceEngineFailRequested()) {
             throw new Error("cairn-plot engine: forced compare-pane activation failure (?forceEngineFail test hook)");
           }
-          const ownsDevice = shared.backend === "webgl2";
-          const device = ownsDevice ? createWebGL2Device() : shared;
           const surface = device.createSurface(canvas, { hdr: false });
-          resRef.current = { device, ownsDevice, surface, texA: null, texB: null };
+          resRef.current = { device, surface, texA: null, texB: null };
           setReady(true);
         } catch (err) {
           // eslint-disable-next-line no-console
@@ -212,7 +204,8 @@ export default function GpuComparePane({
       if (r) {
         r.texA?.destroy();
         r.texB?.destroy();
-        if (r.ownsDevice) r.device.destroy();
+        // `r.device` is the page-wide SHARED device (see module doc) — never
+        // destroy it here, just stop using it for this canvas.
         resRef.current = null;
       }
     };
@@ -314,11 +307,7 @@ export default function GpuComparePane({
     const canvasBox = canvasRef.current ? canvasRef.current.getBoundingClientRect() : box;
     const filter: "nearest" | "linear" =
       screenPxPerTexel(rawUv, canvasBox, dims.w, dims.h) >= PIXEL_VALUE_MIN_SCREEN_PX ? "nearest" : "linear";
-    let uv = rawUv;
-    // WebGL2 display Y-flip correction — identical to GpuImagePane's.
-    if (r.device.backend === "webgl2") {
-      uv = { x: uv.x, y: uv.y + uv.h, w: uv.w, h: -uv.h };
-    }
+    const uv = rawUv;
     const params: CompareParams = {
       exposureEV: 0,
       operator: "linear",

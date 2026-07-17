@@ -15,9 +15,12 @@
  * The decode is a single CPU pass recomputed whenever the data OR any of
  * `tonemap` / `exposure` / `gamma` changes (a `useEffect` on those deps). This
  * is the honest proof HDR is applied: changing exposure/operator changes the
- * actual canvas pixels, not a CSS filter. CPU decode is fine for v1 sizes; a
- * WebGL2 fragment-shader port (upload the float data as a texture, tone-map in
- * a shader) is the future perf upgrade for large images / live scrubbing.
+ * actual canvas pixels, not a CSS filter. CPU decode is fine for v1 sizes; the
+ * WebGPU engine (`engine/image-engine.ts`, `renderers/GpuImagePane.tsx`)
+ * ports this exact pipeline to a GPU fragment shader for large images / live
+ * scrubbing — this component remains the LEGACY CPU fallback the engine
+ * renders through when WebGPU is unavailable (see
+ * `docs/superpowers/specs/2026-07-16-webgpu-engine-design.md`).
  *
  * SHAPE: `[H,W]` grayscale, `[H,W,1]` gray, `[H,W,3]` rgb, `[H,W,4]` rgba.
  * NaN/Inf pixels are treated as 0. The pane fills its container (like

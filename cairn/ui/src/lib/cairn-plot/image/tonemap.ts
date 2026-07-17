@@ -30,8 +30,9 @@
  * other renderer/registry change is needed — `HdrImagePane` looks the operator
  * up by name at render time and falls back to `srgb` for an unknown key.
  *
- * PERF: these are plain scalar functions used in the CPU decode loop (v1). A
- * WebGL2 fragment-shader port is a future upgrade (see `HdrImagePane`).
+ * PERF: these are plain scalar functions used in the CPU decode loop (v1).
+ * The WebGPU engine (`engine/shaders/image.wgsl.ts`) ports the same operators
+ * to a GPU fragment shader (see `HdrImagePane`'s module doc).
  */
 
 export type RgbTriple = [number, number, number];

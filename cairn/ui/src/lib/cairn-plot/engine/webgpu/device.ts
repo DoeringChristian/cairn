@@ -1,18 +1,19 @@
 /// <reference types="@webgpu/types" />
 /**
- * WebGPU backend of the RHI (`engine/types.ts`) — the PRIMARY, full-featured
- * backend (HDR, compute, float16 all `true`; see `engine/webgl2/device.ts`
- * for the reduced/SDR fallback used when `navigator.gpu` is unavailable).
+ * WebGPU backend of the RHI (`engine/types.ts`) — the engine's ONLY backend
+ * (HDR, compute, float16 all `true`). A reduced/SDR WebGL2 backend used to
+ * exist as a fallback for when `navigator.gpu` is unavailable; it was
+ * removed in favor of a clean WebGPU-or-legacy-CPU-pane boundary — see
+ * `docs/superpowers/specs/2026-07-16-webgpu-engine-design.md`. When WebGPU is
+ * unavailable, `engine/device.ts`'s `getSharedDevice()` rejects and callers
+ * fall back to the legacy CPU/2D-canvas pane, not another GPU backend.
  *
- * ## Bind-group convention: native WebGPU bind groups, keyed like WebGL2
- * WebGL2 has no native bind groups, so `engine/webgl2/device.ts` maps a
- * `BindGroupEntry.binding = N` ("logical binding N") onto GLSL uniforms BY
- * NAME (`t_bindN` / `u_bindN`). WebGPU DOES have native bind groups/layouts,
- * so this backend uses REAL `GPUBindGroup`s — but to let the exact same
- * `BindGroupEntry[]` drive both backends (the whole point of the harness
- * that proves this), a logical binding N needs a deterministic mapping onto
- * a native `@group(0) @binding(M)` slot. WebGPU (unlike GLSL) requires every
- * resource KIND (texture / sampler / uniform buffer) to occupy its OWN
+ * ## Bind-group convention: native WebGPU bind groups
+ * WebGPU has native bind groups/layouts, so this backend uses REAL
+ * `GPUBindGroup`s — a logical binding N (`BindGroupEntry.binding`) needs a
+ * deterministic mapping onto a native `@group(0) @binding(M)` slot. WebGPU
+ * requires every resource KIND (texture / sampler / uniform buffer) to
+ * occupy its OWN
  * binding slot even when a `Texture` and a `Sampler` entry share the same
  * *logical* binding (e.g. `scalebias.wgsl.ts`'s `{binding:0, resource:
  * sampler}` + `{binding:0, resource: texture}, so this backend spreads each

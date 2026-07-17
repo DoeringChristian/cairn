@@ -30,9 +30,7 @@
  */
 import type { BindGroup, Device, RenderPipeline, Surface, Texture, TextureFormat } from "./types";
 import { imageWGSL } from "./shaders/image.wgsl";
-import { imageGLSL } from "./shaders/image.glsl";
 import { compareWGSL } from "./shaders/compare.wgsl";
-import { compareGLSL } from "./shaders/compare.glsl";
 
 export type ImageOperator = "linear" | "srgb" | "reinhard" | "aces" | "extended";
 
@@ -84,7 +82,7 @@ function getImagePipeline(device: Device, targetFormat: TextureFormat): RenderPi
   }
   let pipeline = byFormat.get(targetFormat);
   if (!pipeline) {
-    pipeline = device.createRenderPipeline({ shaderWGSL: imageWGSL, shaderGLSL: imageGLSL, targetFormat });
+    pipeline = device.createRenderPipeline({ shaderWGSL: imageWGSL, targetFormat });
     byFormat.set(targetFormat, pipeline);
   }
   return pipeline;
@@ -232,7 +230,7 @@ function getComparePipeline(device: Device, targetFormat: TextureFormat): Render
   }
   let pipeline = byFormat.get(targetFormat);
   if (!pipeline) {
-    pipeline = device.createRenderPipeline({ shaderWGSL: compareWGSL, shaderGLSL: compareGLSL, targetFormat });
+    pipeline = device.createRenderPipeline({ shaderWGSL: compareWGSL, targetFormat });
     byFormat.set(targetFormat, pipeline);
   }
   return pipeline;
@@ -315,7 +313,7 @@ export function renderCompare(
 
 // ===========================================================================
 // Diff metrics (Task 7): MSE / PSNR / MAE over the raw (un-tonemapped) source
-// pixels of texA vs texB — GPU reduction on WebGPU, readback + CPU on WebGL2.
+// pixels of texA vs texB — computed via a GPU reduction pass.
 // ===========================================================================
 
 export interface DiffMetrics {
@@ -340,15 +338,16 @@ function metricsFromSums(sumSq: number, sumAbs: number, channelCount: number): D
 
 /**
  * Computes `{mse, psnr, mae}` between `texA` and `texB` over their overlapping
- * `min(width) x min(height)` region (RGB channels; peak = 1.0). On WebGPU the
- * O(N) per-pixel diffing runs on the GPU (`Device.reduceDiffSumSquaredAbs` ->
- * `engine/shaders/reduce.wgsl.ts`); on WebGL2 (no compute) it reads both
- * textures back and reduces on the CPU — the SAME `metricsFromSums` formula
- * for both, so the two backends agree.
+ * `min(width) x min(height)` region (RGB channels; peak = 1.0). The O(N)
+ * per-pixel diffing runs on the GPU (`Device.reduceDiffSumSquaredAbs` ->
+ * `engine/shaders/reduce.wgsl.ts`); a `readback()` + CPU-loop path below is
+ * kept as a defensive fallback for a device that doesn't implement the GPU
+ * reduction (the engine's one backend, WebGPU, always does) — same
+ * `metricsFromSums` formula either way, so the two paths agree.
  *
  * Both textures must be readable float/byte textures the active backend's
- * `readback()` supports (the CPU path) — for the metrics use case they are
- * the exact source textures a pane already uploaded.
+ * `readback()` supports (the CPU fallback path) — for the metrics use case
+ * they are the exact source textures a pane already uploaded.
  */
 export async function computeMetrics(device: Device, texA: Texture, texB: Texture): Promise<DiffMetrics> {
   const width = Math.min(texA.width, texB.width);
@@ -361,7 +360,9 @@ export async function computeMetrics(device: Device, texA: Texture, texB: Textur
     return metricsFromSums(sumSq, sumAbs, channelCount);
   }
 
-  // WebGL2 fallback: readback both textures, reduce on the CPU.
+  // Defensive fallback (no known live caller — the engine's one backend,
+  // WebGPU, always implements reduceDiffSumSquaredAbs): readback both
+  // textures, reduce on the CPU.
   const a = await device.readback(texA);
   const b = await device.readback(texB);
   const normA = a instanceof Uint8Array;
