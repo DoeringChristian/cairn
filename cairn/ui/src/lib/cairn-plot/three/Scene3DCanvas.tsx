@@ -33,6 +33,16 @@ export function Scene3DCanvas({ handle, className }: Scene3DCanvasProps) {
           className="pointer-events-none absolute inset-0 block h-full w-full rounded object-fill"
         />
       )}
+      {/* Q10: very subtle 1px active-state border, shown only while this pane
+          is activated for wheel-zoom. An overlay ring (not a real border on
+          the container) so it never shifts layout; pointer-events:none so it
+          never intercepts orbit/zoom gestures. */}
+      {handle.active && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 rounded border border-accent/50"
+        />
+      )}
     </div>
   );
 }

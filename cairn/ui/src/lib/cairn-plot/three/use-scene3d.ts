@@ -86,8 +86,20 @@ export function usePairedSideBySideSync(sync: Scene3DSyncOptions | null): Scene3
 }
 
 export interface UseScene3DOptions {
-  /** WebGLRenderer clear color, as a THREE-style hex integer (e.g. `0x0d1117`). */
+  /** WebGLRenderer clear color, as a THREE-style hex integer (e.g. `0x0d1117`).
+   *  Only actually painted when `opaqueBackground` is true — the DEFAULT is a
+   *  TRANSPARENT clear (Q4), so 3D panes inherit whatever page/HTML background
+   *  sits behind their `<canvas>` rather than a fixed fill. */
   background: number;
+  /**
+   * Q4 — solid-background opt-in. `false`/absent (DEFAULT) → the renderer
+   * clears with alpha 0 (fully transparent), so the pane shows the page/HTML
+   * background through every empty region (verified light + dark). `true` →
+   * clear with `background` at full opacity, restoring the pre-Q4 solid fill
+   * for callers that explicitly want an opaque backdrop. The renderer is
+   * always created with `alpha: true` so this can toggle at runtime without
+   * recreating the WebGL context. */
+  opaqueBackground?: boolean;
   /** Camera vertical field of view, degrees. Default 50 (pointcloud viewer default). */
   fov?: number;
   /** Camera near plane. Default 0.01 (pointcloud viewer default); tightened by `fitToBounds`. */
@@ -184,6 +196,14 @@ export interface Scene3DHandle {
    * park→re-acquire transition.
    */
   cachedImageUrl: string | null;
+  /**
+   * Q10 — whether this viewport is currently ACTIVATED for wheel-zoom. Wheel
+   * over an inactive pane does NOTHING (the page scrolls normally); the user
+   * clicks the pane to activate it (then the wheel zooms via OrbitControls),
+   * and clicking OR scrolling anywhere outside it de-activates. `Scene3DCanvas`
+   * reads this to paint a very subtle 1px active-state border. Orbit/pan drag
+   * are unaffected by this flag — only `OrbitControls.enableZoom` is gated. */
+  active: boolean;
 }
 
 /**
@@ -216,6 +236,7 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
     showAxes = false,
     showPlanes = false,
     cameraMode = "orbital",
+    opaqueBackground = false,
     onFrame,
   } = options;
 
@@ -253,6 +274,9 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
   // instead of whatever stale defaults `new THREE.WebGLRenderer()` starts with.
   const sizeRef = useRef(size);
   const backgroundRef = useRef(background);
+  // Q4: mirrors `opaqueBackground` so the mount effect / clear-color effect can
+  // read the CURRENT value synchronously (default false → transparent clear).
+  const opaqueBackgroundRef = useRef(opaqueBackground);
   const [cachedImageUrl, setCachedImageUrl] = useState<string | null>(null);
   // Mirrors `cachedImageUrl` synchronously (state updates aren't visible
   // until next render, but `park()` needs to know RIGHT NOW whether a prior
@@ -278,9 +302,38 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
    *  than crashing). */
   const loseContextExtRef = useRef<{ loseContext: () => void; restoreContext: () => void } | null>(null);
 
+  // ── Q10: click-to-activate scroll-zoom ──────────────────────────────────
+  // `active` (state) drives the subtle 1px border in `Scene3DCanvas`;
+  // `activeRef` mirrors it synchronously for the DOM listeners below.
+  // OrbitControls' wheel-zoom (`enableZoom`) is gated on this: inactive → the
+  // wheel does nothing (OrbitControls returns before `preventDefault`, so the
+  // page scrolls normally); active → the wheel zooms. Orbit/pan drag are never
+  // gated.
+  const [active, setActive] = useState(false);
+  const activeRef = useRef(false);
+
+  // ── Q17: home camera pose ────────────────────────────────────────────────
+  // Captured once at mount (initial pose). A dblclick re-fits to the current
+  // bounds when known (the fit-to-content helper), else restores this pose.
+  const homePoseRef = useRef<{
+    position: [number, number, number];
+    target: [number, number, number];
+    zoom: number;
+  } | null>(null);
+
   useEffect(() => {
     onFrameRef.current = onFrame;
   }, [onFrame]);
+
+  /** Q10: flips the active state, keeping `activeRef` and
+   *  `OrbitControls.enableZoom` in lockstep. No-op when already in `next`. */
+  const setActiveState = useCallback((next: boolean) => {
+    if (activeRef.current === next) return;
+    activeRef.current = next;
+    setActive(next);
+    const controls = controlsRef.current;
+    if (controls) controls.enableZoom = next;
+  }, []);
 
   const clearIdleTimer = useCallback(() => {
     if (idleTimerRef.current != null) {
@@ -570,9 +623,13 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    // Q4: `alpha: true` so the clear can be transparent (the default). The
+    // context is created once for the renderer's whole lifetime, so alpha is
+    // always enabled and the transparent↔solid choice is made purely via the
+    // clear-color alpha below (0 = transparent default, 1 = opt-in solid).
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.setClearColor(backgroundRef.current, 1);
+    renderer.setClearColor(backgroundRef.current, opaqueBackgroundRef.current ? 1 : 0);
     const initialSize = sizeRef.current;
     if (initialSize.w > 0 && initialSize.h > 0) renderer.setSize(initialSize.w, initialSize.h, false);
     rendererRef.current = renderer;
@@ -594,11 +651,25 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
 
     const controls = new OrbitControls(camera, canvas);
     controls.enableDamping = false;
+    // Q10: wheel-zoom starts OFF — the pane is inactive until clicked. With
+    // `enableZoom` false, OrbitControls' wheel handler returns before
+    // `preventDefault`, so a wheel over the pane scrolls the page normally.
+    // Orbit (rotate) + pan stay enabled regardless of active state.
+    controls.enableZoom = activeRef.current;
     // #69 S1: apply the initial orientation mode (turntable clamps the polar
     // range; orbital leaves the full range). The dedicated effect below keeps
     // it in sync on later `cameraMode` changes.
     applyCameraMode(controls, cameraModeRef.current);
     controlsRef.current = controls;
+
+    // Q17: remember the initial camera pose so a dblclick can restore it even
+    // before any `fitToBounds` has run (once bounds are known, dblclick re-fits
+    // instead — see `onDblClick`).
+    homePoseRef.current = {
+      position: camera.position.toArray() as [number, number, number],
+      target: controls.target.toArray() as [number, number, number],
+      zoom: camera.zoom,
+    };
 
     const onChange = () => {
       requestRender();
@@ -633,10 +704,47 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
     controls.addEventListener("start", onStart);
     controls.addEventListener("end", onEnd);
 
+    // Q17: dblclick resets the camera. Prefer the fit-to-content helper
+    // (`fitToBounds`) when bounds are known; otherwise restore the initial
+    // home pose captured at mount.
     const onDblClick = () => {
-      if (boundsRef.current) fitToBounds(boundsRef.current);
+      if (boundsRef.current) {
+        fitToBounds(boundsRef.current);
+        return;
+      }
+      const home = homePoseRef.current;
+      const cam = cameraRef.current;
+      const ctl = controlsRef.current;
+      if (home && cam && ctl) {
+        cam.position.fromArray(home.position);
+        ctl.target.fromArray(home.target);
+        cam.zoom = home.zoom;
+        cam.updateProjectionMatrix();
+        ctl.update();
+        requestRender();
+      }
     };
     canvas.addEventListener("dblclick", onDblClick);
+
+    // ── Q10: click-to-activate / click-or-scroll-outside-to-deactivate ──────
+    // A pointerdown INSIDE this pane's container activates it (enabling
+    // wheel-zoom); a pointerdown anywhere OUTSIDE de-activates. A wheel event
+    // outside also de-activates (so scrolling away from the pane releases it).
+    // Both use capture so they see the event regardless of stopPropagation
+    // downstream; the wheel listener is passive (it never needs to
+    // preventDefault — OrbitControls owns that on the canvas itself).
+    const onDocPointerDown = (event: PointerEvent) => {
+      const c = containerRef.current;
+      if (!c) return;
+      setActiveState(c.contains(event.target as Node));
+    };
+    const onDocWheel = (event: WheelEvent) => {
+      const c = containerRef.current;
+      if (!c) return;
+      if (!c.contains(event.target as Node)) setActiveState(false);
+    };
+    document.addEventListener("pointerdown", onDocPointerDown, true);
+    document.addEventListener("wheel", onDocWheel, { capture: true, passive: true });
 
     // BUG FIX (odd/even-pane "stuck loading" regression): a page with
     // several 3D panes/cards open at once — especially compare modes
@@ -701,6 +809,8 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
 
     return () => {
       canvas.removeEventListener("dblclick", onDblClick);
+      document.removeEventListener("pointerdown", onDocPointerDown, true);
+      document.removeEventListener("wheel", onDocWheel, true);
       canvas.removeEventListener("webglcontextlost", onContextLost, false);
       canvas.removeEventListener("webglcontextrestored", onContextRestored, false);
       controls.removeEventListener("start", onStart);
@@ -791,15 +901,16 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cameraMode]);
 
-  // ── Background ─────────────────────────────────────────────────────────
+  // ── Background (Q4: alpha follows `opaqueBackground`) ────────────────────
   useEffect(() => {
     backgroundRef.current = background;
+    opaqueBackgroundRef.current = opaqueBackground;
     const renderer = rendererRef.current;
     if (!renderer) return;
-    renderer.setClearColor(background, 1);
+    renderer.setClearColor(background, opaqueBackground ? 1 : 0);
     requestRender();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [background]);
+  }, [background, opaqueBackground]);
 
   // ── Resize ─────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -823,6 +934,7 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
     fitToBounds,
     refs: { renderer: rendererRef, scene: sceneRef, camera: cameraRef, controls: controlsRef },
     cachedImageUrl,
+    active,
   };
 }
 
