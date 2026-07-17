@@ -8,6 +8,8 @@ import Tooltip from "../primitives/Tooltip";
 import { Axis, PlotFrame, type AxisTick } from "../primitives/Axis";
 import { anchorFromRect, type TooltipAnchor } from "../primitives/tooltip-position";
 import { useChartViewport, type PlotRect } from "../viewport/use-chart-viewport";
+import { useChartController } from "./use-chart-controller";
+import PlotToolbar from "../primitives/PlotToolbar";
 
 export interface HeatmapProps {
   /** `matrix[y][x]` cell values. Rows may be ragged only if all same length. */
@@ -137,7 +139,7 @@ export default function Heatmap({
   const plotRectRef = useRef<PlotRect | null>(null);
   plotRectRef.current = { x: PAD.left, y: PAD.top, width: plotW, height: plotH };
 
-  const { domain, containerProps, dragRect } = useChartViewport({
+  const viewport = useChartViewport({
     containerRef,
     plotRectRef,
     home,
@@ -148,6 +150,8 @@ export default function Heatmap({
     },
     lockAspect,
   });
+  const { domain, containerProps, dragRect } = viewport;
+  const controller = useChartController({ viewport, rootRef: containerRef });
 
   const [xLo, xHi] = domain.xDomain;
   const [yLo, yHi] = domain.yDomain;
@@ -216,11 +220,12 @@ export default function Heatmap({
   return (
     <div
       ref={containerRef}
-      className={`relative h-full w-full ${className ?? ""}`}
+      className={`group relative h-full w-full ${className ?? ""}`}
       onMouseMove={handleMove}
       onMouseLeave={() => setHover(null)}
       {...containerProps}
     >
+      <PlotToolbar controller={controller} />
       {plotW > 0 && plotH > 0 && rows > 0 && cols > 0 && (
         <>
           {/* Plot-rect wrapper clips the zoomed canvas to the frame. */}

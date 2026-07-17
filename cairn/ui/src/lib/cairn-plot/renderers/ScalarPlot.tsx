@@ -23,6 +23,7 @@ import { mergeToRows } from "../transforms/merge-rows";
 import { formatXTick } from "../format";
 import { AXIS, GRID, paddedDomain } from "../theme";
 import { useModifierKey } from "../hooks/use-modifier-key";
+import { useSeriesVisibility } from "../hooks/use-series-visibility";
 import { CustomLegend } from "./scalar/scalar-legend";
 import { CustomTooltip } from "./scalar/scalar-tooltip";
 import { usePlotGestures, type PlotOffset } from "./scalar/use-plot-gestures";
@@ -71,6 +72,11 @@ export default function ScalarPlot({
 }: ScalarPlotProps) {
   const data = useMemo(() => mergeToRows(series), [series]);
 
+  // S6 interactive legend: per-series show/hide. Hidden series are dropped from
+  // the render AND from y-autoscale so the axis reframes to what's visible.
+  const seriesKeys = useMemo(() => series.map((s) => s.key), [series]);
+  const visibility = useSeriesVisibility(seriesKeys);
+
   const xDomain = resolveAxisDomain(
     xRange[0], xRange[1], viewport.xMin, viewport.xMax, xScale,
   );
@@ -97,6 +103,7 @@ export default function ScalarPlot({
     let hi = -Infinity;
     for (const s of series) {
       if (promotedSeries[s.key]) continue;
+      if (visibility.isHidden(s.key)) continue;
       for (const p of s.points) {
         if (p.y < lo) lo = p.y;
         if (p.y > hi) hi = p.y;
@@ -105,7 +112,7 @@ export default function ScalarPlot({
     if (!Number.isFinite(lo) || !Number.isFinite(hi)) return [0, 1] as const;
     if (lo === hi) return [lo - 0.5, hi + 0.5] as const;
     return [lo, hi] as const;
-  }, [series, promotedSeries]);
+  }, [series, promotedSeries, visibility]);
 
   const effectiveX: [number, number] = [
     typeof xDomain[0] === "number" ? xDomain[0] : dataXs[0],
@@ -357,11 +364,14 @@ export default function ScalarPlot({
                   onToggle={togglePromote}
                   onSelect={(key) => onSeriesClick?.(key)}
                   selectedKeys={selectedSeriesKeys}
+                  visibility={visibility}
                 />
               }
             />
           )}
           {series.map((s) => {
+            // S6: a hidden series renders no lines at all (Plotly legend hide).
+            if (visibility.isHidden(s.key)) return null;
             const isHovered = hoveredSeries === s.key;
             const isSelected = selectedSeriesKeys?.has(s.key);
             const isDimmed =

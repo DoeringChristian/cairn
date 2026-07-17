@@ -10,6 +10,8 @@ import { Axis, PlotFrame, type AxisTick } from "../primitives/Axis";
 import Tooltip from "../primitives/Tooltip";
 import { pointerAnchor, type TooltipAnchor } from "../primitives/tooltip-position";
 import { useChartViewport, type PlotRect } from "../viewport/use-chart-viewport";
+import { useChartController } from "./use-chart-controller";
+import PlotToolbar from "../primitives/PlotToolbar";
 
 const DEFAULT_COLORS = SERIES_COLORS;
 
@@ -142,11 +144,13 @@ export default function ScatterPlot({
   const plotRectRef = useRef<PlotRect | null>(null);
   plotRectRef.current = { x: pad.left, y: pad.top, width: plotW, height: plotH };
 
-  const { domain, containerProps, dragRect, wasDragRef } = useChartViewport({
+  const viewport = useChartViewport({
     containerRef,
     plotRectRef,
     home,
   });
+  const { domain, containerProps, dragRect, wasDragRef } = viewport;
+  const controller = useChartController({ viewport, rootRef: containerRef });
 
   const [xMin, xMax] = domain.xDomain;
   const [yMin, yMax] = domain.yDomain;
@@ -212,10 +216,11 @@ export default function ScatterPlot({
   return (
     <div
       ref={containerRef}
-      className={`relative ${className ?? ""}`}
+      className={`group relative ${className ?? ""}`}
       onMouseLeave={handleLeave}
       {...containerProps}
     >
+      <PlotToolbar controller={controller} />
       {plotW > 0 && plotH > 0 && (
         <svg width={w} height={h} className="select-none">
           <defs>

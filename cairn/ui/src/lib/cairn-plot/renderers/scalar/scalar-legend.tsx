@@ -2,6 +2,7 @@
 // intentionally NOT re-exported from the public cairn-plot barrels.
 
 import type { PromotedSeriesConfig } from "../../types";
+import type { SeriesVisibility } from "../../hooks/use-series-visibility";
 
 export interface LegendSeries {
   key: string;
@@ -15,12 +16,21 @@ export function CustomLegend({
   onToggle,
   onSelect,
   selectedKeys,
+  visibility,
 }: {
   series: LegendSeries[];
   promoted: Record<string, PromotedSeriesConfig>;
   onToggle: (key: string) => void;
   onSelect?: (seriesKey: string) => void;
   selectedKeys?: Set<string>;
+  /**
+   * S6 interactive-legend state. When provided, a chip click TOGGLES that
+   * series' visibility and a double-click ISOLATES it (Plotly parity); hidden
+   * series render at ~0.35 opacity with a struck-through label. Run-selection
+   * (`onSelect`) then lives on the line itself, not the legend. When omitted,
+   * the legacy behavior (chip click = select run) is preserved.
+   */
+  visibility?: SeriesVisibility;
 }) {
   return (
     <ul className="flex flex-wrap justify-center gap-x-3 gap-y-1">
@@ -28,6 +38,14 @@ export function CustomLegend({
         const isPromoted = !!promoted[s.key];
         const isSelected = selectedKeys?.has(s.key) ?? false;
         const hasSel = selectedKeys != null && selectedKeys.size > 0;
+        const isHidden = visibility?.isHidden(s.key) ?? false;
+        // Opacity: hidden always wins (Plotly dim); otherwise fall back to the
+        // selection-dim behavior for the legacy select-on-click mode.
+        const opacity = isHidden
+          ? 0.35
+          : hasSel && !isSelected
+            ? 0.35
+            : 1;
         return (
           <li
             key={s.key}
@@ -36,9 +54,28 @@ export function CustomLegend({
             <button
               type="button"
               className="inline-flex items-center gap-1 hover:text-fg"
-              style={{ opacity: hasSel && !isSelected ? 0.35 : 1 }}
-              onClick={onSelect ? () => onSelect(s.key) : undefined}
-              title="Click to select this run"
+              style={{ opacity }}
+              onClick={
+                visibility
+                  ? () => visibility.toggle(s.key)
+                  : onSelect
+                    ? () => onSelect(s.key)
+                    : undefined
+              }
+              onDoubleClick={
+                visibility
+                  ? (e) => {
+                      e.preventDefault();
+                      visibility.isolate(s.key);
+                    }
+                  : undefined
+              }
+              aria-pressed={visibility ? !isHidden : isSelected}
+              title={
+                visibility
+                  ? "Click to hide/show. Double-click to isolate."
+                  : "Click to select this run"
+              }
             >
               <span
                 aria-hidden="true"
@@ -50,7 +87,13 @@ export function CustomLegend({
                   marginRight: 2,
                 }}
               />
-              <span>{s.label}</span>
+              <span
+                style={{
+                  textDecoration: isHidden ? "line-through" : undefined,
+                }}
+              >
+                {s.label}
+              </span>
             </button>
             <button
               type="button"

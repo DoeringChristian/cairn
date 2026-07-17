@@ -7,6 +7,9 @@ import { useContainerSize } from "../hooks/use-container-size";
 import Tooltip from "../primitives/Tooltip";
 import { pointerAnchor, type TooltipAnchor } from "../primitives/tooltip-position";
 import { useChartViewport, type PlotRect } from "../viewport/use-chart-viewport";
+import { useChartController } from "./use-chart-controller";
+import { useSeriesVisibility } from "../hooks/use-series-visibility";
+import PlotToolbar from "../primitives/PlotToolbar";
 
 const DEFAULT_COLORS = SERIES_COLORS;
 
@@ -202,17 +205,25 @@ export default function BarChart({
   const plotRectRef = useRef<PlotRect | null>(null);
   plotRectRef.current = { x: pad.left, y: pad.top, width: plotW, height: plotH };
 
-  const {
-    domain: viewport,
-    containerProps,
-    dragRect,
-    wasDragRef,
-  } = useChartViewport({
+  const chartVp = useChartViewport({
     containerRef,
     plotRectRef,
     home,
     constrainTo: "x",
   });
+  const {
+    domain: viewport,
+    containerProps,
+    dragRect,
+    wasDragRef,
+  } = chartVp;
+  const controller = useChartController({ viewport: chartVp, rootRef: containerRef });
+
+  // S6 interactive legend: click a chip to hide/show that run's bar,
+  // double-click to isolate it. A hidden bar is simply not drawn (its row slot
+  // stays in place so the layout doesn't jump).
+  const barIds = useMemo(() => bars.map((b) => b.id), [bars]);
+  const visibility = useSeriesVisibility(barIds);
 
   const [dMin, dMax] = viewport.xDomain;
   const range = dMax - dMin || 1;
@@ -277,10 +288,11 @@ export default function BarChart({
   return (
     <div
       ref={containerRef}
-      className={`relative ${className ?? ""}`}
+      className={`group relative ${className ?? ""}`}
       onMouseLeave={handleLeave}
       {...containerProps}
     >
+      <PlotToolbar controller={controller} />
       {plotW > 0 && plotH > 0 && (
         <svg width={w} height={h} className="select-none">
           <defs>
@@ -314,15 +326,19 @@ export default function BarChart({
             <g>
               {legendChips.map(({ bar, x, color }) => {
                 const isSelected = selectedIds?.has(bar.id);
+                const isHidden = visibility.isHidden(bar.id);
                 return (
                   <g
                     key={bar.id}
                     className="cursor-pointer"
-                    onClick={() => onClick?.(bar.id)}
+                    opacity={isHidden ? 0.35 : 1}
+                    onClick={() => visibility.toggle(bar.id)}
+                    onDoubleClick={() => visibility.isolate(bar.id)}
                     onMouseEnter={(e) => handleEnter(bar.id, e)}
                     onMouseMove={handleMove}
                     onMouseLeave={handleLeave}
                   >
+                    <title>Click to hide/show. Double-click to isolate.</title>
                     <rect
                       x={pad.left + x}
                       y={4}
@@ -336,7 +352,10 @@ export default function BarChart({
                       x={pad.left + x + 14}
                       y={13}
                       className={`mono text-[9px] ${isSelected ? "fill-accent" : "fill-fg-muted"}`}
-                      style={{ fontSize: 9 }}
+                      style={{
+                        fontSize: 9,
+                        textDecoration: isHidden ? "line-through" : undefined,
+                      }}
                     >
                       {bar.label.length > 24 ? bar.label.slice(0, 23) + "…" : bar.label}
                     </text>
@@ -360,6 +379,7 @@ export default function BarChart({
 
           {mode === "grouped" &&
             bars.map((b, i) => {
+              if (visibility.isHidden(b.id)) return null;
               const rowCy = pad.top + i * rowH + rowH / 2;
               const vx = toX(b.value);
               const x0 = Math.min(baseX, vx);
@@ -428,6 +448,7 @@ export default function BarChart({
                 {rowLabel}
               </text>
               {stackSegments.map((seg) => {
+                if (visibility.isHidden(seg.bar.id)) return null;
                 const x0 = toX(seg.start);
                 const x1 = toX(seg.end);
                 const isHovered = hoveredId === seg.bar.id;
@@ -491,6 +512,7 @@ export default function BarChart({
                 {rowLabel}
               </text>
               {bars.map((b, i) => {
+                if (visibility.isHidden(b.id)) return null;
                 const vx = toX(b.value);
                 const x0 = Math.min(baseX, vx);
                 const x1 = Math.max(baseX, vx);

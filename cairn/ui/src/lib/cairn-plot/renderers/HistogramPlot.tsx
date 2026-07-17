@@ -8,6 +8,8 @@ import Tooltip from "../primitives/Tooltip";
 import { Axis, PlotFrame, type AxisTick } from "../primitives/Axis";
 import { anchorFromRect, type TooltipAnchor } from "../primitives/tooltip-position";
 import { useChartViewport, type PlotRect } from "../viewport/use-chart-viewport";
+import { useChartController } from "./use-chart-controller";
+import PlotToolbar from "../primitives/PlotToolbar";
 import Heatmap from "./Heatmap";
 
 export type HistogramPlotProps = { className?: string } & (
@@ -87,12 +89,14 @@ function HistogramBars({
   const plotRectRef = useRef<PlotRect | null>(null);
   plotRectRef.current = { x: PAD.left, y: PAD.top, width: plotW, height: plotH };
 
-  const { domain, containerProps, dragRect } = useChartViewport({
+  const viewport = useChartViewport({
     containerRef,
     plotRectRef,
     home,
     minSpan: binWidth ? { x: binWidth } : undefined,
   });
+  const { domain, containerProps, dragRect } = viewport;
+  const controller = useChartController({ viewport, rootRef: containerRef });
 
   const [xMin, xMax] = domain.xDomain;
   const [yLo, yHi] = domain.yDomain;
@@ -149,11 +153,12 @@ function HistogramBars({
   return (
     <div
       ref={containerRef}
-      className={`relative h-full w-full ${className ?? ""}`}
+      className={`group relative h-full w-full ${className ?? ""}`}
       onMouseMove={handleMove}
       onMouseLeave={() => setHover(null)}
       {...containerProps}
     >
+      <PlotToolbar controller={controller} />
       {plotW > 0 && plotH > 0 && (
         <svg width={w} height={h} className="select-none">
           <defs>

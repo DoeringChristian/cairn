@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from "react";
+import { useId, useMemo, useState, type ReactNode } from "react";
 import type { ParallelColumn, ParallelRow } from "../types";
 import { normalizeValue } from "../transforms/normalize";
 import { viridis } from "../colormaps/viridis";
@@ -9,6 +9,8 @@ import Tooltip from "../primitives/Tooltip";
 import { TickText, AxisTitle } from "../primitives/Axis";
 import { pointerAnchor, type TooltipAnchor } from "../primitives/tooltip-position";
 import type { ChartCapabilities } from "../viewport/use-chart-viewport";
+import PlotToolbar from "../primitives/PlotToolbar";
+import type { PlotController } from "../controls/types";
 
 /**
  * Parallel-coordinates deliberately opts OUT of the shared chart-zoom (no
@@ -63,6 +65,46 @@ export default function ParallelCoords({
   const rawId = useId();
   const gradientId = `pc-cbar-${rawId.replace(/:/g, "")}`;
   const { ref: containerRef, size } = useContainerSize();
+
+  // ParallelCoords opts out of the shared 2D viewport (see the module comment),
+  // so it exposes a REDUCED controller: only the screenshot button is capable;
+  // every zoom/pan/reset flag is false, so the toolbar collapses to just the
+  // download-PNG placeholder (per-axis brushing arrives in a later slice).
+  const controller = useMemo<PlotController>(
+    () => ({
+      capabilities: {
+        zoom: false,
+        pan: false,
+        boxZoom: false,
+        select: false,
+        lasso: false,
+        autoscale: false,
+        reset: false,
+        screenshot: PARALLEL_COORDS_CAPABILITIES.screenshot,
+        hover: false,
+        spikelines: false,
+        hoverModes: false,
+        legend: false,
+        axisScaleToggle: false,
+        perAxisDrag: false,
+        brush: false,
+        reorder: false,
+      },
+      dragMode: "zoom",
+      hoverMode: "closest",
+      spikelines: false,
+      isModified: false,
+      setDragMode: () => {},
+      setHoverMode: () => {},
+      toggleSpikelines: () => {},
+      zoomIn: () => {},
+      zoomOut: () => {},
+      autoscale: () => {},
+      reset: () => {},
+      toPNG: () => Promise.reject(new Error("toPNG not implemented (S10)")),
+    }),
+    [],
+  );
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [tooltipPos, setTooltipPos] = useState<TooltipAnchor | null>(null);
 
@@ -108,9 +150,10 @@ export default function ParallelCoords({
   return (
     <div
       ref={containerRef}
-      className={`relative ${className ?? ""}`}
+      className={`group relative ${className ?? ""}`}
       onMouseLeave={handleLeave}
     >
+      <PlotToolbar controller={controller} />
       {plotW > 0 && plotH > 0 && (
         <svg width={w} height={h} className="select-none">
           {columns.map((col, ci) => {
