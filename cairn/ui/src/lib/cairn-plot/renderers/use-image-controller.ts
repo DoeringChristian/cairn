@@ -36,9 +36,10 @@ import type {
   PlotController,
   ToPNGOptions,
 } from "../controls/types";
-import type { ToolbarConfig } from "../controls/ToolbarConfig";
+import type { ToolbarConfig, ToolbarButtonSpec } from "../controls/ToolbarConfig";
 import { adaptiveMaxZoom, type Viewport } from "../hooks/use-image-viewport";
 import { canvasToPng, plotToPng, type PlotToPngOptions } from "../primitives/plot-to-png";
+import type { PixelValueNotation } from "../primitives/PixelValueOverlay";
 
 const HOME: Viewport = { zoom: 1, pan: { x: 0, y: 0 } };
 /** Per-button click factor for the toolbar's +/- zoom (coarser than the
@@ -59,6 +60,27 @@ const DEFAULT_MAX_ZOOM = 64;
  * (gated on `capabilities.pan`) so the toolbar still advertises drag-to-pan.
  */
 export const IMAGE_TOOLBAR_CONFIG: ToolbarConfig = { buttons: { zoom: false } };
+
+/**
+ * The pixel-value notation toggle ("0–255" ↔ "0–1") as a toolbar LEADING
+ * button, replacing the old free-floating `PixelNotationToggle` chip. A leading
+ * (leftmost) button so that when the pixel-value overlay appears/disappears —
+ * the only time this button shows — it never shifts the standard, corner-
+ * anchored zoom/pan/reset buttons. Panes spread this into their toolbar config's
+ * `leadingButtons` only while the overlay is active.
+ */
+export function notationToolbarButton(
+  notation: PixelValueNotation,
+  onChange: (n: PixelValueNotation) => void,
+): ToolbarButtonSpec {
+  return {
+    id: "notation",
+    label: notation === "int" ? "0–255" : "0–1",
+    title:
+      "Pixel-value notation: 0–255 integer (255 = white) vs 0–1 float (1.0 = white)",
+    onClick: () => onChange(notation === "int" ? "decimal" : "int"),
+  };
+}
 
 export interface UseImageControllerArgs {
   /** The pane's root element — the `plotToPng` fallback target and the box the

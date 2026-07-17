@@ -75,7 +75,7 @@
  * pan, an exposure/operator change, or the double-click reset on a
  * cap-parked-but-visible pane always paints a live, correct frame.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   Colormap,
   DiffMode,
@@ -92,7 +92,6 @@ import ImageOverlay from "./ImageOverlay";
 import PixelValueOverlay, {
   CHANNEL_COLORS,
   PIXEL_VALUE_MIN_SCREEN_PX,
-  PixelNotationToggle,
   formatChannelValue,
   type PixelSample,
   type PixelValueNotation,
@@ -111,7 +110,11 @@ import type { ImageOperator, ImageParams } from "../engine/image-engine";
 import ImagePane from "./ImagePane";
 import HdrImagePane from "./HdrImagePane";
 import PlotToolbar from "../primitives/PlotToolbar";
-import { useImageController, IMAGE_TOOLBAR_CONFIG } from "./use-image-controller";
+import {
+  useImageController,
+  IMAGE_TOOLBAR_CONFIG,
+  notationToolbarButton,
+} from "./use-image-controller";
 
 // ---------------------------------------------------------------------------
 // HDR data contract — mirrors `HdrImagePane.tsx`'s `HdrData` exactly (kept
@@ -694,6 +697,19 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
     requestRender: renderPass,
   });
 
+  // Toolbar config: while the pixel-value overlay is active, expose the
+  // notation toggle ("0–255"/"0–1") as a LEADING toolbar button (replacing the
+  // old free-floating chip). Leftmost so it never shifts the standard buttons.
+  const toolbarConfig = useMemo(
+    () => ({
+      ...IMAGE_TOOLBAR_CONFIG,
+      leadingButtons: overlayActive
+        ? [notationToolbarButton(notation, setNotation)]
+        : [],
+    }),
+    [overlayActive, notation],
+  );
+
   // -----------------------------------------------------------------------
   // TEV per-pixel value overlay sampler.
   // -----------------------------------------------------------------------
@@ -807,7 +823,7 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
 
   return (
     <div className="group relative flex flex-col h-full" data-gpu-image-pane data-gpu-backend-ready={paneReady}>
-      <PlotToolbar controller={controller} config={IMAGE_TOOLBAR_CONFIG} />
+      <PlotToolbar controller={controller} config={toolbarConfig} />
       <div
         ref={paneRef}
         className="relative flex-1 min-h-0 min-w-0 flex items-center justify-center overflow-hidden rounded"
@@ -885,7 +901,6 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
             onActiveChange={setOverlayActive}
           />
         )}
-        {overlayActive && <PixelNotationToggle notation={notation} onChange={setNotation} />}
       </div>
       {label ? <LabelChip label={label} isDraggable={isDraggable} onDragStart={onDragStart} /> : null}
     </div>

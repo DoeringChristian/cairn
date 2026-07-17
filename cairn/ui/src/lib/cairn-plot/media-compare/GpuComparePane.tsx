@@ -59,7 +59,6 @@ import { screenPxPerTexel, viewportToUvRect } from "../renderers/GpuImagePane";
 import PixelValueOverlay, {
   CHANNEL_COLORS,
   PIXEL_VALUE_MIN_SCREEN_PX,
-  PixelNotationToggle,
   formatChannelValue,
   type PixelSample,
   type PixelValueNotation,
@@ -77,7 +76,11 @@ import PixelValueOverlay, {
 import ImagePane from "../renderers/ImagePane";
 import { MediaComparePane } from "./compositor";
 import PlotToolbar from "../primitives/PlotToolbar";
-import { useImageController, IMAGE_TOOLBAR_CONFIG } from "../renderers/use-image-controller";
+import {
+  useImageController,
+  IMAGE_TOOLBAR_CONFIG,
+  notationToolbarButton,
+} from "../renderers/use-image-controller";
 
 export interface GpuComparePaneProps {
   imageUrl: string | null;
@@ -459,6 +462,19 @@ export default function GpuComparePane({
     requestRender: renderPass,
   });
 
+  // Toolbar config: top-right (default) with the pixel-value notation toggle as
+  // a LEADING button while the overlay is active (replaces the old floating
+  // chip). The diff metrics chip sits just BELOW this toolbar (see render).
+  const toolbarConfig = useMemo(
+    () => ({
+      ...IMAGE_TOOLBAR_CONFIG,
+      leadingButtons: overlayActive
+        ? [notationToolbarButton(notation, setNotation)]
+        : [],
+    }),
+    [overlayActive, notation],
+  );
+
   // C1 fix (whole-branch review) — engine bailout: on any activation/render
   // hard failure, self-heal to the LEGACY compare pane using the SAME props
   // this component already received — `mode:"diff"` mirrors
@@ -505,10 +521,10 @@ export default function GpuComparePane({
 
   return (
     <div className="group relative flex flex-col h-full" data-gpu-compare-pane data-gpu-compare-ready={ready}>
-      {/* Anchored bottom-left: the REF chip (top-left), metrics chip
-          (top-right) and label (bottom-right) already occupy the other three
-          corners of this composite. */}
-      <PlotToolbar controller={controller} config={{ ...IMAGE_TOOLBAR_CONFIG, position: "bottom-left" }} />
+      {/* Top-right toolbar (default). The diff metrics chip is anchored just
+          below it (see below); the REF chip stays top-left and the label
+          bottom-right. */}
+      <PlotToolbar controller={controller} config={toolbarConfig} />
       <div
         ref={paneRef}
         className="relative flex-1 min-h-0 min-w-0 flex items-center justify-center overflow-hidden rounded cairn-checkerboard"
@@ -633,7 +649,6 @@ export default function GpuComparePane({
             />
           )
         )}
-        {overlayActive && <PixelNotationToggle notation={notation} onChange={setNotation} />}
       </div>
 
       <span className="absolute top-1 left-1 z-10 rounded bg-accent/20 px-1 py-0.5 text-[10px] text-accent backdrop-blur-sm">
@@ -646,13 +661,11 @@ export default function GpuComparePane({
       ) : null}
       {metrics && (
         <span
-          // Task 8 fix: the TEV notation toggle (`PixelNotationToggle`, shared
-          // primitive) also anchors `top-1 right-1` — when BOTH are visible
-          // (zoomed in far enough for per-pixel numbers, AND a baseline is
-          // present) they overlapped. Drop the chip below the toggle's row
-          // whenever the overlay is active; both stay `top-1` otherwise so
-          // outside a zoomed state the chip keeps its usual corner spot.
-          className={`absolute right-1 z-10 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm font-mono ${overlayActive ? "top-8" : "top-1"}`}
+          // The diff metrics sit just BELOW the top-right toolbar (hover-
+          // revealed, ~28px tall anchored at top:6px), right-aligned to tuck
+          // under it. The notation toggle now lives INSIDE the toolbar (a
+          // leading button), so there's no longer a separate chip to dodge.
+          className="absolute right-1.5 top-9 z-10 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm font-mono"
           data-gpu-compare-metrics
         >
           MSE {metrics.mse.toExponential(2)} · PSNR {Number.isFinite(metrics.psnr) ? metrics.psnr.toFixed(1) : "∞"} dB · MAE{" "}

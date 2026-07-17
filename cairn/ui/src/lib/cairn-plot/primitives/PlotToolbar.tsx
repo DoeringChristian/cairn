@@ -93,12 +93,16 @@ function Icon({ name }: { name: string }) {
 
 function ToolbarButton({
   icon,
+  label,
   title,
   active,
   disabled,
   onClick,
 }: {
-  icon: string;
+  /** Inline-SVG icon name; used when `label` is absent. */
+  icon?: string;
+  /** Short text label (e.g. "0–255"); rendered instead of an icon. */
+  label?: string;
   title: string;
   active?: boolean;
   disabled?: boolean;
@@ -125,8 +129,10 @@ function ToolbarButton({
       title={title}
       className={[
         // Fixed box size so the toolbar width never changes and buttons don't
-        // shift under the cursor (a disabled button keeps its footprint).
-        "h-[22px] min-w-[22px] inline-flex items-center justify-center rounded text-xs",
+        // shift under the cursor (a disabled button keeps its footprint). A
+        // text-label button gets horizontal padding + a mono font instead.
+        "h-[22px] min-w-[22px] inline-flex items-center justify-center rounded",
+        label ? "px-1.5 text-[10px] font-mono" : "text-xs",
         disabled
           ? "opacity-40 cursor-default text-fg-muted"
           : active
@@ -134,7 +140,7 @@ function ToolbarButton({
             : "text-fg-muted hover:text-fg hover:bg-bg-hover",
       ].join(" ")}
     >
-      <Icon name={icon} />
+      {label ? <span aria-hidden="true">{label}</span> : <Icon name={icon ?? ""} />}
     </button>
   );
 }
@@ -168,8 +174,10 @@ export default function PlotToolbar({ controller, config }: PlotToolbarProps) {
   const viewGroup =
     shown("autoscale", caps.autoscale) || shown("reset", caps.reset);
   const exportGroup = shown("screenshot", caps.screenshot);
+  const leading = config?.leadingButtons ?? [];
 
-  if (!dragGroup && !zoomGroup && !viewGroup && !exportGroup) return null;
+  if (!leading.length && !dragGroup && !zoomGroup && !viewGroup && !exportGroup)
+    return null;
 
   const position = config?.position ?? "top-right";
   const alwaysOn = config?.visibility === "always";
@@ -184,13 +192,33 @@ export default function PlotToolbar({ controller, config }: PlotToolbarProps) {
         ...POSITION_STYLE[position],
       }}
       className={[
-        "z-10 flex items-center gap-0.5 rounded border border-border",
+        // z-20 keeps the toolbar ABOVE the image pane's pixel-value number
+        // overlay (which sits at z-10) so the modebar is never painted under
+        // the digits.
+        "z-20 flex items-center gap-0.5 rounded border border-border",
         "bg-bg-elevated/90 px-1 py-0.5 shadow-sm backdrop-blur-sm transition-opacity",
         alwaysOn ? "opacity-100" : "opacity-0 group-hover:opacity-100",
       ].join(" ")}
       role="toolbar"
       aria-label="Plot controls"
     >
+      {leading.length > 0 && (
+        <>
+          {leading.map((b) => (
+            <ToolbarButton
+              key={b.id}
+              icon={b.icon}
+              label={b.label}
+              title={b.title}
+              active={b.active}
+              disabled={b.disabled}
+              onClick={b.onClick}
+            />
+          ))}
+          {(dragGroup || zoomGroup || viewGroup || exportGroup) && <Divider />}
+        </>
+      )}
+
       {dragGroup && (
         <>
           {shown("zoom", caps.zoom) && (
