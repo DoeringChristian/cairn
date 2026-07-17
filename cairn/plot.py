@@ -80,6 +80,7 @@ from .sdk.plot_components import (
     Volume,
 )
 from .sdk.reader import ArtifactInfo, DataRef
+from .sdk.report import PlotReport as Report
 
 # The app's categorical series palette — mirrors `SERIES_COLORS` in
 # `cairn/ui/src/lib/cairn-plot/types.ts` so a Python-emitted scalar plot uses
@@ -1467,6 +1468,26 @@ def boxes_compare(a: Any, b: Any, *, mode: str = "side") -> Any:
 
 
 # ---------------------------------------------------------------------------
+# cp.Report — a composable, self-contained HTML report (Q21).
+# ---------------------------------------------------------------------------
+
+
+def report(title: str | None = None) -> Report:
+    """A composable, self-contained ``cairn-plot`` report — the lowercase
+    factory for :class:`~cairn.sdk.report.PlotReport` (exposed here as
+    ``cp.Report``). Chain ``.md(...)`` / ``.markdown(...)`` / ``.html(...)`` /
+    ``.add(component)`` / ``.grid(children, ...)``; emit via ``_repr_html_`` /
+    ``.show()`` / ``.save(path)`` to ONE offline HTML doc that inlines the
+    renderer bundle once and merges every component's baked blobs into one
+    content-addressed store.
+
+    Mirrors the ``cp.image``/``cp.scalar`` lowercase convention: ``cp.report()``
+    is sugar for ``cp.Report()``. DISTINCT from ``cairn.Report`` (the
+    notebook-inline, server-backed card container)."""
+    return Report(title=title)
+
+
+# ---------------------------------------------------------------------------
 # Public surface. The capitalized names are the G2 composable Plotly-shaped
 # leaves/containers (``cp.Line(...)`` etc.); the lowercase ``scalar/line/
 # image/figure/table`` return a ``PlotElement`` directly; ``bar``/``line_series``
@@ -1493,6 +1514,7 @@ __all__ = [
     "Grid",
     "Shared",
     "Component",
+    "Report",  # cp.Report — self-contained composable HTML report (== PlotReport)
     "Scalar",  # deprecated alias == Line
     # Lowercase builders (return a PlotElement).
     "scalar",
@@ -1510,6 +1532,7 @@ __all__ = [
     "pointcloud_compare",
     "volume_compare",
     "boxes_compare",
+    "report",  # lowercase cp.report() factory for cp.Report
     # Pure-numpy plotly-recipe helpers (return a go.Figure).
     "confusion_matrix",
     "roc_curve",
