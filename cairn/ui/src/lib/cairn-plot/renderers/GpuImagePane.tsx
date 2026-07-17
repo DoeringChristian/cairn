@@ -110,6 +110,8 @@ import type { ImageOperator, ImageParams } from "../engine/image-engine";
 // addon avoiding a duplicate copy of these already-tiny CPU renderers.
 import ImagePane from "./ImagePane";
 import HdrImagePane from "./HdrImagePane";
+import PlotToolbar from "../primitives/PlotToolbar";
+import { useImageController, IMAGE_TOOLBAR_CONFIG } from "./use-image-controller";
 
 // ---------------------------------------------------------------------------
 // HDR data contract — mirrors `HdrImagePane.tsx`'s `HdrData` exactly (kept
@@ -579,7 +581,11 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
   const tonemapName = hdrMode ? (props as HdrGpuImagePaneProps).tonemap : undefined;
   const gamma = hdrMode ? (props as HdrGpuImagePaneProps).gamma : undefined;
 
-  useEffect(() => {
+  // The render pass, extracted into a stable callback so the screenshot path
+  // (`useImageController`'s `toPNG`) can force a fresh, SYNCHRONOUS repaint
+  // before reading the WebGPU canvas back (see that hook's module doc). The
+  // effect below simply invokes it on the same dep set as before.
+  const renderPass = useCallback(() => {
     const handle = paneHandleRef.current;
     if (!handle || !paneReady || !naturalDims) return;
     const paneEl = paneRef.current;
@@ -665,7 +671,28 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
       setEngineFailed(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paneReady, naturalDims, uploadVersion, zoom, pan.x, pan.y, exposure, tonemapName, gamma, containerTick, hdrMode, dpr]);
+  }, [paneReady, naturalDims, zoom, pan.x, pan.y, exposure, tonemapName, gamma, hdrMode, dpr]);
+
+  useEffect(() => {
+    renderPass();
+  }, [renderPass, uploadVersion, containerTick]);
+
+  // -----------------------------------------------------------------------
+  // PlotToolbar controller (zoom/pan/reset/screenshot) — the image pane's
+  // adapter onto the renderer-agnostic PlotController facade the modebar
+  // drives. `requestRender` is `renderPass` so the screenshot forces a fresh
+  // WebGPU frame before reading the canvas back (see the hook's module doc).
+  // -----------------------------------------------------------------------
+  const controller = useImageController({
+    rootRef: paneRef,
+    canvasRef,
+    zoom,
+    pan,
+    onViewportChange,
+    naturalWidth: naturalDims?.w,
+    naturalHeight: naturalDims?.h,
+    requestRender: renderPass,
+  });
 
   // -----------------------------------------------------------------------
   // TEV per-pixel value overlay sampler.
@@ -779,7 +806,8 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
   }
 
   return (
-    <div className="relative flex flex-col h-full" data-gpu-image-pane data-gpu-backend-ready={paneReady}>
+    <div className="group relative flex flex-col h-full" data-gpu-image-pane data-gpu-backend-ready={paneReady}>
+      <PlotToolbar controller={controller} config={IMAGE_TOOLBAR_CONFIG} />
       <div
         ref={paneRef}
         className="relative flex-1 min-h-0 min-w-0 flex items-center justify-center overflow-hidden rounded"

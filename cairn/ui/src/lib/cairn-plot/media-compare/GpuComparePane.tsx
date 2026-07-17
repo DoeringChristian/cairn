@@ -76,6 +76,8 @@ import PixelValueOverlay, {
 // import cycle.
 import ImagePane from "../renderers/ImagePane";
 import { MediaComparePane } from "./compositor";
+import PlotToolbar from "../primitives/PlotToolbar";
+import { useImageController, IMAGE_TOOLBAR_CONFIG } from "../renderers/use-image-controller";
 
 export interface GpuComparePaneProps {
   imageUrl: string | null;
@@ -298,7 +300,11 @@ export default function GpuComparePane({
   );
 
   // ---- render pass -------------------------------------------------------
-  useEffect(() => {
+  // Extracted into a stable callback so the screenshot path
+  // (`useImageController`'s `toPNG`) can force a fresh, SYNCHRONOUS repaint
+  // before reading the WebGPU canvas back (see that hook's module doc). The
+  // effect below invokes it on the same dep set as before.
+  const renderPass = useCallback(() => {
     const r = resRef.current;
     if (!ready || !r || !r.surface || !r.texA || !r.texB || !dims) return;
     const paneEl = paneRef.current;
@@ -368,7 +374,6 @@ export default function GpuComparePane({
   }, [
     ready,
     dims,
-    uploadVersion,
     zoom,
     pan.x,
     pan.y,
@@ -378,9 +383,12 @@ export default function GpuComparePane({
     diffSubmode,
     diffCmapMode,
     diffColormap,
-    containerTick,
     dpr,
   ]);
+
+  useEffect(() => {
+    renderPass();
+  }, [renderPass, uploadVersion, containerTick]);
 
   // ---- metrics (recomputed on source change) ----------------------------
   useEffect(() => {
@@ -436,6 +444,21 @@ export default function GpuComparePane({
   const resetViewport = useCallback(() => onViewportChange?.(HOME_VIEWPORT), [onViewportChange]);
   const imgRendering = interpolation === "auto" ? undefined : interpolation;
 
+  // PlotToolbar controller (zoom/pan/reset/screenshot) for the composite
+  // compare view — one modebar zoom/pan/reset/screenshots the whole split/
+  // blend/diff composite. `requestRender` is `renderPass` so the screenshot
+  // forces a fresh WebGPU frame before reading the canvas back.
+  const controller = useImageController({
+    rootRef: paneRef,
+    canvasRef,
+    zoom,
+    pan,
+    onViewportChange,
+    naturalWidth: dims?.w,
+    naturalHeight: dims?.h,
+    requestRender: renderPass,
+  });
+
   // C1 fix (whole-branch review) — engine bailout: on any activation/render
   // hard failure, self-heal to the LEGACY compare pane using the SAME props
   // this component already received — `mode:"diff"` mirrors
@@ -481,7 +504,11 @@ export default function GpuComparePane({
   }
 
   return (
-    <div className="relative flex flex-col h-full" data-gpu-compare-pane data-gpu-compare-ready={ready}>
+    <div className="group relative flex flex-col h-full" data-gpu-compare-pane data-gpu-compare-ready={ready}>
+      {/* Anchored bottom-left: the REF chip (top-left), metrics chip
+          (top-right) and label (bottom-right) already occupy the other three
+          corners of this composite. */}
+      <PlotToolbar controller={controller} config={{ ...IMAGE_TOOLBAR_CONFIG, position: "bottom-left" }} />
       <div
         ref={paneRef}
         className="relative flex-1 min-h-0 min-w-0 flex items-center justify-center overflow-hidden rounded cairn-checkerboard"
