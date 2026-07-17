@@ -334,6 +334,26 @@ def build_gallery() -> list[tuple[str, object]]:
         ),
     ))
 
+    # ── Synced image controls — zoom/pan linked ────────────────────────────
+    # `Grid(shared={"sync": {"viewport": True}})` (`cp.Shared(sync=...)` here)
+    # links every IMAGE leaf in the grid into one live zoom/pan group — the
+    # image mirror of the existing 3D camera-sync mechanism ("Sync 3D views"
+    # on PointCloud/Mesh/Volume/Boxes cards). Hold Alt/Ctrl and wheel-zoom or
+    # drag-pan EITHER pane below; the other mirrors it in lock-step (same
+    # zoom + pan) because both leaves resolve the SAME viewport-sync group id
+    # from this one grid. Two related (same-size, offset-gradient) images
+    # make the linkage visually obvious.
+    sync_a = _gradient_image(160, 120)
+    sync_b = _gradient_image(160, 120, shift=0.3)
+    items.append((
+        "Synced image controls — zoom/pan linked "
+        "(Alt/Ctrl + wheel/drag on either pane moves both together)",
+        cp.Grid(
+            [[cp.Image(sync_a), cp.Image(sync_b)]],
+            shared=cp.Shared(sync={"viewport": True}),
+        ),
+    ))
+
     return items
 
 
