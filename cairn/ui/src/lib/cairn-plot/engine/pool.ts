@@ -57,6 +57,7 @@ import { getSharedDevice } from "./device";
 import { createWebGL2Device } from "./webgl2/device";
 import { renderImage, type ImageParams } from "./image-engine";
 import type { Backend, Device, Surface, Texture, TextureFormat } from "./types";
+import { forceEngineFailRequested } from "./test-hooks";
 
 /**
  * Cap on simultaneously-LIVE GPU swapchains (configured `Surface` + source
@@ -102,8 +103,20 @@ export interface PaneHandle {
    * evicts the LRU live pane if that pushes the pool over
    * `MAX_LIVE_SWAPCHAINS`. No-op (does not throw) if no source has been set
    * yet or the handle was disposed.
+   *
+   * NEVER THROWS (C1 fix — whole-branch review): a non-context-lost GPU
+   * failure while (re)activating this pane's resources (e.g. WebGL2
+   * `getContext` returning `null` under live-context exhaustion — see
+   * `activateEntry`'s doc) or while running the render pass itself is caught
+   * here, the entry is parked, and `false` is returned instead of letting the
+   * exception propagate into the caller's `useEffect` (which would otherwise
+   * unmount the caller's whole subtree — React 18 unmounts to the nearest
+   * root on an uncaught effect throw). Returns `true` on success OR on the
+   * transparently-retried context-LOST path (`webgl2` `isContextLost()` —
+   * recoverable, not a hard failure). Callers (`renderers/GpuImagePane.tsx`)
+   * treat a `false` return as "fall back to the legacy CPU pane".
    */
-  render(params: ImageParams): void;
+  render(params: ImageParams): boolean;
   /** Free this pane's live GPU resources (source texture; WebGL2: the whole
    *  per-pane Device/context), keeping the retained CPU source buffer. Safe
    *  to call on an already-parked or disposed handle (no-op). */
@@ -200,10 +213,26 @@ function evictOverCap(except: PaneEntry): void {
   }
 }
 
-/** (Re-)acquire GPU resources for `entry` and upload its retained source (if
- *  any); marks it most-recently-used and enforces the live cap. */
+/**
+ * (Re-)acquire GPU resources for `entry` and upload its retained source (if
+ * any); marks it most-recently-used and enforces the live cap.
+ *
+ * THROWS on a hard GPU-init failure — most realistically WebGL2's
+ * `createWebGL2Device()`/`Device.createSurface()` (`webgl2/device.ts:157-158,
+ * 417, 483`) when `canvas.getContext("webgl2")` returns `null` under live
+ * -context exhaustion (the browser's ~16-context-per-page cap; see this
+ * module's doc comment). Callers (`attemptRender`, below) MUST catch this —
+ * it is a genuine "this pane can never activate right now" condition, not a
+ * recoverable context-LOST case (that's `Device.isContextLost()`, checked
+ * separately after a SUCCESSFUL activation). `?forceEngineFail` (test-only,
+ * `./test-hooks`) deterministically triggers this same throw path without
+ * needing to actually exhaust the browser's context cap.
+ */
 function activateEntry(entry: PaneEntry): void {
   if (entry.disposed) return;
+  if (forceEngineFailRequested()) {
+    throw new Error("cairn-plot engine: forced pane activation failure (?forceEngineFail test hook)");
+  }
   if (!entry.parked && entry.surface) {
     touchMostRecentlyUsed(entry);
     evictOverCap(entry);
@@ -246,27 +275,44 @@ const MAX_CONTEXT_RESTORE_RETRIES = 30;
  * retrying the SAME `renderImage()` call is not enough. WebGPU's
  * `isContextLost()` always returns `false` (see `types.ts`'s doc), so this
  * is a no-op there — `renderImage()` runs immediately, same as before.
+ *
+ * C1 fix (whole-branch review): `activateEntry()` — and thus the WebGL2
+ * `getContext`-returns-`null` hard-failure vector — used to run OUTSIDE this
+ * function's try/catch (only `renderImage()` was guarded). Both are now
+ * inside ONE try/catch; a non-context-lost failure from EITHER parks the
+ * entry and returns `false` instead of throwing into the caller
+ * (`PaneHandle.render()` → `renderers/GpuImagePane.tsx`'s render effect),
+ * which would otherwise unmount the caller's whole subtree.
  */
-function attemptRender(entry: PaneEntry, params: ImageParams): void {
-  if (entry.disposed || !entry.source) return;
-  activateEntry(entry);
-  if (!entry.device || !entry.surface || !entry.srcTexture) return;
-  if (entry.device.isContextLost()) {
-    retryAfterContextRestore(entry, params);
-    return;
-  }
+function attemptRender(entry: PaneEntry, params: ImageParams): boolean {
+  if (entry.disposed || !entry.source) return true;
   try {
-    renderImage(entry.device, entry.surface, entry.srcTexture, params);
-    entry.restoreRetries = 0;
-  } catch (err) {
-    // Belt-and-suspenders: the pre-check above should already have caught
-    // a still-lost context, but treat a render-time throw on a (now/still)
-    // lost context the same way rather than crashing the caller.
+    activateEntry(entry);
+    if (!entry.device || !entry.surface || !entry.srcTexture) return false;
     if (entry.device.isContextLost()) {
       retryAfterContextRestore(entry, params);
-      return;
+      return true;
     }
-    throw err;
+    renderImage(entry.device, entry.surface, entry.srcTexture, params);
+    entry.restoreRetries = 0;
+    return true;
+  } catch (err) {
+    // Belt-and-suspenders: a still-lost context at render time (missed by
+    // the pre-check above, e.g. lost mid-call) retries the same recoverable
+    // path; anything else is a genuine hard failure — park and report it
+    // instead of rethrowing.
+    if (entry.device?.isContextLost()) {
+      retryAfterContextRestore(entry, params);
+      return true;
+    }
+    // eslint-disable-next-line no-console
+    console.warn("cairn-plot engine: pane activation/render failed, falling back to legacy pane", err);
+    // Force a full teardown regardless of `parkEntry`'s early-return guard
+    // (`entry.parked` may still read `true` if the throw happened mid
+    // `activateEntry()`, before it flips to `false` — see that function).
+    entry.parked = false;
+    parkEntry(entry);
+    return false;
   }
 }
 
@@ -302,8 +348,8 @@ function makeHandle(entry: PaneEntry): PaneHandle {
       }
       // Parked: the new source is picked up by the next activateEntry().
     },
-    render(params: ImageParams): void {
-      attemptRender(entry, params);
+    render(params: ImageParams): boolean {
+      return attemptRender(entry, params);
     },
     park(): void {
       if (entry.disposed) return;

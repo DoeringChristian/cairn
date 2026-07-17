@@ -100,6 +100,14 @@ import { useImageViewport, type Viewport as ImageViewport } from "../hooks/use-i
 import { acquirePane, releasePane, type PaneHandle, type SourceUpload } from "../engine/pool";
 import { getSharedDevice } from "../engine/device";
 import type { ImageOperator, ImageParams } from "../engine/image-engine";
+// C1 fix (whole-branch review) — the LEGACY CPU panes, used as the fallback
+// when the engine fails to activate/render (see `engineFailed` state below).
+// Safe to import here: this file only ever ships inside the gpu-image ADDON
+// bundle (`vite.plot-gpu-image.config.ts`), never `core.iife.js` — the
+// core-bundle guard is about core staying free of the ENGINE, not about the
+// addon avoiding a duplicate copy of these already-tiny CPU renderers.
+import ImagePane from "./ImagePane";
+import HdrImagePane from "./HdrImagePane";
 
 // ---------------------------------------------------------------------------
 // HDR data contract — mirrors `HdrImagePane.tsx`'s `HdrData` exactly (kept
@@ -250,6 +258,15 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
   // a re-render (paneReady already does that once acquisition resolves).
   const useHdrRef = useRef(false);
 
+  // C1 fix (whole-branch review): true once the engine has definitively
+  // failed to activate or render this pane (a non-context-lost hard failure
+  // — `engine/pool.ts`'s `handle.render()` returned `false`, or an
+  // unexpected throw was caught below). Once set, this component permanently
+  // renders the LEGACY CPU pane (`ImagePane`/`HdrImagePane`) instead of the
+  // GPU canvas — see the bailout branch near the bottom of this component's
+  // render body. A pane never blanks: either the GPU canvas paints, or the
+  // legacy pane does.
+  const [engineFailed, setEngineFailed] = useState(false);
   const [paneReady, setPaneReady] = useState(false);
   const [naturalDims, setNaturalDims] = useState<{ w: number; h: number } | null>(null);
   const [uploadVersion, setUploadVersion] = useState(0);
@@ -291,21 +308,41 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
     // given pane instance — the two prop shapes never swap mid-life, per
     // this file's module doc) rather than a dep, matching this effect's
     // existing run-once-on-mount contract.
-    getSharedDevice().then((device) => {
-      if (cancelled) return;
-      const hasHighDynamicRangeDisplay =
-        typeof matchMedia !== "undefined" && matchMedia("(dynamic-range: high)").matches;
-      const useHdr = device.backend === "webgpu" && device.capabilities.hdr && hasHighDynamicRangeDisplay && hdrMode;
-      useHdrRef.current = useHdr;
-      acquirePane(canvas, { hdr: useHdr }).then((handle) => {
-        if (cancelled) {
-          releasePane(handle);
-          return;
-        }
-        paneHandleRef.current = handle;
-        setPaneReady(true);
+    getSharedDevice()
+      .then((device) => {
+        if (cancelled) return;
+        const hasHighDynamicRangeDisplay =
+          typeof matchMedia !== "undefined" && matchMedia("(dynamic-range: high)").matches;
+        const useHdr = device.backend === "webgpu" && device.capabilities.hdr && hasHighDynamicRangeDisplay && hdrMode;
+        useHdrRef.current = useHdr;
+        acquirePane(canvas, { hdr: useHdr })
+          .then((handle) => {
+            if (cancelled) {
+              releasePane(handle);
+              return;
+            }
+            paneHandleRef.current = handle;
+            setPaneReady(true);
+          })
+          .catch((err) => {
+            // C1 fix (whole-branch review): defense-in-depth — `acquirePane`
+            // is not expected to reject in practice (the WebGL2/WebGPU hard
+            // failures this fix targets surface later, from `handle.render()`
+            // — see the render effect below), but a promise rejection here
+            // would otherwise be an unhandled rejection that leaves the pane
+            // permanently blank. Fall back to the legacy pane instead.
+            if (cancelled) return;
+            // eslint-disable-next-line no-console
+            console.warn("cairn-plot: GpuImagePane failed to acquire a pool handle, falling back to legacy pane", err);
+            setEngineFailed(true);
+          });
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        // eslint-disable-next-line no-console
+        console.warn("cairn-plot: GpuImagePane could not resolve a GPU device, falling back to legacy pane", err);
+        setEngineFailed(true);
       });
-    });
     return () => {
       cancelled = true;
       if (paneHandleRef.current) {
@@ -494,7 +531,23 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
           uv,
         }
       : { exposureEV: 0, operator: "linear", gamma: 1, isScalar: false, hdrOut: false, uv };
-    handle.render(params);
+    // C1 fix (whole-branch review): `handle.render()` is called SYNCHRONOUSLY
+    // in this effect, so an uncaught throw here would unmount this pane's
+    // whole subtree in React 18. `engine/pool.ts`'s `attemptRender` already
+    // converts its own non-context-lost hard failures into a `false` return
+    // rather than throwing (see that function's doc) — the try/catch below
+    // is belt-and-suspenders for anything unforeseen that still throws.
+    // Either path sets `engineFailed`, which makes this component render the
+    // LEGACY CPU pane instead (see the bailout branch below) — a pane never
+    // blanks.
+    try {
+      const ok = handle.render(params);
+      if (!ok) setEngineFailed(true);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn("cairn-plot: GpuImagePane render failed, falling back to legacy pane", err);
+      setEngineFailed(true);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paneReady, naturalDims, uploadVersion, zoom, pan.x, pan.y, exposure, tonemapName, gamma, containerTick, hdrMode]);
 
@@ -561,6 +614,53 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
   const overlaySettings = hdrMode ? undefined : (props as SdrGpuImagePaneProps).overlaySettings;
   const isDraggable = hdrMode ? false : ((props as SdrGpuImagePaneProps).isDraggable ?? false);
   const onDragStart = hdrMode ? undefined : (props as SdrGpuImagePaneProps).onDragStart;
+
+  // C1 fix (whole-branch review) — engine bailout: the GPU pane self-heals to
+  // the LEGACY CPU pane on any activation/render hard failure, using the
+  // SAME props (`HdrGpuImagePaneProps`/`SdrGpuImagePaneProps` mirror
+  // `HdrImagePaneProps`/`ImagePaneProps` exactly — see this file's module
+  // doc), so the image still renders — never a blank card. Placed after
+  // every hook above runs unconditionally (rules-of-hooks) but before this
+  // component paints its own GPU canvas.
+  if (engineFailed) {
+    return hdrMode ? (
+      <HdrImagePane
+        hdr={(props as HdrGpuImagePaneProps).hdr}
+        tonemap={(props as HdrGpuImagePaneProps).tonemap}
+        exposure={(props as HdrGpuImagePaneProps).exposure}
+        gamma={(props as HdrGpuImagePaneProps).gamma}
+        showAxes={showAxes}
+        label={label}
+        interpolation={interpolation}
+        zoom={props.zoom}
+        pan={props.pan}
+        onViewportChange={onViewportChange}
+        pixelValueNotation={props.pixelValueNotation}
+      />
+    ) : (
+      <ImagePane
+        imageUrl={(props as SdrGpuImagePaneProps).imageUrl}
+        baselineUrl={(props as SdrGpuImagePaneProps).baselineUrl ?? null}
+        isBaseline={(props as SdrGpuImagePaneProps).isBaseline}
+        diffMode={(props as SdrGpuImagePaneProps).diffMode ?? "none"}
+        interpolation={interpolation}
+        colormap={sdrColormap}
+        showAxes={showAxes}
+        processing={(props as SdrGpuImagePaneProps).processing}
+        zoom={props.zoom}
+        pan={props.pan}
+        onViewportChange={onViewportChange}
+        onNaturalSize={(props as SdrGpuImagePaneProps).onNaturalSize}
+        label={label}
+        isDraggable={isDraggable}
+        onDragStart={onDragStart}
+        className={(props as SdrGpuImagePaneProps).className}
+        overlay={overlay}
+        overlaySettings={overlaySettings}
+        pixelValueNotation={props.pixelValueNotation}
+      />
+    );
+  }
 
   return (
     <div className="relative flex flex-col h-full" data-gpu-image-pane data-gpu-backend-ready={paneReady}>

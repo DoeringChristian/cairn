@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Engine fallback (C1) harness</title>
+    <style>
+      body { font-family: ui-monospace, monospace; font-size: 13px; padding: 16px; background: #111; color: #eee; }
+      #status { font-size: 28px; font-weight: bold; margin-bottom: 12px; }
+      #result div { white-space: pre-wrap; }
+      #harness-sdr-image, #harness-hdr-image, #harness-compare-split, #harness-compare-diff { background: #222; margin: 8px 0; }
+    </style>
+  </head>
+  <body>
+    <h1>C1 fix — engine&rarr;legacy fallback harness</h1>
+    <p>Must be loaded WITH <code>?forceEngineFail</code> in the URL to exercise the fault-injection path.</p>
+    <div id="status">RUNNING&hellip;</div>
+    <div id="result"></div>
+    <script type="module" src="./engine-fallback.browser.bundle.js?v=1"></script>
+  </body>
+</html>

@@ -44,6 +44,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Colormap, DiffMode, Interpolation } from "../types";
 import { getSharedDevice } from "../engine/device";
 import { createWebGL2Device } from "../engine/webgl2/device";
+import { forceEngineFailRequested } from "../engine/test-hooks";
 import {
   renderCompare,
   computeMetrics,
@@ -64,6 +65,18 @@ import PixelValueOverlay, {
   type PixelSample,
   type PixelValueNotation,
 } from "../primitives/PixelValueOverlay";
+// C1 fix (whole-branch review) — the LEGACY compare panes, used as the
+// fallback when the engine fails to activate/render (see `engineFailed`
+// state below). Safe to import here: this file only ever ships inside the
+// gpu-image ADDON bundle (`vite.plot-gpu-image.config.ts`), never
+// `core.iife.js` — the core-bundle guard is about core staying free of the
+// ENGINE, not about the addon avoiding a duplicate copy of these already-tiny
+// CPU renderers. `MediaComparePane` is imported as a VALUE from `./compositor`
+// — that file only imports THIS file's `GpuComparePaneProps` as a TYPE
+// (`import type`), which TS/esbuild fully erase, so this is not a runtime
+// import cycle.
+import ImagePane from "../renderers/ImagePane";
+import { MediaComparePane } from "./compositor";
 
 export interface GpuComparePaneProps {
   imageUrl: string | null;
@@ -130,6 +143,14 @@ export default function GpuComparePane({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const resRef = useRef<GpuResources | null>(null);
 
+  // C1 fix (whole-branch review): true once the engine has definitively
+  // failed to activate or render this compare pane (a non-context-lost hard
+  // failure, e.g. WebGL2 `getContext` returning `null` under live-context
+  // exhaustion). Once set, this component permanently renders the LEGACY
+  // compare pane (`MediaComparePane` for split/blend, `ImagePane` for diff)
+  // instead of the GPU canvas — see the bailout branch near the bottom of
+  // this component's render body. A pane never blanks.
+  const [engineFailed, setEngineFailed] = useState(false);
   const [ready, setReady] = useState(false);
   const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
   const [uploadVersion, setUploadVersion] = useState(0);
@@ -151,14 +172,39 @@ export default function GpuComparePane({
     const canvas = canvasRef.current;
     if (!canvas) return;
     let cancelled = false;
-    getSharedDevice().then((shared) => {
-      if (cancelled) return;
-      const ownsDevice = shared.backend === "webgl2";
-      const device = ownsDevice ? createWebGL2Device() : shared;
-      const surface = device.createSurface(canvas, { hdr: false });
-      resRef.current = { device, ownsDevice, surface, texA: null, texB: null };
-      setReady(true);
-    });
+    // C1 fix (whole-branch review): this file is self-contained (module doc:
+    // "NOT the pool") — unlike `renderers/GpuImagePane.tsx`, there is no
+    // `engine/pool.ts` to catch a hard GPU-init failure here.
+    // `device.createSurface()` can throw the SAME way `engine/pool.ts`'s
+    // `activateEntry` can (most realistically WebGL2's `getContext`
+    // returning `null` under live-context exhaustion), and this used to run
+    // with NO try/catch at all. `?forceEngineFail` (test-only, `./test-hooks`,
+    // matches the same hook `engine/pool.ts` reads) deterministically
+    // triggers this same failure path.
+    getSharedDevice()
+      .then((shared) => {
+        if (cancelled) return;
+        try {
+          if (forceEngineFailRequested()) {
+            throw new Error("cairn-plot engine: forced compare-pane activation failure (?forceEngineFail test hook)");
+          }
+          const ownsDevice = shared.backend === "webgl2";
+          const device = ownsDevice ? createWebGL2Device() : shared;
+          const surface = device.createSurface(canvas, { hdr: false });
+          resRef.current = { device, ownsDevice, surface, texA: null, texB: null };
+          setReady(true);
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.warn("cairn-plot: GpuComparePane failed to activate, falling back to legacy pane", err);
+          setEngineFailed(true);
+        }
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        // eslint-disable-next-line no-console
+        console.warn("cairn-plot: GpuComparePane could not resolve a GPU device, falling back to legacy pane", err);
+        setEngineFailed(true);
+      });
     return () => {
       cancelled = true;
       const r = resRef.current;
@@ -279,7 +325,19 @@ export default function GpuComparePane({
       diffCmapMode,
       diffColormap: mode === "diff" ? diffColormap : undefined,
     };
-    renderCompare(r.device, r.surface, r.texA, r.texB, params);
+    // C1 fix (whole-branch review): `renderCompare()` is called
+    // SYNCHRONOUSLY in this effect with NO try/catch at all previously — an
+    // uncaught throw here would unmount this pane's whole subtree in React
+    // 18. Catch and fall back to the legacy compare pane instead (see the
+    // bailout branch near the bottom of this component's render body) — a
+    // pane never blanks.
+    try {
+      renderCompare(r.device, r.surface, r.texA, r.texB, params);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn("cairn-plot: GpuComparePane renderCompare failed, falling back to legacy pane", err);
+      setEngineFailed(true);
+    }
   }, [
     ready,
     dims,
@@ -346,6 +404,50 @@ export default function GpuComparePane({
 
   const resetViewport = useCallback(() => onViewportChange?.(HOME_VIEWPORT), [onViewportChange]);
   const imgRendering = interpolation === "auto" ? undefined : interpolation;
+
+  // C1 fix (whole-branch review) — engine bailout: on any activation/render
+  // hard failure, self-heal to the LEGACY compare pane using the SAME props
+  // this component already received — `mode:"diff"` mirrors
+  // `compositor.tsx`'s own "normal"|"diff" branch (`ImagePane` with
+  // `diffMode`), `mode:"split"|"blend"` mirrors its split/blend branch
+  // (`MediaComparePane`) — so the image still renders — never a blank card.
+  // Placed after every hook above runs unconditionally (rules-of-hooks) but
+  // before this component paints its own GPU canvas.
+  if (engineFailed) {
+    if (mode === "diff") {
+      return (
+        <ImagePane
+          imageUrl={imageUrl}
+          baselineUrl={baselineUrl}
+          diffMode={diffSubmode ?? "signed"}
+          interpolation={interpolation}
+          colormap={colormap}
+          showAxes={false}
+          zoom={zoom}
+          pan={pan}
+          onViewportChange={onViewportChange}
+          label={label}
+          pixelValueNotation={pixelValueNotation}
+        />
+      );
+    }
+    return (
+      <MediaComparePane
+        imageUrl={imageUrl}
+        baselineUrl={baselineUrl}
+        mode={mode}
+        splitPosition={splitPosition}
+        blendAlpha={blendAlpha}
+        onSplitPositionChange={onSplitPositionChange}
+        zoom={zoom}
+        pan={pan}
+        onViewportChange={onViewportChange}
+        interpolation={interpolation}
+        label={label}
+        pixelValueNotation={pixelValueNotation}
+      />
+    );
+  }
 
   return (
     <div className="relative flex flex-col h-full" data-gpu-compare-pane data-gpu-compare-ready={ready}>
