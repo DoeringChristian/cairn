@@ -225,6 +225,24 @@ export default function PixelValueOverlay({
     }
     reportActive(true); // zoomed in far enough — numbers are being drawn.
 
+    // Q19: clip ALL drawing to the DISPLAYED IMAGE's own on-screen rect — the
+    // intersection of the actual image bounds `[0,naturalWidth] x
+    // [0,naturalHeight]` with `sourceWindow`'s crop, mapped through the same
+    // `imgLeft/imgTop + (coord - srcOrigin) * scale` transform used below.
+    // `sourceWindow` alone (the crop rect) is NOT enough: when zoomed out
+    // past the image's native size (Q18), `sourceWindow` extends past
+    // `[0,1]` into the checkerboard border, so its on-screen box is BIGGER
+    // than the actual image — without this clip, a halo/stroke drawn near
+    // that border could bleed onto the checkerboard.
+    const imageLeft = imgLeft + (0 - srcOriginX) * scale;
+    const imageTop = imgTop + (0 - srcOriginY) * scale;
+    const imageRight = imgLeft + (naturalWidth - srcOriginX) * scale;
+    const imageBottom = imgTop + (naturalHeight - srcOriginY) * scale;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(imageLeft, imageTop, imageRight - imageLeft, imageBottom - imageTop);
+    ctx.clip();
+
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.lineJoin = "round";
@@ -233,6 +251,10 @@ export default function PixelValueOverlay({
 
     for (let py = y0; py < y1; py++) {
       for (let px = x0; px < x1; px++) {
+        // Q19: only draw a pixel INSIDE the actual image bounds — never a
+        // pixel `sample()` might (incorrectly, for some future caller) still
+        // return a value for outside `[0,naturalWidth) x [0,naturalHeight)`.
+        if (px < 0 || py < 0 || px >= naturalWidth || py >= naturalHeight) continue;
         const s = sample(px, py, notation);
         if (!s || s.lines.length === 0) continue;
         const lc = s.lines.length;
@@ -266,6 +288,7 @@ export default function PixelValueOverlay({
         }
       }
     }
+    ctx.restore(); // matches the ctx.save()/clip() above.
   }, [imageElRef, naturalWidth, naturalHeight, sample, notation, reportActive, sourceWindow]);
 
   // Redraw on viewport / data / notation / mount changes.

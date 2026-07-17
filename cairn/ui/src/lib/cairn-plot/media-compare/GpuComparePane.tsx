@@ -57,9 +57,10 @@ import type { Device, Surface, Texture } from "../engine/types";
 import { getColormapLUT } from "../colormaps";
 import { loadImageData } from "../image";
 import { useImageViewport, type Viewport as ImageViewport } from "../hooks/use-image-viewport";
-import { viewportToUvRect } from "../renderers/GpuImagePane";
+import { screenPxPerTexel, viewportToUvRect } from "../renderers/GpuImagePane";
 import PixelValueOverlay, {
   CHANNEL_COLORS,
+  PIXEL_VALUE_MIN_SCREEN_PX,
   PixelNotationToggle,
   formatChannelValue,
   type PixelSample,
@@ -306,6 +307,13 @@ export default function GpuComparePane({
     setOverlayWindow((prev) =>
       prev.x === rawUv.x && prev.y === rawUv.y && prev.w === rawUv.w && prev.h === rawUv.h ? prev : rawUv,
     );
+    // Q20: same nearest/linear threshold GpuImagePane uses — see
+    // `screenPxPerTexel`'s doc comment. Uses the canvas's OWN rect (matches
+    // what `PixelValueOverlay` queries via `imageElRef={canvasRef}`), not
+    // `box`/paneEl.
+    const canvasBox = canvasRef.current ? canvasRef.current.getBoundingClientRect() : box;
+    const filter: "nearest" | "linear" =
+      screenPxPerTexel(rawUv, canvasBox, dims.w, dims.h) >= PIXEL_VALUE_MIN_SCREEN_PX ? "nearest" : "linear";
     let uv = rawUv;
     // WebGL2 display Y-flip correction — identical to GpuImagePane's.
     if (r.device.backend === "webgl2") {
@@ -318,6 +326,7 @@ export default function GpuComparePane({
       isScalar: false,
       hdrOut: false,
       uv,
+      filter,
       mode,
       split: splitPosition,
       alpha: blendAlpha,

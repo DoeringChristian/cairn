@@ -38,6 +38,45 @@
  *     .zw = uvRect.wh (window size,   [0,1] source-space)
  *   logical binding 4 (`u_bind4: f32`, native binding 4*3+2=14):
  *     = hdrOut (f32, 0/1 boolean flag)
+ *   logical binding 5 (`u_bind5: f32`, native binding 5*3+2=17):
+ *     = filterMode (f32, 0=nearest, 1=linear — see "Out-of-bounds..." /
+ *       "Source filtering" sections below; Q20)
+ *
+ * ## Out-of-bounds -> fully transparent (Q18)
+ * `uvRect` (`u_bind3`) is the zoom/pan WINDOW in source-space `[0,1]`; when
+ * zoomed OUT past the image's native size, `uvRect.zw` exceeds `1-uvRect.xy`
+ * and the window's far edge lands outside `[0,1]`. The image-space UV
+ * (`rawSrcUV` below, BEFORE any clamping) is tested against `[0,1)` on both
+ * axes first: outside it, the fragment returns `vec4(0.0)` (fully
+ * transparent, RGBA all-zero) WITHOUT sampling `t_bind0` at all — no
+ * clamped-edge smear/repeat. This requires the WebGPU canvas surface to be
+ * configured `alphaMode:'premultiplied'` (`engine/webgpu/surface.ts`) so the
+ * zero-alpha fragment actually composites as transparent (an `'opaque'`
+ * surface would force every pixel's alpha to 1 at present time, hiding this
+ * fix) — the caller's checkerboard background (`cairn-checkerboard`, applied
+ * to the pane container behind the canvas) then shows through.
+ *
+ * ## Source filtering: nearest vs. manual bilinear (Q20)
+ * `t_bind0`/`t_bind1` are `unfilterable-float`-safe (`textureLoad`, see
+ * "Texel fetch..." below) specifically so `rgba32float`/`r32float` HDR
+ * sources work without requiring the optional `float32-filterable` WebGPU
+ * feature — a REAL `Sampler`+`textureSample` pair (the RHI's
+ * `Device.createSampler`) would need that feature for the HDR path, which
+ * isn't guaranteed to be available (see `engine/webgpu/device.ts`'s "Texel
+ * fetch" doc note), so it is NOT used here. Instead `filterMode` (`u_bind5`)
+ * selects between a single nearest `textureLoad` (`filterMode==0`) and a
+ * manual bilinear blend of the four neighboring texels (`filterMode==1`,
+ * `sampleBilinearF` below), computed entirely from `textureLoad` calls — this
+ * works identically for every `TextureFormat` this engine uses and needs no
+ * GPU feature beyond what `textureLoad` already requires. `GpuImagePane`
+ * drives `filterMode` from the SAME `PIXEL_VALUE_MIN_SCREEN_PX` threshold
+ * `PixelValueOverlay` uses (nearest once a source texel is large enough
+ * on-screen to show its per-pixel TEV number, linear below that), so the
+ * "crisp/blocky pixels" and "pixel-value numbers" visual cues change in
+ * lockstep. At exact 1:1 (or any texel-aligned) sampling the bilinear blend's
+ * fractional weight is exactly 0, so it degenerates to the SAME value nearest
+ * would produce — this is why enabling it by default does not change any of
+ * this file's existing byte-exact parity-test cases (all texel-aligned).
  *
  * ## Operator porting (verbatim from `image/tonemap.ts`)
  * `TONEMAP_OPERATORS` order or its keys, and `applyOperator`'s `if` chain,
@@ -114,6 +153,8 @@ fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> VSOut {
 @group(0) @binding(11) var<uniform> u_bind3: vec4<f32>;
 // Logical binding 4 (uniform f32: hdrOut) -> native binding 4*3+2 = 14.
 @group(0) @binding(14) var<uniform> u_bind4: f32;
+// Logical binding 5 (uniform f32: filterMode, 0=nearest/1=linear) -> native binding 5*3+2 = 17.
+@group(0) @binding(17) var<uniform> u_bind5: f32;
 
 // --- ported verbatim from image/tonemap.ts ---
 
@@ -144,6 +185,31 @@ fn acesCurve(x: f32) -> f32 {
   return clamp(num / den, 0.0, 1.0);
 }
 
+// Manual bilinear blend of the 4 texels surrounding 'uv' (source-space
+// [0,1]) — see module doc comment's "Source filtering" section for why this
+// is hand-rolled instead of a real Sampler+textureSample. 'uv' is assumed
+// already inside [0,1) (the OOB-transparent check runs before this is
+// called); neighbor indices are clamped to the texture's own edge (standard
+// filter-kernel clamp-to-edge, NOT the Q18 uvRect-window OOB check above).
+fn sampleBilinearF(uv: vec2<f32>, dims: vec2<f32>) -> vec4<f32> {
+  let texel = uv * dims - vec2<f32>(0.5);
+  let base = floor(texel);
+  let frac = texel - base;
+  let maxX = i32(dims.x) - 1;
+  let maxY = i32(dims.y) - 1;
+  let x0 = clamp(i32(base.x), 0, maxX);
+  let x1 = clamp(i32(base.x) + 1, 0, maxX);
+  let y0 = clamp(i32(base.y), 0, maxY);
+  let y1 = clamp(i32(base.y) + 1, 0, maxY);
+  let c00 = textureLoad(t_bind0, vec2<i32>(x0, y0), 0);
+  let c10 = textureLoad(t_bind0, vec2<i32>(x1, y0), 0);
+  let c01 = textureLoad(t_bind0, vec2<i32>(x0, y1), 0);
+  let c11 = textureLoad(t_bind0, vec2<i32>(x1, y1), 0);
+  let top = mix(c00, c10, frac.x);
+  let bot = mix(c01, c11, frac.x);
+  return mix(top, bot, frac.y);
+}
+
 // operatorId: 0=linear, 1=srgb, 2=reinhard, 3=aces, 4=extended (matches
 // TONEMAP_OPERATORS key order in image/tonemap.ts). linear/srgb are the SAME
 // clamp — the sRGB OETF lives in outputEncodeF, not here. 4 (extended) is a
@@ -169,9 +235,24 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   let srcDims = vec2<f32>(textureDimensions(t_bind0));
   let uvRect = u_bind3;
   let uv = clamp(in.uv, vec2<f32>(0.0), vec2<f32>(0.999999));
-  let srcUV = clamp(uvRect.xy + uv * uvRect.zw, vec2<f32>(0.0), vec2<f32>(0.999999));
-  let coord = vec2<i32>(srcUV * srcDims);
-  let sampled = textureLoad(t_bind0, coord, 0);
+  // Image-space UV, UNCLAMPED — Q18: test this against [0,1) before doing
+  // anything else. Zoomed-out (uvRect.zw > 1-uvRect.xy) pushes this outside
+  // [0,1] on purpose; that region must render fully transparent, not a
+  // clamped-edge smear.
+  let rawSrcUV = uvRect.xy + uv * uvRect.zw;
+  if (rawSrcUV.x < 0.0 || rawSrcUV.x >= 1.0 || rawSrcUV.y < 0.0 || rawSrcUV.y >= 1.0) {
+    return vec4<f32>(0.0);
+  }
+  let srcUV = clamp(rawSrcUV, vec2<f32>(0.0), vec2<f32>(0.999999));
+
+  let filterLinear = u_bind5 > 0.5;
+  var sampled: vec4<f32>;
+  if (filterLinear) {
+    sampled = sampleBilinearF(srcUV, srcDims);
+  } else {
+    let coord = vec2<i32>(srcUV * srcDims);
+    sampled = textureLoad(t_bind0, coord, 0);
+  }
 
   let exposureEV = u_bind2.x;
   let operatorId = i32(round(u_bind2.y));

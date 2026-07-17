@@ -349,6 +349,57 @@ async function runMetricsCase(device: Device, label: string): Promise<boolean> {
   return mseOk && maeOk && psnrOk;
 }
 
+/**
+ * Q18: zoomed-out (uv window outside [0,1]) -> fully transparent, for the
+ * COMPARE pass too (`compare.wgsl.ts`/`compare.glsl.ts` share the same
+ * `rawSrcUV` OOB check `image.wgsl.ts` uses — see `image-pass.browser.ts`'s
+ * `oob-transparent` case for the identical single-shader version). Same
+ * 2-texel source / 4-wide target / `uv:{x:-1,w:2}` window as that case;
+ * texels 0-1 land outside [0,1] (transparent), texels 2-3 land inside.
+ */
+async function runOobTransparentCase(device: Device, label: string): Promise<boolean> {
+  const texRef = buildRowTexture(device, [
+    [1.0, 0.0, 0.0, 1.0],
+    [0.0, 1.0, 0.0, 1.0],
+  ]);
+  const texFg = buildRowTexture(device, [
+    [0.0, 0.0, 1.0, 1.0],
+    [1.0, 1.0, 0.0, 1.0],
+  ]);
+  const target = device.createTexture(4, 1, "rgba8unorm");
+  const params: CompareParams = {
+    ...BASE,
+    uv: { x: -1, y: 0, w: 2, h: 1 },
+    mode: "split",
+    split: 0.5,
+    alpha: 0.5,
+    diffSubmode: "absolute",
+  };
+  renderCompare(device, target, texRef, texFg, params);
+  const out = await device.readback(target);
+  texRef.destroy();
+  texFg.destroy();
+  target.destroy();
+
+  if (!(out instanceof Uint8Array)) {
+    report(false, `[${label}] readback should be Uint8Array, got ${out.constructor.name}`);
+    return false;
+  }
+  // Same per-fragment srcUV math as image-pass.browser.ts's oob-transparent
+  // case: i=0,1 -> OOB; i=2,3 -> in bounds.
+  const expectOOB = [true, true, false, false];
+  let ok = true;
+  for (let i = 0; i < 4; i++) {
+    const a = out[i * 4 + 3]!;
+    const isTransparent = a === 0;
+    const pass = isTransparent === expectOOB[i];
+    if (!pass) ok = false;
+    report(pass, `[${label}] texel[${i}] alpha=${a} expected ${expectOOB[i] ? "transparent (0)" : "opaque (255)"}`);
+  }
+  report(ok, `[${label}] zoomed-out OOB texels are fully transparent, in-bounds texels are not`);
+  return ok;
+}
+
 async function runAll(device: Device, label: string): Promise<boolean> {
   report(true, `[${label}] device.backend = ${device.backend}`);
   let ok = true;
@@ -386,6 +437,7 @@ async function runAll(device: Device, label: string): Promise<boolean> {
     ok = (await runCase(device, `${label}/diff/absolute+viridis`, p)) && ok;
   }
   ok = (await runMetricsCase(device, `${label}/metrics`)) && ok;
+  ok = (await runOobTransparentCase(device, `${label}/oob-transparent`)) && ok;
 
   // ---- SWAP GUARD (C1 regression): texRef/texFg swapped must DISAGREE with
   // the legacy reference for asymmetric modes — this is what makes the

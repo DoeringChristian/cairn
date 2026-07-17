@@ -51,6 +51,23 @@ export interface ImageParams {
   hdrOut: boolean;
   /** Source-space [0,1] viewport window (zoom/pan): sampled UV = uv.xy + rawUV * uv.wh. */
   uv: { x: number; y: number; w: number; h: number };
+  /**
+   * Source-texture filter mode (Q20). `"linear"` (the default when unset) is
+   * a manual bilinear blend of the 4 neighboring texels — see
+   * `image.wgsl.ts`'s "Source filtering" doc note for why this is hand-rolled
+   * in-shader rather than a real `Device.createSampler` + `textureSample`
+   * (the HDR `rgba32float` path would need the optional `float32-filterable`
+   * WebGPU feature for that, which isn't guaranteed available).
+   * `"nearest"` is a single exact texel fetch (crisp/blocky) — callers
+   * (`GpuImagePane`) switch to this once a source pixel is large enough
+   * on-screen for `PixelValueOverlay`'s per-pixel numbers to appear, so the
+   * two visual cues change in lockstep. Defaulting to `"linear"` does not
+   * change any EXISTING byte-exact parity-test case: at exact texel-aligned
+   * sampling (every case in `image-pass.browser.ts`/`compare-pass.browser.ts`)
+   * the bilinear weight is exactly 0, degenerating to the same value nearest
+   * would produce.
+   */
+  filter?: "nearest" | "linear";
 }
 
 /** Matches TONEMAP_OPERATORS' key order in image/tonemap.ts — see image.wgsl.ts's doc comment. */
@@ -131,6 +148,9 @@ export function renderImage(device: Device, target: Surface | Texture, src: Text
   const paramsVec = new Float32Array([params.exposureEV, operatorId, gamma, params.isScalar ? 1 : 0]);
   const uvRect = new Float32Array([params.uv.x, params.uv.y, params.uv.w, params.uv.h]);
   const hdrFlag = new Float32Array([params.hdrOut ? 1 : 0]);
+  // Field order MUST match image.wgsl.ts / image.glsl.ts's u_bind5 doc
+  // comment. Default "linear" when unset — see ImageParams.filter's doc.
+  const filterFlag = new Float32Array([params.filter === "nearest" ? 0 : 1]);
 
   let bindGroup: BindGroup | undefined;
   try {
@@ -140,6 +160,7 @@ export function renderImage(device: Device, target: Surface | Texture, src: Text
       { binding: 2, resource: { uniform: paramsVec } },
       { binding: 3, resource: { uniform: uvRect } },
       { binding: 4, resource: { uniform: hdrFlag } },
+      { binding: 5, resource: { uniform: filterFlag } },
     ]);
     device.renderFullscreen(target, pipeline, bindGroup);
   } finally {
@@ -268,6 +289,10 @@ export function renderCompare(
     useDiffColormap ? 1 : 0,
     0,
   ]);
+  // u_bind7: filterMode (0=nearest, 1=linear) — IDENTICAL convention to
+  // renderImage's filterFlag / image.wgsl.ts's u_bind5. Default "linear"
+  // when unset — see ImageParams.filter's doc.
+  const filterFlag = new Float32Array([params.filter === "nearest" ? 0 : 1]);
 
   let bindGroup: BindGroup | undefined;
   try {
@@ -279,6 +304,7 @@ export function renderCompare(
       { binding: 4, resource: { uniform: uvRect } },
       { binding: 5, resource: { uniform: modeVec } },
       { binding: 6, resource: { uniform: cmapVec } },
+      { binding: 7, resource: { uniform: filterFlag } },
     ]);
     device.renderFullscreen(target, pipeline, bindGroup);
   } finally {

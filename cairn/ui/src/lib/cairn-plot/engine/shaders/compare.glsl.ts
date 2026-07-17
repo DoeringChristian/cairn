@@ -11,6 +11,12 @@
  * fullscreen-triangle vertex stage as `image.glsl.ts` (see that file's doc
  * comment), and the same `texelFetch` (not filtered `texture()`) reads for
  * `t_bind0`/`t_bind1`/`t_bind2`.
+ *
+ * ## Out-of-bounds -> transparent (Q18) / bilinear filtering (Q20)
+ * Mirrors `compare.wgsl.ts`'s doc comment exactly — one `rawSrcUV` [0,1)
+ * test gates a transparent discard before either side is sampled;
+ * `u_bind7` (filterMode) selects nearest `texelFetch` vs a manual bilinear
+ * blend (`sampleBilinearOf`) for both `texA`/`texB`.
  */
 export const compareGLSL = `#pragma vertex
 #version 300 es
@@ -34,6 +40,7 @@ uniform vec4 u_bind3; // exposureEV, operatorId, gamma, isScalar
 uniform vec4 u_bind4; // uvRect.xy, uvRect.wh
 uniform vec4 u_bind5; // modeId, split, alpha, diffSubmodeId
 uniform vec4 u_bind6; // diffCmapModeId, hdrOut, useColormap, unused
+uniform float u_bind7; // filterMode (0=nearest, 1=linear)
 
 in vec2 v_uv;
 out vec4 fragColor;
@@ -83,6 +90,27 @@ vec3 sampleLUT(float valueUnit) {
   return texelFetch(t_bind2, ivec2(idx, 0), 0).rgb;
 }
 
+// Manual bilinear blend over EITHER source texture (texA or texB) — see
+// compare.wgsl.ts's sampleBilinearOf doc comment.
+vec4 sampleBilinearOf(sampler2D tex, vec2 uv, vec2 dims) {
+  vec2 texel = uv * dims - vec2(0.5);
+  vec2 base = floor(texel);
+  vec2 frac = texel - base;
+  int maxX = int(dims.x) - 1;
+  int maxY = int(dims.y) - 1;
+  int x0 = clamp(int(base.x), 0, maxX);
+  int x1 = clamp(int(base.x) + 1, 0, maxX);
+  int y0 = clamp(int(base.y), 0, maxY);
+  int y1 = clamp(int(base.y) + 1, 0, maxY);
+  vec4 c00 = texelFetch(tex, ivec2(x0, y0), 0);
+  vec4 c10 = texelFetch(tex, ivec2(x1, y0), 0);
+  vec4 c01 = texelFetch(tex, ivec2(x0, y1), 0);
+  vec4 c11 = texelFetch(tex, ivec2(x1, y1), 0);
+  vec4 top = mix(c00, c10, frac.x);
+  vec4 bot = mix(c01, c11, frac.x);
+  return mix(top, bot, frac.y);
+}
+
 vec3 processSide(vec4 sampled, float exposureEV, int operatorId, float gamma, bool isScalar, bool hdrOut) {
   vec3 rgb = sampled.rgb * exp2(exposureEV);
   if (isScalar) {
@@ -117,15 +145,30 @@ float diffChannel(float a, float b, int mode) {
 void main() {
   vec2 uv = clamp(v_uv, 0.0, 0.999999);
   vec4 uvRect = u_bind4;
-  vec2 srcUV = clamp(uvRect.xy + uv * uvRect.zw, 0.0, 0.999999);
+  // Image-space UV, UNCLAMPED — Q18 (see compare.wgsl.ts's doc comment).
+  vec2 rawSrcUV = uvRect.xy + uv * uvRect.zw;
+  if (rawSrcUV.x < 0.0 || rawSrcUV.x >= 1.0 || rawSrcUV.y < 0.0 || rawSrcUV.y >= 1.0) {
+    fragColor = vec4(0.0);
+    return;
+  }
+  vec2 srcUV = clamp(rawSrcUV, 0.0, 0.999999);
+  bool filterLinear = u_bind7 > 0.5;
 
   vec2 dimsA = vec2(textureSize(t_bind0, 0));
-  ivec2 coordA = ivec2(srcUV * dimsA);
-  vec4 sampledA = texelFetch(t_bind0, coordA, 0);
+  vec4 sampledA;
+  if (filterLinear) {
+    sampledA = sampleBilinearOf(t_bind0, srcUV, dimsA);
+  } else {
+    sampledA = texelFetch(t_bind0, ivec2(srcUV * dimsA), 0);
+  }
 
   vec2 dimsB = vec2(textureSize(t_bind1, 0));
-  ivec2 coordB = ivec2(srcUV * dimsB);
-  vec4 sampledB = texelFetch(t_bind1, coordB, 0);
+  vec4 sampledB;
+  if (filterLinear) {
+    sampledB = sampleBilinearOf(t_bind1, srcUV, dimsB);
+  } else {
+    sampledB = texelFetch(t_bind1, ivec2(srcUV * dimsB), 0);
+  }
 
   float exposureEV = u_bind3.x;
   int operatorId = int(round(u_bind3.y));

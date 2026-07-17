@@ -91,6 +91,7 @@ import LabelChip from "../primitives/LabelChip";
 import ImageOverlay from "./ImageOverlay";
 import PixelValueOverlay, {
   CHANNEL_COLORS,
+  PIXEL_VALUE_MIN_SCREEN_PX,
   PixelNotationToggle,
   formatChannelValue,
   type PixelSample,
@@ -238,6 +239,29 @@ export function viewportToUvRect(
   const x = (imgLeft * (1 - z) - viewport.pan.x) / (dispW * z);
   const y = (imgTop * (1 - z) - viewport.pan.y) / (dispH * z);
   return { x, y, w, h };
+}
+
+/**
+ * Screen pixels covered by ONE source texel, for the CURRENTLY-DISPLAYED
+ * `rawUv` window — the exact same object-contain-fit formula
+ * `PixelValueOverlay.tsx`'s `draw()` uses for its own `scale` (`min(box.width
+ * / visibleW, box.height / visibleH)`, `visibleW/H = rawUv.w/h *
+ * naturalW/H`), so `GpuImagePane`'s nearest/linear filter switch (Q20) stays
+ * in EXACT lockstep with `PixelValueOverlay`'s `PIXEL_VALUE_MIN_SCREEN_PX`
+ * active-state threshold — both flip at the same zoom level. `box` must be
+ * the DISPLAYED element's rect (the canvas, same as `PixelValueOverlay`'s
+ * `imageElRef`), not the outer padded pane container.
+ */
+export function screenPxPerTexel(
+  rawUv: { w: number; h: number },
+  box: { width: number; height: number },
+  naturalW: number,
+  naturalH: number,
+): number {
+  const visibleW = rawUv.w * naturalW;
+  const visibleH = rawUv.h * naturalH;
+  if (visibleW <= 0 || visibleH <= 0 || box.width <= 0 || box.height <= 0) return 0;
+  return Math.min(box.width / visibleW, box.height / visibleH);
 }
 
 const HOME_VIEWPORT: ImageViewport = { zoom: 1, pan: { x: 0, y: 0 } };
@@ -498,6 +522,16 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
     setOverlayWindow((prev) =>
       prev.x === rawUv.x && prev.y === rawUv.y && prev.w === rawUv.w && prev.h === rawUv.h ? prev : rawUv,
     );
+    // Q20: nearest once a source texel is >= PIXEL_VALUE_MIN_SCREEN_PX on
+    // screen (the SAME threshold that makes PixelValueOverlay start drawing
+    // per-pixel numbers), linear below it — see `screenPxPerTexel`'s doc
+    // comment for why the canvas rect (not `box`/paneEl, which includes
+    // padding) is used here.
+    const canvasBox = canvasRef.current ? canvasRef.current.getBoundingClientRect() : box;
+    const filter: "nearest" | "linear" =
+      screenPxPerTexel(rawUv, canvasBox, naturalDims.w, naturalDims.h) >= PIXEL_VALUE_MIN_SCREEN_PX
+        ? "nearest"
+        : "linear";
     let uv = rawUv;
     // WebGL2 display Y-flip correction (see PaneHandle.backend's doc + the
     // engine's `passthrough.wgsl.ts` orientation note): on WebGL2 the
@@ -529,8 +563,9 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
           isScalar: false,
           hdrOut: useHdrRef.current,
           uv,
+          filter,
         }
-      : { exposureEV: 0, operator: "linear", gamma: 1, isScalar: false, hdrOut: false, uv };
+      : { exposureEV: 0, operator: "linear", gamma: 1, isScalar: false, hdrOut: false, uv, filter };
     // C1 fix (whole-branch review): `handle.render()` is called SYNCHRONOUSLY
     // in this effect, so an uncaught throw here would unmount this pane's
     // whole subtree in React 18. `engine/pool.ts`'s `attemptRender` already

@@ -10,6 +10,17 @@
  * `matchMedia('(dynamic-range: high)')`: the spike's own recipe doc
  * mentions that gate as where the RENDERER should decide to request `hdr`
  * at all, not something this module re-derives.
+ *
+ * ## `alphaMode: 'premultiplied'` (Q18)
+ * Both configs use `'premultiplied'`, not `'opaque'`: `image.wgsl.ts`/
+ * `compare.wgsl.ts` output a fully-transparent `vec4(0.0)` fragment for any
+ * pixel outside the sampled image's `[0,1]` bounds (zoomed-out borders) — an
+ * `'opaque'`-configured surface would force every composited pixel's alpha
+ * to 1, silently discarding that transparency and defeating the fix. Every
+ * fragment this pipeline ever emits has alpha exactly 0 or 1 (never a
+ * fractional in-between), so premultiplied-vs-straight alpha is a
+ * distinction without a difference here (0*rgb=0 either way) — no shader
+ * change was needed beyond the OOB check itself.
  */
 /// <reference types="@webgpu/types" />
 
@@ -30,7 +41,7 @@ const SURFACE_USAGE = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_S
  */
 export function configureSDRSurface(context: GPUCanvasContext, device: GPUDevice): SurfaceConfigResult {
   const format = navigator.gpu.getPreferredCanvasFormat();
-  context.configure({ device, format, alphaMode: "opaque", usage: SURFACE_USAGE });
+  context.configure({ device, format, alphaMode: "premultiplied", usage: SURFACE_USAGE });
   return { hdr: false, format };
 }
 
@@ -53,7 +64,7 @@ export function configureHDRSurface(context: GPUCanvasContext, device: GPUDevice
       format: "rgba16float",
       colorSpace: "display-p3",
       toneMapping: { mode: "extended" },
-      alphaMode: "opaque",
+      alphaMode: "premultiplied",
       usage: SURFACE_USAGE,
     });
     return { hdr: true, format: "rgba16float", colorSpace: "display-p3", toneMappingMode: "extended" };
@@ -64,7 +75,7 @@ export function configureHDRSurface(context: GPUCanvasContext, device: GPUDevice
         format: "rgba16float",
         colorSpace: "display-p3",
         toneMapping: { mode: "standard" },
-        alphaMode: "opaque",
+        alphaMode: "premultiplied",
         usage: SURFACE_USAGE,
       });
       return { hdr: true, format: "rgba16float", colorSpace: "display-p3", toneMappingMode: "standard" };

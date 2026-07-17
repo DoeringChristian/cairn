@@ -23,6 +23,19 @@
  * `OES_texture_float_linear` extension (WebGL2 core supports texel-fetch
  * sampling of `RGBA32F`/`R32F` textures without it; that extension is only
  * needed for LINEAR filtering).
+ *
+ * ## Out-of-bounds -> transparent (Q18) / manual bilinear filtering (Q20)
+ * See `image.wgsl.ts`'s module doc comment ("Out-of-bounds..." / "Source
+ * filtering..." sections) — this file mirrors both fixes exactly:
+ * `u_bind5` (filterMode) selects nearest `texelFetch` vs a hand-rolled
+ * bilinear blend of 4 `texelFetch` samples (`sampleBilinearF`, avoiding
+ * `OES_texture_float_linear` entirely, same reasoning as the texel-fetch
+ * note above), and the unclamped image-space UV is tested against `[0,1)`
+ * before any sampling, discarding to `vec4(0.0)` outside it. The WebGL2
+ * canvas context is already `{alpha:true, premultipliedAlpha:false}`
+ * (`engine/webgl2/device.ts`), so this needed no context-config change,
+ * unlike the WebGPU surface (`engine/webgpu/surface.ts`, was `alphaMode:
+ * 'opaque'`).
  */
 export const imageGLSL = `#pragma vertex
 #version 300 es
@@ -46,11 +59,13 @@ precision highp int;
 //     gamma, isScalar) — see image.wgsl.ts's doc comment for field order.
 //   - {uniform} entry at binding=3 -> u_bind3 (vec4: uvRect.x, .y, .w, .h).
 //   - {uniform} entry at binding=4 -> u_bind4 (float: hdrOut).
+//   - {uniform} entry at binding=5 -> u_bind5 (float: filterMode, 0=nearest/1=linear).
 uniform sampler2D t_bind0;
 uniform sampler2D t_bind1;
 uniform vec4 u_bind2;
 uniform vec4 u_bind3;
 uniform float u_bind4;
+uniform float u_bind5;
 
 in vec2 v_uv;
 out vec4 fragColor;
@@ -84,6 +99,28 @@ float acesCurve(float x) {
   return clamp(num / den, 0.0, 1.0);
 }
 
+// Manual bilinear blend of the 4 texels surrounding 'uv' — see
+// image.wgsl.ts's sampleBilinearF doc comment (same reasoning: avoids
+// OES_texture_float_linear / a real sampler entirely).
+vec4 sampleBilinearF(vec2 uv, vec2 dims) {
+  vec2 texel = uv * dims - vec2(0.5);
+  vec2 base = floor(texel);
+  vec2 frac = texel - base;
+  int maxX = int(dims.x) - 1;
+  int maxY = int(dims.y) - 1;
+  int x0 = clamp(int(base.x), 0, maxX);
+  int x1 = clamp(int(base.x) + 1, 0, maxX);
+  int y0 = clamp(int(base.y), 0, maxY);
+  int y1 = clamp(int(base.y) + 1, 0, maxY);
+  vec4 c00 = texelFetch(t_bind0, ivec2(x0, y0), 0);
+  vec4 c10 = texelFetch(t_bind0, ivec2(x1, y0), 0);
+  vec4 c01 = texelFetch(t_bind0, ivec2(x0, y1), 0);
+  vec4 c11 = texelFetch(t_bind0, ivec2(x1, y1), 0);
+  vec4 top = mix(c00, c10, frac.x);
+  vec4 bot = mix(c01, c11, frac.x);
+  return mix(top, bot, frac.y);
+}
+
 // operatorId: 0=linear, 1=srgb, 2=reinhard, 3=aces, 4=extended — matches
 // image.wgsl.ts (4=extended is a pure identity, no clamp — see that file's
 // doc comment / image/tonemap.ts's "extended" entry).
@@ -104,9 +141,22 @@ void main() {
   vec2 srcDims = vec2(textureSize(t_bind0, 0));
   vec4 uvRect = u_bind3;
   vec2 uv = clamp(v_uv, 0.0, 0.999999);
-  vec2 srcUV = clamp(uvRect.xy + uv * uvRect.zw, 0.0, 0.999999);
-  ivec2 coord = ivec2(srcUV * srcDims);
-  vec4 sampled = texelFetch(t_bind0, coord, 0);
+  // Image-space UV, UNCLAMPED — Q18 (see image.wgsl.ts's doc comment).
+  vec2 rawSrcUV = uvRect.xy + uv * uvRect.zw;
+  if (rawSrcUV.x < 0.0 || rawSrcUV.x >= 1.0 || rawSrcUV.y < 0.0 || rawSrcUV.y >= 1.0) {
+    fragColor = vec4(0.0);
+    return;
+  }
+  vec2 srcUV = clamp(rawSrcUV, 0.0, 0.999999);
+
+  bool filterLinear = u_bind5 > 0.5;
+  vec4 sampled;
+  if (filterLinear) {
+    sampled = sampleBilinearF(srcUV, srcDims);
+  } else {
+    ivec2 coord = ivec2(srcUV * srcDims);
+    sampled = texelFetch(t_bind0, coord, 0);
+  }
 
   float exposureEV = u_bind2.x;
   int operatorId = int(round(u_bind2.y));

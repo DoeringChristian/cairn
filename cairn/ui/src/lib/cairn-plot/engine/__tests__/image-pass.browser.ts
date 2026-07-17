@@ -370,6 +370,114 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
     results.set(caseLabel, r);
   }
 
+  // ---------------------------------------------------------------------
+  // Q18: out-of-bounds (zoomed OUT past the image) -> fully transparent,
+  // NOT the old clamped-edge smear. A zoomed-out `uv` window (`w`/`h` > 1,
+  // `x`/`y` < 0) samples a 2-pixel source into a 4-pixel target: pixel 0
+  // (fully outside [0,1] on the left) must read back alpha=0 AND rgb=0 (the
+  // shader's `vec4(0.0)` early-return, not clamp-to-edge repeating pixel 0's
+  // color); pixels 1-2 land inside [0,1] and must be non-transparent.
+  // ---------------------------------------------------------------------
+  {
+    const caseLabel = `${label}/oob-transparent`;
+    const pixels = [
+      [1.0, 0.0, 0.0, 1.0], // red
+      [0.0, 1.0, 0.0, 1.0], // green
+    ];
+    const src = buildSrcTexture(device, pixels);
+    const target = device.createTexture(4, 1, "rgba8unorm");
+    // uv window: x=-1, w=2 -> covers source-space [-1,1] across a 4-wide
+    // target (each target texel = 0.5 source-space wide). Target texel 0
+    // covers source-space [-1,-0.5] (fully OOB); texel 3 covers [0.5,1]
+    // (fully OOB on the right, since [0,1) is the in-bounds half-open range
+    // and srcUV==1.0 is out); texels 1-2 cover [-0.5,0.5) -> in-bounds
+    // (texel 1 samples the negative half but its OWN fragment uv lands at
+    // 0.25/0.75 of the window which maps inside [0,1) — see per-fragment
+    // math below).
+    const params: ImageParams = { exposureEV: 0, operator: "linear", isScalar: false, hdrOut: false, uv: { x: -1, y: 0, w: 2, h: 1 } };
+    renderImage(device, target, src, params);
+    const out = await device.readback(target);
+    src.destroy();
+    target.destroy();
+    let ok = out instanceof Uint8Array;
+    if (out instanceof Uint8Array) {
+      // Fragment i's uv.x = (i+0.5)/4; srcUV.x = -1 + uv.x*2.
+      //   i=0: uv.x=0.125 -> srcUV.x=-0.75 (OOB, < 0)
+      //   i=1: uv.x=0.375 -> srcUV.x=-0.25 (OOB, < 0)
+      //   i=2: uv.x=0.625 -> srcUV.x= 0.25 (in bounds)
+      //   i=3: uv.x=0.875 -> srcUV.x= 0.75 (in bounds)
+      const expectOOB = [true, true, false, false];
+      for (let i = 0; i < 4; i++) {
+        const a = out[i * 4 + 3]!;
+        const isTransparent = a === 0;
+        const chOk = isTransparent === expectOOB[i];
+        if (!chOk) ok = false;
+        report(
+          chOk,
+          `[${caseLabel}] texel[${i}] alpha=${a} expected ${expectOOB[i] ? "transparent (0)" : "opaque (255)"}`,
+        );
+        if (!expectOOB[i]) {
+          // In-bounds texels must also carry non-zero RGB (not the OOB
+          // vec4(0.0) early-return's zeroed color channels either).
+          const rgbSum = out[i * 4]! + out[i * 4 + 1]! + out[i * 4 + 2]!;
+          const rgbOk = rgbSum > 0;
+          if (!rgbOk) ok = false;
+          report(rgbOk, `[${caseLabel}] texel[${i}] in-bounds rgb sum=${rgbSum} expected >0`);
+        }
+      }
+    } else {
+      report(false, `[${caseLabel}] readback() should return Uint8Array, got ${(out as { constructor: { name: string } }).constructor.name}`);
+    }
+    report(ok, `[${caseLabel}] zoomed-out OOB texels are fully transparent, in-bounds texels are not`);
+    results.set(caseLabel, { label: caseLabel, ok, out: out instanceof Uint8Array ? out : null });
+  }
+
+  // ---------------------------------------------------------------------
+  // Q20: filter:"nearest" vs filter:"linear" produce DIFFERENT results at a
+  // non-texel-aligned sample point over a sharp black/white step, and
+  // "linear" produces a blended midtone while "nearest" produces a pure
+  // black-or-white value (no interpolation) — proving the shader actually
+  // switched sampling modes, not just accepted-and-ignored the uniform.
+  // ---------------------------------------------------------------------
+  {
+    const caseLabel = `${label}/filter-nearest-vs-linear`;
+    const stepPixels = [
+      [0.0, 0.0, 0.0, 1.0], // texel 0: black
+      [1.0, 1.0, 1.0, 1.0], // texel 1: white
+    ];
+    const src = buildSrcTexture(device, stepPixels);
+    // 1x1 target, uv window covering the WHOLE source (x=0,w=1): the single
+    // fragment's uv.x=0.5 -> srcUV.x=0.5 -> texel-space coordinate
+    // 0.5*2-0.5=0.5 -> exactly halfway between texel 0 and texel 1 (frac=0.5)
+    // for bilinear, vs. floor(0.5*2)=1 (texel 1, white) for nearest.
+    const uv = { x: 0, y: 0, w: 1, h: 1 };
+    for (const filter of ["nearest", "linear"] as const) {
+      const target = device.createTexture(1, 1, "rgba8unorm");
+      // gamma:1 makes output-encode an identity (pow(x,1)=x) instead of the
+      // sRGB OETF, so the bilinear-blended 0.5 raw sample survives to the
+      // readback as ~127/255 unchanged — isolating the SAMPLING behavior
+      // this case tests from the (unrelated, already-covered-elsewhere)
+      // output-encode curve.
+      const params: ImageParams = { exposureEV: 0, operator: "linear", gamma: 1, isScalar: false, hdrOut: false, uv, filter };
+      renderImage(device, target, src, params);
+      const out = await device.readback(target);
+      target.destroy();
+      if (!(out instanceof Uint8Array)) {
+        report(false, `[${caseLabel}/${filter}] readback() should return Uint8Array`);
+        results.set(`${caseLabel}/${filter}`, { label: caseLabel, ok: false, out: null });
+        continue;
+      }
+      const v = out[0]!;
+      const ok =
+        filter === "nearest"
+          ? v <= 5 || v >= 250 // pure black or white, no blend
+          : Math.abs(v - 127) <= 10; // ~50% blend of black+white
+      report(ok, `[${caseLabel}/${filter}] value=${v} expected ${filter === "nearest" ? "pure black/white (no blend)" : "~127 (50% blend)"}`);
+      results.set(`${caseLabel}/${filter}`, { label: caseLabel, ok, out });
+    }
+    src.destroy();
+  }
+
   return results;
 }
 

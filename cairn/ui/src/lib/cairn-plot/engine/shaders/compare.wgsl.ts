@@ -58,6 +58,17 @@
  *   logical binding 4 (`u_bind4`, native 4*3+2=14): .xy=uvRect.xy .zw=uvRect.wh — IDENTICAL layout to image.wgsl.ts's u_bind3.
  *   logical binding 5 (`u_bind5`, native 5*3+2=17): .x=modeId(0=split,1=blend,2=diff) .y=split .z=alpha .w=diffSubmodeId(0..5, DIFF_MODE_MAP order)
  *   logical binding 6 (`u_bind6`, native 6*3+2=20): .x=diffCmapModeId(0=linear,1=signed,2=positive) .y=hdrOut .z=useColormap .w=unused(0)
+ *   logical binding 7 (`u_bind7: f32`, native 7*3+2=23): filterMode (0=nearest, 1=linear — Q20, IDENTICAL convention to image.wgsl.ts's u_bind5)
+ *
+ * ## Out-of-bounds -> transparent (Q18) / bilinear filtering (Q20)
+ * Both fixes are IDENTICAL to `image.wgsl.ts`'s (see that file's module doc
+ * comment for the full rationale) — the SAME `rawSrcUV` [0,1) test (a single
+ * check; texA/texB share one `uvRect`/`srcUV`, so there is exactly one
+ * "in/out of bounds" decision per fragment, not one per side) gates a
+ * transparent `vec4(0.0)` return before either side is sampled, and
+ * `sampleBilinearF` (parameterized over WHICH texture, since there are two)
+ * replaces `textureLoad` for both `texA`/`texB` when `filterMode==1`. The LUT
+ * (`sampleLUT`) is always nearest, unaffected.
  *
  * ## Fullscreen triangle + Y-flip
  * Reuses the exact vertex stage `image.wgsl.ts`/`passthrough.wgsl.ts` use —
@@ -86,6 +97,7 @@ fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> VSOut {
 @group(0) @binding(14) var<uniform> u_bind4: vec4<f32>; // uvRect.xy, uvRect.wh
 @group(0) @binding(17) var<uniform> u_bind5: vec4<f32>; // modeId, split, alpha, diffSubmodeId
 @group(0) @binding(20) var<uniform> u_bind6: vec4<f32>; // diffCmapModeId, hdrOut, useColormap, unused
+@group(0) @binding(23) var<uniform> u_bind7: f32; // filterMode (0=nearest, 1=linear)
 
 // --- ported verbatim from image/tonemap.ts (see image.wgsl.ts's doc comment) ---
 
@@ -133,6 +145,28 @@ fn sampleLUT(valueUnit: f32) -> vec3<f32> {
   let idxF = clamp(valueUnit, 0.0, 1.0) * 255.0;
   let idx = clamp(i32(floor(idxF + 0.5)), 0, 255);
   return textureLoad(t_bind2, vec2<i32>(idx, 0), 0).rgb;
+}
+
+// Manual bilinear blend over EITHER source texture (texA or texB — see
+// image.wgsl.ts's sampleBilinearF doc comment for the full rationale; this
+// is parameterized over which texture since compare.wgsl.ts has two).
+fn sampleBilinearOf(tex: texture_2d<f32>, uv: vec2<f32>, dims: vec2<f32>) -> vec4<f32> {
+  let texel = uv * dims - vec2<f32>(0.5);
+  let base = floor(texel);
+  let frac = texel - base;
+  let maxX = i32(dims.x) - 1;
+  let maxY = i32(dims.y) - 1;
+  let x0 = clamp(i32(base.x), 0, maxX);
+  let x1 = clamp(i32(base.x) + 1, 0, maxX);
+  let y0 = clamp(i32(base.y), 0, maxY);
+  let y1 = clamp(i32(base.y) + 1, 0, maxY);
+  let c00 = textureLoad(tex, vec2<i32>(x0, y0), 0);
+  let c10 = textureLoad(tex, vec2<i32>(x1, y0), 0);
+  let c01 = textureLoad(tex, vec2<i32>(x0, y1), 0);
+  let c11 = textureLoad(tex, vec2<i32>(x1, y1), 0);
+  let top = mix(c00, c10, frac.x);
+  let bot = mix(c01, c11, frac.x);
+  return mix(top, bot, frac.y);
 }
 
 // image.wgsl.ts's fs_main body, factored out so it can run once per side.
@@ -185,15 +219,31 @@ fn diffChannel(a: f32, b: f32, mode: i32) -> f32 {
 fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   let uv = clamp(in.uv, vec2<f32>(0.0), vec2<f32>(0.999999));
   let uvRect = u_bind4;
-  let srcUV = clamp(uvRect.xy + uv * uvRect.zw, vec2<f32>(0.0), vec2<f32>(0.999999));
+  // Image-space UV, UNCLAMPED — Q18 (see image.wgsl.ts's doc comment). texA
+  // and texB share one uvRect/srcUV, so this is a single in/out-of-bounds
+  // decision for the whole fragment.
+  let rawSrcUV = uvRect.xy + uv * uvRect.zw;
+  if (rawSrcUV.x < 0.0 || rawSrcUV.x >= 1.0 || rawSrcUV.y < 0.0 || rawSrcUV.y >= 1.0) {
+    return vec4<f32>(0.0);
+  }
+  let srcUV = clamp(rawSrcUV, vec2<f32>(0.0), vec2<f32>(0.999999));
+  let filterLinear = u_bind7 > 0.5;
 
   let dimsA = vec2<f32>(textureDimensions(t_bind0));
-  let coordA = vec2<i32>(srcUV * dimsA);
-  let sampledA = textureLoad(t_bind0, coordA, 0);
+  var sampledA: vec4<f32>;
+  if (filterLinear) {
+    sampledA = sampleBilinearOf(t_bind0, srcUV, dimsA);
+  } else {
+    sampledA = textureLoad(t_bind0, vec2<i32>(srcUV * dimsA), 0);
+  }
 
   let dimsB = vec2<f32>(textureDimensions(t_bind1));
-  let coordB = vec2<i32>(srcUV * dimsB);
-  let sampledB = textureLoad(t_bind1, coordB, 0);
+  var sampledB: vec4<f32>;
+  if (filterLinear) {
+    sampledB = sampleBilinearOf(t_bind1, srcUV, dimsB);
+  } else {
+    sampledB = textureLoad(t_bind1, vec2<i32>(srcUV * dimsB), 0);
+  }
 
   let exposureEV = u_bind3.x;
   let operatorId = i32(round(u_bind3.y));
