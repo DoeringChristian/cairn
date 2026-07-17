@@ -23,6 +23,7 @@
  *    luminance (black on light, white on dark) with an opposite-colour halo.
  */
 import { useCallback, useEffect, useRef } from "react";
+import { useDevicePixelRatio } from "../hooks/use-device-pixel-ratio";
 
 /** A source pixel covering at least this many screen px triggers the overlay. */
 export const PIXEL_VALUE_MIN_SCREEN_PX = 30;
@@ -151,6 +152,13 @@ export default function PixelValueOverlay({
 }: PixelValueOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const activeRef = useRef(false);
+  // Q22 fix: self-contained dpr tracking (per this file's own convention —
+  // no external hook required of the host pane) so this overlay's own
+  // backing store stays crisp when `devicePixelRatio` changes without a
+  // container resize (e.g. dragging the window to a different-DPI display)
+  // — `draw()` below already re-reads `window.devicePixelRatio` fresh every
+  // call, it just needs a trigger to actually redraw.
+  const dpr = useDevicePixelRatio();
   const onActiveChangeRef = useRef(onActiveChange);
   onActiveChangeRef.current = onActiveChange;
   const reportActive = useCallback((active: boolean) => {
@@ -291,10 +299,10 @@ export default function PixelValueOverlay({
     ctx.restore(); // matches the ctx.save()/clip() above.
   }, [imageElRef, naturalWidth, naturalHeight, sample, notation, reportActive, sourceWindow]);
 
-  // Redraw on viewport / data / notation / mount changes.
+  // Redraw on viewport / data / notation / mount / dpr changes.
   useEffect(() => {
     draw();
-  }, [draw, zoom, pan.x, pan.y, version, notation, sourceWindow]);
+  }, [draw, zoom, pan.x, pan.y, version, notation, sourceWindow, dpr]);
 
   // Redraw on container resize (fit box changes -> pixel size changes).
   useEffect(() => {

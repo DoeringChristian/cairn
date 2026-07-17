@@ -54,7 +54,8 @@ import type { Device, Surface, Texture } from "../engine/types";
 import { getColormapLUT } from "../colormaps";
 import { loadImageData } from "../image";
 import { useImageViewport, type Viewport as ImageViewport } from "../hooks/use-image-viewport";
-import { screenPxPerTexel, viewportToUvRect } from "../renderers/GpuImagePane";
+import { useDevicePixelRatio } from "../hooks/use-device-pixel-ratio";
+import { computeCanvasDisplaySize, screenPxPerTexel, viewportToUvRect } from "../renderers/GpuImagePane";
 import PixelValueOverlay, {
   CHANNEL_COLORS,
   PIXEL_VALUE_MIN_SCREEN_PX,
@@ -163,6 +164,10 @@ export default function GpuComparePane({
   const refDataRef = useRef<ImageData | null>(null);
   const [pixelDataVersion, setPixelDataVersion] = useState(0);
 
+  // Q22 fix: same as `GpuImagePane` — the canvas backing store / surface
+  // track the on-screen display resolution x dpr, not the source images'.
+  const dpr = useDevicePixelRatio();
+
   // ---- device/surface acquisition (once) --------------------------------
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -250,6 +255,12 @@ export default function GpuComparePane({
       if (!primary) {
         setDims(null);
         setPixelDataVersion((v) => v + 1);
+        // Q22 fix: drop the explicit letterboxed CSS size — see
+        // `GpuImagePane`'s identical reset for the `imageUrl:null` case.
+        if (canvasRef.current) {
+          canvasRef.current.style.width = "";
+          canvasRef.current.style.height = "";
+        }
         return;
       }
       const uploadTex = (d: ImageData): Texture => {
@@ -266,11 +277,10 @@ export default function GpuComparePane({
       res.texA = uploadTex(ref ?? primary);
       res.texB = uploadTex(fg ?? primary);
 
-      const canvas = canvasRef.current!;
-      canvas.width = primary.width;
-      canvas.height = primary.height;
-      res.surface?.configure(primary.width, primary.height);
-
+      // Q22 fix: canvas backing-store / surface sizing is driven by the
+      // render-pass effect below (display resolution x dpr), NOT the source
+      // images' own resolution — no `canvas.width/height`/`surface.configure`
+      // here.
       setDims({ w: primary.width, h: primary.height });
       setPixelDataVersion((v) => v + 1);
       setUploadVersion((v) => v + 1);
@@ -300,11 +310,36 @@ export default function GpuComparePane({
     setOverlayWindow((prev) =>
       prev.x === rawUv.x && prev.y === rawUv.y && prev.w === rawUv.w && prev.h === rawUv.h ? prev : rawUv,
     );
+
+    // Q22 fix: size the canvas's OWN CSS box to the object-contain
+    // letterboxed display size within `box` (padding is 0 for this pane, so
+    // `box` doubles as the padding-free content box), then size the backing
+    // store / surface to that CSS size x `devicePixelRatio` — NOT the source
+    // images' resolution. Same fixed-CSS-box-across-zoom reasoning as
+    // `GpuImagePane`'s identical block (see that effect's doc comment).
+    const disp = computeCanvasDisplaySize(box, dims.w, dims.h);
+    const canvasEl = canvasRef.current;
+    if (disp.width > 0 && disp.height > 0 && canvasEl && r.surface) {
+      const cssW = Math.round(disp.width);
+      const cssH = Math.round(disp.height);
+      const cssWidthPx = `${cssW}px`;
+      const cssHeightPx = `${cssH}px`;
+      if (canvasEl.style.width !== cssWidthPx) canvasEl.style.width = cssWidthPx;
+      if (canvasEl.style.height !== cssHeightPx) canvasEl.style.height = cssHeightPx;
+      const backingW = Math.max(1, Math.round(cssW * dpr));
+      const backingH = Math.max(1, Math.round(cssH * dpr));
+      if (canvasEl.width !== backingW || canvasEl.height !== backingH) {
+        canvasEl.width = backingW;
+        canvasEl.height = backingH;
+        r.surface.configure(backingW, backingH);
+      }
+    }
+
     // Q20: same nearest/linear threshold GpuImagePane uses — see
-    // `screenPxPerTexel`'s doc comment. Uses the canvas's OWN rect (matches
-    // what `PixelValueOverlay` queries via `imageElRef={canvasRef}`), not
-    // `box`/paneEl.
-    const canvasBox = canvasRef.current ? canvasRef.current.getBoundingClientRect() : box;
+    // `screenPxPerTexel`'s doc comment. Uses the canvas's OWN (now
+    // display-resolution, Q22) box (matches what `PixelValueOverlay` queries
+    // via `imageElRef={canvasRef}`), not `box`/paneEl.
+    const canvasBox = disp.width > 0 ? disp : canvasEl ? canvasEl.getBoundingClientRect() : box;
     const filter: "nearest" | "linear" =
       screenPxPerTexel(rawUv, canvasBox, dims.w, dims.h) >= PIXEL_VALUE_MIN_SCREEN_PX ? "nearest" : "linear";
     const uv = rawUv;
@@ -350,6 +385,7 @@ export default function GpuComparePane({
     diffCmapMode,
     diffColormap,
     containerTick,
+    dpr,
   ]);
 
   // ---- metrics (recomputed on source change) ----------------------------
@@ -460,10 +496,19 @@ export default function GpuComparePane({
         onDoubleClick={resetViewport}
         data-gpu-compare-viewport
       >
-        <div className="relative w-full h-full">
+        <div className="relative w-full h-full flex items-center justify-center">
+          {/* Q22 fix: same as `GpuImagePane` — the canvas's CSS box is set
+              EXPLICITLY (inline style, in the render-pass effect) to the
+              object-contain-equivalent letterboxed size instead of relying
+              on `object-fit:contain` inferring it from the backing store's
+              aspect ratio (the backing store now tracks display resolution,
+              not the source images'); this flex-centered wrapper positions
+              it exactly where `object-contain` used to. Note: the split
+              divider below is positioned as a percentage of THIS wrapper's
+              full width (pre-existing behavior, unchanged by Q22). */}
           <canvas
             ref={canvasRef}
-            className="w-full h-full object-contain block"
+            className="w-full h-full block"
             style={{ imageRendering: imgRendering }}
             data-gpu-compare-canvas
           />

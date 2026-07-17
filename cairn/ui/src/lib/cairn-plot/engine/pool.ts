@@ -73,8 +73,34 @@ export interface PaneHandle {
    * cycles don't need the caller to re-supply it. If the pane is currently
    * live, uploads immediately; if parked, the upload is deferred to the next
    * `render()`/`restore()`.
+   *
+   * Q22 fix: this does NOT touch `canvas.width/height` or the surface's
+   * configured size — those are now driven exclusively by `resize()`, sized
+   * to the pane's ON-SCREEN display resolution, fully decoupled from the
+   * source image's own resolution (a 16x16 source image and a 4K source
+   * image render into the SAME backing-store size for a given on-screen
+   * pane). Previously this sized the canvas backing store to
+   * `src.width/height` directly — the source's native resolution — which
+   * the browser then CSS-upscaled to the pane's actual on-screen size,
+   * producing blurry edges and sub-pixel jitter on zoom/pan.
    */
   setSource(src: SourceUpload): void;
+  /**
+   * Size this pane's canvas backing store + WebGPU surface to
+   * `width x height` DEVICE pixels (i.e. already `displayCssSize * dpr` —
+   * callers, e.g. `GpuImagePane`, compute that from a `ResizeObserver` on the
+   * pane's container plus a `devicePixelRatio` watcher). Q22 fix: THIS, not
+   * `setSource()`, is what the canvas/surface resolution now tracks — the
+   * source image's resolution is irrelevant to how many device pixels the
+   * canvas backs; only what's actually on screen matters (bilinear/nearest
+   * sampling in the shader handles up- or down-sampling the source into
+   * however many pixels this allocates). No-op if `width`/`height` (rounded)
+   * match the current backing size. If the pane is currently live, resizes
+   * immediately (re-`configure`s the surface — a safe idempotent call, same
+   * as `webgpu/device.ts`'s `createSurface` doc note); if parked, the new
+   * size is retained and applied by the next `render()`/`restore()`.
+   */
+  resize(width: number, height: number): void;
   /**
    * Run the IMAGE render pass with `params` against the current source.
    * Auto-restores a parked pane first (marking it most-recently-used) and
@@ -129,6 +155,16 @@ interface PaneEntry {
   /** Last-reported on-screen visibility (`PaneHandle.setVisible`) — read by
    *  `evictOverCap` to prefer parking off-screen panes first. */
   visible: boolean;
+  /**
+   * Q22 fix: the canvas backing-store / surface size (DEVICE pixels, i.e.
+   * already display-css-size * dpr), as last requested via
+   * `PaneHandle.resize()`. 0 until the first `resize()` call — `activateEntry`
+   * falls back to the retained source's dimensions in that narrow window (a
+   * pane rendering before its container has ever been measured) so
+   * `Surface.configure()` never sees a zero size.
+   */
+  backingWidth: number;
+  backingHeight: number;
 }
 
 // Module-singleton LRU of currently-LIVE (non-parked) entries, oldest first.
@@ -197,10 +233,18 @@ function activateEntry(entry: PaneEntry): void {
   }
   const device = entry.device;
   entry.surface = device.createSurface(entry.canvas, { hdr: entry.hdr });
+  // Q22 fix: the backing store / surface are sized to the ON-SCREEN display
+  // resolution (`backingWidth/backingHeight`, set via `resize()`), NEVER the
+  // source image's own resolution — falls back to the source's dims only in
+  // the narrow window before the caller's first `resize()` call (e.g. a
+  // render requested before the pane's container has been measured), so
+  // `configure()` never sees a zero size.
+  const w = entry.backingWidth || entry.source?.width || 1;
+  const h = entry.backingHeight || entry.source?.height || 1;
+  entry.canvas.width = w;
+  entry.canvas.height = h;
+  entry.surface.configure(w, h);
   if (entry.source) {
-    entry.canvas.width = entry.source.width;
-    entry.canvas.height = entry.source.height;
-    entry.surface.configure(entry.source.width, entry.source.height);
     const tex = device.createTexture(entry.source.width, entry.source.height, entry.source.format);
     tex.write(entry.source.data);
     entry.srcTexture = tex;
@@ -247,16 +291,30 @@ function makeHandle(entry: PaneEntry): PaneHandle {
     setSource(src: SourceUpload): void {
       if (entry.disposed) return;
       entry.source = src;
+      // Q22 fix: no canvas/surface sizing here — that's `resize()`'s job now,
+      // driven by the pane's ON-SCREEN display size, not this source
+      // texture's own resolution.
       if (!entry.parked && entry.surface) {
-        entry.canvas.width = src.width;
-        entry.canvas.height = src.height;
-        entry.surface.configure(src.width, src.height);
         if (entry.srcTexture) entry.srcTexture.destroy();
         const tex = entry.device.createTexture(src.width, src.height, src.format);
         tex.write(src.data);
         entry.srcTexture = tex;
       }
       // Parked: the new source is picked up by the next activateEntry().
+    },
+    resize(width: number, height: number): void {
+      if (entry.disposed) return;
+      const w = Math.max(1, Math.round(width));
+      const h = Math.max(1, Math.round(height));
+      if (entry.backingWidth === w && entry.backingHeight === h) return;
+      entry.backingWidth = w;
+      entry.backingHeight = h;
+      if (!entry.parked && entry.surface) {
+        entry.canvas.width = w;
+        entry.canvas.height = h;
+        entry.surface.configure(w, h);
+      }
+      // Parked: picked up by the next activateEntry() (restore/render).
     },
     render(params: ImageParams): boolean {
       return attemptRender(entry, params);
@@ -307,6 +365,8 @@ export async function acquirePane(
     parked: true,
     disposed: false,
     visible: true,
+    backingWidth: 0,
+    backingHeight: 0,
   };
   return makeHandle(entry);
 }
