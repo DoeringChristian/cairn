@@ -1,5 +1,10 @@
 /**
- * GpuImagePane — the first LIVE on-screen WebGPU (RHI) image renderer (Task 6
+ * GpuImagePane — the WebGPU image BACKEND: one of two interchangeable image
+ * backends (see `CpuImagePane.tsx` for the CPU/2D-canvas other); both accept
+ * the shared `ImageBackendProps` union (`renderers/image-backend.ts`) and are
+ * chosen upstream by the render mode (`resolveRenderMode` — cpu | gpu | auto).
+ *
+ * Historically: the first LIVE on-screen WebGPU (RHI) image renderer (Task 6
  * of the WebGPU engine, Sub-project 1). Wraps `engine/image-engine.ts`'s
  * `renderImage()` (Task 5) + `engine/pool.ts`'s many-panes resource pool
  * behind the SAME prop shapes `ImagePane`/`HdrImagePane` already use, so the
@@ -76,14 +81,7 @@
  * cap-parked-but-visible pane always paints a live, correct frame.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type {
-  Colormap,
-  DiffMode,
-  ImageOverlayData,
-  ImageOverlaySettings,
-  ImageProcessing,
-  Interpolation,
-} from "../types";
+import type { Colormap } from "../types";
 import { applyColormap, DIVERGING_COLORMAPS } from "../colormaps";
 import { loadImageData, getCachedImageData, setCachedImageData } from "../image";
 import PixelAxes from "../primitives/PixelAxes";
@@ -101,91 +99,47 @@ import { useDevicePixelRatio } from "../hooks/use-device-pixel-ratio";
 import { acquirePane, releasePane, type PaneHandle, type SourceUpload } from "../engine/pool";
 import { getSharedDevice } from "../engine/device";
 import type { ImageOperator, ImageParams } from "../engine/image-engine";
-// C1 fix (whole-branch review) — the LEGACY CPU panes, used as the fallback
+// C1 fix (whole-branch review) — the CPU image BACKEND, used as the fallback
 // when the engine fails to activate/render (see `engineFailed` state below).
 // Safe to import here: this file only ever ships inside the gpu-image ADDON
 // bundle (`vite.plot-gpu-image.config.ts`), never `core.iife.js` — the
 // core-bundle guard is about core staying free of the ENGINE, not about the
-// addon avoiding a duplicate copy of these already-tiny CPU renderers.
-import ImagePane from "./ImagePane";
-import HdrImagePane from "./HdrImagePane";
+// addon avoiding a duplicate copy of the already-tiny CPU renderer.
+import CpuImagePane from "./CpuImagePane";
 import PlotToolbar from "../primitives/PlotToolbar";
 import {
   useImageController,
   IMAGE_TOOLBAR_CONFIG,
   notationToolbarButton,
 } from "./use-image-controller";
+import {
+  isHdrProps,
+  type HdrData,
+  type HdrGpuImagePaneProps,
+  type SdrGpuImagePaneProps,
+  type ImageBackend,
+  type ImageBackendProps,
+} from "./image-backend";
 
-// ---------------------------------------------------------------------------
-// HDR data contract — mirrors `HdrImagePane.tsx`'s `HdrData` exactly (kept
-// as a separate local type so this file has no import-cycle onto
-// HdrImagePane; the SHAPE is identical, and callers already producing one
-// (via `parseNpy`) satisfy the other with no adapter).
-// ---------------------------------------------------------------------------
-export interface HdrData {
-  data: Float64Array | Float32Array;
-  shape: number[];
-  dtype: string;
-}
+// The shared backend prop contract now lives in `renderers/image-backend.ts`
+// (ONE place both interchangeable backends import it from). Re-exported here
+// under the historical names so existing importers keep working.
+export type { HdrData, HdrGpuImagePaneProps, SdrGpuImagePaneProps };
 
-export interface HdrGpuImagePaneProps {
-  hdr: HdrData;
-  tonemap?: string;
-  exposure?: number;
-  gamma?: number;
-  showAxes?: boolean;
-  label?: string;
-  interpolation?: Interpolation;
-  zoom?: number;
-  pan?: { x: number; y: number };
-  onViewportChange?: (v: ImageViewport) => void;
-  pixelValueNotation?: PixelValueNotation;
-}
-
-export interface SdrGpuImagePaneProps {
-  imageUrl: string | null;
-  baselineUrl?: string | null;
-  isBaseline?: boolean;
-  diffMode?: "none" | DiffMode;
-  interpolation?: Interpolation;
-  colormap?: Colormap;
-  showAxes?: boolean;
-  processing?: ImageProcessing;
-  zoom?: number;
-  pan?: { x: number; y: number };
-  onViewportChange?: (v: ImageViewport) => void;
-  onNaturalSize?: (w: number, h: number) => void;
-  label: string;
-  isDraggable?: boolean;
-  onDragStart?: (e: React.DragEvent) => void;
-  className?: string;
-  overlay?: ImageOverlayData;
-  overlaySettings?: ImageOverlaySettings;
-  pixelValueNotation?: PixelValueNotation;
-}
-
-export type GpuImagePaneProps = HdrGpuImagePaneProps | SdrGpuImagePaneProps;
+export type GpuImagePaneProps = ImageBackendProps;
 
 /**
- * The formalized prop CONTRACT shared between the two interchangeable
- * image-pane implementations this codebase ships: the LEGACY CPU/2D-canvas
- * pane (`ImagePane`/`HdrImagePane`) and this WebGPU engine pane
- * (`GpuImagePane`). `plot-renderers.tsx`'s `resolveImageRenderer` is the
- * capability-gated seam that picks ONE implementation per mount — the
- * WebGPU-or-legacy-CPU-pane fallback boundary (see
+ * The formalized prop CONTRACT shared between the two interchangeable image
+ * BACKENDS this codebase ships: the CPU/2D-canvas backend (`CpuImagePane`)
+ * and this WebGPU engine backend (`GpuImagePane`).
+ * `plot-renderers.tsx`'s `resolveImageRenderer(mode)` is the render-mode seam
+ * that picks ONE backend per mount — the WebGPU-or-CPU fallback boundary (see
  * `docs/superpowers/specs/2026-07-16-webgpu-engine-design.md`) — and both
- * sides accept this same shape (`ImagePaneProps`/`HdrImagePaneProps` are the
- * legacy panes' own required-field-stricter version of the same two prop
- * shapes), so the swap is prop-compatible. Exported as a TYPE ONLY — core
- * files (`plot-renderers.tsx`) import just this type, never a value, from
- * this file, so the bundle guard (core stays free of the engine's runtime
- * code) holds even though core reasons about the contract's shape.
+ * sides accept this same shape, so the swap is prop-compatible. Kept as a
+ * TYPE-only alias of `image-backend.ts`'s `ImageBackendProps` for existing
+ * importers; new code should import from `image-backend.ts` directly.
  */
 export type ImageRenderProps = GpuImagePaneProps;
-
-function isHdrProps(p: GpuImagePaneProps): p is HdrGpuImagePaneProps {
-  return "hdr" in p && p.hdr != null;
-}
 
 const OPERATORS: readonly ImageOperator[] = ["linear", "srgb", "reinhard", "aces"];
 function toOperator(name: string | undefined): ImageOperator {
@@ -774,50 +728,18 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
   const isDraggable = hdrMode ? false : ((props as SdrGpuImagePaneProps).isDraggable ?? false);
   const onDragStart = hdrMode ? undefined : (props as SdrGpuImagePaneProps).onDragStart;
 
-  // C1 fix (whole-branch review) — engine bailout: the GPU pane self-heals to
-  // the LEGACY CPU pane on any activation/render hard failure, using the
-  // SAME props (`HdrGpuImagePaneProps`/`SdrGpuImagePaneProps` mirror
-  // `HdrImagePaneProps`/`ImagePaneProps` exactly — see this file's module
-  // doc), so the image still renders — never a blank card. Placed after
-  // every hook above runs unconditionally (rules-of-hooks) but before this
-  // component paints its own GPU canvas.
+  // C1 fix (whole-branch review) — engine bailout: the GPU backend self-heals
+  // to the CPU backend (`CpuImagePane`) on any activation/render hard
+  // failure. Both backends accept the SAME `ImageBackendProps` union (see
+  // `renderers/image-backend.ts`), so the props forward verbatim and the
+  // image still renders — never a blank card. Placed after every hook above
+  // runs unconditionally (rules-of-hooks) but before this component paints
+  // its own GPU canvas.
   if (engineFailed) {
     return hdrMode ? (
-      <HdrImagePane
-        hdr={(props as HdrGpuImagePaneProps).hdr}
-        tonemap={(props as HdrGpuImagePaneProps).tonemap}
-        exposure={(props as HdrGpuImagePaneProps).exposure}
-        gamma={(props as HdrGpuImagePaneProps).gamma}
-        showAxes={showAxes}
-        label={label}
-        interpolation={interpolation}
-        zoom={props.zoom}
-        pan={props.pan}
-        onViewportChange={onViewportChange}
-        pixelValueNotation={props.pixelValueNotation}
-      />
+      <CpuImagePane {...(props as HdrGpuImagePaneProps)} />
     ) : (
-      <ImagePane
-        imageUrl={(props as SdrGpuImagePaneProps).imageUrl}
-        baselineUrl={(props as SdrGpuImagePaneProps).baselineUrl ?? null}
-        isBaseline={(props as SdrGpuImagePaneProps).isBaseline}
-        diffMode={(props as SdrGpuImagePaneProps).diffMode ?? "none"}
-        interpolation={interpolation}
-        colormap={sdrColormap}
-        showAxes={showAxes}
-        processing={(props as SdrGpuImagePaneProps).processing}
-        zoom={props.zoom}
-        pan={props.pan}
-        onViewportChange={onViewportChange}
-        onNaturalSize={(props as SdrGpuImagePaneProps).onNaturalSize}
-        label={label}
-        isDraggable={isDraggable}
-        onDragStart={onDragStart}
-        className={(props as SdrGpuImagePaneProps).className}
-        overlay={overlay}
-        overlaySettings={overlaySettings}
-        pixelValueNotation={props.pixelValueNotation}
-      />
+      <CpuImagePane {...(props as SdrGpuImagePaneProps)} />
     );
   }
 
@@ -906,3 +828,8 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
     </div>
   );
 }
+
+// Compile-time contract check: GpuImagePane implements the shared backend
+// interface (`renderers/image-backend.ts`) — interchangeable with CpuImagePane.
+const _backendCheck: ImageBackend = GpuImagePane;
+void _backendCheck;

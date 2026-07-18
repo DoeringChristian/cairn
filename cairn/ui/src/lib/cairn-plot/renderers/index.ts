@@ -10,6 +10,17 @@ export {
   type ParallelCoordsProps,
 } from "./ParallelCoords";
 export { default as ScalarPlot, type ScalarPlotProps } from "./ScalarPlot";
+// The unified CPU image backend + the shared backend contract. `ImagePane`/
+// `HdrImagePane` below are thin compatibility shims over `CpuImagePane`
+// (`toolbar={false}` legacy chrome) — see `image-backend.ts`'s module doc.
+export { default as CpuImagePane, type CpuImagePaneProps } from "./CpuImagePane";
+export {
+  isHdrProps,
+  resolveRenderMode,
+  type ImageBackend,
+  type ImageBackendProps,
+  type RenderMode,
+} from "./image-backend";
 export { default as ImagePane, type ImagePaneProps } from "./ImagePane";
 export {
   default as HdrImagePane,

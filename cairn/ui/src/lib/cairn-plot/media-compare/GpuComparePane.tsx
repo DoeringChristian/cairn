@@ -69,11 +69,13 @@ import PixelValueOverlay, {
 // gpu-image ADDON bundle (`vite.plot-gpu-image.config.ts`), never
 // `core.iife.js` — the core-bundle guard is about core staying free of the
 // ENGINE, not about the addon avoiding a duplicate copy of these already-tiny
-// CPU renderers. `MediaComparePane` is imported as a VALUE from `./compositor`
-// — that file only imports THIS file's `GpuComparePaneProps` as a TYPE
-// (`import type`), which TS/esbuild fully erase, so this is not a runtime
-// import cycle.
-import ImagePane from "../renderers/ImagePane";
+// CPU renderers. The diff fallback self-heals to `CpuImagePane` (the unified
+// CPU image backend — same `ImageBackendProps` contract as `GpuImagePane`,
+// see `renderers/image-backend.ts`). `MediaComparePane` is imported as a
+// VALUE from `./compositor` — that file only imports THIS file's
+// `GpuComparePaneProps` as a TYPE (`import type`), which TS/esbuild fully
+// erase, so this is not a runtime import cycle.
+import CpuImagePane from "../renderers/CpuImagePane";
 import { MediaComparePane } from "./compositor";
 import PlotToolbar from "../primitives/PlotToolbar";
 import {
@@ -149,7 +151,7 @@ export default function GpuComparePane({
   // C1 fix (whole-branch review): true once the engine has definitively
   // failed to activate or render this compare pane (a hard GPU-init/render
   // failure). Once set, this component permanently renders the LEGACY
-  // compare pane (`MediaComparePane` for split/blend, `ImagePane` for diff)
+  // compare pane (`MediaComparePane` for split/blend, `CpuImagePane` for diff)
   // instead of the GPU canvas — see the bailout branch near the bottom of
   // this component's render body. A pane never blanks.
   const [engineFailed, setEngineFailed] = useState(false);
@@ -486,7 +488,7 @@ export default function GpuComparePane({
   if (engineFailed) {
     if (mode === "diff") {
       return (
-        <ImagePane
+        <CpuImagePane
           imageUrl={imageUrl}
           baselineUrl={baselineUrl}
           diffMode={diffSubmode ?? "signed"}
