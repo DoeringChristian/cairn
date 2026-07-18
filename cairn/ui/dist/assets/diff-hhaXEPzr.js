@@ -1,4 +1,4 @@
-import{u as oc,r as Te,j as _n,C as lc,a8 as cc}from"./index-Bev6sgJs.js";/**
+import{u as oc,r as Te,j as _n,C as lc,a2 as cc}from"./index-CSCPnVC4.js";/**
  * @license
  * Copyright 2010-2026 Three.js Authors
  * SPDX-License-Identifier: MIT
