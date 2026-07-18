@@ -22,6 +22,7 @@ import { loadImageData } from "../image";
 import type { MediaCompareModeKind } from "./mode";
 import { alignFrameSourcesForDiff } from "./cross-type-align";
 import type { GpuComparePaneProps } from "./GpuComparePane";
+import { resolveRenderMode } from "../renderers/image-backend";
 
 declare global {
   interface Window {
@@ -61,6 +62,14 @@ const GPU_IMAGE_READY_EVENT = "cairn-plot:gpu-image-ready";
  */
 function resolveGpuComparePane(): ((props: GpuComparePaneProps) => JSX.Element | null) | null {
   if (typeof window === "undefined") return null;
+  // Honor the user-settable render mode (cpu | gpu | auto — same seam as
+  // `resolveImageRenderer`): "cpu" forces the legacy CPU compare path; "gpu"
+  // forces the engine pane when registered (outranking the opt-in flag, like
+  // the image seam — unavailable falls through to CPU); "auto" keeps the
+  // flag-gated default.
+  const mode = resolveRenderMode();
+  if (mode === "cpu") return null;
+  if (mode === "gpu") return window.__cairnPlotGpuComparePane ?? null;
   if (window.__cairnPlotUseGpuImage !== true) return null;
   return window.__cairnPlotGpuComparePane ?? null;
 }
