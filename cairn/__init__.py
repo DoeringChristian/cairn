@@ -2,43 +2,107 @@
 
 from __future__ import annotations
 
+import importlib
+from typing import TYPE_CHECKING
+
 __version__ = "0.1.0"
 
-# Top-level API (re-exports from cairn.sdk).
+# `configure` is light (only ``cairn.config`` — stdlib + platformdirs/tomli_w)
+# and part of the very first line of most scripts, so it stays eager.
 from .config import configure  # noqa: E402
-from .sdk import handlers  # noqa: E402, F401  - registers built-in handlers
-from .sdk.handlers.registry import register_handler  # noqa: E402
-from .sdk.run import Run  # noqa: E402
-from .sdk.plugins import (  # noqa: E402
-    JSPlugin,
-    PythonPlugin,
-    ServerPlugin,
-    WindowPlugin,
-)
-from .sdk.reader import Reader  # noqa: E402
-from .sdk.run import ArtifactVersion  # noqa: E402
-from . import plot  # noqa: E402, F401  - cairn.plot.* helpers (plotly imports stay lazy)
-from .sdk.report import Report  # noqa: E402
 
-from .sdk.wrappers import (  # noqa: E402
-    Artifact,
-    Audio,
-    Boxes3D,
-    BVH,
-    Figure,
-    Histogram,
-    Html,
-    Image,
-    Markdown,
-    Mesh,
-    Octree,
-    PointCloud,
-    Table,
-    Tensor,
-    Text,
-    Video,
-    Volume,
-)
+# ---------------------------------------------------------------------------
+# Lazy top-level surface (PEP 562).
+#
+# Everything else — ``Run``/``Reader``/``Report``, the plugin + wrapper
+# classes, ``cairn.plot`` — is loaded on first attribute access rather than at
+# ``import cairn``. This keeps ``import cairn`` (and therefore importing any
+# ``cairn.sdk.*`` submodule, which runs THIS package initializer) from eagerly
+# pulling the server/run/transport/handler graph — the P2 cairn-plot packaging
+# requirement that the pure ``cairn.plot`` modules stay app-decoupled (proven
+# by ``tests/unit/test_plot_import_purity.py``). The public behaviour is
+# unchanged: ``cairn.Run``, ``cairn.plot``, ``cairn.Image`` … all still resolve.
+#
+# Handler registration is a side effect of importing ``cairn.sdk.run`` (which
+# imports the handlers package) — so any tracking path still registers the
+# built-ins; ``log_artifact`` below imports them explicitly for its no-Run path.
+# ---------------------------------------------------------------------------
+
+_LAZY_ATTRS: dict[str, str] = {
+    "Run": ".sdk.run",
+    "ArtifactVersion": ".sdk.run",
+    "Reader": ".sdk.reader",
+    "register_handler": ".sdk.handlers.registry",
+    "Report": ".sdk.report",
+    "JSPlugin": ".sdk.plugins",
+    "PythonPlugin": ".sdk.plugins",
+    "ServerPlugin": ".sdk.plugins",
+    "WindowPlugin": ".sdk.plugins",
+    "Artifact": ".sdk.wrappers",
+    "Audio": ".sdk.wrappers",
+    "Boxes3D": ".sdk.wrappers",
+    "BVH": ".sdk.wrappers",
+    "Figure": ".sdk.wrappers",
+    "Histogram": ".sdk.wrappers",
+    "Html": ".sdk.wrappers",
+    "Image": ".sdk.wrappers",
+    "Markdown": ".sdk.wrappers",
+    "Mesh": ".sdk.wrappers",
+    "Octree": ".sdk.wrappers",
+    "PointCloud": ".sdk.wrappers",
+    "Table": ".sdk.wrappers",
+    "Tensor": ".sdk.wrappers",
+    "Text": ".sdk.wrappers",
+    "Video": ".sdk.wrappers",
+    "Volume": ".sdk.wrappers",
+}
+
+if TYPE_CHECKING:  # static-analysis only — never executed, never eager at runtime.
+    from . import plot as plot
+    from .sdk.plugins import JSPlugin, PythonPlugin, ServerPlugin, WindowPlugin
+    from .sdk.reader import Reader
+    from .sdk.report import Report
+    from .sdk.run import ArtifactVersion, Run
+    from .sdk.handlers.registry import register_handler
+    from .sdk.wrappers import (
+        Artifact,
+        Audio,
+        Boxes3D,
+        BVH,
+        Figure,
+        Histogram,
+        Html,
+        Image,
+        Markdown,
+        Mesh,
+        Octree,
+        PointCloud,
+        Table,
+        Tensor,
+        Text,
+        Video,
+        Volume,
+    )
+
+
+def __getattr__(name: str):
+    """PEP 562 lazy loader for the top-level API (see module docstring)."""
+    if name == "plot":
+        module = importlib.import_module(".plot", __name__)
+        globals()["plot"] = module
+        return module
+    target = _LAZY_ATTRS.get(name)
+    if target is not None:
+        module = importlib.import_module(target, __name__)
+        value = getattr(module, name)
+        globals()[name] = value  # cache — subsequent lookups skip __getattr__
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(__all__)
+
 
 __all__ = [
     "__version__",
@@ -87,10 +151,13 @@ def log_artifact(
     aliases: list[str] | None = None,
 ) -> "ArtifactVersion | None":
     """Upload an artifact version outside a run context."""
-    import hashlib
-
     from .config import resolve_target
+    # Import the handlers PACKAGE (not just the registry) so the built-in type
+    # handlers are registered — the no-Run path can't rely on `cairn.sdk.run`
+    # having been imported to do it.
+    from .sdk import handlers as _handlers  # noqa: F401
     from .sdk.handlers.registry import default_registry
+    from .sdk.run import ArtifactVersion
 
     target = resolve_target(repo=repo)
     if target.is_local:
@@ -143,6 +210,8 @@ def log_artifact(
 
 def load_artifact(ref: str, *, project: str, repo=None, cache: bool = True):
     """Download and return artifact bytes/deserialized object."""
+    from .sdk.reader import Reader
+
     reader = Reader(repo=repo, cache=cache)
     try:
         project_id = project.lower().replace(" ", "-")
@@ -153,6 +222,8 @@ def load_artifact(ref: str, *, project: str, repo=None, cache: bool = True):
 
 def list_artifacts(*, project: str, type: str | None = None, repo=None) -> list[dict]:
     """List artifact families in a project."""
+    from .sdk.reader import Reader
+
     reader = Reader(repo=repo)
     try:
         return reader.artifact_families(project, type=type)

@@ -50,15 +50,11 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from .sdk.card_spec import (
-    CardSettingsSpec,
-    CardSpec,
-    ImageDataSpec,
-    InlineDataSpec,
-    PlotSpec,
-    SeriesRef,
-)
-from .sdk.elements import CardElement, HtmlElement, PlotElement
+# App-card models stay in card_spec; the plot-descriptor models are factored
+# into the pure cairn.sdk.plot_spec (P2-M1 packaging split).
+from .sdk.card_spec import CardSettingsSpec, CardSpec, SeriesRef
+from .sdk.elements import CardElement
+from .sdk.plot_elements import HtmlElement, PlotElement
 from .sdk.plot_components import (
     Bar,
     Boxes,
@@ -78,9 +74,18 @@ from .sdk.plot_components import (
     Shared,
     Table,
     Volume,
+    register_data_ref_type as _register_data_ref_type,
 )
+from .sdk.plot_report import PlotReport as Report
+from .sdk.plot_spec import ImageDataSpec, InlineDataSpec, PlotSpec
 from .sdk.reader import ArtifactInfo, DataRef
-from .sdk.report import PlotReport as Report
+
+# Wire the DataRef seam (packaging spec §4): teach the pure plot components to
+# recognize a cairn ``run[tag]`` handle without importing cairn.sdk.reader
+# themselves. This is the app-layer glue that keeps ``cp.Line(run["loss"])`` &
+# friends working identically while ``import cairn.sdk.plot_components`` stays
+# pure for the standalone cairn-plot package (M2).
+_register_data_ref_type(DataRef)
 
 # The app's categorical series palette — mirrors `SERIES_COLORS` in
 # `cairn/ui/src/lib/cairn-plot/types.ts` so a Python-emitted scalar plot uses

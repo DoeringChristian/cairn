@@ -30,9 +30,36 @@ import html as _html
 import logging
 from typing import Any, Sequence
 
-from .reader import DataRef
-
 log = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# DataRef seam (packaging spec §4 / P2-M1).
+#
+# The pure plot components must not import cairn's reader (``cairn.sdk.reader``
+# pulls in run/wal/local/transport/server). A ``run[tag]`` handle is instead
+# recognized through a small registry the cairn app-layer populates:
+# ``cairn/plot.py`` calls :func:`register_data_ref_type(DataRef)` at import, so
+# ``_is_data_ref(run[tag])`` is True in the normal ``import cairn.plot`` flow
+# while a STANDALONE ``import cairn.sdk.plot_components`` (no cairn.plot) stays
+# pure — standalone users pass raw data (numpy/PIL/bytes), never a DataRef.
+# ---------------------------------------------------------------------------
+
+_DATA_REF_TYPES: tuple[type, ...] = ()
+
+
+def register_data_ref_type(cls: type) -> None:
+    """Register a concrete ``run[tag]`` handle type (cairn's ``DataRef``) so the
+    pure components recognize it via :func:`_is_data_ref` without importing
+    ``cairn.sdk.reader``. Idempotent."""
+    global _DATA_REF_TYPES
+    if cls not in _DATA_REF_TYPES:
+        _DATA_REF_TYPES = _DATA_REF_TYPES + (cls,)
+
+
+def _is_data_ref(obj: Any) -> bool:
+    """Whether ``obj`` is a registered ``run[tag]`` handle (a cairn ``DataRef``).
+    Always ``False`` in a standalone (no-cairn.plot) import — raw data only."""
+    return bool(_DATA_REF_TYPES) and isinstance(obj, _DATA_REF_TYPES)
 
 # The compare compositor's one-pane modes (mirrors `_COMPARE_MODES` in
 # `cairn/plot.py`); `"side"` lowers to a 2-cell Grid, the rest to a compare node.
@@ -157,8 +184,8 @@ class Component:
 
         A leaf lowers to the flat ``PlotSpec`` (legacy-flat render path);
         a container lowers to the recursive ``PlotDescriptorSpec`` tree."""
-        from .card_spec import PlotDescriptorSpec, PlotSpec
-        from .elements import PlotElement
+        from .plot_elements import PlotElement
+        from .plot_spec import PlotDescriptorSpec, PlotSpec
 
         node = self.to_node()
         store = self._collect_store()
@@ -265,7 +292,7 @@ class Line(Component):
         )
 
         _check_data_mode(data_mode)
-        if isinstance(y, DataRef):
+        if _is_data_ref(y):
             series = [_scalar_series_from_ref(y)]
             self._source: Any = y
             self._data_mode = data_mode
@@ -460,7 +487,7 @@ class Heatmap(Component):
         from ..plot import _check_data_mode, _heatmap_matrix_from_raw
 
         _check_data_mode(data_mode)
-        if isinstance(z, DataRef):
+        if _is_data_ref(z):
             arr = z.run.artifact(z.tag, step=z.step)
             matrix = _heatmap_matrix_from_raw(arr)
             self._source: Any = z
@@ -540,7 +567,7 @@ class Figure(Component):
         )
 
         _check_data_mode(data_mode)
-        if isinstance(data, DataRef):
+        if _is_data_ref(data):
             fig_json = _figure_json_from_ref(data)
             self._source: Any = data
             self._data_mode = data_mode
@@ -574,7 +601,7 @@ class Table(Component):
         )
 
         _check_data_mode(data_mode)
-        if isinstance(data, DataRef):
+        if _is_data_ref(data):
             tbl = _table_json_from_ref(data)
             self._source: Any = data
             self._data_mode = data_mode
@@ -847,7 +874,7 @@ class Image(Component):
             pixel_value_notation=pixel_value_notation,
         )
 
-        if isinstance(data, DataRef):
+        if _is_data_ref(data):
             ai = _artifact_info_of(data)
             hash_ = ai.hash
             mime = ai.mime_type or "image/png"
@@ -967,7 +994,7 @@ class PointCloud(Component):
         if camera_mode is not None:
             self._props["cameraMode"] = camera_mode
 
-        if isinstance(data, DataRef):
+        if _is_data_ref(data):
             ai = _artifact_info_of(data)
             hash_ = ai.hash
             meta = _parse_meta(ai.metadata)
@@ -1112,7 +1139,7 @@ class Mesh(Component):
         if camera_mode is not None:
             self._props["cameraMode"] = camera_mode
 
-        if isinstance(vertices, DataRef):
+        if _is_data_ref(vertices):
             ai = _artifact_info_of(vertices)
             hash_ = ai.hash
             meta = _parse_meta(ai.metadata)
@@ -1248,7 +1275,7 @@ class Volume(Component):
         if camera_mode is not None:
             self._props["cameraMode"] = camera_mode
 
-        if isinstance(grid, DataRef):
+        if _is_data_ref(grid):
             ai = _artifact_info_of(grid)
             hash_ = ai.hash
             meta = _parse_meta(ai.metadata)
@@ -1369,7 +1396,7 @@ class Boxes(Component):
         if camera_mode is not None:
             self._props["cameraMode"] = camera_mode
 
-        if isinstance(mins, DataRef):
+        if _is_data_ref(mins):
             ai = _artifact_info_of(mins)
             hash_ = ai.hash
             meta = _parse_meta(ai.metadata)
