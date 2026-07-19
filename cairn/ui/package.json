@@ -13,6 +13,8 @@
     "gen:plot-schema": "node scripts/gen-plot-spec-schema.mjs",
     "check:plot-schema": "node scripts/check-plot-spec-schema.mjs",
     "build:plot-inline": "vite build --config vite.plot-figure.config.ts && vite build --config vite.plot-three.config.ts && vite build --config vite.plot-gpu-image.config.ts && vite build --config vite.plot-core.config.ts",
+    "sync:plot-assets": "node scripts/sync-plot-assets.mjs",
+    "check:plot-assets": "node scripts/sync-plot-assets.mjs --check",
     "smoke:plot": "node scripts/smoke-plot-gallery.mjs"
   },
   "dependencies": {
