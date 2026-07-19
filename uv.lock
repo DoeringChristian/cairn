@@ -11,6 +11,12 @@ resolution-markers = [
     "python_full_version < '3.11'",
 ]
 
+[manifest]
+members = [
+    "cairn-plot",
+    "cairn-track",
+]
+
 [[package]]
 name = "aiohappyeyeballs"
 version = "2.6.1"
@@ -301,10 +307,36 @@ wheels = [
 ]
 
 [[package]]
+name = "cairn-plot"
+version = "0.1.0"
+source = { editable = "packages/cairn-plot" }
+dependencies = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "pydantic" },
+]
+
+[package.optional-dependencies]
+media = [
+    { name = "pillow" },
+    { name = "plotly" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "numpy", specifier = ">=1.24" },
+    { name = "pillow", marker = "extra == 'media'", specifier = ">=10.0.0" },
+    { name = "plotly", marker = "extra == 'media'", specifier = ">=5.18" },
+    { name = "pydantic", specifier = ">=2.0" },
+]
+provides-extras = ["media"]
+
+[[package]]
 name = "cairn-track"
 version = "0.1.1"
 source = { editable = "." }
 dependencies = [
+    { name = "cairn-plot" },
     { name = "click" },
     { name = "fastapi" },
     { name = "httpx" },
@@ -366,6 +398,7 @@ plugins = [
 [package.metadata]
 requires-dist = [
     { name = "aiortc", marker = "extra == 'plugins'", specifier = ">=1.9" },
+    { name = "cairn-plot", editable = "packages/cairn-plot" },
     { name = "click", specifier = ">=8.1.0" },
     { name = "datasets", marker = "extra == 'hf'", specifier = ">=2.18" },
     { name = "fastapi", specifier = ">=0.110.0" },

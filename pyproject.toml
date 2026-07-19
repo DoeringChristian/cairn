@@ -18,6 +18,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
+    "cairn-plot",
     "fastapi>=0.110.0",
     "uvicorn[standard]>=0.27.0",
     "pydantic>=2.0",
@@ -80,6 +81,15 @@ cairn = "cairn.cli:main"
 
 [project.urls]
 Repository = "https://github.com/anthropics/cairn"
+
+# The cairn-plot rendering library is developed in-repo as a uv workspace member
+# (packaging spec §2). In dev it resolves from the local checkout; on release it
+# pins `cairn-plot>=0.1,<0.2`.
+[tool.uv.workspace]
+members = ["packages/cairn-plot"]
+
+[tool.uv.sources]
+cairn-plot = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]
