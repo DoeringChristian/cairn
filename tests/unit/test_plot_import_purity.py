@@ -70,6 +70,15 @@ import cairn.sdk._plot_bundle
 print(json.dumps(sorted(sys.modules)))
 """
 
+# The standalone package (`import cairn_plot`) must load NO ``cairn.*`` modules
+# at all — it is the wheel a bare ``pip install cairn-plot`` ships, with no
+# cairn-track in the environment (packaging spec §M2 gate).
+_SUBPROCESS_STANDALONE = r"""
+import json, sys
+import cairn_plot
+print(json.dumps(sorted(m for m in sys.modules if m == "cairn" or m.startswith("cairn."))))
+"""
+
 
 def _loaded_modules() -> list[str]:
     """Import the pure modules in a fresh interpreter and return its
@@ -124,3 +133,24 @@ def test_pure_modules_all_present() -> None:
     loaded = set(_loaded_modules())
     missing = [m for m in _PURE_MODULES if m not in loaded]
     assert not missing, f"pure modules failed to load in the subprocess: {missing}"
+
+
+def test_standalone_cairn_plot_imports_no_cairn_modules() -> None:
+    """``import cairn_plot`` (the standalone wheel) must pull in ZERO ``cairn.*``
+    modules — it is installable and usable with no cairn-track present."""
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(
+        [str(_REPO_ROOT), env.get("PYTHONPATH", "")]
+    ).rstrip(os.pathsep)
+    proc = subprocess.run(
+        [sys.executable, "-c", _SUBPROCESS_STANDALONE],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert proc.returncode == 0, f"importing cairn_plot failed:\n{proc.stderr}"
+    cairn_modules = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert not cairn_modules, (
+        "importing the standalone cairn_plot package pulled in cairn.* modules "
+        f"(the split leaked): {cairn_modules}"
+    )

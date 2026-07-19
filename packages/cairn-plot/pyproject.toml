@@ -1,0 +1,52 @@
+[project]
+name = "cairn-plot"
+version = "0.1.0"
+description = "Standalone, Plotly-shaped plotting library — self-contained offline HTML plots and reports, no server required."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Cairn contributors" }]
+keywords = ["plotting", "visualization", "notebook", "plotly", "offline"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Visualization",
+]
+dependencies = [
+    "numpy>=1.24",
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+# Plotly + Pillow are needed only for the figure recipes / raw-image baking;
+# the core 2D/3D composables and reports work with numpy + pydantic alone.
+media = [
+    "plotly>=5.18",
+    "pillow>=10.0.0",
+]
+
+[project.urls]
+Repository = "https://github.com/anthropics/cairn"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cairn_plot"]
+# The JS/CSS renderer bundles are the package's canonical payload (packaging
+# spec §5) — ship them as package data (kept in sync from cairn/ui/dist by
+# cairn/ui/scripts/sync-plot-assets.mjs).
+artifacts = ["src/cairn_plot/_assets/**/*"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/",
+    "README.md",
+    "pyproject.toml",
+]
