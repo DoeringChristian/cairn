@@ -1,4 +1,4 @@
-import { useId, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useId, useMemo, useState, type ReactNode } from "react";
 import type { ParallelColumn, ParallelRow } from "../types";
 import { normalizeValue } from "../transforms/normalize";
 import { viridis } from "../colormaps/viridis";
@@ -10,7 +10,8 @@ import { TickText, AxisTitle } from "../primitives/Axis";
 import { pointerAnchor, type TooltipAnchor } from "../primitives/tooltip-position";
 import type { ChartCapabilities } from "../viewport/use-chart-viewport";
 import PlotToolbar from "../primitives/PlotToolbar";
-import type { PlotController } from "../controls/types";
+import type { PlotController, ToPNGOptions } from "../controls/types";
+import { plotToPng, type PlotToPngOptions } from "../primitives/plot-to-png";
 
 /**
  * Parallel-coordinates deliberately opts OUT of the shared chart-zoom (no
@@ -67,9 +68,30 @@ export default function ParallelCoords({
   const { ref: containerRef, size } = useContainerSize();
 
   // ParallelCoords opts out of the shared 2D viewport (see the module comment),
-  // so it exposes a REDUCED controller: only the screenshot button is capable;
-  // every zoom/pan/reset flag is false, so the toolbar collapses to just the
-  // download-PNG placeholder (per-axis brushing arrives in a later slice).
+  // so it exposes a REDUCED but HONEST controller. The one thing it can
+  // genuinely do is a client-side PNG export: `plotToPng` rasterizes the `<svg>`
+  // under the root, so `screenshot` is truly capable and the camera button
+  // downloads the PC chart. Every other capability is honestly `false`:
+  //   - zoom/pan/boxZoom/autoscale: no shared 2D viewport here (per-axis 1D
+  //     scales have no single 2D domain — see the module comment).
+  //   - reset: PC holds NO clearable exploration state. `selectedIds` is owned
+  //     by the parent (PC only emits `onClick`), and `hoveredId` is transient.
+  //     There is no per-axis brush or column-reorder state to clear, so `reset`
+  //     stays `false` rather than showing a button that would clear nothing.
+  //     (When per-axis brushing / reorder lands, flip `reset` to true and clear
+  //     that state in the `reset()` handler + set `isModified` accordingly.)
+  const toPNG = useCallback(
+    (opts?: ToPNGOptions): Promise<Blob> => {
+      const root = containerRef.current;
+      if (!root)
+        return Promise.reject(
+          new Error("ParallelCoords.toPNG: no root element to export"),
+        );
+      const png: PlotToPngOptions = { scale: opts?.scale, filename: opts?.filename };
+      return plotToPng(root, png);
+    },
+    [containerRef],
+  );
   const controller = useMemo<PlotController>(
     () => ({
       capabilities: {
@@ -101,9 +123,9 @@ export default function ParallelCoords({
       zoomOut: () => {},
       autoscale: () => {},
       reset: () => {},
-      toPNG: () => Promise.reject(new Error("toPNG not implemented (S10)")),
+      toPNG,
     }),
-    [],
+    [toPNG],
   );
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [tooltipPos, setTooltipPos] = useState<TooltipAnchor | null>(null);
