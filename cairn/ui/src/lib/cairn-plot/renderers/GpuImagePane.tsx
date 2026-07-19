@@ -20,8 +20,9 @@
  * (`PixelValueOverlay`) reads, exactly like the two CPU panes do.
  *
  * ## SCOPE (documented gaps — see Task 6 report for the full rationale)
- * `Task 7 adds compare/metrics` per the brief, so the SDR path here handles
- * the PLAIN single-image case only:
+ * Compare/metrics are handled by the separate engine-backed `GpuComparePane`
+ * (`media-compare/GpuComparePane.tsx`), so the SDR path here handles the
+ * PLAIN single-image case only:
  *   - `colormap` false-colors CPU-side via the exact same `applyColormap`
  *     ImagePane uses (byte-identical source pixels), then the GPU pass is a
  *     PURE PASSTHROUGH blit (`operator:"linear", gamma:1, exposureEV:0`) —
@@ -33,8 +34,8 @@
  *   - `diffMode !== "none"` / `baselineUrl` (baseline-compare) and
  *     `processing`'s CSS-filter fields (brightness/contrast/offset/flipSign)
  *     are ACCEPTED (prop-compatible) but NOT rendered specially — the plain
- *     `imageUrl` alone is shown. Real compare lives in Task 7; this pane is
- *     not wired into any live page yet (registered behind a capability flag,
+ *     `imageUrl` alone is shown. Real compare lives in `GpuComparePane`; this
+ *     pane is not wired into any live page yet (registered behind a capability flag,
  *     `plot-gpu-image-addon.tsx`, not emitted by Python), so the gap has no
  *     production surface today.
  *
@@ -63,7 +64,7 @@
  * ## Double-click reset (Q17 — user request)
  * Double-clicking the pane resets the viewport to `{zoom:1, pan:{x:0,y:0}}`
  * via `onViewportChange`, consistent with the 2D charts' double-click-reset.
- * Compare-view double-click-reset is Task 7's job (`CompositeMediaPane`).
+ * Compare-view double-click-reset is `CompositeMediaPane`'s job.
  *
  * ## Off-screen park/restore
  * An `IntersectionObserver` on the pane container calls the pool handle's
@@ -114,6 +115,8 @@ import {
 } from "./use-image-controller";
 import {
   isHdrProps,
+  shapeDims,
+  finite,
   type HdrData,
   type HdrGpuImagePaneProps,
   type SdrGpuImagePaneProps,
@@ -144,14 +147,6 @@ export type ImageRenderProps = GpuImagePaneProps;
 const OPERATORS: readonly ImageOperator[] = ["linear", "srgb", "reinhard", "aces"];
 function toOperator(name: string | undefined): ImageOperator {
   return (name && (OPERATORS as readonly string[]).includes(name) ? name : "srgb") as ImageOperator;
-}
-
-const finite = (v: number): number => (Number.isFinite(v) ? v : 0);
-
-function shapeDims(shape: number[]): { h: number; w: number; c: number } {
-  if (shape.length === 2) return { h: shape[0]!, w: shape[1]!, c: 1 };
-  if (shape.length === 3) return { h: shape[0]!, w: shape[1]!, c: shape[2]! };
-  throw new Error(`GpuImagePane: unsupported HDR shape [${shape.join(",")}] (want [H,W] or [H,W,C]).`);
 }
 
 /** Expand the raw float HDR buffer into an RGBA `Float32Array` upload — NO

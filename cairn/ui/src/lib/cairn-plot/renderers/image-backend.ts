@@ -96,6 +96,30 @@ export function isHdrProps(p: ImageBackendProps): p is HdrGpuImagePaneProps {
 }
 
 // ---------------------------------------------------------------------------
+// Shared HDR-decode primitives — used identically by both backends when they
+// walk the raw float buffer (CpuImagePane's `tonemapToImageData`,
+// GpuImagePane's `hdrToRGBAFloat32`). Kept here (not duplicated per pane) so
+// the shape/channel contract has ONE definition.
+// ---------------------------------------------------------------------------
+
+/**
+ * Decode an HDR `shape` into `(H, W, C)`. Grayscale `[H,W]` is treated as
+ * `C=1`; `[H,W,C]` passes `C` through. Throws on any other rank.
+ */
+export function shapeDims(shape: number[]): { h: number; w: number; c: number } {
+  if (shape.length === 2) return { h: shape[0]!, w: shape[1]!, c: 1 };
+  if (shape.length === 3) return { h: shape[0]!, w: shape[1]!, c: shape[2]! };
+  throw new Error(
+    `cairn-plot image: unsupported HDR shape [${shape.join(",")}] (want [H,W] or [H,W,C]).`,
+  );
+}
+
+/** NaN/±Inf → 0; finite values pass through. */
+export function finite(v: number): number {
+  return Number.isFinite(v) ? v : 0;
+}
+
+// ---------------------------------------------------------------------------
 // User-settable render mode (backend selection).
 //
 // NOTE: distinct from `image.ts`'s `getRenderMode()`, which is the (unrelated)

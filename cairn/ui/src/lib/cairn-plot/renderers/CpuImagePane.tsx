@@ -74,6 +74,8 @@ import {
 } from "./use-image-controller";
 import {
   isHdrProps,
+  shapeDims,
+  finite,
   type HdrData,
   type HdrGpuImagePaneProps,
   type SdrGpuImagePaneProps,
@@ -95,18 +97,6 @@ const HOME_VIEWPORT: ImageViewport = { zoom: 1, pan: { x: 0, y: 0 } };
 // ---------------------------------------------------------------------------
 // HDR tone-map (moved verbatim from HdrImagePane.tsx; re-exported there).
 // ---------------------------------------------------------------------------
-
-/** Decode HDR shape into (H, W, C). Grayscale `[H,W]` is treated as C=1. */
-function shapeDims(shape: number[]): { h: number; w: number; c: number } {
-  if (shape.length === 2) return { h: shape[0]!, w: shape[1]!, c: 1 };
-  if (shape.length === 3)
-    return { h: shape[0]!, w: shape[1]!, c: shape[2]! };
-  throw new Error(
-    `CpuImagePane: unsupported HDR shape [${shape.join(",")}] (want [H,W] or [H,W,C]).`,
-  );
-}
-
-const finite = (v: number): number => (Number.isFinite(v) ? v : 0);
 
 /**
  * Tone-map the float HDR buffer into an 8-bit RGBA `ImageData`. Pure — no DOM

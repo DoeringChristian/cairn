@@ -21,8 +21,11 @@
  * `CARD_TYPES` below is the superset (21 members) all three now derive
  * from: `ComparisonCard.type` is typed as `CardType` (this file);
  * `CardRenderer` carries a compile-time exhaustiveness check tying its
- * switch + multi-run branch back to this same list (see that file's
- * `SERIES_RENDERER_CASES`). This keeps `cardFromSpec`/`CardRenderer`/
+ * switch back to this same list. It derives the per-metric case set as
+ * `SeriesCardType = Exclude<CardType, MultiRunCardType>` and asserts the
+ * switch's `default` branch narrows to `never` (see the never-guard in
+ * components/CardRenderer.tsx), so there is no hand-maintained mirror of
+ * the `case` labels. This keeps `cardFromSpec`/`CardRenderer`/
  * `compileCairnBlock` behavior byte-identical — this is a type-level
  * reconciliation, not a runtime one.
  *

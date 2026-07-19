@@ -10,8 +10,9 @@
  *
  * Reveal model mirrors CardHeader's grip: the toolbar sits at `opacity-0` and
  * fades to `opacity-100` on `group-hover` (the renderer's root carries the
- * `group` class). Icons + button chrome follow CardHeader's Font Awesome
- * convention (`fa-solid fa-*`, `h-[22px] min-w-[22px] …`).
+ * `group` class). Button chrome matches CardHeader's sizing (`h-[22px]
+ * min-w-[22px] …`), but the icons are inline SVG (see `ICON_PATHS` below) —
+ * the self-contained plot bundle can't depend on the app's CDN Font Awesome.
  */
 import type { CSSProperties, ReactNode } from "react";
 import type { DragMode, PlotController } from "../controls/types";

@@ -30,9 +30,10 @@ import type {
 export interface UseChartControllerArgs {
   /** The renderer's `useChartViewport` result (state machine + actions). */
   viewport: ChartViewportResult;
-  /** The renderer's root element — the future export target (S10 toPNG). */
+  /** The renderer's root element — the default `toPNG` export target. */
   rootRef: RefObject<HTMLElement | null>;
-  /** Optional client-side PNG exporter; when absent, `toPNG` rejects (S10). */
+  /** Optional client-side PNG exporter; when absent, `toPNG` rasterizes
+   *  `rootRef` via the shared `plotToPng` helper. */
   toPNG?: (opts?: ToPNGOptions) => Promise<Blob>;
   /** Advertise box-select + lasso (ScatterPlot). When true the toolbar shows
    *  the select/lasso mode buttons; other charts leave it off. */
