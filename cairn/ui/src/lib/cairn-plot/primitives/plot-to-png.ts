@@ -120,6 +120,52 @@ export async function canvasToPng(
   );
 }
 
+/**
+ * Rasterize a plain `<img>` (the CPU image pane's SDR/verbatim display path,
+ * which shows an `<img>` rather than an `<svg>`/`<canvas>`). Exports at the
+ * image's DISPLAYED geometry — matching the other paths — but uses the intrinsic
+ * `naturalWidth`/`naturalHeight` as the drawn source so a down-scaled display
+ * stays crisp. Same-document `data:`/`blob:` sources (our self-contained store)
+ * never taint the canvas; a genuinely cross-origin source makes `toBlob`
+ * readback throw, which we surface as a clear error.
+ */
+export async function imageToPng(
+  img: HTMLImageElement,
+  opts?: PlotToPngOptions,
+): Promise<Blob> {
+  const rect = img.getBoundingClientRect();
+  const w = rect.width || img.naturalWidth || img.width;
+  const h = rect.height || img.naturalHeight || img.height;
+  const bg = opts?.background ?? resolveBackground(img);
+  try {
+    return await rasterize(w, h, pickScale(opts), bg, (ctx) =>
+      ctx.drawImage(img, 0, 0, w, h),
+    );
+  } catch (err) {
+    throw new Error(
+      "plot-to-png: cannot export <img> — the image source appears to be " +
+        "cross-origin (tainted canvas). Same-document data:/blob: images " +
+        `export fine. (${err instanceof Error ? err.message : String(err)})`,
+    );
+  }
+}
+
+/** Pick the largest visible `<img>` under `root` (by displayed area). */
+function largestVisibleImg(root: HTMLElement): HTMLImageElement | null {
+  const imgs = Array.from(root.querySelectorAll("img")) as HTMLImageElement[];
+  let best: HTMLImageElement | null = null;
+  let bestArea = 0;
+  for (const img of imgs) {
+    const r = img.getBoundingClientRect();
+    const area = r.width * r.height;
+    if (area > bestArea) {
+      bestArea = area;
+      best = img;
+    }
+  }
+  return best;
+}
+
 /** Rasterize an `<svg>` (SVG charts). */
 export async function svgToPng(
   svg: SVGSVGElement,
@@ -178,7 +224,12 @@ export async function plotToPng(
     });
   }
   if (canvases.length) return canvasToPng(canvases[0]!, opts);
-  throw new Error("plot-to-png: no <svg> or <canvas> found under root");
+  // No SVG and no canvas: the CPU image pane's plain-<img> display path. Fall
+  // back to the largest visible <img> so the toolbar's camera button still
+  // produces a download instead of silently rejecting.
+  const img = largestVisibleImg(root);
+  if (img) return imageToPng(img, opts);
+  throw new Error("plot-to-png: no <svg>, <canvas>, or <img> found under root");
 }
 
 /** Trigger a browser download of a PNG Blob. */
