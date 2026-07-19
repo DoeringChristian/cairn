@@ -41,6 +41,27 @@ const POSITION_STYLE: Record<
 // `currentColor` so it inherits the button's text color (active/hover states).
 const ICON_PATHS: Record<string, ReactNode> = {
   boxZoom: <rect x="3.5" y="3.5" width="17" height="17" rx="1.5" strokeDasharray="4 3" />,
+  // Box-select: a dashed marquee with a filled cursor arrow tucked in a corner.
+  select: (
+    <>
+      <rect x="3" y="3" width="11" height="11" rx="1" strokeDasharray="3 2.5" />
+      <path
+        d="M12 12l8.5 3.3-3.4 1-1 3.4z"
+        fill="currentColor"
+        stroke="currentColor"
+        strokeWidth="1"
+        strokeLinejoin="round"
+      />
+    </>
+  ),
+  // Lasso: a closed freeform loop with a short rope tail + knot.
+  lasso: (
+    <>
+      <path d="M12 4c4.4 0 7.3 2.9 6.6 6.4-0.7 3.5-4.9 5.3-8.8 4.5C6.4 14.2 4.6 11.4 5.7 8.7 6.8 6 9.2 4 12 4z" />
+      <path d="M8.7 15.2c-1.3 0.9-1.8 2.3-1.2 3.5" />
+      <circle cx="7.7" cy="19.6" r="1.05" fill="currentColor" stroke="none" />
+    </>
+  ),
   pan: (
     <>
       <path d="M12 2v20M2 12h20" />
@@ -164,7 +185,11 @@ export default function PlotToolbar({ controller, config }: PlotToolbarProps) {
 
   const setMode = (m: DragMode) => () => controller.setDragMode(m);
 
-  const dragGroup = shown("zoom", caps.zoom) || shown("pan", caps.pan);
+  const dragGroup =
+    shown("zoom", caps.zoom) ||
+    shown("pan", caps.pan) ||
+    shown("select", caps.select) ||
+    shown("lasso", caps.lasso);
   const zoomGroup =
     shown("zoomIn", caps.zoom) || shown("zoomOut", caps.zoom);
   // The reset ("home") button is ALWAYS shown when reset is available (it just
@@ -235,6 +260,22 @@ export default function PlotToolbar({ controller, config }: PlotToolbarProps) {
               title="Pan"
               active={controller.dragMode === "pan"}
               onClick={setMode("pan")}
+            />
+          )}
+          {shown("select", caps.select) && (
+            <ToolbarButton
+              icon="select"
+              title="Box select"
+              active={controller.dragMode === "select"}
+              onClick={setMode("select")}
+            />
+          )}
+          {shown("lasso", caps.lasso) && (
+            <ToolbarButton
+              icon="lasso"
+              title="Lasso select"
+              active={controller.dragMode === "lasso"}
+              onClick={setMode("lasso")}
             />
           )}
         </>

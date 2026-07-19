@@ -1,4 +1,12 @@
-import { useId, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { SERIES_COLORS, type ScatterPoint } from "../types";
 import type { ParetoDirection } from "../transforms/pareto";
 import { computeParetoFront } from "../transforms/pareto";
@@ -9,7 +17,12 @@ import { AXIS, niceTicks, paddedDomain } from "../theme";
 import { Axis, PlotFrame, type AxisTick } from "../primitives/Axis";
 import Tooltip from "../primitives/Tooltip";
 import { pointerAnchor, type TooltipAnchor } from "../primitives/tooltip-position";
-import { useChartViewport, type PlotRect } from "../viewport/use-chart-viewport";
+import {
+  useChartViewport,
+  type PlotRect,
+  type SelectionGeometry,
+} from "../viewport/use-chart-viewport";
+import { pointInPolygon, pointInRect } from "../viewport/chart-viewport-math";
 import { useChartController } from "./use-chart-controller";
 import PlotToolbar from "../primitives/PlotToolbar";
 
@@ -61,6 +74,24 @@ export default function ScatterPlot({
   const { ref: containerRef, size } = useContainerSize();
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [tooltipPos, setTooltipPos] = useState<TooltipAnchor | null>(null);
+  // Internal box/lasso selection (a Set of point ids). Distinct from the
+  // `selectedIds` prop (an external highlight): this drives the dim-others
+  // visual and is surfaced on the controller. Cleared on Escape / empty click.
+  const [selection, setSelection] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const clearSelection = useCallback(() => setSelection(new Set()), []);
+  // Stable wrapper for `controller.selection` — only re-identifies when the
+  // selection Set changes, so it doesn't defeat the controller's memo.
+  const controllerSelection = useMemo(
+    () => ({ ids: selection, clear: clearSelection }),
+    [selection, clearSelection],
+  );
+  // The viewport hook fires `onSelect` on release, but it can't see this
+  // render's `toX`/`toY` (defined below). It dispatches through this ref, which
+  // we repoint at the live hit-tester each render — so a selection always maps
+  // through the CURRENT viewport transform.
+  const selectRef = useRef<(g: SelectionGeometry) => void>(() => {});
 
   const { xDomain, yDomain, colorDomain } = useMemo(() => {
     const makeDomain = (vals: number[]) => {
@@ -148,9 +179,15 @@ export default function ScatterPlot({
     containerRef,
     plotRectRef,
     home,
+    onSelect: (g) => selectRef.current(g),
   });
-  const { domain, containerProps, dragRect, wasDragRef } = viewport;
-  const controller = useChartController({ viewport, rootRef: containerRef });
+  const { domain, containerProps, dragRect, dragPath, wasDragRef } = viewport;
+  const controller = useChartController({
+    viewport,
+    rootRef: containerRef,
+    selectable: true,
+    selection: controllerSelection,
+  });
 
   const [xMin, xMax] = domain.xDomain;
   const [yMin, yMax] = domain.yDomain;
@@ -166,6 +203,36 @@ export default function ScatterPlot({
     const mapped = yLog ? logSafe(v) : v;
     return pad.top + plotH - ((mapped - yMin) / yRange) * plotH;
   };
+
+  // Repoint the hook's onSelect dispatcher at a hit-tester bound to THIS render's
+  // toX/toY. On box/lasso release the hook hands us the marquee/polygon (in the
+  // same container-local px space toX/toY emit), and we collect the enclosed
+  // point ids. Assigning a ref during render is safe here: it's only read later
+  // from a pointer handler, never during this render's output.
+  selectRef.current = (geom: SelectionGeometry) => {
+    const hit = new Set<string>();
+    for (const pt of points) {
+      const px = toX(pt.x);
+      const py = toY(pt.y);
+      const inside =
+        geom.kind === "rect"
+          ? pointInRect(px, py, geom.rect)
+          : pointInPolygon(px, py, geom.points);
+      if (inside) hit.add(pt.id);
+    }
+    setSelection(hit);
+  };
+
+  // Escape clears an active box/lasso selection. Scoped to when there's a
+  // selection so it doesn't intercept Escape globally (e.g. closing a modal).
+  useEffect(() => {
+    if (selection.size === 0) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSelection(new Set());
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selection.size]);
 
   // Tick values: "nice"-rounded on a linear axis; evenly-spaced fractions on a
   // log axis (pretty log ticks are out of scope). Recomputed from the LIVE
@@ -241,6 +308,13 @@ export default function ScatterPlot({
                 wasDragRef.current = false;
                 return;
               }
+              // An empty click first clears an active box/lasso selection; only
+              // with nothing selected does it fall through to the background
+              // handler (the external run-deselect).
+              if (selection.size > 0) {
+                clearSelection();
+                return;
+              }
               onBackgroundClick?.();
             }}
             className="cursor-default"
@@ -272,8 +346,14 @@ export default function ScatterPlot({
               color = colors[i % colors.length];
             }
             const isHovered = hoveredId === pt.id;
-            const isSelected = selectedIds?.has(pt.id);
+            const inSelection = selection.has(pt.id);
+            // Accent stroke for either an externally-marked point (`selectedIds`
+            // prop) or an internal box/lasso selection.
+            const isSelected = !!selectedIds?.has(pt.id) || inSelection;
             const isOnPareto = paretoSet.has(pt.id);
+            // While a box/lasso selection is active, fade points outside it
+            // (unless hovered) to spotlight the picked set.
+            const dimmed = selection.size > 0 && !inSelection && !isHovered;
             return (
               <circle
                 key={pt.id}
@@ -281,6 +361,7 @@ export default function ScatterPlot({
                 cy={cy}
                 r={isHovered ? 7 : isOnPareto && pareto?.show ? 6 : 5}
                 fill={color}
+                opacity={dimmed ? 0.25 : 1}
                 stroke={
                   isSelected
                     ? "var(--color-accent, #0969da)"
@@ -383,6 +464,24 @@ export default function ScatterPlot({
             pointerEvents: "none",
           }}
         />
+      )}
+
+      {/* Live lasso polygon (container-local px), drawn closed while dragging. */}
+      {dragPath && dragPath.length >= 2 && (
+        <svg
+          width={w}
+          height={h}
+          aria-hidden="true"
+          style={{ position: "absolute", left: 0, top: 0, pointerEvents: "none" }}
+        >
+          <path
+            d={`M${dragPath.map((p) => `${p.x},${p.y}`).join("L")}Z`}
+            fill="rgba(83, 155, 245, 0.12)"
+            stroke="#0969da"
+            strokeWidth={1}
+            strokeDasharray="4 3"
+          />
+        </svg>
       )}
 
       {hoveredPoint && tooltipPos && (

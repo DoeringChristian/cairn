@@ -34,6 +34,13 @@ export interface UseChartControllerArgs {
   rootRef: RefObject<HTMLElement | null>;
   /** Optional client-side PNG exporter; when absent, `toPNG` rejects (S10). */
   toPNG?: (opts?: ToPNGOptions) => Promise<Blob>;
+  /** Advertise box-select + lasso (ScatterPlot). When true the toolbar shows
+   *  the select/lasso mode buttons; other charts leave it off. */
+  selectable?: boolean;
+  /** The renderer's current selection, surfaced on `controller.selection` so a
+   *  toolbar (or host) can read the ids / clear it. Pass alongside
+   *  `selectable`. */
+  selection?: { ids: ReadonlySet<string>; clear: () => void };
 }
 
 /** internal ChartDragMode → public DragMode ("box" is the toolbar's "zoom"). */
@@ -50,6 +57,8 @@ export function useChartController({
   viewport,
   rootRef,
   toPNG: toPNGImpl,
+  selectable = false,
+  selection,
 }: UseChartControllerArgs): PlotController {
   // The hook does not expose its current drag mode, so we mirror it here. The
   // hook's default is "box"; the public face of that is "zoom".
@@ -98,9 +107,10 @@ export function useChartController({
       autoscale: vp.autoscale,
       reset: vp.reset,
       screenshot: vp.screenshot,
+      // Box-select + lasso: on for renderers that opt in (ScatterPlot).
+      select: selectable,
+      lasso: selectable,
       // Not implemented yet — reported false until their slice lands:
-      select: false,
-      lasso: false,
       hover: false,
       spikelines: false,
       hoverModes: false,
@@ -110,7 +120,7 @@ export function useChartController({
       brush: false,
       reorder: false,
     }),
-    [vp],
+    [vp, selectable],
   );
 
   return useMemo<PlotController>(
@@ -128,6 +138,9 @@ export function useChartController({
       autoscale: actions.autoscale,
       reset: actions.reset,
       toPNG,
+      // Only surfaced when the renderer opts into selection (ScatterPlot); the
+      // `PlotController.selection` member is optional so other charts omit it.
+      selection: selectable ? selection : undefined,
     }),
     [
       capabilities,
@@ -140,6 +153,8 @@ export function useChartController({
       toggleSpikelines,
       actions,
       toPNG,
+      selectable,
+      selection,
     ],
   );
 }

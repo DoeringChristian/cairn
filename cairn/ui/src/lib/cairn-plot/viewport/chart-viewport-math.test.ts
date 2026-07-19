@@ -17,6 +17,8 @@ import {
   boxZoomAxis,
   constrainDragRect,
   panByPixels,
+  pointInPolygon,
+  pointInRect,
   wheelZoom,
   zoomAboutAnchor,
   fracToValue,
@@ -24,6 +26,7 @@ import {
   WHEEL_FACTOR,
   type ChartDomain,
   type ClientRect,
+  type PixelPoint,
 } from "./chart-viewport-math.ts";
 
 const D = (x0: number, x1: number, y0: number, y1: number): ChartDomain => ({
@@ -205,4 +208,73 @@ test("axisScale1D pins the high end for a left-third grab", () => {
 test("axisScale1D returns null at/over the pinned end (degenerate)", () => {
   assert.equal(axisScale1D(0, 10, 0.8, 0, 0), null); // cursor on the anchor
   assert.equal(axisScale1D(0, 10, 0.8, -0.1, 0), null); // past the anchor → inverted
+});
+
+// ── Selection hit-testing: point-in-rect ──
+
+test("pointInRect: interior, edges (inclusive) and exterior", () => {
+  const r = { x: 10, y: 20, width: 100, height: 50 }; // covers x∈[10,110], y∈[20,70]
+  assert.equal(pointInRect(60, 45, r), true); // interior
+  assert.equal(pointInRect(10, 20, r), true); // top-left corner (inclusive)
+  assert.equal(pointInRect(110, 70, r), true); // bottom-right corner (inclusive)
+  assert.equal(pointInRect(9, 45, r), false); // left of
+  assert.equal(pointInRect(111, 45, r), false); // right of
+  assert.equal(pointInRect(60, 19, r), false); // above
+  assert.equal(pointInRect(60, 71, r), false); // below
+});
+
+// ── Selection hit-testing: point-in-polygon (even-odd ray cast) ──
+
+const square: PixelPoint[] = [
+  { x: 0, y: 0 },
+  { x: 10, y: 0 },
+  { x: 10, y: 10 },
+  { x: 0, y: 10 },
+];
+
+test("pointInPolygon: convex square membership", () => {
+  assert.equal(pointInPolygon(5, 5, square), true); // centre
+  assert.equal(pointInPolygon(-1, 5, square), false); // left
+  assert.equal(pointInPolygon(15, 5, square), false); // right
+  assert.equal(pointInPolygon(5, -1, square), false); // above
+  assert.equal(pointInPolygon(5, 15, square), false); // below
+});
+
+test("pointInPolygon: implicitly-closed ring (last→first edge counts)", () => {
+  // A triangle given without repeating the first vertex still hit-tests as a
+  // closed region.
+  const tri: PixelPoint[] = [
+    { x: 0, y: 0 },
+    { x: 10, y: 0 },
+    { x: 5, y: 10 },
+  ];
+  assert.equal(pointInPolygon(5, 3, tri), true);
+  assert.equal(pointInPolygon(1, 8, tri), false); // outside a slanted edge
+});
+
+test("pointInPolygon: concave L-shape excludes the notch", () => {
+  // L-shape (concave): the top-right quadrant is carved out.
+  const L: PixelPoint[] = [
+    { x: 0, y: 0 },
+    { x: 10, y: 0 },
+    { x: 10, y: 4 },
+    { x: 4, y: 4 },
+    { x: 4, y: 10 },
+    { x: 0, y: 10 },
+  ];
+  assert.equal(pointInPolygon(2, 8, L), true); // lower-left arm
+  assert.equal(pointInPolygon(8, 2, L), true); // upper-right arm
+  assert.equal(pointInPolygon(8, 8, L), false); // the carved-out notch
+});
+
+test("pointInPolygon: degenerate ring (< 3 vertices) is always false", () => {
+  assert.equal(pointInPolygon(0, 0, []), false);
+  assert.equal(pointInPolygon(0, 0, [{ x: 0, y: 0 }]), false);
+  assert.equal(
+    pointInPolygon(0, 0, [
+      { x: 0, y: 0 },
+      { x: 1, y: 1 },
+    ]),
+    false,
+  );
 });

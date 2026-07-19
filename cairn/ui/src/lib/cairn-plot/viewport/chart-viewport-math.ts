@@ -172,6 +172,13 @@ export interface PixelRect {
   height: number;
 }
 
+/** A point in a renderer's CONTAINER-LOCAL px space (a lasso vertex, or a
+ *  data point already mapped through the renderer's `toX`/`toY`). */
+export interface PixelPoint {
+  x: number;
+  y: number;
+}
+
 /**
  * Decide which axis (or both) a box-zoom should touch, given the chart's base
  * axis constraint and the drag's pixel extents. A `'both'`-constrained chart
@@ -362,4 +369,48 @@ export function domainsEqual(a: ChartDomain, b: ChartDomain): boolean {
     a.yDomain[0] === b.yDomain[0] &&
     a.yDomain[1] === b.yDomain[1]
   );
+}
+
+// ── Selection hit-testing (box-select / lasso) ──
+// Both operate in a renderer's CONTAINER-LOCAL px space: the viewport hook emits
+// the marquee rect / lasso polygon in that space, and a renderer maps each data
+// point through its `toX`/`toY` (same space) before testing membership.
+
+/** True when pixel point (`px`,`py`) lies within `rect` (edges inclusive). */
+export function pointInRect(px: number, py: number, rect: PixelRect): boolean {
+  return (
+    px >= rect.x &&
+    px <= rect.x + rect.width &&
+    py >= rect.y &&
+    py <= rect.y + rect.height
+  );
+}
+
+/**
+ * Even-odd ray-cast point-in-polygon. `poly` is an ordered ring of vertices
+ * treated as implicitly closed (the last vertex joins back to the first).
+ * Returns `false` for a degenerate ring (< 3 vertices). Points exactly on an
+ * edge are not guaranteed either way (inherent to ray-casting) — fine for
+ * marquee/lasso hit-testing where sub-pixel edge cases don't matter.
+ */
+export function pointInPolygon(
+  px: number,
+  py: number,
+  poly: readonly PixelPoint[],
+): boolean {
+  const n = poly.length;
+  if (n < 3) return false;
+  let inside = false;
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const xi = poly[i].x;
+    const yi = poly[i].y;
+    const xj = poly[j].x;
+    const yj = poly[j].y;
+    // Does a rightward ray from (px,py) cross the edge (j → i)?
+    const crosses =
+      yi > py !== yj > py &&
+      px < ((xj - xi) * (py - yi)) / (yj - yi) + xi;
+    if (crosses) inside = !inside;
+  }
+  return inside;
 }
