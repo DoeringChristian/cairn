@@ -12,3 +12,23 @@ export {
   type TonemapOperator,
   type RgbTriple,
 } from "./tonemap";
+
+// Multi-format image decoder registry (browser-native + raw npy/npz; EXR slot
+// deferred). `decodeImage`/`loadImageAny` normalize any url/bytes source into
+// the canonical `DecodedImage` the CPU/GPU backends consume — the seam plugged
+// in at the DataSpec-resolution call sites (see `plot-descriptor.ts`).
+export {
+  decodeImage,
+  decodeImage as loadImageAny,
+  sniffFormat,
+  sniffMagic,
+  getDecoder,
+  npyArrayToDecoded,
+  decodedU8ToDataUrl,
+  isRawBufferFormat,
+  isBrowserNativeFormat,
+  type DecodedImage,
+  type ImageSource,
+  type ImageFormat,
+  type ImageDecoder,
+} from "./decoders";

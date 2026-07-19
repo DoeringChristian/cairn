@@ -56,6 +56,22 @@ export type { NpyArray, HistogramData } from "./transforms";
 export { getRenderMode, setRenderMode } from "./image";
 export type { RenderMode } from "./image";
 
+// Multi-format image decoder registry (browser-native + raw npy/npz; EXR
+// deferred). The DataSpec-resolution seam (`plot-descriptor.ts`) routes
+// raw-buffer image blobs through `decodeImage`.
+export {
+  decodeImage,
+  loadImageAny,
+  sniffFormat,
+  sniffMagic,
+  getDecoder,
+  npyArrayToDecoded,
+  decodedU8ToDataUrl,
+  isRawBufferFormat,
+  isBrowserNativeFormat,
+} from "./image";
+export type { DecodedImage, ImageSource, ImageFormat, ImageDecoder } from "./image";
+
 // HDR tone-mapping operators (extensible; see image/tonemap.ts)
 export {
   TONEMAP_OPERATORS,

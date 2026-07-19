@@ -164,12 +164,17 @@ class ImageDataSpec(_Strict):
     `DataSource` (LOCAL `data:` URL / ENDPOINT `/api/artifacts/…`).
 
     ``hash`` is required-but-nullable (matches the TS `string | null`);
-    ``referenceHash``/``metadata`` are optional."""
+    ``referenceHash``/``metadata`` are optional. ``format`` is an OPTIONAL
+    blob-format hint (MIME or extension, e.g. ``"png"``/``"avif"``/``"npy"``)
+    that drives the multi-format decoder seam: a RAW-buffer format (``npy``/
+    ``npz``) is fetched + normalized through ``decodeImage`` client-side, while a
+    browser-native format (or an absent hint) keeps the URL fast path."""
 
     kind: Literal["image"]
     hash: Optional[str]
     referenceHash: Optional[str] = None
     metadata: Optional[str] = None
+    format: Optional[str] = None
 
 
 class UrlDataSpec(_Strict):

@@ -115,6 +115,10 @@
                 "string",
                 "null"
               ]
+            },
+            "format": {
+              "type": "string",
+              "description": "OPTIONAL format hint for the image blob (a MIME type or extension token, e.g. `\"png\"`, `\"avif\"`, `\"npy\"`). Drives the multi-format DECODER seam (`resolveDataProps`): when it names a RAW-buffer format (`npy`/`npz`), the bytes are fetched and normalized through `decodeImage` — float buffers → the `hdr` prop shape, uint8 buffers → an `imageUrl` data URL. Absent (or a browser-native format like png/jpeg/webp/avif/gif) keeps the byte-identical URL fast path — the browser decodes it via `<img>`."
             }
           },
           "required": [

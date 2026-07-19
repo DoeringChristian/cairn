@@ -25,6 +25,9 @@ import {
   fetchBoxesArrays,
   parseOverlay,
   parseNpy,
+  decodeImage,
+  decodedU8ToDataUrl,
+  isRawBufferFormat,
   type DataSource,
 } from "./lib/cairn-plot";
 
@@ -53,6 +56,16 @@ export type DataSpec =
       hash: string | null;
       referenceHash?: string | null;
       metadata?: string | null;
+      /**
+       * OPTIONAL format hint for the image blob (a MIME type or extension token,
+       * e.g. `"png"`, `"avif"`, `"npy"`). Drives the multi-format DECODER seam
+       * (`resolveDataProps`): when it names a RAW-buffer format (`npy`/`npz`),
+       * the bytes are fetched and normalized through `decodeImage` — float
+       * buffers → the `hdr` prop shape, uint8 buffers → an `imageUrl` data URL.
+       * Absent (or a browser-native format like png/jpeg/webp/avif/gif) keeps
+       * the byte-identical URL fast path — the browser decodes it via `<img>`.
+       */
+      format?: string;
     }
   | {
       kind: "npz";
@@ -166,6 +179,29 @@ export async function resolveDataProps(
     case "inline":
       return { ...data.props };
     case "image": {
+      // Multi-format DECODER seam. When `format` names a RAW-buffer image
+      // (`.npy`/`.npz`), the browser can't decode it via `<img>`, so fetch the
+      // bytes and normalize through `decodeImage`: float buffers become the
+      // `hdr` prop shape (pair the leaf with an HDR-capable image renderer),
+      // uint8 buffers become an `imageUrl` PNG data URL for the SDR path. The
+      // baseline follows the same rule. Browser-native formats (or no `format`)
+      // fall through to the byte-identical URL fast path below.
+      if (data.format && isRawBufferFormat(data.format) && data.hash) {
+        const decoded = await decodeImage({
+          bytes: await source.bytes(data.hash),
+          ext: data.format,
+        });
+        const baselineUrl = await resolveRawBufferBaseline(data, source);
+        const overlay = parseOverlay(data.metadata) ?? undefined;
+        if (decoded.kind === "f32") {
+          const shape =
+            decoded.channels === 1
+              ? [decoded.height, decoded.width]
+              : [decoded.height, decoded.width, decoded.channels];
+          return { hdr: { data: decoded.data, shape, dtype: "<f4" }, baselineUrl, overlay };
+        }
+        return { imageUrl: decodedU8ToDataUrl(decoded), baselineUrl, overlay };
+      }
       const res = resolveImageViewportItems(
         {
           hashes: [data.hash ?? null],
@@ -246,4 +282,23 @@ export async function resolveDataProps(
       };
     }
   }
+}
+
+/**
+ * Resolve the OPTIONAL baseline of a raw-buffer (`format`) `image` DataSpec to
+ * an SDR `imageUrl`. Decodes the reference blob through the same registry;
+ * uint8 baselines become a PNG data URL. A float baseline has no place in the
+ * SDR `baselineUrl` string channel, so it resolves to `null`. Returns `null`
+ * when there is no `referenceHash`.
+ */
+async function resolveRawBufferBaseline(
+  data: Extract<DataSpec, { kind: "image" }>,
+  source: DataSource,
+): Promise<string | null> {
+  if (!data.referenceHash || !data.format) return null;
+  const decoded = await decodeImage({
+    bytes: await source.bytes(data.referenceHash),
+    ext: data.format,
+  });
+  return decoded.kind === "u8" ? decodedU8ToDataUrl(decoded) : null;
 }
