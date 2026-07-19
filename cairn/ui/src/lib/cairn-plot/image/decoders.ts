@@ -14,9 +14,11 @@
  *     dependency is bundled for it.
  *   - npy/npz → the pure raw-buffer parsers (`parseNpy`/`parseNpz`). Float
  *     dtypes yield `f32`; `uint8`/`int8`/`bool` yield `u8`.
- *   - exr → a registered STUB that throws a clear "EXR decoder not bundled"
- *     error. EXR is DEFERRED pending a WASM-decoder dependency decision; this
- *     is the clean slot the future decoder plugs into.
+ *   - exr → the minimal dependency-free browser EXR reader (`decoders/exr.ts`):
+ *     single-part scanline, HALF/FLOAT channels, NONE/ZIP/ZIPS compression
+ *     (zlib via native `DecompressionStream`). Yields `f32` (RGB→3, RGBA→4,
+ *     Y/single→1). Unsupported EXR variants throw a clear
+ *     "unsupported EXR variant: …" error.
  *   - unknown → best-effort browser-native decode, else a clear error.
  *
  * Format is sniffed by {@link sniffFormat}: explicit `mime` wins, then `ext`,
@@ -33,6 +35,10 @@
 // Node's resolver and accepted by tsc (`allowImportingTsExtensions`) + the vite
 // bundler.
 import { parseNpy, type NpyArray } from "../transforms/parse-npy.ts";
+// The EXR reader is a self-contained leaf (types-only dep on this module + the
+// runtime-native `DecompressionStream`/`Blob`/`Response`), so a static import
+// keeps the node-test graph DOM-free while wiring it into the registry below.
+import { decodeExr } from "./decoders/exr.ts";
 
 // ---------------------------------------------------------------------------
 // Canonical payload + source contracts.
@@ -335,17 +341,6 @@ function get2dContext(width: number, height: number): CanvasRenderingContext2D {
 }
 
 // ---------------------------------------------------------------------------
-// EXR: DEFERRED. Registered stub reporting the missing WASM decoder.
-// ---------------------------------------------------------------------------
-
-async function decodeExrUnsupported(): Promise<DecodedImage> {
-  throw new Error(
-    "cairn-plot decodeImage: unsupported format 'exr' (EXR decoder not bundled). " +
-      "EXR is deferred pending a WASM-decoder dependency decision.",
-  );
-}
-
-// ---------------------------------------------------------------------------
 // The registry + top-level dispatch.
 // ---------------------------------------------------------------------------
 
@@ -357,7 +352,7 @@ const REGISTRY: Record<Exclude<ImageFormat, "unknown">, ImageDecoder> = {
   gif: decodeBrowserNative,
   npy: decodeNpy,
   npz: decodeNpz,
-  exr: decodeExrUnsupported,
+  exr: decodeExr,
 };
 
 /** Look up the decoder registered for a sniffed format (`null` for unknown). */

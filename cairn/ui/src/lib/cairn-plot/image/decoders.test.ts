@@ -211,14 +211,17 @@ test("getDecoder returns a decoder for every known format, null for unknown", ()
   assert.equal(getDecoder("unknown"), null);
 });
 
-test("EXR is a registered slot that reports the missing bundled decoder", async () => {
+test("EXR dispatches to the bundled reader (rejects malformed bytes, not a stub)", async () => {
   const decoder = getDecoder("exr");
   assert.ok(decoder);
-  await assert.rejects(decoder!({ bytes: new Uint8Array([0x76, 0x2f, 0x31, 0x01]).buffer }), /EXR decoder not bundled/);
+  // A truncated EXR (magic only) reaches the real reader and fails parsing —
+  // NOT the old "decoder not bundled" stub. Full decode is covered in
+  // `decoders/exr.test.ts`.
   await assert.rejects(
     decodeImage({ bytes: new Uint8Array([0x76, 0x2f, 0x31, 0x01]).buffer, ext: "exr" }),
-    /EXR decoder not bundled/,
   );
+  // The raw decoder also requires bytes, not just a url.
+  await assert.rejects(decodeImage({ url: "https://x/y.exr" }), /needs raw bytes/);
 });
 
 test("raw decoders require bytes, not just a url", async () => {
