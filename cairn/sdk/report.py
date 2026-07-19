@@ -384,10 +384,20 @@ class PlotReport:
     def _full_document(self) -> str:
         """The report wrapped in a complete standalone HTML document (for
         :meth:`save`). The body fragment already carries the inlined bundle +
-        store, so the file opens with no server and no network."""
+        store, so the file opens with no server and no network.
+
+        Theme-aware (P4/Q5): the ``cairn-plot-doc`` class on ``<html>`` opts the
+        page into the token contract defined in the inlined ``style.css`` (the
+        ``:root.cairn-plot-doc`` block), and ``<meta name="color-scheme">``
+        makes the UA render a dark canvas immediately in a dark-mode browser —
+        so the page looks right in both light and dark, with no light flash
+        before the stylesheet applies. Force a specific theme by adding
+        ``data-theme="light"`` / ``"dark"`` to the ``<html>`` tag."""
         title = _html.escape(self.title) if self.title else "cairn report"
         return (
-            '<!doctype html>\n<html lang="en"><head><meta charset="utf-8">'
+            '<!doctype html>\n<html lang="en" class="cairn-plot-doc">'
+            '<head><meta charset="utf-8">'
+            '<meta name="color-scheme" content="light dark">'
             '<meta name="viewport" content="width=device-width, initial-scale=1">'
             f"<title>{title}</title></head><body>\n{self._body_html()}\n"
             "</body></html>\n"

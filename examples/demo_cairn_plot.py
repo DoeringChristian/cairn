@@ -392,18 +392,25 @@ def render_html(items: list[tuple[str, object]]) -> str:
             raise SystemExit(f"FAILED to render {title!r}:\n{html[:400]}")
         blocks.append(
             f'<section style="margin:0 0 2.5rem">'
-            f'<h2 style="font:600 15px system-ui;color:#334;margin:0 0 .5rem">{title}</h2>'
+            f'<h2 style="font:600 15px system-ui;color:var(--color-fg-muted,#334);'
+            f'margin:0 0 .5rem">{title}</h2>'
             f"{html}</section>"
         )
     body = "\n".join(blocks)
+    # `class="cairn-plot-doc"` + the color-scheme meta opt the page into the
+    # theme token contract (P4/Q5) carried by the inlined style.css, so the
+    # gallery renders correctly in both light and dark browsers. The inline
+    # colors below route through the same tokens (with light fallbacks).
     return (
-        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<!doctype html><html class='cairn-plot-doc'><head><meta charset='utf-8'>"
+        "<meta name='color-scheme' content='light dark'>"
         "<title>cairn.plot — standalone gallery</title></head>"
         "<body style='max-width:1000px;margin:2rem auto;padding:0 1rem;"
         "font-family:system-ui'>"
         "<h1 style='font:700 22px system-ui'>cairn.plot — standalone library gallery</h1>"
-        "<p style='color:#667'>Every plot below is baked into this file — no server, "
-        "no network. Rendered by the same cairn-plot renderers the web app uses.</p>"
+        "<p style='color:var(--color-fg-muted,#667)'>Every plot below is baked into "
+        "this file — no server, no network. Rendered by the same cairn-plot renderers "
+        "the web app uses.</p>"
         f"{body}</body></html>"
     )
 
