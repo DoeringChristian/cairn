@@ -54,9 +54,12 @@ const RENDERER_WAIT_MS = 4000;
 
 /** Root-provided context shared by the whole tree: the single `DataSource`,
  *  the nearest grid's `shared` block (colormap/colorRange/reference/…), and
- *  (when that grid opted in via `shared.sync.viewport`) the live image
- *  viewport-sync group id for that grid — see `GridView`'s derivation and
- *  `image-viewport-sync.ts`'s pub/sub bus. Mirrors the 3D `cameraSyncGroupId`
+ *  (when that grid opted in via `shared.sync.viewport`) the live viewport-sync
+ *  group id for that grid — see `GridView`'s derivation. The SAME id is
+ *  threaded to every leaf and drives BOTH sync buses: image panes via
+ *  `image-viewport-sync.ts` (`useSyncedImageViewport`) and 2D charts via
+ *  `chart-viewport-sync.ts` (`useChartSyncTarget` → `useChartViewport`), so one
+ *  flag links a grid's images AND charts. Mirrors the 3D `cameraSyncGroupId`
  *  mechanism (`lib/camera-sync.ts`'s `useCameraSync`), scoped per grid
  *  instead of per card. */
 export interface SharedPlotCtx {
@@ -104,11 +107,12 @@ function LeafView({ node }: { node: PlotLeafNode }) {
         const sharedProps: Record<string, unknown> = {};
         if (shared?.colormap != null) sharedProps.colormap = shared.colormap;
         if (shared?.colorRange != null) sharedProps.colorRange = shared.colorRange;
-        // Image viewport sync (`shared.sync.viewport`) — threaded down as a
-        // group id the `image`/`imagehdr` standalone adapters subscribe to
-        // (see `plot-renderers.tsx`'s `useSyncedImageViewport`). Harmless on
-        // non-image leaves (an unused prop), same as `colormap`/`colorRange`
-        // above.
+        // Viewport sync (`shared.sync.viewport`) — threaded down as one group
+        // id every synced leaf picks up: `image`/`imagehdr` adapters via
+        // `useSyncedImageViewport`, and 2D chart adapters via
+        // `ChartSyncBoundary` → `useChartViewport` (see `plot-renderers.tsx`).
+        // Harmless on leaves that don't sync (an unused prop), same as
+        // `colormap`/`colorRange` above.
         if (viewportSyncGroupId) sharedProps.viewportSyncGroupId = viewportSyncGroupId;
         setState({
           status: "ready",

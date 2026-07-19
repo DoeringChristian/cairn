@@ -24,7 +24,15 @@
  * DATA props arrive already-resolved from the descriptor (`resolveDataProps`)
  * merged over the descriptor's config `props`; adapters spread that as `p`.
  */
-import { useCallback, useEffect, useRef, useState, type ComponentType } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentType,
+  type ReactNode,
+} from "react";
 import ScalarPlot from "./lib/cairn-plot/renderers/ScalarPlot";
 import ScatterPlot from "./lib/cairn-plot/renderers/ScatterPlot";
 import ParallelCoords from "./lib/cairn-plot/renderers/ParallelCoords";
@@ -46,6 +54,11 @@ import {
   publishImageViewportState,
   subscribeImageViewportState,
 } from "./lib/cairn-plot/viewport/image-viewport-sync";
+import {
+  ChartViewportSyncProvider,
+  type ChartViewportSyncTarget,
+} from "./lib/cairn-plot/viewport/use-chart-viewport";
+import { makeChartViewportSyncSourceId } from "./lib/cairn-plot/viewport/chart-viewport-sync";
 import { ChartBox } from "./plot-standalone-helpers";
 import { registerRenderer } from "./plot-registry";
 
@@ -171,11 +184,50 @@ function ScalarPlotStandalone(p: P) {
   );
 }
 
+/**
+ * Derives the stable {@link ChartViewportSyncTarget} for a chart leaf from the
+ * grid's `viewportSyncGroupId` (threaded down by `plot-node.tsx` — the SAME
+ * flag that syncs image panes). The CHART mirror of `useSyncedImageViewport`:
+ * mints a per-instance `sourceId` once (the echo-guard token) and pairs it with
+ * the group id. Returns `null` (not synced) when the leaf isn't in a synced
+ * grid. Memoized so peers don't re-subscribe every render.
+ */
+function useChartSyncTarget(
+  groupId: string | null | undefined,
+): ChartViewportSyncTarget | null {
+  const sourceIdRef = useRef<string>();
+  if (!sourceIdRef.current) sourceIdRef.current = makeChartViewportSyncSourceId();
+  return useMemo(
+    () => (groupId ? { groupId, sourceId: sourceIdRef.current! } : null),
+    [groupId],
+  );
+}
+
+/**
+ * Opts a chart standalone's pure renderer into the grid's viewport-sync group
+ * via context, so the shared `useChartViewport` inside the renderer publishes/
+ * subscribes without the renderer component needing any sync-specific prop —
+ * exactly how `useSyncedImageViewport` gives image panes sync "for free". A
+ * `null` group (unsynced grid or a bare page) is a transparent pass-through.
+ */
+function ChartSyncBoundary({
+  groupId,
+  children,
+}: {
+  groupId: string | null | undefined;
+  children: ReactNode;
+}) {
+  const sync = useChartSyncTarget(groupId);
+  return <ChartViewportSyncProvider value={sync}>{children}</ChartViewportSyncProvider>;
+}
+
 function ScatterPlotStandalone(p: P) {
   const { height, ...rest } = p;
   return (
     <ChartBox height={height}>
-      <ScatterPlot points={p.points ?? []} {...rest} />
+      <ChartSyncBoundary groupId={p.viewportSyncGroupId}>
+        <ScatterPlot points={p.points ?? []} {...rest} />
+      </ChartSyncBoundary>
     </ChartBox>
   );
 }
@@ -198,7 +250,9 @@ function BarChartStandalone(p: P) {
   const { height, ...rest } = p;
   return (
     <ChartBox height={height}>
-      <BarChart bars={p.bars ?? []} {...rest} />
+      <ChartSyncBoundary groupId={p.viewportSyncGroupId}>
+        <BarChart bars={p.bars ?? []} {...rest} />
+      </ChartSyncBoundary>
     </ChartBox>
   );
 }
@@ -209,7 +263,9 @@ function HistogramStandalone(p: P) {
   const props = (rest.view ? rest : { ...rest, view: "bars" }) as any;
   return (
     <ChartBox height={height}>
-      <HistogramPlot {...props} />
+      <ChartSyncBoundary groupId={p.viewportSyncGroupId}>
+        <HistogramPlot {...props} />
+      </ChartSyncBoundary>
     </ChartBox>
   );
 }
@@ -218,7 +274,9 @@ function HeatmapStandalone(p: P) {
   const { height, ...rest } = p;
   return (
     <ChartBox height={height}>
-      <Heatmap matrix={p.matrix ?? []} colormap={p.colormap ?? "viridis"} {...rest} />
+      <ChartSyncBoundary groupId={p.viewportSyncGroupId}>
+        <Heatmap matrix={p.matrix ?? []} colormap={p.colormap ?? "viridis"} {...rest} />
+      </ChartSyncBoundary>
     </ChartBox>
   );
 }

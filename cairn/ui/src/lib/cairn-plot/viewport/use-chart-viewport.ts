@@ -18,7 +18,9 @@
  * hooks, no external viewport store — the component holds its own view state.
  */
 import {
+  createContext,
   useCallback,
+  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -46,9 +48,42 @@ import {
   type PixelPoint,
   type PixelRect,
 } from "./chart-viewport-math";
+import {
+  getLastChartViewport,
+  publishChartViewport,
+  subscribeChartViewport,
+  type ChartSyncPayload,
+} from "./chart-viewport-sync";
 import { useModifierKey } from "../hooks/use-modifier-key";
 
 export type { ChartDomain } from "./chart-viewport-math";
+
+/**
+ * Identifies the live-sync group a chart belongs to (see
+ * `chart-viewport-sync.ts`). `groupId` scopes the pub/sub bus (one per synced
+ * grid); `sourceId` is this chart instance's echo-guard token (a peer ignores
+ * its own broadcasts). Passed to {@link useChartViewport} either as the `sync`
+ * arg (direct/testable) or — since the pure chart renderers don't forward a
+ * viewport-sync prop — through {@link ChartViewportSyncProvider}, so a
+ * standalone adapter can opt a whole subtree into a group without the renderer
+ * component needing to know sync exists (mirrors how the image path threads
+ * `viewportSyncGroupId` into `useSyncedImageViewport`).
+ */
+export interface ChartViewportSyncTarget {
+  groupId: string;
+  sourceId: string;
+}
+
+const ChartViewportSyncContext = createContext<ChartViewportSyncTarget | null>(null);
+
+/**
+ * Opts every {@link useChartViewport} in the subtree into the given sync group.
+ * The standalone chart adapters (`plot-renderers.tsx`) wrap their pure renderer
+ * in this when a grid enables `shared.sync.viewport`, so the shared hook picks
+ * the group up from context without any renderer-component plumbing. An explicit
+ * `sync` arg still wins over context (see the hook body).
+ */
+export const ChartViewportSyncProvider = ChartViewportSyncContext.Provider;
 
 // The internal drag vocabulary. `"box"` (box-zoom) is deliberately kept as the
 // internal token — the toolbar's PUBLIC name `"zoom"` is translated to `"box"`
@@ -146,6 +181,11 @@ export interface UseChartViewportArgs {
    *  against it. When absent, select/lasso drags draw their overlay but emit
    *  nothing (so a chart that doesn't opt in never selects). */
   onSelect?: (geometry: SelectionGeometry) => void;
+  /** Live viewport-sync group. When set (directly, or inherited from
+   *  {@link ChartViewportSyncProvider}), every viewport COMMIT publishes the
+   *  new domain to the group and peers' commits are applied here — Plotly
+   *  matched-axes behaviour across a grid. A direct arg wins over context. */
+  sync?: ChartViewportSyncTarget;
 }
 
 export interface ChartViewportResult {
@@ -278,7 +318,16 @@ export function useChartViewport({
   clamp,
   lockAspect,
   onSelect,
+  sync,
 }: UseChartViewportArgs): ChartViewportResult {
+  // Resolve the sync target: an explicit `sync` arg wins, else inherit the
+  // group a standalone adapter opted this subtree into via context. Kept in a
+  // ref so the stable `commit`/`reset` callbacks publish to the current group
+  // without re-identifying when it changes.
+  const contextSync = useContext(ChartViewportSyncContext);
+  const syncTarget = sync ?? contextSync ?? null;
+  const syncRef = useRef<ChartViewportSyncTarget | null>(syncTarget);
+  syncRef.current = syncTarget;
   // `null` internal ⇒ "follow home" (auto-reframe on new data). A committed
   // gesture sets it; reset clears it back to null.
   const [internal, setInternal] = useState<ChartDomain | null>(null);
@@ -341,19 +390,72 @@ export function useChartViewport({
     [clamp, minSpan, lockAspect],
   );
 
+  // Broadcast the just-committed viewport to the sync group (no-op when this
+  // chart isn't in one). Only ever called from a LOCAL commit/reset — never
+  // from the subscribe handler below — so a remote update is never re-published
+  // (the echo guard, mirroring image-viewport-sync.ts). `"home"` is sent for
+  // autoscale/reset so peers return to following their own home domain.
+  const publishSync = useCallback((d: ChartDomain | "home") => {
+    const s = syncRef.current;
+    if (!s) return;
+    publishChartViewport(
+      s.groupId,
+      s.sourceId,
+      d === "home" ? "home" : { x: d.xDomain, y: d.yDomain },
+    );
+  }, []);
+
   const commit = useCallback(
     (d: ChartDomain) => {
       const next = constrain(d);
       onChange?.(next);
       if (!controlled) setInternal(next);
+      publishSync(next);
     },
-    [constrain, onChange, controlled],
+    [constrain, onChange, controlled, publishSync],
   );
 
   const reset = useCallback(() => {
     onChange?.(home);
     if (!controlled) setInternal(null);
-  }, [home, onChange, controlled]);
+    publishSync("home");
+  }, [home, onChange, controlled, publishSync]);
+
+  // ── Live viewport sync: apply a PEER's broadcast ──
+  // Adopt a peer's domain WITHOUT re-committing (so it never re-publishes — the
+  // echo guard). `"home"` returns to following our own home domain; a concrete
+  // domain is applied directly (Plotly matched-axes: data-space, not pixels),
+  // each axis falling back to our current range when the peer left it null.
+  // Held behind a ref, refreshed each render, so the subscribe effect stays
+  // keyed only on the group id and doesn't churn its subscription per render.
+  const applyRemoteRef = useRef<(payload: ChartSyncPayload) => void>(() => {});
+  applyRemoteRef.current = (payload: ChartSyncPayload) => {
+    if (payload === "home") {
+      onChange?.(home);
+      if (!controlled) setInternal(null);
+      return;
+    }
+    const cur = domainRef.current;
+    const next = constrain({
+      xDomain: payload.x ?? cur.xDomain,
+      yDomain: payload.y ?? cur.yDomain,
+    });
+    onChange?.(next);
+    if (!controlled) setInternal(next);
+  };
+
+  useEffect(() => {
+    if (!syncTarget) return;
+    const { groupId, sourceId } = syncTarget;
+    const last = getLastChartViewport(groupId);
+    if (last) applyRemoteRef.current(last);
+    return subscribeChartViewport(groupId, sourceId, (payload) =>
+      applyRemoteRef.current(payload),
+    );
+    // Re-subscribe only when the group identity changes; peer application reads
+    // freshest state through `applyRemoteRef`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncTarget?.groupId, syncTarget?.sourceId]);
 
   // ── Wheel zoom (non-passive so preventDefault sticks) ──
   // Modifier-gated (Alt/Ctrl/Meta via useModifierKey, matching the image

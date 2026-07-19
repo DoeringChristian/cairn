@@ -354,6 +354,30 @@ def build_gallery() -> list[tuple[str, object]]:
         ),
     ))
 
+    # ── Synced chart viewports — zoom/pan linked (S7) ──────────────────────
+    # The SAME `Grid(shared={"sync": {"viewport": True}})` flag that links image
+    # panes above also links 2D CHART leaves: every chart in the grid joins one
+    # live zoom/pan group via `chart-viewport-sync.ts`'s pub/sub bus (the chart
+    # mirror of the image + 3D-camera sync buses). Box-zoom, pan (drag or the
+    # axis gutters), Alt/Ctrl+wheel, or double-click-to-reset on EITHER chart
+    # and the other adopts the exact same DATA-SPACE window (Plotly matched-axes
+    # style) — not a pixel copy, so it holds even though the two charts have
+    # different y-data. Both scatters share the x range [0, 20], so a zoom into
+    # one x-window frames the same slice in both.
+    sx = np.linspace(0, 20, 120)
+    chart_a = cp.Scatter(sx, np.sin(sx) + 0.05 * rng.standard_normal(120),
+                         x_label="x", y_label="sin(x)")
+    chart_b = cp.Scatter(sx, np.cos(sx) + 0.05 * rng.standard_normal(120),
+                         x_label="x", y_label="cos(x)")
+    items.append((
+        "Synced chart viewports — zoom/pan linked "
+        "(box-zoom / drag / Alt+wheel / double-click on either chart moves both)",
+        cp.Grid(
+            [[chart_a, chart_b]],
+            shared=cp.Shared(sync={"viewport": True}),
+        ),
+    ))
+
     return items
 
 
