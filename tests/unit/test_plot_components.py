@@ -104,6 +104,31 @@ def test_image_url_leaf_emits_url_dataspec():
     assert img._collect_store() == {}
 
 
+def test_image_url_kwarg_emits_client_decode_dataspec():
+    # `cp.Image(url=...)` references the blob by URL (nothing baked) and picks
+    # the renderer from the extension: .exr -> the float-HDR client-decode path.
+    exr = cp.Image(url="https://cdn.example/scene.exr").to_node()
+    assert exr["renderer"] == "imagehdr"
+    assert exr["data"] == {"kind": "image", "hash": None, "url": "https://cdn.example/scene.exr"}
+    # A browser-native URL stays on the 8-bit `image` renderer.
+    png = cp.Image(url="https://cdn.example/pic.png").to_node()
+    assert png["renderer"] == "image"
+    assert png["data"] == {"kind": "image", "hash": None, "url": "https://cdn.example/pic.png"}
+    # `hdr=True` forces the HDR renderer regardless of extension.
+    assert cp.Image(url="https://cdn.example/raw.bin", hdr=True).to_node()["renderer"] == "imagehdr"
+    assert cp.Image(url="https://cdn.example/scene.exr").to_node() is not None
+    assert cp.Image(url="https://cdn.example/scene.exr")._collect_store() == {}
+
+
+def test_image_url_kwarg_guards():
+    with pytest.raises(ValueError, match="EITHER data or url"):
+        cp.Image(_PNG, url="https://cdn.example/pic.png")
+    with pytest.raises(ValueError, match="HDR-only"):
+        cp.Image(url="https://cdn.example/pic.png", tonemap="aces")
+    with pytest.raises(ValueError, match="requires `data`"):
+        cp.Image()
+
+
 def test_leaf_repr_html_never_raises_on_bad_data():
     # A figure leaf built from a non-figure raises at build; the display hook
     # must degrade to a visible message rather than propagate.

@@ -91,11 +91,15 @@ def table(data: Any, *, data_mode: str = "local") -> PlotElement:
     return Table(data, data_mode=data_mode)._build_element()
 
 
-def image(data: Any, *, data_mode: str = "local") -> PlotElement:
+def image(data: Any = None, *, url: str | None = None, data_mode: str = "local") -> PlotElement:
     """A single-view ``image`` plot — mounts the pure image renderer. ``data``:
     a raw image (``PIL.Image`` / numpy array / PNG-JPEG ``bytes``) or a
-    ``run[tag]`` image artifact."""
-    return Image(data, data_mode=data_mode)._build_element()
+    ``run[tag]`` image artifact. ``url``: a direct URL to the image blob
+    (mutually exclusive with ``data``) — the descriptor keeps the URL verbatim
+    and the client fetches + sniffs + decodes it, handling formats a browser
+    can't ``<img>``-decode (``.exr``/``.npy``/…); those default to the
+    float-HDR renderer."""
+    return Image(data, url=url, data_mode=data_mode)._build_element()
 
 
 def mesh(data: Any, faces: Any = None, **kwargs: Any) -> PlotElement:

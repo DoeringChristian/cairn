@@ -64,13 +64,17 @@ class ImageDataSpec(_Strict):
     blob-format hint (MIME or extension, e.g. ``"png"``/``"avif"``/``"npy"``)
     that drives the multi-format decoder seam: a RAW-buffer format (``npy``/
     ``npz``) is fetched + normalized through ``decodeImage`` client-side, while a
-    browser-native format (or an absent hint) keeps the URL fast path."""
+    browser-native format (or an absent hint) keeps the URL fast path. ``url`` is
+    an OPTIONAL direct URL to the blob (additive to ``hash``): when set the
+    client FETCHES + sniffs + decodes it (handles ``exr``/``npy``/… a browser
+    can't ``<img>``-decode), keeping the image referenced by URL, not embedded."""
 
     kind: Literal["image"]
     hash: Optional[str]
     referenceHash: Optional[str] = None
     metadata: Optional[str] = None
     format: Optional[str] = None
+    url: Optional[str] = None
 
 
 class UrlDataSpec(_Strict):

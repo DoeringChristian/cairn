@@ -777,8 +777,9 @@ class Image(Component):
 
     def __init__(
         self,
-        data: Any,
+        data: Any = None,
         *,
+        url: str | None = None,
         data_mode: str = "local",
         hdr: bool | None = None,
         tonemap: str | None = None,
@@ -809,6 +810,49 @@ class Image(Component):
         self._store: dict[str, dict[str, str]] = {}
         self._data_mode = data_mode
         self._renderer = "image"
+
+        # ── URL source (client fetch + sniff + decode) ───────────────────
+        # `cp.Image(url=...)` references the blob BY URL instead of embedding it:
+        # the emitted descriptor keeps the URL verbatim, and the client fetches
+        # + decodes it (handles exr/npy/… a browser can't <img>-decode). The
+        # renderer is chosen here (fixed at emit time): explicit `hdr=` wins,
+        # else the URL extension (.exr/.npy/.npz → the float-HDR renderer, which
+        # consumes the `hdr` prop the url decode yields; otherwise the 8-bit
+        # `image` renderer, which consumes the `imageUrl` data URL).
+        if url is not None:
+            if data is not None:
+                raise ValueError("cp.Image: pass EITHER data or url, not both.")
+            if not isinstance(url, str):
+                raise ValueError("cp.Image(url=...) must be a string URL.")
+            stem = url.split("?", 1)[0].split("#", 1)[0]
+            ext = stem.rsplit(".", 1)[-1].lower() if "." in stem else ""
+            use_hdr = hdr if hdr is not None else ext in ("exr", "npy", "npz")
+            if tonemap is not None and not use_hdr:
+                raise ValueError(
+                    "cp.Image(url=..., tonemap=...) is HDR-only: pass hdr=True or a "
+                    "float/exr URL (.exr/.npy/.npz)."
+                )
+            if use_hdr:
+                self._props = _image_hdr_props(
+                    tonemap=tonemap, exposure=exposure, gamma=gamma,
+                    interpolation=interpolation, show_axes=show_axes,
+                    pixel_value_notation=pixel_value_notation,
+                )
+                self._renderer = "imagehdr"
+            else:
+                self._props = _image_display_props(
+                    exposure=exposure, gamma=gamma, brightness=brightness,
+                    contrast=contrast, offset=offset, flip_sign=flip_sign,
+                    colormap=colormap, interpolation=interpolation,
+                    show_axes=show_axes, pixel_value_notation=pixel_value_notation,
+                )
+                self._renderer = "image"
+            self._data: dict[str, Any] = {"kind": "image", "hash": None, "url": url}
+            self._data_mode = data_mode
+            return
+
+        if data is None:
+            raise ValueError("cp.Image requires `data` (or `url=`).")
 
         # ── HDR routing ──────────────────────────────────────────────────
         # HDR applies only to a raw float ndarray (never a DataRef/URL/bytes/

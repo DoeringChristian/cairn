@@ -66,6 +66,19 @@ export type DataSpec =
        * the byte-identical URL fast path — the browser decodes it via `<img>`.
        */
       format?: string;
+      /**
+       * OPTIONAL direct URL to the image blob (additive to `hash`). When present,
+       * `resolveDataProps` FETCHES the bytes from this URL and normalizes them
+       * through `decodeImage` (sniffed by MIME/URL-ext/magic) — the same shaping
+       * as the `format?` path: float buffers → the `hdr` prop shape, uint8/native
+       * buffers → an `imageUrl` PNG data URL. This is the CLIENT-DECODE path that
+       * lets a URL serve formats the browser can't `<img>`-decode (`exr`/`npy`/…),
+       * with the image referenced by URL instead of embedded in the HTML. (For a
+       * plain browser-native URL a bare-`str` `kind:"url"` passthrough is lighter;
+       * this field opts into the fetch+decode path.) NOTE: a cross-origin fetch
+       * is CORS-gated — the serving endpoint must allow the page's origin.
+       */
+      url?: string;
     }
   | {
       kind: "npz";
@@ -179,6 +192,34 @@ export async function resolveDataProps(
     case "inline":
       return { ...data.props };
     case "image": {
+      // Direct-URL CLIENT-DECODE seam. When `url` is set, fetch the bytes from
+      // that URL and normalize through `decodeImage` (sniffed by the response
+      // Content-Type, the URL extension, then magic bytes) — the SAME shaping as
+      // the `format?` path below: float buffers → the `hdr` prop shape, uint8/
+      // browser-native buffers → an `imageUrl` PNG data URL. This lets a URL
+      // serve formats the browser can't `<img>`-decode (`exr`/`npy`/…) while the
+      // image stays referenced by URL, not embedded. CORS applies to the fetch.
+      if (data.url) {
+        const res = await fetch(data.url);
+        if (!res.ok) {
+          throw new Error(`cairn-plot: failed to fetch image ${data.url} (${res.status})`);
+        }
+        const bytes = await res.arrayBuffer();
+        const decoded = await decodeImage({
+          bytes,
+          url: data.url,
+          mime: res.headers.get("content-type") ?? undefined,
+        });
+        const overlay = parseOverlay(data.metadata) ?? undefined;
+        if (decoded.kind === "f32") {
+          const shape =
+            decoded.channels === 1
+              ? [decoded.height, decoded.width]
+              : [decoded.height, decoded.width, decoded.channels];
+          return { hdr: { data: decoded.data, shape, dtype: "<f4" }, baselineUrl: null, overlay };
+        }
+        return { imageUrl: decodedU8ToDataUrl(decoded), baselineUrl: null, overlay };
+      }
       // Multi-format DECODER seam. When `format` names a RAW-buffer image
       // (`.npy`/`.npz`), the browser can't decode it via `<img>`, so fetch the
       // bytes and normalize through `decodeImage`: float buffers become the
