@@ -2,6 +2,18 @@ import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { TOOLTIP_OFFSET } from "./tooltip-position";
 
 /**
+ * The ONE shared tooltip chrome (container look) for every cairn-plot renderer:
+ * rounded corners, token-driven border + elevated background, drop shadow, and
+ * the small-text/padding baseline. This is the single source of truth — both
+ * the SVG renderers' shared <Tooltip> below AND the Recharts-based ScalarPlot's
+ * CustomTooltip render their container with this exact class so no renderer's
+ * tooltip diverges (e.g. sharp vs. rounded corners). Positioning-only classes
+ * (absolute/z-index/pointer-events) live on the <Tooltip> wrapper, not here.
+ */
+export const TOOLTIP_CHROME_CLASS =
+  "rounded border border-border bg-bg-elevated shadow-lg p-2 text-xs";
+
+/**
  * Shared tooltip positioning model for every 2D cairn-plot renderer
  * (ScatterPlot, BarChart, HistogramPlot, Heatmap, ParallelCoords).
  *
@@ -73,7 +85,7 @@ export default function Tooltip({
   return (
     <div
       ref={ref}
-      className="pointer-events-none absolute z-50 rounded border border-border bg-bg-elevated shadow-lg p-2 text-xs w-fit"
+      className={`pointer-events-none absolute z-50 w-fit ${TOOLTIP_CHROME_CLASS}`}
       style={{ maxWidth: width, left, top }}
     >
       {children}

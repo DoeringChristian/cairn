@@ -356,6 +356,10 @@ export default function ScalarPlot({
               />
             );
           })}
+          {/* All tooltip chrome (rounded corners, bg, border, shadow, font)
+              lives in CustomTooltip via the shared TOOLTIP_CHROME_CLASS, so no
+              contentStyle/labelStyle override here (Recharts ignores them when
+              a custom `content` is supplied anyway). */}
           <Tooltip
             isAnimationActive={false}
             content={
@@ -368,12 +372,6 @@ export default function ScalarPlot({
                 showWallTime={tooltip?.showWallTime ?? true}
               />
             }
-            contentStyle={{
-              background: "var(--color-bg-elevated, #f6f8fa)",
-              border: "1px solid var(--color-border, #d0d7de)",
-              fontSize: 12,
-            }}
-            labelStyle={{ color: "var(--color-fg-muted, #656d76)" }}
           />
           {showLegend && series.length > 0 && (
             <Legend

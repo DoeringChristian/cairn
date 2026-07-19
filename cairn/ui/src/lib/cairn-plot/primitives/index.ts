@@ -1,4 +1,4 @@
-export { default as Tooltip } from "./Tooltip";
+export { default as Tooltip, TOOLTIP_CHROME_CLASS } from "./Tooltip";
 export {
   TOOLTIP_OFFSET,
   anchorFromRect,

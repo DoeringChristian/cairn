@@ -1,9 +1,9 @@
 // Internal satellite of ScalarPlot. Exported for ScalarPlot's use only —
 // intentionally NOT re-exported from the public cairn-plot barrels.
 
-import type { CSSProperties } from "react";
 import type { AxisSource } from "../../transforms/x-axis";
 import { formatNum, formatXTick } from "../../format";
+import { TOOLTIP_CHROME_CLASS } from "../../primitives/Tooltip";
 import type { LegendSeries } from "./scalar-legend";
 
 interface TooltipPayloadEntry {
@@ -32,17 +32,11 @@ export function CustomTooltip({
   showWallTime: boolean;
 }) {
   if (!active || !payload || payload.length === 0) return null;
-  const style: CSSProperties = {
-    background: "var(--color-bg-elevated, #f6f8fa)",
-    border: "1px solid var(--color-border, #d0d7de)",
-    padding: "6px 8px",
-    fontSize: 12,
-    color: "#1f2328",
-    minWidth: 140,
-  };
   const labelNum = typeof label === "number" ? label : Number(label);
   return (
-    <div style={style}>
+    // Same shared chrome (rounded, token bg/border, shadow) as every other
+    // cairn-plot tooltip; only the min-width is scalar-specific.
+    <div className={TOOLTIP_CHROME_CLASS} style={{ minWidth: 140 }}>
       <div style={{ color: "var(--color-fg-muted, #656d76)", marginBottom: 4 }}>
         {formatXTick(labelNum, xAxis)}
       </div>
