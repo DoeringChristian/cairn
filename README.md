@@ -158,6 +158,17 @@ uv run --extra examples --extra media marimo edit examples/marimo_cairn_demo.py
 
 This project uses [uv](https://docs.astral.sh/uv/) for Python and npm for the UI.
 
+The [cairn-plot](https://github.com/doeringchristian/cairn-plot) rendering
+library is vendored as a git submodule at `vendor/cairn-plot` (both the Python
+package, via a uv path source, and the TS renderer source the app build bundles
+come from there). Clone with submodules:
+
+```bash
+git clone --recurse-submodules https://github.com/anthropics/cairn
+# already cloned? pull the submodule in:
+git submodule update --init --recursive
+```
+
 ```bash
 uv sync --extra dev
 cd cairn/ui && npm install && npm run build

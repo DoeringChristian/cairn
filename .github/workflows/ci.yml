@@ -13,6 +13,10 @@ jobs:
         python: ["3.10", "3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # cairn-plot ships from the standalone repo, vendored at
+          # vendor/cairn-plot; uv's path source needs it checked out.
+          submodules: recursive
 
       - uses: astral-sh/setup-uv@v3
         with:
@@ -37,6 +41,10 @@ jobs:
         working-directory: cairn/ui
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The app build consumes the cairn-plot renderer source from the
+          # vendored submodule (vendor/cairn-plot) via the @cairn-plot alias.
+          submodules: recursive
 
       - uses: actions/setup-node@v4
         with:
@@ -50,13 +58,7 @@ jobs:
 
       - run: npm run build
 
-      # Enforce the TS → JSON-schema contracts (drift = fail). These generate
-      # from the TS types and diff against the committed schemas; without them
-      # a TS type change that desyncs the pydantic-facing schema slips through.
-      - run: npm run check:plot-schema
-
-      # Enforce the cairn-plot extraction boundary: the plot library + its
-      # standalone entries must not import app code (prep for the repo split).
-      - run: npm run check:plot-boundary
-
+      # The plot TS→JSON-schema contract and the lib→app import boundary are now
+      # enforced in the standalone cairn-plot repo's own CI (the library lives
+      # there); the monorepo keeps only the app-card schema drift guard.
       - run: npm run check:card-schema
