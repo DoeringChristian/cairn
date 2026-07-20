@@ -1,10 +1,36 @@
-# cairn-plot repo extraction — preparation
+# cairn-plot repo extraction — preparation + migration
 
-Status: user-directed (2026-07-19): "we are going to extract cairn plot into its own repo. Prep for that."
-This spec covers PREP only — the extraction itself is a later, deliberate cutover.
+Status: user-directed (2026-07-19). UPDATE: the target repo EXISTS — an empty clone at
+`../cairn-plot` (github.com/doeringchristian/cairn-plot). We migrate the plotting part
+there; cairn then consumes cairn-plot as a dependency. The library is exposed BOTH as a
+**Python library** (`pip install cairn-plot` → `import cairn_plot as cp`) and an
+**HTML/JS library** (the per-renderer IIFE bundles + the standalone-page/report emit —
+consumable without Python).
 
-## Target end-state (context for prep decisions)
-A standalone `cairn-plot` repository containing: the TS renderer library + its per-renderer IIFE build, the Python package (`cairn_plot`), the schema contract, tests, CI, docs. The `cairn` repo then consumes `cairn-plot` as a dependency (pip + either npm pkg or vendored IIFEs).
+## Phasing
+- **Phase 1 (now): migrate.** Populate `../cairn-plot` (layout below) from the monorepo
+  state AFTER the in-flight templating + WASM-decoder work merges; standalone gates green
+  in the new repo; initial import commit (clean import, no history rewrite — the monorepo
+  keeps the history; runbook records the provenance SHA). Push only with user go-ahead.
+  During Phase 1 the monorepo keeps its in-tree copy (dual-home; cairn-plot repo is
+  canonical from the moment of migration — monorepo changes to the lib FREEZE).
+- **Phase 2 (next): consume.** cairn switches to the dependency (uv source: path/git →
+  later PyPI pin; app build consumes the TS lib via npm file:-dep or vendored assets),
+  and the in-tree copy + shims are deleted.
+
+## Standalone repo layout (Phase 1 target)
+```
+cairn-plot/
+  pyproject.toml           # from packages/cairn-plot (repo root = pip-installable)
+  src/cairn_plot/...       # Python package incl. _assets
+  ui/                      # TS lib: src/ (lib/cairn-plot/** + plot-* entries),
+                           # vite.plot-*.configs, scripts/, package.json, tsconfig
+  schema/cairn-plot-spec.schema.json
+  tests/                   # test_plot_*.py + node tests live beside ui/src
+  examples/                # demo_cairn_plot.py, report_cairn_plot.py, demo_url_images.py
+  .github/workflows/ci.yml # tsc, node tests, schema check, pytest, wheel+bare-venv, smoke
+  README.md, LICENSE, CHANGELOG.md
+```
 
 ## Prep workstreams
 
