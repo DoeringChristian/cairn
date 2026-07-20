@@ -82,14 +82,12 @@ cairn = "cairn.cli:main"
 [project.urls]
 Repository = "https://github.com/anthropics/cairn"
 
-# The cairn-plot rendering library is developed in-repo as a uv workspace member
-# (packaging spec §2). In dev it resolves from the local checkout; on release it
-# pins `cairn-plot>=0.1,<0.2`.
-[tool.uv.workspace]
-members = ["packages/cairn-plot"]
-
+# The cairn-plot rendering library now lives in the standalone `cairn-plot`
+# repository (github.com/doeringchristian/cairn-plot), consumed here as a git
+# submodule at `vendor/cairn-plot` (pinned commit). In dev it resolves editable
+# from that checkout; on release it pins `cairn-plot>=0.1,<0.2`.
 [tool.uv.sources]
-cairn-plot = { workspace = true }
+cairn-plot = { path = "vendor/cairn-plot", editable = true }
 
 [build-system]
 requires = ["hatchling"]

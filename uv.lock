@@ -11,12 +11,6 @@ resolution-markers = [
     "python_full_version < '3.11'",
 ]
 
-[manifest]
-members = [
-    "cairn-plot",
-    "cairn-track",
-]
-
 [[package]]
 name = "aiohappyeyeballs"
 version = "2.6.1"
@@ -309,7 +303,7 @@ wheels = [
 [[package]]
 name = "cairn-plot"
 version = "0.1.0"
-source = { editable = "packages/cairn-plot" }
+source = { editable = "vendor/cairn-plot" }
 dependencies = [
     { name = "jinja2" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -317,21 +311,18 @@ dependencies = [
     { name = "pydantic" },
 ]
 
-[package.optional-dependencies]
-media = [
-    { name = "pillow" },
-    { name = "plotly" },
-]
-
 [package.metadata]
 requires-dist = [
     { name = "jinja2", specifier = ">=3.1" },
     { name = "numpy", specifier = ">=1.24" },
+    { name = "pillow", marker = "extra == 'dev'", specifier = ">=10.0.0" },
     { name = "pillow", marker = "extra == 'media'", specifier = ">=10.0.0" },
+    { name = "plotly", marker = "extra == 'dev'", specifier = ">=5.18" },
     { name = "plotly", marker = "extra == 'media'", specifier = ">=5.18" },
     { name = "pydantic", specifier = ">=2.0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
 ]
-provides-extras = ["media"]
+provides-extras = ["media", "dev"]
 
 [[package]]
 name = "cairn-track"
@@ -400,7 +391,7 @@ plugins = [
 [package.metadata]
 requires-dist = [
     { name = "aiortc", marker = "extra == 'plugins'", specifier = ">=1.9" },
-    { name = "cairn-plot", editable = "packages/cairn-plot" },
+    { name = "cairn-plot", editable = "vendor/cairn-plot" },
     { name = "click", specifier = ">=8.1.0" },
     { name = "datasets", marker = "extra == 'hf'", specifier = ">=2.18" },
     { name = "fastapi", specifier = ">=0.110.0" },
