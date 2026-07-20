@@ -14,11 +14,13 @@
  *     dependency is bundled for it.
  *   - npy/npz → the pure raw-buffer parsers (`parseNpy`/`parseNpz`). Float
  *     dtypes yield `f32`; `uint8`/`int8`/`bool` yield `u8`.
- *   - exr → the minimal dependency-free browser EXR reader (`decoders/exr.ts`):
- *     single-part scanline, HALF/FLOAT channels, NONE/ZIP/ZIPS compression
- *     (zlib via native `DecompressionStream`). Yields `f32` (RGB→3, RGBA→4,
- *     Y/single→1). Unsupported EXR variants throw a clear
- *     "unsupported EXR variant: …" error.
+ *   - exr → the worker-backed full decoder (`decoders/exr-decode.ts`): the
+ *     vendored three.js EXR loader (`decoders/vendor/`) covering NONE/RLE/
+ *     ZIP(S)/PIZ/PXR24/B44(A)/DWAA/DWAB (+ tiled/multi-part/deep), run OFF the
+ *     main thread in a persistent inline Web Worker. Yields `f32` (RGB→3,
+ *     RGBA→4, Y/single→1). Falls back to the pure-TS `decoders/exr.ts` reader
+ *     (NONE/ZIP/ZIPS) when no Worker is available; genuinely unsupported inputs
+ *     surface a clear error.
  *   - unknown → best-effort browser-native decode, else a clear error.
  *
  * Format is sniffed by {@link sniffFormat}: explicit `mime` wins, then `ext`,
@@ -35,10 +37,14 @@
 // Node's resolver and accepted by tsc (`allowImportingTsExtensions`) + the vite
 // bundler.
 import { parseNpy, type NpyArray } from "../transforms/parse-npy.ts";
-// The EXR reader is a self-contained leaf (types-only dep on this module + the
-// runtime-native `DecompressionStream`/`Blob`/`Response`), so a static import
-// keeps the node-test graph DOM-free while wiring it into the registry below.
-import { decodeExr } from "./decoders/exr.ts";
+// The EXR slot is the worker-backed dispatcher (`decoders/exr-decode.ts`): it
+// runs the FULL vendored decoder (PIZ/PXR24/B44/DWA/… — see
+// `decoders/vendor/PROVENANCE.md`) OFF the main thread in a persistent inline
+// Web Worker, falling back to the same decoder on the main thread (and, last,
+// to the pure-TS `decoders/exr.ts` reader for NONE/ZIP/ZIPS) when a Worker is
+// unavailable. The dispatcher's eager module graph is DOM-free (the worker is
+// loaded lazily via `?worker&inline`), so the node-test import stays clean.
+import { decodeExr } from "./decoders/exr-decode.ts";
 
 // ---------------------------------------------------------------------------
 // Canonical payload + source contracts.
