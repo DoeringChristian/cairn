@@ -362,5 +362,5 @@ def test_import_cairn_plot_without_plotly_does_not_raise(monkeypatch):
 
     importlib.reload(reloaded)  # module body itself has no plotly import
 
-    with pytest.raises(ImportError, match="cairn-track\\[media\\]"):
+    with pytest.raises(ImportError, match="cairn-plot\\[media\\]"):
         reloaded.bar(["a"], [1])
