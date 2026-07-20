@@ -352,25 +352,29 @@ def test_compare_node_round_trips():
 
 
 # ---------------------------------------------------------------------------
-# The flat PlotSpec leaf-builder stays green (lowercase path).
+# Leaf specs round-trip through the tree-root descriptor (the ONE form).
 # ---------------------------------------------------------------------------
 
 
-def test_flat_plot_spec_inline_round_trips():
-    spec = cs.PlotSpec(
-        renderer="scalar",
-        props={"xAxis": "step"},
-        data=cs.InlineDataSpec(kind="inline", props={"series": []}),
+def test_tree_leaf_descriptor_round_trips():
+    spec = cs.PlotDescriptorSpec(
+        root=cs.PlotLeafSpec(
+            kind="plot",
+            renderer="scalar",
+            props={"xAxis": "step"},
+            data=cs.InlineDataSpec(kind="inline", props={"series": []}),
+        ),
+        mode="local",
     )
     dumped = spec.model_dump(exclude_none=True, mode="json")
     assert dumped["mode"] == "local"
-    assert dumped["data"]["kind"] == "inline"
-    assert cs.PlotSpec.model_validate(dumped) == spec
+    assert dumped["root"]["data"]["kind"] == "inline"
+    assert cs.PlotDescriptorSpec.model_validate(dumped) == spec
 
 
 def test_discriminator_rejects_unknown_kind():
     with pytest.raises(ValidationError):
-        cs.PlotSpec(renderer="scalar", data={"kind": "bogus", "props": {}})
+        cs.PlotLeafSpec(kind="plot", renderer="scalar", data={"kind": "bogus", "props": {}})
 
 
 def test_extra_field_rejected_on_descriptor():

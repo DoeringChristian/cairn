@@ -24,7 +24,6 @@ from cairn_plot.components import (  # noqa: F401 - re-exported for zero caller 
     Mesh,
     ParallelCoordinates,
     PointCloud,
-    Scalar,
     Scatter,
     Shared,
     Table,

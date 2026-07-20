@@ -1,9 +1,9 @@
-"""G2: the composable ``cairn.plot`` Component API (``cp.Scalar``/``Image``/
+"""G2: the composable ``cairn.plot`` Component API (``cp.Line``/``Image``/
 ``Figure``/``Table``/``Grid``/``Compare``).
 
 Stage A (leaves) + Stage B (grid/compare + lowercase aliases). Each test drives
 the real display path (``_repr_html_``) and round-trips the emitted descriptor
-back through the pydantic ``PlotSpec``/``PlotDescriptorSpec`` — the same
+back through the pydantic ``PlotDescriptorSpec`` (tree-root form) — the same
 anti-drift gate the flat emit tests use.
 """
 
@@ -15,7 +15,7 @@ import re
 import pytest
 
 import cairn.plot as cp
-from cairn.sdk.card_spec import PlotDescriptorSpec, PlotSpec
+from cairn.sdk.card_spec import PlotDescriptorSpec
 
 # A 1x1 opaque PNG.
 _PNG = bytes.fromhex(
@@ -50,18 +50,18 @@ def _mount_divs(html: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def test_scalar_leaf_emits_one_mount_and_flat_descriptor():
-    html = cp.Scalar([0.9, 0.5, 0.3])._repr_html_()
+def test_scalar_leaf_emits_one_mount_and_tree_descriptor():
+    html = cp.Line([0.9, 0.5, 0.3])._repr_html_()
     assert len(_mount_divs(html)) == 1
     desc = _descriptor_from_html(html)
-    # A standalone leaf renders through the legacy-flat path.
-    spec = PlotSpec.model_validate(desc)
-    assert spec.renderer == "scalar"
-    assert desc["data"]["props"]["series"][0]["points"][0] == {"x": 0, "y": 0.9}
+    # Every emit — leaf or container — is the ONE tree-root descriptor form.
+    spec = PlotDescriptorSpec.model_validate(desc)
+    assert spec.root.renderer == "scalar"
+    assert desc["root"]["data"]["props"]["series"][0]["points"][0] == {"x": 0, "y": 0.9}
 
 
 def test_scalar_leaf_carries_no_plotly():
-    html = cp.Scalar([1, 2, 3])._repr_html_()
+    html = cp.Line([1, 2, 3])._repr_html_()
     assert "window.__cairnPlotBundleLoaded" in html
     assert "window.__cairnPlotFigureLoaded" not in html
     assert "plotly" not in html.lower()
@@ -75,21 +75,21 @@ def test_figure_leaf_carries_both_bundle_guards():
     assert "window.__cairnPlotFigureLoaded" in html
     assert "plotly" in html.lower()
     desc = _descriptor_from_html(html)
-    assert PlotSpec.model_validate(desc).renderer == "figure"
+    assert PlotDescriptorSpec.model_validate(desc).root.renderer == "figure"
 
 
 def test_table_leaf_round_trips():
     html = cp.Table([{"a": 1, "b": "x"}, {"a": 2, "b": "y"}])._repr_html_()
     assert len(_mount_divs(html)) == 1
     desc = _descriptor_from_html(html)
-    assert PlotSpec.model_validate(desc).renderer == "table"
+    assert PlotDescriptorSpec.model_validate(desc).root.renderer == "table"
 
 
 def test_image_leaf_bakes_store_blob():
     img = cp.Image(_PNG)
     html = img._repr_html_()
     assert "application/cairn-plot-store+json" in html
-    desc = _descriptor_from_html(html)
+    desc = _descriptor_from_html(html)["root"]
     assert desc["data"]["kind"] == "image"
     h = desc["data"]["hash"]
     assert h.startswith("sha256:")
@@ -150,7 +150,7 @@ def test_leaf_repr_html_never_raises_on_bad_data():
 
 
 def test_grid_1d_defaults_cols_to_child_count():
-    node = cp.Grid([cp.Scalar([1, 2]), cp.Image(_PNG), cp.Image(_PNG2)]).to_node()
+    node = cp.Grid([cp.Line([1, 2]), cp.Image(_PNG), cp.Image(_PNG2)]).to_node()
     assert node["kind"] == "grid"
     assert node["cols"] == 3
     assert len(node["children"]) == 3
@@ -158,7 +158,7 @@ def test_grid_1d_defaults_cols_to_child_count():
 
 def test_grid_2d_flattens_row_major_and_sets_cols():
     node = cp.Grid(
-        [[cp.Scalar([1]), cp.Image(_PNG)], [cp.Image(_PNG2), cp.Scalar([2])]]
+        [[cp.Line([1]), cp.Image(_PNG)], [cp.Image(_PNG2), cp.Line([2])]]
     ).to_node()
     assert node["cols"] == 2
     assert [c["renderer"] for c in node["children"]] == [
@@ -171,13 +171,13 @@ def test_grid_2d_flattens_row_major_and_sets_cols():
 
 def test_grid_2d_ragged_rows_raise():
     with pytest.raises(ValueError, match="ragged"):
-        cp.Grid([[cp.Scalar([1]), cp.Image(_PNG)], [cp.Scalar([2])]])
+        cp.Grid([[cp.Line([1]), cp.Image(_PNG)], [cp.Line([2])]])
 
 
 def test_grid_recursive_descriptor_round_trips_and_one_mount():
     grid = cp.Grid(
         [
-            [cp.Scalar([0.1, 0.2]), cp.Image(_PNG)],
+            [cp.Line([0.1, 0.2]), cp.Image(_PNG)],
             [cp.Compare(cp.Image(_PNG), cp.Image(_PNG2), mode="split"), cp.Table([{"a": 1}])],
         ],
         col_widths=[0.6, 0.4],
@@ -226,7 +226,7 @@ def test_compare_diff_emits_compare_node_with_baseline():
 
 def test_compare_split_requires_image_like_leaves():
     with pytest.raises(TypeError, match="image-like"):
-        cp.Compare(cp.Scalar([1, 2]), cp.Image(_PNG), mode="diff")
+        cp.Compare(cp.Line([1, 2]), cp.Image(_PNG), mode="diff")
 
 
 def test_compare_store_merges_up():
@@ -411,9 +411,9 @@ def test_image_hdr_autodetect_emits_imagehdr_renderer():
     assert node["props"]["tonemap"] == "srgb"
     assert node["props"]["exposure"] == 0.0
     assert "gamma" not in node["props"]
-    # round-trips through the pydantic PlotSpec (the anti-drift gate)
-    spec = PlotSpec.model_validate(_descriptor_from_html(img._repr_html_()))
-    assert spec.renderer == "imagehdr"
+    # round-trips through the pydantic PlotDescriptorSpec (the anti-drift gate)
+    spec = PlotDescriptorSpec.model_validate(_descriptor_from_html(img._repr_html_()))
+    assert spec.root.renderer == "imagehdr"
 
 
 def test_image_hdr_force_flag_on_low_range_float():
@@ -530,7 +530,7 @@ def test_lowercase_scalar_still_returns_plot_element():
     el = cp.scalar([1, 2, 3])
     assert isinstance(el, PlotElement)
     desc = _descriptor_from_html(el._repr_html_())
-    assert PlotSpec.model_validate(desc).renderer == "scalar"
+    assert PlotDescriptorSpec.model_validate(desc).root.renderer == "scalar"
 
 
 def test_lowercase_image_still_returns_plot_element_with_store():
@@ -549,7 +549,6 @@ def test_capitalized_names_exported():
         "Histogram",
         "Heatmap",
         "ParallelCoordinates",
-        "Scalar",
         "Figure",
         "Table",
         "Image",
@@ -562,7 +561,7 @@ def test_capitalized_names_exported():
 # ---------------------------------------------------------------------------
 # G2 revision — general plotting leaves (Line/Scatter/Bar/Histogram/Heatmap/
 # ParallelCoordinates). Each raw-data constructor drives the real display path
-# and round-trips through the flat PlotSpec (byte-compatible legacy render).
+# and round-trips through the tree-root PlotDescriptorSpec.
 # ---------------------------------------------------------------------------
 
 
@@ -570,12 +569,12 @@ def _leaf_desc(component) -> dict:
     html = component._repr_html_()
     assert len(_mount_divs(html)) == 1
     desc = _descriptor_from_html(html)
-    PlotSpec.model_validate(desc)  # schema-valid round-trip
-    return desc
+    PlotDescriptorSpec.model_validate(desc)  # schema-valid round-trip
+    return desc["root"]
 
 
-def test_scalar_is_deprecated_alias_of_line():
-    assert cp.Scalar is cp.Line
+def test_scalar_alias_removed_from_surface():
+    assert not hasattr(cp, "Scalar")
 
 
 def test_line_raw_single_series_matches_index():
