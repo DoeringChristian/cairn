@@ -20,6 +20,9 @@ classifiers = [
 dependencies = [
     "numpy>=1.24",
     "pydantic>=2.0",
+    # Report templating (cp.Report renders through a Jinja2 template — the
+    # branded `cairn` theme + `minimal`, or a caller-supplied template).
+    "jinja2>=3.1",
 ]
 
 [project.optional-dependencies]
@@ -41,7 +44,10 @@ build-backend = "hatchling.build"
 packages = ["src/cairn_plot"]
 # The JS/CSS renderer bundles are the package's canonical payload (packaging
 # spec §5) — ship them as package data (kept in sync from cairn/ui/dist by
-# cairn/ui/scripts/sync-plot-assets.mjs).
+# cairn/ui/scripts/sync-plot-assets.mjs). `_assets` is gitignored (built output)
+# so it needs an explicit `artifacts` entry; the Jinja2 report templates
+# (templates/**/*.j2 + theme.css) are tracked source under the package, so the
+# `packages = [...]` selection above already ships them in the wheel.
 artifacts = ["src/cairn_plot/_assets/**/*"]
 
 [tool.hatch.build.targets.sdist]
