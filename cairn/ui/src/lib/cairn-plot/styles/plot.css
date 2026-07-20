@@ -1,0 +1,63 @@
+/**
+ * cairn-plot standalone stylesheet entry.
+ *
+ * This is what the offline plot-inline build (`vite.plot-core.config.ts`) and
+ * the server `/plot` build compile into `plot-inline/style.css` — the CSS the
+ * Python emitter inlines into every self-contained plot / report page. It is
+ * SELF-CONTAINED: it depends only on the cairn-plot Tailwind preset
+ * (`../tailwind-preset.ts`, wired via the shared `tailwind.config.ts`) and the
+ * token contract (`./tokens.css`), never on the app's `src/index.css`.
+ *
+ * It carries ONLY the base/component rules the plot renderers actually use:
+ * the `.num`/`.mono` numeric styling, the `.input` control (Table filter), the
+ * `.cairn-checkerboard` alpha backdrop (image panes), and Font-Awesome icon
+ * sizing (legend/label chips). App-shell-only rules (`.card`, `.btn`, `.kbd`,
+ * card drag-reorder, mobile grid) intentionally do NOT ship here — the
+ * standalone plot pages never mount inside the app shell.
+ */
+@import "./tokens.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+  /* Numbers and identifiers in monospace per spec §Design principles */
+  .num,
+  .mono {
+    font-family: theme("fontFamily.mono");
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer components {
+  /* Checkerboard background for image cards — shows alpha channel and image
+     bounds. Colors route through the theme tokens with the historical light
+     values as fallbacks, so the APP (which never defines
+     `--color-checkerboard-*`) is unchanged, while an emitted `.cairn-plot-doc`
+     page in dark mode gets a dark-safe checkerboard. */
+  .cairn-checkerboard {
+    background-image:
+      linear-gradient(45deg, var(--color-checkerboard-a, #e0e0e0) 25%, transparent 25%),
+      linear-gradient(-45deg, var(--color-checkerboard-a, #e0e0e0) 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, var(--color-checkerboard-a, #e0e0e0) 75%),
+      linear-gradient(-45deg, transparent 75%, var(--color-checkerboard-a, #e0e0e0) 75%);
+    background-size: 16px 16px;
+    background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+    background-color: var(--color-checkerboard-b, #f0f0f0);
+  }
+  .input {
+    @apply w-full rounded border border-border bg-bg-elevated px-3 py-1.5 text-sm text-fg placeholder:text-fg-subtle focus:border-accent focus:outline-none;
+  }
+}
+
+/* Font Awesome icons inside buttons */
+button i[class*="fa-"] { font-size: 12px; line-height: 1; }

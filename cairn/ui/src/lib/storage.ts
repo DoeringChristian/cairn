@@ -21,6 +21,9 @@ export const storageKeys = {
   comparisonTemplates: (projectId: string) => `cairn:comparison-templates:${projectId}`,
   reportTemplates: (projectId: string) => `cairn:report-templates:${projectId}`,
   streamMode: "cairn:stream-mode",
+  // NOTE: the cairn-plot library keeps its own byte-identical copy of this key
+  // (`lib/cairn-plot/image/render-mode.ts`) so it stays app-independent for
+  // extraction. Keep the two literals in sync if this ever changes.
   renderMode: "cairn:render-mode",
   scroll: (key: string) => `cairn:scroll:${key}`, // sessionStorage
   lastComparison: (projectId: string) => `cairn:last-comparison:${projectId}`, // sessionStorage

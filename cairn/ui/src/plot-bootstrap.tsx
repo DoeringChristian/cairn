@@ -30,7 +30,7 @@ import {
   loadPlotStoreFromDom,
   type DataSource,
 } from "./lib/cairn-plot";
-import { useEmitAutoHeight } from "./lib/emit-auto-height";
+import { useEmitAutoHeight } from "./lib/cairn-plot/hooks";
 import { type PlotDescriptor } from "./plot-descriptor";
 import { registerRenderer } from "./plot-registry";
 import { PlotNodeView, SharedPlotContext } from "./plot-node";

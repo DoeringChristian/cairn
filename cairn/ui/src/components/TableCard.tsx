@@ -32,7 +32,7 @@ import {
   computeTableDiff,
   type CellComparison,
   type DiffTable,
-} from "../lib/table-diff";
+} from "../lib/cairn-plot/table-diff";
 import { Table as TableGrid, type TableData } from "../lib/cairn-plot/renderers";
 
 // Out of scope for v1 (noted per spec): media-in-cells, cross-table joins,

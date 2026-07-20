@@ -1,0 +1,100 @@
+/* ===========================================================================
+ * cairn-plot THEME TOKEN CONTRACT — theme-aware standalone / report emit.
+ *
+ * Self-contained copy of the token surface the standalone plot bundle needs
+ * (previously lived in the app's `src/index.css`). Python-emitted pages
+ * (`cp.Report().save()`, the demo gallery, any self-contained
+ * `.cairn-plot-doc` document) inline the compiled `plot-inline/style.css`,
+ * which pulls THIS file in. Owning it inside the library keeps the plot build
+ * independent of app CSS.
+ *
+ * SCOPE: everything here is gated on `:root.cairn-plot-doc` — the class the
+ * emitters put on the standalone `<html>`. The APP shell (whose `<html>` has
+ * NO such class) is deliberately UNTOUCHED.
+ *
+ * THEME SELECTION:
+ *   - default             → light tokens;
+ *   - dark-mode browser   → dark tokens (`@media (prefers-color-scheme: dark)`);
+ *   - `data-theme="dark"` → dark tokens, explicitly (wins in a light browser);
+ *   - `data-theme="light"`→ forces light (the media query is guarded by
+ *                           `:not([data-theme="light"])`).
+ * ========================================================================= */
+
+/* Light token values — mirror the Tailwind semantic palette
+   (`tailwind-preset.ts`) so the light look is byte-for-byte unchanged. */
+:root.cairn-plot-doc {
+  color-scheme: light dark;
+  --color-bg: #ffffff;
+  --color-bg-elevated: #f6f8fa;
+  --color-bg-hover: #ebedf0;
+  --color-fg: #1f2328;
+  --color-fg-muted: #656d76;
+  --color-fg-subtle: #8b949e;
+  --color-border: #d0d7de;
+  --color-border-subtle: #e8ebef;
+  --color-accent: #0969da;
+  --color-accent-hover: #0550ae;
+  --color-checkerboard-a: #e0e0e0;
+  --color-checkerboard-b: #f0f0f0;
+  --color-selection-band: rgba(9, 105, 218, 0.12);
+}
+
+/* Dark token values — a GitHub-dark-dimmed-derived palette. Applied under a
+   dark-mode browser UNLESS the page pins `data-theme="light"`. */
+@media (prefers-color-scheme: dark) {
+  :root.cairn-plot-doc:not([data-theme="light"]) {
+    --color-bg: #0d1117;
+    --color-bg-elevated: #161b22;
+    --color-bg-hover: #21262d;
+    --color-fg: #e6edf3;
+    --color-fg-muted: #9198a1;
+    --color-fg-subtle: #6e7681;
+    --color-border: #30363d;
+    --color-border-subtle: #21262d;
+    --color-accent: #4493f8;
+    --color-accent-hover: #58a6ff;
+    --color-checkerboard-a: #30363d;
+    --color-checkerboard-b: #21262d;
+    --color-selection-band: rgba(88, 166, 255, 0.18);
+  }
+}
+
+/* Explicit dark pin — wins even in a light-mode browser. */
+:root.cairn-plot-doc[data-theme="dark"] {
+  --color-bg: #0d1117;
+  --color-bg-elevated: #161b22;
+  --color-bg-hover: #21262d;
+  --color-fg: #e6edf3;
+  --color-fg-muted: #9198a1;
+  --color-fg-subtle: #6e7681;
+  --color-border: #30363d;
+  --color-border-subtle: #21262d;
+  --color-accent: #4493f8;
+  --color-accent-hover: #58a6ff;
+  --color-checkerboard-a: #30363d;
+  --color-checkerboard-b: #21262d;
+  --color-selection-band: rgba(88, 166, 255, 0.18);
+}
+
+/* Page canvas follows the tokens (with `color-scheme` above, the UA canvas is
+   already dark before this stylesheet even loads, so there is no light flash). */
+:root.cairn-plot-doc body {
+  background-color: var(--color-bg);
+  color: var(--color-fg);
+}
+
+/* Route the semantic Tailwind utilities the cairn-plot renderers use through
+   the tokens. The descendant selector's specificity (0,2,0) beats Tailwind's
+   bare `.bg-bg` (0,1,0), so these win regardless of source order — and only
+   inside an emitted document. */
+.cairn-plot-doc .bg-bg { background-color: var(--color-bg); }
+.cairn-plot-doc .bg-bg-elevated { background-color: var(--color-bg-elevated); }
+.cairn-plot-doc .bg-bg-hover { background-color: var(--color-bg-hover); }
+.cairn-plot-doc .bg-accent { background-color: var(--color-accent); }
+.cairn-plot-doc .text-fg { color: var(--color-fg); }
+.cairn-plot-doc .text-fg-muted { color: var(--color-fg-muted); }
+.cairn-plot-doc .text-fg-subtle { color: var(--color-fg-subtle); }
+.cairn-plot-doc .text-accent { color: var(--color-accent); }
+.cairn-plot-doc .border-border { border-color: var(--color-border); }
+.cairn-plot-doc .border-border-subtle { border-color: var(--color-border-subtle); }
+.cairn-plot-doc .border-accent { border-color: var(--color-accent); }

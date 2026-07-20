@@ -6,3 +6,4 @@ export {
   useSeriesVisibility,
   type SeriesVisibility,
 } from "./use-series-visibility";
+export { useEmitAutoHeight } from "./use-emit-auto-height";

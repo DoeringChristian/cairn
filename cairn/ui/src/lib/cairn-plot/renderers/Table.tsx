@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { diffCellClassName, type CellComparison } from "../../table-diff";
+import { diffCellClassName, type CellComparison } from "../table-diff";
 
 export type ColumnType = "number" | "string" | "bool" | "other";
 

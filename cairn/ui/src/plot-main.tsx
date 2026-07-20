@@ -18,7 +18,7 @@ import React from "react";
 import { installCairnPlotBootstrap } from "./plot-bootstrap";
 import { registerCoreRenderers } from "./plot-renderers";
 import { registerRenderer } from "./plot-registry";
-import "./index.css";
+import "./lib/cairn-plot/styles/plot.css";
 
 installCairnPlotBootstrap();
 registerCoreRenderers();
