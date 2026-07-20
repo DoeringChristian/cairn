@@ -178,7 +178,7 @@ def test_grid_recursive_descriptor_round_trips_and_one_mount():
     grid = cp.Grid(
         [
             [cp.Line([0.1, 0.2]), cp.Image(_PNG)],
-            [cp.Compare(cp.Image(_PNG), cp.Image(_PNG2), mode="split"), cp.Table([{"a": 1}])],
+            [cp.Compare(cp.Image(_PNG), cp.Image(_PNG2), mode="slide"), cp.Table([{"a": 1}])],
         ],
         col_widths=[0.6, 0.4],
         row_heights=[1, 1],
@@ -217,7 +217,7 @@ def test_compare_side_lowers_to_two_col_grid():
 
 
 def test_compare_diff_emits_compare_node_with_baseline():
-    node = cp.Compare(cp.Image(_PNG), cp.Image(_PNG2), mode="diff").to_node()
+    node = cp.Compare(cp.Image(_PNG), cp.Image(_PNG2), mode="abs").to_node()
     assert node["kind"] == "compare"
     assert node["mode"] == "diff"
     assert node["baselineIndex"] == 0
@@ -226,7 +226,7 @@ def test_compare_diff_emits_compare_node_with_baseline():
 
 def test_compare_split_requires_image_like_leaves():
     with pytest.raises(TypeError, match="image-like"):
-        cp.Compare(cp.Line([1, 2]), cp.Image(_PNG), mode="diff")
+        cp.Compare(cp.Line([1, 2]), cp.Image(_PNG), mode="abs")
 
 
 def test_compare_store_merges_up():
@@ -270,7 +270,7 @@ def test_image_hdr_forwards_pixel_value_notation():
 
 def test_compare_forwards_pixel_value_notation():
     node = cp.Compare(
-        cp.Image(_PNG), cp.Image(_PNG2), mode="split", pixel_value_notation="int"
+        cp.Image(_PNG), cp.Image(_PNG2), mode="slide", pixel_value_notation="int"
     ).to_node()
     assert node["props"]["pixelValueNotation"] == "int"
 
@@ -502,21 +502,23 @@ def test_image_hdr_ignores_8bit_only_args(caplog):
 
 
 def test_compare_typed_kwargs_populate_node():
-    node = cp.Compare(cp.Image(_PNG), cp.Image(_PNG2), mode="split",
-                      split_position=0.4, baseline=1, exposure=1.0).to_node()
-    assert node["baselineIndex"] == 1
+    node = cp.Compare(cp.Image(_PNG), cp.Image(_PNG2), mode="slide",
+                      split_position=0.4, exposure=1.0).to_node()
+    # Flat API: the REFERENCE is the second operand by definition (lowered
+    # into slot a, baselineIndex 0) — no baseline= kwarg anymore.
+    assert node["baselineIndex"] == 0
     assert node["props"]["splitPosition"] == 0.4
     assert node["props"]["processing"]["exposure"] == 1.0
 
-    diff = cp.Compare(cp.Image(_PNG), cp.Image(_PNG2), mode="diff",
-                      diff_submode="absolute", colormap="red-blue").to_node()
+    diff = cp.Compare(cp.Image(_PNG), cp.Image(_PNG2), mode="abs",
+                      colormap="red-blue").to_node()
     assert diff["props"]["diffSubmode"] == "absolute"
     assert diff["props"]["colormap"] == "red-blue"
 
 
-def test_compare_baseline_must_be_0_or_1():
-    with pytest.raises(ValueError, match="baseline"):
-        cp.Compare(cp.Image(_PNG), cp.Image(_PNG2), mode="diff", baseline=2)
+def test_compare_rejects_unknown_mode():
+    with pytest.raises(ValueError, match="mode"):
+        cp.Compare(cp.Image(_PNG), cp.Image(_PNG2), mode="diff")  # old two-level name
 
 
 # ---------------------------------------------------------------------------
