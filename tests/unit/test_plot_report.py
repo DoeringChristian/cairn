@@ -14,6 +14,7 @@ import re
 import pytest
 
 import cairn.plot as cp
+from cairn_plot.report import _markdown_to_html
 
 # A tiny PNG-magic byte blob. `cp.Image(bytes)` sniffs the header and bakes the
 # bytes verbatim into the content-addressed store (no PIL needed for `bytes`).
@@ -176,6 +177,68 @@ def test_report_markdown_inline_spans_and_lists():
     assert "<ul>" in html
     assert "<em>a</em>" in html
     assert "<code>b</code>" in html
+
+
+# ---------------------------------------------------------------------------
+# Markdown converter upgrades — ordered/nested lists, GFM tables, blockquotes,
+# horizontal rules (tested at the converter level for precise structure).
+# ---------------------------------------------------------------------------
+
+
+def test_markdown_ordered_list():
+    out = _markdown_to_html("1. first\n2. second\n3. third")
+    assert out == "<ol><li>first</li><li>second</li><li>third</li></ol>"
+
+
+def test_markdown_nested_list_one_level():
+    out = _markdown_to_html("- a\n  - a1\n  - a2\n- b")
+    assert out == "<ul><li>a<ul><li>a1</li><li>a2</li></ul></li><li>b</li></ul>"
+
+
+def test_markdown_nested_ordered_under_unordered():
+    out = _markdown_to_html("- top\n  1. one\n  2. two")
+    assert out == "<ul><li>top<ol><li>one</li><li>two</li></ol></li></ul>"
+
+
+def test_markdown_unordered_list_unchanged_legacy():
+    # Existing bullet behavior must be byte-identical (no regressions).
+    assert _markdown_to_html("- one\n- two\n- three") == (
+        "<ul><li>one</li><li>two</li><li>three</li></ul>"
+    )
+
+
+def test_markdown_gfm_table():
+    out = _markdown_to_html("| h1 | h2 |\n| --- | --- |\n| a | b |\n| c | d |")
+    assert "<table>" in out
+    assert "<thead><tr><th>h1</th><th>h2</th></tr></thead>" in out
+    assert "<tbody><tr><td>a</td><td>b</td></tr><tr><td>c</td><td>d</td></tr></tbody>" in out
+
+
+def test_markdown_table_ragged_row_padded():
+    out = _markdown_to_html("| a | b | c |\n| - | - | - |\n| 1 | 2 |")
+    assert "<td>1</td><td>2</td><td></td>" in out
+
+
+def test_markdown_blockquote():
+    out = _markdown_to_html("> a quote\n> spanning two lines")
+    assert out == "<blockquote><p>a quote spanning two lines</p></blockquote>"
+
+
+def test_markdown_horizontal_rule():
+    out = _markdown_to_html("before\n\n---\n\nafter")
+    assert out == "<p>before</p>\n<hr>\n<p>after</p>"
+
+
+def test_markdown_hr_not_confused_with_table_separator():
+    # A bare `---` (no pipes, no preceding pipe header) is a rule, not a table.
+    assert _markdown_to_html("***") == "<hr>"
+    assert _markdown_to_html("___") == "<hr>"
+
+
+def test_markdown_table_cells_inline_formatted_and_escaped():
+    out = _markdown_to_html("| a | b |\n| - | - |\n| **bold** | <x> |")
+    assert "<td><strong>bold</strong></td>" in out
+    assert "<td>&lt;x&gt;</td>" in out  # raw markup in a cell stays escaped
 
 
 # ---------------------------------------------------------------------------
