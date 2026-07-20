@@ -10,13 +10,7 @@
     "typecheck": "tsc -b --noEmit",
     "gen:card-schema": "node scripts/gen-card-spec-schema.mjs",
     "check:card-schema": "node scripts/check-card-spec-schema.mjs",
-    "gen:plot-schema": "node scripts/gen-plot-spec-schema.mjs",
-    "check:plot-schema": "node scripts/check-plot-spec-schema.mjs",
-    "check:plot-boundary": "node scripts/check-plot-boundary.mjs",
-    "build:plot-inline": "vite build --config vite.plot-figure.config.ts && vite build --config vite.plot-three.config.ts && vite build --config vite.plot-gpu-image.config.ts && vite build --config vite.plot-core.config.ts",
-    "sync:plot-assets": "node scripts/sync-plot-assets.mjs",
-    "check:plot-assets": "node scripts/sync-plot-assets.mjs --check",
-    "smoke:plot": "node scripts/smoke-plot-gallery.mjs"
+    "smoke:plot": "npm --prefix ../../vendor/cairn-plot/ui run smoke:plot"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.59.0",

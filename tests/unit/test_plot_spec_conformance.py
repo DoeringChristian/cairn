@@ -1,12 +1,14 @@
 """WS-PLOT (Phase C) / G1 conformance: the hand-written pydantic mirror in
 ``cairn.sdk.card_spec`` (``PlotDescriptorSpec`` + the recursive ``PlotNode``
-union + ``DataSpec`` variants) must match the committed JSON Schema
-``docs/schemas/cairn-plot-spec.schema.json`` (itself generated from the
-authoritative TS ``PlotDescriptor`` in ``cairn/ui/src/plot-descriptor.ts``).
+union + ``DataSpec`` variants) must match the canonical JSON Schema
+``vendor/cairn-plot/schema/cairn-plot-spec.schema.json`` (shipped by the
+standalone cairn-plot repo, consumed here as a git submodule; itself generated
+from the authoritative TS ``PlotDescriptor`` in that repo's
+``ui/src/plot-descriptor.ts``).
 
 This is the Python half of the plot anti-drift chain: TS -> JSON Schema
-(``npm run check:plot-schema`` guards TS<->schema) -> pydantic (this test
-guards schema<->Python). If any of the three drift, one of the two gates
+(the submodule's ``check:plot-schema`` guards TS<->schema) -> pydantic (this
+test guards schema<->Python). If any of the three drift, one of the two gates
 fails.
 """
 
@@ -21,7 +23,11 @@ from pydantic import ValidationError
 from cairn.sdk import card_spec as cs
 
 _SCHEMA_PATH = (
-    Path(__file__).resolve().parents[2] / "docs" / "schemas" / "cairn-plot-spec.schema.json"
+    Path(__file__).resolve().parents[2]
+    / "vendor"
+    / "cairn-plot"
+    / "schema"
+    / "cairn-plot-spec.schema.json"
 )
 
 

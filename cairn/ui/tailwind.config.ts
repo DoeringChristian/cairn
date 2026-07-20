@@ -1,12 +1,20 @@
 import type { Config } from "tailwindcss";
 // The semantic plot palette (bg/fg/border/accent + `mono` font) lives in the
-// cairn-plot library preset so the library is self-contained for extraction;
-// the app merges its own app-only theme (the `status.*` run colors) on top.
-import cairnPlotPreset from "./src/lib/cairn-plot/tailwind-preset";
+// cairn-plot library preset (now the vendored standalone repo, git submodule at
+// vendor/cairn-plot); the app merges its own app-only theme (the `status.*` run
+// colors) on top. Loaded outside vite, so a real relative path (not the
+// `@cairn-plot` alias).
+import cairnPlotPreset from "../../vendor/cairn-plot/ui/src/lib/cairn-plot/tailwind-preset";
 
 export default {
   presets: [cairnPlotPreset],
-  content: ["./index.html", "./src/**/*.{ts,tsx}"],
+  // Scan the app source AND the vendored cairn-plot renderer source so Tailwind
+  // keeps the utility classes the renderers use (otherwise they'd be purged).
+  content: [
+    "./index.html",
+    "./src/**/*.{ts,tsx}",
+    "../../vendor/cairn-plot/ui/src/**/*.{ts,tsx}",
+  ],
   darkMode: "class",
   theme: {
     extend: {
