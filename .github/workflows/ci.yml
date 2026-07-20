@@ -55,4 +55,8 @@ jobs:
       # a TS type change that desyncs the pydantic-facing schema slips through.
       - run: npm run check:plot-schema
 
+      # Enforce the cairn-plot extraction boundary: the plot library + its
+      # standalone entries must not import app code (prep for the repo split).
+      - run: npm run check:plot-boundary
+
       - run: npm run check:card-schema
