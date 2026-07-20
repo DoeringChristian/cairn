@@ -1,8 +1,8 @@
 import Select from "../settings/Select";
 import Slider from "../settings/Slider";
 import Toggle from "../settings/Toggle";
-import type { Colormap, DiffMode } from "../../lib/cairn-plot/types";
-import type { DiffColormap } from "../../lib/cairn-plot/three/diff";
+import type { Colormap, DiffMode } from "@cairn-plot/lib/cairn-plot/types";
+import type { DiffColormap } from "@cairn-plot/lib/cairn-plot/three/diff";
 
 // ---------------------------------------------------------------------------
 // The ONE "Compare (2 series)" settings block, shared by all four 3D cards

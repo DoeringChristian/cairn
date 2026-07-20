@@ -22,8 +22,8 @@ import {
   useContainerSize,
   type PlotlyFigureLike,
   type FigureMergeEntry,
-} from "../lib/cairn-plot";
-import Figure, { type SharedView } from "../lib/cairn-plot/renderers/Figure";
+} from "@cairn-plot/lib/cairn-plot";
+import Figure, { type SharedView } from "@cairn-plot/lib/cairn-plot/renderers/Figure";
 import AddToComparisonButton from "./AddToComparisonButton";
 import CardShell from "./CardShell";
 import RunSelectionPanel from "./RunSelectionPanel";

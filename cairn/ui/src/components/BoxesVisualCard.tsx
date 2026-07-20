@@ -16,12 +16,12 @@ import {
   type ViewportDataResult,
   type ViewportModule,
   type ViewState,
-} from "../lib/cairn-plot";
+} from "@cairn-plot/lib/cairn-plot";
 import BoxesViewer, {
   resolveBoxesColorMode,
   type BoxesColorMode,
   type BoxesBackground,
-} from "../lib/cairn-plot/three/BoxesViewer";
+} from "@cairn-plot/lib/cairn-plot/three/BoxesViewer";
 import {
   BoxesSingleView,
   BoxesSideBySideView,
@@ -33,14 +33,14 @@ import {
   type BoxesViewportItem,
   type BoxesViewState,
   type BoxesNativeMode,
-} from "../lib/cairn-plot/viewport/boxes-viewport";
+} from "@cairn-plot/lib/cairn-plot/viewport/boxes-viewport";
 import {
   propertyNames,
   resolveActiveProperty,
-} from "../lib/cairn-plot/three/properties";
-import type { DiffColormap } from "../lib/cairn-plot/three/diff";
-import { resetScene3DViews, type Scene3DCameraMode, type Scene3DSyncOptions } from "../lib/cairn-plot/three/use-scene3d";
-import type { ViewportPaneProps } from "../lib/cairn-plot/viewport/types";
+} from "@cairn-plot/lib/cairn-plot/three/properties";
+import type { DiffColormap } from "@cairn-plot/lib/cairn-plot/three/diff";
+import { resetScene3DViews, type Scene3DCameraMode, type Scene3DSyncOptions } from "@cairn-plot/lib/cairn-plot/three/use-scene3d";
+import type { ViewportPaneProps } from "@cairn-plot/lib/cairn-plot/viewport/types";
 import { OffscreenComparePanes, PropertySelector, useOffscreenSnapshot, type VisualCompareSettings } from "./card-kit";
 import type { ForeignFrameProps } from "./card-kit/cross-type-frame";
 import Select from "./settings/Select";

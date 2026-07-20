@@ -11,13 +11,13 @@ import {
   type Colormap,
   type ImageViewportItem,
   type ImageViewState,
-} from "../lib/cairn-plot";
+} from "@cairn-plot/lib/cairn-plot";
 import type {
   ViewState,
   ViewportDataArgs,
   ViewportDataResult,
   ViewportModule,
-} from "../lib/cairn-plot";
+} from "@cairn-plot/lib/cairn-plot";
 import type { VisualCompareSettings } from "./card-kit";
 import Select from "./settings/Select";
 import Slider from "./settings/Slider";

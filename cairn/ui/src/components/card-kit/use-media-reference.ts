@@ -8,7 +8,7 @@ import {
   resolveArtifactAtStep,
   resolveGlobalPositionalReference,
   type MissingArtifactMode,
-} from "../../lib/cairn-plot/media-compare";
+} from "@cairn-plot/lib/cairn-plot/media-compare";
 
 export interface MediaReferenceTag {
   runId?: string;

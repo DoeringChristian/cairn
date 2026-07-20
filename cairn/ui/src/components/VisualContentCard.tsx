@@ -32,8 +32,8 @@ import {
   Colorbar,
   useContainerSize,
   canCrossTypeCompare,
-} from "../lib/cairn-plot";
-import type { DiffColormap } from "../lib/cairn-plot/three/diff";
+} from "@cairn-plot/lib/cairn-plot";
+import type { DiffColormap } from "@cairn-plot/lib/cairn-plot/three/diff";
 import { parseOverlay } from "./viewport-registry";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import { useCameraSync } from "../lib/camera-sync";

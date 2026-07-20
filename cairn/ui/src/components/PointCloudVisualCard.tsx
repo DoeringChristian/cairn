@@ -20,7 +20,7 @@ import {
   type ViewportDataResult,
   type ViewportModule,
   type ViewState,
-} from "../lib/cairn-plot";
+} from "@cairn-plot/lib/cairn-plot";
 import {
   PointCloudSingleView,
   PointCloudSideBySideView,
@@ -31,11 +31,11 @@ import {
   type PointCloudViewportItem,
   type PointCloudViewState,
   type PointCloudNativeMode,
-} from "../lib/cairn-plot/viewport/pointcloud-viewport";
-import { propertyNames } from "../lib/cairn-plot/three/properties";
-import type { DiffColormap } from "../lib/cairn-plot/three/diff";
-import { resetScene3DViews, type Scene3DCameraMode, type Scene3DSyncOptions } from "../lib/cairn-plot/three/use-scene3d";
-import type { ViewportPaneProps } from "../lib/cairn-plot/viewport/types";
+} from "@cairn-plot/lib/cairn-plot/viewport/pointcloud-viewport";
+import { propertyNames } from "@cairn-plot/lib/cairn-plot/three/properties";
+import type { DiffColormap } from "@cairn-plot/lib/cairn-plot/three/diff";
+import { resetScene3DViews, type Scene3DCameraMode, type Scene3DSyncOptions } from "@cairn-plot/lib/cairn-plot/three/use-scene3d";
+import type { ViewportPaneProps } from "@cairn-plot/lib/cairn-plot/viewport/types";
 import { OffscreenComparePanes, PropertySelector, useOffscreenSnapshot, type VisualCompareSettings } from "./card-kit";
 import type { ForeignFrameProps } from "./card-kit/cross-type-frame";
 import Select from "./settings/Select";

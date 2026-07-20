@@ -39,7 +39,7 @@ import {
   type AxisScale,
   type PromotedSeriesConfig,
   type Series,
-} from "../lib/cairn-plot";
+} from "@cairn-plot/lib/cairn-plot";
 
 // -----------------------------------------------------------------------------
 // Settings shape

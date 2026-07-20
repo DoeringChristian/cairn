@@ -8,7 +8,7 @@ import {
   SERIES_COLORS,
   type BarDatum,
   type BarCompareMode,
-} from "../lib/cairn-plot";
+} from "@cairn-plot/lib/cairn-plot";
 import { downloadCsv, exportChartFromContainer, safeName } from "../lib/download";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import { useRunSelection, useRunSelectionHasProvider } from "../lib/use-run-selection";

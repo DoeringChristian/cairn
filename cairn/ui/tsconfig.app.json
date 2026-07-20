@@ -16,9 +16,26 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "allowSyntheticDefaultImports": true,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "baseUrl": ".",
+    "typeRoots": ["./node_modules/@types", "./node_modules"],
+    "types": ["@webgpu/types"],
+    "paths": {
+      "@cairn-plot/*": ["../../vendor/cairn-plot/ui/src/*"],
+      "react": ["./node_modules/@types/react"],
+      "react/*": ["./node_modules/@types/react/*"],
+      "react-dom": ["./node_modules/@types/react-dom"],
+      "react-dom/*": ["./node_modules/@types/react-dom/*"],
+      "three": ["./node_modules/@types/three"],
+      "three/*": ["./node_modules/@types/three/*"],
+      "react-plotly.js": ["./node_modules/@types/react-plotly.js"],
+      "react-plotly.js/*": ["./node_modules/@types/react-plotly.js/*"],
+      "recharts": ["./node_modules/recharts"],
+      "@webgpu/types": ["./node_modules/@webgpu/types"]
+    }
   },
-  "include": ["src"],
+  "//include": "src plus the vendored cairn-plot ambient .d.ts (the `*?worker&inline` module declaration) so those globals load into the program — the vendored src otherwise enters the program only through imports, and ambient .d.ts are not import-reachable.",
+  "include": ["src", "../../vendor/cairn-plot/ui/src/**/*.d.ts"],
   "//exclude": "Pure Node test files (run via `node --experimental-strip-types --test`) use node: builtins and .ts import specifiers; they are not part of the shipped bundle and @types/node is not a dependency, so keep them out of the app typecheck.",
   "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
 }

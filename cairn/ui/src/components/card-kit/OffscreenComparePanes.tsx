@@ -1,17 +1,17 @@
 import { useEffect, useId, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import type { Scene3DSyncOptions } from "../../lib/cairn-plot/three/use-scene3d";
+import type { Scene3DSyncOptions } from "@cairn-plot/lib/cairn-plot/three/use-scene3d";
 import {
   getLastCameraState,
   makeCameraSyncSourceId,
   publishCameraState,
   subscribeCameraState,
   type CameraState,
-} from "../../lib/cairn-plot/three/camera-sync";
-import { CrossTypeCompositeMediaPane, type MediaCompareModeKind } from "../../lib/cairn-plot/media-compare";
-import type { FrameSource } from "../../lib/cairn-plot/viewport/types";
-import type { Colormap, DiffMode } from "../../lib/cairn-plot/types";
+} from "@cairn-plot/lib/cairn-plot/three/camera-sync";
+import { CrossTypeCompositeMediaPane, type MediaCompareModeKind } from "@cairn-plot/lib/cairn-plot/media-compare";
+import type { FrameSource } from "@cairn-plot/lib/cairn-plot/viewport/types";
+import type { Colormap, DiffMode } from "@cairn-plot/lib/cairn-plot/types";
 import { useOffscreenSnapshot } from "./use-offscreen-snapshot";
 
 /** Convert any `FrameSource` variant to a plain `<img src>`-compatible

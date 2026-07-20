@@ -3,9 +3,9 @@ import type {
   DiffMode,
   ImageOverlaySettings,
   Interpolation,
-} from "../../lib/cairn-plot";
-import type { MediaCompareModeKind } from "../../lib/cairn-plot";
-import type { DiffColormap } from "../../lib/cairn-plot/three/diff";
+} from "@cairn-plot/lib/cairn-plot";
+import type { MediaCompareModeKind } from "@cairn-plot/lib/cairn-plot";
+import type { DiffColormap } from "@cairn-plot/lib/cairn-plot/three/diff";
 import type { BaseCardSettings } from "./base-settings";
 import type { SeriesRef } from "./use-card-series";
 

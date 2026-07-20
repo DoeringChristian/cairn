@@ -13,7 +13,7 @@ import {
   computeHistogram,
   type NpyArray,
   type ColormapName,
-} from "../lib/cairn-plot";
+} from "@cairn-plot/lib/cairn-plot";
 import AddToComparisonButton from "./AddToComparisonButton";
 import CardShell from "./CardShell";
 import StepSlider from "./StepSlider";

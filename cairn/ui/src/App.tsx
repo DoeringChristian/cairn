@@ -3,7 +3,7 @@ import { Link, Outlet, useNavigate } from "react-router-dom";
 import { useHealth, useSession } from "./api/hooks";
 import { api } from "./api/client";
 import ServerStatus from "./components/ServerStatus";
-import { getRenderMode, setRenderMode, type RenderMode } from "./lib/cairn-plot";
+import { getRenderMode, setRenderMode, type RenderMode } from "@cairn-plot/lib/cairn-plot";
 import { getStreamMode, setStreamMode, type StreamMode } from "./lib/stream-mode";
 
 export default function App() {

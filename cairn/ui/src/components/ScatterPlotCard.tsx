@@ -3,7 +3,7 @@ import { useQueries } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { qk } from "../api/query-keys";
 import { useCardSettings } from "../lib/card-settings";
-import { ScatterPlot, type ScatterPoint, type ParetoDirection } from "../lib/cairn-plot";
+import { ScatterPlot, type ScatterPoint, type ParetoDirection } from "@cairn-plot/lib/cairn-plot";
 import { downloadCsv, exportChartFromContainer, safeName } from "../lib/download";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import { useRunSelection, useRunSelectionHasProvider } from "../lib/use-run-selection";

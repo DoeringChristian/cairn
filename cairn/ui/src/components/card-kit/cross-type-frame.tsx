@@ -1,6 +1,6 @@
 import { lazy, Suspense, useMemo } from "react";
 import type { ComponentType } from "react";
-import type { FrameSource } from "../../lib/cairn-plot/viewport/types";
+import type { FrameSource } from "@cairn-plot/lib/cairn-plot/viewport/types";
 
 // ---------------------------------------------------------------------------
 // WS-VC6 cross-type bridge — the "foreign 3D type" half of image<->3D
