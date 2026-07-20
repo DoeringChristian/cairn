@@ -25,7 +25,7 @@ import pytest
 import cairn
 import cairn.plot as cplot
 from cairn.sdk import _plot_bundle as _pb
-from cairn.sdk.card_spec import CardSpec, CardsSpec, PlotSpec, RunsSpec
+from cairn.sdk.card_spec import CardSpec, CardsSpec, PlotDescriptorSpec, RunsSpec
 from cairn.sdk.elements import CardElement, HtmlElement, PlotElement
 from cairn.sdk.reader import DataRef, Reader
 
@@ -138,10 +138,10 @@ def test_scalar_with_dataref_emits_schema_valid_plot(two_runs):
     el = cplot.scalar(run_a["loss"])
     assert isinstance(el, PlotElement)
     desc = _descriptor_of(el)
-    spec = PlotSpec.model_validate(desc)  # schema-valid round-trip
-    assert spec.renderer == "scalar"
+    spec = PlotDescriptorSpec.model_validate(desc)  # schema-valid round-trip
+    assert spec.root.renderer == "scalar"
     assert spec.mode == "local"
-    series = desc["data"]["props"]["series"]
+    series = desc["root"]["data"]["props"]["series"]
     assert len(series) == 1
     assert series[0]["label"] == "loss"
     # loss = [0.0, 0.1, 0.2] tracked at steps 0..2.
@@ -204,7 +204,7 @@ def test_single_view_3d_builders_emit_self_contained_plotelement(fn, args, objec
     assert "__cairnPlotThreeLoaded" in html  # three addon emitted
     assert "cairn-plot-store" in html  # bytes baked into the page store
     desc = _descriptor_of(el)
-    data = desc["data"]
+    data = desc["root"]["data"]
     assert data["kind"] == "npz"
     assert data["objectType"] == object_type
     assert data["hash"]  # content-addressed store key present
@@ -263,8 +263,8 @@ def test_scalar_raw_data_bakes_local_plot_element():
     el = cplot.scalar([1.0, 2.0, 3.0, 2.5])
     assert isinstance(el, PlotElement)
     desc = _descriptor_of(el)
-    assert PlotSpec.model_validate(desc).renderer == "scalar"
-    assert [p["y"] for p in desc["data"]["props"]["series"][0]["points"]] == [
+    assert PlotDescriptorSpec.model_validate(desc).root.renderer == "scalar"
+    assert [p["y"] for p in desc["root"]["data"]["props"]["series"][0]["points"]] == [
         1.0, 2.0, 3.0, 2.5,
     ]
 
@@ -275,8 +275,8 @@ def test_figure_raw_plotly_figure_bakes_local_plot_element():
     el = cplot.figure(fig)
     assert isinstance(el, PlotElement)
     desc = _descriptor_of(el)
-    assert PlotSpec.model_validate(desc).renderer == "figure"
-    fig_json = desc["data"]["props"]["figure"]
+    assert PlotDescriptorSpec.model_validate(desc).root.renderer == "figure"
+    fig_json = desc["root"]["data"]["props"]["figure"]
     assert "data" in fig_json and "layout" in fig_json
     assert len(fig_json["data"]) >= 1
 
@@ -290,8 +290,8 @@ def test_table_raw_list_of_dicts_bakes_local_plot_element():
     el = cplot.table([{"a": 1, "b": 2}, {"a": 3, "b": 4}])
     assert isinstance(el, PlotElement)
     desc = _descriptor_of(el)
-    assert PlotSpec.model_validate(desc).renderer == "table"
-    tbl = desc["data"]["props"]["table"]
+    assert PlotDescriptorSpec.model_validate(desc).root.renderer == "table"
+    tbl = desc["root"]["data"]["props"]["table"]
     assert [c["name"] for c in tbl["columns"]] == ["a", "b"]
     assert tbl["data"] == [[1, 2], [3, 4]]
 
@@ -307,11 +307,11 @@ def test_image_raw_bytes_bakes_into_store():
     html = el._repr_html_()
     assert "application/cairn-plot-store+json" in html
     desc = _descriptor_of(el)
-    assert desc["data"]["kind"] == "image"
-    assert desc["data"]["hash"].startswith("sha256:")
+    assert desc["root"]["data"]["kind"] == "image"
+    assert desc["root"]["data"]["hash"].startswith("sha256:")
     # The store carries the baked bytes keyed by that hash.
-    assert desc["data"]["hash"] in el._store
-    assert el._store[desc["data"]["hash"]]["mime"] == "image/png"
+    assert desc["root"]["data"]["hash"] in el._store
+    assert el._store[desc["root"]["data"]["hash"]]["mime"] == "image/png"
 
 
 @pytest.mark.media
@@ -334,8 +334,8 @@ def test_image_dataref_bakes_bytes_into_store(tmp_path):
         el = cplot.image(reader.run(rid)["pic"])
         assert isinstance(el, PlotElement)
         desc = _descriptor_of(el)
-        assert PlotSpec.model_validate(desc).renderer == "image"
-        h = desc["data"]["hash"]
+        assert PlotDescriptorSpec.model_validate(desc).root.renderer == "image"
+        h = desc["root"]["data"]["hash"]
         assert h in el._store and el._store[h]["mime"].startswith("image/")
         # The baked bytes decode back to a PNG/image.
         import base64
@@ -364,7 +364,7 @@ def test_table_dataref_shapes_columns_and_rows(tmp_path):
         el = cplot.table(reader.run(rid)["metrics"])
         assert isinstance(el, PlotElement)
         desc = _descriptor_of(el)
-        tbl = desc["data"]["props"]["table"]
+        tbl = desc["root"]["data"]["props"]["table"]
         assert [c["name"] for c in tbl["columns"]] == ["epoch", "acc"]
         assert tbl["data"] == [[1, 0.5], [2, 0.9]]
     finally:

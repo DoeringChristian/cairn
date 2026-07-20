@@ -6,7 +6,7 @@ Headless display smoke — builds a PlotElement for each supported renderer
 HTML carries: the mount div, a schema-valid `application/cairn-plot+json`
 descriptor, the store blob (image), the include-once guard, per-div multi-mount
 queueing, and NO `</script>`-breakout / NO CDN link. Round-trips every emitted
-descriptor back through the pydantic `PlotSpec`.
+descriptor back through the pydantic `PlotDescriptorSpec` (tree-root form).
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import pytest
 
 import cairn.plot as cplot
 from cairn.sdk import _plot_bundle as pb
-from cairn.sdk.card_spec import PlotSpec
+from cairn.sdk.card_spec import PlotDescriptorSpec
 from cairn.sdk.elements import PlotElement
 
 # A 1x1 opaque PNG.
@@ -62,8 +62,8 @@ def test_each_renderer_emits_mount_div_and_schema_valid_descriptor(figure_obj):
         html = el._repr_html_()
         assert 'id="cairn-plot-' in html, f"{name}: no mount div"
         desc = _descriptor(el)
-        spec = PlotSpec.model_validate(desc)  # round-trip through pydantic
-        assert spec.renderer == name
+        spec = PlotDescriptorSpec.model_validate(desc)  # round-trip through pydantic
+        assert spec.root.renderer == name
         assert spec.mode == "local"
 
 
@@ -120,7 +120,7 @@ def test_m1_xss_payload_does_not_break_out_of_script():
     assert "</script><script>window.__pwned" not in html
     # …but it round-trips intact through the escaped descriptor.
     desc = _descriptor(el)
-    assert desc["data"]["props"]["table"]["data"][0][0] == payload
+    assert desc["root"]["data"]["props"]["table"]["data"][0][0] == payload
 
 
 def test_m1_json_script_safe_escapes_all_breakout_sequences():
