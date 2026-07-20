@@ -1,0 +1,264 @@
+/* cairn default report theme — the app token palette + document typography.
+ *
+ * EVERYTHING is scoped under the `.cairn-report` root element so this stylesheet
+ * is safe to inline into a hosting notebook page (the fragment emit) without
+ * restyling it. The report root carries BOTH `cairn-report` (this theme) and
+ * `cairn-plot-doc` (the renderer bundle's utility routing, e.g. `.bg-bg`); the
+ * `--color-*` tokens defined here on `.cairn-report` inherit down to the mounted
+ * plots, so component cards follow the theme in a saved page AND in a notebook.
+ *
+ * Theme selection mirrors the standalone contract (P4/Q5):
+ *   default              → light tokens;
+ *   dark-mode browser    → dark tokens (`prefers-color-scheme: dark`);
+ *   `data-theme="dark"`  → dark tokens explicitly (wins in a light browser);
+ *   `data-theme="light"` → forces light (the media query is guarded).
+ */
+
+.cairn-report {
+  /* Light token values — the exact app palette (tailwind.config.ts). */
+  --color-bg: #ffffff;
+  --color-bg-elevated: #f6f8fa;
+  --color-bg-hover: #ebedf0;
+  --color-fg: #1f2328;
+  --color-fg-muted: #656d76;
+  --color-fg-subtle: #8b949e;
+  --color-border: #d0d7de;
+  --color-border-subtle: #e8ebef;
+  --color-accent: #0969da;
+  --color-accent-hover: #0550ae;
+
+  --cairn-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+  --cairn-sans: -apple-system, system-ui, "Segoe UI", Roboto, Helvetica, Arial,
+    "Apple Color Emoji", sans-serif;
+
+  color-scheme: light dark;
+  box-sizing: border-box;
+  margin: 0;
+  min-height: 100%;
+  padding: 2.75rem 1.5rem 4rem;
+  background-color: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--cairn-sans);
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-variant-numeric: tabular-nums;
+}
+
+.cairn-report *,
+.cairn-report *::before,
+.cairn-report *::after {
+  box-sizing: border-box;
+}
+
+/* Dark token values — the GitHub-dark-dimmed-derived app palette. Applied under
+   a dark-mode browser UNLESS the root pins `data-theme="light"`. */
+@media (prefers-color-scheme: dark) {
+  .cairn-report:not([data-theme="light"]) {
+    --color-bg: #0d1117;
+    --color-bg-elevated: #161b22;
+    --color-bg-hover: #21262d;
+    --color-fg: #e6edf3;
+    --color-fg-muted: #9198a1;
+    --color-fg-subtle: #6e7681;
+    --color-border: #30363d;
+    --color-border-subtle: #21262d;
+    --color-accent: #4493f8;
+    --color-accent-hover: #58a6ff;
+  }
+}
+
+/* Explicit dark pin — wins even in a light-mode browser. */
+.cairn-report[data-theme="dark"] {
+  --color-bg: #0d1117;
+  --color-bg-elevated: #161b22;
+  --color-bg-hover: #21262d;
+  --color-fg: #e6edf3;
+  --color-fg-muted: #9198a1;
+  --color-fg-subtle: #6e7681;
+  --color-border: #30363d;
+  --color-border-subtle: #21262d;
+  --color-accent: #4493f8;
+  --color-accent-hover: #58a6ff;
+}
+
+/* ---- layout: centered prose column, wider component cards ---------------- */
+
+.cairn-report .cairn-block {
+  margin: 1.75rem auto;
+}
+.cairn-report .cairn-block:first-child {
+  margin-top: 0;
+}
+
+/* Prose (markdown + raw HTML) — a comfortable reading measure. */
+.cairn-report .cairn-prose {
+  max-width: 72ch;
+}
+
+/* Component cards + the title block break out wider than the prose column. */
+.cairn-report .cairn-component,
+.cairn-report .cairn-title {
+  max-width: 1100px;
+}
+
+/* ---- title block --------------------------------------------------------- */
+
+.cairn-report .cairn-title {
+  margin: 0 auto 2.25rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--color-border);
+}
+.cairn-report .cairn-title h1 {
+  margin: 0;
+  font-size: 1.9rem;
+  line-height: 1.2;
+}
+.cairn-report .cairn-meta {
+  margin: 0.55rem 0 0;
+  color: var(--color-fg-muted);
+  font-family: var(--cairn-mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.01em;
+}
+
+/* ---- typography: mono headings, sans prose ------------------------------- */
+
+.cairn-report h1,
+.cairn-report h2,
+.cairn-report h3,
+.cairn-report h4,
+.cairn-report h5,
+.cairn-report h6 {
+  margin: 2rem 0 0.75rem;
+  font-family: var(--cairn-mono);
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--color-fg);
+}
+.cairn-report .cairn-block > :first-child {
+  margin-top: 0;
+}
+.cairn-report h1 { font-size: 1.6rem; }
+.cairn-report h2 {
+  font-size: 1.3rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+.cairn-report h3 { font-size: 1.1rem; }
+.cairn-report h4 { font-size: 1rem; }
+.cairn-report h5,
+.cairn-report h6 {
+  font-size: 0.9rem;
+  color: var(--color-fg-muted);
+}
+
+.cairn-report p {
+  margin: 0 0 1rem;
+}
+.cairn-report a {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+.cairn-report a:hover {
+  text-decoration: underline;
+}
+.cairn-report strong {
+  font-weight: 650;
+}
+
+/* ---- code ---------------------------------------------------------------- */
+
+.cairn-report code {
+  font-family: var(--cairn-mono);
+  font-size: 0.88em;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+}
+.cairn-report pre {
+  margin: 0 0 1rem;
+  padding: 0.9rem 1rem;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  overflow-x: auto;
+  line-height: 1.45;
+}
+.cairn-report pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.82rem;
+}
+
+/* ---- lists, quotes, rules ------------------------------------------------ */
+
+.cairn-report ul,
+.cairn-report ol {
+  margin: 0 0 1rem;
+  padding-left: 1.5rem;
+}
+.cairn-report li {
+  margin: 0.3rem 0;
+}
+.cairn-report li > ul,
+.cairn-report li > ol {
+  margin: 0.3rem 0 0.3rem;
+}
+.cairn-report blockquote {
+  margin: 0 0 1rem;
+  padding: 0.35rem 1rem;
+  border-left: 3px solid var(--color-border);
+  color: var(--color-fg-muted);
+}
+.cairn-report blockquote p {
+  margin: 0;
+}
+.cairn-report hr {
+  height: 0;
+  margin: 2rem 0;
+  border: none;
+  border-top: 1px solid var(--color-border);
+}
+
+/* ---- tables (markdown + cp.Table prose) ---------------------------------- */
+
+.cairn-report table {
+  width: 100%;
+  margin: 0 0 1rem;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+  font-variant-numeric: tabular-nums;
+}
+.cairn-report th,
+.cairn-report td {
+  padding: 0.42rem 0.7rem;
+  border: 1px solid var(--color-border);
+  text-align: left;
+}
+.cairn-report thead th {
+  background: var(--color-bg-elevated);
+  font-family: var(--cairn-mono);
+  font-weight: 600;
+}
+
+/* ---- component cards (app look) ------------------------------------------ */
+
+.cairn-report .cairn-component {
+  padding: 0.75rem;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+
+/* Media inside a report never overflows its column. */
+.cairn-report img,
+.cairn-report canvas,
+.cairn-report svg {
+  max-width: 100%;
+  height: auto;
+}

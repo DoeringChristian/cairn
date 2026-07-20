@@ -1,0 +1,12 @@
+{%- import "cairn/_macros.html.j2" as f -%}
+{#
+  Body-only fragment for notebooks / _repr_html_. No <html>/<body> shell; the
+  theme CSS below is scoped entirely under `.cairn-report`, so inlining it into
+  a host page cannot restyle that page.
+#}
+<style>
+{% include "cairn/theme.css" %}
+</style>
+<div class="cairn-report cairn-plot-doc">
+{{ f.render_body(title, blocks, bundle_html, store_html, meta) }}
+</div>

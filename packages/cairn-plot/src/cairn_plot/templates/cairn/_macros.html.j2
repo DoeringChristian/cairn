@@ -1,0 +1,45 @@
+{#
+  Block framing for the cairn theme. A custom template can re-frame any block
+  kind by supplying its own macros of the same shape — no Python change needed.
+
+  Context contract (see cairn_plot.report):
+    title       : str | None
+    blocks      : [{kind: "md"|"html"|"component"|"grid", html, index}]
+    bundle_html : str  (inlined renderer bundle; already once, guarded)
+    store_html  : str  (merged content-addressed store)
+    meta        : {generated_at, cairn_plot_version}
+#}
+
+{%- macro render_title(title, meta) -%}
+{%- if title -%}
+<header class="cairn-block cairn-title">
+  <h1>{{ title | e }}</h1>
+  <p class="cairn-meta">{{ meta.generated_at | e }} &middot; cairn-plot {{ meta.cairn_plot_version | e }}</p>
+</header>
+{%- endif -%}
+{%- endmacro -%}
+
+{%- macro render_block(block) -%}
+{%- if block.kind == "md" -%}
+<section class="cairn-block cairn-prose cairn-md">{{ block.html }}</section>
+{%- elif block.kind == "html" -%}
+<section class="cairn-block cairn-prose cairn-raw">{{ block.html }}</section>
+{%- elif block.kind == "grid" -%}
+<section class="cairn-block cairn-component cairn-grid">{{ block.html }}</section>
+{%- else -%}
+<section class="cairn-block cairn-component">{{ block.html }}</section>
+{%- endif -%}
+{%- endmacro -%}
+
+{%- macro render_body(title, blocks, bundle_html, store_html, meta) -%}
+{%- if not blocks and not title -%}
+<p><em>(empty cairn.plot report)</em></p>
+{%- else -%}
+{{ bundle_html }}
+{{ store_html }}
+{{ render_title(title, meta) }}
+{%- for block in blocks %}
+{{ render_block(block) }}
+{%- endfor %}
+{%- endif -%}
+{%- endmacro -%}

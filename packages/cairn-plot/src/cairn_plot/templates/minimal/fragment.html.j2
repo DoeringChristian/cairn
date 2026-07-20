@@ -1,0 +1,18 @@
+{#
+  minimal theme — reproduces the historical bare `cp.Report` emit (no theme
+  CSS, no wrapper element, no block framing): the inlined bundle + merged store
+  up front, an optional <h1> title, then each block's rendered HTML in order.
+  Embedding-friendly; the host page owns all styling.
+#}
+{%- if not blocks and not title -%}
+<p><em>(empty cairn.plot report)</em></p>
+{%- else -%}
+{%- if bundle_html %}{{ bundle_html }}
+{% endif -%}
+{%- if store_html %}{{ store_html }}
+{% endif -%}
+{%- if title %}<h1>{{ title | e }}</h1>
+{% endif -%}
+{%- for block in blocks %}{{ block.html }}
+{% endfor -%}
+{%- endif -%}

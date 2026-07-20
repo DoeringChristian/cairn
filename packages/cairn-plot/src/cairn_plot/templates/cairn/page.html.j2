@@ -1,0 +1,15 @@
+{%- import "cairn/_macros.html.j2" as f -%}
+<!doctype html>
+<html lang="en" class="cairn-plot-doc">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="light dark">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ title | e if title else "cairn report" }}</title>
+<style>
+{% include "cairn/theme.css" %}
+</style>
+</head>
+<body class="cairn-report cairn-plot-doc">
+{{ f.render_body(title, blocks, bundle_html, store_html, meta) }}
+</body></html>
