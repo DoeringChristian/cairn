@@ -10,9 +10,8 @@ Sources are the ASWF openexr-images sample repo (served with CORS ``*``):
 
 * ``WideColorGamut.exr`` — ZIP-compressed RGB → decodes and renders in the
   float-HDR pane (tone-map/exposure controls live).
-* ``Desk.exr`` — PIZ-compressed → deliberately UNSUPPORTED: shows the clean
-  in-pane "unsupported EXR variant" error instead of a blank pane. (PIZ needs
-  a wavelet+Huffman decoder — out of the minimal reader's envelope.)
+* ``Desk.exr`` — PIZ-compressed → decoded by the vendored FULL decoder
+  (PIZ/PXR24/B44/DWA), off the main thread in a Web Worker.
 
 NOTE: viewing needs NETWORK access (the whole point — the images are
 referenced, not baked), so this stays a separate example: the offline demo
@@ -48,9 +47,10 @@ def build_report() -> "cp.Report":
         )
         .add(cp.Image(url=f"{ASWF}/TestImages/WideColorGamut.exr", tonemap="aces"))
         .md(
-            "### PIZ EXR (unsupported by design) — `ScanLines/Desk.exr`\n"
-            "PIZ needs a wavelet+Huffman decoder, outside the minimal reader's "
-            "envelope — the pane shows an explicit error instead of blanking."
+            "### PIZ EXR — `ScanLines/Desk.exr`\n"
+            "PIZ (wavelet+Huffman — OpenEXR's historic default) is decoded by the "
+            "vendored full EXR decoder, running **off the main thread** in a Web "
+            "Worker. The full decoder also covers PXR24, B44(A), and DWAA/DWAB."
         )
         .add(cp.Image(url=f"{ASWF}/ScanLines/Desk.exr"))
     )
