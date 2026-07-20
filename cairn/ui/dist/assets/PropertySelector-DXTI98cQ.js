@@ -1,0 +1,1 @@
+import{j as s}from"./parse-overlay-C1-mf16G.js";import{b4 as a}from"./index-DH4H9ns1.js";function u({properties:r,value:o,onChange:n,label:e="Property"}){if(r.length<=1)return null;const l=o&&r.includes(o)?o:r[0];return s.jsx(a,{label:e,value:l,onChange:n,options:r.map(t=>({value:t,label:t})),description:"Drives value coloring + the Colorbar's range"})}export{u as P};
