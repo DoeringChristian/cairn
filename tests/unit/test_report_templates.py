@@ -128,8 +128,9 @@ def test_context_contract_fields_present():
         [cp.Line([1]), cp.Line([2])], cols=2
     )
     ctx = rep._context()
-    assert set(ctx) == {"title", "blocks", "bundle_html", "store_html", "meta"}
+    assert set(ctx) == {"title", "theme", "blocks", "bundle_html", "store_html", "meta"}
     assert ctx["title"] == "Ctx"
+    assert ctx["theme"] == "auto"  # default authored theme
     assert set(ctx["meta"]) == {"generated_at", "cairn_plot_version"}
     assert ctx["meta"]["cairn_plot_version"]  # non-empty
     assert "UTC" in ctx["meta"]["generated_at"]

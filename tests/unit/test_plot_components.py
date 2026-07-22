@@ -209,11 +209,15 @@ def test_grid_merged_store_dedups_shared_reference_blob():
     assert len(grid2._collect_store()) == 2
 
 
-def test_compare_side_lowers_to_two_col_grid():
+def test_compare_side_lowers_to_compare_node():
+    # `side` now emits a COMPARE node (mode="side"), NOT a 2-cell grid — so the
+    # view-mode menu can switch it client-side. a=reference, b=prediction, and
+    # the reference is baseline (baselineIndex 0). Both operands are image-like.
     node = cp.Compare(cp.Image(_PNG), cp.Image(_PNG2), mode="side").to_node()
-    assert node["kind"] == "grid"
-    assert node["cols"] == 2
-    assert len(node["children"]) == 2
+    assert node["kind"] == "compare"
+    assert node["mode"] == "side"
+    assert node["baselineIndex"] == 0
+    assert node["a"]["kind"] == "image" and node["b"]["kind"] == "image"
 
 
 def test_compare_diff_emits_compare_node_with_baseline():
@@ -324,10 +328,16 @@ def test_mesh_face_colors_pack_into_store_and_meta():
     # colorMode "face-colors" rides in the leaf props.
     assert node["props"]["colorMode"] == "face-colors"
 
-    # The packed .npz carries a `face_colors` array shaped (n_faces, 3).
+    # The packed .npz carries a `face_colors` array shaped (n_faces, 3). The
+    # non-image binary payload is raw-DEFLATE compressed and tagged
+    # `encoding:"deflate"` (mirrors the TS `deflate-raw` inflate seam, wbits -15).
+    import zlib
+
     store = mesh._collect_store()
     (blob,) = store.values()
-    raw = base64.b64decode(blob["b64"])
+    assert blob["mime"] == "application/octet-stream"
+    assert blob["encoding"] == "deflate"
+    raw = zlib.decompress(base64.b64decode(blob["b64"]), -15)
     npz = np.load(io.BytesIO(raw))
     assert "face_colors" in npz.files
     assert npz["face_colors"].shape == (4, 3)
@@ -458,7 +468,12 @@ def test_image_hdr_bakes_c_contiguous_npy():
     img = cp.Image(f, hdr=True)
     h = img.to_node()["data"]["hash"]
     import base64 as _b64
-    raw = _b64.b64decode(img._collect_store()[h]["b64"])
+    import zlib as _zlib
+    # The float .npy is a non-image binary payload → raw-DEFLATE, tagged
+    # `encoding:"deflate"` (inflate with wbits -15 to recover the raw .npy bytes).
+    blob = img._collect_store()[h]
+    assert blob["encoding"] == "deflate"
+    raw = _zlib.decompress(_b64.b64decode(blob["b64"]), -15)
     # parse the .npy header dict — fortran_order must be False
     header = raw[10 : 10 + int.from_bytes(raw[8:10], "little")].decode("latin1")
     assert "'fortran_order': False" in header
@@ -612,7 +627,9 @@ def test_scatter_raw_shapes_points_and_config():
         cp.Scatter([1, 2, 3], [4, 5, 6], color=[0, 1, 2], x_label="lr", y_log=True)
     )
     assert desc["renderer"] == "scatter"
-    assert desc["props"] == {"xLabel": "lr", "yLog": True}
+    # config always carries the colormap (default "viridis") alongside the
+    # explicit axis/scale flags.
+    assert desc["props"] == {"colormap": "viridis", "xLabel": "lr", "yLog": True}
     pt = desc["data"]["props"]["points"][0]
     assert pt == {"id": "0", "x": 1.0, "y": 4.0, "color": 0.0}
 

@@ -241,51 +241,54 @@ def build_gallery() -> list[tuple[str, object]]:
     items.append((
         "Compare — zoomable split w/ TEV-style pixel values "
         "(Alt/Ctrl + wheel to zoom; per-pixel RGB appears when pixels get big)",
-        cp.Compare(cp.Image(small_a), cp.Image(small_b), mode="split",
+        cp.Compare(cp.Image(small_a), cp.Image(small_b), mode="slide",
                    split_position=0.5),
     ))
 
-    # ── image comparison: all four modes + diff submodes ──────────────────
+    # ── image comparison: all view modes + diff kernels ───────────────────
+    # The flat Compare API: view modes are `side`/`slide`/`blend`; every diff is
+    # its own top-level mode (`signed`/`abs`/`square`/`rel_signed`/… ) — there is
+    # no `mode="diff"` + `diff_submode=` two-level form anymore.
     img_a = _gradient_image(120, 80)
     img_b = _gradient_image(120, 80, shift=0.18)  # a shifted variant to compare
     items.append((
-        "Compare — all modes (side · split · blend · diff)",
+        "Compare — all modes (side · slide · blend · diff)",
         cp.Grid(
             [[cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="side"),
-              cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="split",
+              cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="slide",
                          split_position=0.5)],
              [cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="blend",
                          blend_alpha=0.5),
-              cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="diff",
-                         diff_submode="signed", colormap="red-blue")]],
+              cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="signed",
+                         colormap="red-blue")]],
         ),
     ))
-    # Every diff submode the renderer supports (see DiffMode in types.ts /
+    # Every diff kernel the renderer supports (see DiffMode in types.ts /
     # image/diff.ts), laid out row-major in a 3×2 Grid. Diverging errors
-    # (signed / relative_signed) use the red-blue diverging map; magnitude
-    # errors use viridis / red-green. The two source images differ by a real
-    # red-channel shift, so every submode renders a visibly distinct field.
+    # (signed / rel_signed) use the red-blue diverging map; magnitude errors use
+    # viridis / red-green. The two source images differ by a real red-channel
+    # shift, so every kernel renders a visibly distinct field.
     items.append((
         "Compare — all 6 diff submodes "
-        "(row-major: signed · absolute · squared / "
-        "relative_signed · relative_absolute · relative_squared)",
+        "(row-major: signed · abs · square / "
+        "rel_signed · rel_abs · rel_square)",
         cp.Grid(
             [
                 [
-                    cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="diff",
-                               diff_submode="signed", colormap="red-blue"),
-                    cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="diff",
-                               diff_submode="absolute", colormap="viridis"),
-                    cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="diff",
-                               diff_submode="squared", colormap="viridis"),
+                    cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="signed",
+                               colormap="red-blue"),
+                    cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="abs",
+                               colormap="viridis"),
+                    cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="square",
+                               colormap="viridis"),
                 ],
                 [
-                    cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="diff",
-                               diff_submode="relative_signed", colormap="red-blue"),
-                    cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="diff",
-                               diff_submode="relative_absolute", colormap="viridis"),
-                    cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="diff",
-                               diff_submode="relative_squared", colormap="red-green"),
+                    cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="rel_signed",
+                               colormap="red-blue"),
+                    cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="rel_abs",
+                               colormap="viridis"),
+                    cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="rel_square",
+                               colormap="red-green"),
                 ],
             ],
         ),
