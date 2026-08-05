@@ -243,10 +243,16 @@ def test_image_forwards_processing_and_display_props():
                     colormap="viridis", interpolation="pixelated",
                     show_axes=True).to_node()
     p = node["props"]
+    # Post-unification contract: `gamma=` is the DISPLAY-TRANSFER gamma (top-
+    # level prop + auto-selected tonemap="gamma"), NOT the legacy CSS-filter
+    # `processing.gamma` (which stays at its 1.0 default) — one gamma concept,
+    # never applied twice.
     assert p["processing"] == {
-        "brightness": 0.1, "contrast": 0.0, "gamma": 2.2,
+        "brightness": 0.1, "contrast": 0.0, "gamma": 1.0,
         "exposure": 1.5, "offset": 0.0, "flipSign": False,
     }
+    assert p["tonemap"] == "gamma"
+    assert p["gamma"] == 2.2
     assert p["colormap"] == "viridis"
     assert p["interpolation"] == "pixelated"
     assert p["showAxes"] is True
@@ -417,8 +423,10 @@ def test_image_hdr_autodetect_emits_imagehdr_renderer():
     h = node["data"]["hash"]
     store = img._collect_store()
     assert h in store and store[h]["mime"] == "application/octet-stream"
-    # default props: tonemap present (srgb), exposure 0, gamma OMITTED
-    assert node["props"]["tonemap"] == "srgb"
+    # default props (post-unification contract): tonemap OMITTED when unset —
+    # the client resolves the surface default (sRGB everywhere); exposure 0
+    # always emitted; gamma/peak omitted unless explicitly passed.
+    assert "tonemap" not in node["props"]
     assert node["props"]["exposure"] == 0.0
     assert "gamma" not in node["props"]
     # round-trips through the pydantic PlotDescriptorSpec (the anti-drift gate)
