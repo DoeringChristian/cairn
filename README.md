@@ -130,6 +130,51 @@ for run in reader.runs(project="sweep").list():
     print(f"{run.name}: final_loss={loss.values[-1]:.4f}")
 ```
 
+## Live query URLs
+
+A **live query URL** is a stable server URL that always resolves to "the
+`<tag>` artifact of the latest (optionally filtered) run". It lets a
+[cairn-plot](https://github.com/doeringchristian/cairn-plot) report show the
+freshest data *every time it opens* — the HTML never changes, only what the URL
+resolves to does.
+
+```python
+import cairn
+import cairn.plot as cp
+
+# "the train/render image of the most recent run in project 'demo'"
+url = cairn.query_url("train/render", project="demo", server="cairn://localhost:4300")
+
+# Embed it in a report — the browser fetches it fresh on every open.
+cp.Report(title="live dashboard").add(cp.Image(url=url)).save("dashboard.html")
+```
+
+Under the hood `GET /api/query?run=latest&project=demo&tag=train/render`
+**302-redirects** to the immutable, content-addressed
+`/api/artifacts/{digest}` endpoint. The query response is `Cache-Control:
+no-store` (re-resolved on every open); the digest it points at is cached
+forever.
+
+Selector grammar (query params):
+
+| Param | Meaning |
+|-------|---------|
+| `run` | `latest` (default) · `latest:N` (N-th newest) · `id:<run_id>` (pin) · `newest-per-name` |
+| `project` | restrict to a project id |
+| `name` | display-name glob (`exp*`) or case-insensitive substring |
+| `status` | exact run status (`completed`, …) |
+| `<param>__<op>` | run-param / metric predicate — `lr__gt=1e-4`, `metrics.loss__lt=0.1`, `tags__contains=best` (ops: `gt`/`lt`/`gte`/`lte`/`in`/`contains`/`startswith`/…) |
+| `tag` | **required** — the artifact / sequence name to resolve |
+| `step` | `latest` (default, highest step) or an explicit `<N>` |
+| `at` | ISO-8601 pin — "latest run created ≤ this instant" |
+| `format` | `raw` (default → 302) or `json` (`{run_id, digest, step, mime_type, size, url}`) |
+
+`cairn.query_url(..., live=False)` resolves once now and returns the baked
+immutable digest URL (fully pinned). `reader.runs("demo").filter(lr__gt=1e-4).latest_url("render")`
+and `run["render"].url` are equivalent sugar. Query URLs need a **server** when
+fetched; offline reports keep using baked, self-contained HTML.
+See `examples/report_query_url.py`.
+
 ## Examples
 
 | Example | Framework | Multi-machine? |

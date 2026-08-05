@@ -2,6 +2,42 @@
 
 Date: 2026-07-20. Status: DESIGN ONLY (no implementation). Track: cairn-track / cairn-plot.
 
+> **STATUS: IMPLEMENTED (2026-08-05)** — work items 1, 2, 4, 5, 6 of §8 shipped on
+> `feature/query-urls` (item 3, the cairn-plot `res.url` cache re-keying, is a
+> separate cairn-plot-side change). What landed:
+>
+> * **`GET /api/query`** (`cairn/server/routes/query.py`, read-role router) —
+>   parses the §3 grammar, resolves against the DB, and either **302-redirects**
+>   to `/api/artifacts/{digest}` (`format=raw`, default) or returns the
+>   `{run_id, digest, step, mime_type, size, url}` JSON envelope (`format=json`).
+>   `Cache-Control: no-store` on the query response; `/api/artifacts/{digest}`
+>   now sets `public, max-age=31536000, immutable`.
+> * **Pure resolver** (`cairn/server/query_resolver.py`) — the first server-side
+>   home for the `QueryRunSelector` schema (`resolve_run_ids`, mirroring
+>   `ui/src/lib/run-selector.ts`), `RunQuery`'s `field__op=value` filter
+>   semantics (the `_OPERATORS` table is imported verbatim from `reader.py`),
+>   and `_find_artifact`'s highest-step logic. HTTP-free, unit-tested directly.
+> * **Python sugar** (`cairn/sdk/query_urls.py`) — `cairn.query_url(tag,
+>   run="latest", name=…, project=…, live=True, **filters)`, plus
+>   `RunQuery.latest_url(tag)` and `DataRef.url` (`reader.py`). `live=False`
+>   resolves once via `format=json` and returns the baked immutable digest URL;
+>   all three raise a clear error on a local-only target.
+> * **Tests**: `tests/unit/test_query_resolver.py`,
+>   `tests/integration/test_api_query.py`, `tests/unit/test_query_url_sugar.py`.
+> * **Example**: `examples/report_query_url.py` (a `cp.Report` whose panes are
+>   live query URLs).
+>
+> **Decisions as shipped** (§9): (1) query-param grammar; (2) **`step=best`
+> deferred** — the endpoint returns HTTP 400 for `step=best:…`; (4) `live=`
+> toggle exactly as recommended (default live). **Deviations from the doc**:
+> run-tag filtering in the URL is expressed as the RunQuery predicate
+> `tags__contains=<tag>` (repeatable, all-of) rather than a dedicated param,
+> because `tag=` already names the object/artifact; `run=latest:N` selects the
+> **N-th newest** single run (as in §3), while the multi-run `latest-n` set
+> semantics live in `resolve_run_ids` for the ported `QueryRunSelector` schema.
+> The existing client resolver (`run-selector.ts`) is untouched — unification
+> (§9.7) remains a follow-up.
+
 ## 0. TL;DR
 
 Today run/artifact selection lives only in Python (`Reader.runs(...).filter(...).last()`,
