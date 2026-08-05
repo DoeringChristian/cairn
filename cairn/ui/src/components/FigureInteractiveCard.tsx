@@ -701,7 +701,7 @@ export default function FigureInteractiveCard({ runId, metric, extraSeries, cont
       onSettings={() => setExpanded(true)}
       onRemove={onRemove}
       onDownload={current?.artifact_hash ? () => downloadArtifact(api.artifactUrl(current.artifact_hash!), artifactFilename(metric.name, current.step, current.artifact_mime ?? "image/png")) : undefined}
-      onScreenshot={() => { if (cardRef.current) exportPlotlyChart(cardRef.current, safeName(settings.title ?? metric.name), "svg"); }}
+      onScreenshot={() => { if (cardRef.current) exportPlotlyChart(cardRef.current, safeName(settings.title ?? metric.name), "png"); }}
       addToComparisonSlot={<AddToComparisonButton cardType="figure" series={compSeries} />}
       onResetView={resetView}
       viewModified={viewModified}

@@ -9,7 +9,7 @@ import {
   type BarDatum,
   type BarCompareMode,
 } from "@cairn-plot/lib/cairn-plot";
-import { downloadCsv, exportChartFromContainer, safeName } from "../lib/download";
+import { downloadCsv, exportChartPng, safeName } from "../lib/download";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import { useRunSelection, useRunSelectionHasProvider } from "../lib/use-run-selection";
 import CardShell from "./CardShell";
@@ -363,7 +363,7 @@ export default function BarChartCard({
         const rows: (string | number)[][] = bars.map((b) => [b.id, b.label, b.value]);
         downloadCsv(headers, rows, safeName(settings.title ?? "bar_chart") + ".csv");
       }}
-      onScreenshot={() => { if (cardRef.current) exportChartFromContainer(cardRef.current, safeName(settings.title ?? "bar_chart"), "svg"); }}
+      onScreenshot={() => { if (cardRef.current) exportChartPng(cardRef.current, safeName(settings.title ?? "bar_chart")); }}
       selectionPanel={selectionPanel}
       settingsPanel={settingsPanel}
       modalOpen={expanded}

@@ -38,7 +38,8 @@ import {
 import type { DiffColormap } from "@cairn-plot/lib/cairn-plot/three/diff";
 import { resetScene3DViews, type Scene3DCameraMode, type Scene3DSyncOptions } from "@cairn-plot/lib/cairn-plot/three/use-scene3d";
 import type { ViewportPaneProps } from "@cairn-plot/lib/cairn-plot/viewport/types";
-import { OffscreenComparePanes, useOffscreenSnapshot, type VisualCompareSettings } from "./card-kit";
+import { useOffscreenSnapshot, type VisualCompareSettings } from "./card-kit";
+import { OffscreenComparePanes } from "@cairn-plot/lib/cairn-plot/media-compare/OffscreenComparePanes";
 import type { ForeignFrameProps } from "./card-kit/cross-type-frame";
 import Select from "./settings/Select";
 import Slider from "./settings/Slider";

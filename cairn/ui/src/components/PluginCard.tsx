@@ -9,7 +9,7 @@ import { useSequence } from "../api/hooks";
 import { api } from "../api/client";
 import { qk } from "../api/query-keys";
 import { safeJsonParse } from "../lib/format";
-import { downloadArtifact, artifactFilename, exportChartFromContainer, safeName } from "../lib/download";
+import { downloadArtifact, artifactFilename, exportChartPng, safeName } from "../lib/download";
 import { type CardSettingsKey } from "../lib/card-settings";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import type { SequenceMeta, SequenceResponse, SequencePoint } from "../api/types";
@@ -429,7 +429,7 @@ export default function PluginCard({
       defaultHeight={400}
       onRemove={onRemove}
       onDownload={primaryCurrent?.artifact_hash ? () => downloadArtifact(api.artifactUrl(primaryCurrent.artifact_hash!), artifactFilename(metric.name, primaryCurrent.step, primaryCurrent.artifact_mime)) : undefined}
-      onScreenshot={() => { if (cardRef.current) exportChartFromContainer(cardRef.current, safeName(settings.title ?? metric.name), "svg"); }}
+      onScreenshot={() => { if (cardRef.current) exportChartPng(cardRef.current, safeName(settings.title ?? metric.name)); }}
       scrollIntoViewOnMount={autoOpenSettings}
       headerActions={<>
         <span className="inline-flex items-center rounded bg-bg-hover px-1.5 py-0.5 text-[10px] text-fg-muted">

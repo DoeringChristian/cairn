@@ -26,11 +26,11 @@ import Slider from "./settings/Slider";
 import Toggle from "./settings/Toggle";
 import SettingsSection from "./settings/SettingsSection";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
-import { SERIES_COLORS } from "../lib/colors";
 import { seriesKey, seriesLabel } from "../lib/series-utils";
-import { downloadCsv, exportChartFromContainer, safeName } from "../lib/download";
+import { downloadCsv, exportChartPng, safeName } from "../lib/download";
 import {
   ScalarPlot,
+  SERIES_COLORS,
   mapToXAxis,
   strideDownsample,
   emaSmooth,
@@ -574,7 +574,7 @@ export default function ScalarPlotCard({
         }
         downloadCsv(headers, rows, safeName(settings.title ?? metric.name) + ".csv");
       }}
-      onScreenshot={() => { if (cardRef.current) exportChartFromContainer(cardRef.current, safeName(settings.title ?? metric.name), "svg"); }}
+      onScreenshot={() => { if (cardRef.current) exportChartPng(cardRef.current, safeName(settings.title ?? metric.name)); }}
       addToComparisonSlot={<AddToComparisonButton cardType="scalar" series={compSeries} />}
       onRemove={onRemove}
       onResetView={resetViewport}

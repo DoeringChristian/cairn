@@ -4,11 +4,7 @@ import { api } from "../../api/client";
 import { qk } from "../../api/query-keys";
 import { useSequence } from "../../api/hooks";
 import type { SequencePoint } from "../../api/types";
-import {
-  resolveArtifactAtStep,
-  resolveGlobalPositionalReference,
-  type MissingArtifactMode,
-} from "@cairn-plot/lib/cairn-plot/media-compare";
+import { resolveReferenceHashes, type MissingArtifactMode } from "@cairn-plot/lib/cairn-plot/media-compare";
 
 export interface MediaReferenceTag {
   runId?: string;
@@ -118,63 +114,57 @@ export function useMediaReference(args: UseMediaReferenceArgs): UseMediaReferenc
         : [],
   });
 
-  const globalHash = useMemo(() => {
-    if (external && externalScope === "global") {
-      return resolveGlobalPositionalReference(externalPoints, safeIdx);
-    }
-    if (seriesBaselineIndex != null) {
-      return resolveArtifactAtStep(
-        perSeriesStepMap[seriesBaselineIndex] ?? new Map(),
-        seriesBaselineFixedStep ?? currentStep,
-        perSeriesPoints[seriesBaselineIndex]?.map((p) => p.step) ?? [],
-        missingImageMode,
-      ).hash;
-    }
-    return undefined;
-  }, [
-    external,
-    externalScope,
-    externalPoints,
-    safeIdx,
-    seriesBaselineIndex,
-    seriesBaselineFixedStep,
-    perSeriesStepMap,
-    perSeriesPoints,
-    currentStep,
-    missingImageMode,
-  ]);
-
-  const perPaneHashes = useMemo(() => {
-    if (!external || externalScope !== "per-run") return null;
-    return panes.map((_, paneIdx) => {
-      const points: SequencePoint[] = (perRunRefQueries[paneIdx]?.data?.points ?? []).filter(
-        (p: SequencePoint) => p.artifact_hash,
-      );
-      if (points.length === 0) return undefined;
-      const stepMap = new Map<number, SequencePoint>();
-      for (const p of points) stepMap.set(p.step, p);
-      const seriesSteps = points.map((p) => p.step);
-      return resolveArtifactAtStep(stepMap, currentStep, seriesSteps, missingImageMode).hash;
-    });
+  // Per-pane external-reference points, index-aligned with `panes` (empty
+  // unless external + "per-run" scope). This is the app data-model glue the
+  // lib dispatch consumes; both `perRunPoints` (a public result) and the
+  // dispatch's per-pane branch read it.
+  const perPaneExternalPoints = useMemo(
+    () => perRunRefQueries.map((q) => (q.data?.points ?? []).filter((p: SequencePoint) => p.artifact_hash)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [external, externalScope, panes, perRunRefQueries.map((q) => q.dataUpdatedAt).join("|"), currentStep, missingImageMode]);
+    [perRunRefQueries.map((q) => q.dataUpdatedAt).join("|")],
+  );
 
-  // Gate on `external` too (not just `externalScope`): `externalScope` is a
-  // persisted setting that can outlive the reference it was chosen for
-  // (e.g. the user clears `externalBaseline` via the "×" button, which only
-  // resets that field — see ImageGalleryCard's + every 3D card's clear
-  // button). Without this guard, a stale externalScope==="per-run" would
-  // make every pane's hash resolve to `perPaneHashes?.[paneIdx]` === always
-  // undefined (perPaneHashes itself is `null` whenever `external` is unset),
-  // permanently hiding the fallback `globalHash` (e.g. the "series-same-
-  // step" default) even though a perfectly good reference is available.
-  const perPaneHash = (paneIdx: number): string | undefined =>
-    external && externalScope === "per-run" ? perPaneHashes?.[paneIdx] : globalHash;
+  // Pure reference-resolution dispatch lives in the lib
+  // (`media-compare/reference.ts`); this hook only assembles the already-
+  // fetched candidate data + persisted policy + live context and hands them
+  // over. The `external`-vs-`externalScope` gating that keeps a stale
+  // persisted scope from hiding a valid series baseline is encoded in the
+  // lib `policy.hasExternal` gate.
+  const { globalHash, perPaneHash } = useMemo(
+    () =>
+      resolveReferenceHashes<SequencePoint>(
+        {
+          hasExternal: !!external,
+          externalScope,
+          seriesBaselineIndex,
+          seriesBaselineFixedStep,
+        },
+        {
+          externalPoints,
+          perPaneExternalPoints,
+          seriesStepMap: (seriesBaselineIndex != null ? perSeriesStepMap[seriesBaselineIndex] : undefined) ?? new Map(),
+          seriesSteps:
+            (seriesBaselineIndex != null ? perSeriesPoints[seriesBaselineIndex]?.map((p) => p.step) : undefined) ?? [],
+        },
+        { currentStep, safeIdx, missingMode: missingImageMode },
+      ),
+    [
+      external,
+      externalScope,
+      seriesBaselineIndex,
+      seriesBaselineFixedStep,
+      externalPoints,
+      perPaneExternalPoints,
+      perSeriesStepMap,
+      perSeriesPoints,
+      currentStep,
+      safeIdx,
+      missingImageMode,
+    ],
+  );
 
   const perRunPoints = (paneIdx: number): SequencePoint[] =>
-    external && externalScope === "per-run"
-      ? (perRunRefQueries[paneIdx]?.data?.points ?? []).filter((p: SequencePoint) => p.artifact_hash)
-      : [];
+    external && externalScope === "per-run" ? perPaneExternalPoints[paneIdx] ?? [] : [];
 
   return { globalHash, perPaneHash, externalPoints, perRunPoints };
 }

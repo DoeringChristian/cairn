@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import type { SequenceResponse } from "../../api/types";
 import { safeJsonParse } from "../../lib/format";
-import { resolveAtStep } from "./resolve-at-step";
+import { resolveArtifactPointAtStep } from "@cairn-plot/lib/cairn-plot/media-compare";
 
 /**
  * Resolves the parsed artifact metadata of the REFERENCE series (series[1])
@@ -25,7 +25,7 @@ export function useCompareReferenceMeta<T>(
     const points = (referenceData?.points ?? []).filter((p) => p.artifact_hash);
     if (points.length === 0) return null;
     const targetStep = refFixedStep ?? currentStep;
-    const current = resolveAtStep(points, targetStep) ?? points[0];
+    const current = resolveArtifactPointAtStep(points, targetStep);
     return safeJsonParse<T>(current?.artifact_metadata) ?? null;
   }, [referenceData, refFixedStep, currentStep]);
 }

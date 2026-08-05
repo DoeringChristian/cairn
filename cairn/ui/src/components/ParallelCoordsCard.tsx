@@ -15,7 +15,7 @@ import {
   type ParallelRow,
 } from "@cairn-plot/lib/cairn-plot";
 import { useCardSettings } from "../lib/card-settings";
-import { downloadCsv, exportChartFromContainer, safeName } from "../lib/download";
+import { downloadCsv, exportChartPng, safeName } from "../lib/download";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import { useRunSelection, useRunSelectionHasProvider } from "../lib/use-run-selection";
 import CardShell from "./CardShell";
@@ -377,7 +377,7 @@ export default function ParallelCoordsCard({
         });
         downloadCsv(headers, rows, safeName(settings.title ?? "parallel_coords") + ".csv");
       }}
-      onScreenshot={() => { if (cardRef.current) exportChartFromContainer(cardRef.current, safeName(settings.title ?? "parallel_coords"), "svg"); }}
+      onScreenshot={() => { if (cardRef.current) exportChartPng(cardRef.current, safeName(settings.title ?? "parallel_coords")); }}
       selectionPanel={selectionPanel}
       settingsPanel={settingsPanel}
       modalOpen={expanded}

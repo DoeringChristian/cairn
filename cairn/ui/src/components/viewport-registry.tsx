@@ -41,10 +41,12 @@ export { parseOverlay };
 // `lib/cairn-plot/media-compare/reference.ts` (pure) and
 // `components/card-kit/use-media-reference.ts` (react-query, app layer).
 //
-// `CardRenderer.tsx` looks up `viewportRegistry[metric.object_type]` instead
-// of branching per type; today only "image" is registered (WS-VC3 scope).
-// WS-VC4 adds mesh/pointcloud/boxes3d/volume entries here without touching
-// this file's shape.
+// `CardRenderer.tsx` renders the image case through `viewportRegistry.image`.
+// The 3D types (mesh/pointcloud/boxes3d/volume) are Viewport-backed too, but
+// each defines + owns its own `ViewportModule` inside its own card file (see
+// `meshViewportModule` etc.) and passes it straight into `VisualContentCard`,
+// so they are intentionally NOT registered here — this map holds only the
+// image module.
 // ---------------------------------------------------------------------------
 
 /** The app's default `DataSource` — wraps `api.artifactUrl`. See
@@ -224,10 +226,11 @@ export const viewportRegistry: Record<
   string,
   ViewportModule<unknown, ViewState, VisualCompareSettings>
 > = {
-  // Only "image" is a real Viewport-backed type today (WS-VC3 scope). VC4
-  // adds mesh/pointcloud/boxes3d/volume entries; VisualContentCard is not
-  // wired to those object_types yet (CardRenderer keeps their existing
-  // bespoke cards until WS-VC5).
+  // Only "image" is registered here — it is the one type `CardRenderer`
+  // renders through this shared registry (`viewportRegistry.image`). The 3D
+  // types self-register their own `ViewportModule` in their own card files
+  // and wire it straight into `VisualContentCard`, so they never flow through
+  // this map.
   //
   // The cast erases the `TView` variance between the module's concrete
   // `ImageViewState` and the card's `ViewState` union — safe because the

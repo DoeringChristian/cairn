@@ -5,7 +5,7 @@ import { safeJsonParse } from "../lib/format";
 import {
   downloadArtifact,
   artifactFilename,
-  exportChartFromContainer,
+  exportChartPng,
   safeName,
 } from "../lib/download";
 import { api } from "../api/client";
@@ -300,11 +300,7 @@ export default function HistogramCard({
       }
       onScreenshot={() => {
         if (cardRef.current)
-          exportChartFromContainer(
-            cardRef.current,
-            safeName(settings.title ?? metric.name),
-            "svg",
-          );
+          exportChartPng(cardRef.current, safeName(settings.title ?? metric.name));
       }}
       addToComparisonSlot={
         <AddToComparisonButton cardType="histogram" series={compSeries} />

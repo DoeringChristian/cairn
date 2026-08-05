@@ -4,7 +4,7 @@ import { api } from "../api/client";
 import { qk } from "../api/query-keys";
 import { useCardSettings } from "../lib/card-settings";
 import { ScatterPlot, type ScatterPoint, type ParetoDirection } from "@cairn-plot/lib/cairn-plot";
-import { downloadCsv, exportChartFromContainer, safeName } from "../lib/download";
+import { downloadCsv, exportChartPng, safeName } from "../lib/download";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import { useRunSelection, useRunSelectionHasProvider } from "../lib/use-run-selection";
 import CardShell from "./CardShell";
@@ -298,7 +298,7 @@ export default function ScatterPlotCard({
         });
         downloadCsv(headers, rows, safeName(settings.title ?? "scatter_plot") + ".csv");
       }}
-      onScreenshot={() => { if (cardRef.current) exportChartFromContainer(cardRef.current, safeName(settings.title ?? "scatter_plot"), "svg"); }}
+      onScreenshot={() => { if (cardRef.current) exportChartPng(cardRef.current, safeName(settings.title ?? "scatter_plot")); }}
       selectionPanel={selectionPanel}
       settingsPanel={settingsPanel}
       modalOpen={expanded}

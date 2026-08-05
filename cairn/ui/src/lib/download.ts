@@ -1,5 +1,7 @@
 /** Artifact download and chart export helpers. */
 
+import { plotToPng, downloadBlob as downloadPngBlob } from "@cairn-plot/lib/cairn-plot/primitives/plot-to-png";
+
 export type ExportFormat = "svg" | "png" | "jpg" | "pdf";
 
 const MIME_EXT: Record<string, string> = {
@@ -67,95 +69,19 @@ export function downloadCsv(headers: string[], rows: (string | number)[][], file
 }
 
 /**
- * Serialize an SVG element to a standalone SVG string with computed styles
- * inlined so it renders correctly outside the page.
+ * Export the chart under `container` as a PNG using cairn-plot's shared
+ * client-side rasterizer (`primitives/plot-to-png` — the same exporter every
+ * `<PlotToolbar>` camera button uses). Prefers an `<svg>` chart (compositing
+ * any sibling `<canvas>` layers), falling back to a lone `<canvas>`/`<img>`.
+ * Replaces the former in-app multi-format SVG serializer; the multi-format
+ * (svg/jpg/pdf) surface was dropped in favor of a single PNG output.
  */
-function serializeSvg(svgEl: SVGSVGElement): string {
-  const clone = svgEl.cloneNode(true) as SVGSVGElement;
-  // Ensure the SVG has explicit dimensions
-  const { width, height } = svgEl.getBoundingClientRect();
-  clone.setAttribute("width", String(Math.round(width)));
-  clone.setAttribute("height", String(Math.round(height)));
-  clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-  // Inline computed styles on all elements so export is self-contained
-  const origEls = svgEl.querySelectorAll("*");
-  const cloneEls = clone.querySelectorAll("*");
-  for (let i = 0; i < origEls.length; i++) {
-    const cs = getComputedStyle(origEls[i]!);
-    const el = cloneEls[i]! as SVGElement | HTMLElement;
-    // Copy key properties that affect rendering
-    for (const prop of ["fill", "stroke", "stroke-width", "stroke-dasharray", "font-size", "font-family", "font-weight", "opacity", "visibility", "display"]) {
-      const val = cs.getPropertyValue(prop);
-      if (val) el.style.setProperty(prop, val);
-    }
-  }
-  return new XMLSerializer().serializeToString(clone);
-}
-
-/**
- * Render an SVG string to a canvas and return it as a Blob.
- */
-function svgToRasterBlob(
-  svgStr: string,
-  width: number,
-  height: number,
-  format: "png" | "jpg",
-  scale = 2,
-): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    const svgBlob = new Blob([svgStr], { type: "image/svg+xml;charset=utf-8" });
-    const url = URL.createObjectURL(svgBlob);
-    img.onload = () => {
-      const canvas = document.createElement("canvas");
-      canvas.width = width * scale;
-      canvas.height = height * scale;
-      const ctx = canvas.getContext("2d")!;
-      if (format === "jpg") {
-        ctx.fillStyle = "#ffffff";
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-      }
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      URL.revokeObjectURL(url);
-      canvas.toBlob(
-        (blob) => (blob ? resolve(blob) : reject(new Error("Canvas toBlob failed"))),
-        format === "jpg" ? "image/jpeg" : "image/png",
-        0.95,
-      );
-    };
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("SVG render failed")); };
-    img.src = url;
-  });
-}
-
-/**
- * Export a chart from a container element that contains an SVG (e.g., Recharts).
- * Finds the first `<svg>` child, serializes it, and downloads in the requested format.
- */
-export async function exportChartFromContainer(
-  container: HTMLElement,
-  filename: string,
-  format: ExportFormat,
-): Promise<void> {
-  const svg = container.querySelector("svg");
-  if (!svg) return;
-  const { width, height } = svg.getBoundingClientRect();
-  const svgStr = serializeSvg(svg);
-
-  if (format === "svg") {
-    downloadBlob(new Blob([svgStr], { type: "image/svg+xml" }), `${filename}.svg`);
-    return;
-  }
-
-  if (format === "png" || format === "jpg") {
-    const blob = await svgToRasterBlob(svgStr, width, height, format);
-    downloadBlob(blob, `${filename}.${format}`);
-    return;
-  }
-
-  if (format === "pdf") {
-    // PDF: export as high-res SVG (vector, opens in any PDF viewer that supports SVG)
-    downloadBlob(new Blob([svgStr], { type: "image/svg+xml" }), `${filename}.svg`);
+export async function exportChartPng(container: HTMLElement, filename: string): Promise<void> {
+  try {
+    const blob = await plotToPng(container);
+    downloadPngBlob(blob, filename);
+  } catch (err) {
+    console.error("exportChartPng failed", err);
   }
 }
 
@@ -389,8 +315,9 @@ export async function exportPlotlyChart(
   const plotlyEl = plotEl.querySelector(".js-plotly-plot") ?? plotEl;
   const Plotly = (window as any).Plotly;
   if (!Plotly?.downloadImage) {
-    // Fallback: use SVG serialization if Plotly global not available
-    await exportChartFromContainer(plotEl, filename, format);
+    // Fallback: cairn-plot's client-side rasterizer if the Plotly global is
+    // not available (rasterizes the plotted SVG to PNG).
+    await exportChartPng(plotEl, filename);
     return;
   }
   const plotlyFormat = format === "jpg" ? "jpeg" : format === "pdf" ? "svg" : format;
