@@ -226,6 +226,22 @@ class DataRef:
                 return seq[self.step]
             return seq
 
+    @property
+    def url(self) -> str:
+        """A live query URL pinned to this exact run+tag (``run=id:<run_id>``).
+
+        Only meaningful against a server target (the URL is fetched over HTTP);
+        raises on a local-only backend. Narrowed steps (``run[tag][step]``)
+        carry through as ``step=<N>``.
+        """
+        base = getattr(self.run._backend, "server_url", None)
+        if base is None:
+            from .query_urls import _LOCAL_ONLY_MSG
+            raise ValueError(_LOCAL_ONLY_MSG)
+        from .query_urls import build_query_url
+        step: str | int = self.step if self.step is not None else "latest"
+        return build_query_url(base, tag=self.tag, run=f"id:{self.run.id}", step=step)
+
     def context_hash(self) -> str:
         """Resolve the ``context_hash`` for this tag (for a ``SeriesRef``).
 
@@ -695,6 +711,37 @@ class RunQuery:
     def last(self) -> Run | None:
         runs = self._clone(sort_desc=True, limit_n=self._limit_n or 1000).list()
         return runs[0] if runs else None
+
+    def latest_url(self, tag: str, *, live: bool = True, step: str | int = "latest") -> str:
+        """A live query URL for ``tag`` on the *latest* run matching this query.
+
+        The query's ``project``/``status``/``filter(...)`` predicates are
+        emitted as URL selectors, so
+        ``reader.runs("demo").filter(lr__gt=1e-4).latest_url("render")`` yields
+        ``.../api/query?run=latest&tag=render&project=demo&lr__gt=0.0001``.
+
+        Requires a server target (the URL is fetched over HTTP); raises on a
+        local-only backend. ``live=False`` resolves once and returns the baked
+        immutable digest URL.
+        """
+        base = getattr(self._backend, "server_url", None)
+        if base is None:
+            from .query_urls import _LOCAL_ONLY_MSG
+            raise ValueError(_LOCAL_ONLY_MSG)
+        from .query_urls import query_url as _query_url
+
+        filters: dict[str, Any] = {}
+        if self._status is not None:
+            filters["status"] = self._status
+        for f_field, op, sub_field, value in self._filters:
+            key = f"{f_field}.{sub_field}" if sub_field else f_field
+            if op != "exact":
+                key = f"{key}__{op}"
+            filters[key] = value
+        return _query_url(
+            tag, run="latest", project=self._project, live=live, step=step,
+            server=base, **filters,
+        )
 
     def __iter__(self) -> Iterator[Run]:
         return iter(self.list())

@@ -14,6 +14,11 @@ router = APIRouter(prefix="/api", tags=["artifacts"])
 
 _RANGE_RE = re.compile(r"^bytes=(\d*)-(\d*)$")
 
+# Content is addressed by SHA256 digest, so a given URL's bytes never change —
+# safe to cache forever. This is the immutable half of the query-URL freshness
+# contract (the /api/query resolver is Cache-Control: no-store).
+_IMMUTABLE = "public, max-age=31536000, immutable"
+
 
 @router.get("/runs/{run_id}/artifacts")
 def list_run_artifacts(run_id: str, request: Request) -> dict[str, Any]:
@@ -92,6 +97,7 @@ def get_artifact(
             "Content-Range": f"bytes {start}-{end}/{total_size}",
             "Content-Length": str(length),
             "Accept-Ranges": "bytes",
+            "Cache-Control": _IMMUTABLE,
         }
         return StreamingResponse(
             iterator(), status_code=206, headers=headers, media_type=mime_type
@@ -99,5 +105,9 @@ def get_artifact(
 
     # Full body
     data, _meta = blobs.get(digest)
-    headers = {"Accept-Ranges": "bytes", "Content-Length": str(len(data))}
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Length": str(len(data)),
+        "Cache-Control": _IMMUTABLE,
+    }
     return Response(content=data, media_type=mime_type, headers=headers)
