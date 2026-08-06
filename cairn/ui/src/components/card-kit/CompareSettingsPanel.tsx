@@ -42,6 +42,12 @@ export interface CompareSettingsPanelProps<M extends string> {
   onDiffColormapChange: (v: DiffColormap) => void;
   diffSubmode: DiffMode;
   onDiffSubmodeChange: (v: DiffMode) => void;
+  /** Persisted ENGINE diff-kernel selection (`flip`/`flip_ldr`/`ssim` or a
+   *  pointwise id) — the value of the kernel select below, threaded so pane-side
+   *  kernel changes (embed/report seeds) stay in sync. Falls back to
+   *  `diffSubmode` when unset. */
+  diffKernel?: string;
+  onDiffKernelChange?: (v: string) => void;
   splitPosition: number;
   onSplitPositionChange: (v: number) => void;
   blendAlpha: number;
@@ -63,6 +69,8 @@ export function CompareSettingsPanel<M extends string>({
   onDiffColormapChange,
   diffSubmode,
   onDiffSubmodeChange,
+  diffKernel,
+  onDiffKernelChange,
   splitPosition,
   onSplitPositionChange,
   blendAlpha,
@@ -79,6 +87,24 @@ export function CompareSettingsPanel<M extends string>({
   const nativeValues = new Set<string>(nativeModes.map((o) => o.value));
   const isNative = nativeValues.has(mode);
   const usingCompareMode = mode !== ("side" as M);
+
+  // ENGINE diff KERNELS from the gpu-image registry — the FULL kernel menu
+  // (the six pointwise diffs plus FLIP / HDR-FLIP / SSIM), enumerated via the
+  // same `enumerateCompareModeOptions` seam, GPU-gated. Empty on a non-WebGPU
+  // browser (the addon publishes the list only once its device check resolves),
+  // in which case the panel falls back to the plain pointwise submode select.
+  const engineKernelList =
+    (window as unknown as { __cairnPlotDiffMenuModes?: Array<{ id: string; label: string }> })
+      .__cairnPlotDiffMenuModes ?? [];
+  const gpuAvailable = !!(window as unknown as { __cairnPlotGpuImageLoaded?: boolean })
+    .__cairnPlotGpuImageLoaded;
+  const kernelOptions = enumerateCompareModeOptions<string>(
+    { nativeModes: [], topologyOk: true },
+    { engineKernels: engineKernelList.map((k) => ({ value: k.id, label: k.label })), gpuAvailable },
+  )
+    .filter((o) => o.kernel)
+    .map((o) => ({ value: o.value, label: o.label, disabled: o.disabled }));
+  const showKernelSelect = !!onDiffKernelChange && kernelOptions.length > 0;
 
   return (
     <div className="mt-2 border-t border-border-subtle pt-2">
@@ -102,12 +128,22 @@ export function CompareSettingsPanel<M extends string>({
           )}
           {mode === ("diff" as M) && (
             <>
-              <Select
-                label="Pixel-diff submode"
-                value={diffSubmode}
-                onChange={onDiffSubmodeChange}
-                options={[...DIFF_SUBMODE_OPTIONS]}
-              />
+              {showKernelSelect ? (
+                <Select
+                  label="Diff kernel"
+                  value={diffKernel ?? diffSubmode}
+                  onChange={(v) => onDiffKernelChange!(v)}
+                  options={kernelOptions}
+                  description="Pointwise diffs plus the GPU perceptual kernels (FLIP / HDR-FLIP / SSIM)"
+                />
+              ) : (
+                <Select
+                  label="Pixel-diff submode"
+                  value={diffSubmode}
+                  onChange={onDiffSubmodeChange}
+                  options={[...DIFF_SUBMODE_OPTIONS]}
+                />
+              )}
               <Select
                 label="Pixel-diff colormap"
                 value={diffColormap as Colormap}

@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
 import {
   ImageViewportPane,
@@ -7,6 +7,7 @@ import {
   DIVERGING_COLORMAPS,
   createEndpointDataSource,
   resolveImageViewportItems,
+  resolveImageViewportItemsAsync,
   parseOverlay,
   type Colormap,
   type ImageViewportItem,
@@ -64,12 +65,43 @@ const endpointDataSource = createEndpointDataSource((hash) => api.artifactUrl(ha
  * this hook is now just the `useMemo` + `DataSource`/`parseOverlay` wiring.
  */
 function useImageData(args: ViewportDataArgs): ViewportDataResult<ImageViewportItem> {
-  const { hashes, referenceHashes, metadata } = args;
-  return useMemo(
+  const { hashes, referenceHashes, metadata, mimes, referenceMimes } = args;
+  // Instant synchronous baseline (`{url, overlay}` per pane, no fetch) so SDR
+  // panes render immediately; the async, float-aware resolver below then
+  // fetches+decodes any `.exr`/float-`.npy` artifact (detected from the host's
+  // `artifact_mime` via `args.mimes`, else the URL extension + magic bytes) and
+  // replaces the item with a decoded `CompareFloatSource` — this is what lights
+  // up the true-HDR panes/compare (rgba16float, HDR-FLIP auto-dispatch, the
+  // host-driven tonemap). Browser-native panes pass through unchanged.
+  const sync = useMemo(
     () => resolveImageViewportItems(args, endpointDataSource, parseOverlay),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [hashes.join("|"), referenceHashes.join("|"), (metadata ?? []).join("|")],
   );
+  const [resolved, setResolved] = useState<ViewportDataResult<ImageViewportItem>>(sync);
+  const key = [
+    hashes.join("|"),
+    referenceHashes.join("|"),
+    (metadata ?? []).join("|"),
+    (mimes ?? []).join("|"),
+    (referenceMimes ?? []).join("|"),
+  ].join("§");
+  useEffect(() => {
+    setResolved(sync);
+    let cancelled = false;
+    resolveImageViewportItemsAsync(args, endpointDataSource, parseOverlay)
+      .then((r) => {
+        if (!cancelled) setResolved(r);
+      })
+      .catch(() => {
+        /* keep the sync `{url}` fallback if a decode fails */
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+  return resolved;
 }
 
 // ---------------------------------------------------------------------------
@@ -149,6 +181,42 @@ function ImageSettingsControls({
         onChange={(v) => update({ flipSign: v })}
         description="Invert / negate pixel values"
       />
+      <SettingsSection title="Tone map" />
+      <Select<"linear" | "srgb" | "gamma" | "reinhard" | "aces">
+        label="Operator"
+        value={settings.tonemap ?? "srgb"}
+        onChange={(v) => update({ tonemap: v })}
+        options={[
+          { value: "srgb", label: "sRGB (default)" },
+          { value: "linear", label: "Linear" },
+          { value: "gamma", label: "Gamma" },
+          { value: "reinhard", label: "Reinhard" },
+          { value: "aces", label: "ACES" },
+        ]}
+        description="Unified curve. HDR/float panes extend it; the CPU 2D-canvas backend is SDR-only (P=1)"
+      />
+      <Slider
+        label="Peak (HDR ceiling)"
+        value={settings.peak ?? 4}
+        onChange={(v) => update({ peak: v })}
+        min={1}
+        max={16}
+        step={0.5}
+        format={(v) => `${v.toFixed(1)}×`}
+        description="×SDR white. 1 = SDR; >1 extends onto an HDR surface (engaged panes only)"
+      />
+      {(settings.tonemap ?? "srgb") === "gamma" && (
+        <Slider
+          label="Tone-map γ"
+          value={settings.tonemapGamma ?? 2.2}
+          onChange={(v) => update({ tonemapGamma: v })}
+          min={0.5}
+          max={4}
+          step={0.05}
+          format={(v) => v.toFixed(2)}
+          description="Gamma-operator exponent (distinct from the Gamma filter above)"
+        />
+      )}
       <Select<"auto" | "pixelated" | "crisp-edges">
         label="Interpolation"
         value={settings.interpolation ?? "auto"}
@@ -188,6 +256,16 @@ function ImageSettingsControls({
         checked={settings.showAxes ?? false}
         onChange={(v) => update({ showAxes: v })}
         description="Show pixel coordinate ticks along edges"
+      />
+      <Select<"decimal" | "int">
+        label="Pixel-value notation"
+        value={settings.pixelValueNotation ?? "decimal"}
+        onChange={(v) => update({ pixelValueNotation: v })}
+        options={[
+          { value: "decimal", label: "Decimal (0–1)" },
+          { value: "int", label: "Integer (0–255)" },
+        ]}
+        description="Notation for the TEV pixel-value overlay (the retained floating chip)"
       />
     </>
   );

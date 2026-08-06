@@ -34,6 +34,7 @@ import {
   canCrossTypeCompare,
 } from "@cairn-plot/lib/cairn-plot";
 import type { DiffColormap } from "@cairn-plot/lib/cairn-plot/three/diff";
+import { enumerateCompareModeOptions } from "@cairn-plot/lib/cairn-plot/media-compare";
 import { parseOverlay } from "./viewport-registry";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import { useCameraSync } from "../lib/camera-sync";
@@ -106,6 +107,34 @@ const MEDIA_COMPARE_MODE_LABELS: Record<MediaCompareModeKind, string> = {
   blend: "blend",
   diff: "diff",
 };
+
+interface DiffMenuMode {
+  id: string;
+  label: string;
+}
+
+// The engine diff KERNELS (the six pointwise diffs plus FLIP / HDR-FLIP / SSIM)
+// the gpu-image addon publishes on `window.__cairnPlotDiffMenuModes` once WebGPU
+// initializes, plus whether the engine is available. GPU-gated: empty on a
+// non-WebGPU browser (or before the addon's async device check resolves). We
+// re-render on the addon's ready event so the kernel menu fills in live.
+function useEngineDiffKernels(): { kernels: DiffMenuMode[]; gpuAvailable: boolean } {
+  const read = () => {
+    const w = window as unknown as {
+      __cairnPlotDiffMenuModes?: DiffMenuMode[];
+      __cairnPlotGpuImageLoaded?: boolean;
+    };
+    return { kernels: w.__cairnPlotDiffMenuModes ?? [], gpuAvailable: !!w.__cairnPlotGpuImageLoaded };
+  };
+  const [state, setState] = useState<{ kernels: DiffMenuMode[]; gpuAvailable: boolean }>(read);
+  useEffect(() => {
+    const onReady = () => setState(read());
+    window.addEventListener("cairn-plot:gpu-image-ready", onReady);
+    onReady(); // the addon may have resolved between the initial render and this effect
+    return () => window.removeEventListener("cairn-plot:gpu-image-ready", onReady);
+  }, []);
+  return state;
+}
 
 // ---------------------------------------------------------------------------
 // ExternalBaselinePicker
@@ -248,6 +277,7 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
   useRunMetadataVersion();
 
   const caps = viewport.capabilities;
+  const { kernels: engineDiffKernels, gpuAvailable } = useEngineDiffKernels();
   // The card's own minimum height — passed to every resolveCardHeight read so
   // the inner content agrees with CardShell's outer-box clamp (one clamp
   // source). Per-type via the viewport's object_type.
@@ -305,9 +335,6 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
     updateSettings(updates);
   }, [updateSettings]);
 
-  const setNativeMode = useCallback((nativeMode: string) => {
-    updateSettings({ nativeMode });
-  }, [updateSettings]);
 
   // -----------------------------------------------------------------------
   // Multi-series fetch
@@ -404,6 +431,22 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
       const stepMap = perSeriesStepMap[i] ?? new Map();
       const step = fallbackStep ?? currentStep;
       return stepMap.get(step)?.artifact_metadata ?? null;
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [effectiveMetrics, perSeriesStepMap, paneResolved, currentStep],
+  );
+
+  // Per-pane foreground MIME (the host's `artifact_mime`) — threaded into
+  // `useData` so the async float-aware resolver can reliably detect `.exr` /
+  // float-`.npy` artifacts behind extension-less artifact URLs (item 3). A
+  // `.png`/`.jpg` mime keeps the plain `<img>` URL path untouched.
+  const paneMimes = useMemo(
+    () => effectiveMetrics.map((_, i) => {
+      const { hash, fallbackStep } = paneResolved[i] ?? { hash: undefined, fallbackStep: null };
+      if (!hash) return null;
+      const stepMap = perSeriesStepMap[i] ?? new Map();
+      const step = fallbackStep ?? currentStep;
+      return stepMap.get(step)?.artifact_mime ?? null;
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [effectiveMetrics, perSeriesStepMap, paneResolved, currentStep],
@@ -638,6 +681,26 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [effectiveMetrics, paneRefHashArr, extBase, refMode, externalPoints, perRunPoints, perSeriesPoints, settings.baselineIndex],
   );
+
+  // Reference-side MIME per pane (counterpart of `paneMimes`) — lets the async
+  // resolver decode an EXR/float reference so an EXR-vs-EXR compare runs true-HDR.
+  const paneReferenceMimes = useMemo(
+    () => effectiveMetrics.map((_, i) => {
+      const refHash = paneRefHashArr[i];
+      if (!refHash) return null;
+      if (extBase) {
+        const pts = refMode === "per-run" ? perRunPoints(i) : externalPoints;
+        return pts.find((p) => p.artifact_hash === refHash)?.artifact_mime ?? null;
+      }
+      if (settings.baselineIndex != null) {
+        const pts = perSeriesPoints[settings.baselineIndex] ?? [];
+        return pts.find((p) => p.artifact_hash === refHash)?.artifact_mime ?? null;
+      }
+      return null;
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [effectiveMetrics, paneRefHashArr, extBase, refMode, externalPoints, perRunPoints, perSeriesPoints, settings.baselineIndex],
+  );
   // Cap simultaneously-rendered panes per the descriptor (WS-VC4 — D9 in the
   // design doc: "preserve per-type maxPanes... card enforces"). Image's
   // `caps.maxPanes` is +Infinity (unenforced), so `shownMetrics` is always
@@ -710,6 +773,8 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
     referenceHashes: crossTypeActive ? shownMetrics.map(() => null) : paneRefHashArr.slice(0, shownMetrics.length),
     metadata: paneMetadata.slice(0, shownMetrics.length),
     referenceMetadata: crossTypeActive ? shownMetrics.map(() => null) : paneReferenceMetadata.slice(0, shownMetrics.length),
+    mimes: paneMimes.slice(0, shownMetrics.length),
+    referenceMimes: crossTypeActive ? shownMetrics.map(() => null) : paneReferenceMimes.slice(0, shownMetrics.length),
   });
 
   // Settings handed to each Pane: identical to persisted settings, but with
@@ -795,6 +860,7 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
           return (
             <div key={seriesKey(m)} className="relative overflow-hidden">
               <RenderPane
+                toolbar={false}
                 data={viewData.items[paneIdx] ?? null}
                 reference={viewData.referenceItems[paneIdx] ?? null}
                 settings={paneSettings}
@@ -802,6 +868,10 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
                 onViewChange={onPaneViewChange}
                 mode={effectiveRenderMode}
                 diffMode={diffSubmode}
+                diffKernel={settings.diffKernel}
+                onDiffKernelChange={(k) => updateSettings({ diffKernel: k })}
+                onCompareModeChange={(m) => setMode(m)}
+                onRequestSide={() => setMode("side")}
                 nativeMode={activeNativeMode}
                 cameraSyncGroupId={cameraSyncGroupId}
                 colorRange={colorRange}
@@ -855,6 +925,7 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
   // -----------------------------------------------------------------------
   const renderSingleImageView = () => (
     <Pane
+      toolbar={false}
       data={viewData.items[0] ?? null}
       reference={null}
       settings={paneSettings}
@@ -968,6 +1039,37 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
   // reason, shown as a disabled option + tooltip, not hidden) whenever their
   // `enabledFor` topology check fails or a cross-type reference is active
   // (native diffs are same-type only by construction).
+  const PIXEL_DIFF_TYPE_VALUES = new Set(["signed", "absolute", "squared", "relative_signed", "relative_absolute", "relative_squared"]);
+  // ENGINE diff KERNELS from the gpu-image registry (FLIP / HDR-FLIP / SSIM),
+  // enumerated via the lib's `enumerateCompareModeOptions` (item 2) so the
+  // GPU-only perceptual kernels appear in the diff dropdown alongside the six
+  // pointwise diffs. The pointwise ids overlap the hardcoded list above, so we
+  // keep only the non-pointwise kernels (flip/flip_ldr/ssim). Image-space
+  // pixel-diff only (image type) — the 3D cards' native geometry diffs are
+  // unrelated. GPU-gated (`disabled` when the engine is unavailable). Selecting
+  // one persists `settings.diffKernel`, which threads to the pane's `diffKernel`.
+  const engineKernelEntries = useMemo(
+    () =>
+      caps.nativeModes.length > 0
+        ? []
+        : enumerateCompareModeOptions<string>(
+            { nativeModes: [], topologyOk: true },
+            {
+              engineKernels: engineDiffKernels.map((k) => ({ value: k.id, label: k.label })),
+              gpuAvailable,
+            },
+          )
+            .filter((o) => o.kernel && !PIXEL_DIFF_TYPE_VALUES.has(o.value))
+            .map((o) => ({
+              value: o.value,
+              label: o.label,
+              disabled: o.disabled,
+              title: o.disabled ? "Requires a WebGPU browser" : undefined,
+            })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [caps.nativeModes.length, engineDiffKernels, gpuAvailable],
+  );
+  const ENGINE_KERNEL_VALUES = new Set(engineKernelEntries.map((e) => e.value));
   const diffTypeEntries: Array<{ value: string; label: string; disabled: boolean; title?: string }> = [
     { value: "signed", label: "Signed Error", disabled: false },
     { value: "absolute", label: "Absolute Error", disabled: false },
@@ -975,6 +1077,7 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
     { value: "relative_signed", label: "Relative Signed", disabled: false },
     { value: "relative_absolute", label: "Relative Absolute", disabled: false },
     { value: "relative_squared", label: "Relative Squared", disabled: false },
+    ...engineKernelEntries,
     ...caps.nativeModes.map((nm) => {
       if (crossTypeActive) {
         return { value: nm.mode as string, label: nm.label, disabled: true, title: "Native diff is same-type only — not available for a cross-type reference" };
@@ -983,16 +1086,30 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
       return { value: nm.mode as string, label: nm.label, disabled: !enabled, title: enabled ? undefined : nm.disabledReason };
     }),
   ];
-  const PIXEL_DIFF_TYPE_VALUES = new Set(["signed", "absolute", "squared", "relative_signed", "relative_absolute", "relative_squared"]);
-  const selectedDiffTypeValue: string = activeNativeMode ?? (settings.diffMode === "none" ? "absolute" : settings.diffMode);
+  // The active diff selection token: the persisted engine `diffKernel` wins (a
+  // perceptual kernel like `flip`/`ssim`), else the native mode, else the
+  // pointwise sub-mode. Falls back to `absolute` when nothing is set.
+  const selectedDiffTypeValue: string =
+    (settings.diffKernel && (ENGINE_KERNEL_VALUES.has(settings.diffKernel) || PIXEL_DIFF_TYPE_VALUES.has(settings.diffKernel))
+      ? settings.diffKernel
+      : undefined)
+    ?? activeNativeMode
+    ?? (settings.diffMode === "none" ? "absolute" : settings.diffMode);
   const handleDiffTypeSelect = useCallback((value: string) => {
     if (PIXEL_DIFF_TYPE_VALUES.has(value)) {
-      updateSettings({ diffMode: value as ImageSettings["diffMode"], nativeMode: undefined });
+      // A pointwise pick sets BOTH the descriptor `diffMode` and `diffKernel`
+      // (the engine pane resolves `diffKernel ?? diffSubmode`, so keeping them
+      // aligned means the selection survives whichever pane path renders).
+      updateSettings({ diffMode: value as ImageSettings["diffMode"], nativeMode: undefined, diffKernel: value });
+    } else if (ENGINE_KERNEL_VALUES.has(value)) {
+      // An engine kernel (flip/flip_ldr/ssim) drives only `diffKernel`; the
+      // descriptor `diffMode` stays a valid pointwise fallback.
+      updateSettings({ nativeMode: undefined, diffKernel: value });
     } else {
-      setNativeMode(value);
+      updateSettings({ nativeMode: value, diffKernel: undefined });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [updateSettings, setNativeMode]);
+  }, [updateSettings, ENGINE_KERNEL_VALUES]);
   // The diff-coloring "Colormap" dropdown (red-green signed vs viridis
   // magnitude) — WS-MFIX Bug 2's original ask. Drives BOTH the core pixel
   // `diff` mode (fed to `OffscreenComparePanes`/`CrossTypeCompositeMediaPane`
