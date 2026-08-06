@@ -123,8 +123,13 @@ def test_image_url_kwarg_emits_client_decode_dataspec():
 def test_image_url_kwarg_guards():
     with pytest.raises(ValueError, match="EITHER data or url"):
         cp.Image(_PNG, url="https://cdn.example/pic.png")
-    with pytest.raises(ValueError, match="HDR-only"):
-        cp.Image(url="https://cdn.example/pic.png", tonemap="aces")
+    # Post-unification: tonemap is legal on ANY image (8-bit sources are
+    # sRGB-decoded to scene-linear and run the same operator×peak pipeline),
+    # so aces on a URL image now emits rather than raising.
+    assert (
+        cp.Image(url="https://cdn.example/pic.png", tonemap="aces").to_node()["props"]["tonemap"]
+        == "aces"
+    )
     with pytest.raises(ValueError, match="requires `data`"):
         cp.Image()
 
@@ -492,9 +497,13 @@ def test_image_hdr_bakes_c_contiguous_npy():
     assert loaded.flags["C_CONTIGUOUS"] and loaded.dtype == np.float32
 
 
-def test_image_tonemap_on_non_hdr_raises():
-    with pytest.raises(ValueError, match="HDR-only"):
-        cp.Image(_PNG, tonemap="aces")
+def test_image_tonemap_on_non_hdr_accepted():
+    # Post-unification contract ("unified no matter what the input data was"):
+    # all 5 canonical operators are valid on 8-bit sources; only the
+    # deprecated extended-* ALIASES stay rejected on 8-bit (use peak= instead).
+    assert cp.Image(_PNG, tonemap="aces").to_node()["props"]["tonemap"] == "aces"
+    with pytest.raises(ValueError):
+        cp.Image(_PNG, tonemap="extended-aces")
 
 
 def test_image_hdr_true_on_non_float_raises():
