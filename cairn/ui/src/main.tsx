@@ -19,7 +19,15 @@ import LineagePage from "./pages/LineagePage";
 import ReportsListPage from "./pages/ReportsListPage";
 import ReportEditorPage from "./pages/ReportEditorPage";
 import LoginPage from "./pages/LoginPage";
+import { loadGpuImageAddon } from "./lib/gpu-image-addon";
 import "./index.css";
+
+// Load cairn-plot's WebGPU "gpu-image" addon at startup so the app's image
+// panes/compares can use the engine backend (GpuImagePane / GpuComparePane) the
+// same way the standalone plot bundle does — enabling the full diff-kernel menu
+// (FLIP / HDR-FLIP / SSIM), true-HDR float compare, and GPU zoom auto-nearest.
+// Self-gating (WebGPU capability + render-mode preference); see the loader.
+loadGpuImageAddon();
 
 const queryClient = new QueryClient({
   defaultOptions: {

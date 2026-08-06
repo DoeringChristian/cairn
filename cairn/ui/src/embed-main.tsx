@@ -31,6 +31,7 @@ import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import CardRenderer from "./components/CardRenderer";
+import { loadGpuImageAddon } from "./lib/gpu-image-addon";
 import type { SequenceMeta } from "./api/types";
 import {
   isMultiRunCardType,
@@ -208,6 +209,10 @@ function EmbedApp() {
     </div>
   );
 }
+
+// Same WebGPU gpu-image addon the main app loads, so an embedded image compare
+// card gets the engine kernels / HDR float / GPU auto-nearest too (see loader).
+loadGpuImageAddon();
 
 ReactDOM.createRoot(document.getElementById("embed-root")!).render(
   <React.StrictMode>
