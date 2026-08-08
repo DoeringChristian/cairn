@@ -580,17 +580,47 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
     [ovl.hiddenClasses, updateOverlay],
   );
 
+  // `side` mode packs the reference AND the prediction side-by-side inside a
+  // SINGLE grid cell, so each image occupies only HALF the column width; every
+  // other mode fills the cell with one image box. Sizing the row to the full
+  // column width in side mode is what stranded square images in ~2:1 cells
+  // (huge vertical checkerboard bands). `effectiveRenderMode` isn't declared
+  // until later, but for the image path it only ever differs from
+  // `effectiveMode` under an un-opted-in cross-type diff (downgraded to side) —
+  // rare enough that `effectiveMode` is the right, in-scope signal here.
+  const imagesPerPane = effectiveMode === "side" ? 2 : 1;
+
+  // ONE shared cell-sizing computation for EVERY pane kind in the grid: the
+  // grid's own column count (`settings.imageColumns`, matching the grid
+  // template below — the previous `floor(width/200)` silently disagreed with
+  // it) and the per-image aspect drive a single row height. It is applied BOTH
+  // to the auto container height AND to the grid's `gridAutoRows`, so every row
+  // is identical regardless of pane count, mount order or `align-content` — a
+  // cell never inherits its height from a sibling row (the "shrinks lower on
+  // the grid" report).
+  const GRID_GAP_PX = 4; // Tailwind `gap-1` (0.25rem @ 16px root)
+  const gridMetrics = useMemo(() => {
+    const n = Math.max(effectiveMetrics.length, 1);
+    const cols = Math.max(1, settings.imageColumns ?? 2);
+    const rows = Math.ceil(n / cols);
+    if (!imageAspect || containerWidth <= 0) return { cols, rows, cellHeight: null as number | null };
+    const paneWidth = containerWidth / cols;
+    const imageWidth = paneWidth / imagesPerPane;
+    const rowHeight = imageWidth * imageAspect + 24;
+    const cellHeight = Math.max(120, Math.min(500, rowHeight));
+    return { cols, rows, cellHeight };
+  }, [effectiveMetrics.length, settings.imageColumns, imageAspect, containerWidth, imagesPerPane]);
+
   const autoHeight = useMemo((): string | undefined => {
     if (resolveCardHeight(settings, undefined, MIN_HEIGHT) != null) return undefined;
-    if (!imageAspect || containerWidth <= 0) return "20rem";
-    const n = effectiveMetrics.length;
-    const cols = Math.min(n, Math.max(1, Math.floor(containerWidth / 200)));
-    const rows = Math.ceil(n / cols);
-    const paneWidth = containerWidth / cols;
-    const rowHeight = paneWidth * imageAspect + 24;
-    const clampedRow = Math.max(120, Math.min(500, rowHeight));
-    return `${Math.round(rows * clampedRow)}px`;
-  }, [settings.height, settings.height1, settings.height2, settings.colSpan, imageAspect, containerWidth, effectiveMetrics.length]);
+    if (gridMetrics.cellHeight == null) return "20rem";
+    const { rows, cellHeight } = gridMetrics;
+    // Include the inter-row gaps so the container is an EXACT fit for `rows`
+    // rows of `cellHeight` — no leftover space for `align-content` to stretch
+    // (which is what let row heights drift) and no phantom overflow scrollbar.
+    return `${Math.round(rows * cellHeight + (rows - 1) * GRID_GAP_PX)}px`;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.height, settings.height1, settings.height2, settings.colSpan, gridMetrics, MIN_HEIGHT]);
 
   const subtitle =
     globalSteps.length > 0
@@ -844,7 +874,13 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
       <>
       <div
         className="grid gap-1 flex-1 min-h-0 overflow-auto"
-        style={{ gridTemplateColumns: `repeat(${settings.imageColumns ?? 2}, 1fr)` }}
+        style={{
+          gridTemplateColumns: `repeat(${settings.imageColumns ?? 2}, 1fr)`,
+          // Pin every row to the ONE shared cell height (aspect-correct, and
+          // accounting for side-mode's two-up packing) so a row's size never
+          // depends on its index, mount order or `align-content` stretch.
+          gridAutoRows: gridMetrics.cellHeight != null ? `${gridMetrics.cellHeight}px` : undefined,
+        }}
       >
         {shownMetrics.length < effectiveMetrics.length && (
           <div className="col-span-full mono text-xs text-fg-subtle">
