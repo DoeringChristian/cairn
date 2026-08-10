@@ -11,6 +11,7 @@ import {
   HistogramPlot,
   parseNpy,
   computeHistogram,
+  COLORMAP_OPTIONS as LIB_COLORMAP_OPTIONS,
   type NpyArray,
   type ColormapName,
 } from "@cairn-plot/lib/cairn-plot";
@@ -60,11 +61,8 @@ const DEFAULT_TENSOR_SETTINGS: TensorSettings = {
   bins: 64,
 };
 
-const COLORMAP_OPTIONS: Array<{ value: ColormapName; label: string }> = [
-  { value: "viridis", label: "Viridis" },
-  { value: "red-blue", label: "Red–Blue" },
-  { value: "red-green", label: "Red–Green" },
-];
+const COLORMAP_OPTIONS: Array<{ value: ColormapName; label: string }> =
+  LIB_COLORMAP_OPTIONS.map((o) => ({ value: o.id, label: o.label }));
 
 const SIZE_CAP = 10 * 1024 * 1024;
 

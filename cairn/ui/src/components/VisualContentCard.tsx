@@ -24,6 +24,7 @@ import {
   type ViewportModule,
   type ViewState,
   DIVERGING_COLORMAPS,
+  COLORMAP_OPTIONS,
   DEFAULT_OVERLAY_SETTINGS,
   getColormapLUT,
   overlayClassColor,
@@ -101,11 +102,12 @@ function seriesKey(m: {
 }
 
 const MEDIA_COMPARE_MODE_LABELS: Record<MediaCompareModeKind, string> = {
-  normal: "normal",
-  side: "side",
-  split: "split",
-  blend: "blend",
-  diff: "diff",
+  normal: "Normal",
+  side: "Side",
+  // Aligned to cairn-plot's own compare-mode menu wording (split → "Slide").
+  split: "Slide",
+  blend: "Blend",
+  diff: "Diff",
 };
 
 interface DiffMenuMode {
@@ -1060,6 +1062,10 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
     };
   });
   const selectedModeValue: string = effectiveMode;
+  // The non-diff core modes (Normal/Side/Slide/Blend) — the "View" half of the
+  // combined View/Error dropdown in the quick strip. "diff" is excluded here:
+  // it is reached implicitly by picking any entry in the "Error" optgroup.
+  const viewModeEntries = modeSelectorEntries.filter((m) => m.value !== "diff");
   const handleModeSelect = useCallback((value: string) => {
     setMode(value as MediaCompareModeKind);
   }, [setMode]);
@@ -1468,18 +1474,68 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
 
           {isMulti && hasBaseline && (
             <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px]">
-              {modeSelectorEntries.map((m) => (
-                <button
-                  key={m.value}
-                  type="button"
-                  disabled={m.disabled}
-                  title={m.title}
-                  onClick={() => handleModeSelect(m.value)}
-                  className={`rounded px-1.5 py-0.5 ${selectedModeValue === m.value ? "bg-accent/15 text-accent" : m.disabled ? "text-fg-subtle/50 cursor-not-allowed" : "text-fg-muted hover:bg-bg-hover hover:text-fg"}`}
+              {/* Colormap select — ALWAYS visible, leftmost. Image cards drive
+                  the persisted `settings.colormap` (the SAME field the
+                  settings-panel "False color" picker binds, so the two surfaces
+                  stay in sync — no separate state). 3D types (`hasDiffColormap`)
+                  drive `settings.diffColormap` instead (no "none" passthrough,
+                  default viridis). */}
+              {hasDiffColormap ? (
+                <select
+                  value={settings.diffColormap ?? "viridis"}
+                  onChange={(e) => updateSettings({ diffColormap: e.target.value as DiffColormap })}
+                  className="h-[22px] rounded border border-border bg-bg-elevated px-1.5 text-[10px] mono cursor-pointer text-accent"
+                  title="Colormap"
                 >
-                  {m.label}
-                </button>
-              ))}
+                  {COLORMAP_OPTIONS.map((o) => (
+                    <option key={o.id} value={o.id}>{o.label}</option>
+                  ))}
+                </select>
+              ) : (
+                <select
+                  value={settings.colormap ?? "none"}
+                  onChange={(e) => updateSettings({ colormap: e.target.value as Colormap })}
+                  className="h-[22px] rounded border border-border bg-bg-elevated px-1.5 text-[10px] mono cursor-pointer text-accent"
+                  title="Colormap"
+                >
+                  <option value="none">None (original)</option>
+                  {COLORMAP_OPTIONS.map((o) => (
+                    <option key={o.id} value={o.id}>{o.label}</option>
+                  ))}
+                </select>
+              )}
+              {/* Combined View/Error menu — ONE dropdown mirroring cairn-plot's
+                  own compare-mode menu (Side · Slide · Blend · ⟨diff kernels⟩).
+                  "View" optgroup = the non-diff core modes; "Error" optgroup =
+                  the diff kernels + native modes. Picking a View entry switches
+                  mode; picking an Error entry enters diff mode AND sets that
+                  kernel in a single change (both updateSettings calls merge via
+                  the shared settingsRef, so they compose). */}
+              <select
+                value={effectiveMode === "diff" ? selectedDiffTypeValue : effectiveMode}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  if (viewModeEntries.some((m) => m.value === value)) {
+                    handleModeSelect(value);
+                  } else {
+                    handleModeSelect("diff");
+                    handleDiffTypeSelect(value);
+                  }
+                }}
+                className="h-[22px] rounded border border-border bg-bg-elevated px-1.5 text-[10px] mono cursor-pointer text-accent"
+                title="Compare / diff mode"
+              >
+                <optgroup label="View">
+                  {viewModeEntries.map((m) => (
+                    <option key={m.value} value={m.value} disabled={m.disabled} title={m.title}>{m.label}</option>
+                  ))}
+                </optgroup>
+                <optgroup label="Error">
+                  {diffTypeEntries.map((d) => (
+                    <option key={d.value} value={d.value} disabled={d.disabled} title={d.title}>{d.label}</option>
+                  ))}
+                </optgroup>
+              </select>
               {effectiveMode === "split" && !activeNativeMode && (
                 <input
                   type="range"
@@ -1503,29 +1559,6 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
                   className="w-24 accent-accent"
                   title="Blend alpha"
                 />
-              )}
-              {effectiveMode === "diff" && (
-                <select
-                  value={selectedDiffTypeValue}
-                  onChange={(e) => handleDiffTypeSelect(e.target.value)}
-                  className="h-[22px] rounded border border-border bg-bg-elevated px-1.5 text-[10px] mono cursor-pointer text-accent"
-                  title="Diff type"
-                >
-                  {diffTypeEntries.map((d) => (
-                    <option key={d.value} value={d.value} disabled={d.disabled} title={d.title}>{d.label}</option>
-                  ))}
-                </select>
-              )}
-              {effectiveMode === "diff" && hasDiffColormap && (
-                <select
-                  value={settings.diffColormap ?? "viridis"}
-                  onChange={(e) => updateSettings({ diffColormap: e.target.value as DiffColormap })}
-                  className="h-[22px] rounded border border-border bg-bg-elevated px-1.5 text-[10px] mono cursor-pointer text-accent"
-                  title="Diff colormap"
-                >
-                  <option value="viridis">viridis</option>
-                  <option value="red-green">red-green</option>
-                </select>
               )}
             </div>
           )}

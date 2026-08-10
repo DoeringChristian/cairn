@@ -4,6 +4,7 @@ import {
   ImageViewportPane,
   imageViewportCapabilities,
   ColormapSwatch,
+  COLORMAP_OPTIONS,
   DIVERGING_COLORMAPS,
   createEndpointDataSource,
   resolveImageViewportItems,
@@ -234,9 +235,7 @@ function ImageSettingsControls({
         onChange={(v) => update({ colormap: v })}
         options={[
           { value: "none", label: "None (original)" },
-          { value: "viridis", label: "Viridis" },
-          { value: "red-green", label: "Red – Green (±)" },
-          { value: "red-blue", label: "Red – Blue (±)" },
+          ...COLORMAP_OPTIONS.map((o) => ({ value: o.id as Colormap, label: o.label })),
         ]}
       />
       {(settings.colormap ?? "none") !== "none" && (

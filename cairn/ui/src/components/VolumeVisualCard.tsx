@@ -9,6 +9,7 @@ import {
   createEndpointDataSource,
   fetchVolumeArray,
   isCoreCompareMode,
+  COLORMAP_OPTIONS as LIB_COLORMAP_OPTIONS,
   type MediaCompareModeKind,
   type DiffMode,
   type Colormap,
@@ -410,11 +411,8 @@ const MODE_OPTIONS: Array<{ value: VolumeRenderMode; label: string }> = [
   { value: "iso", label: "Isosurface" },
 ];
 
-const COLORMAP_OPTIONS: Array<{ value: ColormapName; label: string }> = [
-  { value: "viridis", label: "Viridis" },
-  { value: "red-blue", label: "Red–Blue" },
-  { value: "red-green", label: "Red–Green" },
-];
+const COLORMAP_OPTIONS: Array<{ value: ColormapName; label: string }> =
+  LIB_COLORMAP_OPTIONS.map((o) => ({ value: o.id, label: o.label }));
 
 const QUALITY_OPTIONS: Array<{ value: "64" | "128" | "256"; label: string }> = [
   { value: "64", label: "64 steps (fast)" },

@@ -14,6 +14,7 @@ import type { SequenceMeta } from "../api/types";
 import {
   HistogramPlot,
   parseNpz,
+  COLORMAP_OPTIONS as LIB_COLORMAP_OPTIONS,
   type HistogramData,
   type ColormapName,
 } from "@cairn-plot/lib/cairn-plot";
@@ -55,11 +56,8 @@ const DEFAULT_HISTOGRAM_SETTINGS: HistogramSettings = {
   colormap: "viridis",
 };
 
-const COLORMAP_OPTIONS: Array<{ value: ColormapName; label: string }> = [
-  { value: "viridis", label: "Viridis" },
-  { value: "red-blue", label: "Red–Blue" },
-  { value: "red-green", label: "Red–Green" },
-];
+const COLORMAP_OPTIONS: Array<{ value: ColormapName; label: string }> =
+  LIB_COLORMAP_OPTIONS.map((o) => ({ value: o.id, label: o.label }));
 
 async function fetchNpz(
   hash: string,
