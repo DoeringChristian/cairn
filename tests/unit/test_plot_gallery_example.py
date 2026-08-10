@@ -52,8 +52,9 @@ def test_gallery_renders_every_type_self_contained():
     # Self-contained + each renderer bundle inlined.
     assert "cairn-plot-" in html
     assert "could not render" not in html
-    # the imagehdr renderer is in CORE (no new addon) — it appears in the page.
-    assert "imagehdr" in html
+    # the float image bakes an `imghdr` DataSpec (kind retained post-unification,
+    # served by the ONE `image` renderer) — its kind string appears in the page.
+    assert "imghdr" in html
     assert "__cairnPlotBundleLoaded" in html          # core bundle inlined
     assert "__cairnPlotThreeLoaded" in html           # three addon (PointCloud)
     assert "__cairnPlotFigureLoaded" in html          # figure addon (Figure)

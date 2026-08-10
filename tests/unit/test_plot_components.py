@@ -105,17 +105,19 @@ def test_image_url_leaf_emits_url_dataspec():
 
 
 def test_image_url_kwarg_emits_client_decode_dataspec():
-    # `cp.Image(url=...)` references the blob by URL (nothing baked) and picks
-    # the renderer from the extension: .exr -> the float-HDR client-decode path.
+    # `cp.Image(url=...)` references the blob by URL (nothing baked). Post-
+    # unification there is NO renderer fork and NO extension check: ONE renderer
+    # ("image") consumes the client-decoded source regardless of extension.
     exr = cp.Image(url="https://cdn.example/scene.exr").to_node()
-    assert exr["renderer"] == "imagehdr"
+    assert exr["renderer"] == "image"
     assert exr["data"] == {"kind": "image", "hash": None, "url": "https://cdn.example/scene.exr"}
-    # A browser-native URL stays on the 8-bit `image` renderer.
+    # A browser-native URL also stays on the ONE `image` renderer.
     png = cp.Image(url="https://cdn.example/pic.png").to_node()
     assert png["renderer"] == "image"
     assert png["data"] == {"kind": "image", "hash": None, "url": "https://cdn.example/pic.png"}
-    # `hdr=True` forces the HDR renderer regardless of extension.
-    assert cp.Image(url="https://cdn.example/raw.bin", hdr=True).to_node()["renderer"] == "imagehdr"
+    # An arbitrary (non-image-extension) URL likewise routes to "image" — the
+    # extension no longer forks the renderer.
+    assert cp.Image(url="https://cdn.example/raw.bin").to_node()["renderer"] == "image"
     assert cp.Image(url="https://cdn.example/scene.exr").to_node() is not None
     assert cp.Image(url="https://cdn.example/scene.exr")._collect_store() == {}
 
@@ -279,7 +281,7 @@ def test_image_forwards_pixel_value_notation():
 
 def test_image_hdr_forwards_pixel_value_notation():
     node = cp.Image(_hdr_arr(), pixel_value_notation="int").to_node()
-    assert node["renderer"] == "imagehdr"
+    assert node["renderer"] == "image"
     assert node["props"]["pixelValueNotation"] == "int"
 
 
@@ -403,7 +405,7 @@ def test_pointcloud_forwards_point_size_mode_prop():
 
 
 # ---------------------------------------------------------------------------
-# HDR (float) image — the `imagehdr` renderer + `imghdr` DataSpec.
+# Float image — the ONE `image` renderer + the `imghdr` DataSpec (float by ref).
 # ---------------------------------------------------------------------------
 
 import numpy as np  # noqa: E402
@@ -416,10 +418,10 @@ def _hdr_arr() -> np.ndarray:
     return arr
 
 
-def test_image_hdr_autodetect_emits_imagehdr_renderer():
-    img = cp.Image(_hdr_arr())  # values outside [0,1] → HDR auto-detected
+def test_image_float_emits_image_renderer_with_imghdr_dataspec():
+    img = cp.Image(_hdr_arr())  # any float ndarray → the ONE `image` renderer
     node = img.to_node()
-    assert node["renderer"] == "imagehdr"
+    assert node["renderer"] == "image"
     assert node["data"]["kind"] == "imghdr"
     assert node["data"]["meta"]["dtype"] == "float32"
     assert node["data"]["meta"]["channels"] == 3
@@ -436,18 +438,27 @@ def test_image_hdr_autodetect_emits_imagehdr_renderer():
     assert "gamma" not in node["props"]
     # round-trips through the pydantic PlotDescriptorSpec (the anti-drift gate)
     spec = PlotDescriptorSpec.model_validate(_descriptor_from_html(img._repr_html_()))
-    assert spec.root.renderer == "imagehdr"
+    assert spec.root.renderer == "image"
 
 
-def test_image_hdr_force_flag_on_low_range_float():
-    # A float array in [0,1] is 8-bit by default; hdr=True forces the HDR path.
+def test_image_low_range_float_still_imghdr():
+    # NEW invariant: the `max>1`/`min<0` auto-HDR heuristic was DROPPED. A float
+    # array in [0,1] no longer routes to the 8-bit surface — it takes the ONE
+    # float pipeline just like an out-of-range float (renderer "image", `imghdr`
+    # DataSpec = float carried by reference). Range does NOT change the routing.
     lo = (np.linspace(0, 1, 24).reshape(4, 6)).astype(np.float32)
-    assert cp.Image(lo).to_node()["renderer"] == "image"
-    assert cp.Image(lo, hdr=True).to_node()["renderer"] == "imagehdr"
+    node = cp.Image(lo).to_node()
+    assert node["renderer"] == "image"
+    assert node["data"]["kind"] == "imghdr"
 
 
-def test_image_hdr_false_forces_8bit():
-    assert cp.Image(_hdr_arr(), hdr=False).to_node()["renderer"] == "image"
+def test_image_out_of_range_float_same_routing_as_low_range():
+    # The out-of-range float lands identically: renderer "image", `imghdr` kind.
+    # Together with the test above this pins "value range does NOT fork the
+    # renderer/kind" (the dropped want_hdr heuristic).
+    node = cp.Image(_hdr_arr()).to_node()
+    assert node["renderer"] == "image"
+    assert node["data"]["kind"] == "imghdr"
 
 
 def test_image_uint8_and_png_stay_8bit():
@@ -478,7 +489,7 @@ def test_image_hdr_bakes_c_contiguous_npy():
     # A Fortran-order input must still bake C-order bytes (M2 guarantee).
     f = np.asfortranarray(_hdr_arr())
     assert not f.flags["C_CONTIGUOUS"]
-    img = cp.Image(f, hdr=True)
+    img = cp.Image(f)
     h = img.to_node()["data"]["hash"]
     import base64 as _b64
     import zlib as _zlib
@@ -506,20 +517,24 @@ def test_image_tonemap_on_non_hdr_accepted():
         cp.Image(_PNG, tonemap="extended-aces")
 
 
-def test_image_hdr_true_on_non_float_raises():
-    with pytest.raises(ValueError, match="float numpy array"):
+def test_image_hdr_kwarg_removed():
+    # The `hdr=` kwarg was REMOVED by the unification — passing it is now a
+    # TypeError (float-vs-uint8 is decided from the source dtype, not a flag).
+    with pytest.raises(TypeError):
         cp.Image(_PNG, hdr=True)
+    with pytest.raises(TypeError):
+        cp.Image(_hdr_arr(), hdr=False)
 
 
-def test_image_hdr_bad_shape_raises():
+def test_image_float_bad_shape_raises():
     with pytest.raises(ValueError, match="H,W"):
-        cp.Image(np.zeros((4, 5, 2), dtype=np.float32), hdr=True)
+        cp.Image(np.zeros((4, 5, 2), dtype=np.float32))
 
 
-def test_image_hdr_gray_and_channel_shapes():
-    assert cp.Image(np.full((4, 5), 3.0, np.float32), hdr=True).to_node()[
+def test_image_float_gray_and_channel_shapes():
+    assert cp.Image(np.full((4, 5), 3.0, np.float32)).to_node()[
         "data"]["meta"]["channels"] == 1
-    assert cp.Image(np.full((4, 5, 4), 3.0, np.float32), hdr=True).to_node()[
+    assert cp.Image(np.full((4, 5, 4), 3.0, np.float32)).to_node()[
         "data"]["meta"]["channels"] == 4
 
 
@@ -530,7 +545,7 @@ def test_image_hdr_ignores_8bit_only_args(caplog):
         node = cp.Image(_hdr_arr(), colormap="viridis", brightness=0.5).to_node()
     assert "colormap" not in node["props"]
     assert "processing" not in node["props"]
-    assert any("HDR path ignores" in r.message for r in caplog.records)
+    assert any("float path ignores" in r.message for r in caplog.records)
 
 
 def test_compare_typed_kwargs_populate_node():

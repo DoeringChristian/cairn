@@ -310,7 +310,7 @@ def test_imghdr_dataspec_round_trips():
     spec = cs.PlotDescriptorSpec(
         root=cs.PlotLeafSpec(
             kind="plot",
-            renderer="imagehdr",
+            renderer="image",
             props={"tonemap": "aces", "exposure": 0, "gamma": 1},
             data=cs.ImgHdrDataSpec(
                 kind="imghdr",
@@ -328,7 +328,7 @@ def test_imghdr_dataspec_round_trips():
     dumped = spec.model_dump(exclude_none=True, mode="json")
     assert dumped["root"]["data"]["kind"] == "imghdr"
     assert dumped["root"]["data"]["meta"]["shape"] == [4, 4, 3]
-    assert dumped["root"]["renderer"] == "imagehdr"
+    assert dumped["root"]["renderer"] == "image"
     assert cs.PlotDescriptorSpec.model_validate(dumped) == spec
 
 
