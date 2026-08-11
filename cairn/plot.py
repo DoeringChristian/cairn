@@ -118,12 +118,12 @@ register_resolvers(
 # Each `cairn.plot.*_compare(...)` resolves `run[tag]` sources to a validated
 # `CardSpec` and returns a `CardElement` (a live `/embed/card` iframe). These
 # stay cairn-only (they need the server); `cp.Compare` (the pure composable) is
-# re-exported above for the self-contained `mode="side"` path.
+# re-exported above for the pure/self-contained composable path.
 # ---------------------------------------------------------------------------
 
 # `mode` values for the "one-pane" media-compare compositor — mirrors
-# `Extract<MediaCompareModeKind, "side"|"split"|"blend"|"diff">`.
-_COMPARE_MODES = ("side", "split", "blend", "diff")
+# `Extract<MediaCompareModeKind, "split"|"blend"|"diff">`.
+_COMPARE_MODES = ("split", "blend", "diff")
 
 
 def _resolve_series(data: Any, *, builder: str) -> tuple[SeriesRef, int | None]:
@@ -227,7 +227,7 @@ def media_compare(a: Any, b: Any, *, mode: str = "diff", card_type: str = "image
     Args:
         a: first `run[tag]` handle.
         b: second `run[tag]` handle.
-        mode: ``"side"`` (side-by-side), ``"split"`` (image-space split),
+        mode: ``"split"`` (image-space split),
             ``"blend"`` (alpha blend), or ``"diff"`` (pixel diff).
         card_type: which single-view card type `a`/`b` are —
             ``"image"`` (default), ``"mesh"``, ``"pointcloud"``,
@@ -243,10 +243,9 @@ def media_compare(a: Any, b: Any, *, mode: str = "diff", card_type: str = "image
     reference.ts) and `VisualContentCard.tsx`'s `hasBaseline`/`baselineIdx`:
     without it, every pane resolves no reference at all and every mode
     (including "diff") falls back to plain unmodified per-pane rendering
-    (`side`-shaped output) — the bug this fixes. `"side"` itself never reads
-    the reference, so this is a no-op for it, but is set unconditionally so
-    switching modes after render (e.g. via the card's own UI) works
-    immediately without a reload.
+    plain-per-pane output. `baselineIndex` is set unconditionally so switching
+    modes after render (e.g. via the card's own UI) works immediately without a
+    reload.
     """
     if mode not in _COMPARE_MODES:
         raise ValueError(f"mode must be one of {_COMPARE_MODES!r}, got {mode!r}")
@@ -255,55 +254,38 @@ def media_compare(a: Any, b: Any, *, mode: str = "diff", card_type: str = "image
     )
 
 
-def image_compare(a: Any, b: Any, *, mode: str = "side") -> Any:
+def image_compare(a: Any, b: Any, *, mode: str = "split") -> Any:
     """`media_compare(a, b, mode=mode, card_type="image")`."""
     return media_compare(a, b, mode=mode, card_type="image")
 
 
-def _compare_3d(component: Any, a: Any, b: Any, mode: str, card_type: str) -> Any:
+def _compare_3d(a: Any, b: Any, mode: str, card_type: str) -> Any:
     """Shared body for the four 3D ``*_compare`` helpers.
 
-    ``mode="side"`` lowers to a self-contained ``cp.Compare(component(a),
-    component(b), mode="side")`` — which itself becomes a 2-cell ``cp.Grid``,
-    so both cells render as standalone 3D leaves (G3b, no server). ``mode`` in
-    ``{split, blend, diff}`` (image-space compositing of two rendered frames)
-    has no standalone 3D path yet (deferred G3c), so it KEEPS delegating to the
-    server-backed ``media_compare`` ``CardElement`` iframe."""
-    if mode == "side":
-        return Compare(component(a), component(b), mode="side")._build_element()
+    All modes (``split``/``blend``/``diff``) delegate to the server-backed
+    ``media_compare`` ``CardElement`` iframe (image-space compositing of two
+    rendered frames; standalone 3D compositing is deferred to G3c)."""
     return media_compare(a, b, mode=mode, card_type=card_type)
 
 
-def mesh_compare(a: Any, b: Any, *, mode: str = "side") -> Any:
-    """Compare two meshes. ``mode="side"`` renders both as self-contained
-    standalone 3D leaves (via ``cp.Compare``/``cp.Mesh``, no server);
-    ``split``/``blend``/``diff`` delegate to the server-backed
-    ``media_compare`` iframe (standalone 3D compositing is deferred to G3c)."""
-    return _compare_3d(Mesh, a, b, mode, "mesh")
+def mesh_compare(a: Any, b: Any, *, mode: str = "split") -> Any:
+    """Compare two meshes via the server-backed ``media_compare`` iframe (``split``/``blend``/``diff``)."""
+    return _compare_3d(a, b, mode, "mesh")
 
 
-def pointcloud_compare(a: Any, b: Any, *, mode: str = "side") -> Any:
-    """Compare two point clouds. ``mode="side"`` renders both as
-    self-contained standalone 3D leaves (via ``cp.Compare``/``cp.PointCloud``,
-    no server); ``split``/``blend``/``diff`` delegate to the server-backed
-    ``media_compare`` iframe (standalone 3D compositing is deferred to G3c)."""
-    return _compare_3d(PointCloud, a, b, mode, "pointcloud")
+def pointcloud_compare(a: Any, b: Any, *, mode: str = "split") -> Any:
+    """Compare two point clouds via the server-backed ``media_compare`` iframe (``split``/``blend``/``diff``)."""
+    return _compare_3d(a, b, mode, "pointcloud")
 
 
-def volume_compare(a: Any, b: Any, *, mode: str = "side") -> Any:
-    """Compare two volumes. ``mode="side"`` renders both as self-contained
-    standalone 3D leaves (via ``cp.Compare``/``cp.Volume``, no server);
-    ``split``/``blend``/``diff`` delegate to the server-backed
-    ``media_compare`` iframe (standalone 3D compositing is deferred to G3c)."""
-    return _compare_3d(Volume, a, b, mode, "volume")
+def volume_compare(a: Any, b: Any, *, mode: str = "split") -> Any:
+    """Compare two volumes via the server-backed ``media_compare`` iframe (``split``/``blend``/``diff``)."""
+    return _compare_3d(a, b, mode, "volume")
 
 
-def boxes_compare(a: Any, b: Any, *, mode: str = "side") -> Any:
-    """Compare two boxes plots. ``mode="side"`` renders both as self-contained
-    standalone 3D leaves (via ``cp.Compare``/``cp.Boxes``, no server);
-    ``split``/``blend``/``diff`` delegate to the server-backed
-    ``media_compare`` iframe (standalone 3D compositing is deferred to G3c)."""
-    return _compare_3d(Boxes, a, b, mode, "boxes3d")
+def boxes_compare(a: Any, b: Any, *, mode: str = "split") -> Any:
+    """Compare two boxes plots via the server-backed ``media_compare`` iframe (``split``/``blend``/``diff``)."""
+    return _compare_3d(a, b, mode, "boxes3d")
 
 
 # The public surface = the standalone cairn_plot surface + the cairn-only

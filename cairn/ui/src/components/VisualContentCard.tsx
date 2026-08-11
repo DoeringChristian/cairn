@@ -103,7 +103,6 @@ function seriesKey(m: {
 
 const MEDIA_COMPARE_MODE_LABELS: Record<MediaCompareModeKind, string> = {
   normal: "Normal",
-  side: "Side",
   // Aligned to cairn-plot's own compare-mode menu wording (split → "Slide").
   split: "Slide",
   blend: "Blend",
@@ -582,15 +581,11 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
     [ovl.hiddenClasses, updateOverlay],
   );
 
-  // `side` mode packs the reference AND the prediction side-by-side inside a
-  // SINGLE grid cell, so each image occupies only HALF the column width; every
-  // other mode fills the cell with one image box. Sizing the row to the full
-  // column width in side mode is what stranded square images in ~2:1 cells
-  // (huge vertical checkerboard bands). `effectiveRenderMode` isn't declared
-  // until later, but for the image path it only ever differs from
-  // `effectiveMode` under an un-opted-in cross-type diff (downgraded to side) —
-  // rare enough that `effectiveMode` is the right, in-scope signal here.
-  const imagesPerPane = effectiveMode === "side" ? 2 : 1;
+  // Every surviving compare mode (normal/split/blend/diff) fills the grid cell
+  // with a single image box — the reference and prediction are composited into
+  // one pane rather than laid out side-by-side. (The old `side` mode packed two
+  // half-width images into a cell; it was removed from cairn-plot.)
+  const imagesPerPane = 1;
 
   // ONE shared cell-sizing computation for EVERY pane kind in the grid: the
   // grid's own column count (`settings.imageColumns`, matching the grid
@@ -794,11 +789,12 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
   const crossTypeDiffAllowed = !crossTypeActive || (!!settings.crossTypeDiffOptIn && crossTypeDiffReady);
   // What's actually RENDERED (vs. `effectiveMode`, the user's raw selection,
   // still used for isOverlayMode/UI elsewhere): downgrades a not-yet-allowed
-  // cross-type "diff" to "side" rather than running the diff pipeline on
-  // unaligned/not-yet-resolved rasters. `settings.mode` itself is untouched,
-  // so opting in immediately shows "diff" without reselecting.
+  // cross-type "diff" to "normal" (show the primary only) rather than running
+  // the diff pipeline on unaligned/not-yet-resolved rasters. `settings.mode`
+  // itself is untouched, so opting in immediately shows "diff" without
+  // reselecting.
   const effectiveRenderMode: MediaCompareModeKind =
-    crossTypeActive && effectiveMode === "diff" && !crossTypeDiffAllowed ? "side" : effectiveMode;
+    crossTypeActive && effectiveMode === "diff" && !crossTypeDiffAllowed ? "normal" : effectiveMode;
 
   const viewData = viewport.useData({
     hashes: paneHashArr.slice(0, shownMetrics.length),
@@ -909,7 +905,6 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
                 diffKernel={settings.diffKernel}
                 onDiffKernelChange={(k) => updateSettings({ diffKernel: k })}
                 onCompareModeChange={(m) => setMode(m)}
-                onRequestSide={() => setMode("side")}
                 nativeMode={activeNativeMode}
                 cameraSyncGroupId={cameraSyncGroupId}
                 colorRange={colorRange}
@@ -1046,7 +1041,7 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
   const modeSelectorEntries: Array<{ value: string; label: string; disabled: boolean; title?: string }> = coreModeEntries.map((m) => {
     // WS-VC6: cross-type "diff" is gated behind the explicit opt-in
     // (crossTypeDiffAllowed, computed above from settings.crossTypeDiffOptIn
-    // + the reference raster actually being resolved) — side/split/blend
+    // + the reference raster actually being resolved) — normal/split/blend
     // stay unconditionally enabled the moment crossTypeActive is true (no
     // gate — image-space compositing works on any two FrameSources).
     const gated = m === "diff" && crossTypeActive && !crossTypeDiffAllowed;

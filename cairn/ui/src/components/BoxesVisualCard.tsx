@@ -24,7 +24,6 @@ import BoxesViewer, {
 } from "@cairn-plot/lib/cairn-plot/three/BoxesViewer";
 import {
   BoxesSingleView,
-  BoxesSideBySideView,
   BoxesNativeDiffPane,
   boxesViewportCapabilities,
   boxesActiveColorbar,
@@ -188,7 +187,7 @@ function defaultBoxesSettings(): Omit<BoxesFullSettings, "metrics" | "version"> 
   };
 }
 
-const LEGACY_CORE_MODES = new Set<string>(["normal", "side", "split", "blend", "diff"]);
+const LEGACY_CORE_MODES = new Set<string>(["normal", "split", "blend", "diff"]);
 
 function migrateBoxesSettings(settings: BoxesFullSettings): BoxesFullSettings {
   const raw = settings as unknown as Record<string, unknown>;
@@ -208,7 +207,7 @@ function migrateBoxesSettings(settings: BoxesFullSettings): BoxesFullSettings {
 }
 
 // ---------------------------------------------------------------------------
-// Pane — the REAL `ViewportModule.Pane`. Dispatches "normal"/"side" to the
+// Pane — the REAL `ViewportModule.Pane`. Dispatches "normal" to the
 // pure cairn-plot components and "split"/"blend"/"diff" to
 // OffscreenComparePanes, mirroring MeshViewportPane.
 // ---------------------------------------------------------------------------
@@ -241,8 +240,8 @@ function BoxesViewportPane(
 
   // Renders THIS pane's own (foreground) boxes live — shared by the
   // same-type split/blend/diff branch below AND the WS-VC6 cross-type
-  // branch (a foreign-type reference has no `BoxesSideBySideView`
-  // counterpart, so cross-type routes "side" through the generalized
+  // branch (a foreign-type reference has no same-type counterpart, so
+  // cross-type routes through the generalized
   // `OffscreenComparePanes` too).
   const renderBoxesLive = (cb: (canvas: HTMLCanvasElement) => void, syncOpts: Scene3DSyncOptions) => {
     const active = resolveActiveProperty(data!.arrays.properties, view.property, data!.meta.properties ?? null);
@@ -281,7 +280,7 @@ function BoxesViewportPane(
     }
     return (
       <OffscreenComparePanes
-        mode={effectiveMode as Extract<MediaCompareModeKind, "side" | "split" | "blend" | "diff">}
+        mode={effectiveMode as Extract<MediaCompareModeKind, "split" | "blend" | "diff">}
         syncGroupId={cameraSyncGroupId ?? null}
         primary={{ kind: "live", render: renderBoxesLive }}
         reference={{ kind: "frame", frameSource: { kind: "url", url: crossTypeReferenceUrl! } }}
@@ -292,21 +291,6 @@ function BoxesViewportPane(
         blendAlpha={blendAlpha ?? 0.5}
         primaryLabel={label}
         alignForDiff={crossTypeAlignForDiff}
-      />
-    );
-  }
-
-  if (effectiveMode === "side") {
-    return (
-      <BoxesSideBySideView
-        item={data}
-        reference={reference ?? null}
-        view={view}
-        sync={sync}
-        label={label}
-        isDraggable={isDraggable}
-        onDragStart={onDragStart}
-        colorRange={colorRange}
       />
     );
   }

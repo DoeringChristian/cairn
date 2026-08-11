@@ -23,7 +23,6 @@ import {
 } from "@cairn-plot/lib/cairn-plot";
 import {
   PointCloudSingleView,
-  PointCloudSideBySideView,
   PointCloudNativeDiffPane,
   pointCloudViewportCapabilities,
   pointCloudActiveColorbar,
@@ -211,7 +210,7 @@ function defaultPointCloudSettings(): Omit<PointCloudFullSettings, "metrics" | "
   };
 }
 
-const LEGACY_CORE_MODES = new Set<string>(["normal", "side", "split", "blend", "diff"]);
+const LEGACY_CORE_MODES = new Set<string>(["normal", "split", "blend", "diff"]);
 
 /**
  * Read migration for old pointcloud cards' persisted settings: folds the
@@ -240,7 +239,7 @@ function migratePointCloudSettings(settings: PointCloudFullSettings): PointCloud
 }
 
 // ---------------------------------------------------------------------------
-// Pane — the REAL `ViewportModule.Pane`. Dispatches "normal"/"side" to the
+// Pane — the REAL `ViewportModule.Pane`. Dispatches "normal" to the
 // pure cairn-plot components and "split"/"blend"/"diff" to
 // `OffscreenComparePanes` (snapshot -> the shared image-space compositor),
 // mirroring the pre-refactor `PointCloudComparePane`'s three-way dispatch
@@ -289,8 +288,8 @@ function PointCloudViewportPane(
 
   // Renders THIS pane's own (foreground) point cloud live — shared by the
   // same-type split/blend/diff branch below AND the WS-VC6 cross-type
-  // branch (a foreign-type reference has no `PointCloudSideBySideView`
-  // counterpart, so cross-type routes "side" through the generalized
+  // branch (a foreign-type reference has no same-type counterpart, so
+  // cross-type routes through the generalized
   // `OffscreenComparePanes` too).
   const renderPointCloudLive = (cb: (canvas: HTMLCanvasElement) => void, syncOpts: Scene3DSyncOptions) => (
     <PointCloudViewer
@@ -320,7 +319,7 @@ function PointCloudViewportPane(
     }
     return (
       <OffscreenComparePanes
-        mode={effectiveMode as Extract<MediaCompareModeKind, "side" | "split" | "blend" | "diff">}
+        mode={effectiveMode as Extract<MediaCompareModeKind, "split" | "blend" | "diff">}
         syncGroupId={cameraSyncGroupId ?? null}
         primary={{ kind: "live", render: renderPointCloudLive }}
         reference={{ kind: "frame", frameSource: { kind: "url", url: crossTypeReferenceUrl! } }}
@@ -331,20 +330,6 @@ function PointCloudViewportPane(
         blendAlpha={blendAlpha ?? 0.5}
         primaryLabel={label}
         alignForDiff={crossTypeAlignForDiff}
-      />
-    );
-  }
-
-  if (effectiveMode === "side") {
-    return (
-      <PointCloudSideBySideView
-        item={data}
-        reference={reference ?? null}
-        view={view}
-        sync={sync}
-        label={label}
-        isDraggable={isDraggable}
-        onDragStart={onDragStart}
       />
     );
   }
@@ -394,7 +379,7 @@ function PointCloudViewportPane(
 
   // "normal" (isBaseline is accepted for interface conformance; unlike
   // image, pointcloud never renders an explicit standalone REF pane in the
-  // multi-pane grid outside of "side" mode, matching the pre-refactor card).
+  // multi-pane grid, matching the pre-refactor card).
   void isBaseline;
   return (
     <PointCloudSingleView

@@ -20,6 +20,10 @@ import type {
   ViewportDataResult,
   ViewportModule,
 } from "@cairn-plot/lib/cairn-plot";
+// The Peak-slider seed tracks cairn-plot's own extended-tonemap default so the
+// app can't drift from the pane surface's default (16). Deep import: the const
+// isn't re-exported from the package root.
+import { EXTENDED_TONEMAP_PEAK_DEFAULT } from "@cairn-plot/lib/cairn-plot/image/tonemap";
 import type { VisualCompareSettings } from "./card-kit";
 import Select from "./settings/Select";
 import Slider from "./settings/Slider";
@@ -198,7 +202,7 @@ function ImageSettingsControls({
       />
       <Slider
         label="Peak (HDR ceiling)"
-        value={settings.peak ?? 4}
+        value={settings.peak ?? EXTENDED_TONEMAP_PEAK_DEFAULT}
         onChange={(v) => update({ peak: v })}
         min={1}
         max={16}

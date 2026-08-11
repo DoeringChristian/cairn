@@ -25,7 +25,6 @@ import MeshViewer, {
 } from "@cairn-plot/lib/cairn-plot/three/MeshViewer";
 import {
   MeshSingleView,
-  MeshSideBySideView,
   MeshNativeDiffPane,
   meshViewportCapabilities,
   meshActiveColorbar,
@@ -200,7 +199,7 @@ function defaultMeshSettings(): Omit<MeshFullSettings, "metrics" | "version"> {
   };
 }
 
-const LEGACY_CORE_MODES = new Set<string>(["normal", "side", "split", "blend", "diff"]);
+const LEGACY_CORE_MODES = new Set<string>(["normal", "split", "blend", "diff"]);
 
 /**
  * Read migration for old mesh cards' persisted settings: folds the
@@ -226,8 +225,8 @@ function migrateMeshSettings(settings: MeshFullSettings): MeshFullSettings {
 }
 
 // ---------------------------------------------------------------------------
-// Pane — the REAL `ViewportModule.Pane`. Dispatches "normal"/"side" to the
-// pure cairn-plot components and "split"/"blend"/"diff" to
+// Pane — the REAL `ViewportModule.Pane`. Dispatches "normal" to the
+// pure cairn-plot single-view component and "split"/"blend"/"diff" to
 // `OffscreenComparePanes`, mirroring `PointCloudViewportPane` verbatim (same
 // viewer wiring, same `sync`/`onFrame` contract).
 // ---------------------------------------------------------------------------
@@ -270,9 +269,8 @@ function MeshViewportPane(
 
   // Renders THIS pane's own (foreground) mesh live — shared by the same-type
   // split/blend/diff branch below AND the WS-VC6 cross-type branch (a
-  // foreign-type reference has no MeshSideBySideView/OffscreenComparePanes
-  // same-type counterpart, so cross-type always routes "side" too through
-  // the generalized OffscreenComparePanes).
+  // foreign-type reference has no same-type counterpart, so cross-type routes
+  // through the generalized OffscreenComparePanes).
   const renderMeshLive = (cb: (canvas: HTMLCanvasElement) => void, syncOpts: Scene3DSyncOptions) => {
     const active = resolveActiveProperty(data!.arrays.properties, view.property, data!.meta.properties ?? null);
     const resolvedMode = resolveMeshColorMode(view.colorMode, !!data!.arrays.colors, !!active.values, !!data!.arrays.faceColors);
@@ -313,7 +311,7 @@ function MeshViewportPane(
     }
     return (
       <OffscreenComparePanes
-        mode={effectiveMode as Extract<MediaCompareModeKind, "side" | "split" | "blend" | "diff">}
+        mode={effectiveMode as Extract<MediaCompareModeKind, "split" | "blend" | "diff">}
         syncGroupId={cameraSyncGroupId ?? null}
         primary={{ kind: "live", render: renderMeshLive }}
         reference={{ kind: "frame", frameSource: { kind: "url", url: crossTypeReferenceUrl! } }}
@@ -324,21 +322,6 @@ function MeshViewportPane(
         blendAlpha={blendAlpha ?? 0.5}
         primaryLabel={label}
         alignForDiff={crossTypeAlignForDiff}
-      />
-    );
-  }
-
-  if (effectiveMode === "side") {
-    return (
-      <MeshSideBySideView
-        item={data}
-        reference={reference ?? null}
-        view={view}
-        sync={sync}
-        label={label}
-        isDraggable={isDraggable}
-        onDragStart={onDragStart}
-        colorRange={colorRange}
       />
     );
   }

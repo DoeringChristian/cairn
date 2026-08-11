@@ -254,7 +254,7 @@ def build_gallery() -> list[tuple[str, object]]:
     items.append((
         "Compare — all modes (side · slide · blend · diff)",
         cp.Grid(
-            [[cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="side"),
+            [[cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="slide"),
               cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="slide",
                          split_position=0.5)],
              [cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="blend",

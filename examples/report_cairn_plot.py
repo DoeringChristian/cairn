@@ -285,7 +285,7 @@ def build_report() -> cp.Report:
     rep.grid(
         [
             [
-                cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="side"),
+                cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="slide"),
                 cp.Compare(
                     cp.Image(img_a), cp.Image(img_b), mode="split", split_position=0.5
                 ),

@@ -216,13 +216,14 @@ def test_grid_merged_store_dedups_shared_reference_blob():
     assert len(grid2._collect_store()) == 2
 
 
-def test_compare_side_lowers_to_compare_node():
-    # `side` now emits a COMPARE node (mode="side"), NOT a 2-cell grid — so the
-    # view-mode menu can switch it client-side. a=reference, b=prediction, and
-    # the reference is baseline (baselineIndex 0). Both operands are image-like.
-    node = cp.Compare(cp.Image(_PNG), cp.Image(_PNG2), mode="side").to_node()
+def test_compare_slide_lowers_to_compare_node():
+    # `slide` (the default overlay) emits a COMPARE node — internal mode "split",
+    # NOT a 2-cell grid — so the view-mode menu can switch it client-side.
+    # a=reference, b=prediction, and the reference is baseline (baselineIndex 0).
+    # Both operands are image-like. (The removed `side` mode used to cover this.)
+    node = cp.Compare(cp.Image(_PNG), cp.Image(_PNG2), mode="slide").to_node()
     assert node["kind"] == "compare"
-    assert node["mode"] == "side"
+    assert node["mode"] == "split"
     assert node["baselineIndex"] == 0
     assert node["a"]["kind"] == "image" and node["b"]["kind"] == "image"
 

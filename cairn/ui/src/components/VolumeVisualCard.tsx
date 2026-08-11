@@ -26,7 +26,6 @@ import VolumeViewer, {
 } from "@cairn-plot/lib/cairn-plot/three/VolumeViewer";
 import {
   VolumeSingleView,
-  VolumeSideBySideView,
   VolumeNativeDiffPane,
   volumeViewportCapabilities,
   volumeActiveColorbar,
@@ -201,7 +200,7 @@ function defaultVolumeSettings(): Omit<VolumeFullSettings, "metrics" | "version"
   };
 }
 
-const LEGACY_CORE_MODES = new Set<string>(["normal", "side", "split", "blend", "diff"]);
+const LEGACY_CORE_MODES = new Set<string>(["normal", "split", "blend", "diff"]);
 const RENDER_MODES = new Set<string>(["mip", "iso"]);
 
 function migrateVolumeSettings(settings: VolumeFullSettings): VolumeFullSettings {
@@ -231,7 +230,7 @@ function migrateVolumeSettings(settings: VolumeFullSettings): VolumeFullSettings
 }
 
 // ---------------------------------------------------------------------------
-// Pane — the REAL `ViewportModule.Pane`. Dispatches "normal"/"side" to the
+// Pane — the REAL `ViewportModule.Pane`. Dispatches "normal" to the
 // pure cairn-plot components and "split"/"blend"/"diff" to
 // OffscreenComparePanes, mirroring MeshViewportPane.
 // ---------------------------------------------------------------------------
@@ -264,8 +263,8 @@ function VolumeViewportPane(
 
   // Renders THIS pane's own (foreground) volume live — shared by the
   // same-type split/blend/diff branch below AND the WS-VC6 cross-type
-  // branch (a foreign-type reference has no `VolumeSideBySideView`
-  // counterpart, so cross-type routes "side" through the generalized
+  // branch (a foreign-type reference has no same-type counterpart, so
+  // cross-type routes through the generalized
   // `OffscreenComparePanes` too).
   const renderVolumeLive = (cb: (canvas: HTMLCanvasElement) => void, syncOpts: Scene3DSyncOptions) => {
     const [vmin, vmax] = colorRange ?? [data!.meta.vmin, data!.meta.vmax];
@@ -302,7 +301,7 @@ function VolumeViewportPane(
     }
     return (
       <OffscreenComparePanes
-        mode={effectiveMode as Extract<MediaCompareModeKind, "side" | "split" | "blend" | "diff">}
+        mode={effectiveMode as Extract<MediaCompareModeKind, "split" | "blend" | "diff">}
         syncGroupId={cameraSyncGroupId ?? null}
         primary={{ kind: "live", render: renderVolumeLive }}
         reference={{ kind: "frame", frameSource: { kind: "url", url: crossTypeReferenceUrl! } }}
@@ -313,21 +312,6 @@ function VolumeViewportPane(
         blendAlpha={blendAlpha ?? 0.5}
         primaryLabel={label}
         alignForDiff={crossTypeAlignForDiff}
-      />
-    );
-  }
-
-  if (effectiveMode === "side") {
-    return (
-      <VolumeSideBySideView
-        item={data}
-        reference={reference ?? null}
-        view={view}
-        sync={sync}
-        label={label}
-        isDraggable={isDraggable}
-        onDragStart={onDragStart}
-        colorRange={colorRange}
       />
     );
   }

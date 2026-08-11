@@ -86,7 +86,6 @@ export function CompareSettingsPanel<M extends string>({
   }).map((o) => ({ value: o.value, label: o.label, disabled: o.disabled }));
   const nativeValues = new Set<string>(nativeModes.map((o) => o.value));
   const isNative = nativeValues.has(mode);
-  const usingCompareMode = mode !== ("side" as M);
 
   // ENGINE diff KERNELS from the gpu-image registry — the FULL kernel menu
   // (the six pointwise diffs plus FLIP / HDR-FLIP / SSIM), enumerated via the
@@ -116,9 +115,9 @@ export function CompareSettingsPanel<M extends string>({
         options={options}
         description={topologyOk ? undefined : topologyHint}
       />
-      {usingCompareMode && (
-        <>
-          {isNative && (
+      {/* Every surviving mode (normal/split/blend/diff) is a compare mode; the
+          per-mode sub-controls below are each gated on their own mode. */}
+      {isNative && (
             <Select
               label="Diff colormap"
               value={diffColormap}
@@ -191,8 +190,6 @@ export function CompareSettingsPanel<M extends string>({
               format={(v) => v.toFixed(0)}
             />
           )}
-        </>
-      )}
     </div>
   );
 }
