@@ -56,7 +56,7 @@ interface TensorSettings extends BaseCardSettings {
 const DEFAULT_TENSOR_SETTINGS: TensorSettings = {
   version: 1,
   viewMode: "heatmap",
-  colormap: "viridis",
+  colormap: "turbo",
   logY: false,
   bins: 64,
 };

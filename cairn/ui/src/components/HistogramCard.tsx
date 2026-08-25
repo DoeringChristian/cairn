@@ -53,7 +53,7 @@ const DEFAULT_HISTOGRAM_SETTINGS: HistogramSettings = {
   version: 1,
   viewMode: "bars",
   logY: false,
-  colormap: "viridis",
+  colormap: "turbo",
 };
 
 const COLORMAP_OPTIONS: Array<{ value: ColormapName; label: string }> =

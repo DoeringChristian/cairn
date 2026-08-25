@@ -105,7 +105,6 @@ const MEDIA_COMPARE_MODE_LABELS: Record<MediaCompareModeKind, string> = {
   normal: "Normal",
   // Aligned to cairn-plot's own compare-mode menu wording (split → "Slide").
   split: "Slide",
-  blend: "Blend",
   diff: "Diff",
 };
 
@@ -865,7 +864,6 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
   // -----------------------------------------------------------------------
   const renderMultiPaneGrid = () => {
     const splitPos = settings.splitPosition ?? 0.5;
-    const blendAlpha = settings.blendAlpha ?? 0.5;
     const diffSubmode: DiffMode = settings.diffMode === "none" ? "absolute" : settings.diffMode;
 
     return (
@@ -910,7 +908,6 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
                 colorRange={colorRange}
                 isBaseline={refMode === "global" && baselineIdx === paneIdx}
                 splitPosition={splitPos}
-                blendAlpha={blendAlpha}
                 onSplitPositionChange={(pos) => updateSettings({ splitPosition: pos })}
                 label={label}
                 isDraggable
@@ -1280,10 +1277,10 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
       {effectiveMode === "diff" && hasDiffColormap && (
         <Select<DiffColormap>
           label="Diff colormap"
-          value={settings.diffColormap ?? "viridis"}
+          value={settings.diffColormap ?? "turbo"}
           onChange={(v) => updateSettings({ diffColormap: v })}
           options={[
-            { value: "viridis", label: "Viridis (magnitude)" },
+            { value: "turbo", label: "Turbo (magnitude)" },
             { value: "red-green", label: "Red – Green (signed)" },
           ]}
           description="Color mapping for the active diff (pixel or native)"
@@ -1477,7 +1474,7 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
                   default viridis). */}
               {hasDiffColormap ? (
                 <select
-                  value={settings.diffColormap ?? "viridis"}
+                  value={settings.diffColormap ?? "turbo"}
                   onChange={(e) => updateSettings({ diffColormap: e.target.value as DiffColormap })}
                   className="h-[22px] rounded border border-border bg-bg-elevated px-1.5 text-[10px] mono cursor-pointer text-accent"
                   title="Colormap"
@@ -1541,18 +1538,6 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
                   onChange={(e) => updateSettings({ splitPosition: Number(e.target.value) })}
                   className="w-24 accent-accent"
                   title="Split position"
-                />
-              )}
-              {effectiveMode === "blend" && !activeNativeMode && (
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  value={settings.blendAlpha ?? 0.5}
-                  onChange={(e) => updateSettings({ blendAlpha: Number(e.target.value) })}
-                  className="w-24 accent-accent"
-                  title="Blend alpha"
                 />
               )}
             </div>

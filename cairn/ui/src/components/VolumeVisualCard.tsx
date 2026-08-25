@@ -175,7 +175,7 @@ function defaultVolumeSettings(): Omit<VolumeFullSettings, "metrics" | "version"
   return {
     renderMode: "mip",
     isovalue: 0.5,
-    colormap: "viridis",
+    colormap: "turbo",
     steps: 128,
     clipMin: [0, 0, 0],
     clipMax: [1, 1, 1],
@@ -220,7 +220,9 @@ function migrateVolumeSettings(settings: VolumeFullSettings): VolumeFullSettings
     if (legacy === "diff-value") {
       next = { ...next, nativeMode: legacy };
     } else if (LEGACY_CORE_MODES.has(legacy)) {
-      next = { ...next, mode: legacy as MediaCompareModeKind };
+      // cairn-plot removed the "blend" compare mode — legacy stored settings
+      // alias to "split" (matching cairn-plot's own normalize-on-read).
+      next = { ...next, mode: (legacy === "blend" ? "split" : legacy) as MediaCompareModeKind };
     }
   }
   if (next.diffMode === "none" && typeof raw.diffSubmode === "string") {
@@ -231,7 +233,7 @@ function migrateVolumeSettings(settings: VolumeFullSettings): VolumeFullSettings
 
 // ---------------------------------------------------------------------------
 // Pane — the REAL `ViewportModule.Pane`. Dispatches "normal" to the
-// pure cairn-plot components and "split"/"blend"/"diff" to
+// pure cairn-plot components and "split"/"diff" to
 // OffscreenComparePanes, mirroring MeshViewportPane.
 // ---------------------------------------------------------------------------
 
@@ -251,7 +253,6 @@ function VolumeViewportPane(
     onDragStart,
     splitPosition,
     onSplitPositionChange,
-    blendAlpha,
     crossTypeReferenceUrl,
     crossTypeAlignForDiff,
     colorRange,
@@ -301,22 +302,21 @@ function VolumeViewportPane(
     }
     return (
       <OffscreenComparePanes
-        mode={effectiveMode as Extract<MediaCompareModeKind, "split" | "blend" | "diff">}
+        mode={effectiveMode as Extract<MediaCompareModeKind, "split" | "diff">}
         syncGroupId={cameraSyncGroupId ?? null}
         primary={{ kind: "live", render: renderVolumeLive }}
         reference={{ kind: "frame", frameSource: { kind: "url", url: crossTypeReferenceUrl! } }}
         diffSubmode={diffMode}
-        colormap={(settings.diffColormap ?? "viridis") as Colormap}
+        colormap={(settings.diffColormap ?? "turbo") as Colormap}
         splitPosition={splitPosition ?? 0.5}
         onSplitPositionChange={onSplitPositionChange ?? (() => {})}
-        blendAlpha={blendAlpha ?? 0.5}
         primaryLabel={label}
         alignForDiff={crossTypeAlignForDiff}
       />
     );
   }
 
-  if (isCoreCompareMode(effectiveMode) && (effectiveMode === "split" || effectiveMode === "blend" || effectiveMode === "diff")) {
+  if (isCoreCompareMode(effectiveMode) && (effectiveMode === "split" || effectiveMode === "diff")) {
     if (!data || !reference) {
       return (
         <div className="flex h-full w-full items-center justify-center text-sm text-fg-muted motion-safe:animate-pulse">
@@ -357,10 +357,9 @@ function VolumeViewportPane(
           },
         }}
         diffSubmode={diffMode}
-        colormap={(settings.diffColormap ?? "viridis") as Colormap}
+        colormap={(settings.diffColormap ?? "turbo") as Colormap}
         splitPosition={splitPosition ?? 0.5}
         onSplitPositionChange={onSplitPositionChange ?? (() => {})}
-        blendAlpha={blendAlpha ?? 0.5}
         primaryLabel={label}
       />
     );
