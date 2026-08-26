@@ -1,0 +1,698 @@
+[
+ {
+  "id": "S-1",
+  "severity": "blocker",
+  "section": "\u00a76.1 The ephemeral local server",
+  "claim": "The ruling's justification \u2014 \"auth disabled on loopback (same-user semantics, as the direct-DB mode had)\" \u2014 is factually wrong. Direct-DB mode was gated by filesystem permissions; a loopback TCP listener is reachable by *every* local UID on the host, and the spec's own discovery substrate publishes the port to them in a world-readable file.",
+  "evidence": "cairn/server/storage/datadir.py:55-58 creates `.cairn/` with a bare `mkdir(parents=True, exist_ok=True)` (mode 0o777 & umask \u2192 0755) and datadir.py:223-228 writes `servers.json` via `write_text` (0644), so any local user can read `{host, port}` of the spawned server \u2014 no port scanning needed. The spawned app runs with `app.state.auth_enabled = False` (cairn/server/app.py:145), so every route is open: read all runs/params/logs, the captured **source tree** of the user's code (cairn/server/routes/source.py:20-60), plus write-role routers `ingest` and `import_export` (app.py:204-205), which direct-DB mode never exposed to a non-owner (0755 dir = no write for others). On a shared ML box / HPC login node \u2014 the primary cairn deployment \u2014 this is a read+write escalation, not parity.",
+  "suggestion": "Drop the parity claim and specify a real same-user gate: bind to a unix domain socket in a 0700 dir (httpx supports UDS transports), or keep TCP but require a per-spawn random bearer token written to a 0600 file next to `servers.json` and demanded by the spawned app (`auth_enabled=True` + one ephemeral token). Also specify `.cairn` and `servers.json` creation modes (0700/0600) explicitly in this spec, since \u00a76.1 makes them a security boundary for the first time."
+ },
+ {
+  "id": "S-2",
+  "severity": "blocker",
+  "section": "\u00a76.1 + \u00a77 (CORS) + \u00a71 (mixed-content)",
+  "claim": "The auth-off server ships `Access-Control-Allow-Origin: *`, so any web page the user visits can read and write the spawned loopback server cross-origin. No DNS rebinding is required, and the loopback \"exemption\" \u00a71 relies on is exactly what lets an HTTPS attacker page reach it.",
+  "evidence": "cairn/server/app.py:159 \u2014 `allow_origins=[] if auth_enabled else [\"*\"]`. \u00a77 only adds `--allow-origin` to the *auth-on* mode, leaving the wildcard untouched in the mode \u00a76.1 makes the default for every zero-setup user. `http://127.0.0.1:<port>` is a potentially-trustworthy origin, so an `https://evil.example` page can `fetch()` it without a mixed-content block (the same rule \u00a71 cites as the blessed `ssh -L` path), and CORS `*` with `allow_credentials=False` makes the *response body readable* to that page. There is no Origin check and no Host check anywhere in the server. Attack: victim opens any page \u2192 JS sweeps a few hundred ephemeral ports (or reads the port from a prior leak) \u2192 `GET /api/runs`, `GET /api/runs/{id}/source/file` (exfiltrate proprietary training code), `POST /api/ingest` (poison results), `POST /api/import` (write blobs).",
+  "suggestion": "Make the spec state the auth-off CORS posture explicitly: in auth-off mode either drop CORS to same-origin (`allow_origins=[]`) or restrict it to an explicit `--allow-origin` list too, and add a mandatory `Host`/`Origin` allowlist (loopback literals only) on the spawned server. Never ship `*` on a server that has write routes and no auth."
+ },
+ {
+  "id": "S-3",
+  "severity": "blocker",
+  "section": "\u00a77 (WS token auth) vs \u00a711.4 (plugins dropped)",
+  "claim": "\u00a77 mandates auth work for the plugin WebSocket that \u00a711.4 drops, and \"dropped for now \u2014 out of scope\" does not remove the route. The `/ws/plugin` endpoint is registered unconditionally, skips all auth when `auth_enabled` is false, performs no Origin check (WebSockets are exempt from CORS), and `exec()`s plugin source server-side \u2014 an RCE path opened by \u00a76.1's auth-off spawned server.",
+  "evidence": "cairn/server/app.py:211 registers `plugin_ws.router` outside the dependency loops; cairn/server/routes/plugin_ws.py:368-373 \u2014 `if getattr(websocket.app.state, \"auth_enabled\", False): ... else: await websocket.accept()`; plugin_ws.py:411-419 loads a blob by client-supplied `artifact_hash` and calls `_reconstruct_plugin_class`, which does `exec(source, mod.__dict__)` (plugin_ws.py:95). With auth off and write routes open (S-2), a hostile page or a co-tenant can ingest a plugin artifact and then drive the WS to execute it as the user. `plugin_webrtc.py` spawns Xvfb/subprocesses on the same premise.",
+  "suggestion": "Add an explicit S-step: remove `plugin_ws`/`plugin_webrtc` registration (or hard-gate them behind an opt-in `--enable-plugins` flag that is refused when auth is off) *before* \u00a76.1's ephemeral server lands. Then delete the \u00a77 WS bullet, or restate it for whatever WS actually survives. If any WS survives, rule out the query-param variant \u2014 uvicorn logs the full request line, so a 30-day session/bearer token in the query string lands in access logs and proxy logs; specify first-message auth with a short-lived single-use ticket instead."
+ },
+ {
+  "id": "S-4",
+  "severity": "blocker",
+  "section": "\u00a77 Artifact URLs / \u00a711.2",
+  "claim": "\"Re-minted transparently by the UI's `artifactUrl` funnel near expiry\" is not implementable: `artifactUrl` is a *synchronous pure string formatter*, minting a signature is an async server round-trip, and URLs already committed to the DOM cannot be re-minted by a formatter at all.",
+  "evidence": "cairn/ui/src/api/client.ts:117 \u2014 `artifactUrl: (hash: string) => \\`/api/artifacts/${hash}\\``. Its ~30 consumers include `<img>/<video src>` (VideoPlayerCard.tsx:108,232) *and* plain `fetch()` calls (TableCard.tsx:100,120; HistogramCard.tsx:65; MarkdownCard.tsx:100; PluginCard.tsx:72,80) *and* cairn-plot's `createEndpointDataSource` (viewport-registry.tsx:61, MeshVisualCard.tsx:61, VolumeVisualCard.tsx:58) \u2014 so the spec's clean \"browser tags get signed urls, programmatic fetches keep Bearer\" split does not exist in the code; one funnel feeds both. Concrete failures: (a) a report/dashboard left open >1h renders broken images with no retry hook, because `<img onerror>` is not wired anywhere; (b) `<video>` issues Range requests against the *same* URL for the life of playback (cairn/server/routes/artifacts.py:69-104) \u2014 a mid-stream expiry 401s the next range, not the initial load; (c) making the formatter async is a breaking change at ~30 call sites, which contradicts \u00a78's \"~5 sites\" estimate.",
+  "suggestion": "Rule on the mechanism, not the aspiration: either (i) mint one session-scoped signature at connect time and have the formatter append it synchronously (then accept S-5's namespace-wide scope and set expiry \u2265 session length with a refresh-on-401 wrapper at each tag), or (ii) keep the formatter sync but return a URL carrying a *client-refreshable* opaque ticket, with an explicit retry-on-401 helper (`<img onerror>` / MediaSource) named in the spec. Also correct \u00a78's site count: the funnel has tag consumers and fetch consumers and both need touching."
+ },
+ {
+  "id": "S-5",
+  "severity": "major",
+  "section": "\u00a77 Artifact URLs / \u00a711.2",
+  "claim": "The signed-URL ruling never says what the signature covers, where the server secret lives, or which endpoint mints it \u2014 and the plausible reading that keeps \u00a77's sync funnel working (sign `(token_id, exp)` only) turns a leaked URL into a 1-hour read capability over the *entire* artifact namespace, not one blob.",
+  "evidence": "\u00a77 says only \"signed with a server secret + embedded token id\". Nothing in the tree holds a server secret today: the DataDir has no key material and is created world-readable (cairn/server/storage/datadir.py:50-61), so an unspecified `.cairn/auth/secret` inherits 0644 and any local user can mint signatures for any `token_id` \u2014 a complete read-auth bypass. The spec also names no minting endpoint, no role requirement, and no rate limit, and does not say whether the secret is stable across restarts or shared between the two apps `cairn server` runs in one process (app.py:5-12 dual-app mode) \u2014 if per-boot, every outstanding URL in an open report dies on restart.",
+  "suggestion": "Specify: signature payload = `HMAC(secret, digest \u2016 token_id \u2016 exp)` (bind the digest \u2014 a leaked URL then grants exactly one blob); secret persisted at `.cairn/auth/url_signing_key` created 0600 in a 0700 dir, shared across apps of one deployment, stable across restarts; minting endpoint `POST /api/artifacts/{digest}/sign` (or a batch form) requiring `read`; explicit statement that verification re-checks `tokens.disabled` per request (cairn/server/auth.py:137-146)."
+ },
+ {
+  "id": "S-6",
+  "severity": "blocker",
+  "section": "\u00a79 references / \u00a77 Artifact URLs",
+  "claim": "A live reference resolves to `/api/query?...`, which is auth-gated and 302s to an *unsigned* digest URL \u2014 so `cp.Image(ref)` in a browser has no working authentication path at all. \u00a77's signing story covers only `/api/artifacts/{digest}`, and \u00a79 forbids cairn-plot from knowing anything but the URL.",
+  "evidence": "cairn/server/routes/query.py:36-59 \u2014 `/api/query` returns `RedirectResponse(url=f\"/api/artifacts/{art.digest}\", 302)`; the router is registered with `Depends(require(\"read\"))` (cairn/server/app.py:184-201). \u00a79's `cp.Image(ref)` yields `https://server/api/query?tag=...&run=latest` (built by cairn/sdk/query_urls.py:66-84) which, per \u00a77, is a browser tag with no header \u2014 401. Even if `/api/query` were signable, the 302 target carries no `sig`/`exp`, so the follow-up request 401s: browsers do not propagate query strings across redirects. \u00a79 simultaneously asserts \"cairn-plot has no idea the query language exists\" and \"the report runtime reuses cairn-ui's connect/token module\" without saying how a token reaches a URL that cairn-plot treats as opaque.",
+  "suggestion": "Add an explicit rule: `/api/query` accepts the same `sig`/`exp` scheme, and the resolver re-signs the redirect target (302 to `/api/artifacts/{digest}?sig=\u2026&exp=\u2026` derived from the presented, still-valid query signature). Alternatively rule that live references are resolved by the *host* (Tier-2 seam does an authenticated `format=json` fetch with a Bearer header and hands cairn-plot the resulting digest URL) \u2014 but then say so, because it changes \u00a79's \"the url is cairn-plot's entire contract\" into \"the url plus a host-side resolver\"."
+ },
+ {
+  "id": "S-7",
+  "severity": "major",
+  "section": "\u00a77 auth / \u00a79 cairn.Repo",
+  "claim": "Client credentials are not bound to a server. One global `token` is attached to *any* URL the client talks to, so the multi-server world this spec creates (static UI with \"multi-server memory\", `cairn.Repo(url, token=...)`, reports authored against colleagues' servers) routinely ships one server's bearer token to a different host.",
+  "evidence": "cairn/config.py:155-172 \u2014 `resolve_token()` consults `CAIRN_TOKEN` then the config `token` key with no reference to the target URL; cairn/sdk/transport.py:68-69 attaches it unconditionally as `Authorization: Bearer`. cairn/cli.py:905-908 \u2014 `cairn login --ssh` overwrites the single `server`/`token` pair, so logging into server B and then running against server A (`CAIRN_SERVER=A`, `Run(server=A)`, `cairn.Repo(\"https://A\")`) sends B's token to A. Same hazard on the UI side: \u00a78 stores tokens per browser with \"multi-server memory\" but states no origin-keying rule, and \u00a711.6's `?endpoint=` means `https://user.github.io/cairn-ui/?endpoint=https://evil.example` silently points a UI that already holds real tokens at an attacker server.",
+  "suggestion": "Make origin-binding an explicit contract item in \u00a77: config becomes `[servers.\"https://host:port\"] token = \u2026`, `resolve_token(target)` returns nothing for an unknown origin, `CAIRN_TOKEN` applies only to the resolved target; UI localStorage keys tokens by exact origin and never replays one to another. Also require `?endpoint=` to prompt for confirmation before connecting (and never to carry a token)."
+ },
+ {
+  "id": "S-8",
+  "severity": "major",
+  "section": "\u00a77 track auth (SSH promoted to primary)",
+  "claim": "Promoting SSH login to the primary path promotes an unbounded, never-expiring token factory whose trust anchor (`authorized_keys`) has no revocation effect \u2014 while \u00a77/\u00a711.2 simultaneously make token revocation the sole kill switch for signed artifact URLs.",
+  "evidence": "cairn/server/routes/auth.py:179-187 \u2014 every successful `/api/auth/ssh/verify` calls `auth.create_token(...)` with **no `expires_at`** and an auto-generated name (`ssh-<hex>` or a `-2`,`-3`\u2026 suffixed collision), so N logins from N machines/CI jobs leave N permanent credentials. cairn/server/auth.py:356-381 \u2014 removing a key from `auth/authorized_keys` blocks *future* logins but does not touch already-minted tokens; and when the comment carries no `role=`, the default role is **write** (auth.py:379). There is no bulk-revoke-by-key: `revoke_token` takes a single id/name (auth.py:137-146), and token rows record no link back to the key that minted them. Offboarding a colleague therefore silently fails, and their signed artifact URLs keep re-minting.",
+  "suggestion": "Add to \u00a77: SSH-minted tokens get a default expiry (e.g. 30d, `--ttl` overridable) and record the authorizing key fingerprint; `cairn token revoke --key <fingerprint>` revokes all tokens minted by a key; verification optionally re-checks that the fingerprint is still in `authorized_keys` on each use (cheap file read) so key removal is the real kill switch; state the default role explicitly (`read`, not `write`)."
+ },
+ {
+  "id": "S-9",
+  "severity": "major",
+  "section": "\u00a77 HTTPS",
+  "claim": "\u00a77 adds TLS but leaves the session cookie non-Secure and says nothing about which auth modes are legal over which transport, so the cookie ships in cleartext the moment a TLS-enabled server is also reachable over HTTP.",
+  "evidence": "cairn/server/routes/auth.py:26-37 \u2014 `_set_session_cookie` hardcodes `secure=False` with the comment \"this app makes no TLS assumption\"; that comment stops being true the instant `--tls-cert/--tls-key` exist. There is no HSTS, no `__Host-` prefix, and no rule that the cookie path is disabled in the cross-origin/static-UI posture (\u00a77 keeps \"the cookie session \u2026 for the server-served-UI localhost convenience\", but nothing in the code prevents a cookie session against a remote HTTPS server, where an active attacker can downgrade or a single `http://` subresource leaks it).",
+  "suggestion": "Specify in \u00a77: `secure=True` (and ideally `__Host-cairn_session`) whenever the server is started with `--tls-*` or behind a declared `--behind-proxy https`; document HSTS on the TLS path; state that the cookie flow is loopback-only and that all non-loopback UI auth is Bearer-in-header."
+ },
+ {
+  "id": "S-10",
+  "severity": "major",
+  "section": "\u00a77 CORS",
+  "claim": "The CORS ruling hardens only the mode that was already same-origin-safe, and leaves the wildcard in the mode this spec makes the default.",
+  "evidence": "cairn/server/app.py:159: `allow_origins=[] if auth_enabled else [\"*\"]`. \u00a77 adds `--allow-origin` to \"auth-on mode\" only. But \u00a76.1 makes an auth-off server the standard zero-setup path, and `--no-auth` is the documented dev/UI-verification mode. So after S3 lands, an auth-on server is locked down while every auth-off server (including the ones spawned automatically inside a user's notebook) still answers any origin on the internet.",
+  "suggestion": "Extend the ruling to all modes: `allow_origins` is `[]` by default everywhere and only `--allow-origin` widens it; the wildcard is available (if at all) behind an explicit `--allow-origin '*'` opt-in that logs a warning, mirroring the existing `--advertise + --no-auth` warning (cairn/cli.py:204-206)."
+ },
+ {
+  "id": "S-11",
+  "severity": "major",
+  "section": "\u00a77 Artifact URLs / \u00a78 static UI",
+  "claim": "Signed artifact URLs turn artifact blobs into shareable, top-level-openable capability links, but artifacts are served with a *client-supplied* Content-Type and no sniffing/CSP defenses anywhere \u2014 so an ingested `text/html` or `image/svg+xml` artifact is stored XSS on the server origin, with same-origin access to the whole API.",
+  "evidence": "cairn/server/routes/artifacts.py:103,112 \u2014 `media_type=mime_type` read straight from the `artifacts` table, populated verbatim from the ingest payload (cairn/server/ingest_ops.py:182-194). A repo-wide grep for `nosniff`, `Content-Security-Policy`, `X-Frame-Options` returns nothing (only `import_export.py:137` sets `Content-Disposition`, and only for the export zip). `artifactUrl` is used in `<a href>` download paths (CardRenderer.tsx:140, TextViewerCard.tsx:147), so artifact bytes can be opened as a top-level document on the server origin, where they can call `/api/*` with the HttpOnly `cairn_session` cookie attached by default (`credentials: \"same-origin\"`).",
+  "suggestion": "Add to \u00a77: artifact responses always carry `X-Content-Type-Options: nosniff`, `Content-Disposition: attachment` (or an allowlist of inline-safe MIME types: image/png|jpeg|webp, video/mp4, audio/*, application/octet-stream \u2014 never text/html or image/svg+xml inline), and `Content-Security-Policy: sandbox`. Better still, state that artifacts are served from a distinct origin/subdomain when the server is internet-facing."
+ },
+ {
+  "id": "S-12",
+  "severity": "major",
+  "section": "\u00a711.6 (cairn ui --server/--token/--discover)",
+  "claim": "The local-launch ruling introduces two credential leaks: a bearer token in process argv and in browser URL params, and a flow that hands the CLI's own credentials to a server chosen from unauthenticated mDNS.",
+  "evidence": "\u00a711.6: \"`cairn ui --server <url> [--token \u2026]`\u2026 the CLI hands the UI its endpoint config, e.g. a served config.json / URL params, and can mint the session from its own credentials\" and \"`cairn ui --discover` performs mDNS IN THE CLI PROCESS \u2026 then launches the UI pointed at the chosen server\". argv is world-readable on Linux (`/proc/<pid>/cmdline`) \u2014 the same multi-user host \u00a76.1 targets \u2014 and a token in URL params lands in browser history, session restore, and any extension with tabs access. mDNS has no authenticity binding: cairn/server/advertise.py:23-52 registers `_cairn._tcp.local.` with a hostname/port and nothing else, so any LAN host can advertise a service and receive whatever credential the CLI \"mints from its own credentials\". The existing code already warns about the weaker version of this (`--advertise + --no-auth`, cairn/cli.py:204-206).",
+  "suggestion": "Rule it out explicitly: `--token` reads from stdin or `CAIRN_TOKEN`, never argv; the endpoint handoff uses a 0600 served `config.json` or a one-time, single-use, seconds-lived handoff code in the URL \u2014 never the long-lived token; `--discover` may only pre-fill the connect screen (server URL shown for confirmation) and must never transmit a credential to a discovered endpoint."
+ },
+ {
+  "id": "S-14",
+  "severity": "major",
+  "section": "\u00a75 (/api/health, contract) / \u00a77 (HTTPS exposure)",
+  "claim": "The spec moves cairn servers onto the public internet (HTTPS, static UI, `--allow-origin`) without specifying any abuse controls on the unauthenticated `/api/auth/*` surface, which writes an unbounded DB row per anonymous request and is never swept on that path.",
+  "evidence": "cairn/server/app.py:169-171 registers `health.public_router` and `auth_routes.router` with no dependency; cairn/server/routes/auth.py:113-120 \u2014 `GET /api/auth/ssh/challenge` is anonymous and calls `auth.create_nonce`, which INSERTs a row (cairn/server/auth.py:299-305) and does **not** call `sweep_expired`; `sweep_expired` is only invoked from `create_session` (auth.py:194), i.e. only when someone successfully logs in. So an anonymous loop over `/api/auth/ssh/challenge` grows `auth_nonces` without bound. `POST /api/auth/login` and `/api/auth/otp` are likewise unthrottled (OTP is a 24-byte secret, so brute force is infeasible, but the endpoints are free DB work).",
+  "suggestion": "Add a line to \u00a75/\u00a77: `/api/auth/*` gets per-IP rate limiting and `create_nonce`/`create_otp` call `sweep_expired` (or a periodic sweep task is added to the lifespan loop that already runs every 2s, app.py:112-126). Cheap, and it is the difference between \"internet-capable\" and \"internet-safe\"."
+ },
+ {
+  "id": "S-15",
+  "severity": "major",
+  "section": "\u00a79 consumption side (contentKey = the 302 target)",
+  "claim": "\"The RefStore's `contentKey` is the resolved DIGEST (302 target / envelope field) \u2014 free content identity\" is not free cross-origin: JS cannot read a redirect's `Location` from another origin, and the server does not expose it.",
+  "evidence": "`Location` is not a CORS-safelisted response header, and cairn/server/app.py:163 exposes only `Content-Range, Content-Length, Accept-Ranges`. With `redirect: \"manual\"` a cross-origin fetch yields an opaque-redirect response with no readable headers; with the default `follow`, `response.url` is readable but only *after* the artifact body has been fetched \u2014 which defeats using the digest as a cache key to *avoid* refetching. The `format=json` envelope path works but is a second round-trip that \u00a79 presents as an alternative, not a requirement.",
+  "suggestion": "Pick one and say so: either add `Location` to `expose_headers` and require `redirect: \"manual\"` (note this also needs the manual follow to re-attach auth, see S-6), or state that Tier-2 resolution always uses `format=json` and that the 302 form exists solely for browser tags."
+ },
+ {
+  "id": "S-13",
+  "severity": "minor",
+  "section": "\u00a75 version handshake",
+  "claim": "The version handshake is specified as data added to an anonymous endpoint, with no failure semantics \u2014 and it is attacker-controlled input from a user-entered URL, so \"hard block\" makes any server able to lock the UI out and \"soft banner\" makes the gate decorative.",
+  "evidence": "cairn/server/app.py:170 registers `health.public_router` with no auth dependency; cairn/server/routes/health.py:23-31 already returns the package `version` anonymously. \u00a75 adds `{api_version, min_client}` but never says what the UI does on mismatch, whether `min_client` is trusted enough to disable features, or that the handshake should run *before* the connect screen posts the user's token to an unverified URL.",
+  "suggestion": "State the failure semantics (e.g. `api_version` mismatch \u2192 read-only banner, never a hard block; `min_client` is advisory only and never disables auth or transport hardening), and sequence the connect screen: probe `/api/health` first, show the server's identity/version, and only then accept and transmit the token."
+ },
+ {
+  "id": "S-16",
+  "severity": "minor",
+  "section": "\u00a71 motivation (mixed-content / blessed remote paths)",
+  "claim": "\u00a71's mixed-content analysis is correct as far as it goes but omits Private Network Access / Local Network Access, which gates the spec's headline remote path \u2014 an HTTPS-hosted UI fetching `http://localhost:PORT` over `ssh -L`.",
+  "evidence": "\u00a71 lists \"`ssh -L` to localhost (exempt)\" as a blessed path on the strength of the secure-context/mixed-content exemption alone. That exemption is real (loopback is a potentially-trustworthy origin) but it is not the only gate: a request from a public-origin document to a loopback address is a local-network request, which recent Chrome versions gate behind a user permission prompt (and, for non-secure targets, a preflight the FastAPI app does not answer \u2014 no `Access-Control-Allow-Private-Network` handling exists in cairn/server/app.py:151-164). The result would be a permission prompt or an opaque failure on the canonical GitHub-Pages \u2192 `ssh -L` path, in exactly the browser the WebGPU motivation targets.",
+  "suggestion": "Add a sentence to \u00a71 acknowledging PNA/LNA and a bullet to \u00a77: the server answers local-network preflights (`Access-Control-Request-Private-Network` \u2192 `Access-Control-Allow-Private-Network: true`) for allowlisted origins, and the connect screen surfaces a specific error when a loopback fetch is blocked rather than the generic \"unreachable server\"."
+ },
+ {
+  "id": "W-1",
+  "severity": "blocker",
+  "section": "\u00a76 Ingest \u2014 \"Offline-start\" bullet",
+  "claim": "\"A run started with no reachable server accumulates WAL and syncs later \u2014 same machinery, no special mode\" is false: with today's machinery `cairn.Run(...)` cannot even be constructed without a live server, and `run.finish()` raises when the link is down.",
+  "evidence": "`Run.__init__` calls `self._transport.create_run(create_body)` unguarded (cairn/sdk/run.py:227) and only *then* creates the WAL from the server's reply `resp[\"run_id\"]` (run.py:228,235). `Transport.create_run` \u2192 `post_json` \u2192 `_retry`, which re-raises after `max_retries` (cairn/sdk/transport.py:150-151, 82-101); `_probe_server` only logs a warning (run.py:82-103), so the failure surfaces ~31 s later as an httpx exception out of the constructor. There is no `create_run` WAL op anywhere in transport.py (WAL appends exist only in post_batch/post_params/post_logs/upload_artifact). `finish_run` (run.py:617) and `set_tags` (run.py:586) are likewise unguarded and un-WAL'd, so the tail of an offline run raises into the user's training script.",
+  "suggestion": "Specify offline-start as real work, not \"same machinery\": (a) make run identity fully client-side (`client_run_id` already exists at run.py:205 \u2014 the server must accept it and derive/accept `project_id` too, since it is currently server-issued at run.py:229); (b) add `create_run` to the WAL op vocabulary in cairn-core and replay it first; (c) state that every transport call is non-raising when a WAL is attached, so no cairn-track call can abort a training script. Add an acceptance test: `CAIRN_SERVER` pointed at a black hole, full run lifecycle, then replay."
+ },
+ {
+  "id": "W-2",
+  "severity": "blocker",
+  "section": "\u00a73 \"Current state\" / \u00a76 Ingest \u2014 `cairn sync`",
+  "claim": "Both sections assert `drain_wal()` replay is \"exposed as `cairn sync`\" and that \"`cairn sync` replays after process death\". `cairn sync` today drains only the legacy spill dir and can never drain a WAL \u2014 so the recovery step at the centre of the HPC workflow is a no-op.",
+  "evidence": "`sync_cmd` returns early with \"no spill to sync\" when `default_spill_dir()` (\u2026/cache/cairn/**pending**, transport.py:30-31) is missing (cairn/cli.py:695-698), while WALs live in \u2026/cache/cairn/**wal** (cairn/sdk/wal.py:36-37). Even past that guard, `_client()` builds `Transport(_config.resolve_server())` with no `wal=` (cli.py:443-444), and `drain_wal` short-circuits `if not self._wal \u2026 return 0` (transport.py:303-305). WALs are per-run files (`{run_id}.wal.jsonl`, wal.py:54) that nothing enumerates.",
+  "suggestion": "Spec `cairn sync` explicitly: scan `wal_dir/*.wal.jsonl`, construct a WAL object per run, replay each against the resolved server, and define what happens when a run in the WAL does not exist on that server (today `/api/runs/{id}/batch` 404s and `drain_wal` stop-on-error wedges forever \u2014 transport.py:312-314). Add it to S2's checklist; it is currently invisible in the migration plan."
+ },
+ {
+  "id": "W-3",
+  "severity": "major",
+  "section": "\u00a76 Ingest \u2014 \"Kept and promoted\"",
+  "claim": "\"Every op is seq-numbered into the WAL\" describes an op vocabulary the client WAL does not have. Under a real dropout the run keeps its metrics but loses artifact\u2192run attachment, tags, notes, source tree and the finish record \u2014 silently.",
+  "evidence": "transport.py WAL appends exist only for `batch` (155), `params` (169), `logs` (178) and `artifact` (230). `attach_artifact` (206-212), `set_tags` (197), `set_notes` (200), `upload_source` (214), `finish_run` (190) and `create_run` (150) have none. `_replay_wal_entry` even has a `finish` branch (transport.py:347) that nothing ever writes. The retired repo-dir WAL had the full set \u2014 `create_run`, `set_tags`, `set_notes`, `attach_artifact`, `source`, `artifact_meta`, `heartbeat`, `create_artifact_version`, `record_artifact_input` (cairn/sdk/local.py:133-299) \u2014 so retiring it is a net loss of durability, not a consolidation.",
+  "suggestion": "Make the cairn-core \"WAL op vocabulary\" item normative: enumerate the ops (take local.py's list as the floor), and add a conformance test that every write method on the transport has a WAL entry. Note in \u00a76 that this is NEW work alongside idempotency, not \"kept\"."
+ },
+ {
+  "id": "W-4",
+  "severity": "blocker",
+  "section": "\u00a76 (retire `local_wal`) + \u00a76.1 ephemeral server",
+  "claim": "The retirement of repo-dir WAL mode deletes the only documented multi-node/Slurm path, and the ephemeral-server replacement is unsafe on the shared filesystem such jobs use: liveness is pid-based, which is meaningless across hosts.",
+  "evidence": "`local_wal` mode is documented as exactly this workflow: \"WAL mode \u2026 The SDK never touches the SQLite database. The UI server ingests WAL files in the background. Use this for NFS / multi-node / Slurm setups\" (cairn/sdk/local.py:6-14; the flag is public API, run.py:146). Under \u00a76.1, two array tasks on different nodes pointed at one shared `.cairn` each see a stale-looking lock \u2014 `acquire_lock` trusts `psutil.pid_exists(holder_pid)` (cairn/server/storage/datadir.py:154) and *unlinks and re-creates* the lock when it looks dead (datadir.py:158-160); `servers.json` liveness is the same pid check (datadir.py:255) and `add_live_server` hard-codes `host=\"127.0.0.1\"`-style local entries. A PID alive on node B reads as alive on node A and vice versa, so both tasks can conclude \"mine\" and open concurrent SQLite writers over NFS.",
+  "suggestion": "Either keep a shared-filesystem ingest mode (repo-dir WAL + a server-side drain, which is what it was for) or state in \u00a76.1 that the ephemeral server is single-host only and stamp lock/advertisement records with a machine identity (hostname + boot id) so cross-host holders are rejected rather than reaped. Also say explicitly what the supported HPC story now is."
+ },
+ {
+  "id": "W-5",
+  "severity": "blocker",
+  "section": "\u00a76.1 + \u00a710 (migration)",
+  "claim": "There is no path from data captured by an ephemeral local server into a central server. An HPC job with no network route logs to a node-local `.cairn`; nothing in the spec moves it to the lab server afterwards.",
+  "evidence": "The only reconciliation primitive is the client WAL, and it is checkpointed the moment the *ephemeral* server accepts each op (transport.py:158-159), so after a successful local run the WAL is empty (and `cleanup()` deletes it, wal.py:151-158). \u00a76 retires direct-DB reads, so cairn-track can no longer read that `.cairn` either. The CLI has `export` (per-run JSON/CSV, cli.py:527-575) but no import; `cairn sync` targets one resolved server (cli.py:693). Spec \u00a76.1 stops at \"one code path, still fully separated\" and never mentions repo-to-server transfer.",
+  "suggestion": "Add a first-class `cairn push <src .cairn> <server-url>` (or server-side `import`) to \u00a76/\u00a710 and name it as the answer for network-isolated compute. Without it the ruling's zero-setup local mode is a data roach motel."
+ },
+ {
+  "id": "W-6",
+  "severity": "major",
+  "section": "\u00a76 Ingest \u2014 WAL durability",
+  "claim": "The WAL's location, growth and lifecycle are unspecified, and the shipped defaults are hostile to the exact workflow the WAL is promoted for: it lives on the user's home/cache filesystem, is unbounded, fsyncs on every append, and cannot be relocated.",
+  "evidence": "`default_wal_dir()` = `platformdirs.user_cache_dir(\"cairn\")/wal` (wal.py:36-37) \u2014 `~/.cache/cairn` on Linux, i.e. quota-limited (often NFS) HOME on a cluster. `Run` constructs `WriteAheadLog(self._run_id)` with no directory argument and there is no env override (run.py:235). Every append does `flush()` + `os.fsync()` (wal.py:85-86) \u2014 with a 0.5 s metric-buffer flush (run.py:247) that is a sustained fsync stream onto NFS. Artifacts >1 MB are copied whole into that dir (`INLINE_ARTIFACT_MAX`, wal.py:33, 100-108), so an image-logging run mirrors its full artifact volume into the home quota. WAL files are deleted only on a clean finish with nothing pending (run.py:618-626); crashed runs leave them forever and nothing GCs them.",
+  "suggestion": "Spec: a `CAIRN_WAL_DIR` (and config key) so HPC users can point it at node-local scratch; a documented growth bound / disk-full behaviour; a retention + GC rule for orphaned run WALs (`cairn sync --prune`); and an fsync policy (batch fsync or fsync-on-checkpoint) for network filesystems."
+ },
+ {
+  "id": "W-7",
+  "severity": "blocker",
+  "section": "\u00a76.1 \u2014 \"Lifetime = the spawning process\"",
+  "claim": "Two concurrent experiments on one machine: the second attaches to the first's in-process server, and when the first process exits the second loses its backend mid-run with no failover and no recoverable address.",
+  "evidence": "\u00a76.1 fixes the server's lifetime to the spawning process and offers only \"the client WAL covers crashes\". But the WAL's replay target is whatever server the surviving process is configured with \u2014 an ephemeral loopback port (\u00a76.1: \"127.0.0.1:<ephemeral>\") that dies with process A and is never re-advertised. `cairn sync` resolves `DEFAULT_SERVER = http://localhost:4300` (config.py:35, cli.py:443-444), which is not that port. Process B therefore accumulates a WAL addressed to a port that will never exist again; nothing in \u00a76.1 respawns a server or re-points a connected client.",
+  "suggestion": "Define the failover contract: on losing its server, a connected client re-runs the resolve/spawn decision (promoting itself to server), and the WAL replay target must be the *data dir*, not a URL, so any later server on that `.cairn` can absorb it. Alternatively make the ephemeral server outlive its spawner (detached, pid-file + stable port) and say who reaps it."
+ },
+ {
+  "id": "W-8",
+  "severity": "major",
+  "section": "\u00a76.1 \u2014 \"Trigger\" and \"Mechanism\"",
+  "claim": "The claim that the existing lock/advertisement machinery \"already\" lets a second process discover the live server and upgrade to HTTP is inaccurate in both halves, and the spec never fixes the mode string \u2014 which decides whether `cairn ui` still works while an experiment is running.",
+  "evidence": "`Run` consults only `repo.lock`, never `servers.json`, and swaps transports only when `holder.get(\"mode\") == \"server\"` (cairn/sdk/local.py:65-73) \u2014 a `mode=\"ui\"` holder falls through to a direct DB open. `servers.json` is read exclusively by notebook card rendering (`CardElement._resolve_server`, cairn/sdk/elements.py:126-166). There is also an unaddressed TOCTOU: check-then-spawn is not atomic, and `acquire_lock` is O_EXCL with stale takeover (datadir.py:140-160), so two simultaneously-launched experiments can both decide to spawn. Separately, if the ephemeral server advertises `mode=\"server\"`, `cairn ui` on that repo now hard-exits with \"A `cairn server` is already running on this repo. Open its UI URL in your browser instead\" (cairn/cli.py:378-385) \u2014 pointing the user at a UI that an ephemeral ingest-only server does not serve.",
+  "suggestion": "Specify the spawn as an atomic lock-acquire-or-read-holder loop (winner spawns and advertises; loser re-reads and connects, with a bounded retry for the window before the winner's port is published), name the advertised mode (`ephemeral`), and state what `cairn ui`/`cairn server` do when they find one \u2014 attach to the same data dir, or ask the ephemeral to hand off."
+ },
+ {
+  "id": "W-9",
+  "severity": "blocker",
+  "section": "\u00a76.1 \u2014 \"auth disabled on loopback (same-user semantics, as the direct-DB mode had)\"",
+  "claim": "Loopback is not a same-user boundary. The stated equivalence with direct-DB mode is false, and on any multi-user host (HPC login node, shared lab workstation) the ephemeral server grants every local account read/write on the spawner's experiments.",
+  "evidence": "Direct-DB mode's boundary was filesystem permissions on the `.cairn` tree (DataDir creates plain dirs; the token config file is deliberately 0600/0700 because \"multi-user-host scenario\" is a known threat \u2014 cairn/config.py:73-99). A `127.0.0.1:<port>` TCP listener has no such boundary: any local uid can connect, and with auth off `create_app(..., auth_enabled=False)` also sets CORS `allow_origins=[\"*\"]` (cairn/server/app.py:159), so a page in the same user's browser can hit it too. Ports are ephemeral but trivially enumerated.",
+  "suggestion": "Do not disable auth. Either bind a unix-domain socket in a 0700 dir (httpx supports UDS transports, so cairn-track needs no protocol change), or auto-mint a per-spawn token written to a 0600 file in the data dir and require it. Update \u00a76.1 to drop the \"same-user semantics\" justification, which will otherwise be copied into the implementation."
+ },
+ {
+  "id": "W-10",
+  "severity": "blocker",
+  "section": "\u00a76 (retire `_LocalBackend`) + \u00a76.1 trigger",
+  "claim": "The notebook analysis workflow is only specified for the *defaulted* `.cairn`. Two shipped `Reader` entry points \u2014 an explicit local path and an exported ZIP \u2014 fall outside the trigger and are left with no backend at all once `_LocalBackend` leaves cairn-track.",
+  "evidence": "\u00a76.1's trigger is \"`resolve_target()` yields the local default AND no live advertisement exists\". But `Reader(repo=\"/scratch/exp42/.cairn\")` is an explicit path, not the default (config.py:185-186), and `Reader(\"run.zip\")` bypasses `resolve_target` entirely, unpacking to a tempdir and constructing `_LocalBackend(repo_path)` directly (cairn/sdk/reader.py:1392-1398) \u2014 a documented feature (reader.py:1372-1380). \u00a76 removes `_LocalBackend` from cairn-track with no replacement for either case.",
+  "suggestion": "State that the spawn trigger is \"target resolves to a local data dir\" (defaulted or explicit), including the ZIP tempdir, and say what happens when the `[local]` extra is absent for a *read* (\u00a76.1 only gives the error text for the write path). Also decide whether `Reader` shares one ephemeral server per data dir per process or spawns one per Reader \u2014 a notebook that opens three Readers should not start three uvicorns."
+ },
+ {
+  "id": "W-11",
+  "severity": "blocker",
+  "section": "\u00a79 references + \u00a76.1 ephemeral port",
+  "claim": "The two headline rulings collide: a live reference \"resolves to a simple URL\", but references authored in the zero-setup local mode resolve to `http://127.0.0.1:<random ephemeral port>` \u2014 an address that is dead after the kernel restarts and meaningless to anyone else. Reports authored this way are silently broken artifacts.",
+  "evidence": "\u00a76.1 binds the local server to `127.0.0.1:<ephemeral>` with lifetime = the spawning process. \u00a79's URLs are built from the backend's base: `DataRef.url` and `RunQuery.latest_url` read `getattr(backend, \"server_url\")` and concatenate (cairn/sdk/reader.py:229-244, 715-744; `build_query_url`). So `cp.Image(ref)` bakes the ephemeral base into the descriptor. Nothing in \u00a79 warns, and \u00a79 explicitly makes view-time resolution the default.",
+  "suggestion": "Require `cairn.Repo`/reference construction to refuse (or loudly warn and auto-`.get()`) when the resolved base is an ephemeral loopback server, and say in \u00a79 that live references require a durable, addressable server. If local live refs are wanted, give the ephemeral server a stable per-data-dir port and document its lifetime limits."
+ },
+ {
+  "id": "W-12",
+  "severity": "blocker",
+  "section": "\u00a79 \"Viewer-side auth + mixed content\" + \u00a77 CORS",
+  "claim": "The flagship sharing workflow \u2014 a colleague opens a report containing live references \u2014 has no credential-provisioning story and, for the normal delivery shape (an exported HTML file), cannot work at all: `file://` gives `Origin: null`, which the spec's exact-origin CORS rule cannot express, and opaque file origins have no usable localStorage for the \"connect/token module\".",
+  "evidence": "Reports are notebook-inline / exported HTML (`cairn.Report._repr_html_`, cairn/sdk/report.py:1-11, 67-76) \u2014 sharing is explicitly \"sharing the notebook (or its native Jupyter/marimo HTML export)\". \u00a77 mandates \"exact origins, never wildcard-with-credentials\"; a `file://` page sends `Origin: null`. Tokens can only be minted by an operator on the server host \u2014 `cairn token create` opens the DB directly (\"operator, direct-DB, local host only\", cairn/cli.py:720-745); there is no remote admin API, no scoped/read-only share token, no anonymous read. \u00a79's \"the report runtime reuses cairn-ui's connect/token module\" therefore reduces to \"the colleague must be sent a bearer token out of band and paste it into a page that may not be able to store it\".",
+  "suggestion": "Spec the viewer path concretely: (a) supported report hosting origins (served over http(s), not `file://`) and the matching `--allow-origin` guidance; (b) a share-credential primitive \u2014 a scoped, expiring, read-only token mintable by a non-operator (or a signed report-scoped URL family, which the \u00a77 signing secret already makes possible); (c) the exact 401/403 UX in the pane (\u00a79 only covers *unreachable*)."
+ },
+ {
+  "id": "W-13",
+  "severity": "major",
+  "section": "\u00a77 CORS + \u00a78 connect screen",
+  "claim": "First contact from the hosted UI fails opaquely. With auth on, the server allows no origins at all, so even the auth-exempt `/api/health` probe the connect screen would use is blocked by the browser \u2014 and a CORS rejection is indistinguishable in JS from \"server down\" or \"typo in the URL\".",
+  "evidence": "`allow_origins=[] if auth_enabled else [\"*\"]` (cairn/server/app.py:159, with the comment stating same-origin is deliberate). `/api/health` is exempt from auth but not from CORS (health.public_router, cairn/server/routes/health.py:14-31). The UI's own error handling can only see a generic `TypeError: Failed to fetch`. The user's fix lives on the *server* (`--allow-origin https://user.github.io`), which nothing tells them about.",
+  "suggestion": "Either allow `Access-Control-Allow-Origin: *` on `/api/health` unconditionally (it leaks only version/uptime) so the connect screen can distinguish \"reachable but not authorized for this origin\" from \"unreachable\", or have `/api/health` echo the configured allowed origins so the UI can render an actionable message (\"this server does not allow https://\u2026 \u2014 restart it with `--allow-origin https://\u2026`\"). Add the default `--allow-origin` for the canonical Pages deployment to the docs."
+ },
+ {
+  "id": "W-14",
+  "severity": "major",
+  "section": "\u00a77 auth (ui) + \u00a711.6",
+  "claim": "The token-bootstrap flow has no cross-origin equivalent. Both login paths mint an HttpOnly cookie, and the split turns credentials off \u2014 so the one-time login link that makes today's first-run painless simply dies, and \u00a77 never replaces it.",
+  "evidence": "`/api/auth/login` and `/api/auth/otp` both call `_set_session_cookie` and return only `{name, role}` \u2014 no bearer token is ever handed back (cairn/server/routes/auth.py:26-73). \u00a77 keeps `allow_credentials=False` (matching app.py:160), so a cross-origin UI can never use that cookie. The bootstrap banner prints `{ui_url}/login?otp=\u2026` built from the server's own UI port (cairn/cli.py:132-160, 283) \u2014 under a Pages-hosted UI the server does not know the UI's URL. Same problem for \u00a711.6's \"can mint the session from its own credentials\": a session *is* the cookie.",
+  "suggestion": "Add an OTP\u2192bearer exchange (`POST /api/auth/otp` returns a token when the caller is cross-origin / asks for one) and respec the bootstrap banner for a server that serves no UI: print the token plus a copy-pasteable `https://<pages-url>/?endpoint=<server>` link, and define whether the OTP may ride that link. Fix \u00a711.6's wording \u2014 the CLI can hand the UI a *token*, not a session."
+ },
+ {
+  "id": "W-15",
+  "severity": "major",
+  "section": "\u00a77 \"Artifact URLs (ruling: standard signed urls)\"",
+  "claim": "\"Re-minted transparently by the UI's `artifactUrl` funnel near expiry\" is not implementable as described: the funnel is a synchronous pure string formatter consumed directly in JSX `src=` attributes, and minting a signature requires the server secret.",
+  "evidence": "`artifactUrl: (hash: string) => \\`/api/artifacts/${hash}\\`` (cairn/ui/src/api/client.ts:117) \u2014 pure, sync, called inline at ~30 `<img>/<video>/href` sites and inside the plot data source (`createEndpointDataSource((hash) => api.artifactUrl(hash))`, cairn/ui/src/components/viewport-registry.tsx:61) and download helpers (components/PluginCard.tsx:72,80,431). Any server round trip makes it async, which is precisely the ~30-consumer refactor \u00a77 rejects for the blob+objectURL alternative.",
+  "suggestion": "Pick a mechanic that keeps the funnel synchronous and say so: at connect/login time the server hands the client a short-lived per-token signing key (HMAC key + key id + expiry), and the funnel computes `sig` locally via WebCrypto \u2014 still sync if the key is derived once and cached, still revocable via the embedded token id. Otherwise state that the funnel becomes async and budget the ~30-site refactor in S3."
+ },
+ {
+  "id": "W-16",
+  "severity": "major",
+  "section": "\u00a711.6 \u2014 `cairn ui --server` / `--discover`",
+  "claim": "Both local-launch modes create a cross-origin pair that the target server will reject by default, and the origin they present is not even stable enough to pre-authorize. `--discover` additionally hands the user a plain-HTTP LAN server, i.e. no WebGPU \u2014 the exact failure \u00a71 exists to fix.",
+  "evidence": "`cairn ui` binds `127.0.0.1` and auto-increments its port when 4301 is taken (`_find_free_port`, cairn/cli.py:341, 371, 98-115), so the UI origin is `http://127.0.0.1:{4301|4302|\u2026}` \u2014 an admin cannot register a fixed `--allow-origin` for it. A `--discover`'d server is by definition someone else's process (started with `--advertise`, cli.py:181-185, 247-260) whose CORS list the discovering user cannot change; with auth on it is `[]` (app.py:159). mDNS returns a bare `(host, port)` with no scheme/TLS/token (cairn/sdk/discovery.py:38-60), and a `http://192.168.x.y:4300` UI origin has no `navigator.gpu` (\u00a71).",
+  "suggestion": "Either have `cairn ui --server` proxy `/api/*` through its own origin (same-origin, no CORS, token held server-side by the CLI \u2014 this also solves the token-in-URL leak) or spec a fixed UI port plus a documented `--allow-origin http://127.0.0.1:<port>` requirement and a clear failure message. For `--discover`, state the two preconditions (server must allow the UI origin; must be HTTPS or reached via `ssh -L` for WebGPU) or drop it alongside mDNS-in-the-browser."
+ },
+ {
+  "id": "W-17",
+  "severity": "major",
+  "section": "\u00a78 endpoint config vs \u00a711.6",
+  "claim": "Three endpoint-config mechanisms are specified in two places with no precedence rule, so `cairn ui --server B` can silently land the user on server A; and the `?endpoint=`/URL-params channel is also proposed as the token channel, which leaks credentials into history and referrers.",
+  "evidence": "\u00a78: \"connect screen + `?endpoint=` + localStorage\". \u00a711.6: \"the CLI hands the UI its endpoint config, e.g. a served config.json / URL params, and can mint the session from its own credentials\". Nothing orders them. A returning user has a persisted endpoint (\"persisted per browser, multi-server memory\", \u00a77) that will conflict with the CLI's intent on the same `http://127.0.0.1:4301` origin \u2014 localStorage is keyed by origin, so every `cairn ui` invocation shares one store regardless of `--server`.",
+  "suggestion": "Define one precedence chain explicitly (e.g. served `config.json` > `?endpoint=` > localStorage > connect screen) and state that a CLI-provided endpoint overwrites, not merges with, the remembered selection. Forbid tokens in query strings; deliver them via the served config.json (same-origin fetch) or a one-time POST, and strip any credential params from the URL on load."
+ },
+ {
+  "id": "W-18",
+  "severity": "major",
+  "section": "\u00a710 S5 + \u00a711.3",
+  "claim": "The migration story is silent on the one thing that breaks for every existing user: the `cairn` command moves out of the wheel they installed, so a routine `pip install -U cairn-track` removes `cairn ui`/`cairn server`/`cairn list` from their environment with no deprecation and no hint.",
+  "evidence": "\u00a711.3: \"cairn-track keeps today's pip name (client package, **no CLI**)\" and \"a NEW `cairn-cli` wheel owns the `cairn` entry point\". Today that entry point ships in cairn-track \u2014 the CLI even reads its version from that distribution (`@click.version_option(package_name=\"cairn-track\")`, cairn/cli.py:62) and imports server internals directly (cli.py:36-40). \u00a710 S5 says only \"`cairn ui`/`cairn server` behavior preserved\", which is about behaviour once installed, not about the command surviving the upgrade.",
+  "suggestion": "Add a transition release to S5: cairn-track N keeps a `cairn` shim that depends on (or errors pointing at) `cairn-cli`, printing the exact install line; cairn-track N+1 drops it. State the recommended single install command for today's `cairn ui` user (`pip install cairn-cli[ui]`) and put it in the release notes, not only in the package layout diagram."
+ },
+ {
+  "id": "W-19",
+  "severity": "major",
+  "section": "\u00a76 (\"the server's repo-dir WAL-scan loop simplifies\") + \u00a710 S2",
+  "claim": "Upgrading orphans any un-ingested repo-dir WAL files: the background scan loop is their only consumer, and removing it silently strands data that users were told to rely on for NFS/Slurm runs.",
+  "evidence": "The scan loop is started unconditionally in the app lifespan and calls `ingest_all(dd, _db, _blobs)` every 2 s (cairn/server/app.py:110-126); its input is `.cairn/wals/*.jsonl` written by `LocalTransport` WAL mode (cairn/sdk/local.py:80-88, 128-131). \u00a76 retires both ends and \u00a710 S2 lists no import step, so a repo upgraded with pending WAL files loses whatever they held \u2014 including runs that were never created in the DB at all (the `create_run` op lives only in those files, local.py:133-141).",
+  "suggestion": "Add a one-shot `cairn-server migrate-wals <data-dir>` (or run `ingest_all` once at startup for one release) to S2, and make the server refuse to start \u2014 or loudly warn \u2014 when it finds non-empty `.cairn/wals/` after the loop is gone."
+ },
+ {
+  "id": "W-20",
+  "severity": "major",
+  "section": "\u00a78 (\"`/embed/card` + `/plot` become `embed.html`/`plot.html` file URLs\")",
+  "claim": "Notebook cards break: the emitter builds the iframe from a *server* base, but after the split the server no longer serves the UI, and nothing gives the notebook a UI base URL to substitute. The spec assigns the work (\"the python emitters learn the new shape\") without specifying the input they'd need.",
+  "evidence": "`CardElement` resolves a server (config/`servers.json`/health-probed defaults, cairn/sdk/elements.py:126-166) and emits `src = f\"{server}/embed/card?sid={sid}\"` after POSTing the spec to that server (elements.py:234-241). \u00a78 both moves the page to a static `embed.html` and stops bundling dist in the server wheel \u2014 so `{server}` is no longer a valid base, and `servers.json` advertises servers, not UIs (datadir.py `add_live_server`). \u00a78 also keeps the spec store server-side (\"the in-memory EmbedSpecStore stays a server concern\"), so the static `embed.html` must fetch the spec cross-origin with a token \u2014 unspecified.",
+  "suggestion": "Introduce an explicit UI-base concept (config key + `servers.json` field + `cairn.configure(ui=...)`), define the new iframe URL shape (`<ui-base>/embed.html?endpoint=<server>&sid=\u2026`), and say how `embed.html` authenticates its spec fetch. Alternatively let the ephemeral/local server keep serving `embed.html` from the optional `--ui` mount and state that notebook cards require it."
+ },
+ {
+  "id": "W-21",
+  "severity": "minor",
+  "section": "\u00a79 + header (\"Companion spec: cairn-plot's Host API v4.2\")",
+  "claim": "The normative companion spec that defines the Tier-2 data-source seam \u2014 the consumer of every reference URL in \u00a79 \u2014 does not exist at the cited path in this tree, so an implementor of S6 cannot check the contract they are being asked to satisfy.",
+  "evidence": "`find . -name \"*host-api*\"` returns nothing; the vendored plot lib is pinned at 892126c (`git -C vendor/cairn-plot log -1`) and its specs dir contains only `2026-08-17-grid-view-modes-stacked-design.md` and `2026-08-25-image-info-panel-design.md`. The header cites `cairn-plot/docs/superpowers/specs/2026-08-26-host-api-design.md` at \"v4.2\".",
+  "suggestion": "Pin the companion by commit sha (not just version) and note that S6 is blocked until that spec is pushed and the submodule re-pointed \u2014 \u00a710 already gates S6 on \"after Host API M2 lands the RefStore\", so make the dependency checkable."
+ },
+ {
+  "id": "W-22",
+  "severity": "minor",
+  "section": "\u00a76.1 Packaging (error text) \u2014 configuration vocabulary",
+  "claim": "The ruling hinges on \"no server configured\", but the spec names an env var that does not exist and the tree's own configuration surface is already inconsistent \u2014 so the error message tells the user to set something that has no effect.",
+  "evidence": "\u00a76.1: \"no server configured; install cairn-track[local] or point **CAIRN_SERVER** at one\". The resolver reads `CAIRN_REPO` and expects the `cairn://host:port` scheme (cairn/config.py:142, 189, 125-127); `CAIRN_SERVER` appears nowhere. Separately, `cairn configure --server` writes a `server` key (cairn/cli.py:715) that no resolver reads \u2014 both `resolve_server` and `resolve_target` look only at `repo` (config.py:138-151, 187-194).",
+  "suggestion": "Fix the error text to the real variable, and use S0/S5 to settle the vocabulary once (`CAIRN_SERVER` + plain https URLs is the better fit for a server-only client than `CAIRN_REPO` + `cairn://`) with an explicit compatibility note for the old name/scheme. Fold the dead `configure --server` key into the drift fixes."
+ },
+ {
+  "id": "M-01",
+  "severity": "blocker",
+  "section": "\u00a710 S2 / \u00a76.1",
+  "claim": "S2 deletes every local ingest and read path, but the replacement (\u00a76.1's ephemeral in-process server) is not assigned to any stage \u2014 S0\u2013S6 never build it. Following the work order literally leaves a stage (or more) in which local usage is simply gone.",
+  "evidence": "S2 reads: \"retire LocalTransport/local_wal/direct-DB reads; sdk\u2194server imports go to zero\". \u00a76.1's spawn is described only in the design body; the `[local]` extra it needs is packaging work that S5 owns (\"Package split in the monorepo \u2026 extras\"). Everything that dies at S2 with nothing to fall back on: `Run(repo=...)` local mode (cairn/sdk/run.py:169-172), `Reader()` local mode (cairn/sdk/reader.py:1402-1404), `Reader(repo=\"run.zip\")` (cairn/sdk/reader.py:1391-1394 \u2192 `_load_zip_to_tempdir`, reader.py:1201-1216), `cairn diff --repo` (cairn/cli.py:598-605), the top-level `cairn.log_artifact/load_artifact/list_artifacts` local branch (cairn/__init__.py:166-171), and 4 test modules (tests/unit/test_local_transport.py, tests/unit/test_figure_source_hash_dedup.py, tests/integration/test_run_local.py, tests/integration/test_run_while_ui.py).",
+  "suggestion": "Split \u00a76.1 into its own stage that lands BEFORE the deletions: S2a = ephemeral loopback server + discovery/handshake + `cairn-track[local]` extra + `cairn diff`/zip/log_artifact rerouted through it; S2b = retire LocalTransport/_LocalBackend. State explicitly that the `[local]` extra ships at S2a, not S5, and enumerate the call sites above as the S2b checklist."
+ },
+ {
+  "id": "M-02",
+  "severity": "major",
+  "section": "\u00a74 / \u00a76.1",
+  "claim": "The lint-enforced dependency rule \"No `track \u2194 server` imports in either direction\" is directly violated by \u00a76.1, which requires cairn-track to import cairn-server to spawn the ephemeral server. The spec states both as absolutes and never reconciles them, so the S2 boundary lint as written must fail on the S2a code.",
+  "evidence": "\u00a74: \"Dependency rules (lint/CI-enforced \u2026): `track \u2192 core`, `server \u2192 core` \u2026 No `track \u2194 server` imports in either direction\". \u00a76.1 Packaging: \"the spawn requires cairn-server importable and is packaged as an extra (`pip install cairn-track[local]`)\". Today's equivalent lazy imports are exactly what the lint would flag (cairn/sdk/run.py:41, cairn/sdk/reader.py:802-805).",
+  "suggestion": "Restate the rule as \"no module-scope track\u2192server imports; exactly one allow-listed lazy import site (`cairn_track/_local_server.py`) guarded by the `[local]` extra\", and name that file in the lint config so the exception is auditable rather than implicit."
+ },
+ {
+  "id": "M-03",
+  "severity": "blocker",
+  "section": "\u00a73 / \u00a76",
+  "claim": "The spec twice describes `cairn sync` as the existing WAL replay entry point and builds S2's durability story on it. `cairn sync` cannot drain the WAL at all \u2014 it constructs a Transport with no WAL attached, and `drain_wal()` returns 0 immediately in that case. The per-run WAL enumeration this needs does not exist anywhere.",
+  "evidence": "cairn/cli.py:691-700 (`sync_cmd` \u2192 `t = _client()`; returns early with \"no spill to sync\" when the *legacy spill* dir is missing \u2014 a different directory from the WAL dir). cairn/cli.py:443-444: `Transport(_config.resolve_server())` \u2014 no `wal=` argument. cairn/sdk/transport.py:302-305: `if not self._wal or not self._wal.has_pending: return 0`. WAL dir is `user_cache_dir(\"cairn\")/wal` (cairn/sdk/wal.py:36-37); spill dir is `\u2026/pending` (transport.py:30-31). WALs are per-run files `{run_id}.wal.jsonl`, and `WriteAheadLog.__init__` takes a single run_id (wal.py:50).",
+  "suggestion": "Correct \u00a73 (\"`drain_wal()` replay exposed as `cairn sync`\" is false) and add to S2 the concrete work: a WAL-directory scanner that enumerates `*.wal.jsonl`, reconstructs a `WriteAheadLog` per run, resolves each run's target server, and drains in seq order \u2014 plus the early-return bug fix in `sync_cmd`."
+ },
+ {
+  "id": "M-04",
+  "severity": "blocker",
+  "section": "\u00a76",
+  "claim": "The client WAL that S2 promotes to \"THE durability story\" silently loses ops today: the checkpoint is a single monotonically-advancing integer, so one failed send followed by one successful send permanently marks the failed op as delivered. Server-side `(run_id, seq)` idempotency does not fix this \u2014 the lost op is never replayed at all.",
+  "evidence": "cairn/sdk/wal.py:118-120 `checkpoint(seq)` writes one int; wal.py:122-140 `pending()` yields only entries with `seq > cp`. cairn/sdk/transport.py:155-166: `post_batch` appends seq N, and on success calls `checkpoint(N)`; on failure it does NOT checkpoint but also does not block the next flush. Sequence: batch@seq5 fails (network blip) \u2192 batch@seq6 succeeds \u2192 `checkpoint(6)` \u2192 seq5 is below the checkpoint and is never yielded by `pending()`. Same shape in `post_params` (168-176), `post_logs` (177-188), `upload_artifact` (221-249).",
+  "suggestion": "S2 must specify the client-side fix, not only the server-side dedupe: either a strict stop-on-first-failure send gate (no op is sent while an earlier op is unacknowledged) or a checkpoint that records a low-water mark plus an explicit acked-set. Say which, because it changes the ordering guarantee `(run_id, seq)` dedupe is allowed to assume."
+ },
+ {
+  "id": "M-05",
+  "severity": "blocker",
+  "section": "\u00a76 (\"Offline-start\")",
+  "claim": "\"A run started with no reachable server accumulates WAL and syncs later \u2014 same machinery, no special mode\" is not achievable with the existing client WAL: run creation is never written to the WAL, so replayed ops reference a run the server has never seen and are discarded. The WAL also covers only 4 of the ~11 ingest ops.",
+  "evidence": "cairn/sdk/transport.py:150-151 `create_run` \u2014 no `self._wal.append(...)`. Same for `finish_run` (190-195), `set_tags` (197), `set_notes` (200), `attach_artifact` (206-212), `upload_source` (214-219) and all three registry ops (253-294). Only batch/params/logs/artifact are WAL'd. `_replay_wal_entry` even handles an `\"finish\"` op (transport.py:347-351) that nothing ever writes \u2014 dead code proving the gap. Server side, a batch for an unknown run raises `RunNotFound` (cairn/server/ingest_ops.py:118 `_require_run`), and the WAL ingester logs \"WAL batch for unknown run %s \u2014 skipping\" and drops it (cairn/server/wal_ingest.py:105-106). Contrast: the *local* WAL that S2 retires does log `create_run`/`finish`/`set_tags`/`set_notes`/`attach_artifact`/`source`/`artifact_meta`/`heartbeat` (cairn/sdk/local.py:133-140, 179-239).",
+  "suggestion": "S2 must state that the client WAL's op vocabulary is widened to the local WAL's full set (that vocabulary is already listed as a cairn-core deliverable in \u00a74, \"WAL op vocabulary\" \u2014 make S2 the stage that actually adopts it), with `create_run` as the mandatory first entry. Also drop the false \"no special mode\" framing: `Run.__init__` currently *requires* a successful `create_run` response for `run_id`/`project_id`/`url` (cairn/sdk/run.py:227-230), so an offline start needs client-side derivation of those three fields."
+ },
+ {
+  "id": "M-06",
+  "severity": "blocker",
+  "section": "\u00a76.1",
+  "claim": "The ephemeral-server ruling has no election protocol, so the common local case \u2014 several processes starting at once (DDP ranks, a parallel sweep, a notebook next to a training script) \u2014 races: every process sees \"no live advertisement\" inside the spawn window and every process spawns its own server. And whichever spawn takes `repo.lock` in mode=\"server\" makes `cairn ui` hard-exit with advice the user cannot follow.",
+  "evidence": "\u00a76.1 asserts only \"the first process becomes the server, later processes connect to it\" with no mechanism. Today's discovery is not atomic with the spawn: `_holder_is_live` reads `repo.lock` (cairn/sdk/local.py:51-55, 65-73) and `read_live_servers` prunes purely by pid liveness with no health probe (cairn/server/storage/datadir.py:231-257). `acquire_lock` is exclusive and raises on any live holder (datadir.py:145-161). `cairn ui` exits(1) when the holder's mode is \"server\": \"A `cairn server` is already running on this repo. Open its UI URL in your browser instead\" (cairn/cli.py:377-384) \u2014 but an ephemeral server binds a random loopback port and mounts no UI.",
+  "suggestion": "Specify the election: an atomic O_EXCL claim file (or reuse `acquire_lock` with a new mode, e.g. `\"embedded\"`) taken BEFORE binding, losers polling `servers.json` with a bounded timeout, advertisement written only after the port is bound and health-probed. Then say explicitly (a) which lock mode the ephemeral server takes, (b) what `cairn ui`/`cairn server` do when they find it \u2014 the answer must not be today's exit(1) \u2014 and (c) what happens to connected client processes when the spawning process exits mid-run."
+ },
+ {
+  "id": "M-07",
+  "severity": "blocker",
+  "section": "\u00a79 / \u00a76.1",
+  "claim": "\u00a79's live references resolve to a server URL derived from the client's transport base. Under server-only ingest, the blessed local workflow's base is \u00a76.1's `127.0.0.1:<ephemeral>` \u2014 so every reference authored locally bakes a URL that is dead the moment the spawning process exits and meaningless to any other viewer. The spec never says where a reference's durable base comes from.",
+  "evidence": "cairn/sdk/reader.py:237-243 (`DataRef.url` \u2192 `getattr(self.run._backend, \"server_url\")`) and reader.py:727-745 (`RunQuery.latest_url` \u2192 same). `_HttpBackend.server_url` is just the transport base (reader.py:1057, 1064). \u00a76.1 mandates \"bound to `127.0.0.1:<ephemeral>`\" with \"Lifetime = the spawning process\". \u00a79's premise is the opposite: \"view-time resolution by default\", \"the VIEWING side needs neither [package] \u2014 the report fetches urls\".",
+  "suggestion": "State the rule for reference bases explicitly: reference construction requires a *stable* server (reject or warn when the resolved base is an ephemeral loopback server \u2014 the existing `_LOCAL_ONLY_MSG` at cairn/sdk/query_urls.py:28-34 is the precedent), and document that `.get()` (bake) is the only supported reference mode against a `[local]` ephemeral server. Also give `cairn.Repo(url)` a base independent of the reading transport so a notebook can author references against a remote server it is not ingesting to."
+ },
+ {
+  "id": "M-08",
+  "severity": "blocker",
+  "section": "\u00a77 / \u00a79",
+  "claim": "The signed-URL ruling covers `/api/artifacts/{digest}` only, but \u00a79's entire reference contract hands cairn-plot a `/api/query?...` URL that a browser fetches directly. `/api/query` 302s to an unsigned `/api/artifacts/{digest}`, and a cross-origin `<img>/<video>` can carry no `Authorization` header \u2014 so on an auth-on server the live-reference feature has no working authentication path.",
+  "evidence": "cairn/server/routes/query.py:60-62 returns `RedirectResponse(url=f\"/api/artifacts/{art.digest}\", 302)`; the redirect target is a bare path with no signature. \u00a79: \"a url reference rides the descriptor as a plain https `src` ref into the Host API Tier-2 seam\". \u00a77: signed urls are \"Browser tags only\" and \"programmatic fetches (SDK, report runtime) keep Bearer headers\" \u2014 these two statements contradict each other for the same URL. CORS makes it worse: auth-on sets `allow_origins=[]` (cairn/server/app.py:159) and `allow_credentials=False` (app.py:160).",
+  "suggestion": "Extend the ruling's mechanics to the selector endpoint: define how `/api/query` itself is signed (the signature must cover the full canonicalized selector, since it is user-authored and dynamic) and require the 302 `Location` to carry a signature minted at redirect time with the same expiry. Alternatively state that live references are `format=json` + programmatic fetch only, and that `<img src>`-style direct reference consumption is unsupported against auth-on servers."
+ },
+ {
+  "id": "M-09",
+  "severity": "major",
+  "section": "\u00a77",
+  "claim": "\"Re-minted transparently by the UI's `artifactUrl` funnel near expiry\" is not implementable as described: `artifactUrl` is a synchronous pure string function used inline in JSX `src=` attributes across ~51 sites, while minting an HMAC signature requires a server round-trip. There is also no server signing secret in the codebase today.",
+  "evidence": "cairn/ui/src/api/client.ts:117 \u2014 `artifactUrl: (hash: string) => \\`/api/artifacts/${hash}\\``. 51 references across the app (`grep -rn artifactUrl cairn/ui/src | wc -l` \u2192 51). Auth stores only per-token hashes and ids, no server-wide secret (cairn/server/auth.py:95-117, 154-170); nothing persists a signing key across restarts.",
+  "suggestion": "Pick and write down one mechanism: (a) the server issues a short-lived per-session signing key so the client can compute signatures locally (say so, since it contradicts \"signed with a server secret\"); or (b) `artifactUrl` becomes async/suspense-backed and the spec budgets the ~51-site migration instead of the \"~5 sites\" figure in \u00a78. Also add \"persistent server signing secret (survives restart; rotation semantics)\" as explicit S3 work \u2014 a restart-generated secret invalidates every open report."
+ },
+ {
+  "id": "M-10",
+  "severity": "major",
+  "section": "\u00a73 / \u00a78",
+  "claim": "\"`artifactUrl` is the single formatter feeding ~30 consumers\" and \"All fetch bases + `artifactUrl` + the WS constructor take the base (~5 sites)\" are both wrong in ways that produce silent breakage on a Pages-hosted UI: at least two consumers bypass the funnel with hardcoded absolute paths, and ~12 consumers use the funnel for programmatic `fetch()` \u2014 crossing \u00a77's \"browser tags only\" line.",
+  "evidence": "Funnel bypasses: cairn/ui/src/components/TextViewerCard.tsx:59 \u2014 `fetch(\\`/api/artifacts/${current.artifact_hash}\\`)`; cairn/ui/src/embed-main.tsx:178 \u2014 `fetch(\\`/api/embed/specs/${sid}\\`)`. Programmatic use of the funnel: PluginCard.tsx:72,80; TableCard.tsx:100,120; HistogramCard.tsx:65; FigureInteractiveCard.tsx:122,325; MarkdownCard.tsx:100,195; TensorCard.tsx:115; HtmlCard.tsx:155. On a static host these relative paths resolve against the Pages origin and 404 with no error surface.",
+  "suggestion": "Make S4 open with a mechanical audit (an ESLint rule banning string-literal `/api/` outside the client module) rather than a site count, and split the \u00a77 rule by *consumer kind* (tag vs fetch) rather than by function, since the same funnel serves both."
+ },
+ {
+  "id": "M-11",
+  "severity": "major",
+  "section": "\u00a75 / \u00a710 S1",
+  "claim": "\"Predicates go server-side \u2026 `RunQuery.filter` compiles to query params instead of fetching 1000 rows and filtering in python \u2014 the silent-cap bug dies\" is not a drop-in: the server's predicate evaluator is also Python, over an unbounded table scan with per-run N+1 subqueries. Worse, `/api/runs`'s pagination and `total` are computed in SQL, and cannot be computed correctly once predicates are evaluated after the SQL LIMIT.",
+  "evidence": "`_OPERATORS` are Python lambdas (cairn/sdk/reader.py:527-546), imported verbatim by the server (cairn/server/query_resolver.py:32). `_load_candidates` issues `SELECT * FROM runs {where} ORDER BY created_at DESC` with NO LIMIT, then Python-filters each row (query_resolver.py:343-362); each predicate on `metrics.*`/params costs one extra query per run (query_resolver.py:288-306). `/api/runs` today applies `LIMIT ? OFFSET ?` in SQL and returns `total` from `SELECT COUNT(*)` under the same WHERE (cairn/server/routes/runs.py:81-89).",
+  "suggestion": "Say explicitly which operators get SQL translation (that is a rewrite of the lambda table into a SQL-fragment table, and it is the actual S1 deliverable), and define pagination semantics for predicates that cannot be pushed into SQL \u2014 e.g. a documented candidate cap with an explicit `truncated: true` flag rather than trading a silent 1000-row cap for a silent full scan."
+ },
+ {
+  "id": "M-12",
+  "severity": "major",
+  "section": "\u00a75 / \u00a710 S1",
+  "claim": "Merging the predicate grammar into `/api/runs` creates unresolved reserved-name collisions: the grammar treats any unknown root as a param lookup, so `limit`, `offset`, `project`, `status` (and on a selector endpoint also `run`, `tag`, `step`, `format`, `at`, `name`) become ambiguous between pagination/selector control and a user's hyperparameter of the same name.",
+  "evidence": "Grammar fallback: \"Default: treat field as a param key\" (cairn/sdk/reader.py:595-598) and the server twin (cairn/server/query_resolver.py:319-322). Existing control params on `/api/runs`: `project`, `status`, `limit`, `offset` (cairn/server/routes/runs.py:59-62). Concrete failure: a run logging `run.log_param(\"limit\", 32)` cannot be filtered by it \u2014 `?limit=32` is consumed as pagination and silently returns 32 rows.",
+  "suggestion": "Define a namespacing rule in cairn-core's grammar (the obvious one: control params are a closed reserved set, and predicates on colliding keys must be written `params__limit=32`), and add a conformance test for each reserved name so the rule is enforced rather than documented."
+ },
+ {
+  "id": "M-13",
+  "severity": "major",
+  "section": "\u00a75 / \u00a710 S0",
+  "claim": "S0's central promise \u2014 an OpenAPI contract generated from the FastAPI app, drift-gated, making the shipping drift bugs \"impossible\" \u2014 cannot cover the grammar S1 adds, because arbitrary `field[.sub][__op]=value` parameter names are not expressible in a generated OpenAPI schema. The surface most likely to drift is precisely the one excluded from the gate.",
+  "evidence": "\u00a75: \"OpenAPI generated from the FastAPI app + JSON schemas for wire models, committed and drift-gated\". The grammar's params are dynamic (cairn/server/query_resolver.py:153-171 `_parse_predicate`, parsed from `request.query_params.multi_items()` \u2014 cairn/server/routes/query.py:40), never declared as typed FastAPI `Query` parameters. Contrast the typed declarations that OpenAPI *can* see at cairn/server/routes/runs.py:59-62.",
+  "suggestion": "State that the grammar is contract-gated by a separate artifact \u2014 a committed JSON description of `_OPERATORS`, field roots, selectors and reserved names, generated from cairn-core and asserted by conformance tests in both directions \u2014 and that the OpenAPI gate covers only the fixed-shape routes. Otherwise S0's \"impossible\" is overclaimed."
+ },
+ {
+  "id": "M-14",
+  "severity": "major",
+  "section": "\u00a75 / \u00a74",
+  "claim": "\"python client, server, and UI share one canonical encoding\" is unimplementable as stated: cairn-core is a Python package and the UI is a TypeScript app that cannot import it. No TS encoder/decoder \u2014 or a generation step producing one \u2014 is scheduled in S0 or S1, yet S1 requires the UI to re-base RunSelector/SmartFilters onto the grammar.",
+  "evidence": "\u00a74 places the grammar in `packages/cairn-core` alongside Python `_OPERATORS`/`QuerySpec`; \u00a75 bullet 1 names the UI as a third consumer; \u00a710 S1: \"UI RunSelector/SmartFilters re-based\". Today the UI has zero grammar code and filters client-side over a 500-row pool (cairn/ui/src/api/hooks.ts:383-386, `RUN_SELECTOR_FETCH_LIMIT = 500`).",
+  "suggestion": "Add the TS side as an explicit S0 deliverable: either a hand-written `@cairn/grammar` TS package with a shared conformance-vector fixture (a committed JSON file of `{kwargs \u2192 url}` cases both implementations must reproduce), or code generation from the cairn-core schema. Name which, and put it in the same drift gate."
+ },
+ {
+  "id": "M-15",
+  "severity": "major",
+  "section": "\u00a710 S2",
+  "claim": "`(run_id, seq)` is the wrong key for two of the ops it must protect, and the spec never says where the dedupe check sits relative to side effects. Artifact uploads are not run-scoped and their WAL payload carries no run_id at all; log ingest is the one genuinely non-idempotent op and its duplication surface is the on-disk log file, which no DB-level dedupe protects.",
+  "evidence": "`append_artifact` writes `{data_b64|data_file, mime_type, metadata}` \u2014 no run_id (cairn/sdk/wal.py:89-109); replay POSTs to the un-scoped `/api/artifacts` (transport.py:340-346). `log_lines` has NO primary key or unique constraint (cairn/server/storage/migrations.py:98-105), so `INSERT OR IGNORE` (cairn/server/ingest_ops.py:159) is a no-op guard; and `insert_logs` unconditionally appends to `combined.log`/`stdout.log`/`stderr.log` (ingest_ops.py:160-174), duplicating on every replay. By contrast `sequences` (migrations.py:75), `params` (ingest_ops.py:107), `run_artifacts` (ingest_ops.py:215) and `artifacts` (ingest_ops.py:191) are already replay-safe.",
+  "suggestion": "Specify the dedupe as a server-side ledger keyed `(run_id, seq)` checked-and-inserted in the SAME transaction as the op's effects, before any filesystem write; give run-less ops a synthetic scope (they are already content-addressed \u2014 say so and exempt them explicitly); and add the missing `log_lines` unique key as S2 work. Also state the ledger's retention rule."
+ },
+ {
+  "id": "M-16",
+  "severity": "major",
+  "section": "\u00a710 S2",
+  "claim": "WAL sequence numbers restart at 1 whenever a run's WAL file is recreated, because `_seq` is derived from the file and `cleanup()` deletes it. A server that dedupes on `(run_id, seq)` will therefore silently DROP new data whenever a seq is reused for a run whose earlier ops were already ingested.",
+  "evidence": "cairn/sdk/wal.py:56 `self._seq = self._read_last_seq()`; wal.py:59-77 derives it purely from the on-disk file; wal.py:151-158 `cleanup()` unlinks the WAL and checkpoint. `Run.finish()` calls `cleanup()` only when nothing is pending, and merely `close()`s otherwise (cairn/sdk/run.py:618-627) \u2014 leaving a WAL file whose lifecycle relative to a later `WriteAheadLog(run_id)` on the same run is unspecified.",
+  "suggestion": "Make the idempotency key `(run_id, wal_epoch, seq)` where `wal_epoch` is a random id minted at WAL creation and persisted in the WAL header, or forbid seq reuse by persisting the high-water seq independently of the log file. Either way, state the invariant the server is allowed to rely on."
+ },
+ {
+  "id": "M-17",
+  "severity": "major",
+  "section": "\u00a76.1",
+  "claim": "\"Auth disabled on loopback (same-user semantics, as the direct-DB mode had)\" is a false equivalence with a real security consequence: the current auth-off code path also sets CORS `allow_origins=[\"*\"]`, so an unauthenticated ephemeral server would let any web page the user visits read, write and delete their experiment data. The direct-DB mode it is compared to had no network surface at all.",
+  "evidence": "cairn/server/app.py:159 \u2014 `allow_origins=[] if auth_enabled else [\"*\"]`. \u00a76.1: \"auth disabled on loopback (same-user semantics, as the direct-DB mode had)\". The CLI already treats auth-off-plus-network as dangerous enough to warn about (cairn/cli.py:205-210).",
+  "suggestion": "Specify the ephemeral server's posture concretely: `allow_origins=[]` regardless of auth mode, bind strictly to 127.0.0.1, and either a per-spawn random bearer token written into `servers.json` (readable only by the same user) or an `Origin`/`Sec-Fetch-Site` rejection rule. Drop the \"same as direct-DB\" framing \u2014 it is what makes the weaker posture look free."
+ },
+ {
+  "id": "M-18",
+  "severity": "major",
+  "section": "\u00a710 S4/S5",
+  "claim": "S4 ships the static Pages UI, but S5 is where \"version handshake live\" appears. The spec itself calls a Pages-fresh UI against a lagging user server \"the normal case, not the edge case\" \u2014 so the plan deliberately ships that normal case unguarded for a whole stage.",
+  "evidence": "\u00a710 S4: \"Static cairn-ui: base/basename/404 fallback; embed/plot as files; Pages CI deploy\u2026\". \u00a710 S5: \"\u2026version handshake live.\" \u00a75: \"`/api/health` gains `{api_version, min_client}` for the version handshake (a GitHub-Pages-fresh UI vs lagging user servers is the normal case, not the edge case)\". `/api/health` today returns only `{status, version, uptime_sec}` (cairn/server/routes/health.py:23-31).",
+  "suggestion": "Move `{api_version, min_client}` on `/api/health` into S0 (it is a pure additive field, no behavior change) and the UI's handshake gate into S4, so the first public deploy can refuse or degrade against an incompatible server instead of failing at a random endpoint."
+ },
+ {
+  "id": "M-19",
+  "severity": "major",
+  "section": "\u00a78",
+  "claim": "\"`/embed/card` + `/plot` become `embed.html`/`plot.html` file URLs (\u2026 the in-memory EmbedSpecStore stays a server concern)\" walks straight into a security case the code itself documents as deferred: a Pages-hosted `embed.html` reading specs from a remote server IS cross-origin embedding, which the store's own docstring says requires an unguessable capability token and an origin allowlist before it is safe.",
+  "evidence": "cairn/server/embed_specs.py:23-26: \"TODO(remote-embed): cross-origin embedding will need each `sid` to carry an unguessable capability token (so a leaked short `sid` alone can't be read from another origin) plus a `--embed-origins` CORS allowlist. Deferred to a later security-reviewed follow-up; this store is LOCAL / SAME-ORIGIN only.\" The sid is a 16-hex-char content hash (embed_specs.py:58-62). The embed entry fetches it with a relative path (cairn/ui/src/embed-main.tsx:178).",
+  "suggestion": "Either fold the capability-token + `--embed-origins` work into S4 as a named deliverable, or state that `/embed/card` remains a server-served, same-origin-only route and that the Pages build ships without the embed entry. The current one-line treatment reads as if this were a build-config change."
+ },
+ {
+  "id": "M-20",
+  "severity": "major",
+  "section": "\u00a74 / \u00a710 S5",
+  "claim": "The package inventory has no home for roughly 1100 lines of exported public API \u2014 the `cairn.plot` / report / card / element / plugin surface. Some of it cannot live in cairn-track under the stated rules, because it depends on both server storage and a server route.",
+  "evidence": "\u00a74 lists cairn-track as \"Run (write) + Reader (read), Transport + client WAL, capture/, handlers/, discovery, `cairn` CLI client commands\" \u2014 nothing else. Unassigned: cairn/plot.py (300 lines, exported as `cairn.plot`), cairn/sdk/elements.py (275), cairn/sdk/card_spec.py (200), cairn/sdk/plugins.py (233), cairn/sdk/report.py (79), plus plot_components/plot_elements/plot_report/plot_spec. `CardElement` imports server storage (cairn/sdk/elements.py:185 `from ..server.storage.datadir import read_live_servers`) and renders through the server's `/embed/card` route (cairn/plot.py:19-21, 193). `cairn/__init__.py:109-142` exports ~25 of these names publicly.",
+  "suggestion": "Add an explicit disposition table to \u00a74: for each of those modules, target package and any API break. In particular decide `read_live_servers`' home \u2014 \u00a76.1's ephemeral-server discovery needs it in cairn-track, so it is a cairn-core candidate \u2014 and state whether `CardElement`/`cairn.plot.*` moves to a `cairn-track[cards]` extra, to cairn-server, or is retired with the cards feature."
+ },
+ {
+  "id": "M-21",
+  "severity": "major",
+  "section": "\u00a74",
+  "claim": "\"Depends on cairn-core + httpx ONLY \u2014 no FastAPI, no sqlite, no server imports\" is unachievable for the contents \u00a74 itself assigns to cairn-track. `capture/` and `handlers/` need numpy, pillow, zstandard, psutil and pynvml; the CLI client commands need click; and today's cairn-track even depends on cairn-plot.",
+  "evidence": "pyproject.toml:20-36 \u2014 cairn-track's current runtime deps include `cairn-plot`, `zstandard`, `pillow`, `numpy`, `click`, `platformdirs`, `psutil`, `pynvml` alongside fastapi/uvicorn/httpx. `LocalTransport`'s liveness check uses psutil (cairn/sdk/local.py:27), `read_live_servers` uses psutil (cairn/server/storage/datadir.py:255), source capture uses zstandard (cairn/sdk/transport.py:217 `tree.tar.zst`).",
+  "suggestion": "Rewrite the constraint as what it actually means \u2014 \"no FastAPI/uvicorn/sqlite3 and no cairn-server import\" \u2014 and list the real dependency set. Then say whether the media/array deps stay required or move behind the existing `[media]` extra, since \"pure HTTP client\" implies a slimness the handler stack does not have."
+ },
+ {
+  "id": "M-22",
+  "severity": "major",
+  "section": "\u00a711.3",
+  "claim": "\"`cairn ui` and `cairn server` keep working exactly as today\" is untrue across the upgrade boundary: the `cairn` console script is currently provided by the `cairn-track` wheel, and the ruling moves it to a new `cairn-cli` wheel. Every existing user who upgrades cairn-track loses the `cairn` command with no migration path specified.",
+  "evidence": "pyproject.toml:1 `name = \"cairn-track\"` and pyproject.toml:78-79 `[project.scripts] cairn = \"cairn.cli:main\"`. \u00a711.3: \"`cairn-track` keeps today's pip name (client package, **no CLI**); \u2026 a NEW `cairn-cli` wheel owns the `cairn` entry point\".",
+  "suggestion": "Add the transition to S5: one release where cairn-track declares a dependency on (or an extra for) cairn-cli, or ships a stub `cairn` entry point that prints the install hint. Also decide where server-side admin commands land \u2014 `cairn token create/list/revoke` opens the DB directly (cairn/cli.py:742-750) and so requires the `[server]` extra, which the \u00a74 sketch (\"client commands (list/ping/sync/login/\u2026)\") does not account for."
+ },
+ {
+  "id": "M-23",
+  "severity": "minor",
+  "section": "\u00a77 / \u00a78 vs \u00a711.4",
+  "claim": "Two \u00a77/\u00a78 work items target the plugin subsystem that \u00a711.4 rules DROPPED, and the drop itself has unstated consequences the stages never absorb.",
+  "evidence": "\u00a77 final bullet: \"The plugin WebSocket authenticates by token\u2026\"; \u00a78 counts \"the WS constructor\" among the ~5 endpoint-base sites. The only WebSocket in the app is the plugin card's (cairn/ui/src/components/PluginCard.tsx:269, hardcoding `window.location.host`); `grep -rn \"new WebSocket\" cairn/ui/src` returns that one hit. Meanwhile the drop removes `JSPlugin`/`PythonPlugin`/`ServerPlugin`/`WindowPlugin` from the public API (cairn/__init__.py:135-139) plus cairn/sdk/plugins.py (233 lines) and cairn/server/routes/plugin_ws.py (551) + plugin_webrtc.py (152), and leaves saved comparisons containing plugin cards with no defined rendering behavior.",
+  "suggestion": "Delete the WS bullets from \u00a77/\u00a78 (or requalify them as deferred with the plugin system), and add a one-line S4 item: what a plugin card in a stored comparison renders as, and whether the plugin exports are removed or kept as raising stubs for one release."
+ },
+ {
+  "id": "M-24",
+  "severity": "minor",
+  "section": "\u00a710 S2",
+  "claim": "Two public read APIs die quietly with `_LocalBackend` and are named nowhere in the spec: ZIP-archive reading and local artifact paths.",
+  "evidence": "`Reader(repo=\"run.zip\")` routes through `_load_zip_to_tempdir` \u2192 `_LocalBackend` (cairn/sdk/reader.py:1391-1394 and 1201-1216, which also imports server storage \u2014 an sdk\u2192server import S2's \"imports go to zero\" must account for). `Run.artifact_path()` returns a real filesystem path only on the local backend (reader.py:454-461; `_HttpBackend.get_artifact_path` returns `None` \u2014 reader.py:1142-1143), so after S2 it returns `None` for every caller, including the ephemeral-server \"local\" workflow.",
+  "suggestion": "Add both to S2's checklist with a decision: re-implement ZIP reading as a server-side import (`/api/import` already exists \u2014 cairn/server/routes/import_export.py) that the ephemeral server ingests into a temp data dir, and either delete `artifact_path()` or redefine it as \"downloads to the reader cache and returns that path\"."
+ },
+ {
+  "id": "M-25",
+  "severity": "minor",
+  "section": "\u00a76.1 / \u00a710 S1",
+  "claim": "Two smaller specification gaps: the ephemeral-server trigger and its error text do not match the code's configuration vocabulary, and the new selector endpoint inherits an inconsistency with the reaper-at-list-time behavior.",
+  "evidence": "(a) \u00a76.1's error message says \"point `CAIRN_SERVER` at one\", but the env var is `CAIRN_REPO` (cairn/config.py:142, 189); no `CAIRN_SERVER` exists. (b) The trigger says `resolve_target()` \"yields the local default\", but `resolve_target` tags ANY non-`cairn://` string as `kind=\"local\"` (cairn/config.py:119-128, 185-196) \u2014 so whether `Run(repo=\"/mnt/shared/.cairn\")` spawns a server is undefined. (c) `_reap_stale_runs` runs only inside `GET /api/runs` (cairn/server/routes/runs.py:68); a `/api/runs/select` built on `query_resolver.resolve_run_ids` would not reap, so `status=running` predicates and `latest` selectors would disagree between the two endpoints.",
+  "suggestion": "(a) Use `CAIRN_REPO` or state that a new `CAIRN_SERVER` var is being introduced and how it interacts with `CAIRN_REPO`. (b) Say whether the spawn is default-path-only or any local path. (c) Make reaping a shared dependency invoked by every run-selecting endpoint (or move it to a background task), and say so in S1."
+ },
+ {
+  "id": "G-1",
+  "severity": "blocker",
+  "section": "\u00a76 (Ingest: server-only + client WAL) \u2014 \"Offline-start\"",
+  "claim": "\u00a76 claims \"a run started with no reachable server accumulates WAL and syncs later (`cairn sync` / next run) \u2014 same machinery, no special mode.\" This is not the existing machinery; it is impossible with today's code and the spec budgets zero work for it.",
+  "evidence": "`Run.__init__` calls `self._transport.create_run(create_body)` unguarded (cairn/sdk/run.py:230), which goes through `Transport.post_json` \u2192 `_request` \u2192 `resp.raise_for_status()` (cairn/sdk/transport.py:110,116,150-151). No WAL exists at that point: the WAL is only constructed *after* create succeeds, keyed on the SERVER-returned id (`self._run_id = resp[\"run_id\"]`, run.py:231; `WriteAheadLog(self._run_id)`, run.py:235). A client-side id is generated (`client_run_id = secrets.token_hex(16)`, run.py:206) but discarded. For `cairn://` targets `_probe_server` also runs first (run.py:184). So with no server: constructor raises, no run, no WAL, nothing to sync. `create_run` is also never a WAL op (`_replay_wal_entry` handles only batch/params/logs/artifact/finish, transport.py:317-353).",
+  "suggestion": "State offline-start as NEW work and specify it: adopt the client-generated run id as authoritative, add a `create_run` WAL op, make `Run.__init__` non-fatal on an unreachable target, and define what `run.url`/`run_id` mean before the server has ever seen the run. Or drop the \"same machinery, no special mode\" claim."
+ },
+ {
+  "id": "G-2",
+  "severity": "blocker",
+  "section": "\u00a73 (\"Ingest today = three modes\") and \u00a76 (\"Kept and promoted\")",
+  "claim": "\u00a73 states `drain_wal()` replay is \"exposed as `cairn sync`\", and \u00a76 builds the whole durability story on \"`cairn sync` replays after process death\". `cairn sync` cannot replay the client WAL today, and no code anywhere discovers orphaned client WAL files.",
+  "evidence": "`sync_cmd` builds its transport via `_client()` = `Transport(_config.resolve_server())` with no `wal=` argument (cairn/cli.py:443-444, 691-702), so `Transport._wal is None` (transport.py:74) and `drain_wal()` returns 0 immediately (`if not self._wal or not self._wal.has_pending: return 0`, transport.py:302-305). Worse, `sync_cmd` early-returns \"no spill to sync\" when `default_spill_dir()` is missing (cli.py:695-698) \u2014 that is `user_cache_dir(\"cairn\")/pending` (transport.py:30-31), a *different* directory from the WAL's `user_cache_dir(\"cairn\")/wal` (wal.py:36-37). The only WAL-scanning code in the tree is `cairn/server/wal_ingest.py:311-316`, which scans the repo-dir `.cairn/wals/` \u2014 i.e. exactly the `local_wal` mode \u00a76 retires. Nothing reads `default_wal_dir()` except `WriteAheadLog` itself.",
+  "suggestion": "Reclassify cross-process WAL recovery as new work in \u00a76/S2: a WAL-dir scanner that enumerates `{run_id}.wal.jsonl`, reconstructs a `WriteAheadLog` per orphan, resolves the target server, and drains \u2014 plus a policy for WALs whose run was never created server-side (see G-1) and for cleanup of `.artifact.N.bin` spill files."
+ },
+ {
+  "id": "G-3",
+  "severity": "blocker",
+  "section": "\u00a76.1 (ephemeral local server, RULING) \u2014 \"Trigger\"",
+  "claim": "\u00a76.1 asserts \"the existing lock/advertisement machinery is the substrate \u2014 `repo.lock` + `servers.json` already let a second process discover the live server and upgrade to HTTP \u2026 the first process becomes the server, later processes connect to it.\" No SDK process ever becomes a lock holder today, and `servers.json` plays no part in the upgrade path, so the load-bearing half of the ruling's mechanism does not exist.",
+  "evidence": "`acquire_lock` is called from exactly two places, both in the CLI: `cairn server` (cairn/cli.py:224) and `cairn ui` (cli.py:375). `LocalTransport` only *reads* the lock and never acquires it (cairn/sdk/local.py:62-73), and it raises `_RepoServedByOtherError` only when `holder.get(\"mode\") == \"server\"` \u2014 a `cairn ui` holder (mode `\"ui\"`) is silently ignored. `add_live_server` is called once, by `cairn ui` (cli.py:399); `cairn server` never advertises. `servers.json` is read only by `read_live_servers` for notebook card rendering (cairn/sdk/elements.py:185, datadir.py:234-259) \u2014 never by `Run`'s transport resolution. `acquire_lock` is strictly exclusive against any live pid (datadir.py:153-158), so two concurrent training processes racing to spawn need arbitration that does not exist.",
+  "suggestion": "Spell out the new mechanics: which lock mode an SDK-spawned server takes, how the spawn race is arbitrated (create-exclusive lock then bind, retry-and-connect on EEXIST), who advertises to `servers.json`, and \u2014 critically \u2014 what a client does when the spawning process exits while it is still writing (server re-election / re-resolution loop). \"Lifetime = the spawning process\" plus \"the client WAL covers crashes\" does not cover a *peer* process whose server URL just died."
+ },
+ {
+  "id": "G-4",
+  "severity": "blocker",
+  "section": "\u00a77 (Artifact URLs, RULING) + \u00a78 (\"~5 sites\")",
+  "claim": "\u00a77's \"re-minted transparently by the UI's `artifactUrl` funnel near expiry\" is not implementable through today's funnel: `artifactUrl` is a synchronous pure function and one of its consumers is a cairn-plot API that is typed synchronous. Minting requires a server round-trip, i.e. async.",
+  "evidence": "`artifactUrl: (hash: string) => \\`/api/artifacts/${hash}\\`` (cairn/cairn/ui/src/api/client.ts:117). It is consumed inline in JSX/`fetch` at 51 sites across 20 files, and is passed as the callback to cairn-plot's `createEndpointDataSource(artifactUrl: (hash: string) => string): DataSource` (vendor/cairn-plot/ui/src/lib/cairn-plot/viewport/data-sources.ts:99) from four card components (viewport-registry.tsx:61, MeshVisualCard.tsx:61, VolumeVisualCard.tsx:58, PointCloudVisualCard.tsx:78). Only 10 of the 51 uses are actually `src=`/`href=` browser tags; the rest are programmatic `fetch()`/`downloadArtifact()` calls, contradicting \u00a73's \"single formatter feeding ~30 `<img>/<video>/href` consumers\".",
+  "suggestion": "Specify the minting model concretely: either (a) hand the browser a single long-lived per-session signing capability so `artifactUrl` stays sync and pure, or (b) declare that a batch/prefetch mint runs on connect and refresh, with `artifactUrl` reading a cached, non-expired signature; and state that the cairn-plot `DataSource` seam must accept an async URL resolver (a change to the companion Host API spec)."
+ },
+ {
+  "id": "G-5",
+  "severity": "blocker",
+  "section": "\u00a77 (signed artifact URLs) \u00d7 \u00a79 (references resolve to a simple URL)",
+  "claim": "The two rulings collide unhandled: a live reference URL is `/api/query?...`, which 302-redirects to a *bare, unsigned* `/api/artifacts/{digest}`. Under \u00a77's regime that redirect target is auth-gated, so every `<img src>`/`<video src>` pointed at a live reference fails.",
+  "evidence": "`RedirectResponse(url=f\"/api/artifacts/{art.digest}\", status_code=302, ...)` \u2014 no signature, no query string carried over (cairn/server/routes/query.py:60-62). `artifacts.router` is registered with `dependencies=[Depends(require(\"read\"))]` (cairn/server/app.py:186-200), so an unauthenticated browser-tag fetch of the redirect target 401s. \u00a79 explicitly says a reference \"rides the descriptor as a plain https `src` ref\" and \u00a77 says browser tags cannot carry headers.",
+  "suggestion": "Extend the signing rule to `/api/query` itself: accept `sig`/`exp` on the query endpoint and propagate a freshly-minted signature onto the 302 `Location`. Then say what `exp` on the redirect means relative to `exp` on the incoming query URL, and how a report authored months earlier obtains a signature at view time."
+ },
+ {
+  "id": "G-6",
+  "severity": "major",
+  "section": "\u00a74 (dependency rules) \u00d7 \u00a76.1 (mechanism)",
+  "claim": "\u00a74's lint-enforced \"No `track \u2194 server` imports in either direction\" is incompatible with \u00a76.1's stated trigger mechanism, and cairn-core as scoped in \u00a74 has no home for the pieces \u00a76.1 needs.",
+  "evidence": "The lock/advertisement layer lives in the server package: `from ..server.storage.datadir import DataDir, RepoLockedError` (cairn/sdk/run.py:41) and `from ..server.storage.datadir import read_live_servers` (cairn/sdk/elements.py:185). \u00a76.1 keeps both as the resolver's trigger. \u00a74 defines cairn-core as \"query grammar (`_OPERATORS`, QuerySpec, URL encode/decode), wire models, WAL op vocabulary, API version\" \u2014 the datadir/lock/`servers.json` layer is not in that list, and it is inherently filesystem-and-process machinery, not a wire contract.",
+  "suggestion": "Either add a `discovery`/`datadir` module to cairn-core's charter (and say so), or state that cairn-track's local-target resolution reads `repo.lock`/`servers.json` as a *file format* it owns, with the format specified in cairn-core rather than importing server code."
+ },
+ {
+  "id": "G-7",
+  "severity": "major",
+  "section": "\u00a77 (WS token auth) + \u00a710 S3 \u00d7 \u00a711.4 (plugin system DROPPED)",
+  "claim": "\u00a77 and the S3 migration step specify token auth for \"the plugin WebSocket\", and \u00a78 counts \"the WS constructor\" among the ~5 endpoint-config sites \u2014 but \u00a711.4 rules the plugin system dropped, and the plugin WS is the only WebSocket that exists.",
+  "evidence": "The tree's only websocket route is `@router.websocket(\"/ws/plugin/{run_id}/{metric_name:path}\")` (cairn/server/routes/plugin_ws.py:356), and the only client constructor is `new WebSocket(\\`${protocol}//${window.location.host}/ws/plugin/...\\`)` in PluginCard.tsx:269. App wiring notes it \"gates itself (session cookie only, checked before accept())\" (cairn/server/app.py:206-210). Dropping plugins also removes the Pyodide/Plotly CDN deps \u00a78 asks to inventory (PluginCard.tsx:62,132-133).",
+  "suggestion": "Delete the WS-token-auth item from \u00a77 and S3, drop \"the WS constructor\" from \u00a78's site count (making it ~4), and move Pyodide/Plotly out of \u00a78's CDN inventory \u2014 or, if a WS is expected to survive for live-run streaming, name that new endpoint instead of the plugin one."
+ },
+ {
+  "id": "G-8",
+  "severity": "major",
+  "section": "\u00a73 (\"Contract drift already shipping\") + \u00a75 (conformance suite)",
+  "claim": "The enumeration of the five drift bugs is wrong on one item and the claim that a client-vs-live-server conformance suite \"would have caught all five\" is false for two of them.",
+  "evidence": "Client `list_artifact_versions` GETs `/api/artifact-families/{family_id}/versions` (cairn/sdk/reader.py:1179) and the server serves exactly that route (`@router.get(\"/artifact-families/{family_id}/versions\")` under `prefix=\"/api\"`, cairn/server/routes/artifact_registry.py:15,138) \u2014 \"versions\" is NOT drifted. The three real HTTP mismatches are resolve (client GET `/api/projects/{p}/artifact-families/resolve`, reader.py:1182, vs server POST `/api/projects/{p}/resolve-artifact-ref`, artifact_registry.py:226), inputs (`/input-artifacts` reader.py:1185 vs `/runs/{id}/inputs` artifact_registry.py:255) and outputs (`/output-artifacts` reader.py:1188 vs `/runs/{id}/outputs` artifact_registry.py:261). The other two are in-process `AttributeError`s, not wire drift: `artifact_registry_ops.resolve_artifact` (reader.py:1004) and `.get_lineage` (reader.py:1018) do not exist \u2014 the real names are `resolve_ref` (artifact_registry_ops.py:367) and `get_lineage_graph` (artifact_registry_ops.py:460).",
+  "suggestion": "Correct the enumeration to resolve/inputs/outputs + two `_LocalBackend` op-name errors, and drop the claim that the conformance suite covers the latter two (it does not \u2014 they are Python-attribute drift, killed only by S2's deletion of `_LocalBackend`). Add a note that S0's \"fix the five\" must also fix the ~6th, see G-17."
+ },
+ {
+  "id": "G-9",
+  "severity": "major",
+  "section": "\u00a73 (\"no drift by construction\") + \u00a75 (\"one encoder + DECODER\")",
+  "claim": "\"No drift by construction\" holds only for the operator *table*; the encoder is lossy for list-valued operators and the two sides coerce values differently, so filters silently round-trip to non-matches today. \u00a75's encoder/decoder is scoped to URL shape and never mentions value serialization.",
+  "evidence": "`_build_params` stringifies every filter value with `str(value)` (cairn/sdk/query_urls.py:62), and `RunQuery.latest_url` feeds its filters straight into it (reader.py:733-744). So `filter(status__in=[\"completed\",\"killed\"])` emits `status__in=%5B%27completed%27%2C+%27killed%27%5D`, while the server splits `in` values on commas: `coerced = [_coerce(v) for v in value.split(\",\")]` (cairn/server/query_resolver.py:165-166), yielding `[\"['completed'\", \" 'killed']\"]` \u2014 zero matches, no error. Separately the client compares native Python values (`_OPERATORS[op](actual, value)`, reader.py:691) while the server compares against `_coerce`d strings (query_resolver.py:240-253, 330).",
+  "suggestion": "Make cairn-core's grammar own value encoding as explicitly as it owns operators: a typed encode/decode pair per operator (list operators comma-joined with escaping, bools/None canonicalized), plus a round-trip property test in the conformance suite (`encode(decode(u)) == u`, `decode(encode(spec)) == spec`)."
+ },
+ {
+  "id": "G-10",
+  "severity": "major",
+  "section": "\u00a76 (\"`_LocalBackend` leaves cairn-track\") \u00d7 \u00a76.1 (scoped to `.cairn` dirs)",
+  "claim": "Retiring `_LocalBackend` also deletes the zip-archive read path, which \u00a76.1's ephemeral server does not cover (it spawns against a `.cairn` data dir, not an archive). A shipped feature disappears with no migration named.",
+  "evidence": "`Reader(repo=<something>.zip)` unpacks to a tempdir and constructs `_LocalBackend(repo_path)` (cairn/sdk/reader.py:1393-1397, `_load_zip_to_tempdir`); export/import of those archives is a server feature (cairn/server/routes/import_export.py, registered under the write-role loop in app.py:204-205). \u00a76.1 only describes spawning \"for the (defaulted) `.cairn` data dir\".",
+  "suggestion": "Say explicitly whether `Reader(\"run.zip\")` survives \u2014 e.g. the `[local]` extra unpacks the zip into a temp data dir and spawns the ephemeral server against it \u2014 or declare the zip-read path removed and point users at `cairn-server --data <unpacked>`."
+ },
+ {
+  "id": "G-11",
+  "severity": "major",
+  "section": "\u00a76.1 (\"Mechanism\") \u2014 auth disabled on loopback",
+  "claim": "\"auth disabled on loopback (same-user semantics, as the direct-DB mode had)\" is factually wrong about the security model: loopback TCP carries no user identity, so this is a privilege *widening* relative to direct-DB, not a preservation of it.",
+  "evidence": "Direct-DB access was gated by filesystem permissions on the `.cairn` tree (`DataDir.__init__` mkdirs, cairn/server/storage/datadir.py:52-60; lock file created 0o644 at datadir.py:139). The proposed replacement is `create_app(..., auth_enabled=False)` bound to `127.0.0.1:<ephemeral>` \u2014 and with `auth_enabled=False` CORS also opens to `allow_origins=[\"*\"]` (cairn/server/app.py:159). On a shared machine (a cluster login node is the exact target workload) any other local user can connect to that port and get unauthenticated read+write to another user's runs, and any web page the user visits can XHR the port.",
+  "suggestion": "Require the ephemeral server to mint a random per-process token, write it into the `repo.lock`/`servers.json` entry (readable only via the already-permission-checked data dir), and have connecting clients present it \u2014 keeping `auth_enabled=True`. Or bind to a Unix domain socket instead of loopback TCP."
+ },
+ {
+  "id": "G-12",
+  "severity": "major",
+  "section": "\u00a76 (\"Kept and promoted: the existing HTTP client WAL becomes THE durability story\")",
+  "claim": "The WAL being promoted to the durability story is not concurrency-safe, and its checkpoint scheme can silently mark unsent entries as sent. The spec adopts it as \"existing\" machinery without listing these as work.",
+  "evidence": "`WriteAheadLog.append` mutates `self._seq` and writes to a shared handle with no lock (cairn/sdk/wal.py:79-87), while metric batches are flushed from a daemon thread (`threading.Thread(target=self._run, name=\"cairn-metric-flush\", daemon=True)`, cairn/sdk/buffer.py:35-36) concurrently with main-thread artifact/param/log appends (transport.py:169,178,230). `checkpoint(seq)` overwrites a bare scalar (wal.py:118-120) and each op checkpoints its own seq on success (transport.py:158-159,172-173,181-182,245-246), so if seq 6 completes before seq 5 fails, the checkpoint reads 6 and `pending()` (`if seq <= cp: continue`, wal.py:135-137) drops seq 5 forever. `append_artifact` also names its spill file from `self._seq + 1` before the increment (wal.py:102) \u2014 two concurrent large artifacts collide on one filename.",
+  "suggestion": "Add to \u00a76/S2: a lock around append+fsync, a monotonic `checkpoint = max(existing, seq)` plus a per-entry acked set (or in-flight-window tracking) so out-of-order acks cannot skip, and allocate the spill filename from the same locked sequence bump."
+ },
+ {
+  "id": "G-13",
+  "severity": "major",
+  "section": "\u00a76 (\"every op is seq-numbered into the WAL before/with send\")",
+  "claim": "Several ops are not WAL'd today, so \"every op\" describes a target state, not existing machinery \u2014 and the gap has a user-visible consequence for the replay story the spec promises.",
+  "evidence": "`create_run` (transport.py:150-151), `finish_run` (transport.py:189-193), `set_tags` (transport.py:195-196) and `set_notes` (transport.py:198+) post directly with no `self._wal.append(...)`. The replay handler has a `\"finish\"` branch (transport.py:347-351) that is dead code \u2014 nothing ever appends a `finish` op (only occurrence of the string is that branch). Consequence: a process that dies with pending WAL and is later drained gets its metrics/logs/artifacts but is never finished; it stays `running` until `_reap_stale_runs` marks it stale, and that reaper is request-driven off `GET /api/runs` (cairn/server/routes/runs.py:19,22,68), not a background loop.",
+  "suggestion": "List the missing WAL ops (create/finish/tags/notes) as S2 work, and state whether a replayed `finish` should overwrite a reaper-assigned status."
+ },
+ {
+  "id": "G-14",
+  "severity": "major",
+  "section": "\u00a78 (\"`/embed/card` + `/plot` become `embed.html`/`plot.html` file URLs\")",
+  "claim": "This is described as a URL-shape change for \"the python emitters\", but the embed path is a cross-origin, authenticated, server-stateful flow once the UI moves off the server's origin \u2014 and the plot entry does not implement the `?sid=` mode at all.",
+  "evidence": "`CardElement.iframe_html` builds `src = f\"{server.rstrip('/')}/embed/card?sid={sid}\"` after POSTing the spec to the server (cairn/sdk/elements.py:88-91,232-248) with `sandbox=\"allow-scripts allow-same-origin\"`. The embed bundle then fetches the spec with a hardcoded *relative* path: `fetch(\\`/api/embed/specs/${sid}\\`)` (cairn/cairn/ui/src/embed-main.tsx:178). The spec store is per-app and in-memory (`app.state.embed_specs = EmbedSpecStore()`, cairn/server/app.py:146-149). The plot entry explicitly refuses the sid mode: `throw new Error(\"?sid= descriptor loading is not available yet (Phase C).\")` (vendor/cairn-plot/ui/src/plot-bootstrap.tsx:139). Note both `embed.html` and `plot.html` already exist as vite entries (cairn/cairn/ui/vite.config.ts:41-45) and are served from bytes read at startup (app.py:250-279), so \u00a73's \"`/embed/card` + `/plot` are server routes\" understates what is already static.",
+  "suggestion": "Specify the new embed URL shape end-to-end: `<ui-origin>/embed.html?endpoint=<server>&sid=<id>[&token=\u2026]`, the endpoint-aware fetch inside `embed-main.tsx`, CORS + auth on `/api/embed/specs/{sid}`, and the sandbox/token posture for a cross-origin iframe. Say whether the notebook `CardElement` fallback (no server) still applies when the UI origin and server origin differ."
+ },
+ {
+  "id": "G-15",
+  "severity": "major",
+  "section": "\u00a79 (\"Multi-run references \u2026 are likewise urls (`/api/runs/select`, `/api/compare`)\") vs \u00a711.5",
+  "claim": "\u00a79 presents `/api/compare` as an existing URL-addressable reference target; it is POST-only and therefore not a URL reference at all \u2014 and \u00a711.5 of the same document defers GET-ifying it \"indefinitely\". The two sections contradict each other.",
+  "evidence": "`@router.post(\"/compare\")` (cairn/server/routes/compare.py:21-22) \u2014 the only compare route. \u00a711.5: \"a future multi-run series url (GET-ified /api/compare feeding one chart) would cost cairn-plot nothing \u2026 deferrable indefinitely.\" `/api/runs/select` does not exist yet either (it is proposed in \u00a75).",
+  "suggestion": "Remove `/api/compare` from \u00a79's list of reference URLs and reference \u00a711.5's deferral there, or promote GET `/api/compare` into S1 with an explicit selector-to-query-params encoding."
+ },
+ {
+  "id": "G-16",
+  "severity": "major",
+  "section": "\u00a75 (\"the server twin `resolve_run_ids` already exists\"; \"the card-spec `QueryRunSelector` dialect is re-expressed over it\")",
+  "claim": "`resolve_run_ids` exists but implements the *weak fourth dialect*, not the `_OPERATORS` predicate grammar \u00a75 wants `/api/runs/select` to accept, and it is unrouted dead code. Separately, the weak dialect has three implementations, not one, so \"re-expressed\" is a three-site change.",
+  "evidence": "`resolve_run_ids(db, selector: QueryRunSelectorSpec, *, project)` takes only `mode: latest-n|newest-per-name`, `name_pattern` glob, all-of `tags`, `n` (cairn/server/query_resolver.py:455-509) \u2014 no predicates, no operators. Grepping the tree, `resolve_run_ids` has zero callers and no route registers it (cairn/server/routes/query.py imports only `parse_query_params`/`resolve`). The dialect's three implementations: `class QueryRunSelector` (cairn/sdk/card_spec.py:169-177), `interface QueryRunSelector` + `resolveRunSelectorFromRuns` (cairn/cairn/ui/src/lib/run-selector.ts:31-56,104-131), and the server port `_matches_name`/`_matches_tags`/`resolve_run_ids` (query_resolver.py:246-282,470). \u00a73's \"the grammar exists, in three mirrored places\" also omits `run-selector.ts`, which query_resolver.py:249 documents itself as a \"faithful port\" of.",
+  "suggestion": "Correct \u00a75 to say `resolve_run_ids` gives the selector *plumbing* but must be re-based onto the predicate grammar, and name all three sites of the weak dialect (plus the server's `_matches_name` glob semantics) as the re-expression surface."
+ },
+ {
+  "id": "G-17",
+  "severity": "major",
+  "section": "\u00a76.1 (\"install cairn-track[local] or point CAIRN_SERVER at one\") + \u00a711.6 (connect screen / `cairn ui --server`)",
+  "claim": "The spec's user-facing error message names an environment variable that does not exist, and the config-file key the CLI persists for a server URL is never read \u2014 a sixth shipping client/config drift of the same class \u00a73 enumerates, which the connect-screen/persistence design in \u00a711.6 will inherit.",
+  "evidence": "The only repo/server env var is `CAIRN_REPO` (cairn/config.py:189, 142, 147; `cairn://host:port` is parsed at config.py:129-131). There is no `CAIRN_SERVER` anywhere in the tree. Separately, `cairn configure --server` writes `existing[\"server\"] = server` (cairn/cli.py:715) and `cairn login --ssh` writes `existing[\"server\"] = server_url` (cli.py:907), but `resolve_target`/`resolve_server` only ever read `cfg[\"repo\"]` (config.py:149, 194) \u2014 so the persisted server URL has no effect on any subsequent command.",
+  "suggestion": "Fix the error text to `CAIRN_REPO=cairn://host:port`, and add the `server`-vs-`repo` config-key mismatch to S0's drift-bug list. Then state which key \u00a711.6's connect screen / `cairn ui --server` persistence writes and reads."
+ },
+ {
+  "id": "G-18",
+  "severity": "major",
+  "section": "\u00a79 (\"the RefStore's `contentKey` is the resolved DIGEST (302 target / envelope field) \u2014 free content identity\")",
+  "claim": "For the browser-tag consumption path \u00a79 itself blesses, the digest is not observable at all; for the programmatic path it is observable only under CORS conditions the spec does not require.",
+  "evidence": "An `<img src=\".../api/query?...\">` gives JavaScript no access to the redirect chain \u2014 there is no API to read the 302 `Location` or the final URL of an image load. For `fetch`, `response.url` after a cross-origin redirect requires the redirect *target* to also pass CORS; \u00a77 only adds `--allow-origin` in auth-on mode and the artifacts route currently exposes only `Content-Range`/`Content-Length`/`Accept-Ranges` (cairn/server/app.py:163). The `format=json` envelope returns a relative `\"url\": f\"/api/artifacts/{art.digest}\"` (cairn/server/routes/query.py:47-56), so obtaining the digest costs an extra authenticated round trip the tag path cannot make.",
+  "suggestion": "Either require `/api/query` to echo the digest in a CORS-exposed response header (e.g. `X-Cairn-Digest`, added to `expose_headers`) so a HEAD/GET can key the RefStore, or state that live URL references key the RefStore by the *reference URL* and only acquire a digest identity after an explicit `.pin()`/envelope fetch."
+ },
+ {
+  "id": "G-19",
+  "severity": "minor",
+  "section": "\u00a75 (\"the silent-cap bug dies\")",
+  "claim": "Moving predicates server-side relocates the cap rather than removing it: `/api/runs` enforces a hard `limit \u2264 1000` at the route, and the spec specifies no pagination for selector results.",
+  "evidence": "`limit: int = Query(default=50, ge=1, le=1000)` (cairn/server/routes/runs.py:61). Client-side, `RunQuery.list()` passes `limit=self._limit_n or 1000` (cairn/sdk/reader.py:682), so `.limit(5000)` already 422s today. Note also that `.limit(n)` is applied to the *fetch* before filtering (reader.py:682) and again after (reader.py:702-703), so `.limit(5).filter(...)` today filters within only 5 fetched rows \u2014 a second silent-truncation mode the spec does not mention.",
+  "suggestion": "State the pagination contract for `/api/runs` and `/api/runs/select` under the predicate grammar (cursor or offset, and whether `limit` is pre- or post-predicate), and note the `.limit()`-before-filter semantics change users will observe."
+ },
+ {
+  "id": "G-20",
+  "severity": "minor",
+  "section": "\u00a74 (\"Depends on cairn-core + httpx ONLY\") \u00d7 \u00a79 (\"cairn-plot depends on neither cairn-track nor the grammar, ever\")",
+  "claim": "The dependency graph omits the edge that exists today: cairn-track hard-depends on cairn-plot and registers types into it. \u00a79 only rules out the reverse edge, leaving the existing forward edge and its registration seam unaddressed.",
+  "evidence": "`dependencies = [\"cairn-plot\", \"fastapi\u2026\", \u2026]` in pyproject.toml:20-21 for `name = \"cairn-track\"` (pyproject.toml:2). `cairn/plot.py` re-exports the whole `cairn_plot` surface and wires `register_data_ref_type(DataRef)` (plot.py:34,47) plus `register_resolvers(...)` for table/pointcloud/mesh handlers (plot.py:34,58-90). So cairn-plot already has a pluggable notion of a cairn `DataRef` \u2014 which sits uneasily with \u00a79's \"no `cp.Repo`, no query assembly, no grammar, no pin logic in cairn-plot\". \u00a74's \"cairn-core + httpx ONLY\" is also contradicted by pillow/numpy/zstandard/click/platformdirs/psutil/pynvml (pyproject.toml:20-36).",
+  "suggestion": "Draw the `track \u2192 plot` edge in \u00a74's diagram and say what happens to `cairn/plot.py`'s registration shim under the split \u2014 specifically whether `register_data_ref_type` survives (a `DataRef` that stringifies to a URL would make it unnecessary) \u2014 and soften \"cairn-core + httpx ONLY\" to \"no server-side deps (no FastAPI, no uvicorn, no sqlite)\"."
+ },
+ {
+  "id": "G-21",
+  "severity": "minor",
+  "section": "\u00a710 (Migration plan)",
+  "claim": "Two ruled-in decisions have no step in the migration plan: the ephemeral local server (\u00a76.1) and dropping the plugin system (\u00a711.4). S2 removes the direct-DB paths those rulings replace, so the plan as written ships a regression at S2.",
+  "evidence": "S2 reads \"retire `LocalTransport`/`local_wal`/direct-DB reads\" with no counterpart step for spawning a loopback server; \u00a76.1's `[local]` extra is only mentioned in \u00a76.1 and \u00a711.1. S3 lists \"WS token auth\" for a subsystem \u00a711.4 drops (see G-7). Nothing in S0\u2013S6 removes `cairn/sdk/plugins.py`, `cairn/server/routes/plugin_ws.py`, `plugin_webrtc.py`, or `PluginCard.tsx`.",
+  "suggestion": "Add the ephemeral-server work into S2 (before or alongside the direct-DB retirement, so no release is left without a zero-setup path) and a plugin-removal step (S0 or S2), and delete \"WS token auth\" from S3."
+ },
+ {
+  "id": "G-22",
+  "severity": "minor",
+  "section": "\u00a78 (\"Degraded-offline behavior is already good \u2026 keep it\") + CDN inventory",
+  "claim": "The offline claim is contradicted by a hard CDN stylesheet dependency in all three HTML entries, which \u00a78 lists as merely \"inventoried\" \u2014 with plugins dropped (\u00a711.4), FontAwesome is the *only* remaining CDN dep and it affects every page, not an optional feature.",
+  "evidence": "`<link rel=\"stylesheet\" href=\"https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css\" \u2026>` appears at line 12 of cairn/cairn/ui/index.html, embed.html and plot.html. Pyodide/Plotly are confined to PluginCard.tsx:62,132-133, which \u00a711.4 removes.",
+  "suggestion": "Make vendoring FontAwesome (or swapping to a bundled icon set) an explicit S4 task rather than an \"inventory\" item, since \"documented as an online-only feature\" is not an option for the app chrome."
+ },
+ {
+  "id": "G-23",
+  "severity": "minor",
+  "section": "\u00a77 / \u00a711.2 (signed artifact URLs, RULING)",
+  "claim": "Two unstated consequences: no persistent server signing secret exists today, and hourly re-minting fights the immutable cache headers the artifact route deliberately sets \u2014 re-downloading large media on every expiry window.",
+  "evidence": "`cairn/server/auth.py` stores only *hashed* secrets (`hash_secret`, auth.py:76-78; tokens at 109-115, sessions at 195, OTPs at 254-257) and generates per-item random secrets (`generate_secret`, auth.py:81-82); there is no long-lived server key anywhere, so a restart would invalidate every outstanding signed URL. Meanwhile `/api/artifacts/{digest}` sets `_IMMUTABLE = \"public, max-age=31536000, immutable\"` (cairn/server/routes/artifacts.py:20-21,109) \u2014 a cache keyed on the full URL, so changing `sig`/`exp` produces a cache miss on content that never changed. \"Revoking the token invalidates its urls\" additionally requires a token-validity DB read on every artifact request, and cannot evict copies already in the browser cache.",
+  "suggestion": "Specify where the signing secret is persisted (data dir, 0600, generated on first start) and its rotation semantics; and decouple the cache key from the signature \u2014 e.g. sign a scope (`token_id` + digest-prefix or run) carried in a cookie/header-free `sig` that stays stable for its whole validity window, or move `sig`/`exp` out of the cache key via a `Vary`-able mechanism."
+ },
+ {
+  "id": "G-24",
+  "severity": "minor",
+  "section": "\u00a77 (\"SSH-key auth promoted to the primary path (exists today)\")",
+  "claim": "Promoting SSH-key auth to the primary path makes an external binary on the *server* a hard requirement of the primary login flow \u2014 currently an acceptable limitation for an opt-in path.",
+  "evidence": "`ssh_verify` shells out to `ssh-keygen -Y verify` and returns HTTP 501 when the binary is absent: `if ssh_keygen is None: raise HTTPException(status_code=501, detail=\"ssh-keygen not available on server\")` (cairn/server/routes/auth.py:131-138,166). Slim server containers routinely omit openssh-client. Keys are matched against an operator-managed `DATA_DIR/auth/authorized_keys` with a `role=<admin|write|read>` comment (cairn/server/auth.py:335,357-363).",
+  "suggestion": "Note the `ssh-keygen`-on-server requirement (and the operator-managed `authorized_keys` provisioning step) in \u00a77, and state the fallback when it is missing \u2014 Bearer tokens should remain a first-class, documented path rather than a CI/bot-only one."
+ }
+]
