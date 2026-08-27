@@ -5,6 +5,24 @@ ingest, UI data layer, card/type system) + the scrapped split spec's
 adversarial round (its salvage list is absorbed here). User rulings §2.
 Supersedes the salvage list in `2026-08-26-cairn-split-design.md`.
 
+> **2026-08-27 update — package split REVERTED.** A full implementation
+> of the 4-package layout (10 commits) was built, then reverted by user
+> direction after the WAL work turned out to be W&B's *accounting* on
+> cairn's old plumbing, not the log-first architecture. It is archived
+> on branch `refactor-split-archive` (c31741e7). What was kept and
+> ported back onto the monolith (commit 79b0087f): the R0 bug fixes
+> (WAL ack discipline, registry route drift, run.config(), log_artifact
+> contract, config server resolution, same-user local trust), the
+> server-agnostic invariant (server-owned query grammar in
+> `cairn/server/query_grammar.py` + `_operators.py`, reader mirror
+> pinned by `schema/query-vectors.json`; `cairn/server/` never imports
+> `cairn.sdk` — enforced by `tests/unit/test_package_boundaries.py`),
+> plugin-system removal, downsampling removal, and dead-endpoint
+> deletion. NOT ported: the package boundaries themselves, the card
+> manifest registry (Appendix A remains design-only), TypeHandler
+> v2/TrackedValue, the log-first ingest model, auth/TLS work,
+> EXR-always (blocked on an encoder dependency).
+
 Owner: cairn. Companion: cairn-plot Host API v4.2 (unaffected; the card
 manifest builds toward it).
 
