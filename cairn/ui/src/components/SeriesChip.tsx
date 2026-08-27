@@ -32,7 +32,7 @@ export interface SeriesRef {
    *  knows it (a card's own bottom-left viewport label always does — see
    *  `startViewportDrag`'s callers). Optional/absent for the plain
    *  per-run chip drag (`SeriesChip`'s own `onDragStart`) — that path stays
-   *  same-type only for this pass (see VisualContentCard's cross-type
+   *  same-type only (cross-type compare was dropped; see the media cards'
    *  wiring doc comment). */
   objectType?: string;
 }

@@ -30,8 +30,6 @@ export { useCompareReferenceMeta } from "./use-compare-reference-meta";
 // (`@cairn-plot/lib/cairn-plot/media-compare/OffscreenComparePanes`) to keep
 // `three` out of any core chunk. Types are safe to surface from the barrel.
 export type { OffscreenComparePanesProps, ComparePaneSource } from "@cairn-plot/lib/cairn-plot/media-compare";
-export { CrossTypeForeignFrame, hasForeignFrameBridge } from "./cross-type-frame";
-export type { ForeignFrameProps } from "./cross-type-frame";
 export { CompareSettingsPanel } from "./CompareSettingsPanel";
 export type { CompareSettingsPanelProps } from "./CompareSettingsPanel";
 export type { VisualCompareSettings } from "./visual-compare-settings";

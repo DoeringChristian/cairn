@@ -6,7 +6,7 @@ import { createContext, useContext, useId } from "react";
  * underlying framework-free pub/sub bus that actually carries the
  * position/target/zoom updates.
  *
- * WS-VCP fix 1 SCOPE CORRECTION: `VisualContentCard`'s "Sync 3D views"
+ * WS-VCP fix 1 SCOPE CORRECTION: the media cards' "Sync 3D views"
  * toggle now defaults to ON (see the four 3D `defaultXSettings()`
  * functions) — this file's ORIGINAL design (pre-WS-VCP) had every
  * sync-enabled 3D card mounted under one `CameraSyncContext` provider
@@ -48,7 +48,7 @@ export function useCameraSyncHasProvider(): boolean {
 /**
  * Resolves the live camera-sync group id for a 3D card — ALWAYS scoped to
  * THIS card instance (`useId()`), so a card's own panes (multi-run compare)
- * mirror each other's orbit/zoom/pan, but two different `VisualContentCard`
+ * mirror each other's orbit/zoom/pan, but two different media card
  * instances never sync with each other by default (WS-VCP fix 1 scope
  * correction — see this file's header comment). `useId()` returns a stable
  * value for the component instance's lifetime, so every pane of one card

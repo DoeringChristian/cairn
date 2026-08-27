@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { api } from "../api/client";
 import type { SequenceMeta } from "../api/types";
@@ -16,8 +16,6 @@ import {
   type ColormapName,
   type ViewportDataArgs,
   type ViewportDataResult,
-  type ViewportModule,
-  type ViewState,
 } from "@cairn-plot/lib/cairn-plot";
 import VolumeViewer, {
   type VolumeRenderMode,
@@ -33,18 +31,42 @@ import {
   type VolumeMeta,
   type VolumeViewportItem,
   type VolumeViewState,
-  type VolumeNativeMode,
 } from "@cairn-plot/lib/cairn-plot/viewport/volume-viewport";
 import type { DiffColormap } from "@cairn-plot/lib/cairn-plot/three/diff";
 import { resetScene3DViews, type Scene3DCameraMode, type Scene3DSyncOptions } from "@cairn-plot/lib/cairn-plot/three/use-scene3d";
 import type { ViewportPaneProps } from "@cairn-plot/lib/cairn-plot/viewport/types";
-import { useOffscreenSnapshot, type VisualCompareSettings } from "./card-kit";
+import { type VisualCompareSettings } from "./card-kit";
 import { OffscreenComparePanes } from "@cairn-plot/lib/cairn-plot/media-compare/OffscreenComparePanes";
-import type { ForeignFrameProps } from "./card-kit/cross-type-frame";
 import Select from "./settings/Select";
 import Slider from "./settings/Slider";
 import Toggle from "./settings/Toggle";
-import VisualContentCard from "./VisualContentCard";
+import { resolveCardHeight } from "../lib/card-settings";
+import { cardMinSize } from "./card-kit/card-min-sizes";
+import { useCardDrop } from "../lib/use-series-drop";
+import { downloadArtifact, artifactFilename } from "../lib/download";
+import {
+  useCardSeries,
+  useStepSlider,
+  useRunInfo,
+  useMediaReference,
+  useReferenceDrop,
+} from "./card-kit";
+import { seriesLabel, seriesKey } from "./card-kit/series-identity";
+import { useMediaSeriesData } from "./card-kit/use-media-series-data";
+import { usePaneResolution } from "./card-kit/use-pane-resolution";
+import { usePaneReferenceMeta } from "./card-kit/use-pane-reference-meta";
+import { ExternalBaselinePicker } from "./card-kit/ExternalBaselinePicker";
+import { migrateLegacyMode, Colorbar, COLORMAP_OPTIONS as DIFF_LUT_OPTIONS } from "@cairn-plot/lib/cairn-plot";
+import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
+import { useCameraSync } from "../lib/camera-sync";
+import AddToComparisonButton from "./AddToComparisonButton";
+import CardShell from "./CardShell";
+import { startViewportDrag, type SeriesRef } from "./SeriesChip";
+import SeriesChipStrip from "./SeriesChipStrip";
+import { useRunSelection, useRunSelectionHasProvider } from "../lib/use-run-selection";
+import RunSelectionPanel from "./RunSelectionPanel";
+import SettingsSection from "./settings/SettingsSection";
+import StepSlider from "./StepSlider";
 
 // ---------------------------------------------------------------------------
 // VolumeVisualCard — the volume object_type's APP-LAYER Viewport assembly +
@@ -102,53 +124,13 @@ function useVolumeData(args: ViewportDataArgs): ViewportDataResult<VolumeViewpor
 }
 
 // ---------------------------------------------------------------------------
-// VolumeForeignFrame — WS-VC6 cross-type bridge (mirrors `MeshForeignFrame`'s
-// doc comment exactly): renders ONE volume hash's viewer hidden, default
-// view (`defaultVolumeSettings`, hoisted below), purely to capture a single
-// offscreen snapshot for another (image) card's cross-type compare.
-// ---------------------------------------------------------------------------
-export function VolumeForeignFrame({ hash, metadata, onFrame }: ForeignFrameProps) {
-  const [blob] = useVolumeBlobs([hash]);
-  const meta = safeJsonParse<VolumeMeta>(metadata);
-  const snap = useOffscreenSnapshot();
-  const view = resolveVolumeViewConfig(defaultVolumeSettings() as VolumeFullSettings);
-
-  useEffect(() => {
-    if (snap.dataUrl) onFrame({ kind: "dataUrl", dataUrl: snap.dataUrl });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [snap.dataUrl]);
-
-  if (!blob?.data || !meta) return null;
-  return (
-    <VolumeViewer
-      data={blob.data}
-      shape={meta.shape}
-      spacing={meta.spacing}
-      origin={meta.origin}
-      vmin={meta.vmin}
-      vmax={meta.vmax}
-      mode={view.mode}
-      isovalue={view.isovalue}
-      colormap={view.colormap}
-      steps={view.steps}
-      clip={{ min: view.clipMin, max: view.clipMax }}
-      background={view.background}
-      showAxes={view.showAxes}
-      showPlanes={view.showPlanes}
-      cameraMode={view.cameraMode}
-      onFrame={snap.onFrame}
-    />
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Settings — VisualCompareSettings (shared) intersected with volume's own
 // fields. `compareMode`/`diffSubmode` are the OLD field names for what's now
 // `mode`/`nativeMode`/`diffMode` — read only through `migrateVolumeSettings`.
 //
 // NOTE: volume's render mode ("mip"/"iso") was persisted under the field name
 // `mode` in the pre-refactor VolumeCard, which COLLIDES with the shared
-// compare `mode` (MediaCompareModeKind) that VisualContentCard now owns. We
+// compare `mode` (MediaCompareModeKind) that the card body now owns. We
 // rename the render mode to `renderMode` here to avoid the collision, and
 // `migrateVolumeSettings` folds the legacy `mode` (if it held a render mode)
 // into `renderMode`.
@@ -208,9 +190,9 @@ function migrateVolumeSettings(settings: VolumeFullSettings): VolumeFullSettings
   let next = settings;
   // The pre-refactor VolumeCard persisted its render mode ("mip"/"iso") under
   // the field name `mode`, which now collides with the shared compare `mode`
-  // (MediaCompareModeKind) that VisualContentCard owns. When the stored
+  // (MediaCompareModeKind) that the card body owns. When the stored
   // `mode` holds a render mode, fold it into `renderMode` and CLEAR `mode` so
-  // VisualContentCard doesn't misread "mip"/"iso" as a compare mode. (When it
+  // the card body doesn't misread "mip"/"iso" as a compare mode. (When it
   // holds a genuine compare kind, leave it untouched.)
   if (typeof raw.mode === "string" && RENDER_MODES.has(raw.mode)) {
     next = { ...next, renderMode: raw.mode as VolumeRenderMode, mode: undefined };
@@ -253,14 +235,11 @@ function VolumeViewportPane(
     onDragStart,
     splitPosition,
     onSplitPositionChange,
-    crossTypeReferenceUrl,
-    crossTypeAlignForDiff,
     colorRange,
   } = props;
   const sync: Scene3DSyncOptions | null = cameraSyncGroupId ? { groupId: cameraSyncGroupId } : null;
   const view = resolveVolumeViewConfig(settings);
-  const hasCrossTypeRef = crossTypeReferenceUrl != null;
-  const effectiveMode: MediaCompareModeKind = reference == null && !hasCrossTypeRef ? "normal" : mode;
+  const effectiveMode: MediaCompareModeKind = reference == null ? "normal" : mode;
 
   // Renders THIS pane's own (foreground) volume live — shared by the
   // same-type split/blend/diff branch below AND the WS-VC6 cross-type
@@ -291,30 +270,6 @@ function VolumeViewportPane(
       />
     );
   };
-
-  if (hasCrossTypeRef && effectiveMode !== "normal") {
-    if (!data) {
-      return (
-        <div className="flex h-full w-full items-center justify-center text-sm text-fg-muted motion-safe:animate-pulse">
-          loading…
-        </div>
-      );
-    }
-    return (
-      <OffscreenComparePanes
-        mode={effectiveMode as Extract<MediaCompareModeKind, "split" | "diff">}
-        syncGroupId={cameraSyncGroupId ?? null}
-        primary={{ kind: "live", render: renderVolumeLive }}
-        reference={{ kind: "frame", frameSource: { kind: "url", url: crossTypeReferenceUrl! } }}
-        diffSubmode={diffMode}
-        colormap={(settings.diffColormap ?? "turbo") as Colormap}
-        splitPosition={splitPosition ?? 0.5}
-        onSplitPositionChange={onSplitPositionChange ?? (() => {})}
-        primaryLabel={label}
-        alignForDiff={crossTypeAlignForDiff}
-      />
-    );
-  }
 
   if (isCoreCompareMode(effectiveMode) && (effectiveMode === "split" || effectiveMode === "diff")) {
     if (!data || !reference) {
@@ -383,7 +338,7 @@ function VolumeViewportPane(
 // SettingsControls — per-type controls injected into the shared settings
 // panel (render mode, isovalue, colormap, quality, background, 6-slider clip
 // box, diff colormap). "Sync 3D views" is rendered centrally by
-// VisualContentCard. The pre-refactor VolumeCard also had a deliberately
+// the media shell. The pre-refactor VolumeCard also had a deliberately
 // inert PropertySelector (volume has a single implicit scalar field, no named
 // properties — see cairn/sdk/handlers/volume.py); with no properties to
 // select it was always a no-op, so it is dropped here rather than shown inert.
@@ -502,16 +457,12 @@ function VolumeSettingsControls({
         <Slider label="Clip Z max" value={settings.clipMax[2]} onChange={(v) => setClipMax(2, v)} min={0} max={1} step={0.01} format={(v) => v.toFixed(2)} />
       </div>
       {/* "Diff colormap" (red-green/viridis) now lives in the shared
-          Compare section (VisualContentCard.tsx, WS-MFIX Bug 2) — rendering
+          Compare section of the card body (WS-MFIX Bug 2) — rendering
           it here too would duplicate the control in the same settings
           panel. */}
     </>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Module assembly + the lazy-loaded card component.
-// ---------------------------------------------------------------------------
 
 const DEFAULT_VIEW: VolumeViewState = {
   kind: "camera3d",
@@ -520,26 +471,6 @@ const DEFAULT_VIEW: VolumeViewState = {
   zoom: 1,
 };
 
-export const volumeViewportModule: ViewportModule<
-  VolumeViewportItem,
-  VolumeViewState,
-  VolumeFullSettings,
-  VolumeNativeMode
-> = {
-  objectType: "volume",
-  capabilities: volumeViewportCapabilities,
-  useData: useVolumeData,
-  defaultSettings: defaultVolumeSettings,
-  migrateSettings: migrateVolumeSettings,
-  viewFromSettings: () => DEFAULT_VIEW,
-  viewToSettingsPatch: () => ({}),
-  defaultView: () => DEFAULT_VIEW,
-  onResetView: (container) => resetScene3DViews(container),
-  Pane: VolumeViewportPane,
-  SettingsControls: VolumeSettingsControls,
-  nativeDiff: { render: VolumeNativeDiffPane },
-  activeColorbar: volumeActiveColorbar,
-};
 
 interface VolumeVisualCardProps {
   runId: string;
@@ -551,16 +482,601 @@ interface VolumeVisualCardProps {
   autoOpenSettings?: boolean;
 }
 
+const OBJECT_TYPE = "volume";
+
+const MODE_LABELS: Record<string, string> = {
+  normal: "Normal",
+  // Aligned to cairn-plot's own compare-mode menu wording (split -> "Slide").
+  split: "Slide",
+  diff: "Diff",
+};
+
+const PIXEL_DIFF_TYPE_VALUES = new Set(["signed", "absolute", "squared", "relative_signed", "relative_absolute", "relative_squared"]);
+
 /**
- * The lazy-loading boundary for volume (WS-VC5): `CardRenderer.tsx`
- * dynamically imports THIS file instead of the deleted `VolumeCard.tsx`, so
- * `three` + the raymarch shader stay out of every other card's bundle.
+ * The volume card — an individual file (the shared media shell was
+ * dissolved into per-kind cards; this file owns its own composition of the
+ * card-kit hooks). Also the lazy-loading boundary (WS-VC5): `CardRenderer`
+ * dynamically imports THIS file so `three` stays out of every other card's
+ * bundle. Same-type compare only — the cross-type (image<->3D) bridge was
+ * dropped with the shell.
  */
-export default function VolumeVisualCard(props: VolumeVisualCardProps) {
-  return (
-    <VisualContentCard
-      {...props}
-      viewport={volumeViewportModule as unknown as ViewportModule<unknown, ViewState, VisualCompareSettings>}
+export default function VolumeVisualCard({ runId, metric, extraSeries, controlledSeries, settingsKeyOverride, onRemove, autoOpenSettings }: VolumeVisualCardProps) {
+  useRunMetadataVersion();
+
+  const caps = volumeViewportCapabilities;
+  const MIN_HEIGHT = cardMinSize(OBJECT_TYPE).minHeight;
+
+  const {
+    settings: rawSettings,
+    updateSettings,
+    effectiveMetrics,
+    allRunIds: availableRunIds,
+    multipleRuns,
+  } = useCardSeries<VolumeFullSettings>({
+    runId,
+    metric,
+    extraSeries,
+    controlledSeries,
+    settingsKeyOverride,
+    makeDefaults: (_seed, metrics) => ({
+      version: 1,
+      metrics,
+      ...defaultVolumeSettings(),
+    }),
+  });
+
+  // Read migration for pre-shell persisted settings (non-destructive).
+  const settings = migrateVolumeSettings(rawSettings);
+
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+
+  const effectiveMode: MediaCompareModeKind =
+    settings.mode ??
+    migrateLegacyMode({
+      diffMode: settings.diffMode,
+      compareMode: settings.compareMode,
+      referenceMode: settings.referenceMode,
+    });
+
+  const activeNativeMode: string | undefined = settings.nativeMode ?? undefined;
+
+  const setMode = useCallback((mode: MediaCompareModeKind) => {
+    const updates: Partial<VolumeFullSettings> = { mode, nativeMode: undefined };
+    if (mode === "diff" && settingsRef.current.diffMode === "none") {
+      updates.diffMode = "absolute";
+    }
+    updateSettings(updates);
+  }, [updateSettings]);
+
+  // -----------------------------------------------------------------------
+  // Data: multi-series fetch, step slider, per-pane resolution
+  // -----------------------------------------------------------------------
+  const { perSeriesPoints, perSeriesStepMap, globalStepPoints, anyLoading } =
+    useMediaSeriesData(runId, effectiveMetrics);
+
+  const { globalSteps, safeIdx, currentStep, onSliderChange } = useStepSlider({
+    seriesPoints: perSeriesPoints,
+    persistedIdx: settings.sliderStep,
+    updateSettings,
+  });
+
+  const { paneResolved, paneHashArr, paneMetadata, firstResolved, downloadMime } =
+    usePaneResolution(effectiveMetrics, perSeriesStepMap, perSeriesPoints, currentStep, settings.missingImageMode);
+
+  const isMulti = effectiveMetrics.length > 1 || settings.externalBaseline != null;
+
+  const { selectedIds, selectedArray, toggle, clear } = useRunSelection();
+  const hasSelectionProvider = useRunSelectionHasProvider();
+  const { runInfoMap } = useRunInfo(availableRunIds);
+  const { highlight: dropHighlight, dropProps } = useCardDrop(effectiveMetrics, updateSettings);
+  const [expanded, setExpanded] = useState(autoOpenSettings ?? false);
+
+  const compSeries = useMemo(
+    () => effectiveMetrics.map((m) => ({
+      runId: m.runId ?? runId,
+      name: m.name,
+      context_hash: m.context_hash,
+    })),
+    [runId, effectiveMetrics],
+  );
+
+  // -----------------------------------------------------------------------
+  // Reference drop target — SAME-TYPE only: a drag payload carrying a
+  // different object_type is ignored (the cross-type bridge was dropped).
+  // Dropping a reference always lands on "diff".
+  // -----------------------------------------------------------------------
+  const applyReference = useCallback((ref: SeriesRef, mode: "global" | "per-run") => {
+    if (ref.objectType && ref.objectType !== OBJECT_TYPE) return;
+    updateSettings({
+      externalBaseline: { runId: ref.runId, name: ref.name, context_hash: ref.context_hash },
+      baselineIndex: undefined,
+      referenceMode: mode,
+      diffMode: settingsRef.current.diffMode === "none" ? "absolute" : settingsRef.current.diffMode,
+      mode: "diff",
+    });
+  }, [updateSettings]);
+  const { highlight: refDropHighlight, dropProps: refDropProps } = useReferenceDrop({
+    onSeriesDrop: (ref) => applyReference(ref, "per-run"),
+    onViewportDrop: (ref) => applyReference(ref, "global"),
+  });
+  const { onDragOver: onRefDragOver, onDragLeave: onRefDragLeave, onDrop: onRefDrop } = refDropProps;
+
+  const onPaneDragStart = useCallback((e: React.DragEvent, m: { runId?: string; name: string; context_hash: string }) => {
+    startViewportDrag(e, { runId: m.runId ?? runId, name: m.name, context_hash: m.context_hash, objectType: OBJECT_TYPE }, m.name);
+  }, [runId]);
+
+  const subtitle =
+    globalSteps.length > 0
+      ? `step ${currentStep} (${safeIdx + 1}/${globalSteps.length})`
+      : `${metric.count} pts`;
+
+  // -----------------------------------------------------------------------
+  // Reference resolution
+  // -----------------------------------------------------------------------
+  const extBase = settings.externalBaseline;
+  const refMode = settings.referenceMode ?? "global";
+
+  const setReferenceMode = useCallback((mode: "global" | "per-run") => {
+    updateSettings({ referenceMode: mode });
+  }, [updateSettings]);
+
+  const { perPaneHash, externalPoints, perRunPoints } = useMediaReference({
+    runId,
+    perSeriesStepMap,
+    perSeriesPoints,
+    seriesBaselineIndex: settings.baselineIndex,
+    seriesBaselineFixedStep: settings.refFixedStep,
+    external: extBase,
+    externalScope: refMode,
+    panes: effectiveMetrics,
+    currentStep,
+    safeIdx,
+    missingImageMode: settings.missingImageMode,
+  });
+
+  const baselineIdx = settings.baselineIndex;
+  const hasBaseline = baselineIdx != null || extBase != null;
+
+  const { paneRefHashArr, paneReferenceMetadata } = usePaneReferenceMeta({
+    effectiveMetrics,
+    paneResolvedHashes: paneHashArr,
+    perPaneHash,
+    externalBaseline: extBase,
+    referenceMode: refMode,
+    externalPoints,
+    perRunPoints,
+    perSeriesPoints,
+    baselineIndex: settings.baselineIndex,
+  });
+
+  // Cap simultaneously-rendered panes (WebGL budget) — only the RENDERED/
+  // FETCHED pane set is capped; series management (SeriesChipStrip, the step
+  // slider's range) still spans every series.
+  const shownMetrics = useMemo(
+    () => (Number.isFinite(caps.maxPanes) ? effectiveMetrics.slice(0, caps.maxPanes) : effectiveMetrics),
+    [effectiveMetrics, caps.maxPanes],
+  );
+
+  const viewData = useVolumeData({
+    hashes: paneHashArr.slice(0, shownMetrics.length),
+    referenceHashes: paneRefHashArr.slice(0, shownMetrics.length),
+    metadata: paneMetadata.slice(0, shownMetrics.length),
+    referenceMetadata: paneReferenceMetadata.slice(0, shownMetrics.length),
+  });
+
+  // Live camera-sync group — resolved ONCE per card (never per pane, see
+  // `lib/camera-sync.ts`) and threaded to every pane below.
+  const cameraSyncGroupId = useCameraSync(!!settings.syncViews);
+
+  // The selected native (card-rendered, non-compositor) mode, if any is both
+  // chosen AND currently enabled (`enabledFor`, evaluated against the first
+  // pane's resolved content/reference as a representative pair).
+  const activeNativeSpec = activeNativeMode
+    ? caps.nativeModes.find((nm) => nm.mode === activeNativeMode)
+    : undefined;
+  const nativeEnabled =
+    !!activeNativeSpec
+    && activeNativeSpec.enabledFor(viewData.items[0] ?? null, viewData.referenceItems[0] ?? null);
+  const RenderPane = nativeEnabled ? VolumeNativeDiffPane : VolumeViewportPane;
+
+  // The SINGLE card-level colorbar, computed once (not per Pane) across every
+  // currently-resolved pane's items; `nativeMode` mirrors the actual render
+  // gating so the colorbar reflects what's rendered, not merely selected.
+  const colorbarInfo = volumeActiveColorbar({
+    items: viewData.items,
+    referenceItems: viewData.referenceItems,
+    settings,
+    mode: effectiveMode,
+    nativeMode: nativeEnabled ? activeNativeMode : undefined,
+  }) ?? null;
+  const colorRange: [number, number] | null = colorbarInfo ? [colorbarInfo.min, colorbarInfo.max] : null;
+
+  const cardRef = useRef<HTMLDivElement>(null);
+
+  // 3D panes don't report a natural size, so the auto height is the fixed
+  // pre-shell default; an explicitly persisted card height rules when set.
+  const autoHeight = resolveCardHeight(settings, undefined, MIN_HEIGHT) == null ? "20rem" : undefined;
+
+  // -----------------------------------------------------------------------
+  // Panes
+  // -----------------------------------------------------------------------
+  const renderMultiPaneGrid = () => {
+    const splitPos = settings.splitPosition ?? 0.5;
+    const diffSubmode: DiffMode = settings.diffMode === "none" ? "absolute" : settings.diffMode;
+
+    return (
+      <div
+        className="grid gap-1 flex-1 min-h-0 overflow-auto"
+        style={{ gridTemplateColumns: `repeat(${settings.imageColumns ?? 2}, 1fr)` }}
+      >
+        {shownMetrics.length < effectiveMetrics.length && (
+          <div className="col-span-full mono text-xs text-fg-subtle">
+            {`showing ${shownMetrics.length} of ${effectiveMetrics.length}`}
+          </div>
+        )}
+        {shownMetrics.map((m, paneIdx) => {
+          if (refMode === "global" && settings.externalBaseline && m.name === settings.externalBaseline.name && (m.runId ?? runId) === (settings.externalBaseline.runId ?? runId)) return null;
+          const fallbackStep = paneResolved[paneIdx]?.fallbackStep ?? null;
+          const label = seriesLabel(m, runId, multipleRuns, availableRunIds)
+            + (fallbackStep != null ? ` (step ${fallbackStep})` : "");
+
+          return (
+            <div key={seriesKey(m)} className="relative overflow-hidden">
+              <RenderPane
+                toolbar={false}
+                data={viewData.items[paneIdx] ?? null}
+                reference={viewData.referenceItems[paneIdx] ?? null}
+                settings={settings}
+                view={DEFAULT_VIEW}
+                onViewChange={() => {}}
+                mode={effectiveMode}
+                diffMode={diffSubmode}
+                nativeMode={activeNativeMode}
+                cameraSyncGroupId={cameraSyncGroupId}
+                colorRange={colorRange}
+                isBaseline={refMode === "global" && baselineIdx === paneIdx}
+                splitPosition={splitPos}
+                onSplitPositionChange={(pos) => updateSettings({ splitPosition: pos })}
+                label={label}
+                isDraggable
+                onDragStart={(e) => onPaneDragStart(e, m)}
+              />
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  const renderSingleView = () => (
+    <VolumeViewportPane
+      toolbar={false}
+      data={viewData.items[0] ?? null}
+      reference={null}
+      settings={settings}
+      view={DEFAULT_VIEW}
+      onViewChange={() => {}}
+      mode="normal"
+      diffMode="absolute"
+      cameraSyncGroupId={cameraSyncGroupId}
+      colorRange={colorRange}
+      isDraggable
+      onDragStart={(e) => onPaneDragStart(e, effectiveMetrics[0]!)}
+      label={metric.name}
     />
+  );
+
+  const renderContent = () => isMulti ? renderMultiPaneGrid() : renderSingleView();
+
+  // 3D reset-view is imperative (`resetScene3DViews`) — always enabled.
+  const resetView = () => resetScene3DViews(cardRef.current);
+
+  // -----------------------------------------------------------------------
+  // Compare menus: core modes + the diff-type dropdown (six pointwise diffs
+  // + this type's native geometry diffs, gated on topology).
+  // -----------------------------------------------------------------------
+  const modeSelectorEntries = caps.coreModes.map((m) => ({
+    value: m as string,
+    label: MODE_LABELS[m] ?? m,
+    disabled: false,
+  }));
+  const viewModeEntries = modeSelectorEntries.filter((m) => m.value !== "diff");
+  const handleModeSelect = useCallback((value: string) => {
+    setMode(value as MediaCompareModeKind);
+  }, [setMode]);
+
+  const diffTypeEntries: Array<{ value: string; label: string; disabled: boolean; title?: string }> = [
+    { value: "signed", label: "Signed Error", disabled: false },
+    { value: "absolute", label: "Absolute Error", disabled: false },
+    { value: "squared", label: "Squared Error", disabled: false },
+    { value: "relative_signed", label: "Relative Signed", disabled: false },
+    { value: "relative_absolute", label: "Relative Absolute", disabled: false },
+    { value: "relative_squared", label: "Relative Squared", disabled: false },
+    ...caps.nativeModes.map((nm) => {
+      const enabled = nm.enabledFor(viewData.items[0] ?? null, viewData.referenceItems[0] ?? null);
+      return { value: nm.mode as string, label: nm.label, disabled: !enabled, title: enabled ? undefined : nm.disabledReason };
+    }),
+  ];
+  const selectedDiffTypeValue: string =
+    (settings.diffKernel && PIXEL_DIFF_TYPE_VALUES.has(settings.diffKernel)
+      ? settings.diffKernel
+      : undefined)
+    ?? activeNativeMode
+    ?? (settings.diffMode === "none" ? "absolute" : settings.diffMode);
+  const handleDiffTypeSelect = useCallback((value: string) => {
+    if (PIXEL_DIFF_TYPE_VALUES.has(value)) {
+      updateSettings({ diffMode: value as VolumeFullSettings["diffMode"], nativeMode: undefined, diffKernel: value });
+    } else {
+      updateSettings({ nativeMode: value, diffKernel: undefined });
+    }
+  }, [updateSettings]);
+
+  // -----------------------------------------------------------------------
+  // Settings panel
+  // -----------------------------------------------------------------------
+  const settingsPanel = (
+    <>
+      <Toggle
+        label="Sync 3D views"
+        checked={!!settings.syncViews}
+        onChange={(v) => updateSettings({ syncViews: v })}
+        description="Share orbit/zoom/pan live across this card's own panes (not with other 3D cards on the page)"
+      />
+      <VolumeSettingsControls settings={settings} update={updateSettings} meta={viewData.items[0] ?? null} />
+      <SettingsSection title="Compare" />
+      <Select<string>
+        label="Mode"
+        value={effectiveMode}
+        onChange={(v) => handleModeSelect(v)}
+        options={modeSelectorEntries}
+      />
+      {effectiveMode === "diff" && (
+        <Select<string>
+          label="Diff type"
+          value={selectedDiffTypeValue}
+          onChange={(v) => handleDiffTypeSelect(v)}
+          options={diffTypeEntries}
+        />
+      )}
+      {effectiveMode === "diff" && (
+        <Select<DiffColormap>
+          label="Diff colormap"
+          value={settings.diffColormap ?? "turbo"}
+          onChange={(v) => updateSettings({ diffColormap: v })}
+          options={[
+            { value: "turbo", label: "Turbo (magnitude)" },
+            { value: "red-green", label: "Red - Green (signed)" },
+          ]}
+          description="Color mapping for the active diff (pixel or native)"
+        />
+      )}
+      {isMulti && extBase && (
+        <Select<"global" | "per-run">
+          label="Reference mode"
+          value={settings.referenceMode ?? "global"}
+          onChange={(v) => setReferenceMode(v)}
+          options={[
+            { value: "per-run", label: "Per-run (each run uses its own copy of the ref tag)" },
+            { value: "global", label: "Global (same ref for all runs)" },
+          ]}
+        />
+      )}
+      {(effectiveMode !== "normal" || activeNativeMode != null) && (
+        <>
+          <Toggle
+            label="Pin reference to a fixed step"
+            checked={settings.refFixedStep != null}
+            onChange={(v) => updateSettings({ refFixedStep: v ? currentStep : undefined })}
+            description="Off = per-iteration (reference tracks the same step as the primary series)"
+          />
+          {settings.refFixedStep != null && (
+            <Slider
+              label="Reference step"
+              value={settings.refFixedStep}
+              onChange={(v) => updateSettings({ refFixedStep: Math.round(v) })}
+              min={0}
+              max={Math.max(...globalSteps, settings.refFixedStep, 1)}
+              step={1}
+              format={(v) => v.toFixed(0)}
+            />
+          )}
+        </>
+      )}
+      <div className="mt-2">
+        <label className="block text-[10px] uppercase tracking-wide text-fg-muted mb-1">
+          Reference source
+        </label>
+        {settings.externalBaseline ? (
+          <div className="flex items-center gap-1 rounded border border-accent/40 bg-accent/5 px-2 py-1 text-xs text-fg-muted">
+            <span className="mono truncate flex-1">{settings.externalBaseline.name}{settings.externalBaseline.runId && settings.externalBaseline.runId !== runId ? ` · ${shortRunLabel(settings.externalBaseline.runId)}` : ""}</span>
+            <button
+              type="button"
+              onClick={() => updateSettings({ externalBaseline: undefined, baselineIndex: undefined, referenceMode: undefined })}
+              className="text-fg-subtle hover:text-fg shrink-0"
+              title="Remove external reference"
+            >{"×"}</button>
+          </div>
+        ) : (
+          <p className="text-[10px] text-fg-subtle mb-1">
+            {multipleRuns
+              ? "Pick a run below, then choose this metric to make that run the shared baseline every other run diffs/splits against. Or select a different tag / drag a series chip onto the card."
+              : "Drag a series chip onto the card, or select a tag below."}
+          </p>
+        )}
+        <ExternalBaselinePicker
+          runId={runId}
+          objectType={OBJECT_TYPE}
+          currentMetricName={metric.name}
+          selected={settings.externalBaseline?.name}
+          availableRunIds={availableRunIds}
+          onSelect={(name, ctx, selectedRunId) => {
+            updateSettings({
+              externalBaseline: { runId: selectedRunId, name, context_hash: ctx },
+              baselineIndex: undefined,
+              diffMode: settings.diffMode === "none" ? "absolute" : settings.diffMode,
+              mode: "diff",
+            });
+          }}
+        />
+      </div>
+    </>
+  );
+
+  const modalContent = (
+    <div className="h-[calc(100vh-12rem)] flex flex-col">
+      {renderContent()}
+      <StepSlider
+        points={globalStepPoints}
+        currentIndex={safeIdx}
+        onChange={onSliderChange}
+        xAxis={settings.xAxis}
+        onXAxisChange={(m) => updateSettings({ xAxis: m })}
+        className="mt-3"
+      />
+      {!hasSelectionProvider && (
+        <RunSelectionPanel
+          selectedRunIds={selectedArray}
+          allRunIds={availableRunIds}
+          onClear={clear}
+          runInfo={runInfoMap}
+          label="Volume selection"
+        />
+      )}
+    </div>
+  );
+
+  return (
+    <CardShell cardKind={OBJECT_TYPE}
+      cardRef={cardRef}
+      settings={settings}
+      updateSettings={updateSettings}
+      title={metric.name}
+      subtitle={subtitle}
+      onSettings={() => setExpanded(true)}
+      onRemove={onRemove}
+      onDownload={firstResolved.hash ? () => downloadArtifact(api.artifactUrl(firstResolved.hash!), artifactFilename(metric.name, currentStep, downloadMime, caps.downloadExtension)) : undefined}
+      addToComparisonSlot={<AddToComparisonButton cardType={OBJECT_TYPE} series={compSeries} />}
+      onResetView={resetView}
+      viewModified
+      dropHighlight={dropHighlight}
+      dropProps={dropProps}
+      settingsPanel={settingsPanel}
+      modalContent={modalContent}
+      modalOpen={expanded}
+      onModalClose={() => setExpanded(false)}
+      scrollIntoViewOnMount={autoOpenSettings}
+    >
+      <>
+      {anyLoading && globalSteps.length === 0 ? (
+        <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
+      ) : globalSteps.length > 0 ? (
+        <>
+          <div
+            ref={cardRef}
+            className={`relative min-h-0 flex flex-col overflow-hidden${resolveCardHeight(settings, undefined, MIN_HEIGHT) != null ? " flex-1" : ""}${refDropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
+            style={{ height: autoHeight }}
+            onDragOver={onRefDragOver}
+            onDragLeave={onRefDragLeave}
+            onDrop={onRefDrop}
+          >
+          <div className="flex flex-1 min-h-0">
+          <div className="flex-1 min-w-0 min-h-0 flex flex-col">
+          {renderContent()}
+          </div>
+          {colorbarInfo && (
+            <Colorbar colormap={colorbarInfo.colormap} min={colorbarInfo.min} max={colorbarInfo.max} />
+          )}
+          </div>
+          </div>
+
+          {isMulti && hasBaseline && (
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px]">
+              <select
+                value={settings.diffColormap ?? "turbo"}
+                onChange={(e) => updateSettings({ diffColormap: e.target.value as DiffColormap })}
+                className="h-[22px] rounded border border-border bg-bg-elevated px-1.5 text-[10px] mono cursor-pointer text-accent"
+                title="Colormap"
+              >
+                {DIFF_LUT_OPTIONS.map((o) => (
+                  <option key={o.id} value={o.id}>{o.label}</option>
+                ))}
+              </select>
+              <select
+                value={effectiveMode === "diff" ? selectedDiffTypeValue : effectiveMode}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  if (viewModeEntries.some((m) => m.value === value)) {
+                    handleModeSelect(value);
+                  } else {
+                    handleModeSelect("diff");
+                    handleDiffTypeSelect(value);
+                  }
+                }}
+                className="h-[22px] rounded border border-border bg-bg-elevated px-1.5 text-[10px] mono cursor-pointer text-accent"
+                title="Compare / diff mode"
+              >
+                <optgroup label="View">
+                  {viewModeEntries.map((m) => (
+                    <option key={m.value} value={m.value} disabled={m.disabled}>{m.label}</option>
+                  ))}
+                </optgroup>
+                <optgroup label="Error">
+                  {diffTypeEntries.map((d) => (
+                    <option key={d.value} value={d.value} disabled={d.disabled} title={d.title}>{d.label}</option>
+                  ))}
+                </optgroup>
+              </select>
+              {effectiveMode === "split" && !activeNativeMode && (
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={settings.splitPosition ?? 0.5}
+                  onChange={(e) => updateSettings({ splitPosition: Number(e.target.value) })}
+                  className="w-24 accent-accent"
+                  title="Split position"
+                />
+              )}
+            </div>
+          )}
+
+          <StepSlider
+            points={globalStepPoints}
+            currentIndex={safeIdx}
+            onChange={onSliderChange}
+            xAxis={settings.xAxis}
+            onXAxisChange={(m) => updateSettings({ xAxis: m })}
+            className="mt-3"
+          />
+        </>
+      ) : (
+        <div className="text-sm text-fg-muted">no volume logged yet</div>
+      )}
+
+      <SeriesChipStrip
+        metrics={effectiveMetrics}
+        controlledSeries={controlledSeries}
+        runId={runId}
+        allRunIds={availableRunIds}
+        onMetricsChange={(next) => updateSettings({ metrics: next, baselineIndex: undefined, paneWidths: undefined })}
+        labelFn={seriesLabel}
+        onClick={multipleRuns ? toggle : undefined}
+        selectedIds={selectedIds}
+      />
+
+      {!hasSelectionProvider && (
+        <RunSelectionPanel
+          selectedRunIds={selectedArray}
+          allRunIds={availableRunIds}
+          onClear={clear}
+          runInfo={runInfoMap}
+          label="Volume selection"
+        />
+      )}
+      </>
+    </CardShell>
   );
 }

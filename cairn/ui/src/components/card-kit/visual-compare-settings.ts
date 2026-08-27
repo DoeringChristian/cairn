@@ -3,7 +3,7 @@ import type { BaseCardSettings } from "./base-settings";
 import type { SeriesRef } from "./use-card-series";
 
 /**
- * The persisted settings shape shared by every `VisualContentCard`
+ * The persisted settings shape shared by every per-kind media card
  * instantiation, regardless of `object_type`. The renderer-owned compare/
  * reference/rendering fields live in the lib `MediaCompareSettings`; this
  * intersects them with the app-typed fields (`SeriesRef` metric list, external
