@@ -44,7 +44,7 @@ def test_basic_run_lifecycle(transport, reader):
         transport=transport,
     )
     try:
-        run["hparams"] = {"lr": 0.01, "batch": 32}
+        run.config(hparams={"lr": 0.01, "batch": 32})
         for i in range(20):
             run.track(float(i), name="loss", step=i)
         run.track(0.1, name="acc")

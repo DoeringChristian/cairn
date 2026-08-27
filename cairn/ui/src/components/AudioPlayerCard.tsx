@@ -109,7 +109,6 @@ function AudioPane({
   const rid = m.runId ?? runId;
   const q = useSequence(rid, m.name, {
     context: m.context_hash || undefined,
-    maxPoints: 200,
   });
   const points = useMemo(
     () => (q.data?.points ?? []).filter((p) => p.artifact_hash),
@@ -180,7 +179,6 @@ export default function AudioPlayerCard({ runId, metric, extraSeries, controlled
   // Single-metric path: fetch points for the step slider.
   const q = useSequence(runId, metric.name, {
     context: metric.context_hash || undefined,
-    maxPoints: 200,
   });
   const points = useMemo(
     () => (q.data?.points ?? []).filter((p) => p.artifact_hash),
@@ -197,7 +195,6 @@ export default function AudioPlayerCard({ runId, metric, extraSeries, controlled
             queryFn: () =>
               api.sequence(rid, m.name, {
                 context: m.context_hash || undefined,
-                maxPoints: 200,
               }),
             refetchInterval: 2_000,
             staleTime: 2_000,

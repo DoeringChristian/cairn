@@ -103,7 +103,6 @@ CARD_TYPES: tuple[str, ...] = (
     "html",
     "markdown",
     "artifact",
-    "plugin",
 )
 
 CardType = Literal[
@@ -127,7 +126,6 @@ CardType = Literal[
     "html",
     "markdown",
     "artifact",
-    "plugin",
 ]
 
 

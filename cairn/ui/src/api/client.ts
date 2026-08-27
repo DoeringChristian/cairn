@@ -102,11 +102,10 @@ export const api = {
   sequence: (
     runId: string,
     name: string,
-    opts: { context?: string; maxPoints?: number } = {},
+    opts: { context?: string;} = {},
   ) => {
     const q = new URLSearchParams();
     if (opts.context != null) q.set("context", opts.context);
-    if (opts.maxPoints != null) q.set("max_points", String(opts.maxPoints));
     const qs = q.toString();
     return get<import("./types").SequenceResponse>(
       `/api/runs/${runId}/sequences/${encodeURIComponent(name)}${qs ? `?${qs}` : ""}`,

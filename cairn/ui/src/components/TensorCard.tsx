@@ -126,7 +126,6 @@ export default function TensorCard({
 }: Props) {
   const q = useSequence(runId, metric.name, {
     context: metric.context_hash || undefined,
-    maxPoints: 200,
   });
   const points = useMemo(
     () => (q.data?.points ?? []).filter((p) => p.artifact_hash),

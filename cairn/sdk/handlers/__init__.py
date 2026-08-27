@@ -13,7 +13,6 @@ from .html import HtmlHandler
 from .image import ImageHandler
 from .markdown import MarkdownHandler
 from .mesh import MeshHandler
-from .plugin import PluginHandler
 from .pointcloud import PointCloudHandler
 from .registry import (
     HandlerRegistry,
@@ -53,7 +52,6 @@ if not _already_registered:
     default_registry.register(Boxes3DHandler())
     # Wrapper-only, like PointCloud — order among themselves doesn't matter.
     default_registry.register(VolumeHandler())
-    default_registry.register(PluginHandler())
     default_registry.register(ArtifactHandler())
     # Wrapper-only, like Histogram/Tensor — order among themselves doesn't
     # matter since dispatch never falls through can_handle for these.
@@ -80,7 +78,6 @@ __all__ = [
     "MeshHandler",
     "Boxes3DHandler",
     "VolumeHandler",
-    "PluginHandler",
     "ArtifactHandler",
     "HtmlHandler",
     "MarkdownHandler",

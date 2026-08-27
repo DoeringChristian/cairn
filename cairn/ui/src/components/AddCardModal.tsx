@@ -41,14 +41,13 @@ const TYPE_LABELS: Record<string, string> = {
   boxes3d: "Octree / BVH",
   volume: "Volumes",
   artifact: "Artifacts",
-  plugin: "Plugins",
   parallel: "Parallel Coords",
   scatter: "Scatter Plot",
   bar: "Bar Chart",
   tile: "Scalar Tiles",
 };
 
-const TYPE_ORDER = ["scalar", "image", "figure", "audio", "video", "histogram", "tensor", "text", "table", "html", "markdown", "pointcloud", "mesh", "boxes3d", "volume", "artifact", "plugin", "parallel", "scatter", "bar", "tile"];
+const TYPE_ORDER = ["scalar", "image", "figure", "audio", "video", "histogram", "tensor", "text", "table", "html", "markdown", "pointcloud", "mesh", "boxes3d", "volume", "artifact", "parallel", "scatter", "bar", "tile"];
 
 /** Map a picked grouping entry (a lib/reports/metric-index.ts entry) to a typed selection. */
 function toSelection(m: MetricIndexEntry): AddCardSelection {

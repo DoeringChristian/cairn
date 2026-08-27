@@ -33,6 +33,7 @@ import click
 
 from . import config as _config
 from .sdk.transport import Transport, default_spill_dir
+
 from .server import auth as _auth
 from .server.app import create_app
 from .server.storage.blobs import BlobStore
@@ -226,12 +227,15 @@ def server_cmd(
         click.echo(f"ERROR: {exc}", err=True)
         sys.exit(1)
 
-    # One Database, shared by both apps: DuckDB permits only one connection
+    # One Database, shared by both apps (single shared SQLite connection
     # per file in this process, so both FastAPI apps must share the same one.
     db = Database.open(dd.db_path)
     blobs = BlobStore(dd.artifacts_dir)
 
     auth_enabled = not no_auth
+    if auth_enabled:
+        # Same-user local trust (refactor spec §7): see ui_cmd.
+        _auth.ensure_local_token(db, dd.root)
 
     # Ingest-only app (no SPA mount).
     ingest_app = create_app(
@@ -402,6 +406,11 @@ def ui_cmd(
     blobs = BlobStore(dd.artifacts_dir)
     auth_enabled = not no_auth
     app = create_app(db=db, blobs=blobs, data_dir_obj=dd, mount_ui=True, auth_enabled=auth_enabled)
+    if auth_enabled:
+        # Same-user local trust (refactor spec §7): a token file in the data
+        # dir lets same-account SDK runs upgrade to this server without
+        # manual provisioning. Filesystem perms are the boundary.
+        _auth.ensure_local_token(db, dd.root)
 
     ui_url = f"http://localhost:{port}"
     click.echo(
@@ -547,7 +556,6 @@ def export_cmd(run_id: str, fmt: str, out: Path) -> None:
         for s in seqs_meta:
             pts = t.get(
                 f"/api/runs/{run_id}/sequences/{s['name']}",
-                params={"max_points": 1_000_000},
             ).json()["points"]
             seqs.setdefault(s["name"], []).extend(pts)
         payload = {"run": run, "sequences": seqs}
@@ -689,17 +697,52 @@ def diff_cmd(run_id: str, repo: str | None, summary: bool) -> None:
 
 @main.command("sync")
 def sync_cmd() -> None:
-    """Reconcile any spilled batches with the server."""
-    t = _client()
-    try:
-        spill = default_spill_dir()
-        if not spill.exists():
-            click.echo("no spill to sync")
-            return
-        total = t.drain_spill()
-        click.echo(f"replayed {total} batch(es)")
-    finally:
-        t.close()
+    """Replay orphaned run logs (and legacy spill) to their servers.
+
+    R3 rebuild: the old command drained only the legacy spill dir and could
+    NOT replay the client WAL at all (it built a transport with no WAL and
+    scanned a different directory). This scans the WAL dir, reconstructs
+    each orphaned per-run log, resolves its recorded target (the WAL header;
+    falling back to the configured server), and drains it in order.
+    """
+    from .sdk.wal import WriteAheadLog, default_wal_dir
+
+    replayed = 0
+    failed = 0
+    wal_dir = default_wal_dir()
+    for wal_path in sorted(wal_dir.glob("*.wal.jsonl")) if wal_dir.exists() else []:
+        run_id = wal_path.name.removesuffix(".wal.jsonl")
+        wal = WriteAheadLog(run_id, wal_dir)
+        if not wal.has_pending:
+            wal.close()
+            continue
+        target = wal.target or _config.resolve_server()
+        t = Transport(target, wal=wal)
+        try:
+            n = t.drain_wal()
+            replayed += n
+            click.echo(f"{run_id}: replayed {n} op(s) -> {target}")
+            if not wal.has_pending:
+                wal.cleanup()
+        except Exception as exc:  # noqa: BLE001 - keep draining other runs
+            failed += 1
+            click.echo(f"{run_id}: FAILED ({exc}) — kept for retry", err=True)
+        finally:
+            t.close()
+
+    # Legacy spill dir (pre-R3 fallback payloads).
+    spill = default_spill_dir()
+    if spill.exists():
+        t = _client()
+        try:
+            replayed += t.drain_spill()
+        finally:
+            t.close()
+
+    if replayed == 0 and failed == 0:
+        click.echo("nothing to sync")
+    else:
+        click.echo(f"sync complete: {replayed} op(s) replayed, {failed} run(s) failed")
 
 
 @main.command("configure")

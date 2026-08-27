@@ -318,6 +318,11 @@ class Run:
         return self._params
 
     @property
+    def config(self) -> dict[str, Any]:
+        """Alias of :attr:`params` (R0: the write side is ``run.config(...)``)."""
+        return self.params
+
+    @property
     def git(self) -> GitInfo | None:
         sha = self._raw.get("git_sha")
         if not sha:
@@ -345,12 +350,10 @@ class Run:
     def sequence(
         self, name: str, *, context: str | None = None,
         step_from: int | None = None, step_to: int | None = None,
-        max_points: int | None = None,
     ) -> Sequence:
         rows = self._backend.get_sequence(
             self.id, name, context=context,
             step_from=step_from, step_to=step_to,
-            max_points=max_points,
         )
         return Sequence([SequencePoint(
             step=r["step"],
@@ -524,6 +527,10 @@ class Run:
 
 # Mapping from Django-style suffix to a comparator. Each comparator takes
 # (actual_value, query_value) and returns True if the row matches.
+# MIRROR of the server-owned query grammar (cairn/server/_operators.py +
+# query_grammar.OPERATOR_NAMES); pinned by schema/query-vectors.json —
+# change all mirrors together. The server is AUTHORITATIVE (it decodes and
+# evaluates); this copy only validates kwargs early and encodes urls.
 _OPERATORS: dict[str, "Callable[[Any, Any], bool]"] = {
     "exact": lambda a, b: a == b,
     "iexact": lambda a, b: isinstance(a, str) and isinstance(b, str) and a.lower() == b.lower(),
@@ -776,7 +783,7 @@ class _Backend(Protocol):
     def list_sequences(self, run_id: str) -> list[dict[str, Any]]: ...
     def get_sequence(self, run_id: str, name: str, *, context: str | None,
                      step_from: int | None, step_to: int | None,
-                     max_points: int | None) -> list[dict[str, Any]]: ...
+) -> list[dict[str, Any]]: ...
     def list_artifacts(self, run_id: str) -> dict[str, Any]: ...
     def get_artifact_bytes(self, digest: str) -> bytes: ...
     def get_artifact_path(self, digest: str) -> Path | None: ...
@@ -881,7 +888,6 @@ class _LocalBackend:
         self, run_id: str, name: str, *,
         context: str | None = None,
         step_from: int | None = None, step_to: int | None = None,
-        max_points: int | None = None,
     ) -> list[dict[str, Any]]:
         clauses = ["s.run_id = ?", "s.name = ?"]
         params: list[Any] = [run_id, name]
@@ -906,9 +912,6 @@ class _LocalBackend:
             params,
         )
         # Simple downsampling if requested.
-        if max_points and len(rows) > max_points:
-            step = max(1, len(rows) // max_points)
-            rows = rows[::step]
         return rows
 
     def list_artifacts(self, run_id: str) -> dict[str, Any]:
@@ -1001,7 +1004,7 @@ class _LocalBackend:
     def resolve_artifact_ref(self, project_id: str, ref: str) -> dict[str, Any]:
         self._drain_wals()
         from ..server import artifact_registry_ops
-        return artifact_registry_ops.resolve_artifact(self._db, project_id, ref)
+        return artifact_registry_ops.resolve_ref(self._db, project_id, ref)
 
     def get_run_inputs(self, run_id: str) -> list[dict[str, Any]]:
         self._drain_wals()
@@ -1016,7 +1019,7 @@ class _LocalBackend:
     def get_lineage(self, project_id: str, **kwargs: Any) -> dict[str, Any]:
         self._drain_wals()
         from ..server import artifact_registry_ops
-        return artifact_registry_ops.get_lineage(self._db, project_id, **kwargs)
+        return artifact_registry_ops.get_lineage_graph(self._db, project_id, **kwargs)
 
     def close(self) -> None:
         self._db.close()
@@ -1098,7 +1101,6 @@ class _HttpBackend:
         self, run_id: str, name: str, *,
         context: str | None = None,
         step_from: int | None = None, step_to: int | None = None,
-        max_points: int | None = None,
     ) -> list[dict[str, Any]]:
         params: dict[str, Any] = {}
         if context is not None:
@@ -1107,8 +1109,6 @@ class _HttpBackend:
             params["step_from"] = step_from
         if step_to is not None:
             params["step_to"] = step_to
-        if max_points is not None:
-            params["max_points"] = max_points
         return self._get(f"/api/runs/{run_id}/sequences/{name}", params=params)["points"]
 
     def list_artifacts(self, run_id: str) -> dict[str, Any]:
@@ -1173,19 +1173,23 @@ class _HttpBackend:
         params: dict[str, Any] = {}
         if type_filter:
             params["type"] = type_filter
-        return self._get(f"/api/projects/{project_id}/artifact-families", params=params)
+        return self._get(f"/api/projects/{project_id}/artifact-families", params=params)["families"]
 
     def list_artifact_versions(self, family_id: str) -> list[dict[str, Any]]:
-        return self._get(f"/api/artifact-families/{family_id}/versions")
+        return self._get(f"/api/artifact-families/{family_id}/versions")["versions"]
 
     def resolve_artifact_ref(self, project_id: str, ref: str) -> dict[str, Any]:
-        return self._get(f"/api/projects/{project_id}/artifact-families/resolve", params={"ref": ref})
+        resp = self._client.post(
+            f"/api/projects/{project_id}/resolve-artifact-ref", json={"ref": ref}
+        )
+        resp.raise_for_status()
+        return resp.json()
 
     def get_run_inputs(self, run_id: str) -> list[dict[str, Any]]:
-        return self._get(f"/api/runs/{run_id}/input-artifacts")
+        return self._get(f"/api/runs/{run_id}/inputs")["inputs"]
 
     def get_run_outputs(self, run_id: str) -> list[dict[str, Any]]:
-        return self._get(f"/api/runs/{run_id}/output-artifacts")
+        return self._get(f"/api/runs/{run_id}/outputs")["outputs"]
 
     def get_lineage(self, project_id: str, **kwargs: Any) -> dict[str, Any]:
         return self._get(f"/api/projects/{project_id}/lineage", params=kwargs)

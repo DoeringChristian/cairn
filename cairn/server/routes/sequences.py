@@ -1,4 +1,9 @@
-"""Sequence read endpoints with server-side downsampling."""
+"""Sequence read endpoints.
+
+Downsampling is REMOVED (refactor ruling 2026-08-27): sequences ship raw
+(step windowing via step_from/step_to stays — generic row filtering); any
+thinning for render performance is a client/renderer concern.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +12,6 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from ..downsample import downsample
 from ..storage.migrations import hash_context
 from ._common import get_db, require_run
 
@@ -41,8 +45,6 @@ def get_sequence(
     context: str | None = Query(default=None),
     step_from: int | None = Query(default=None),
     step_to: int | None = Query(default=None),
-    max_points: int | None = Query(default=None, ge=1, le=10_000_000),
-    method: str = Query(default="lttb"),
 ) -> dict[str, Any]:
     db = get_db(request)
     require_run(db, run_id)
@@ -102,16 +104,5 @@ def get_sequence(
         """,
         params,
     )
-
-    # Downsample scalar points only; media/artifact series are usually small
-    # enough to return as-is.
-    if rows and rows[0]["object_type"] == "scalar" and max_points:
-        pts = [(r["step"], r["scalar_value"]) for r in rows]
-        reduced = downsample(pts, max_points, method=method)
-        # Build a fast lookup so we keep the original rows with wall_time etc.
-        kept = set(id(p) for p in reduced)  # identity-based; fine for LTTB output
-        # Since downsample returns a subset of the inputs, reconstruct by index.
-        reduced_set = {(step, val) for step, val in reduced}
-        rows = [r for r in rows if (r["step"], r["scalar_value"]) in reduced_set]
 
     return {"run_id": run_id, "name": name, "points": rows}

@@ -79,7 +79,6 @@ function MarkdownPane({
   const rid = m.runId ?? runId;
   const q = useSequence(rid, m.name, {
     context: m.context_hash || undefined,
-    maxPoints: 200,
   });
   const points = useMemo(
     () => (q.data?.points ?? []).filter((p) => p.artifact_hash),
@@ -135,7 +134,6 @@ export default function MarkdownCard({ runId, metric, extraSeries, controlledSer
 
   const q = useSequence(runId, metric.name, {
     context: metric.context_hash || undefined,
-    maxPoints: 200,
   });
   const points = useMemo(
     () => (q.data?.points ?? []).filter((p) => p.artifact_hash),
@@ -151,7 +149,6 @@ export default function MarkdownCard({ runId, metric, extraSeries, controlledSer
             queryFn: () =>
               api.sequence(rid, m.name, {
                 context: m.context_hash || undefined,
-                maxPoints: 200,
               }),
             refetchInterval: 2_000,
             staleTime: 2_000,

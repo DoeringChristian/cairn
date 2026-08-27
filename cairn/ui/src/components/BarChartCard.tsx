@@ -107,7 +107,7 @@ export default function BarChartCard({
     queries: needsMetricFetch
       ? runIds.map((rid) => ({
           queryKey: qk.sequence(rid, metric!.key, ""),
-          queryFn: () => api.sequence(rid, metric!.key, { maxPoints: 1000 }),
+          queryFn: () => api.sequence(rid, metric!.key, {}),
           staleTime: 30_000,
         }))
       : [],

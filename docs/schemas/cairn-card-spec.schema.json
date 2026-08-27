@@ -57,8 +57,7 @@
         "table",
         "html",
         "markdown",
-        "artifact",
-        "plugin"
+        "artifact"
       ]
     },
     "CardSpec": {

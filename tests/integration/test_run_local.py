@@ -44,7 +44,7 @@ def test_local_run_full_lifecycle(tmp_path):
         capture_env=False,
         capture_system_metrics=False,
     ) as run:
-        run["hparams"] = {"lr": 3e-4, "batch": 16}
+        run.config(hparams={"lr": 3e-4, "batch": 16})
         for step in range(5):
             run.track(float(step) * 0.5, name="loss", step=step)
             run.track(float(step) * 0.6, name="loss", step=step, context={"subset": "val"})
@@ -150,7 +150,7 @@ def test_auto_finish_on_interpreter_exit(tmp_path):
             capture_source=False, capture_stdout=False,
             capture_env=False, capture_system_metrics=False,
         )
-        run["lr"] = 0.01
+        run.config(lr=0.01)
         for i in range(5):
             run.track(float(i), name="loss", step=i)
         # Intentionally do NOT call run.finish() — atexit must handle it.

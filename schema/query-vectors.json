@@ -1,0 +1,54 @@
+{
+ "version": 1,
+ "operators": [
+  "exact",
+  "iexact",
+  "gt",
+  "gte",
+  "lt",
+  "lte",
+  "in",
+  "contains",
+  "icontains",
+  "startswith",
+  "endswith",
+  "isnull"
+ ],
+ "cases": [
+  {
+   "kwargs": {
+    "lr__gt": 0.0001
+   },
+   "params": {
+    "lr__gt": "0.0001"
+   }
+  },
+  {
+   "kwargs": {
+    "tags__contains": "best"
+   },
+   "params": {
+    "tags__contains": "best"
+   }
+  },
+  {
+   "kwargs": {
+    "status__in": [
+     "completed",
+     "killed"
+    ]
+   },
+   "params": {
+    "status__in": "completed,killed"
+   }
+  },
+  {
+   "kwargs": {
+    "metrics__loss__lt": 0.1
+   },
+   "params": {
+    "metrics.loss__lt": "0.1"
+   }
+  }
+ ]
+}

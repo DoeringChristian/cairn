@@ -307,7 +307,7 @@ function MetricsSummarySection({ runData, labels, onlyDiffs }: MetricsSummaryPro
   const valueQueries = useQueries({
     queries: specs.map((s) => ({
       queryKey: qk.sequence(s.rid, s.name, "last-summary"),
-      queryFn: () => api.sequence(s.rid, s.name, { maxPoints: 500 }),
+      queryFn: () => api.sequence(s.rid, s.name, {}),
       staleTime: 10_000,
     })),
   });

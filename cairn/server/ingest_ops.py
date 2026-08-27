@@ -271,7 +271,7 @@ def heartbeat(db: Database, run_id: str) -> None:
 def delete_run(db: Database, data_dir: DataDir, run_id: str) -> None:
     _require_run(db, run_id)
     # FK enforcement inside an explicit transaction doesn't recognize deleted
-    # child rows in DuckDB; run each DELETE as its own auto-committed stmt.
+    # child rows; run each DELETE as its own auto-committed stmt.
     db.write("DELETE FROM sequences WHERE run_id = ?", [run_id])
     db.write("DELETE FROM params WHERE run_id = ?", [run_id])
     db.write("DELETE FROM log_lines WHERE run_id = ?", [run_id])

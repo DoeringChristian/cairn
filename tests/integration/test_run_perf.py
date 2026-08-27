@@ -39,11 +39,11 @@ def test_10k_scalars_fast(live_server):
         run.finish()
     elapsed = time.monotonic() - t0
     # Target is "the test completes without hanging" — upper bound generous;
-    # 10k synchronous HTTP batch inserts through DuckDB are not zero-cost.
+    # 10k synchronous HTTP batch inserts through the database are not zero-cost.
     assert elapsed < 120.0, f"10k scalars took {elapsed:.2f}s"
 
     with httpx.Client(base_url=live_server, timeout=30.0) as c:
-        points = c.get(f"/api/runs/{run.id}/sequences/loss?max_points=100000").json()[
+        points = c.get(f"/api/runs/{run.id}/sequences/loss").json()[
             "points"
         ]
     assert len(points) == 10_000

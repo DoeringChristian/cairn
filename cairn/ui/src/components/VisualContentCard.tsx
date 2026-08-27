@@ -345,7 +345,6 @@ export default function VisualContentCard({ runId, metric, extraSeries, controll
       queryFn: () =>
         api.sequence(m.runId ?? runId, m.name, {
           context: m.context_hash || undefined,
-          maxPoints: 500,
         }),
       refetchInterval: 2000,
     })),

@@ -39,7 +39,6 @@ export const CARD_MIN_SIZES: Record<string, CardMinSize> = {
   text: { minHeight: 150, minSpan: 1 },
   audio: { minHeight: 120, minSpan: 1 },
   video: { minHeight: 180, minSpan: 1 },
-  plugin: { minHeight: 200, minSpan: 1 },
   artifact: { minHeight: 120, minSpan: 1 },
 };
 

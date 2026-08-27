@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
-from fastapi import HTTPException, Request, WebSocket
+from fastapi import HTTPException, Request
 
 from .storage.datadir import DataDir
 from .storage.db import Database
@@ -426,22 +426,6 @@ def require_role(min_role: str) -> Callable[[Request], Principal | None]:
     return _dep
 
 
-def authenticate_ws(websocket: WebSocket, *, min_role: str = "read") -> Principal | None:
-    """WS variant: session cookie ONLY (browsers can't set WS headers), read
-    from the ASGI scope before ``accept()``. Does NOT consult
-    ``auth_enabled`` — callers must check that themselves (see
-    ``plugin_ws.py``) and call ``websocket.close(code=4401)`` without ever
-    calling ``accept()`` when this returns None and auth is on. This keeps
-    the "did the caller pass auth" and "is auth even required" concerns
-    separate and independently testable."""
-    db: Database = websocket.app.state.db
-    session_id = websocket.cookies.get(SESSION_COOKIE)
-    principal = verify_session(db, session_id) if session_id else None
-    if principal is None or ROLE_RANK[principal.role] < ROLE_RANK[min_role]:
-        return None
-    return principal
-
-
 def bootstrap_if_needed(db: Database) -> tuple[str, str, str] | None:
     """On first auth-enabled start with zero tokens, mint an admin token +
     a matching one-time login OTP. Returns ``(token_id, token_plaintext,
@@ -453,3 +437,35 @@ def bootstrap_if_needed(db: Database) -> tuple[str, str, str] | None:
     token_id, plaintext = create_token(db, name="bootstrap-admin", role="admin")
     otp = create_otp(db, token_id)
     return token_id, plaintext, otp
+
+
+def ensure_local_token(db: "Database", data_dir_root) -> str:
+    """Ensure the SAME-USER local-trust token exists (refactor spec §7).
+
+    A serving process (``cairn ui``/``cairn server``/the ephemeral server)
+    writes the plaintext to ``<data_dir>/auth/local.token`` (dir 0700, file
+    0600) so same-account clients on this machine — the SDK's
+    upgrade-to-HTTP path — can authenticate without any manual token
+    provisioning. Filesystem permissions ARE the trust boundary, exactly as
+    they were for the direct-DB mode. Reuses the existing file if its token
+    row is still valid; mints a fresh one otherwise.
+    """
+    import os
+    from pathlib import Path
+
+    auth_dir = Path(data_dir_root) / "auth"
+    auth_dir.mkdir(mode=0o700, exist_ok=True)
+    tok_path = auth_dir / "local.token"
+    if tok_path.exists():
+        plaintext = tok_path.read_text().strip()
+        row = db.read_one(
+            "SELECT id FROM tokens WHERE token_hash = ? AND disabled = 0",
+            [hash_secret(plaintext)],
+        )
+        if row:
+            return plaintext
+    _, plaintext = create_token(db, name="local-process", role="write")
+    fd = os.open(tok_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(plaintext)
+    return plaintext

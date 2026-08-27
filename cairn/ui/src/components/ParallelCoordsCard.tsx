@@ -80,7 +80,7 @@ export default function ParallelCoordsCard({
     queries: runIds.flatMap((rid) =>
       metricColumns.map((col) => ({
         queryKey: qk.sequence(rid, col.key, ""),
-        queryFn: () => api.sequence(rid, col.key, { maxPoints: 1000 }),
+        queryFn: () => api.sequence(rid, col.key, {}),
         staleTime: 30_000,
       })),
     ),

@@ -255,13 +255,16 @@ def test_image_forwards_processing_and_display_props():
     # level prop + auto-selected tonemap="gamma"), NOT the legacy CSS-filter
     # `processing.gamma` (which stays at its 1.0 default) — one gamma concept,
     # never applied twice.
+    # exposure is a DISPLAY key (top-level prop), no longer part of the
+    # legacy CSS-filter processing block; viridis aliases to turbo at emit.
     assert p["processing"] == {
         "brightness": 0.1, "contrast": 0.0, "gamma": 1.0,
-        "exposure": 1.5, "offset": 0.0, "flipSign": False,
+        "exposure": 0.0, "offset": 0.0, "flipSign": False,
     }
+    assert p["exposure"] == 1.5
     assert p["tonemap"] == "gamma"
     assert p["gamma"] == 2.2
-    assert p["colormap"] == "viridis"
+    assert p["colormap"] == "turbo"
     assert p["interpolation"] == "pixelated"
     assert p["showAxes"] is True
 
@@ -544,7 +547,10 @@ def test_image_hdr_ignores_8bit_only_args(caplog):
     import logging
     with caplog.at_level(logging.WARNING):
         node = cp.Image(_hdr_arr(), colormap="viridis", brightness=0.5).to_node()
-    assert "colormap" not in node["props"]
+    # Post display-encoding unification: colormap IS honoured on the float
+    # path (one encoding vocabulary); only 8-bit-only processing args are
+    # ignored (with a note).
+    assert node["props"]["colormap"] == "turbo"
     assert "processing" not in node["props"]
     assert any("float path ignores" in r.message for r in caplog.records)
 
@@ -662,7 +668,7 @@ def test_scatter_raw_shapes_points_and_config():
     assert desc["renderer"] == "scatter"
     # config always carries the colormap (default "viridis") alongside the
     # explicit axis/scale flags.
-    assert desc["props"] == {"colormap": "viridis", "xLabel": "lr", "yLog": True}
+    assert desc["props"] == {"colormap": "turbo", "xLabel": "lr", "yLog": True}
     pt = desc["data"]["props"]["points"][0]
     assert pt == {"id": "0", "x": 1.0, "y": 4.0, "color": 0.0}
 

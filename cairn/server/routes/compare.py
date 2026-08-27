@@ -15,7 +15,6 @@ router = APIRouter(prefix="/api", tags=["compare"])
 class CompareRequest(BaseModel):
     run_ids: list[str]
     metrics: list[str]
-    max_points: int | None = None
 
 
 @router.post("/compare")

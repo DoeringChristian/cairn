@@ -8,7 +8,8 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from cairn import cli, config
+from cairn import config
+from cairn import cli
 
 
 @pytest.fixture(autouse=True)
@@ -121,16 +122,17 @@ def test_export_json(live_server, monkeypatch, tmp_path):
     assert "loss" in payload["sequences"]
 
 
-def test_sync_empty_spill(tmp_path, monkeypatch):
+def test_sync_nothing_to_do(tmp_path, monkeypatch):
     runner = CliRunner()
-    # Point spill to empty tmp.
+    # Empty WAL dir + empty spill (R3: sync scans the WAL dir).
     from cairn.sdk import transport as t_mod
 
+    monkeypatch.setenv("CAIRN_WAL_DIR", str(tmp_path / "wal"))
     monkeypatch.setattr(t_mod, "default_spill_dir", lambda: tmp_path / "spill")
     monkeypatch.setattr(cli, "default_spill_dir", lambda: tmp_path / "spill")
     result = runner.invoke(cli.main, ["sync"])
     assert result.exit_code == 0
-    assert "no spill" in result.output
+    assert "nothing to sync" in result.output
 
 
 def test_ping_unreachable_exits_nonzero(monkeypatch):
@@ -190,3 +192,40 @@ def test_diff_against_local_snapshot(tmp_path, monkeypatch):
     # Unknown run id → exit 1.
     result_missing = runner.invoke(cli.main, ["diff", "nope", "--repo", str(repo)])
     assert result_missing.exit_code == 1
+
+
+def test_sync_scans_and_replays_orphaned_wals(live_server, monkeypatch, tmp_path):
+    """R3: `cairn sync` reconstructs orphaned per-run logs from the WAL dir
+    and drains them to each log's recorded target (the old command scanned a
+    different directory and could not replay the WAL at all)."""
+    import json as _json
+
+    from cairn.sdk.wal import WriteAheadLog
+
+    monkeypatch.setenv("CAIRN_WAL_DIR", str(tmp_path / "wal"))
+    monkeypatch.setenv("CAIRN_SERVER", live_server)
+
+    # A run the server knows, with an orphaned un-acked batch in the WAL.
+    import httpx
+
+    with httpx.Client(base_url=live_server, timeout=5.0) as c:
+        rid = c.post("/api/runs", json={"project": "sync"}).json()["run_id"]
+    wal = WriteAheadLog(rid, tmp_path / "wal", target=live_server)
+    wal.append(
+        "batch",
+        {"run_id": rid, "points": [{
+            "name": "loss", "step": 0,
+            "wall_time": "2026-01-01T00:00:00+00:00",
+            "object_type": "scalar", "scalar_value": 0.5,
+        }]},
+    )
+    wal.close()
+
+    runner = CliRunner()
+    result = runner.invoke(cli.main, ["sync"])
+    assert result.exit_code == 0, result.output
+    assert "replayed" in result.output
+
+    with httpx.Client(base_url=live_server, timeout=5.0) as c:
+        pts = c.get(f"/api/runs/{rid}/sequences/loss").json()["points"]
+    assert len(pts) == 1 and pts[0]["scalar_value"] == 0.5

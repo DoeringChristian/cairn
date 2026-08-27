@@ -20,9 +20,10 @@ def transport(tmp_path):
     t.close()
 
 
-def test_create_run_writes_to_duckdb(transport):
+def test_create_run_writes_to_db(transport):
     resp = transport.create_run({"project": "p", "name": "r1"})
-    assert len(resp["run_id"]) == 12
+    # run ids are client-minted 128-bit hex (secrets.token_hex(16))
+    assert len(resp["run_id"]) == 32
     rows = transport.db.read_columns("SELECT * FROM runs WHERE id = ?", [resp["run_id"]])
     assert rows[0]["status"] == "running"
     assert rows[0]["display_name"] == "r1"
@@ -176,11 +177,16 @@ def test_raises_served_by_server_holder(tmp_path):
     assert exc.value.holder["mode"] == "server"
 
 
-def test_ui_holder_does_not_block_sdk(tmp_path):
-    """A UI holding the lock should NOT block SDK — SQLite handles concurrency."""
+def test_ui_holder_redirects_sdk_to_http(tmp_path):
+    """A live UI holder makes LocalTransport raise _RepoServedByOtherError —
+    Run catches it and UPGRADES to the UI's HTTP endpoint (R0 contract; the
+    old direct-DB-beside-a-live-UI mode is retired: one writer, one path)."""
     import json
     import os
 
+    import pytest as _pytest
+
+    from cairn.sdk.local import _RepoServedByOtherError
     from cairn.server.storage.datadir import DataDir
 
     dd = DataDir(tmp_path / ".cairn")
@@ -195,10 +201,8 @@ def test_ui_holder_does_not_block_sdk(tmp_path):
             }
         )
     )
-    # Should NOT raise — UI and SDK can coexist with SQLite
-    t = LocalTransport(tmp_path / ".cairn")
-    t.close()
-
+    with _pytest.raises(_RepoServedByOtherError):
+        LocalTransport(tmp_path / ".cairn")
 
 def test_lock_released_if_db_open_fails(tmp_path, monkeypatch):
     """If Database.open raises, we must not leak the lock."""

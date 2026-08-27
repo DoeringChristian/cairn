@@ -29,7 +29,8 @@ from typing import Any, Iterable, Literal, Mapping
 
 # Reuse the reader's operator table verbatim so URL predicates share exactly
 # the same comparison semantics as ``RunQuery.filter(...)``.
-from ..sdk.reader import _OPERATORS
+from .query_grammar import OPERATOR_NAMES
+from ._operators import OPERATORS as _OPERATORS
 from .storage.db import Database
 
 

@@ -166,7 +166,6 @@ export default function ScalarPlotCard({
         runId: m.runId ?? runId,
         name: m.name,
         contextHash: m.context_hash,
-        maxPoints: 2000,
       })),
     [effectiveMetrics, runId],
   );

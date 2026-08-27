@@ -32,7 +32,6 @@ from ..sdk.capture.git import capture_git
 from ..sdk.capture.source import build_source_archive, find_project_root
 from ..sdk.capture.system import SystemMetricsCollector
 from ..sdk.handlers.registry import HandlerRegistry, default_registry
-from ..sdk.plugins import JSPlugin, PythonPlugin, ServerPlugin, WindowPlugin, _PluginBase
 from ..sdk.wrappers import _TypeWrapper
 from .buffer import MetricBuffer
 from .local import LocalTransport, _RepoServedByOtherError
@@ -54,6 +53,20 @@ class ArtifactVersion:
     size_bytes: int
     metadata: dict
     created_at: str
+    created_by_run: str | None = None
+    aliases: list | None = None
+
+    @classmethod
+    def from_row(cls, row: dict) -> "ArtifactVersion":
+        """Build from a server row, tolerating extra/missing envelope keys
+        (forward-compatible ingest — R0 conformance fix)."""
+        import dataclasses
+
+        names = {f.name for f in dataclasses.fields(cls)}
+        data = {k: v for k, v in row.items() if k in names}
+        data.setdefault("family_name", row.get("name", ""))
+        data.setdefault("metadata", row.get("metadata") or {})
+        return cls(**data)
 
 
 def _now_iso() -> str:
@@ -175,7 +188,12 @@ class Run:
                     if url is None:
                         raise
                     _verify_reachable(url, Path(target.location))
-                    self._transport = Transport(url, timeout=timeout)
+                    # Same-user local trust (spec §7): the serving process
+                    # leaves auth/local.token in the data dir for exactly
+                    # this upgrade path.
+                    local_tok = Path(target.location) / "auth" / "local.token"
+                    tok = local_tok.read_text().strip() if local_tok.exists() else None
+                    self._transport = Transport(url, timeout=timeout, token=tok)
                     self._server = url
             else:
                 # cairn:// URL → HTTP mode. Probe /api/health so we fail
@@ -191,7 +209,6 @@ class Run:
 
         # Bookkeeping
         self._finished = False
-        self._plugins: dict[str, dict[str, str]] = {}
         self._step_counters: dict[tuple, int] = {}
         self._step_lock = threading.Lock()
         self._line_counter = 0
@@ -229,10 +246,10 @@ class Run:
         self._project_id: str = resp["project_id"]
         self._url_path: str = resp.get("url", f"/p/{self._project_id}/r/{self._run_id}")
 
-        # Attach WAL for HTTP transports (not local — DuckDB is its own WAL).
+        # Attach WAL for HTTP transports (local mode writes the repo-dir WAL itself).
         if isinstance(self._transport, Transport):
             try:
-                self._wal = WriteAheadLog(self._run_id)
+                self._wal = WriteAheadLog(self._run_id, target=self._server)
                 self._transport._wal = self._wal
             except OSError:
                 log.warning("failed to create WAL for run %s", self._run_id, exc_info=True)
@@ -397,19 +414,6 @@ class Run:
         effective_step = self._next_step(name, context, step)
         merged_kwargs = {**wrapper_kwargs, **kwargs}
 
-        # Auto-register and inject metadata for plugin classes.
-        if isinstance(value, _PluginBase):
-            plugin_cls = type(value)
-            plugin_name = plugin_cls.name
-            if plugin_name not in self._plugins:
-                self._auto_register_plugin(plugin_cls)
-            pinfo = self._plugins[plugin_name]
-            merged_kwargs["plugin_hash"] = pinfo["hash"]
-            merged_kwargs["plugin_lang"] = pinfo["lang"]
-            merged_kwargs["plugin_name"] = plugin_name
-            # Include settings schema if the plugin declares one.
-            if hasattr(plugin_cls, "settings") and plugin_cls.settings:
-                merged_kwargs["plugin_settings"] = plugin_cls.settings
 
         point: dict[str, Any] = {
             "name": name,
@@ -437,71 +441,64 @@ class Run:
 
         self._metric_buffer.append(point)
 
-    def _auto_register_plugin(self, cls: type[_PluginBase]) -> None:
-        """Upload plugin source and cache its hash. Called on first track()."""
-        if issubclass(cls, JSPlugin):
-            # JS plugins: use the js class attribute or js_file.
-            instance = cls.__new__(cls)
-            source = instance.get_source()
-            lang, mime = "js", "application/javascript"
-        elif issubclass(cls, (WindowPlugin, ServerPlugin, PythonPlugin)):
-            # Capture the ENTIRE module source (not just the class) so that
-            # module-level imports and helper functions are preserved.
-            mod = inspect.getmodule(cls)
-            if mod is not None:
-                try:
-                    source = inspect.getsource(mod)
-                except OSError:
-                    source = inspect.getsource(cls)
-            else:
-                source = inspect.getsource(cls)
-
-            if issubclass(cls, WindowPlugin):
-                lang, mime = "window", "text/x-python"
-            elif issubclass(cls, ServerPlugin):
-                lang, mime = "server", "text/x-python"
-            else:
-                lang, mime = "py", "text/x-python"
-                # Prepend a # cairn-requires comment for the Pyodide iframe.
-                reqs = getattr(cls, "requires", [])
-                if reqs:
-                    req_line = f"# cairn-requires: {', '.join(reqs)}\n"
-                    if "cairn-requires" not in source:
-                        source = req_line + source
-        else:
-            raise TypeError(f"Unknown plugin type: {cls}")
-
-        source_bytes = source.encode("utf-8")
-        digest = self._transport.upload_artifact(
-            source_bytes, mime, {"plugin_name": cls.name, "plugin_lang": lang},
-        )
-        self._plugins[cls.name] = {"hash": digest, "lang": lang}
-
     def log_artifact(
         self,
         value: Any,
         name: str,
         step: int | None = None,
         *,
-        type: str | None = None,
+        artifact_type: str | None = None,
         metadata: dict | None = None,
         aliases: list[str] | None = None,
-    ) -> ArtifactVersion | None:
-        """Log an artifact as a sequence point, or as a versioned artifact.
+        type: str | None = None,  # deprecated alias for artifact_type (R0)
+    ) -> "ArtifactVersion | str":
+        """Attach an artifact to the run.
 
-        When ``type`` is provided, the artifact is registered in the versioned
-        artifact registry (family + versions). Otherwise it behaves like
-        ``run.track(value, name=name, step=step)`` — a convenience for callers
-        who think of the operation as "attach this file to the run".
+        Without ``artifact_type``: serialize + upload + attach as a NAMED run
+        artifact (the ``run_artifacts`` pool) and return its content digest.
+        With ``artifact_type``: register a version in the artifact registry
+        (family + versions) and return the :class:`ArtifactVersion`.
 
-        Single-point artifacts (``step=None``) become a one-element sequence
-        at step 0. Multiple calls with the same ``name`` and different
-        ``step`` values build a time series.
+        R0 API notes: the parameter is ``artifact_type`` (the old ``type=``
+        shadowed the builtin and crashed one branch; it remains as a
+        deprecated alias for one release). The old "no-type = track() sugar"
+        behavior is gone — use :meth:`track` for sequence points.
         """
-        if type is not None:
-            return self._log_versioned_artifact(value, name, type, metadata, aliases)
-        self.track(value, name=name, step=step)
-        return None
+        if artifact_type is None and type is not None:
+            import warnings
+
+            warnings.warn(
+                "log_artifact(type=...) is deprecated; use artifact_type=...",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            artifact_type = type
+        if artifact_type is not None:
+            return self._log_versioned_artifact(value, name, artifact_type, metadata, aliases)
+
+        # Named-artifact path: handler dispatch (wrapper unwrap, like track).
+        if isinstance(value, _TypeWrapper):
+            payload, object_type = value.obj, value.object_type
+            handler = self._registry.find_by_type(object_type)
+            kwargs = value.kwargs
+        else:
+            payload = value
+            handler = self._registry.find_handler(value)
+            object_type = handler.object_type if handler else None
+            kwargs = {}
+        if handler is None:
+            raise TypeError(
+                f"No handler for value of type {value.__class__.__name__}; "
+                "wrap with cairn.Image/Figure/Tensor/... to force a handler."
+            )
+        blob, meta = handler.serialize(payload, **kwargs)
+        if metadata:
+            meta = {**meta, **metadata}
+        digest = self._transport.upload_artifact(
+            blob, handler.mime_type, meta, object_type=object_type
+        )
+        self._transport.attach_artifact(self._run_id, name, digest, step)
+        return digest
 
     def _log_versioned_artifact(
         self,
@@ -551,7 +548,7 @@ class Run:
             created_by_run=self._run_id,
             aliases=aliases,
         )
-        return ArtifactVersion(**result) if result else None
+        return ArtifactVersion.from_row(result) if result else None
 
     def use_artifact(self, ref: str, *, role: str = "input") -> Any:
         """Consume an artifact. ``ref`` is ``"name:alias"`` or ``"name:vN"``."""
@@ -573,14 +570,38 @@ class Run:
 
     # ---- params / metadata ------------------------------------------------
 
-    def __setitem__(self, key: str, value: Any) -> None:
+    def config(self, *args: Any, **kwargs: Any) -> None:
+        """Attach configuration to the run (R0 API: replaces run[k] = v).
+
+        Accepts a mapping and/or kwargs; nested dicts flatten to dotted keys
+        server-side (``run.config(hparams={"lr": 1e-3})`` → ``hparams.lr``).
+
+            run.config(lr=1e-3, sched={"warmup": 100})
+            run.config(vars(args))
+        """
         if self._finished:
             raise RuntimeError("Run has already been finished")
-        if isinstance(value, dict):
-            # nested dict → dotted paths
-            self._transport.post_params(self._run_id, {key: value})
-        else:
-            self._transport.post_params(self._run_id, {key: value})
+        merged: dict[str, Any] = {}
+        for a in args:
+            if not isinstance(a, dict):
+                raise TypeError("run.config() positional args must be mappings")
+            merged.update(a)
+        merged.update(kwargs)
+        if merged:
+            self._transport.post_params(self._run_id, merged)
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        """DEPRECATED (R0): use :meth:`config` — ``run.config(**{key: value})``."""
+        import warnings
+
+        warnings.warn(
+            "run[key] = value is deprecated; use run.config(key=value)",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        if self._finished:
+            raise RuntimeError("Run has already been finished")
+        self._transport.post_params(self._run_id, {key: value})
 
     def set_tag(self, tag: str) -> None:
         self._transport.set_tags(self._run_id, [tag])

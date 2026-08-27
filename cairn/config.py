@@ -119,32 +119,56 @@ def reset_configured() -> None:
 def _parse_repo(value: str) -> RunTarget:
     """Parse a repo string into a RunTarget.
 
-    ``cairn://host:port`` → server mode (HTTP)
-    anything else         → local mode (filesystem path)
+    ``cairn://host:port``   → server mode (HTTP)
+    ``http(s)://host:port`` → server mode (an http URL is never a local path)
+    anything else           → local mode (filesystem path)
     """
     if value.startswith(CAIRN_SCHEME):
         http_url = "http://" + value[len(CAIRN_SCHEME):]
         return RunTarget("server", http_url)
+    if value.startswith(("http://", "https://")):
+        return RunTarget("server", value)
     return RunTarget("local", str(Path(value).expanduser()))
+
+
+def _as_server_url(value: str) -> str:
+    """Accept ``http(s)://...`` or ``cairn://host:port`` server spellings."""
+    v = str(value)
+    if v.startswith(CAIRN_SCHEME):
+        return "http://" + v[len(CAIRN_SCHEME):]
+    return v
 
 
 def resolve_server(explicit: str | None = None) -> str:
     """Resolve the server URL per the server-only priority chain.
 
     Kept for callers (CLI `ping`/`list`/...) that only speak HTTP.
+
+    Priority (R0 drift fix — the ``server`` family was persisted by the CLI
+    and set by tests but never READ; now it is, ahead of the ``repo``
+    family): explicit > configured server > configured repo(server-mode) >
+    $CAIRN_SERVER > $CAIRN_REPO(server-mode) > file server > file
+    repo(server-mode) > default.
     """
     if explicit is not None:
         return explicit
+    if "server" in _configured:
+        return _as_server_url(str(_configured["server"]))
     if "repo" in _configured:
         t = _parse_repo(str(_configured["repo"]))
         if not t.is_local:
             return t.location
+    env = os.environ.get("CAIRN_SERVER")
+    if env:
+        return _as_server_url(env)
     env = os.environ.get("CAIRN_REPO")
     if env:
         t = _parse_repo(env)
         if not t.is_local:
             return t.location
     cfg = load_config_file()
+    if "server" in cfg:
+        return _as_server_url(str(cfg["server"]))
     if "repo" in cfg:
         t = _parse_repo(str(cfg["repo"]))
         if not t.is_local:
@@ -174,6 +198,7 @@ def resolve_token(explicit: str | None = None) -> str | None:
 
 def resolve_target(
     repo: str | Path | None = None,
+    server: str | None = None,
 ) -> RunTarget:
     """Resolve where a ``Run`` should send its data.
 
@@ -184,13 +209,22 @@ def resolve_target(
     """
     if repo is not None:
         return _parse_repo(str(repo))
+    if server is not None:
+        return RunTarget("server", _as_server_url(server))
     if "repo" in _configured:
         return _parse_repo(str(_configured["repo"]))
+    if "server" in _configured:
+        return RunTarget("server", _as_server_url(str(_configured["server"])))
     env_repo = os.environ.get("CAIRN_REPO")
     if env_repo:
         return _parse_repo(env_repo)
+    env_server = os.environ.get("CAIRN_SERVER")
+    if env_server:
+        return RunTarget("server", _as_server_url(env_server))
     cfg = load_config_file()
     if "repo" in cfg:
         return _parse_repo(str(cfg["repo"]))
+    if "server" in cfg:
+        return RunTarget("server", _as_server_url(str(cfg["server"])))
     # Default: ./.cairn in CWD
     return RunTarget("local", str(Path.cwd() / ".cairn"))

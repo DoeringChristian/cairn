@@ -132,7 +132,6 @@ function HtmlPane({
   const rid = m.runId ?? runId;
   const q = useSequence(rid, m.name, {
     context: m.context_hash || undefined,
-    maxPoints: 200,
   });
   const points = useMemo(
     () => (q.data?.points ?? []).filter((p) => p.artifact_hash),
@@ -205,7 +204,6 @@ export default function HtmlCard({ runId, metric, extraSeries, controlledSeries,
 
   const q = useSequence(runId, metric.name, {
     context: metric.context_hash || undefined,
-    maxPoints: 200,
   });
   const points = useMemo(
     () => (q.data?.points ?? []).filter((p) => p.artifact_hash),
@@ -221,7 +219,6 @@ export default function HtmlCard({ runId, metric, extraSeries, controlledSeries,
             queryFn: () =>
               api.sequence(rid, m.name, {
                 context: m.context_hash || undefined,
-                maxPoints: 200,
               }),
             refetchInterval: 2_000,
             staleTime: 2_000,

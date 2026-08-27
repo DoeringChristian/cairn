@@ -3,7 +3,7 @@
 The lock file (``.cairn/repo.lock``) is acquired by any process that intends
 to WRITE to the repo — whether that's ``cairn server`` holding it for its
 whole lifetime or an SDK ``Run`` holding it only while a run is active. The
-same mechanism covers both so the "one writer per DuckDB file" invariant is
+same mechanism covers both so the "one writer per database file" invariant is
 never violated regardless of which mode is active.
 """
 
@@ -48,7 +48,7 @@ class RepoLockedError(RuntimeError):
 
 
 class DataDir:
-    """Owns the ``.cairn/`` tree: DuckDB file, artifacts, sources, logs, lock file."""
+    """Owns the ``.cairn/`` tree: SQLite file, artifacts, sources, logs, lock file."""
 
     def __init__(self, root: Path):
         self.root = Path(root).expanduser().resolve()

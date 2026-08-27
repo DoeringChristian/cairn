@@ -171,6 +171,52 @@ def delete_family(db: Database, family_id: str) -> None:
 # Versions
 # ---------------------------------------------------------------------------
 
+def create_version_from_digest(
+    db: Database,
+    *,
+    family_id: str,
+    digest: str,
+    size_bytes: int | None = None,
+    metadata: dict[str, Any] | None = None,
+    created_by_run: str | None = None,
+    aliases: list[str] | None = None,
+) -> dict[str, Any]:
+    """Register a version referencing an ALREADY-UPLOADED blob (R0 contract
+    fix: the client uploads content-addressed blobs once via the artifact
+    endpoint and versions reference the digest — no double upload)."""
+    get_family(db, family_id)  # ensure exists
+    row = db.read_one(
+        "SELECT hash, size_bytes FROM artifacts WHERE hash = ?", [digest]
+    )
+    if row is None:
+        raise LookupError(f"artifact blob {digest} not found — upload it first")
+    size = size_bytes if size_bytes is not None else row[1]
+    now = _now_iso()
+    version_id = _new_id()
+    with db.transaction() as con:
+        vrow = con.execute(
+            "SELECT COALESCE(MAX(version), 0) FROM artifact_versions WHERE family_id = ?",
+            [family_id],
+        ).fetchone()
+        next_version = vrow[0] + 1
+        con.execute(
+            """
+            INSERT INTO artifact_versions
+                (id, family_id, version, hash, size_bytes, metadata, created_at, created_by_run)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [version_id, family_id, next_version, digest, size,
+             json.dumps(metadata or {}), now, created_by_run],
+        )
+    for alias in (aliases or ["latest"]):
+        set_alias(db, family_id=family_id, alias=alias, version_id=version_id)
+    out = get_version(db, version_id)
+    fam = get_family(db, family_id)
+    out["family_name"] = fam.get("name", "")
+    out["aliases"] = list(aliases or ["latest"])
+    return out
+
+
 def create_version(
     db: Database,
     blobs: BlobStore,

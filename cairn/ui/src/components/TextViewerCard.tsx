@@ -41,7 +41,6 @@ const FONT_SIZE_CLASS: Record<TextSettings["fontSize"], string> = {
 export default function TextViewerCard({ runId, metric, settingsKeyOverride, onRemove, autoOpenSettings }: Props) {
   const q = useSequence(runId, metric.name, {
     context: metric.context_hash || undefined,
-    maxPoints: 200,
   });
   const points = useMemo(() => q.data?.points ?? [], [q.data]);
   const [idx, setIdx] = useState(0);

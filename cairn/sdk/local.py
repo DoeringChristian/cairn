@@ -66,7 +66,7 @@ class LocalTransport:
         if (
             _holder_is_live(holder)
             and holder is not None
-            and holder.get("mode") == "server"
+            and holder.get("mode") in ("server", "ui")
             and holder.get("host")
             and holder.get("port")
         ):

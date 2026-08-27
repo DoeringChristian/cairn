@@ -15,7 +15,7 @@
  *      vanish). Kept permissive here too, unchanged.
  *   3. The `CardRenderer` switch on `metric.object_type`
  *      (components/CardRenderer.tsx), which additionally handles
- *      `table`/`html`/`markdown`/`artifact`/`plugin` — types absent from
+ *      `table`/`html`/`markdown`/`artifact` — types absent from
  *      the closed union above.
  *
  * `CARD_TYPES` below is the superset (21 members) all three now derive
@@ -76,7 +76,6 @@ export const CARD_TYPES = [
   "html",
   "markdown",
   "artifact",
-  "plugin",
 ] as const;
 
 export type CardType = (typeof CARD_TYPES)[number];

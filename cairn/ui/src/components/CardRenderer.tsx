@@ -25,7 +25,6 @@ const FigureInteractiveCard = lazy(
   () => import("./FigureInteractiveCard"),
 );
 
-const PluginCard = lazy(() => import("./PluginCard"));
 
 const ParallelCoordsCard = lazy(() => import("./ParallelCoordsCard"));
 
@@ -125,7 +124,7 @@ function LazyCardFallback({ label }: { label: string }) {
 
 /** Fallback card for unknown object types — shows type info + download button. */
 function UnknownTypeCard({ runId, metric }: { runId: string; metric: SequenceMeta }) {
-  const q = useSequence(runId, metric.name, { context: metric.context_hash || undefined, maxPoints: 1 });
+  const q = useSequence(runId, metric.name, { context: metric.context_hash || undefined});
   const point = useMemo(() => (q.data?.points ?? [])[0], [q.data]);
 
   return (
@@ -324,22 +323,6 @@ export default function CardRenderer(props: CardDescriptor) {
           }
         >
           <VolumeVisualCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />
-        </Suspense>
-      );
-    case "plugin":
-      return (
-        <Suspense
-          fallback={
-            <div data-cairn-card className="card p-4">
-              <div className="mb-2 flex items-baseline justify-between gap-2">
-                <h3 className="mono text-sm font-semibold">{metric.name}</h3>
-                <span className="text-xs text-fg-subtle">loading plugin…</span>
-              </div>
-              <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
-            </div>
-          }
-        >
-          <PluginCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />
         </Suspense>
       );
     default: {

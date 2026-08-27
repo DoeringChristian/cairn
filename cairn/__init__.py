@@ -35,10 +35,6 @@ _LAZY_ATTRS: dict[str, str] = {
     "query_url": ".sdk.query_urls",
     "register_handler": ".sdk.handlers.registry",
     "Report": ".sdk.report",
-    "JSPlugin": ".sdk.plugins",
-    "PythonPlugin": ".sdk.plugins",
-    "ServerPlugin": ".sdk.plugins",
-    "WindowPlugin": ".sdk.plugins",
     "Artifact": ".sdk.wrappers",
     "Audio": ".sdk.wrappers",
     "Boxes3D": ".sdk.wrappers",
@@ -60,7 +56,6 @@ _LAZY_ATTRS: dict[str, str] = {
 
 if TYPE_CHECKING:  # static-analysis only — never executed, never eager at runtime.
     from . import plot as plot
-    from .sdk.plugins import JSPlugin, PythonPlugin, ServerPlugin, WindowPlugin
     from .sdk.query_urls import query_url
     from .sdk.reader import Reader
     from .sdk.report import Report
@@ -133,10 +128,6 @@ __all__ = [
     "Text",
     "Html",
     "Markdown",
-    "JSPlugin",
-    "PythonPlugin",
-    "ServerPlugin",
-    "WindowPlugin",
     "log_artifact",
     "load_artifact",
     "list_artifacts",

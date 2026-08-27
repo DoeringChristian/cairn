@@ -142,30 +142,32 @@ def list_versions(family_id: str, request: Request) -> dict[str, Any]:
     return {"versions": versions}
 
 
+class CreateVersionBody(BaseModel):
+    """R0 contract fix: a version REFERENCES an already-uploaded blob by
+    digest (content-addressed, single upload) — the shape the SDK always
+    sent. The old multipart re-upload form is gone."""
+
+    hash: str
+    size_bytes: int | None = None
+    metadata: dict[str, Any] | None = None
+    created_by_run: str | None = None
+    aliases: list[str] | None = None
+
+
 @router.post("/artifact-families/{family_id}/versions", dependencies=[_write])
-async def create_version(
-    family_id: str,
-    request: Request,
-    file: UploadFile = File(...),
-    metadata: str = Form("{}"),
-    created_by_run: str | None = Form(None),
+def create_version(
+    family_id: str, body: CreateVersionBody, request: Request,
 ) -> dict[str, Any]:
     db = get_db(request)
-    blobs = get_blobs(request)
-    data = await file.read()
-    mime_type = file.content_type or "application/octet-stream"
     try:
-        meta = json.loads(metadata) if metadata else None
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="metadata must be valid JSON")
-    try:
-        return ops.create_version(
-            db, blobs,
+        return ops.create_version_from_digest(
+            db,
             family_id=family_id,
-            data=data,
-            mime_type=mime_type,
-            metadata=meta,
-            created_by_run=created_by_run,
+            digest=body.hash,
+            size_bytes=body.size_bytes,
+            metadata=body.metadata,
+            created_by_run=body.created_by_run,
+            aliases=body.aliases,
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc))

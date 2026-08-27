@@ -87,7 +87,7 @@ export default function ScatterPlotCard({
     queries: runIds.flatMap((rid) =>
       metricAxes.map((ax) => ({
         queryKey: qk.sequence(rid, ax.key, ""),
-        queryFn: () => api.sequence(rid, ax.key, { maxPoints: 1000 }),
+        queryFn: () => api.sequence(rid, ax.key, {}),
         staleTime: 30_000,
       })),
     ),

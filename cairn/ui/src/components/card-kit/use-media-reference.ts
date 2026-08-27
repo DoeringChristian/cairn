@@ -92,7 +92,6 @@ export function useMediaReference(args: UseMediaReferenceArgs): UseMediaReferenc
 
   const extQuery = useSequence(external?.runId ?? runId, external?.name ?? "", {
     context: external?.context_hash || undefined,
-    maxPoints: 500,
   });
   const externalPoints = useMemo(() => {
     if (!external || !extQuery.data) return [];
@@ -107,7 +106,6 @@ export function useMediaReference(args: UseMediaReferenceArgs): UseMediaReferenc
             queryFn: () =>
               api.sequence(m.runId ?? runId, external.name, {
                 context: external.context_hash || undefined,
-                maxPoints: 500,
               }),
             refetchInterval: 2000,
           }))

@@ -45,6 +45,7 @@ _FORBIDDEN = [
     "cairn.sdk.buffer",
     "cairn.sdk.handlers*",
     "cairn.cli",
+    "cairn.server.app",
     # The reader (DataRef/ArtifactInfo run-reading) pulls run/wal/local/server;
     # the pure modules recognize a run[tag] handle via the registered-type seam
     # instead, so the reader must be absent from THEIR closure. (cairn/plot.py

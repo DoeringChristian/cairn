@@ -48,7 +48,6 @@ function formatBytes(bytes: number): string {
 export default function ArtifactCard({ runId, metric, settingsKeyOverride, onRemove, autoOpenSettings }: Props) {
   const q = useSequence(runId, metric.name, {
     context: metric.context_hash || undefined,
-    maxPoints: 200,
   });
   // Also fetch named artifacts (from log_artifact) as fallback.
   const artifactsQ = useArtifacts(runId);

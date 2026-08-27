@@ -331,35 +331,6 @@ def test_bootstrap_if_needed_is_idempotent(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_plugin_ws_closes_4401_without_cookie(auth_env):
-    _app, c, _tokens = auth_env
-    with pytest.raises(WebSocketDisconnect) as exc_info:
-        with c.websocket_connect("/ws/plugin/run123/some_metric"):
-            pass
-    assert exc_info.value.code == 4401
-
-
-def test_plugin_ws_accepts_with_valid_session(auth_env):
-    _app, c, tokens = auth_env
-    c.post("/api/auth/login", json={"token": tokens["read"]})
-    # A valid session should get past the auth gate and accept(); the
-    # connection then waits for a "render" message we never send, so just
-    # prove we didn't get slammed with 4401 immediately.
-    with c.websocket_connect("/ws/plugin/run123/some_metric") as ws:
-        ws.close()
-
-
-def test_plugin_ws_open_when_auth_disabled(noauth_env):
-    _app, c = noauth_env
-    with c.websocket_connect("/ws/plugin/run123/some_metric") as ws:
-        ws.close()
-
-
-# ---------------------------------------------------------------------------
-# --no-auth parity
-# ---------------------------------------------------------------------------
-
-
 def test_noauth_mode_has_no_gate(noauth_env):
     _app, c = noauth_env
     resp = c.post("/api/projects", json={"name": "p"})

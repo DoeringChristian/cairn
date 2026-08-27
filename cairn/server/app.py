@@ -8,7 +8,7 @@ The app can be used in one of two modes:
 * **Shared**: ``create_app(db=..., blobs=..., data_dir=...)`` accepts
   pre-constructed instances and does NOT close the DB on shutdown. This lets
   ``cairn server`` run two FastAPI apps (ingest + UI) in the same process
-  against ONE Database (DuckDB allows one connection per file).
+  against ONE Database (one shared SQLite connection per file).
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+import os
 from pathlib import Path
 
 from fastapi import Depends, FastAPI
@@ -37,7 +38,6 @@ from .routes import (
     import_export,
     ingest,
     logs,
-    plugin_ws,
     projects,
     query,
     report_templates,
@@ -140,7 +140,6 @@ def create_app(
         lifespan=lifespan,
     )
     # Read by the auth dependency family (auth_core.require_role) and the
-    # WS handshake gate (plugin_ws.py) on every request/connection. Set
     # before any router registration so it's never accessed unset.
     app.state.auth_enabled = auth_enabled
     # Short-lived, in-memory store for /embed/card specs (WS-EMBED). Created
@@ -205,10 +204,8 @@ def create_app(
         app.include_router(router, dependencies=[Depends(require("write"))])
 
     # WebSocket: gates itself (session cookie only, checked before accept()
-    # — see plugin_ws.py). A FastAPI Depends() can't run before accept() for
     # a websocket route, so this one is deliberately excluded from the
     # dependencies= loops above.
-    app.include_router(plugin_ws.router)
 
     if mount_ui:
         _mount_spa_or_placeholder(app)
@@ -229,6 +226,17 @@ def create_app(
     return app
 
 
+def _resolve_ui_dist() -> Path:
+    """Locate the cairn-ui build (refactor §1b: the UI is its own package).
+
+    `CAIRN_UI_DIST` overrides; default is the bundled cairn/ui/dist.
+    """
+    env = os.environ.get("CAIRN_UI_DIST")
+    if env:
+        return Path(env)
+    return Path(__file__).resolve().parent.parent / "ui" / "dist"
+
+
 def _mount_spa_or_placeholder(app: FastAPI) -> None:
     """Mount the built React bundle with SPA-style fallback routing.
 
@@ -236,7 +244,7 @@ def _mount_spa_or_placeholder(app: FastAPI) -> None:
     a static asset in ``ui/dist/`` gets ``index.html`` so React Router can
     handle client-side routing (e.g. ``/p/demo/r/abc123/metrics``).
     """
-    ui_dist = Path(__file__).resolve().parent.parent / "ui" / "dist"
+    ui_dist = _resolve_ui_dist()
     if (ui_dist / "index.html").exists():
         index_html = (ui_dist / "index.html").read_bytes()
 

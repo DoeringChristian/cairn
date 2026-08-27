@@ -35,5 +35,5 @@ def test_concurrent_batch_posts(client):
         t.join()
 
     assert not errors, errors
-    r = client.get(f"/api/runs/{rid}/sequences/loss?max_points=100000")
+    r = client.get(f"/api/runs/{rid}/sequences/loss")
     assert len(r.json()["points"]) == 20 * 50

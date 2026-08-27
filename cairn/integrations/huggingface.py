@@ -60,7 +60,7 @@ class CairnCallback(TrainerCallback):
             self._run = Run(**kw)
         # Log the TrainingArguments as params (flat dict).
         try:
-            self._run["training_args"] = args.to_dict()
+            self._run.config(training_args=args.to_dict())
         except Exception:  # noqa: BLE001
             pass
 

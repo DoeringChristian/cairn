@@ -21,7 +21,7 @@ def test_create_run_creates_project(client):
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert len(body["run_id"]) == 12
+    assert len(body["run_id"]) == 32  # client-minted 128-bit hex
     assert body["project_id"] == "image-class"
 
     # Project is now visible via read API.

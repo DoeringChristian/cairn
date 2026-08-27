@@ -11,13 +11,23 @@ export interface Section {
   items: SequenceMeta[];
 }
 
+// R0 fix: this set was missing 8 of the media-like object_types, so e.g.
+// a `foo.mesh` metric landed in a "foo" section instead of Media. Hand-fixed
+// now; DERIVED from the card manifests (section === "media") once R5 lands.
 const MEDIA_TYPES = new Set([
   "image",
   "audio",
   "video",
   "figure",
   "histogram",
-  "plugin",
+  "tensor",
+  "table",
+  "pointcloud",
+  "mesh",
+  "boxes3d",
+  "volume",
+  "html",
+  "markdown",
 ]);
 
 function sectionOrder(name: string): number {

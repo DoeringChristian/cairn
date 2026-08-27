@@ -156,7 +156,7 @@ class Transport:
         try:
             self.post_json(f"/api/runs/{run_id}/batch", {"points": points})
             if seq is not None and self._wal:
-                self._wal.checkpoint(seq)
+                self._wal.ack(seq)
             return True
         except (httpx.HTTPError, OSError) as exc:
             log.warning("batch POST failed for %s (WAL seq %s): %s", run_id, seq, exc)
@@ -170,7 +170,7 @@ class Transport:
         try:
             self.post_json(f"/api/runs/{run_id}/params", {"params": params})
             if seq is not None and self._wal:
-                self._wal.checkpoint(seq)
+                self._wal.ack(seq)
         except (httpx.HTTPError, OSError) as exc:
             log.warning("params POST failed for %s (WAL seq %s): %s", run_id, seq, exc)
 
@@ -179,7 +179,7 @@ class Transport:
         try:
             self.post_json(f"/api/runs/{run_id}/logs", {"lines": lines})
             if seq is not None and self._wal:
-                self._wal.checkpoint(seq)
+                self._wal.ack(seq)
             return True
         except (httpx.HTTPError, OSError) as exc:
             log.warning("logs POST failed for %s (WAL seq %s): %s", run_id, seq, exc)
@@ -243,7 +243,7 @@ class Transport:
                     data=form_data,
                 )
             if seq is not None and self._wal:
-                self._wal.checkpoint(seq)
+                self._wal.ack(seq)
         except (httpx.HTTPError, OSError) as exc:
             log.warning("artifact upload failed (WAL seq %s): %s", seq, exc)
         return digest
@@ -270,7 +270,7 @@ class Transport:
         family = self.get(f"/api/projects/{project_id}/artifact-families/by-name/{family_name}").json()
         # Create version
         return self.post_json(
-            f"/api/projects/{project_id}/artifact-families/{family['id']}/versions",
+            f"/api/artifact-families/{family['id']}/versions",
             {
                 "hash": digest,
                 "size_bytes": size_bytes,
@@ -282,14 +282,14 @@ class Transport:
 
     def resolve_artifact(self, project_id: str, ref: str) -> dict[str, Any]:
         """Resolve ``"name:alias"`` or ``"name:vN"`` to a version dict."""
-        return self.get(
-            f"/api/projects/{project_id}/artifact-families/resolve",
-            params={"ref": ref},
+        return self.post_json(
+            f"/api/projects/{project_id}/resolve-artifact-ref",
+            {"ref": ref},
         ).json()
 
     def record_artifact_input(self, run_id: str, artifact_version_id: str, role: str) -> None:
         """Record that a run consumed an artifact version."""
-        self.post_json(f"/api/runs/{run_id}/input-artifacts", {
+        self.post_json(f"/api/runs/{run_id}/inputs", {
             "artifact_version_id": artifact_version_id, "role": role,
         })
 
@@ -307,7 +307,7 @@ class Transport:
         for entry in self._wal.pending():
             try:
                 self._replay_wal_entry(entry)
-                self._wal.checkpoint(entry.seq)
+                self._wal.ack(entry.seq)
                 replayed += 1
             except (httpx.HTTPError, OSError) as exc:
                 log.warning("WAL replay failed at seq %d: %s", entry.seq, exc)

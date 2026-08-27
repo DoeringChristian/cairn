@@ -136,7 +136,7 @@ export function useSequences(runId: string) {
 export function useSequence(
   runId: string,
   name: string,
-  opts: { context?: string; maxPoints?: number } = {},
+  opts: { context?: string;} = {},
 ) {
   const runQ = useQuery({
     queryKey: qk.run(runId),
@@ -159,7 +159,7 @@ export function useSequence(
  * sequence query keeps polling.
  */
 export function useSequencesForRuns(
-  specs: Array<{ runId: string; name: string; contextHash: string; maxPoints?: number }>,
+  specs: Array<{ runId: string; name: string; contextHash: string;}>,
 ) {
   const distinctRunIds = useMemo(
     () => Array.from(new Set(specs.map((s) => s.runId))),
@@ -187,7 +187,6 @@ export function useSequencesForRuns(
       queryFn: () =>
         api.sequence(spec.runId, spec.name, {
           context: spec.contextHash || undefined,
-          maxPoints: spec.maxPoints,
         }),
       staleTime: 2_000,
       refetchInterval: (liveByRunId.get(spec.runId) ?? true) ? 2_000 : false,

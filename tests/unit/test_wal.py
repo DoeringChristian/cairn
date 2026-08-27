@@ -116,3 +116,56 @@ class TestWALResume:
         pending = list(w2.pending())
         assert len(pending) == 2
         w2.close()
+
+
+# ---------------------------------------------------------------------------
+# R3: ack discipline + epoch header + the sync scanner contract
+# ---------------------------------------------------------------------------
+
+def test_failed_send_is_never_shadowed_by_a_later_success(tmp_path):
+    """THE data-loss bug (refactor spec R3): op 5 fails, op 6 succeeds — the
+    old integer checkpoint jumped to 6 and op 5 was silently lost. With the
+    contiguous low-water + acked-set, op 5 stays pending."""
+    from cairn.sdk.wal import WriteAheadLog
+
+    wal = WriteAheadLog("runx", tmp_path)
+    s1 = wal.append("batch", {"n": 1})
+    s2 = wal.append("batch", {"n": 2})
+    s3 = wal.append("batch", {"n": 3})
+    wal.ack(s1)
+    # s2 FAILS (no ack); s3 succeeds:
+    wal.ack(s3)
+    pend = list(wal.pending())
+    assert [e.seq for e in pend] == [s2]
+    assert wal.has_pending
+    # replay succeeds → contiguous → everything delivered
+    wal.ack(s2)
+    assert not wal.has_pending
+    assert wal.read_checkpoint() == s3
+
+
+def test_header_carries_epoch_and_target(tmp_path):
+    from cairn.sdk.wal import WriteAheadLog
+
+    wal = WriteAheadLog("runy", tmp_path, target="http://srv:4300")
+    assert len(wal.epoch) == 16
+    assert wal.target == "http://srv:4300"
+    wal.append("batch", {"n": 1})
+    wal.close()
+    # Reopen: header is READ, not rewritten; epoch is stable.
+    wal2 = WriteAheadLog("runy", tmp_path)
+    assert wal2.epoch == wal.epoch
+    assert wal2.target == "http://srv:4300"
+    # header record never surfaces as a pending op
+    assert all(e.op != "header" for e in wal2.pending())
+
+
+def test_legacy_bare_int_checkpoint_still_reads(tmp_path):
+    from cairn.sdk.wal import WriteAheadLog
+
+    wal = WriteAheadLog("runz", tmp_path)
+    for i in range(3):
+        wal.append("batch", {"n": i})
+    (tmp_path / "runz.checkpoint").write_text("2")  # legacy format
+    assert wal.read_checkpoint() == 2
+    assert [e.seq for e in wal.pending()] == [3]

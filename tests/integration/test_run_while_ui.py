@@ -117,8 +117,15 @@ def test_run_joins_via_http_when_ui_is_serving(ui_subprocess):
             run.track(float(step), name="loss", step=step)
         run_id = run.id
 
-    # The UI must see the run we just logged via its API.
-    with httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=5.0) as c:
+    # The UI must see the run we just logged via its API. Reads authenticate
+    # with the same-user local-trust token the serving process leaves in the
+    # data dir (refactor spec §7) — the same one the SDK upgrade path used.
+    local_token = (repo / "auth" / "local.token").read_text().strip()
+    with httpx.Client(
+        base_url=f"http://127.0.0.1:{port}",
+        timeout=5.0,
+        headers={"Authorization": f"Bearer {local_token}"},
+    ) as c:
         seq = c.get(f"/api/runs/{run_id}/sequences/loss").json()
         steps = sorted(p["step"] for p in seq["points"])
         assert steps == [0, 1, 2, 3, 4]
