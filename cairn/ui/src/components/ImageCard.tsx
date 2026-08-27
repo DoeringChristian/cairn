@@ -30,7 +30,7 @@ import { ExternalBaselinePicker } from "./card-kit/ExternalBaselinePicker";
 import {
   ImageViewportPane,
   ColormapSwatch,
-  COLORMAP_OPTIONS,
+
   DIVERGING_COLORMAPS,
   DEFAULT_OVERLAY_SETTINGS,
   createEndpointDataSource,
@@ -56,6 +56,11 @@ import { enumerateCompareModeOptions } from "@cairn-plot/lib/cairn-plot/media-co
 // app can't drift from the pane surface's default (16). Deep import: the const
 // isn't re-exported from the package root.
 import { EXTENDED_TONEMAP_PEAK_DEFAULT } from "@cairn-plot/lib/cairn-plot/image/tonemap";
+// The display-encoding REGISTRY — cairn-plot's ONE settings vocabulary for the
+// image display look (curves + colormap LUTs, mutually exclusive). The card's
+// "Display encoding" select is built from it so the panel can never drift from
+// what the panes actually model.
+import { listEncodingsByKind, getEncoding } from "@cairn-plot/lib/cairn-plot/image/encodings";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import AddToComparisonButton from "./AddToComparisonButton";
 import CardShell from "./CardShell";
@@ -78,12 +83,19 @@ import StepSlider from "./StepSlider";
 //
 // Settings model: the pane toolbar stays hidden (`toolbar={false}` — cairn-
 // plot's host-driven controlled-surface seam), and this card's settings panel
-// drives every host-controllable pane prop: processing (brightness/contrast/
-// gamma/exposure/offset/flipSign), the unified tone-map operator set + peak +
-// tonemapGamma, interpolation, false-color colormap (every cairn-plot LUT),
-// pixel axes, pixel-value notation, overlays, diff kernels (pointwise + the
-// GPU FLIP/HDR-FLIP/SSIM set), split position, zoom/pan. Settings persist in
-// card settings and are shared per content kind (stacked-settings ruling).
+// speaks cairn-plot's OWN settings vocabulary: the unified display ENCODING
+// (one select over the registry's curves + colormap LUTs — the same ONE-key
+// model as `ImageSyncSettings.encoding`, persisted as its tonemap/colormap
+// prop seeds), exposure/offset (scene-linear, both SDR + HDR paths), tone-map
+// gamma + peak, interpolation, pixel axes, pixel-value notation, overlays, diff
+// kernels (pointwise + the GPU FLIP/HDR-FLIP/SSIM set), split position,
+// zoom/pan. The legacy SDR-only `processing` knobs (brightness/contrast/
+// gamma-filter/flip-sign) are NOT exposed — they sit outside the synchronized
+// vocabulary and are dead on float/HDR sources; stored values from old cards
+// still apply, the panel just no longer writes them. Store-only keys the pane
+// props cannot reach yet (reduce, colorMin/colorMax, channelSelect, infoPanel)
+// need the settings-group seam threaded through cairn-plot's viewport adapter.
+// Settings persist in card settings, shared per content kind.
 // ---------------------------------------------------------------------------
 
 interface Props {
@@ -607,6 +619,33 @@ export default function ImageCard({ runId, metric, extraSeries, controlledSeries
   }, [updateSettings]);
 
   // -----------------------------------------------------------------------
+  // Unified display encoding — cairn-plot's ONE display-look key. Persisted
+  // via the pane's two prop SEEDS (`tonemap` = curve id, `colormap` = LUT id
+  // or "none"); a LUT structurally deactivates the curve and vice-versa,
+  // exactly as `usePaneEncoding` derives it in every pane backend.
+  // -----------------------------------------------------------------------
+  const encodingOptions = useMemo(() => {
+    const curves = listEncodingsByKind("curve")
+      .filter((e) => !e.needsHdrSurface)
+      .map((e) => ({ value: e.id, label: e.label }));
+    const luts = listEncodingsByKind("lut")
+      .map((e) => ({ value: e.id, label: `False color · ${e.label}` }));
+    return [...curves, ...luts];
+  }, []);
+  const activeEncoding =
+    settings.colormap && settings.colormap !== "none"
+      ? settings.colormap
+      : (settings.tonemap ?? "srgb");
+  const activeLut = getEncoding(activeEncoding)?.kind === "lut";
+  const handleEncodingSelect = useCallback((id: string) => {
+    if (getEncoding(id)?.kind === "lut") {
+      updateSettings({ colormap: id as Colormap });
+    } else {
+      updateSettings({ tonemap: id as ImageSettings["tonemap"], colormap: "none" });
+    }
+  }, [updateSettings]);
+
+  // -----------------------------------------------------------------------
   // Settings panel
   // -----------------------------------------------------------------------
   const settingsPanel = (
@@ -687,35 +726,21 @@ export default function ImageCard({ runId, metric, extraSeries, controlledSeries
           )}
         </>
       )}
-      <SettingsSection title="Image" first={!hasOverlay} />
-      <Slider
-        label="Brightness"
-        value={settings.brightness}
-        onChange={(v) => updateSettings({ brightness: v })}
-        min={-1}
-        max={1}
-        step={0.01}
-        format={(v) => v.toFixed(2)}
+      <SettingsSection title="Display" first={!hasOverlay} />
+      <Select<string>
+        label="Encoding"
+        value={activeEncoding}
+        onChange={(v) => handleEncodingSelect(v)}
+        options={encodingOptions}
+        description={
+          activeLut && DIVERGING_COLORMAPS.has(activeEncoding)
+            ? "Diverging: 0 = center (white)"
+            : "One display look: a tone-map curve OR a false-color LUT (mutually exclusive, cairn-plot's unified encoding)"
+        }
       />
-      <Slider
-        label="Contrast"
-        value={settings.contrast}
-        onChange={(v) => updateSettings({ contrast: v })}
-        min={-1}
-        max={1}
-        step={0.01}
-        format={(v) => v.toFixed(2)}
-      />
-      <Slider
-        label="Gamma"
-        value={settings.gamma}
-        onChange={(v) => updateSettings({ gamma: v })}
-        min={0.1}
-        max={3}
-        step={0.01}
-        format={(v) => v.toFixed(2)}
-        description="1 = no change; <1 brightens shadows, >1 darkens"
-      />
+      {activeLut && (
+        <ColormapSwatch colormap={activeEncoding as Exclude<Colormap, "none">} />
+      )}
       <Slider
         label="Exposure"
         value={settings.exposure}
@@ -724,7 +749,7 @@ export default function ImageCard({ runId, metric, extraSeries, controlledSeries
         max={3}
         step={0.01}
         format={(v) => v.toFixed(2)}
-        description="EV stops: 0 = none, +1 = 2× brighter"
+        description="EV stops in scene-linear space: 0 = none, +1 = 2× brighter"
       />
       <Slider
         label="Offset"
@@ -734,28 +759,20 @@ export default function ImageCard({ runId, metric, extraSeries, controlledSeries
         max={0.5}
         step={0.001}
         format={(v) => v.toFixed(3)}
-        description="Uniform shift added after gamma"
+        description="Uniform shift, applied after exposure"
       />
-      <Toggle
-        label="Flip sign"
-        checked={settings.flipSign}
-        onChange={(v) => updateSettings({ flipSign: v })}
-        description="Invert / negate pixel values"
-      />
-      <SettingsSection title="Tone map" />
-      <Select<"linear" | "srgb" | "gamma" | "reinhard" | "aces">
-        label="Operator"
-        value={settings.tonemap ?? "srgb"}
-        onChange={(v) => updateSettings({ tonemap: v })}
-        options={[
-          { value: "srgb", label: "sRGB (default)" },
-          { value: "linear", label: "Linear" },
-          { value: "gamma", label: "Gamma" },
-          { value: "reinhard", label: "Reinhard" },
-          { value: "aces", label: "ACES" },
-        ]}
-        description="Unified curve. HDR/float panes extend it; the CPU 2D-canvas backend is SDR-only (P=1)"
-      />
+      {activeEncoding === "gamma" && (
+        <Slider
+          label="Tone-map γ"
+          value={settings.tonemapGamma ?? 2.2}
+          onChange={(v) => updateSettings({ tonemapGamma: v })}
+          min={0.5}
+          max={4}
+          step={0.05}
+          format={(v) => v.toFixed(2)}
+          description="Gamma-operator exponent"
+        />
+      )}
       <Slider
         label="Peak (HDR ceiling)"
         value={settings.peak ?? EXTENDED_TONEMAP_PEAK_DEFAULT}
@@ -766,18 +783,6 @@ export default function ImageCard({ runId, metric, extraSeries, controlledSeries
         format={(v) => `${v.toFixed(1)}×`}
         description="×SDR white. 1 = SDR; >1 extends onto an HDR surface (engaged panes only)"
       />
-      {(settings.tonemap ?? "srgb") === "gamma" && (
-        <Slider
-          label="Tone-map γ"
-          value={settings.tonemapGamma ?? 2.2}
-          onChange={(v) => updateSettings({ tonemapGamma: v })}
-          min={0.5}
-          max={4}
-          step={0.05}
-          format={(v) => v.toFixed(2)}
-          description="Gamma-operator exponent (distinct from the Gamma filter above)"
-        />
-      )}
       <Select<"auto" | "pixelated" | "crisp-edges">
         label="Interpolation"
         value={settings.interpolation ?? "auto"}
@@ -788,19 +793,6 @@ export default function ImageCard({ runId, metric, extraSeries, controlledSeries
           { value: "crisp-edges", label: "Crisp edges" },
         ]}
       />
-      <Select<Colormap>
-        label="False color"
-        description={DIVERGING_COLORMAPS.has(settings.colormap ?? "none") ? "Diverging: 0 = center (white)" : undefined}
-        value={settings.colormap ?? "none"}
-        onChange={(v) => updateSettings({ colormap: v })}
-        options={[
-          { value: "none", label: "None (original)" },
-          ...COLORMAP_OPTIONS.map((o) => ({ value: o.id as Colormap, label: o.label })),
-        ]}
-      />
-      {(settings.colormap ?? "none") !== "none" && (
-        <ColormapSwatch colormap={settings.colormap as Exclude<Colormap, "none">} />
-      )}
       <Select<"nothing" | "last_available">
         label="Missing image"
         value={settings.missingImageMode ?? "last_available"}
@@ -985,18 +977,17 @@ export default function ImageCard({ runId, metric, extraSeries, controlledSeries
 
           {isMulti && hasBaseline && (
             <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px]">
-              {/* Colormap select — ALWAYS visible, leftmost. Drives the SAME
-                  persisted `settings.colormap` the settings-panel "False
-                  color" picker binds, so the two surfaces stay in sync. */}
+              {/* Display-encoding select — ALWAYS visible, leftmost. The SAME
+                  unified encoding the settings-panel "Encoding" select binds
+                  (curve OR LUT, one key), so the two surfaces stay in sync. */}
               <select
-                value={settings.colormap ?? "none"}
-                onChange={(e) => updateSettings({ colormap: e.target.value as Colormap })}
+                value={activeEncoding}
+                onChange={(e) => handleEncodingSelect(e.target.value)}
                 className="h-[22px] rounded border border-border bg-bg-elevated px-1.5 text-[10px] mono cursor-pointer text-accent"
-                title="Colormap"
+                title="Display encoding"
               >
-                <option value="none">None (original)</option>
-                {COLORMAP_OPTIONS.map((o) => (
-                  <option key={o.id} value={o.id}>{o.label}</option>
+                {encodingOptions.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
                 ))}
               </select>
               {/* Combined View/Error menu — ONE dropdown mirroring cairn-
