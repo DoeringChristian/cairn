@@ -13,9 +13,8 @@
   </head>
   <body class="bg-bg text-fg font-sans antialiased">
     <div id="cairn-plot-root"></div>
-    <!-- The standalone plot entry now lives in the vendored cairn-plot submodule
-         (vendor/cairn-plot/ui/src/plot-main.tsx); the /plot ENDPOINT-mode shell
-         is built from there. -->
-    <script type="module" src="../../vendor/cairn-plot/ui/src/plot-main.tsx"></script>
+    <!-- Cairn owns the endpoint shell and mounts cairn-plot through its public
+         browser API. Renderer, viewport and layout internals stay private. -->
+    <script type="module" src="/src/plot-main.ts"></script>
   </body>
 </html>

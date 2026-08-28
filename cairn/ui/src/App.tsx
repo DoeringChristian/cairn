@@ -3,7 +3,6 @@ import { Link, Outlet, useNavigate } from "react-router-dom";
 import { useHealth, useSession } from "./api/hooks";
 import { api } from "./api/client";
 import ServerStatus from "./components/ServerStatus";
-import { getRenderMode, setRenderMode, type RenderMode } from "@cairn-plot/lib/cairn-plot";
 
 export default function App() {
   const health = useHealth();
@@ -40,16 +39,6 @@ export default function App() {
           </nav>
           <div className="hidden md:flex items-center gap-2">
             <ServerStatus health={health.data} loading={health.isLoading} />
-            <select
-              value={getRenderMode()}
-              onChange={(e) => { setRenderMode(e.target.value as RenderMode); window.location.reload(); }}
-              className="rounded border border-border bg-bg px-1.5 py-0.5 text-[10px] text-fg-muted"
-              title="Image diff render mode"
-            >
-              <option value="auto">Auto</option>
-              <option value="gpu">GPU</option>
-              <option value="cpu">CPU</option>
-            </select>
           </div>
           <button
             type="button"

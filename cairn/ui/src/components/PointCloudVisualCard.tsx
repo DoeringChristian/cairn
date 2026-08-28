@@ -7,7 +7,6 @@ import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { safeJsonParse } from "../lib/format";
 import {
   PointCloudViewer,
-  createEndpointDataSource,
   fetchPointCloudArrays,
   isCoreCompareMode,
   type MediaCompareModeKind,
@@ -19,6 +18,7 @@ import {
   type ViewportDataArgs,
   type ViewportDataResult,
 } from "@cairn-plot/lib/cairn-plot";
+import { cairnPlotDataSource } from "../lib/cairn-plot";
 import {
   PointCloudSingleView,
   PointCloudNativeDiffPane,
@@ -27,11 +27,11 @@ import {
   type PointCloudMeta,
   type PointCloudViewportItem,
   type PointCloudViewState,
-} from "@cairn-plot/lib/cairn-plot/viewport/pointcloud-viewport";
+} from "@cairn-plot/lib/cairn-plot/host/pointcloud-viewport";
 import { propertyNames } from "@cairn-plot/lib/cairn-plot/three/properties";
 import type { DiffColormap } from "@cairn-plot/lib/cairn-plot/three/diff";
 import { resetScene3DViews, type Scene3DCameraMode, type Scene3DSyncOptions } from "@cairn-plot/lib/cairn-plot/three/use-scene3d";
-import type { ViewportPaneProps } from "@cairn-plot/lib/cairn-plot/viewport/types";
+import type { ViewportPaneProps } from "@cairn-plot/lib/cairn-plot/host/types";
 import { PropertySelector, type VisualCompareSettings } from "./card-kit";
 import { OffscreenComparePanes } from "@cairn-plot/lib/cairn-plot/media-compare/OffscreenComparePanes";
 import Select from "./settings/Select";
@@ -97,15 +97,13 @@ import StepSlider from "./StepSlider";
 // the app's endpoint-backed `DataSource` and the react-query wiring.
 // ---------------------------------------------------------------------------
 
-const dataSource = createEndpointDataSource((hash) => api.artifactUrl(hash));
-
 function usePointCloudBlobs(hashes: (string | null)[]) {
   return useQueries({
     queries: hashes.map((h) => ({
       queryKey: ["pointcloud-blob", h],
       enabled: !!h,
       staleTime: Infinity,
-      queryFn: () => fetchPointCloudArrays(h!, dataSource),
+      queryFn: () => fetchPointCloudArrays(h!, cairnPlotDataSource),
     })),
   });
 }

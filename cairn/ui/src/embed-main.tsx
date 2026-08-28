@@ -31,7 +31,6 @@ import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import CardRenderer from "./components/CardRenderer";
-import { loadGpuImageAddon } from "./lib/gpu-image-addon";
 import type { SequenceMeta } from "./api/types";
 import {
   isMultiRunCardType,
@@ -39,7 +38,7 @@ import {
 } from "./lib/comparisons";
 import type { CardSpec } from "./lib/cards/card-spec";
 import { saveCardSettings } from "./lib/card-settings";
-import { useEmitAutoHeight } from "@cairn-plot/lib/cairn-plot/hooks";
+import { useEmitAutoHeight } from "@cairn-plot/lib/cairn-plot/hooks/use-emit-auto-height";
 import "./index.css";
 
 const queryClient = new QueryClient({
@@ -209,10 +208,6 @@ function EmbedApp() {
     </div>
   );
 }
-
-// Same WebGPU gpu-image addon the main app loads, so an embedded image compare
-// card gets the engine kernels / HDR float / GPU auto-nearest too (see loader).
-loadGpuImageAddon();
 
 ReactDOM.createRoot(document.getElementById("embed-root")!).render(
   <React.StrictMode>

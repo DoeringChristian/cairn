@@ -6,7 +6,6 @@ import type { CardSettingsKey } from "../lib/card-settings";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { safeJsonParse } from "../lib/format";
 import {
-  createEndpointDataSource,
   fetchMeshArrays,
   isCoreCompareMode,
   type MediaCompareModeKind,
@@ -15,6 +14,7 @@ import {
   type ViewportDataArgs,
   type ViewportDataResult,
 } from "@cairn-plot/lib/cairn-plot";
+import { cairnPlotDataSource } from "../lib/cairn-plot";
 import MeshViewer, {
   resolveMeshColorMode,
   type MeshColorMode,
@@ -29,11 +29,11 @@ import {
   type MeshMeta,
   type MeshViewportItem,
   type MeshViewState,
-} from "@cairn-plot/lib/cairn-plot/viewport/mesh-viewport";
+} from "@cairn-plot/lib/cairn-plot/host/mesh-viewport";
 import { propertyNames, resolveActiveProperty } from "@cairn-plot/lib/cairn-plot/three/properties";
 import type { DiffColormap } from "@cairn-plot/lib/cairn-plot/three/diff";
 import { resetScene3DViews, type Scene3DCameraMode, type Scene3DSyncOptions } from "@cairn-plot/lib/cairn-plot/three/use-scene3d";
-import type { ViewportPaneProps } from "@cairn-plot/lib/cairn-plot/viewport/types";
+import type { ViewportPaneProps } from "@cairn-plot/lib/cairn-plot/host/types";
 import { PropertySelector, type VisualCompareSettings } from "./card-kit";
 import { OffscreenComparePanes } from "@cairn-plot/lib/cairn-plot/media-compare/OffscreenComparePanes";
 import Select from "./settings/Select";
@@ -81,15 +81,13 @@ import StepSlider from "./StepSlider";
 // instead of calling `api.artifactUrl` directly — this file just supplies
 // the app's endpoint-backed `DataSource` and the react-query wiring (mirrors
 // PointCloudVisualCard's G3a extraction).
-const dataSource = createEndpointDataSource((hash) => api.artifactUrl(hash));
-
 function useMeshBlobs(hashes: (string | null)[]) {
   return useQueries({
     queries: hashes.map((h) => ({
       queryKey: ["mesh-npz", h],
       enabled: !!h,
       staleTime: Infinity,
-      queryFn: () => fetchMeshArrays(h!, dataSource),
+      queryFn: () => fetchMeshArrays(h!, cairnPlotDataSource),
     })),
   });
 }

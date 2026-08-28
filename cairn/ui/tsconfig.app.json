@@ -21,6 +21,7 @@
     "typeRoots": ["./node_modules/@types", "./node_modules"],
     "types": ["@webgpu/types"],
     "paths": {
+      "@cairn-plot": ["../../vendor/cairn-plot/ui/src/public/index.ts"],
       "@cairn-plot/*": ["../../vendor/cairn-plot/ui/src/*"],
       "react": ["./node_modules/@types/react"],
       "react/*": ["./node_modules/@types/react/*"],

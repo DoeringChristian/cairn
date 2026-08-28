@@ -33,7 +33,6 @@ import {
 
   DIVERGING_COLORMAPS,
   DEFAULT_OVERLAY_SETTINGS,
-  createEndpointDataSource,
   getColormapLUT,
   overlayClassColor,
   parseOverlay,
@@ -51,6 +50,7 @@ import {
   type ViewportDataArgs,
   type ViewportDataResult,
 } from "@cairn-plot/lib/cairn-plot";
+import { cairnPlotDataSource } from "../lib/cairn-plot";
 import { enumerateCompareModeOptions } from "@cairn-plot/lib/cairn-plot/media-compare";
 // The Peak-slider seed tracks cairn-plot's own extended-tonemap default so the
 // app can't drift from the pane surface's default (16). Deep import: the const
@@ -125,8 +125,6 @@ const PIXEL_DIFF_TYPE_VALUES = new Set(["signed", "absolute", "squared", "relati
 
 /** The app's default `DataSource` — wraps `api.artifactUrl` (keeps the app's
  *  API client out of cairn-plot itself). */
-const endpointDataSource = createEndpointDataSource((hash) => api.artifactUrl(hash));
-
 /**
  * Image data resolution: an instant synchronous `{url, overlay}` baseline per
  * pane (no fetch) so SDR panes render immediately; the async float-aware
@@ -139,7 +137,7 @@ const endpointDataSource = createEndpointDataSource((hash) => api.artifactUrl(ha
 function useImageData(args: ViewportDataArgs): ViewportDataResult<ImageViewportItem> {
   const { hashes, referenceHashes, metadata, mimes, referenceMimes } = args;
   const sync = useMemo(
-    () => resolveImageViewportItems(args, endpointDataSource, parseOverlay),
+    () => resolveImageViewportItems(args, cairnPlotDataSource, parseOverlay),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [hashes.join("|"), referenceHashes.join("|"), (metadata ?? []).join("|")],
   );
@@ -154,7 +152,7 @@ function useImageData(args: ViewportDataArgs): ViewportDataResult<ImageViewportI
   useEffect(() => {
     setResolved(sync);
     let cancelled = false;
-    resolveImageViewportItemsAsync(args, endpointDataSource, parseOverlay)
+    resolveImageViewportItemsAsync(args, cairnPlotDataSource, parseOverlay)
       .then((r) => {
         if (!cancelled) setResolved(r);
       })

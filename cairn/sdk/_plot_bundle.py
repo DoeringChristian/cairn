@@ -17,7 +17,6 @@ from cairn_plot.bundle import (  # noqa: F401 - re-exported for zero caller chan
     inline_core_css,
     inline_core_js,
     inline_figure_addon_js,
-    inline_gpu_image_addon_js,
     inline_three_addon_js,
     js_inline_safe,
     json_script_safe,

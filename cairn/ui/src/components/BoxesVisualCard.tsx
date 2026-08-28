@@ -6,7 +6,6 @@ import type { CardSettingsKey } from "../lib/card-settings";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { safeJsonParse } from "../lib/format";
 import {
-  createEndpointDataSource,
   fetchBoxesArrays,
   isCoreCompareMode,
   type MediaCompareModeKind,
@@ -15,6 +14,7 @@ import {
   type ViewportDataArgs,
   type ViewportDataResult,
 } from "@cairn-plot/lib/cairn-plot";
+import { cairnPlotDataSource } from "../lib/cairn-plot";
 import BoxesViewer, {
   resolveBoxesColorMode,
   type BoxesColorMode,
@@ -29,14 +29,14 @@ import {
   type Boxes3DMeta,
   type BoxesViewportItem,
   type BoxesViewState,
-} from "@cairn-plot/lib/cairn-plot/viewport/boxes-viewport";
+} from "@cairn-plot/lib/cairn-plot/host/boxes-viewport";
 import {
   propertyNames,
   resolveActiveProperty,
 } from "@cairn-plot/lib/cairn-plot/three/properties";
 import type { DiffColormap } from "@cairn-plot/lib/cairn-plot/three/diff";
 import { resetScene3DViews, type Scene3DCameraMode, type Scene3DSyncOptions } from "@cairn-plot/lib/cairn-plot/three/use-scene3d";
-import type { ViewportPaneProps } from "@cairn-plot/lib/cairn-plot/viewport/types";
+import type { ViewportPaneProps } from "@cairn-plot/lib/cairn-plot/host/types";
 import { PropertySelector, type VisualCompareSettings } from "./card-kit";
 import { OffscreenComparePanes } from "@cairn-plot/lib/cairn-plot/media-compare/OffscreenComparePanes";
 import Select from "./settings/Select";
@@ -79,15 +79,13 @@ import StepSlider from "./StepSlider";
 // The fetch+parse core (`fetchBoxesArrays`) now lives in
 // `cairn-plot/viewport/data-sources.ts`, parameterized by a `DataSource`
 // (mirrors PointCloudVisualCard's G3a extraction).
-const dataSource = createEndpointDataSource((hash) => api.artifactUrl(hash));
-
 function useBoxesBlobs(hashes: (string | null)[]) {
   return useQueries({
     queries: hashes.map((h) => ({
       queryKey: ["boxes3d-npz", h],
       enabled: !!h,
       staleTime: Infinity,
-      queryFn: () => fetchBoxesArrays(h!, dataSource),
+      queryFn: () => fetchBoxesArrays(h!, cairnPlotDataSource),
     })),
   });
 }

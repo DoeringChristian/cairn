@@ -104,9 +104,9 @@ def test_report_line_only_pulls_no_image_or_three_or_figure_addon():
     assert "__cairnPlotFigureLoaded" not in html
 
 
-def test_report_with_image_pulls_gpu_image_addon():
+def test_report_with_image_needs_no_separate_gpu_addon():
     html = cp.Report().add(cp.Image(_PNG_A))._repr_html_()
-    assert "__cairnPlotGpuImageLoaded" in html
+    assert "__cairnPlotGpuImageLoaded" not in html
 
 
 def test_report_with_figure_pulls_figure_addon():

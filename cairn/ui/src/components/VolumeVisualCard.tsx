@@ -6,7 +6,6 @@ import type { CardSettingsKey } from "../lib/card-settings";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { safeJsonParse } from "../lib/format";
 import {
-  createEndpointDataSource,
   fetchVolumeArray,
   isCoreCompareMode,
   COLORMAP_OPTIONS as LIB_COLORMAP_OPTIONS,
@@ -17,6 +16,7 @@ import {
   type ViewportDataArgs,
   type ViewportDataResult,
 } from "@cairn-plot/lib/cairn-plot";
+import { cairnPlotDataSource } from "../lib/cairn-plot";
 import VolumeViewer, {
   type VolumeRenderMode,
   type VolumeQuality,
@@ -31,10 +31,10 @@ import {
   type VolumeMeta,
   type VolumeViewportItem,
   type VolumeViewState,
-} from "@cairn-plot/lib/cairn-plot/viewport/volume-viewport";
+} from "@cairn-plot/lib/cairn-plot/host/volume-viewport";
 import type { DiffColormap } from "@cairn-plot/lib/cairn-plot/three/diff";
 import { resetScene3DViews, type Scene3DCameraMode, type Scene3DSyncOptions } from "@cairn-plot/lib/cairn-plot/three/use-scene3d";
-import type { ViewportPaneProps } from "@cairn-plot/lib/cairn-plot/viewport/types";
+import type { ViewportPaneProps } from "@cairn-plot/lib/cairn-plot/host/types";
 import { type VisualCompareSettings } from "./card-kit";
 import { OffscreenComparePanes } from "@cairn-plot/lib/cairn-plot/media-compare/OffscreenComparePanes";
 import Select from "./settings/Select";
@@ -77,15 +77,13 @@ import StepSlider from "./StepSlider";
 // The fetch+parse core (`fetchVolumeArray`) now lives in
 // `cairn-plot/viewport/data-sources.ts`, parameterized by a `DataSource`
 // (mirrors PointCloudVisualCard's G3a extraction).
-const dataSource = createEndpointDataSource((hash) => api.artifactUrl(hash));
-
 function useVolumeBlobs(hashes: (string | null)[]) {
   return useQueries({
     queries: hashes.map((h) => ({
       queryKey: ["volume-npz", h],
       enabled: !!h,
       staleTime: Infinity,
-      queryFn: () => fetchVolumeArray(h!, dataSource),
+      queryFn: () => fetchVolumeArray(h!, cairnPlotDataSource),
     })),
   });
 }
