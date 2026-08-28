@@ -21,7 +21,7 @@ import VolumeViewer, {
   type VolumeRenderMode,
   type VolumeQuality,
   type VolumeBackground,
-} from "@cairn-plot/lib/cairn-plot/three/VolumeViewer";
+} from "@cairn-plot/engines/three/VolumeViewer";
 import {
   VolumeSingleView,
   VolumeNativeDiffPane,
@@ -31,9 +31,9 @@ import {
   type VolumeMeta,
   type VolumeViewportItem,
   type VolumeViewState,
-} from "@cairn-plot/lib/cairn-plot/host/volume-viewport";
-import type { DiffColormap } from "@cairn-plot/lib/cairn-plot/three/diff";
-import { resetScene3DViews, type Scene3DCameraMode, type Scene3DSyncOptions } from "@cairn-plot/lib/cairn-plot/three/use-scene3d";
+} from "@cairn-plot/plots/three/viewports/volume";
+import type { DiffColormap } from "@cairn-plot/engines/three/diff";
+import { resetScene3DViews, type Scene3DCameraMode, type Scene3DSyncOptions } from "@cairn-plot/engines/three/use-scene3d";
 import type { ViewportPaneProps } from "@cairn-plot/lib/cairn-plot/host/types";
 import { type VisualCompareSettings } from "./card-kit";
 import { OffscreenComparePanes } from "@cairn-plot/lib/cairn-plot/media-compare/OffscreenComparePanes";

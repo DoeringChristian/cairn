@@ -33,7 +33,11 @@ import {
   type CellComparison,
   type DiffTable,
 } from "@cairn-plot/lib/cairn-plot/table-diff";
-import { Table as TableGrid, type TableData } from "@cairn-plot/lib/cairn-plot/renderers";
+import {
+  Table as ControlledTableGrid,
+  type TableData,
+} from "@cairn-plot/lib/cairn-plot/renderers";
+import type { TableViewState } from "@cairn-plot/lib/cairn-plot/renderers/Table";
 
 // Out of scope for v1 (noted per spec): media-in-cells, cross-table joins,
 // derived columns. The grid is intentionally hand-rolled — no grid dependency.
@@ -74,6 +78,13 @@ interface TableSettings extends BaseCardSettings {
   diffMode?: boolean;
   /** Flip which direction (higher/lower) renders green vs red. */
   invertDiffColors?: boolean;
+}
+
+function TableGrid(
+  props: Omit<React.ComponentProps<typeof ControlledTableGrid>, "state" | "onStateChange">,
+) {
+  const [state, setState] = useState<TableViewState>({ sort: null, filter: "", page: 0 });
+  return <ControlledTableGrid {...props} state={state} onStateChange={setState} />;
 }
 
 const DEFAULT_ROWS_PER_PAGE = 100;

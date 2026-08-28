@@ -27,10 +27,10 @@ import {
   type PointCloudMeta,
   type PointCloudViewportItem,
   type PointCloudViewState,
-} from "@cairn-plot/lib/cairn-plot/host/pointcloud-viewport";
-import { propertyNames } from "@cairn-plot/lib/cairn-plot/three/properties";
-import type { DiffColormap } from "@cairn-plot/lib/cairn-plot/three/diff";
-import { resetScene3DViews, type Scene3DCameraMode, type Scene3DSyncOptions } from "@cairn-plot/lib/cairn-plot/three/use-scene3d";
+} from "@cairn-plot/plots/three/viewports/pointcloud";
+import { propertyNames } from "@cairn-plot/engines/three/properties";
+import type { DiffColormap } from "@cairn-plot/engines/three/diff";
+import { resetScene3DViews, type Scene3DCameraMode, type Scene3DSyncOptions } from "@cairn-plot/engines/three/use-scene3d";
 import type { ViewportPaneProps } from "@cairn-plot/lib/cairn-plot/host/types";
 import { PropertySelector, type VisualCompareSettings } from "./card-kit";
 import { OffscreenComparePanes } from "@cairn-plot/lib/cairn-plot/media-compare/OffscreenComparePanes";

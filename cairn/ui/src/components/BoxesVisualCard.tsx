@@ -19,7 +19,7 @@ import BoxesViewer, {
   resolveBoxesColorMode,
   type BoxesColorMode,
   type BoxesBackground,
-} from "@cairn-plot/lib/cairn-plot/three/BoxesViewer";
+} from "@cairn-plot/engines/three/BoxesViewer";
 import {
   BoxesSingleView,
   BoxesNativeDiffPane,
@@ -29,13 +29,13 @@ import {
   type Boxes3DMeta,
   type BoxesViewportItem,
   type BoxesViewState,
-} from "@cairn-plot/lib/cairn-plot/host/boxes-viewport";
+} from "@cairn-plot/plots/three/viewports/boxes";
 import {
   propertyNames,
   resolveActiveProperty,
-} from "@cairn-plot/lib/cairn-plot/three/properties";
-import type { DiffColormap } from "@cairn-plot/lib/cairn-plot/three/diff";
-import { resetScene3DViews, type Scene3DCameraMode, type Scene3DSyncOptions } from "@cairn-plot/lib/cairn-plot/three/use-scene3d";
+} from "@cairn-plot/engines/three/properties";
+import type { DiffColormap } from "@cairn-plot/engines/three/diff";
+import { resetScene3DViews, type Scene3DCameraMode, type Scene3DSyncOptions } from "@cairn-plot/engines/three/use-scene3d";
 import type { ViewportPaneProps } from "@cairn-plot/lib/cairn-plot/host/types";
 import { PropertySelector, type VisualCompareSettings } from "./card-kit";
 import { OffscreenComparePanes } from "@cairn-plot/lib/cairn-plot/media-compare/OffscreenComparePanes";

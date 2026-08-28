@@ -2,7 +2,7 @@ import Select from "../settings/Select";
 import Slider from "../settings/Slider";
 import Toggle from "../settings/Toggle";
 import type { Colormap, DiffMode } from "@cairn-plot/lib/cairn-plot/types";
-import type { DiffColormap } from "@cairn-plot/lib/cairn-plot/three/diff";
+import type { DiffColormap } from "@cairn-plot/engines/three/diff";
 import {
   DIFF_COLORMAP_OPTIONS,
   DIFF_SUBMODE_OPTIONS,
