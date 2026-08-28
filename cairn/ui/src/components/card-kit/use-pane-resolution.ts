@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import type { SequencePoint } from "../../api/types";
 import type { SeriesRef } from "./use-card-series";
-import { resolveArtifactAtStep } from "@cairn-plot/lib/cairn-plot";
+import { resolveArtifactAtStep } from "@cairn-plot/integration/cairn-card";
 
 type MissingMode = "nothing" | "last_available" | undefined;
 

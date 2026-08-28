@@ -4,7 +4,7 @@ import type { Config } from "tailwindcss";
 // vendor/cairn-plot); the app merges its own app-only theme (the `status.*` run
 // colors) on top. Loaded outside vite, so a real relative path (not the
 // `@cairn-plot` alias).
-import cairnPlotPreset from "../../vendor/cairn-plot/ui/src/lib/cairn-plot/tailwind-preset";
+import cairnPlotPreset from "../../vendor/cairn-plot/ui/src/public/tailwind-preset";
 
 export default {
   presets: [cairnPlotPreset],

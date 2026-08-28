@@ -6,9 +6,9 @@ import { qk } from "../api/query-keys";
 import type { Param, Run } from "../api/types";
 import RunStatusBadge from "../components/RunStatusBadge";
 import { formatDuration, safeJsonParse } from "../lib/format";
-import { formatNum } from "@cairn-plot/lib/cairn-plot";
+import { formatNum } from "@cairn-plot/integration/cairn-card";
 import { disambiguateRunLabels, useRunMetadataVersion } from "../lib/run-label";
-import { computeCellStatuses, diffCellClassName, isNumericSeries, toNumeric } from "@cairn-plot/lib/cairn-plot/table-diff";
+import { computeCellStatuses, diffCellClassName, isNumericSeries, toNumeric } from "@cairn-plot/plots/table/diff";
 
 /** Cap on metrics shown in the summary table (per spec). */
 const MAX_SUMMARY_METRICS = 50;

@@ -1,6 +1,6 @@
 /** Artifact download and chart export helpers. */
 
-import { plotToPng, downloadBlob as downloadPngBlob } from "@cairn-plot/lib/cairn-plot/primitives/plot-to-png";
+import { plotToPng, downloadBlob as downloadPngBlob } from "@cairn-plot/primitives/components/plot-to-png";
 
 export type ExportFormat = "svg" | "png" | "jpg" | "pdf";
 

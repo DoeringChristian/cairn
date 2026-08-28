@@ -14,7 +14,7 @@ import {
   COLORMAP_OPTIONS as LIB_COLORMAP_OPTIONS,
   type NpyArray,
   type ColormapName,
-} from "@cairn-plot/lib/cairn-plot";
+} from "@cairn-plot/integration/cairn-card";
 import AddToComparisonButton from "./AddToComparisonButton";
 import CardShell from "./CardShell";
 import StepSlider from "./StepSlider";

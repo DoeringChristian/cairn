@@ -4,7 +4,7 @@ import { api } from "../../api/client";
 import { qk } from "../../api/query-keys";
 import { useSequence } from "../../api/hooks";
 import type { SequencePoint } from "../../api/types";
-import { resolveReferenceHashes, type MissingArtifactMode } from "@cairn-plot/lib/cairn-plot/media-compare";
+import { resolveReferenceHashes, type MissingArtifactMode } from "@cairn-plot/plots/image/compare";
 
 export interface MediaReferenceTag {
   runId?: string;

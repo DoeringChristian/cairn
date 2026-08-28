@@ -38,7 +38,7 @@ import {
 } from "./lib/comparisons";
 import type { CardSpec } from "./lib/cards/card-spec";
 import { saveCardSettings } from "./lib/card-settings";
-import { useEmitAutoHeight } from "@cairn-plot/lib/cairn-plot/hooks/use-emit-auto-height";
+import { useEmitAutoHeight } from "@cairn-plot/host/hooks/use-emit-auto-height";
 import "./index.css";
 
 const queryClient = new QueryClient({

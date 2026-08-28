@@ -13,7 +13,7 @@ import {
   ParallelCoords,
   type ParallelColumn,
   type ParallelRow,
-} from "@cairn-plot/lib/cairn-plot";
+} from "@cairn-plot/integration/cairn-card";
 import { useCardSettings } from "../lib/card-settings";
 import { downloadCsv, exportChartPng, safeName } from "../lib/download";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";

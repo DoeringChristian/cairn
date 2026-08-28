@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import type { SequenceResponse } from "../../api/types";
 import { safeJsonParse } from "../../lib/format";
-import { resolveArtifactPointAtStep } from "@cairn-plot/lib/cairn-plot/media-compare";
+import { resolveArtifactPointAtStep } from "@cairn-plot/plots/image/compare";
 
 /**
  * Resolves the parsed artifact metadata of the REFERENCE series (series[1])

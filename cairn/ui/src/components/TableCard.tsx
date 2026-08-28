@@ -32,12 +32,12 @@ import {
   computeTableDiff,
   type CellComparison,
   type DiffTable,
-} from "@cairn-plot/lib/cairn-plot/table-diff";
+} from "@cairn-plot/plots/table/diff";
 import {
   Table as ControlledTableGrid,
   type TableData,
-} from "@cairn-plot/lib/cairn-plot/renderers";
-import type { TableViewState } from "@cairn-plot/lib/cairn-plot/renderers/Table";
+} from "@cairn-plot/plots/image/components";
+import type { TableViewState } from "@cairn-plot/plots/table/renderer/Table";
 
 // Out of scope for v1 (noted per spec): media-in-cells, cross-table joins,
 // derived columns. The grid is intentionally hand-rolled — no grid dependency.

@@ -15,7 +15,7 @@ import {
   type ColormapName,
   type ViewportDataArgs,
   type ViewportDataResult,
-} from "@cairn-plot/lib/cairn-plot";
+} from "@cairn-plot/integration/cairn-card";
 import { cairnPlotDataSource } from "../lib/cairn-plot";
 import VolumeViewer, {
   type VolumeRenderMode,
@@ -34,9 +34,9 @@ import {
 } from "@cairn-plot/plots/three/viewports/volume";
 import type { DiffColormap } from "@cairn-plot/engines/three/diff";
 import { resetScene3DViews, type Scene3DCameraMode, type Scene3DSyncOptions } from "@cairn-plot/engines/three/use-scene3d";
-import type { ViewportPaneProps } from "@cairn-plot/lib/cairn-plot/host/types";
+import type { ViewportPaneProps } from "@cairn-plot/integration/cairn-card/types";
 import { type VisualCompareSettings } from "./card-kit";
-import { OffscreenComparePanes } from "@cairn-plot/lib/cairn-plot/media-compare/OffscreenComparePanes";
+import { OffscreenComparePanes } from "@cairn-plot/plots/image/compare/OffscreenComparePanes";
 import Select from "./settings/Select";
 import Slider from "./settings/Slider";
 import Toggle from "./settings/Toggle";
@@ -56,7 +56,7 @@ import { useMediaSeriesData } from "./card-kit/use-media-series-data";
 import { usePaneResolution } from "./card-kit/use-pane-resolution";
 import { usePaneReferenceMeta } from "./card-kit/use-pane-reference-meta";
 import { ExternalBaselinePicker } from "./card-kit/ExternalBaselinePicker";
-import { migrateLegacyMode, Colorbar, COLORMAP_OPTIONS as DIFF_LUT_OPTIONS } from "@cairn-plot/lib/cairn-plot";
+import { migrateLegacyMode, Colorbar, COLORMAP_OPTIONS as DIFF_LUT_OPTIONS } from "@cairn-plot/integration/cairn-card";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import { useCameraSync } from "../lib/camera-sync";
 import AddToComparisonButton from "./AddToComparisonButton";

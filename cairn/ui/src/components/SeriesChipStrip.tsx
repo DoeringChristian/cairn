@@ -1,4 +1,4 @@
-import { SERIES_COLORS } from "@cairn-plot/lib/cairn-plot";
+import { SERIES_COLORS } from "@cairn-plot/integration/cairn-card";
 import { seriesKey, seriesLabel } from "../lib/series-utils";
 import SeriesChip, { type SeriesRef } from "./SeriesChip";
 

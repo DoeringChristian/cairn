@@ -1,4 +1,4 @@
-import type { MediaCompareSettings } from "@cairn-plot/lib/cairn-plot/media-compare";
+import type { MediaCompareSettings } from "@cairn-plot/plots/image/compare";
 import type { BaseCardSettings } from "./base-settings";
 import type { SeriesRef } from "./use-card-series";
 

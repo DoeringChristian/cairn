@@ -49,18 +49,18 @@ import {
   type MediaCompareModeKind,
   type ViewportDataArgs,
   type ViewportDataResult,
-} from "@cairn-plot/lib/cairn-plot";
+} from "@cairn-plot/integration/cairn-card";
 import { cairnPlotDataSource } from "../lib/cairn-plot";
-import { enumerateCompareModeOptions } from "@cairn-plot/lib/cairn-plot/media-compare";
+import { enumerateCompareModeOptions } from "@cairn-plot/plots/image/compare";
 // The Peak-slider seed tracks cairn-plot's own extended-tonemap default so the
 // app can't drift from the pane surface's default (16). Deep import: the const
 // isn't re-exported from the package root.
-import { EXTENDED_TONEMAP_PEAK_DEFAULT } from "@cairn-plot/lib/cairn-plot/image/tonemap";
+import { EXTENDED_TONEMAP_PEAK_DEFAULT } from "@cairn-plot/plots/image/model/tonemap";
 // The display-encoding REGISTRY — cairn-plot's ONE settings vocabulary for the
 // image display look (curves + colormap LUTs, mutually exclusive). The card's
 // "Display encoding" select is built from it so the panel can never drift from
 // what the panes actually model.
-import { listEncodingsByKind, getEncoding } from "@cairn-plot/lib/cairn-plot/image/encodings";
+import { listEncodingsByKind, getEncoding } from "@cairn-plot/plots/image/model/encodings";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import AddToComparisonButton from "./AddToComparisonButton";
 import CardShell from "./CardShell";

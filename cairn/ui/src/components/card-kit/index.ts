@@ -21,15 +21,15 @@ export { useReferenceDrop } from "./use-reference-drop";
 export type { UseReferenceDropOpts, UseReferenceDropResult } from "./use-reference-drop";
 export { PropertySelector } from "./PropertySelector";
 export type { PropertySelectorProps } from "./PropertySelector";
-export { useOffscreenSnapshot } from "@cairn-plot/lib/cairn-plot/media-compare";
-export type { UseOffscreenSnapshotResult } from "@cairn-plot/lib/cairn-plot/media-compare";
+export { useOffscreenSnapshot } from "@cairn-plot/plots/image/compare";
+export type { UseOffscreenSnapshotResult } from "@cairn-plot/plots/image/compare";
 export { useCompareReferenceMeta } from "./use-compare-reference-meta";
 // `OffscreenComparePanes`/`frameSourceToUrl` are NOT re-exported here — they
 // pull `three` (hidden mirror viewers + camera-sync controller), so consumers
 // import them via the DIRECT lib path
-// (`@cairn-plot/lib/cairn-plot/media-compare/OffscreenComparePanes`) to keep
+// (`@cairn-plot/plots/image/compare/OffscreenComparePanes`) to keep
 // `three` out of any core chunk. Types are safe to surface from the barrel.
-export type { OffscreenComparePanesProps, ComparePaneSource } from "@cairn-plot/lib/cairn-plot/media-compare";
+export type { OffscreenComparePanesProps, ComparePaneSource } from "@cairn-plot/plots/image/compare";
 export { CompareSettingsPanel } from "./CompareSettingsPanel";
 export type { CompareSettingsPanelProps } from "./CompareSettingsPanel";
 export type { VisualCompareSettings } from "./visual-compare-settings";
