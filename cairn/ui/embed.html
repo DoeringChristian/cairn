@@ -13,6 +13,14 @@
   </head>
   <body class="bg-bg text-fg font-sans antialiased">
     <div id="embed-root"></div>
+    <script>
+      // Prefer WebGPU images, retaining cairn-plot's automatic Canvas2D
+      // fallback and the explicit ?render=cpu|gpu|auto override.
+      const renderMode = new URLSearchParams(location.search).get("render");
+      if (!globalThis.__cairnPlotRenderMode && !["cpu", "gpu", "auto"].includes(renderMode)) {
+        globalThis.__cairnPlotRenderMode = "gpu";
+      }
+    </script>
     <script type="module" src="/src/embed-main.tsx"></script>
   </body>
 </html>

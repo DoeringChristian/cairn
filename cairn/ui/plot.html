@@ -15,6 +15,14 @@
     <div id="cairn-plot-root"></div>
     <!-- Cairn owns the endpoint shell and mounts cairn-plot through its public
          browser API. Renderer, viewport and layout internals stay private. -->
+    <script>
+      // Prefer WebGPU images, retaining cairn-plot's automatic Canvas2D
+      // fallback and the explicit ?render=cpu|gpu|auto override.
+      const renderMode = new URLSearchParams(location.search).get("render");
+      if (!globalThis.__cairnPlotRenderMode && !["cpu", "gpu", "auto"].includes(renderMode)) {
+        globalThis.__cairnPlotRenderMode = "gpu";
+      }
+    </script>
     <script type="module" src="/src/plot-main.ts"></script>
   </body>
 </html>
