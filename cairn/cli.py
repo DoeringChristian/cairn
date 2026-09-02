@@ -130,31 +130,41 @@ def _ensure_repo(repo: Path) -> Path:
     return repo
 
 
-def _print_bootstrap_banner(db: Database, *, ui_url: str | None) -> None:
-    """On first auth-enabled start with zero tokens, mint + print an admin
-    token (shown once — the sanctioned exception to "no tokens in logs").
-    ``ui_url`` (if given) also gets a one-time login link built from a
-    single-use OTP."""
-    boot = _auth.bootstrap_if_needed(db)
-    if boot is None:
-        return
-    _token_id, token_plain, otp = boot
+def _print_access_banner(
+    db: Database,
+    *,
+    token_plain: str,
+    ui_url: str | None,
+) -> None:
+    """Print the reusable same-user access token on every authenticated start.
+
+    The token is stored in ``auth/local.token`` with mode 0600 and has the
+    ``write`` role. Reusing it avoids accumulating a new token row on every
+    restart while still giving the operator one copy/paste credential for the
+    SDK, ingest API, and UI. A fresh single-use browser OTP is derived from the
+    same token for convenience.
+    """
+    principal = _auth.verify_bearer_token(db, token_plain)
+    if principal is None:  # Defensive: ensure_local_token must return a valid token.
+        raise RuntimeError("Cairn local access token is not valid")
     lines = [
         "",
         "  ================================================================",
-        "  Auth is ON. Created a bootstrap admin token (shown once — save it):",
+        "  Auth is ON. Reusable local access token:",
         f"    {token_plain}",
         "",
         "  SDK/CLI:  CAIRN_TOKEN=<token above>  (or `cairn configure` + config.toml)",
     ]
     if ui_url is not None:
+        otp = _auth.create_otp(db, principal.token_id)
         lines += [
             "  Browser (one-time login link, single-use, expires in 15 min):",
             f"    {ui_url}/login?otp={otp}",
             "  ...or open the UI and paste the token into the login form.",
         ]
     lines += [
-        "  Manage tokens later with `cairn token create|list|revoke`.",
+        "  This token is reused from <repo>/auth/local.token (file mode 0600).",
+        "  Manage additional tokens with `cairn token create|list|revoke`.",
         "  ================================================================",
         "",
     ]
@@ -233,9 +243,11 @@ def server_cmd(
     blobs = BlobStore(dd.artifacts_dir)
 
     auth_enabled = not no_auth
+    local_token = None
     if auth_enabled:
-        # Same-user local trust (refactor spec §7): see ui_cmd.
-        _auth.ensure_local_token(db, dd.root)
+        # Same-user local trust (refactor spec §7): see ui_cmd. The same
+        # reusable token is printed below for UI/API copy-paste login.
+        local_token = _auth.ensure_local_token(db, dd.root)
 
     # Ingest-only app (no SPA mount).
     ingest_app = create_app(
@@ -285,7 +297,8 @@ def server_cmd(
 
     if auth_enabled:
         ui_url = f"http://localhost:{ui_port}" if ui_app is not None else None
-        _print_bootstrap_banner(db, ui_url=ui_url)
+        assert local_token is not None
+        _print_access_banner(db, token_plain=local_token, ui_url=ui_url)
 
     if open_browser and ui_app is not None and host in ("0.0.0.0", "127.0.0.1", "localhost"):
         try:
@@ -406,11 +419,12 @@ def ui_cmd(
     blobs = BlobStore(dd.artifacts_dir)
     auth_enabled = not no_auth
     app = create_app(db=db, blobs=blobs, data_dir_obj=dd, mount_ui=True, auth_enabled=auth_enabled)
+    local_token = None
     if auth_enabled:
         # Same-user local trust (refactor spec §7): a token file in the data
         # dir lets same-account SDK runs upgrade to this server without
         # manual provisioning. Filesystem perms are the boundary.
-        _auth.ensure_local_token(db, dd.root)
+        local_token = _auth.ensure_local_token(db, dd.root)
 
     ui_url = f"http://localhost:{port}"
     click.echo(
@@ -421,7 +435,8 @@ def ui_cmd(
         f"  Press Ctrl+C to stop.\n"
     )
     if auth_enabled:
-        _print_bootstrap_banner(db, ui_url=ui_url)
+        assert local_token is not None
+        _print_access_banner(db, token_plain=local_token, ui_url=ui_url)
     if open_browser and host in ("0.0.0.0", "127.0.0.1", "localhost"):
         try:
             webbrowser.open(f"http://localhost:{port}/")

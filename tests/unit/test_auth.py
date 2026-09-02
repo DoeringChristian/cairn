@@ -10,12 +10,38 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from cairn.cli import _print_access_banner
 from cairn.server import auth as auth_core
 from cairn.server.app import create_app
 from cairn.server.storage.datadir import DataDir
 from cairn.server.storage.db import Database
 
 HAS_SSH_KEYGEN = shutil.which("ssh-keygen") is not None
+
+
+def test_reusable_local_access_token_is_printed_on_every_start(tmp_path, capsys):
+    dd = DataDir(tmp_path / ".cairn")
+    db = Database.open(dd.db_path)
+    try:
+        first = auth_core.ensure_local_token(db, dd.root)
+        _print_access_banner(db, token_plain=first, ui_url="http://localhost:4301")
+        first_output = capsys.readouterr().out
+
+        second = auth_core.ensure_local_token(db, dd.root)
+        _print_access_banner(db, token_plain=second, ui_url="http://localhost:4301")
+        second_output = capsys.readouterr().out
+
+        assert second == first
+        assert first in first_output
+        assert second in second_output
+        assert "Reusable local access token" in first_output
+        assert "CAIRN_TOKEN=<token above>" in first_output
+        assert "http://localhost:4301/login?otp=" in first_output
+        principal = auth_core.verify_bearer_token(db, first)
+        assert principal is not None
+        assert principal.role == "write"
+    finally:
+        db.close()
 
 
 # ---------------------------------------------------------------------------
