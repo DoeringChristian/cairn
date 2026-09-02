@@ -69,7 +69,8 @@ Each run writes to its own `.cairn/wals/{run_id}.wal.jsonl` file. The UI server'
 On the machine that will hold the data:
 
 ```bash
-cairn server                  # defaults to ./.cairn; creates it if missing
+cairn server                  # ingest API only; defaults to ./.cairn
+cairn server --ui             # optionally add the paired UI on port 4301
 ```
 
 From any training machine, use the `cairn://` URL scheme:
@@ -240,7 +241,7 @@ For UI development with HMR:
 
 ```bash
 # terminal 1
-uv run cairn server --repo ./.cairn --no-ui
+uv run cairn server --repo ./.cairn
 
 # terminal 2
 cd cairn/ui && npm run dev   # http://localhost:5173, proxies /api to :4300

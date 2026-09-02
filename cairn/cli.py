@@ -2,8 +2,8 @@
 
 The two server commands:
 
-* ``cairn server [--repo PATH]`` — runs the ingest tracking API **and** the UI
-  viewer on two ports in the same process. Single Ctrl+C kills both.
+* ``cairn server [--repo PATH]`` — runs the ingest tracking API. ``--ui``
+  additionally launches the paired UI viewer; one Ctrl+C stops both.
 * ``cairn ui [--repo PATH|cairn://HOST:PORT]`` — standalone UI over a
   local repo, or a loopback UI/proxy connected to a remote tracking server.
   Local mode acquires the repo write-lock in ``mode="ui"``.
@@ -93,7 +93,7 @@ def init_cmd(path: Path) -> None:
         click.echo(f"Initialized empty Cairn repo at {repo}")
 
 
-# ---------- server (ingest + UI, two ports in one process) -----------------
+# ---------- server (ingest by default; optional paired UI) -----------------
 
 
 def _find_free_port(host: str, start: int, max_attempts: int = 20) -> int:
@@ -188,7 +188,12 @@ def _print_access_banner(
     is_flag=True,
     help="Open the UI in a browser tab after startup (off by default).",
 )
-@click.option("--no-ui", is_flag=True, help="Skip spawning the UI server.")
+@click.option(
+    "--ui/--no-ui",
+    default=False,
+    show_default=True,
+    help="Also launch the paired UI server (ingest-only by default).",
+)
 @click.option(
     "--advertise",
     is_flag=True,
@@ -205,11 +210,11 @@ def server_cmd(
     ui_port: int | None,
     repo: Path | None,
     open_browser: bool,
-    no_ui: bool,
+    ui: bool,
     advertise: bool,
     no_auth: bool,
 ) -> None:
-    """Start the Cairn tracking server (and its paired UI viewer)."""
+    """Start the Cairn tracking server (ingest-only unless ``--ui``)."""
     import uvicorn
 
     if advertise and no_auth:
@@ -222,7 +227,7 @@ def server_cmd(
 
     repo = _ensure_repo(repo or _default_repo())
     port = _find_free_port(host, port)
-    ui_port = _find_free_port(host, ui_port or port + 1)
+    ui_port = _find_free_port(host, ui_port or port + 1) if ui else (ui_port or port + 1)
 
     dd = DataDir(repo)
     # Record the UI port (if present, else the ingest port) in the lock
@@ -230,7 +235,7 @@ def server_cmd(
     # transparently switch to HTTP mode. We store 127.0.0.1 as the host
     # even when --host is 0.0.0.0 because the SDK that detects the lock
     # will always be on the same machine.
-    lock_port = port if no_ui else ui_port
+    lock_port = ui_port if ui else port
     try:
         dd.acquire_lock("server", host="127.0.0.1", port=lock_port)
     except RepoLockedError as exc:
@@ -256,7 +261,7 @@ def server_cmd(
     # UI app (ingest + read + SPA). Only built if UI is enabled.
     ui_app = (
         None
-        if no_ui
+        if not ui
         else create_app(db=db, blobs=blobs, data_dir_obj=dd, mount_ui=True, auth_enabled=auth_enabled)
     )
 

@@ -51,7 +51,7 @@ def fresh_repo(tmp_path):
 
 
 @pytest.mark.slow
-def test_cairn_server_starts_both_ports(fresh_repo: Path):
+def test_cairn_server_with_ui_starts_both_ports(fresh_repo: Path):
     ingest_port = _free_port()
     ui_port = _free_port()
     # Avoid collision if _free_port happened to pick the same port twice.
@@ -71,6 +71,7 @@ def test_cairn_server_starts_both_ports(fresh_repo: Path):
             str(ingest_port),
             "--ui-port",
             str(ui_port),
+            "--ui",
         ],
         cwd=str(REPO_ROOT),
         stdout=subprocess.PIPE,
@@ -90,6 +91,40 @@ def test_cairn_server_starts_both_ports(fresh_repo: Path):
             # UI root may return JSON (no bundle) or HTML (bundle present).
             r2 = c.get(f"http://127.0.0.1:{ui_port}/")
             assert r2.status_code == 200
+    finally:
+        proc.send_signal(signal.SIGINT)
+        proc.wait(timeout=10)
+
+
+@pytest.mark.slow
+def test_cairn_server_defaults_to_ingest_only(fresh_repo: Path):
+    ingest_port = _free_port()
+    unused_ui_port = _free_port()
+    while unused_ui_port == ingest_port:
+        unused_ui_port = _free_port()
+    proc = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "cairn",
+            "server",
+            "--repo",
+            str(fresh_repo),
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(ingest_port),
+            "--ui-port",
+            str(unused_ui_port),
+        ],
+        cwd=str(REPO_ROOT),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    try:
+        assert _wait_ready(f"http://127.0.0.1:{ingest_port}/api/health")
+        with pytest.raises(httpx.ConnectError):
+            httpx.get(f"http://127.0.0.1:{unused_ui_port}/api/health", timeout=0.5)
     finally:
         proc.send_signal(signal.SIGINT)
         proc.wait(timeout=10)
