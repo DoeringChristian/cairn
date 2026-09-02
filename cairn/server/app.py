@@ -62,6 +62,7 @@ def create_app(
     data_dir_obj: DataDir | None = None,
     mount_ui: bool = True,
     auth_enabled: bool = False,
+    disable_webgpu: bool = False,
 ) -> FastAPI:
     """Build a FastAPI app.
 
@@ -83,6 +84,9 @@ def create_app(
             False so existing test fixtures (``tests/conftest.py``) and
             library callers of ``create_app()`` are unaffected; the CLI
             (``cairn server`` / ``cairn ui``) opts in unless ``--no-auth``.
+        disable_webgpu: Inject a pre-bootstrap CPU renderer override into the
+            served browser shells. Used by ``cairn ui --no-webgpu`` for
+            deterministic development and fallback testing.
     """
     owns_db = db is None
     if (db is None) != (blobs is None) or (db is None) != (data_dir_obj is None):
@@ -208,7 +212,7 @@ def create_app(
     # dependencies= loops above.
 
     if mount_ui:
-        _mount_spa_or_placeholder(app)
+        _mount_spa_or_placeholder(app, disable_webgpu=disable_webgpu)
     else:
         @app.get("/", include_in_schema=False)
         def _ingest_root() -> JSONResponse:
@@ -237,7 +241,16 @@ def _resolve_ui_dist() -> Path:
     return Path(__file__).resolve().parent.parent / "ui" / "dist"
 
 
-def _mount_spa_or_placeholder(app: FastAPI) -> None:
+def _browser_shell(path: Path, *, disable_webgpu: bool) -> bytes:
+    content = path.read_bytes()
+    if not disable_webgpu:
+        return content
+    override = b'<script>globalThis.__cairnPlotRenderMode="cpu";</script>'
+    marker = b"</head>"
+    return content.replace(marker, override + marker, 1)
+
+
+def _mount_spa_or_placeholder(app: FastAPI, *, disable_webgpu: bool = False) -> None:
     """Mount the built React bundle with SPA-style fallback routing.
 
     Any request that isn't handled by an ``/api/*`` route and doesn't match
@@ -246,7 +259,9 @@ def _mount_spa_or_placeholder(app: FastAPI) -> None:
     """
     ui_dist = _resolve_ui_dist()
     if (ui_dist / "index.html").exists():
-        index_html = (ui_dist / "index.html").read_bytes()
+        index_html = _browser_shell(
+            ui_dist / "index.html", disable_webgpu=disable_webgpu
+        )
 
         # Mount static assets first (JS, CSS, images, etc.)
         app.mount(
@@ -262,7 +277,9 @@ def _mount_spa_or_placeholder(app: FastAPI) -> None:
         # instead of the minimal one-card embed. ?sid=... selects the spec.
         embed_html_path = ui_dist / "embed.html"
         if embed_html_path.exists():
-            embed_html = embed_html_path.read_bytes()
+            embed_html = _browser_shell(
+                embed_html_path, disable_webgpu=disable_webgpu
+            )
 
             @app.get("/embed/card", include_in_schema=False)
             async def _embed_card() -> Response:
@@ -278,7 +295,9 @@ def _mount_spa_or_placeholder(app: FastAPI) -> None:
         # descriptor); LOCAL-mode plots are self-contained and need no server.
         plot_html_path = ui_dist / "plot.html"
         if plot_html_path.exists():
-            plot_html = plot_html_path.read_bytes()
+            plot_html = _browser_shell(
+                plot_html_path, disable_webgpu=disable_webgpu
+            )
 
             @app.get("/plot", include_in_schema=False)
             async def _plot() -> Response:

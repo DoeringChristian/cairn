@@ -380,8 +380,18 @@ def server_cmd(
     is_flag=True,
     help="Disable authentication (local/debugging only — auth is ON by default).",
 )
+@click.option(
+    "--no-webgpu",
+    is_flag=True,
+    help="Force cairn-plot to use its CPU renderer (development/debugging).",
+)
 def ui_cmd(
-    host: str, port: int, repo: str | None, open_browser: bool, no_auth: bool,
+    host: str,
+    port: int,
+    repo: str | None,
+    open_browser: bool,
+    no_auth: bool,
+    no_webgpu: bool,
 ) -> None:
     """Serve the Cairn viewer over a local repo or remote Cairn server.
 
@@ -408,7 +418,11 @@ def ui_cmd(
         # without one, authentication remains an explicit browser interaction.
         token = os.environ.get("CAIRN_TOKEN") or None
         try:
-            app = create_proxy_app(target.location, token=token)
+            app = create_proxy_app(
+                target.location,
+                token=token,
+                disable_webgpu=no_webgpu,
+            )
         except ValueError as exc:
             raise click.ClickException(str(exc)) from exc
         ui_url = f"http://localhost:{port}"
@@ -417,6 +431,7 @@ def ui_cmd(
             f"    Local:   {ui_url}\n"
             f"    Remote:  {target.location}\n"
             f"  Auth: {'CAIRN_TOKEN (server-side)' if token else 'browser login'}\n"
+            f"  Renderer: {'CPU (--no-webgpu)' if no_webgpu else 'WebGPU preferred'}\n"
             f"  Press Ctrl+C to stop.\n"
         )
         if open_browser and host in ("0.0.0.0", "127.0.0.1", "localhost"):
@@ -469,7 +484,14 @@ def ui_cmd(
     db = Database.open(dd.db_path)
     blobs = BlobStore(dd.artifacts_dir)
     auth_enabled = not no_auth
-    app = create_app(db=db, blobs=blobs, data_dir_obj=dd, mount_ui=True, auth_enabled=auth_enabled)
+    app = create_app(
+        db=db,
+        blobs=blobs,
+        data_dir_obj=dd,
+        mount_ui=True,
+        auth_enabled=auth_enabled,
+        disable_webgpu=no_webgpu,
+    )
     local_token = None
     if auth_enabled:
         # Same-user local trust (refactor spec §7): a token file in the data
@@ -483,6 +505,7 @@ def ui_cmd(
         f"    Local:   {ui_url}\n"
         f"  Repo: {dd.root}\n"
         f"  Auth: {'ON' if auth_enabled else 'OFF (--no-auth)'}\n"
+        f"  Renderer: {'CPU (--no-webgpu)' if no_webgpu else 'WebGPU preferred'}\n"
         f"  Press Ctrl+C to stop.\n"
     )
     if auth_enabled:

@@ -88,6 +88,26 @@
   }
 }
 
+/* cairn-plot's pane selection must remain visible inside Cairn's clipped card
+   body. Draw an inset, pointer-transparent overlay above image/canvas content;
+   relying only on the pane's outline can place it behind descendants or at a
+   clipped stacking boundary in the embedding card. */
+.cairn-card-plot-host [data-plot-pane-id][data-selected="true"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2147482999;
+  pointer-events: none;
+  border: 2px solid var(--color-accent, #0969da);
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px rgb(var(--color-accent-rgb, 9 105 218) / 0.35);
+}
+
+.cairn-card-plot-host [data-plot-pane-id][data-selected="true"][data-reference="true"]::after {
+  border-color: #f59e0b;
+  box-shadow: inset 0 0 0 1px rgb(245 158 11 / 0.4);
+}
+
 /* Drop target highlight during card reorder drag */
 .cairn-drop-target {
   outline: 2px solid var(--color-accent, #0969da) !important;

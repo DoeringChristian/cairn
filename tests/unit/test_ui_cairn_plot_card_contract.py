@@ -28,6 +28,14 @@ def test_plot_card_uses_stable_public_host_and_bounded_surface() -> None:
     assert "@cairn-plot/" not in source
 
 
+def test_selected_cairn_plot_pane_has_an_embedding_visible_outline() -> None:
+    css = CSS.read_text()
+    assert '.cairn-card-plot-host [data-plot-pane-id][data-selected="true"]::after' in css
+    assert "pointer-events: none" in css
+    assert "border: 2px solid var(--color-accent, #0969da)" in css
+    assert '[data-reference="true"]::after' in css
+
+
 def test_plot_card_exposes_persisted_image_controls_and_iteration_slider() -> None:
     source = CARD.read_text()
     for label in (

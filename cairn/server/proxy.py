@@ -113,6 +113,7 @@ def create_proxy_app(
     upstream_url: str,
     *,
     token: str | None = None,
+    disable_webgpu: bool = False,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> FastAPI:
     """Serve the bundled UI locally and stream its API calls to ``upstream``.
@@ -224,5 +225,5 @@ def create_proxy_app(
         return response
 
     # Register the API catch-all before the SPA fallback.
-    _mount_spa_or_placeholder(app)
+    _mount_spa_or_placeholder(app, disable_webgpu=disable_webgpu)
     return app
