@@ -65,10 +65,13 @@ def test_settings_can_select_a_card_comparison_without_dragging() -> None:
     assert "referenceArtifactPoints[index]" in source
     assert "operands: [referenceData, data]" in source
     assert 'presentation: selectedCompareOperation === "split" ? "split" : "difference"' in source
-    assert 'label="Comparison mode"' in source
+    assert 'label="Comparison mode"' not in source
     assert 'label="Diff mode"' in source
+    assert '["split", "Split"]' in source
+    assert 'patchPlotSettings({ "compare.operation": comparisonOperation })' in source
     assert 'label="Pin reference step"' in source
-    assert 'settings.comparisonOperation ?? "absolute"' in source
+    assert 'settings.comparisonPresentation === "split"' in source
+    assert ': settings.comparisonOperation ?? "absolute"' in source
     assert "use-reference-drop" not in source
 
 

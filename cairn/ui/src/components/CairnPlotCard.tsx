@@ -49,10 +49,10 @@ interface PlotCardSettings extends BaseCardSettings {
   sliderStep?: number;
   /** Card content selected as this card's comparison/reference operand. */
   comparisonMetric?: ComparisonSeriesRef;
-  /** Split compositor or a computed difference field. */
-  comparisonPresentation?: "split" | "diff";
-  /** Difference kernel used when comparisonPresentation is diff. */
+  /** Comparison presentation/kernel. `split` is a presentation-only operation. */
   comparisonOperation?: string;
+  /** @deprecated Migrated into comparisonOperation; retained for saved cards. */
+  comparisonPresentation?: "split" | "diff";
   /** One shared reference, or the selected tag resolved separately per run. */
   referenceMode?: "global" | "per-run";
   /** Optional fixed reference step; absent means follow the foreground iteration. */
@@ -77,7 +77,7 @@ const DISPLAY_OPTIONS = [
   ["red-green", "Red–Green"], ["red-blue", "Red–Blue"],
 ].map(([value, label]) => ({ value: value!, label: label! }));
 const COMPARE_OPTIONS = [
-  ["absolute", "Absolute error"], ["signed", "Signed error"],
+  ["split", "Split"], ["absolute", "Absolute error"], ["signed", "Signed error"],
   ["squared", "Squared error"], ["relative_absolute", "Relative absolute"],
   ["relative_signed", "Relative signed"], ["relative_squared", "Relative squared"],
   ["flip", "FLIP"], ["ssim", "SSIM"],
@@ -295,8 +295,7 @@ export default function CairnPlotCard({
     runId,
     ...extraSeries.map((item) => item.runId),
   ])], [runId, extraSeries]);
-  const comparisonPresentation = settings.comparisonPresentation ?? "diff";
-  const selectedCompareOperation = comparisonPresentation === "split"
+  const selectedCompareOperation = settings.comparisonPresentation === "split"
     ? "split"
     : settings.comparisonOperation ?? "absolute";
   const referenceMode = settings.referenceMode ?? "global";
@@ -485,6 +484,14 @@ export default function CairnPlotCard({
     schedulePlotSettingsPersist(next);
   }, [schedulePlotSettingsPersist]);
 
+  const changeCompareOperation = useCallback((comparisonOperation: string) => {
+    // The authored node changes comparison topology, while the live settings
+    // patch updates the already-mounted PlotCell. Node defaults are seeds only
+    // and deliberately do not overwrite interactive session state on updates.
+    updateSettings({ comparisonOperation, comparisonPresentation: undefined });
+    patchPlotSettings({ "compare.operation": comparisonOperation });
+  }, [patchPlotSettings, updateSettings]);
+
   const plot = spec ? (
     <StablePlotHost
       spec={spec}
@@ -624,16 +631,20 @@ export default function CairnPlotCard({
         currentMetricName={metric.name}
         selected={comparisonMetric?.name}
         availableRunIds={availableRunIds}
-        onSelect={(name, context_hash, selectedRunId) => updateSettings({
-          comparisonMetric: { runId: selectedRunId, name, context_hash },
-          comparisonPresentation: settings.comparisonPresentation ?? "diff",
-          comparisonOperation: settings.comparisonOperation ?? "absolute",
-        })}
+        onSelect={(name, context_hash, selectedRunId) => {
+          updateSettings({
+            comparisonMetric: { runId: selectedRunId, name, context_hash },
+            comparisonPresentation: undefined,
+            comparisonOperation: selectedCompareOperation,
+          });
+          patchPlotSettings({ "compare.operation": selectedCompareOperation });
+        }}
       />
     </SettingsSection>
   );
 
   const compareOperation = selectedCompareOperation;
+  const comparisonPresentation = compareOperation === "split" ? "split" : "diff";
   const compareSettings = metric.object_type === "image" && settings.comparisonMetric && (
     <SettingsSection title="Comparison">
       {availableRunIds.length > 1 && (
@@ -648,23 +659,12 @@ export default function CairnPlotCard({
           description="Per-run resolves the selected tag separately in each pane's run. Global uses the exact selected run and tag for every pane."
         />
       )}
-      <Select<"split" | "diff">
-        label="Comparison mode"
-        value={comparisonPresentation}
-        onChange={(comparisonPresentation) => updateSettings({ comparisonPresentation })}
-        options={[
-          { value: "diff", label: "Difference" },
-          { value: "split", label: "Split" },
-        ]}
+      <Select<string>
+        label="Diff mode"
+        value={compareOperation}
+        onChange={changeCompareOperation}
+        options={COMPARE_OPTIONS}
       />
-      {comparisonPresentation === "diff" && (
-        <Select<string>
-          label="Diff mode"
-          value={settings.comparisonOperation ?? "absolute"}
-          onChange={(comparisonOperation) => updateSettings({ comparisonOperation })}
-          options={COMPARE_OPTIONS}
-        />
-      )}
       {comparisonPresentation === "diff" && compareOperation === "flip" && (
         <Select<"hdr" | "sdr">
           label="FLIP evaluation"
