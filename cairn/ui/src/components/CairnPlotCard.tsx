@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import {
   comparisonOperationSettingsPatch,
   mountPlot,
+  recommendedImageEncoding,
   type DataSpec,
   type MountedPlot,
   type PlotNode,
@@ -43,6 +44,8 @@ type PlotSettingValues = Record<string, unknown>;
 
 interface PlotCardSettings extends BaseCardSettings {
   version: 1;
+  /** One-shot migration marker for operation-aware encoding defaults. */
+  encodingDefaultsVersion?: 1;
   gridColumns: GridColumns;
   syncGrid: boolean;
   showLabels: boolean;
@@ -484,6 +487,32 @@ export default function CairnPlotCard({
     plotRef.current?.patchSettings(patch);
     schedulePlotSettingsPersist(next);
   }, [schedulePlotSettingsPersist]);
+
+  const encodingMigrationAppliedRef = useRef(false);
+  useEffect(() => {
+    if (encodingMigrationAppliedRef.current || settings.encodingDefaultsVersion === 1) return;
+    encodingMigrationAppliedRef.current = true;
+    const live = livePlotSettingsRef.current;
+    const operation = typeof live["compare.operation"] === "string"
+      ? live["compare.operation"]
+      : selectedCompareOperation;
+    const currentEncoding = typeof live["image.encoding"] === "string"
+      ? live["image.encoding"]
+      : undefined;
+    const migratedEncoding = operation !== "split" && currentEncoding === "srgb"
+      ? recommendedImageEncoding({
+          operation,
+          flipMode: live["compare.flipMode"] === "hdr" ? "hdr" : "sdr",
+        })
+      : currentEncoding;
+    const migratedPlotSettings = migratedEncoding === currentEncoding
+      ? { ...live }
+      : { ...live, "image.encoding": migratedEncoding };
+    updateSettings({ encodingDefaultsVersion: 1, plotSettings: migratedPlotSettings });
+    if (migratedEncoding !== currentEncoding) {
+      patchPlotSettings({ "image.encoding": migratedEncoding });
+    }
+  }, [patchPlotSettings, selectedCompareOperation, settings.encodingDefaultsVersion, updateSettings]);
 
   const changeCompareOperation = useCallback((comparisonOperation: string) => {
     // The authored node changes comparison topology, while the live settings
