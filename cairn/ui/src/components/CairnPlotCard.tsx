@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
+  comparisonOperationSettingsPatch,
   mountPlot,
   type DataSpec,
   type MountedPlot,
@@ -489,8 +490,18 @@ export default function CairnPlotCard({
     // patch updates the already-mounted PlotCell. Node defaults are seeds only
     // and deliberately do not overwrite interactive session state on updates.
     updateSettings({ comparisonOperation, comparisonPresentation: undefined });
-    patchPlotSettings({ "compare.operation": comparisonOperation });
-  }, [patchPlotSettings, updateSettings]);
+    const live = livePlotSettingsRef.current;
+    patchPlotSettings(comparisonOperationSettingsPatch({
+      previousOperation: typeof live["compare.operation"] === "string"
+        ? live["compare.operation"]
+        : selectedCompareOperation,
+      nextOperation: comparisonOperation,
+      currentEncoding: typeof live["image.encoding"] === "string"
+        ? live["image.encoding"]
+        : undefined,
+      flipMode: live["compare.flipMode"] === "hdr" ? "hdr" : "sdr",
+    }));
+  }, [patchPlotSettings, selectedCompareOperation, updateSettings]);
 
   const plot = spec ? (
     <StablePlotHost
@@ -637,7 +648,7 @@ export default function CairnPlotCard({
             comparisonPresentation: undefined,
             comparisonOperation: selectedCompareOperation,
           });
-          patchPlotSettings({ "compare.operation": selectedCompareOperation });
+          changeCompareOperation(selectedCompareOperation);
         }}
       />
     </SettingsSection>

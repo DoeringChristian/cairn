@@ -68,7 +68,8 @@ def test_settings_can_select_a_card_comparison_without_dragging() -> None:
     assert 'label="Comparison mode"' not in source
     assert 'label="Diff mode"' in source
     assert '["split", "Split"]' in source
-    assert 'patchPlotSettings({ "compare.operation": comparisonOperation })' in source
+    assert "comparisonOperationSettingsPatch({" in source
+    assert 'currentEncoding: typeof live["image.encoding"] === "string"' in source
     assert 'label="Pin reference step"' in source
     assert 'settings.comparisonPresentation === "split"' in source
     assert ': settings.comparisonOperation ?? "absolute"' in source
