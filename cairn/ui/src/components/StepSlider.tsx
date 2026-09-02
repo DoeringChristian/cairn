@@ -3,7 +3,7 @@
  * Replaces raw `<input type="range">` in all non-scalar cards.
  */
 
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 export type XAxisMode = "step" | "relative_time" | "wall_time";
 
@@ -14,6 +14,10 @@ interface StepSliderProps {
   currentIndex: number;
   /** Called when user drags the slider. */
   onChange: (index: number) => void;
+  /** Minimum interval between live publishes; release always flushes. */
+  publishIntervalMs?: number;
+  /** Publish directly in the input event; intended for resident frame caches. */
+  immediate?: boolean;
   /** Active x-axis display mode. */
   xAxis?: XAxisMode;
   /** If provided, show axis mode toggle buttons. */
@@ -50,10 +54,67 @@ export default function StepSlider({
   points,
   currentIndex,
   onChange,
+  publishIntervalMs = 50,
+  immediate = false,
   xAxis = "step",
   onXAxisChange,
   className,
 }: StepSliderProps) {
+  const onChangeRef = useRef(onChange);
+  const [draftIndex, setDraftIndex] = useState(currentIndex);
+  const interactingRef = useRef(false);
+  const frameRef = useRef(0);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingRef = useRef<number | null>(null);
+  const lastPublishRef = useRef(0);
+  onChangeRef.current = onChange;
+  useEffect(() => {
+    if (!interactingRef.current) setDraftIndex(currentIndex);
+  }, [currentIndex]);
+  const publishPending = useCallback(() => {
+    if (frameRef.current) cancelAnimationFrame(frameRef.current);
+    frameRef.current = requestAnimationFrame(() => {
+      frameRef.current = 0;
+      const pending = pendingRef.current;
+      pendingRef.current = null;
+      if (pending == null) return;
+      lastPublishRef.current = performance.now();
+      onChangeRef.current(pending);
+    });
+  }, []);
+  const queueChange = useCallback((index: number) => {
+    if (immediate) {
+      pendingRef.current = null;
+      lastPublishRef.current = performance.now();
+      onChangeRef.current(index);
+      return;
+    }
+    pendingRef.current = index;
+    if (frameRef.current || timerRef.current != null) return;
+    // FLIP/HDR-FLIP can submit several GPU passes per pane. Publishing every
+    // native range-input event floods the GPU with obsolete intermediate
+    // iterations. Keep only the latest index and cap authored updates at 20 Hz;
+    // pointer/key release below flushes the final value immediately.
+    const wait = Math.max(0, publishIntervalMs - (performance.now() - lastPublishRef.current));
+    if (wait === 0) publishPending();
+    else timerRef.current = setTimeout(() => {
+      timerRef.current = null;
+      publishPending();
+    }, wait);
+  }, [immediate, publishPending, publishIntervalMs]);
+  const flushChange = useCallback(() => {
+    interactingRef.current = false;
+    if (timerRef.current != null) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    if (pendingRef.current != null) publishPending();
+  }, [publishPending]);
+  useEffect(() => () => {
+    if (frameRef.current) cancelAnimationFrame(frameRef.current);
+    if (timerRef.current != null) clearTimeout(timerRef.current);
+  }, []);
+
   const firstWallTime = useMemo(() => {
     const first = points[0]?.wall_time;
     return first ? new Date(first).getTime() : null;
@@ -61,7 +122,7 @@ export default function StepSlider({
 
   if (points.length <= 1) return null;
 
-  const safeIdx = Math.min(Math.max(0, currentIndex), points.length - 1);
+  const safeIdx = Math.min(Math.max(0, draftIndex), points.length - 1);
   const current = points[safeIdx]!;
 
   let label: string;
@@ -82,7 +143,14 @@ export default function StepSlider({
           min={0}
           max={points.length - 1}
           value={safeIdx}
-          onChange={(e) => onChange(Number(e.target.value))}
+          onPointerDown={() => { interactingRef.current = true; }}
+          onChange={(e) => {
+            const index = Number(e.target.value);
+            setDraftIndex(index);
+            queueChange(index);
+          }}
+          onPointerUp={flushChange}
+          onKeyUp={flushChange}
           className="flex-1 accent-accent"
         />
         <span className="mono text-[10px] text-fg-muted shrink-0 min-w-[4rem] text-right">

@@ -238,6 +238,17 @@ button i[class*="fa-"] { font-size: 12px; line-height: 1; }
   --color-selection-band: rgba(88, 166, 255, 0.18);
 }
 
+/* Plot-backed dashboard cards author fixed grid rows. Give cairn-plot's root
+   grid and its layout track the card body's definite height so image, chart,
+   and 3D panes contain/letterbox rather than expanding the dashboard card. */
+.cairn-card-plot-host > [data-plot-layout-frame],
+.cairn-card-plot-host > [data-plot-layout-frame] > [data-cairn-grid-root],
+.cairn-card-plot-host > [data-plot-layout-frame] > [data-cairn-grid-root] > div:last-child {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
 /* Page canvas follows the tokens (with `color-scheme` above, the UA canvas is
    already dark before this stylesheet even loads, so there is no light flash). */
 :root.cairn-plot-doc body {

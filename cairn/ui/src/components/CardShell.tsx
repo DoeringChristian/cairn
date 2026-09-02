@@ -93,7 +93,7 @@ export default function CardShell({
       data-cairn-card
       data-cairn-min-h={minSize.minHeight}
       data-cairn-min-span={minSize.minSpan}
-      className={`card p-4 flex flex-col${dropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
+      className={`card p-4 flex min-w-0 flex-col${dropHighlight ? " outline outline-2 outline-accent -outline-offset-2" : ""}`}
       style={{
         height: clampedHeight,
         position: "relative",

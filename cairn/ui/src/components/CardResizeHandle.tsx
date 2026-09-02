@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef } from "react";
-import { ownMinHeight, ownMinSpan, rowMinHeight, sectionMinSpan } from "./card-kit/card-min-sizes";
+import {
+  ownMinHeight,
+  ownMinSpan,
+  rowMinHeight,
+  sectionMinSpan,
+  VALID_CARD_SPANS,
+} from "./card-kit/card-min-sizes";
 
 interface Props {
   /** Current persisted height in px; undefined = auto/default. */
@@ -17,15 +23,14 @@ interface Props {
 }
 
 const MAX_HEIGHT = 2000;
-const VALID_SPANS = [1, 2, 3, 6] as const;
 /** Max px gap between two cards' top edges to still count as "same row". */
 const ROW_TOP_EPSILON_PX = 2;
 
 /** Snap a raw column-span value to the nearest valid span. */
 function snapToValidSpan(raw: number): number {
-  let best: number = VALID_SPANS[0];
+  let best: number = VALID_CARD_SPANS[0];
   let bestDist = Math.abs(raw - best);
-  for (const v of VALID_SPANS) {
+  for (const v of VALID_CARD_SPANS) {
     const d = Math.abs(raw - v);
     if (d < bestDist) {
       best = v;
@@ -146,26 +151,49 @@ export default function CardResizeHandle({
       spacerParent.appendChild(spacer);
 
       let scrollRaf = 0;
-      let lastClientY = 0;
+      let resizeRaf = 0;
+      let lastClientX = e.clientX;
+      let lastClientY = e.clientY;
 
-      const updateCardHeight = () => {
+      const applyResize = () => {
+        // Batch every geometry read before style writes to avoid a forced layout
+        // per sibling on each pointer event.
         const pageY = lastClientY + window.scrollY;
         const newH = Math.round(
           Math.min(MAX_HEIGHT, Math.max(rowFloor, startHeight + (pageY - startPageY))),
         );
+        const cardTop = card.getBoundingClientRect().top;
+        const siblingTops = allSiblings.map((sib) => sib.getBoundingClientRect().top);
         lastH = newH;
         card.style.height = `${newH}px`;
-
-        const cardTop = card.getBoundingClientRect().top;
-        for (const sib of allSiblings) {
-          if (Math.abs(sib.getBoundingClientRect().top - cardTop) < ROW_TOP_EPSILON_PX) {
+        allSiblings.forEach((sib, index) => {
+          if (Math.abs(siblingTops[index]! - cardTop) < ROW_TOP_EPSILON_PX) {
             sib.style.height = `${newH}px`;
             heightTouched.add(sib);
           } else if (heightTouched.has(sib)) {
             sib.style.height = "";
             heightTouched.delete(sib);
           }
+        });
+
+        if (actualCols > 1) {
+          const targetWidth = startWidth + (lastClientX - startX);
+          const rawSpan = Math.max(1, Math.min(actualCols, Math.round(targetWidth / colWidth)));
+          const newSpan = Math.max(spanFloor, snapToValidSpan(rawSpan));
+          if (newSpan !== currentSpan) {
+            currentSpan = newSpan;
+            card.style.gridColumn = `span ${newSpan}`;
+            for (const sib of allSiblings) sib.style.gridColumn = `span ${newSpan}`;
+          }
         }
+      };
+
+      const scheduleResize = () => {
+        if (resizeRaf) return;
+        resizeRaf = requestAnimationFrame(() => {
+          resizeRaf = 0;
+          applyResize();
+        });
       };
 
       const scrollTick = () => {
@@ -174,44 +202,36 @@ export default function CardResizeHandle({
         if (lastClientY > vh - threshold) {
           const speed = 8 + 12 * ((lastClientY - (vh - threshold)) / threshold);
           window.scrollBy(0, speed);
-          updateCardHeight();
+          scheduleResize();
           scrollRaf = requestAnimationFrame(scrollTick);
         } else if (lastClientY < threshold) {
           const speed = 8 + 12 * ((threshold - lastClientY) / threshold);
           window.scrollBy(0, -speed);
-          updateCardHeight();
+          scheduleResize();
           scrollRaf = requestAnimationFrame(scrollTick);
         }
       };
 
       const onPointerMove = (ev: PointerEvent) => {
+        lastClientX = ev.clientX;
         lastClientY = ev.clientY;
-        updateCardHeight();
-
+        scheduleResize();
         cancelAnimationFrame(scrollRaf);
         scrollRaf = requestAnimationFrame(scrollTick);
-
-        if (actualCols > 1) {
-          const targetWidth = startWidth + (ev.clientX - startX);
-          const rawSpan = Math.max(1, Math.min(actualCols, Math.round(targetWidth / colWidth)));
-          const newSpan = Math.max(spanFloor, snapToValidSpan(rawSpan));
-          if (newSpan !== currentSpan) {
-            currentSpan = newSpan;
-            for (const sib of allSiblings) {
-              sib.style.gridColumn = `span ${newSpan}`;
-            }
-          }
-          onColSpanChange(newSpan);
-        }
       };
 
       const onPointerUp = () => {
         window.removeEventListener("pointermove", onPointerMove);
         window.removeEventListener("pointerup", onPointerUp);
         cancelAnimationFrame(scrollRaf);
+        cancelAnimationFrame(resizeRaf);
+        resizeRaf = 0;
+        applyResize();
         spacer.remove();
-        // Persist final height to React state (triggers one re-render).
+        // Persist final dimensions to React state only once. During the drag
+        // direct styles keep feedback smooth without re-rendering every plot.
         onHeightChange(lastH);
+        onColSpanChange(currentSpan);
         if (onPerColHeightChange) {
           onPerColHeightChange({ [`heights.${currentSpan}`]: lastH, height: lastH });
         }

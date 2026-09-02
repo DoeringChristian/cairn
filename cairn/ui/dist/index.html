@@ -10,16 +10,23 @@
       href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect width="16" height="16" rx="3" fill="%230969da"/><path d="M4 11h8M5 8h6M6 5h4" stroke="white" stroke-width="1.4" stroke-linecap="round"/></svg>'
     />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer">
-    <script type="module" crossorigin src="/assets/main-BqXfW9KR.js"></script>
-    <link rel="modulepreload" crossorigin href="/assets/PlotHost-D2UyXaoG.js">
-    <link rel="modulepreload" crossorigin href="/assets/value-colors-BRzksUDQ.js">
-    <link rel="modulepreload" crossorigin href="/assets/parse-npz-CBChNMfo.js">
-    <link rel="modulepreload" crossorigin href="/assets/index-Dkjerzrq.js">
-    <link rel="modulepreload" crossorigin href="/assets/camera-sync-CVrra6Je.js">
-    <link rel="modulepreload" crossorigin href="/assets/markdown-r_G1By70.js">
-    <link rel="stylesheet" crossorigin href="/assets/index-CPZTgCgC.css">
+    <script type="module" crossorigin src="/assets/main-DDMg1rZ0.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/data-source-6nLKwVIc.js">
+    <link rel="modulepreload" crossorigin href="/assets/index-BaKI0pOq.js">
+    <link rel="modulepreload" crossorigin href="/assets/table-diff-249Gkuyj.js">
+    <link rel="modulepreload" crossorigin href="/assets/markdown-BCH_x-fY.js">
+    <link rel="stylesheet" crossorigin href="/assets/index-C50I6j2A.css">
   </head>
   <body class="bg-bg text-fg font-sans antialiased">
     <div id="root"></div>
+    <script>
+      // Cairn prefers cairn-plot's retained WebGPU image backend. The renderer
+      // still falls back to Canvas2D when WebGPU is unavailable; ?render=...
+      // remains an explicit diagnostic/user override.
+      const renderMode = new URLSearchParams(location.search).get("render");
+      if (!globalThis.__cairnPlotRenderMode && !["cpu", "gpu", "auto"].includes(renderMode)) {
+        globalThis.__cairnPlotRenderMode = "gpu";
+      }
+    </script>
   </body>
 </html>

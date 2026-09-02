@@ -19,6 +19,14 @@ class TypeHandler(Protocol):
     def serialize(self, obj: Any, **kwargs: Any) -> tuple[bytes, dict[str, Any]]: ...
 
 
+def resolve_mime_type(handler: TypeHandler, obj: Any) -> str:
+    """Return a handler's MIME type, allowing content-dependent formats."""
+    resolver = getattr(handler, "mime_type_for", None)
+    if callable(resolver):
+        return str(resolver(obj))
+    return handler.mime_type
+
+
 class HandlerRegistry:
     """Ordered collection of handlers; newest wins via ``can_handle``."""
 

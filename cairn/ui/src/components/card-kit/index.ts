@@ -15,21 +15,9 @@ export { resolveAtStep } from "./resolve-at-step";
 export { useStepSlider } from "./use-step-slider";
 export { useRunInfo, buildRunInfoMap } from "./use-run-info";
 export { default as MultiPaneGrid } from "./MultiPaneGrid";
-export { useMediaReference } from "./use-media-reference";
-export type { MediaReferenceTag, UseMediaReferenceArgs, UseMediaReferenceResult } from "./use-media-reference";
 export { useReferenceDrop } from "./use-reference-drop";
 export type { UseReferenceDropOpts, UseReferenceDropResult } from "./use-reference-drop";
 export { PropertySelector } from "./PropertySelector";
 export type { PropertySelectorProps } from "./PropertySelector";
-export { useOffscreenSnapshot } from "@cairn-plot/plots/image/compare";
-export type { UseOffscreenSnapshotResult } from "@cairn-plot/plots/image/compare";
-export { useCompareReferenceMeta } from "./use-compare-reference-meta";
-// `OffscreenComparePanes`/`frameSourceToUrl` are NOT re-exported here — they
-// pull `three` (hidden mirror viewers + camera-sync controller), so consumers
-// import them via the DIRECT lib path
-// (`@cairn-plot/plots/image/compare/OffscreenComparePanes`) to keep
-// `three` out of any core chunk. Types are safe to surface from the barrel.
-export type { OffscreenComparePanesProps, ComparePaneSource } from "@cairn-plot/plots/image/compare";
 export { CompareSettingsPanel } from "./CompareSettingsPanel";
 export type { CompareSettingsPanelProps } from "./CompareSettingsPanel";
-export type { VisualCompareSettings } from "./visual-compare-settings";

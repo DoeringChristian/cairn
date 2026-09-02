@@ -1,4 +1,4 @@
-"""Image handler — PIL, numpy, torch round-trips through PNG."""
+"""Image handler — u8 images use PNG; wider arrays retain HDR values in NPY."""
 
 from __future__ import annotations
 
@@ -44,12 +44,23 @@ def test_numpy_grayscale(handler):
     assert meta["mode"] == "L"
 
 
-def test_numpy_float_normalized(handler):
-    arr = np.random.rand(4, 4, 3).astype(np.float32)  # values in [0,1]
+def test_numpy_float_preserves_hdr_values(handler):
+    arr = np.array([[[-2.0, 0.5, 8.0]]], dtype=np.float32)
     data, meta = handler.serialize(arr)
-    assert meta["width"] == 4
-    back = PILImage.open(io.BytesIO(data))
-    assert back.mode == "RGB"
+
+    assert handler.mime_type_for(arr) == "application/x-npy"
+    assert data.startswith(b"\x93NUMPY")
+    assert meta["preview"].startswith("data:image/png;base64,")
+    np.testing.assert_array_equal(np.load(io.BytesIO(data)), arr)
+    np.testing.assert_array_equal(handler.deserialize(data), arr)
+
+
+def test_numpy_uint8_stays_png(handler):
+    arr = np.zeros((2, 3, 4), dtype=np.uint8)
+    data, _ = handler.serialize(arr)
+
+    assert handler.mime_type_for(arr) == "image/png"
+    assert data.startswith(b"\x89PNG\r\n\x1a\n")
 
 
 def test_can_handle_rejects_1d(handler):

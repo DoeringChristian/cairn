@@ -1,4 +1,4 @@
-"""Image handler — PIL / numpy / torch → PNG.
+"""Image handler — PIL/u8 → PNG; wider numpy/torch arrays → NPY.
 
 Optionally carries **overlay annotations** (bounding boxes + segmentation
 masks) supplied via ``cairn.Image(img, boxes=..., masks=..., class_labels=...)``.
@@ -126,6 +126,7 @@ def _build_masks(
 class ImageHandler:
     object_type = "image"
     mime_type = "image/png"
+    hdr_mime_type = "application/x-npy"
 
     def can_handle(self, obj: Any) -> bool:
         if isinstance(obj, _TypeWrapper):
@@ -140,7 +141,26 @@ class ImageHandler:
         return False
 
     @staticmethod
-    def _to_pil(obj: Any) -> PILImage.Image:
+    def _array_for_storage(obj: Any) -> np.ndarray | None:
+        """Return image arrays in HWC layout without changing their values."""
+        torch = try_import("torch")
+        if torch is not None and isinstance(obj, torch.Tensor):
+            arr = obj.detach().cpu().numpy()
+        elif isinstance(obj, np.ndarray):
+            arr = obj
+        else:
+            return None
+        if arr.ndim == 3 and arr.shape[0] in (1, 3, 4) and arr.shape[-1] not in (1, 3, 4):
+            arr = np.transpose(arr, (1, 2, 0))
+        return np.ascontiguousarray(arr)
+
+    def mime_type_for(self, obj: Any) -> str:
+        """Preserve non-u8 arrays as NPY so cairn-plot receives HDR values."""
+        arr = self._array_for_storage(obj)
+        return self.hdr_mime_type if arr is not None and arr.dtype != np.uint8 else self.mime_type
+
+    @classmethod
+    def _to_pil(cls, obj: Any) -> PILImage.Image:
         if isinstance(obj, PILImage.Image):
             return obj
         # Rasterize matplotlib / plotly figures when forced via cairn.Image(...).
@@ -164,27 +184,21 @@ class ImageHandler:
 
                 png_bytes = obj.to_image(format="png")
                 return PILImage.open(_io.BytesIO(png_bytes)).convert("RGB")
-        torch = try_import("torch")
-        if torch is not None and isinstance(obj, torch.Tensor):
-            arr = obj.detach().cpu().numpy()
-        elif isinstance(obj, np.ndarray):
-            arr = obj
-        else:
+        arr = cls._array_for_storage(obj)
+        if arr is None:
             raise TypeError(f"Cannot coerce {type(obj)!r} to an image")
 
-        # Accept CHW (torch convention) and convert to HWC.
-        if arr.ndim == 3 and arr.shape[0] in (1, 3, 4) and arr.shape[-1] not in (1, 3, 4):
-            arr = np.transpose(arr, (1, 2, 0))
-
         if arr.dtype != np.uint8:
-            a_min = float(arr.min())
-            a_max = float(arr.max())
+            finite = arr[np.isfinite(arr)]
+            a_min = float(finite.min()) if finite.size else 0.0
+            a_max = float(finite.max()) if finite.size else 1.0
+            safe = np.nan_to_num(arr, nan=a_min, posinf=a_max, neginf=a_min)
             if a_max <= 1.0 and a_min >= 0.0:
-                arr = (arr * 255.0).clip(0, 255).astype(np.uint8)
+                arr = (safe * 255.0).clip(0, 255).astype(np.uint8)
             else:
-                # generic min-max normalize
+                # Preview only: the artifact keeps the original scene-linear values.
                 rng = a_max - a_min if a_max > a_min else 1.0
-                arr = ((arr - a_min) / rng * 255.0).clip(0, 255).astype(np.uint8)
+                arr = ((safe - a_min) / rng * 255.0).clip(0, 255).astype(np.uint8)
 
         if arr.ndim == 2:
             return PILImage.fromarray(arr, mode="L")
@@ -204,12 +218,17 @@ class ImageHandler:
         class_labels: Any = None,
         **kwargs: Any,
     ) -> tuple[bytes, dict[str, Any]]:
+        arr = self._array_for_storage(obj)
         img = self._to_pil(obj)
         buf = io.BytesIO()
-        img.save(buf, format="PNG")
+        if arr is not None and arr.dtype != np.uint8:
+            # NPY preserves scene-linear/HDR values for cairn-plot's float path.
+            np.save(buf, arr, allow_pickle=False)
+        else:
+            img.save(buf, format="PNG")
         data = buf.getvalue()
 
-        # 128-px thumbnail preview as data URI.
+        # 128-px tone-mapped thumbnail preview remains browser-native.
         thumb = img.copy()
         thumb.thumbnail((128, 128))
         tbuf = io.BytesIO()
@@ -240,5 +259,7 @@ class ImageHandler:
         return data, meta
 
     def deserialize(self, data: bytes, metadata: dict[str, Any] | None = None) -> Any:
-        """Decode the PNG bytes back into a PIL Image."""
+        """Decode either preserved NPY pixels or legacy PNG bytes."""
+        if data.startswith(b"\x93NUMPY"):
+            return np.load(io.BytesIO(data), allow_pickle=False)
         return PILImage.open(io.BytesIO(data))

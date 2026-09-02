@@ -18,12 +18,13 @@ import type { SequenceMeta, SequenceResponse } from "../api/types";
 import { useCardSeries, useStepSlider, resolveAtStep, useRunInfo, MultiPaneGrid, type BaseCardSettings } from "./card-kit";
 import {
   checkFigureMergeable,
+  Figure,
   mergeFigures,
   useContainerSize,
-  type PlotlyFigureLike,
   type FigureMergeEntry,
-} from "@cairn-plot/integration/cairn-card";
-import Figure, { type SharedView } from "@cairn-plot/plots/figure/renderer/Figure";
+  type PlotlyFigureLike,
+  type SharedView,
+} from "@cairn-plot/figure";
 import AddToComparisonButton from "./AddToComparisonButton";
 import CardShell from "./CardShell";
 import RunSelectionPanel from "./RunSelectionPanel";
@@ -31,10 +32,12 @@ import SeriesChipStrip from "./SeriesChipStrip";
 import Toggle from "./settings/Toggle";
 import Select from "./settings/Select";
 import StepSlider from "./StepSlider";
+import { plotCardPolicy } from "./card-kit/plot-card-policy";
 
 // The card's own minimum height — passed to every resolveCardHeight read so the
 // inner figure agrees with CardShell's outer-box clamp (one clamp source).
 const FIGURE_MIN_HEIGHT = cardMinSize("figure").minHeight;
+const FIGURE_POLICY = plotCardPolicy("figure");
 
 interface Props {
   runId: string;
@@ -92,6 +95,7 @@ const DEFAULT_FIGURE_SETTINGS = (seed: {
   context_hash: string;
 }): FigureSettings => ({
   version: 1,
+  colSpan: FIGURE_POLICY.colSpan,
   metrics: [seed],
   displayModeBar: false,
   scrollZoom: true,
@@ -694,7 +698,7 @@ export default function FigureInteractiveCard({ runId, metric, extraSeries, cont
       updateSettings={updateSettings}
       title={metric.name}
       subtitle={subtitle}
-      defaultHeight={350}
+      defaultHeight={FIGURE_POLICY.defaultHeight}
       onSettings={() => setExpanded(true)}
       onRemove={onRemove}
       onDownload={current?.artifact_hash ? () => downloadArtifact(api.artifactUrl(current.artifact_hash!), artifactFilename(metric.name, current.step, current.artifact_mime ?? "image/png")) : undefined}

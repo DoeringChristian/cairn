@@ -9,12 +9,11 @@ import type { SequenceMeta } from "../api/types";
 import {
   Heatmap,
   HistogramPlot,
-  parseNpy,
   computeHistogram,
   COLORMAP_OPTIONS as LIB_COLORMAP_OPTIONS,
-  type NpyArray,
   type ColormapName,
-} from "@cairn-plot/integration/cairn-card";
+} from "../lib/public-plot";
+import { parseNpy, type NpyArray } from "../lib/parse-npy";
 import AddToComparisonButton from "./AddToComparisonButton";
 import CardShell from "./CardShell";
 import StepSlider from "./StepSlider";

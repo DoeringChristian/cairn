@@ -11,8 +11,7 @@ import type { CardSettingsKey } from "../lib/card-settings";
 import { useSequence } from "../api/hooks";
 import { api } from "../api/client";
 import { downloadArtifact, artifactFilename } from "../lib/download";
-import ScalarPlotCard from "./ScalarPlotCard";
-import ImageCard from "./ImageCard";
+import CairnPlotCard from "./CairnPlotCard";
 import AudioPlayerCard from "./AudioPlayerCard";
 import VideoPlayerCard from "./VideoPlayerCard";
 import HistogramCard from "./HistogramCard";
@@ -23,6 +22,7 @@ import ArtifactCard from "./ArtifactCard";
 const FigureInteractiveCard = lazy(
   () => import("./FigureInteractiveCard"),
 );
+const ScalarPlotCard = lazy(() => import("./ScalarPlotCard"));
 
 
 const ParallelCoordsCard = lazy(() => import("./ParallelCoordsCard"));
@@ -39,13 +39,6 @@ const BarChartCard = lazy(() => import("./BarChartCard"));
 
 const ScalarTileCard = lazy(() => import("./ScalarTileCard"));
 
-const PointCloudVisualCard = lazy(() => import("./PointCloudVisualCard"));
-
-const MeshVisualCard = lazy(() => import("./MeshVisualCard"));
-
-const BoxesVisualCard = lazy(() => import("./BoxesVisualCard"));
-
-const VolumeVisualCard = lazy(() => import("./VolumeVisualCard"));
 
 /**
  * Descriptor for the card CardRenderer should render.
@@ -200,16 +193,12 @@ export default function CardRenderer(props: CardDescriptor) {
   switch (objectType) {
     case "scalar":
       return (
-        <ScalarPlotCard
-          {...baseProps}
-          extraSeries={extraSeries}
-          controlledSeries={controlledSeries}
-          settingsKeyOverride={settingsKeyOverride}
-          onRemove={onRemove}
-        />
+        <Suspense fallback={<LazyCardFallback label="loading scalar plot…" />}>
+          <ScalarPlotCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} settingsKeyOverride={settingsKeyOverride} onRemove={onRemove} />
+        </Suspense>
       );
     case "image":
-      return <ImageCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />;
+      return <CairnPlotCard {...baseProps} extraSeries={extraSeries} settingsKeyOverride={settingsKeyOverride} onRemove={onRemove} />;
     case "figure":
       return (
         <Suspense
@@ -261,69 +250,13 @@ export default function CardRenderer(props: CardDescriptor) {
     case "artifact":
       return <ArtifactCard {...baseProps} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />;
     case "pointcloud":
-      return (
-        <Suspense
-          fallback={
-            <div data-cairn-card className="card p-4">
-              <div className="mb-2 flex items-baseline justify-between gap-2">
-                <h3 className="mono text-sm font-semibold">{metric.name}</h3>
-                <span className="text-xs text-fg-subtle">loading three.js…</span>
-              </div>
-              <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
-            </div>
-          }
-        >
-          <PointCloudVisualCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />
-        </Suspense>
-      );
+      return <CairnPlotCard {...baseProps} extraSeries={extraSeries} settingsKeyOverride={settingsKeyOverride} onRemove={onRemove} />;
     case "mesh":
-      return (
-        <Suspense
-          fallback={
-            <div data-cairn-card className="card p-4">
-              <div className="mb-2 flex items-baseline justify-between gap-2">
-                <h3 className="mono text-sm font-semibold">{metric.name}</h3>
-                <span className="text-xs text-fg-subtle">loading three.js…</span>
-              </div>
-              <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
-            </div>
-          }
-        >
-          <MeshVisualCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />
-        </Suspense>
-      );
+      return <CairnPlotCard {...baseProps} extraSeries={extraSeries} settingsKeyOverride={settingsKeyOverride} onRemove={onRemove} />;
     case "boxes3d":
-      return (
-        <Suspense
-          fallback={
-            <div data-cairn-card className="card p-4">
-              <div className="mb-2 flex items-baseline justify-between gap-2">
-                <h3 className="mono text-sm font-semibold">{metric.name}</h3>
-                <span className="text-xs text-fg-subtle">loading three.js…</span>
-              </div>
-              <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
-            </div>
-          }
-        >
-          <BoxesVisualCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />
-        </Suspense>
-      );
+      return <CairnPlotCard {...baseProps} extraSeries={extraSeries} settingsKeyOverride={settingsKeyOverride} onRemove={onRemove} />;
     case "volume":
-      return (
-        <Suspense
-          fallback={
-            <div data-cairn-card className="card p-4">
-              <div className="mb-2 flex items-baseline justify-between gap-2">
-                <h3 className="mono text-sm font-semibold">{metric.name}</h3>
-                <span className="text-xs text-fg-subtle">loading three.js…</span>
-              </div>
-              <div className="h-48 motion-safe:animate-pulse rounded bg-bg-hover" />
-            </div>
-          }
-        >
-          <VolumeVisualCard {...baseProps} extraSeries={extraSeries} controlledSeries={controlledSeries} onRemove={onRemove} settingsKeyOverride={settingsKeyOverride} />
-        </Suspense>
-      );
+      return <CairnPlotCard {...baseProps} extraSeries={extraSeries} settingsKeyOverride={settingsKeyOverride} onRemove={onRemove} />;
     default: {
       // Exhaustiveness guard tied to the actual switch: if a `SeriesCardType`
       // case above is removed/renamed (or a new `CardType` is added without a

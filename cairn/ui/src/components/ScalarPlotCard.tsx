@@ -25,6 +25,7 @@ import Select from "./settings/Select";
 import Slider from "./settings/Slider";
 import Toggle from "./settings/Toggle";
 import SettingsSection from "./settings/SettingsSection";
+import { plotCardPolicy } from "./card-kit/plot-card-policy";
 import { shortRunLabel, useRunMetadataVersion } from "../lib/run-label";
 import { seriesKey, seriesLabel } from "../lib/series-utils";
 import { downloadCsv, exportChartPng, safeName } from "../lib/download";
@@ -37,9 +38,10 @@ import {
   filterOutliers,
   type AxisSource,
   type AxisScale,
-  type PromotedSeriesConfig,
   type Series,
-} from "@cairn-plot/integration/cairn-card";
+} from "@cairn-plot/scalar";
+
+const SCALAR_POLICY = plotCardPolicy("scalar");
 
 // -----------------------------------------------------------------------------
 // Settings shape
@@ -57,7 +59,6 @@ interface ScalarSettings extends BaseCardSettings {
   lineType: "linear" | "monotone" | "step" | "stepBefore" | "stepAfter";
   showLegend: boolean;
   tooltip: { showContext: boolean; showWallTime: boolean };
-  promotedSeries: Record<string, PromotedSeriesConfig>;
   viewport: {
     xMin: number | null;
     xMax: number | null;
@@ -71,6 +72,7 @@ const DEFAULT_SCALAR_SETTINGS = (seed: {
   context_hash: string;
 }): ScalarSettings => ({
   version: 1,
+  colSpan: SCALAR_POLICY.colSpan,
   metrics: [seed],
   xAxis: "step",
   xScale: "linear",
@@ -82,7 +84,6 @@ const DEFAULT_SCALAR_SETTINGS = (seed: {
   lineType: "linear",
   showLegend: true,
   tooltip: { showContext: true, showWallTime: true },
-  promotedSeries: {},
   viewport: { xMin: null, xMax: null, yMin: null, yMax: null },
 });
 
@@ -538,12 +539,9 @@ export default function ScalarPlotCard({
     yScale: settings.yScale,
     xRange: settings.xRange,
     yRange: settings.yRange,
-    viewport: settings.viewport,
-    onViewportChange: (v: ScalarSettings["viewport"]) =>
+    view: settings.viewport,
+    onViewChange: (v: ScalarSettings["viewport"]) =>
       updateSettings({ viewport: v }),
-    promotedSeries: settings.promotedSeries,
-    onPromotedSeriesChange: (p: Record<string, PromotedSeriesConfig>) =>
-      updateSettings({ promotedSeries: p }),
     lineType: settings.lineType,
     showLegend: settings.showLegend,
     tooltip: settings.tooltip,
@@ -561,7 +559,7 @@ export default function ScalarPlotCard({
       updateSettings={updateSettings}
       title={metric.name}
       subtitle={subtitle}
-      defaultHeight={300}
+      defaultHeight={SCALAR_POLICY.defaultHeight}
       onSettings={() => setExpanded(true)}
       onDownload={() => {
         const headers = ["series", "x", "y", "wall_time"];

@@ -31,7 +31,7 @@ from ..sdk.capture.env import capture_env as _capture_env
 from ..sdk.capture.git import capture_git
 from ..sdk.capture.source import build_source_archive, find_project_root
 from ..sdk.capture.system import SystemMetricsCollector
-from ..sdk.handlers.registry import HandlerRegistry, default_registry
+from ..sdk.handlers.registry import HandlerRegistry, default_registry, resolve_mime_type
 from ..sdk.wrappers import _TypeWrapper
 from .buffer import MetricBuffer
 from .local import LocalTransport, _RepoServedByOtherError
@@ -435,7 +435,7 @@ class Run:
                 src_hash = self._transport.upload_artifact(source_blob, source_mime, {})
                 meta["source_hash"] = src_hash
             digest = self._transport.upload_artifact(
-                blob, handler.mime_type, meta, object_type=handler.object_type,
+                blob, resolve_mime_type(handler, payload), meta, object_type=handler.object_type,
             )
             point["artifact_hash"] = digest
 
@@ -495,7 +495,7 @@ class Run:
         if metadata:
             meta = {**meta, **metadata}
         digest = self._transport.upload_artifact(
-            blob, handler.mime_type, meta, object_type=object_type
+            blob, resolve_mime_type(handler, payload), meta, object_type=object_type
         )
         self._transport.attach_artifact(self._run_id, name, digest, step)
         return digest
@@ -522,7 +522,7 @@ class Run:
             handler = self._registry.find_handler(value)
             if handler is not None:
                 blob, handler_meta = handler.serialize(value)
-                mime_type = handler.mime_type if hasattr(handler, "mime_type") else mime_type
+                mime_type = resolve_mime_type(handler, value)
             elif isinstance(value, (bytes, bytearray)):
                 blob = bytes(value)
             else:

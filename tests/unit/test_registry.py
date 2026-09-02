@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from cairn.sdk.handlers import default_registry
-from cairn.sdk.handlers.registry import HandlerRegistry, register_handler
+from cairn.sdk.handlers.registry import HandlerRegistry, register_handler, resolve_mime_type
 from cairn.sdk.wrappers import Image, Tensor
 
 
@@ -29,6 +29,16 @@ class _B:
 
     def serialize(self, obj, **kw):
         return b"b", {}
+
+
+def test_content_dependent_mime_type():
+    class Dynamic(_A):
+        def mime_type_for(self, obj):
+            return "application/x-special" if obj == "special" else self.mime_type
+
+    handler = Dynamic()
+    assert resolve_mime_type(handler, "special") == "application/x-special"
+    assert resolve_mime_type(_A(), "anything") == "application/octet-stream"
 
 
 def test_lifo_dispatch():

@@ -1,14 +1,21 @@
 import Select from "../settings/Select";
 import Slider from "../settings/Slider";
 import Toggle from "../settings/Toggle";
-import type { Colormap, DiffMode } from "@cairn-plot/plots/types";
-import type { DiffColormap } from "@cairn-plot/engines/three/diff";
-import {
-  DIFF_COLORMAP_OPTIONS,
-  DIFF_SUBMODE_OPTIONS,
-  PIXEL_DIFF_COLORMAP_OPTIONS,
-  enumerateCompareModeOptions,
-} from "@cairn-plot/plots/image/compare";
+type Colormap = string;
+type DiffMode = string;
+type DiffColormap = string;
+
+const DIFF_COLORMAP_OPTIONS = ["turbo", "magma", "gray"].map((value) => ({ value, label: value }));
+const DIFF_SUBMODE_OPTIONS = ["absolute", "signed", "squared", "relative_absolute"].map((value) => ({ value, label: value }));
+const PIXEL_DIFF_COLORMAP_OPTIONS = DIFF_COLORMAP_OPTIONS;
+
+function compareModeOptions<M extends string>(
+  nativeModes: Array<{ value: M; label: string }>,
+  topologyOk: boolean,
+): Array<{ value: M; label: string; disabled?: boolean }> {
+  const core = ["normal", "split", "blend", "diff"].map((value) => ({ value: value as M, label: value }));
+  return [...core, ...nativeModes.map((option) => ({ ...option, disabled: !topologyOk }))];
+}
 
 // ---------------------------------------------------------------------------
 // The ONE "Compare (2 series)" settings block, shared by all four 3D cards
@@ -80,10 +87,7 @@ export function CompareSettingsPanel<M extends string>({
   currentStep,
   maxStep,
 }: CompareSettingsPanelProps<M>) {
-  const options: Array<{ value: M; label: string; disabled?: boolean }> = enumerateCompareModeOptions<M>({
-    nativeModes,
-    topologyOk,
-  }).map((o) => ({ value: o.value, label: o.label, disabled: o.disabled }));
+  const options = compareModeOptions(nativeModes, topologyOk);
   const nativeValues = new Set<string>(nativeModes.map((o) => o.value));
   const isNative = nativeValues.has(mode);
 
@@ -97,12 +101,9 @@ export function CompareSettingsPanel<M extends string>({
       .__cairnPlotDiffMenuModes ?? [];
   const gpuAvailable = !!(window as unknown as { __cairnPlotGpuImageLoaded?: boolean })
     .__cairnPlotGpuImageLoaded;
-  const kernelOptions = enumerateCompareModeOptions<string>(
-    { nativeModes: [], topologyOk: true },
-    { engineKernels: engineKernelList.map((k) => ({ value: k.id, label: k.label })), gpuAvailable },
-  )
-    .filter((o) => o.kernel)
-    .map((o) => ({ value: o.value, label: o.label, disabled: o.disabled }));
+  const kernelOptions = gpuAvailable
+    ? engineKernelList.map((kernel) => ({ value: kernel.id, label: kernel.label }))
+    : [];
   const showKernelSelect = !!onDiffKernelChange && kernelOptions.length > 0;
 
   return (

@@ -3,9 +3,8 @@ import react from "@vitejs/plugin-react";
 
 // The cairn-plot renderer library is vendored as a git submodule at
 // vendor/cairn-plot; the app consumes its TS source (ui/src) via the
-// `@cairn-plot` resolves to the supported public browser API. The temporary
-// `@cairn-plot/*` compatibility alias remains while legacy cards are migrated
-// away from renderer-internal imports.
+// `@cairn-plot` and its explicit scalar/figure entries resolve only to the
+// supported public browser API; renderer-internal wildcard imports are banned.
 // forces its react/three/recharts/plotly imports to resolve from THIS app's
 // single node_modules (the submodule ships no node_modules here), so there is
 // exactly one copy of each — no duplicate-react "invalid hook call" hazard.
@@ -14,14 +13,19 @@ const cairnPlotSrc = decodeURIComponent(
   new URL("../../vendor/cairn-plot/ui/src/", import.meta.url).pathname,
 );
 const cairnPlotPublic = `${cairnPlotSrc}public/index.ts`;
+const cairnPlotStyles = `${cairnPlotSrc}public/styles.css`;
+const cairnPlotFigure = `${cairnPlotSrc}public/figure.ts`;
+const cairnPlotScalar = `${cairnPlotSrc}public/scalar.ts`;
 const repoRoot = decodeURIComponent(new URL("../../", import.meta.url).pathname);
 
 export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: [
+      { find: /^@cairn-plot\/styles\.css$/, replacement: cairnPlotStyles },
+      { find: /^@cairn-plot\/figure$/, replacement: cairnPlotFigure },
+      { find: /^@cairn-plot\/scalar$/, replacement: cairnPlotScalar },
       { find: /^@cairn-plot$/, replacement: cairnPlotPublic },
-      { find: /^@cairn-plot\//, replacement: cairnPlotSrc },
     ],
     dedupe: [
       "react",

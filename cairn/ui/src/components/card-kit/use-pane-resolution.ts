@@ -1,9 +1,23 @@
 import { useMemo } from "react";
 import type { SequencePoint } from "../../api/types";
 import type { SeriesRef } from "./use-card-series";
-import { resolveArtifactAtStep } from "@cairn-plot/integration/cairn-card";
-
 type MissingMode = "nothing" | "last_available" | undefined;
+
+function resolveArtifactAtStep(
+  points: Map<number, SequencePoint>,
+  step: number,
+  steps: number[],
+  missingMode: MissingMode,
+): { hash: string | undefined; fallbackStep: number | null } {
+  const exact = points.get(step)?.artifact_hash ?? undefined;
+  if (exact) return { hash: exact, fallbackStep: null };
+  if (missingMode !== "last_available") return { hash: undefined, fallbackStep: null };
+  const fallbackStep = [...steps].filter((candidate) => candidate <= step).sort((a, b) => b - a)
+    .find((candidate) => !!points.get(candidate)?.artifact_hash);
+  return fallbackStep === undefined
+    ? { hash: undefined, fallbackStep: null }
+    : { hash: points.get(fallbackStep)?.artifact_hash ?? undefined, fallbackStep };
+}
 
 export interface PaneResolution {
   /** Per-pane resolved foreground `{hash, fallbackStep}` at the current step. */

@@ -1,6 +1,6 @@
 /** Artifact download and chart export helpers. */
 
-import { plotToPng, downloadBlob as downloadPngBlob } from "@cairn-plot/primitives/components/plot-to-png";
+import html2canvas from "html2canvas";
 
 export type ExportFormat = "svg" | "png" | "jpg" | "pdf";
 
@@ -69,17 +69,17 @@ export function downloadCsv(headers: string[], rows: (string | number)[][], file
 }
 
 /**
- * Export the chart under `container` as a PNG using cairn-plot's shared
- * client-side rasterizer (`primitives/plot-to-png` — the same exporter every
- * `<PlotToolbar>` camera button uses). Prefers an `<svg>` chart (compositing
- * any sibling `<canvas>` layers), falling back to a lone `<canvas>`/`<img>`.
- * Replaces the former in-app multi-format SVG serializer; the multi-format
- * (svg/jpg/pdf) surface was dropped in favor of a single PNG output.
+ * Export the chart under `container` as a PNG without depending on
+ * cairn-plot renderer internals. The app-level rasterizer captures SVG,
+ * canvas, and ordinary DOM layers into one image.
  */
 export async function exportChartPng(container: HTMLElement, filename: string): Promise<void> {
   try {
-    const blob = await plotToPng(container);
-    downloadPngBlob(blob, filename);
+    const canvas = await html2canvas(container, { backgroundColor: null, useCORS: true });
+    const blob = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((value) => value ? resolve(value) : reject(new Error("PNG encoding failed")), "image/png");
+    });
+    downloadBlob(blob, filename);
   } catch (err) {
     console.error("exportChartPng failed", err);
   }

@@ -150,7 +150,7 @@ def log_artifact(
     # handlers are registered — the no-Run path can't rely on `cairn.sdk.run`
     # having been imported to do it.
     from .sdk import handlers as _handlers  # noqa: F401
-    from .sdk.handlers.registry import default_registry
+    from .sdk.handlers.registry import default_registry, resolve_mime_type
     from .sdk.run import ArtifactVersion
 
     target = resolve_target(repo=repo)
@@ -177,7 +177,7 @@ def log_artifact(
             handler = default_registry.find_handler(data)
             if handler is not None:
                 blob, handler_meta = handler.serialize(data)
-                mime_type = getattr(handler, "mime_type", mime_type)
+                mime_type = resolve_mime_type(handler, data)
             else:
                 raise TypeError(f"No handler for type {type(data).__name__}")
 

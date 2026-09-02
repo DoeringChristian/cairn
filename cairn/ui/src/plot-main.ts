@@ -1,18 +1,18 @@
 import {
   createEndpointDataSource,
   mountPlot,
-  type PlotDescriptor,
+  type PlotSpec,
 } from "@cairn-plot";
-import "@cairn-plot/public/styles.css";
+import "@cairn-plot/styles.css";
 
 const DESCRIPTOR_SCRIPT_ID = "__cairn_plot_descriptor__";
 const DESCRIPTOR_MIME = "application/cairn-plot+json";
 
-async function readDescriptor(): Promise<PlotDescriptor> {
+async function readDescriptor(): Promise<PlotSpec & { endpoint?: string }> {
   const inline =
     document.getElementById(DESCRIPTOR_SCRIPT_ID) ??
     document.querySelector(`script[type="${DESCRIPTOR_MIME}"]`);
-  if (inline?.textContent) return JSON.parse(inline.textContent) as PlotDescriptor;
+  if (inline?.textContent) return JSON.parse(inline.textContent) as PlotSpec & { endpoint?: string };
 
   const src = new URLSearchParams(window.location.search).get("src");
   if (!src) {
@@ -20,7 +20,7 @@ async function readDescriptor(): Promise<PlotDescriptor> {
   }
   const response = await fetch(src);
   if (!response.ok) throw new Error(`failed to fetch descriptor (${response.status})`);
-  return response.json() as Promise<PlotDescriptor>;
+  return response.json() as Promise<PlotSpec & { endpoint?: string }>;
 }
 
 async function main(): Promise<void> {
@@ -31,7 +31,7 @@ async function main(): Promise<void> {
     const descriptor = await readDescriptor();
     const base = (descriptor.endpoint ?? window.location.origin).replace(/\/$/, "");
     mountPlot(root, {
-      descriptor,
+      spec: descriptor,
       dataSource: createEndpointDataSource((hash) => `${base}/api/artifacts/${hash}`),
       className: "p-2",
     });

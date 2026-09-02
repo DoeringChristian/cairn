@@ -13,11 +13,11 @@ import { useCardSettings, type CardSettingsKey } from "../lib/card-settings";
 import type { SequenceMeta } from "../api/types";
 import {
   HistogramPlot,
-  parseNpz,
   COLORMAP_OPTIONS as LIB_COLORMAP_OPTIONS,
   type HistogramData,
   type ColormapName,
-} from "@cairn-plot/integration/cairn-card";
+} from "../lib/public-plot";
+import { parseNpz } from "../lib/parse-npz";
 import AddToComparisonButton from "./AddToComparisonButton";
 import CardShell from "./CardShell";
 import StepSlider from "./StepSlider";

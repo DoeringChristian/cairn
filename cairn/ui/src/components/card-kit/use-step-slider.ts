@@ -1,4 +1,4 @@
-import { useContext, useMemo, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { CardMutationContext } from "../../lib/card-settings";
 
 export interface StepSliderState {
@@ -46,11 +46,27 @@ export function useStepSlider(args: {
   }, [seriesPoints]);
 
   const [idx, setIdx] = useState(persistedIdx ?? 0);
-  const onSliderChange = (newIdx: number) => {
+  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingPersistRef = useRef<number | null>(null);
+  const updateSettingsRef = useRef(updateSettings);
+  updateSettingsRef.current = updateSettings;
+  const onSliderChange = useCallback((newIdx: number) => {
     if (!mutable) return;
     setIdx(newIdx);
-    updateSettings({ sliderStep: newIdx });
-  };
+    pendingPersistRef.current = newIdx;
+    if (persistTimerRef.current != null) clearTimeout(persistTimerRef.current);
+    persistTimerRef.current = setTimeout(() => {
+      persistTimerRef.current = null;
+      const pending = pendingPersistRef.current;
+      pendingPersistRef.current = null;
+      if (pending != null) updateSettingsRef.current({ sliderStep: pending });
+    }, 150);
+  }, [mutable]);
+  useEffect(() => () => {
+    if (persistTimerRef.current != null) clearTimeout(persistTimerRef.current);
+    const pending = pendingPersistRef.current;
+    if (pending != null) updateSettingsRef.current({ sliderStep: pending });
+  }, []);
   const safeIdx = Math.min(Math.max(0, idx), Math.max(0, globalSteps.length - 1));
   const currentStep = globalSteps[safeIdx] ?? 0;
 

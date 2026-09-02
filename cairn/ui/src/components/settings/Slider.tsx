@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { useCallback, useEffect, useId, useRef } from "react";
 
 interface Props {
   label: string;
@@ -23,6 +23,26 @@ export default function Slider({
   description,
 }: Props) {
   const id = useId();
+  const onChangeRef = useRef(onChange);
+  const frameRef = useRef(0);
+  const pendingRef = useRef<number | null>(null);
+  onChangeRef.current = onChange;
+
+  const queueChange = useCallback((next: number) => {
+    pendingRef.current = next;
+    if (frameRef.current) return;
+    frameRef.current = requestAnimationFrame(() => {
+      frameRef.current = 0;
+      const pending = pendingRef.current;
+      pendingRef.current = null;
+      if (pending != null) onChangeRef.current(pending);
+    });
+  }, []);
+
+  useEffect(() => () => {
+    if (frameRef.current) cancelAnimationFrame(frameRef.current);
+  }, []);
+
   const display = format ? format(value) : String(value);
   return (
     <div className="py-1">
@@ -39,7 +59,7 @@ export default function Slider({
         max={max}
         step={step}
         value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
+        onChange={(e) => queueChange(Number(e.target.value))}
         className="w-full accent-accent"
       />
       {description && (
