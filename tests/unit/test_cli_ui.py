@@ -12,6 +12,9 @@ from pathlib import Path
 
 import httpx
 import pytest
+from click.testing import CliRunner
+
+from cairn import cli
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -189,6 +192,52 @@ def test_cairn_ui_errors_when_server_running(fresh_repo: Path):
     finally:
         server_proc.send_signal(signal.SIGINT)
         server_proc.wait(timeout=10)
+
+
+def test_cairn_ui_remote_repo_selects_local_proxy(monkeypatch):
+    import uvicorn
+    from cairn.server import proxy
+
+    captured = {}
+    real_factory = proxy.create_proxy_app
+
+    def capture_factory(upstream, *, token=None, transport=None):
+        captured.update(upstream=upstream, token=token)
+        return real_factory(upstream, token=token, transport=transport)
+
+    monkeypatch.setattr(proxy, "create_proxy_app", capture_factory)
+    monkeypatch.setattr(uvicorn.Server, "run", lambda self: None)
+    monkeypatch.setenv("CAIRN_TOKEN", "from-environment")
+
+    result = CliRunner().invoke(
+        cli.main,
+        ["ui", "--repo", "cairn://fermat:4300", "--port", str(_free_port())],
+    )
+    assert result.exit_code == 0, result.output
+    assert captured == {
+        "upstream": "http://fermat:4300",
+        "token": "from-environment",
+    }
+    assert "Cairn UI proxy" in result.output
+    assert "Remote:  http://fermat:4300" in result.output
+    assert "from-environment" not in result.output
+
+
+def test_cairn_ui_remote_proxy_rejects_non_loopback_bind():
+    result = CliRunner().invoke(
+        cli.main,
+        [
+            "ui",
+            "--repo",
+            "cairn://fermat:4300",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            str(_free_port()),
+        ],
+    )
+    assert result.exit_code != 0
+    assert "must bind to loopback" in result.output
 
 
 def test_cairn_server_creates_repo_if_missing(tmp_path):

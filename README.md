@@ -86,7 +86,23 @@ run["hparams"] = {"lr": 3e-4, "batch_size": 32}
 run.track(0.5, name="loss", step=0)
 ```
 
-Or set it globally:
+To render with the browser and GPU on your workstation while the data stays on
+that server, run a local same-origin UI proxy:
+
+```bash
+# Uses CAIRN_TOKEN server-side when configured:
+CAIRN_TOKEN=... cairn ui --repo cairn://192.168.1.42:4300
+
+# Or omit CAIRN_TOKEN and paste the remote token into the local browser login:
+cairn ui --repo cairn://192.168.1.42:4300
+```
+
+Open `http://localhost:4301`. The JavaScript is served from loopback (a browser
+secure context), while `/api/*`, artifacts, uploads, and range requests stream
+through to the remote server. The token is never placed in a URL or browser
+configuration.
+
+Or set the training destination globally:
 
 ```python
 cairn.configure(repo="cairn://gpu-server:4300")

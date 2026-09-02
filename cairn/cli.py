@@ -4,10 +4,9 @@ The two server commands:
 
 * ``cairn server [--repo PATH]`` — runs the ingest tracking API **and** the UI
   viewer on two ports in the same process. Single Ctrl+C kills both.
-* ``cairn ui [--repo PATH]`` — standalone UI over a local repo when no
-  tracking server is running. Acquires the repo write-lock in ``mode="ui"``.
-  A running ``cairn server`` on the same repo will make this error out; in
-  that case just open the server's UI URL in a browser.
+* ``cairn ui [--repo PATH|cairn://HOST:PORT]`` — standalone UI over a
+  local repo, or a loopback UI/proxy connected to a remote tracking server.
+  Local mode acquires the repo write-lock in ``mode="ui"``.
 
 Client commands (``list``, ``ping``, ``open``, ``rm``, ``export``, ``sync``)
 talk to a running server over HTTP.
@@ -16,6 +15,7 @@ talk to a running server over HTTP.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import signal
@@ -359,8 +359,11 @@ def server_cmd(
 @click.option(
     "--repo",
     default=None,
-    type=click.Path(dir_okay=True, file_okay=False, path_type=Path),
-    help="Path to the .cairn/ directory. Default: ./.cairn.",
+    type=str,
+    help=(
+        "Local .cairn/ path, or remote cairn://HOST:PORT / http(s):// URL. "
+        "A remote target serves the UI locally and proxies its API. Default: ./.cairn."
+    ),
 )
 @click.option(
     "--open-browser",
@@ -373,20 +376,63 @@ def server_cmd(
     help="Disable authentication (local/debugging only — auth is ON by default).",
 )
 def ui_cmd(
-    host: str, port: int, repo: Path | None, open_browser: bool, no_auth: bool,
+    host: str, port: int, repo: str | None, open_browser: bool, no_auth: bool,
 ) -> None:
-    """Serve the Cairn viewer over a local repo (no tracking server).
+    """Serve the Cairn viewer over a local repo or remote Cairn server.
 
-    Use this after ``cairn init`` + a local ``Run(repo=...)`` session to
-    browse the results. If a tracking server is already running against the
-    same repo, point your browser at its UI port instead (this command will
-    error to prevent double-writer corruption).
+    A remote ``--repo cairn://HOST:PORT`` keeps the page on loopback (and thus
+    WebGPU-capable) while proxying relative API requests to the server. Set
+    ``CAIRN_TOKEN`` to authenticate server-side, or omit it and log in through
+    the browser. ``--no-auth`` applies only to local-repo mode.
     """
     import uvicorn
 
-    repo = _ensure_repo(repo or _default_repo())
+    target = _config.resolve_target(repo=repo or str(_default_repo()))
     port = _find_free_port(host, port)
-    dd = DataDir(repo)
+    if not target.is_local:
+        from .server.proxy import create_proxy_app
+
+        if host not in ("127.0.0.1", "localhost"):
+            raise click.ClickException(
+                "remote UI proxy must bind to loopback (use --host 127.0.0.1); "
+                "exposing it would expose its server-side credential"
+            )
+        if no_auth:
+            raise click.ClickException("--no-auth is not valid for a remote UI proxy")
+        # Remote UI proxy credentials come only from the process environment;
+        # without one, authentication remains an explicit browser interaction.
+        token = os.environ.get("CAIRN_TOKEN") or None
+        try:
+            app = create_proxy_app(target.location, token=token)
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
+        ui_url = f"http://localhost:{port}"
+        click.echo(
+            f"\n  Cairn UI proxy:\n"
+            f"    Local:   {ui_url}\n"
+            f"    Remote:  {target.location}\n"
+            f"  Auth: {'CAIRN_TOKEN (server-side)' if token else 'browser login'}\n"
+            f"  Press Ctrl+C to stop.\n"
+        )
+        if open_browser and host in ("0.0.0.0", "127.0.0.1", "localhost"):
+            try:
+                webbrowser.open(f"http://localhost:{port}/")
+            except Exception:  # noqa: BLE001
+                pass
+        uv_config = uvicorn.Config(
+            app=app, host=host, port=port, log_level="info", lifespan="on"
+        )
+        uv_server = uvicorn.Server(uv_config)
+
+        def _proxy_sigint(_sig, _frame):
+            uv_server.should_exit = True
+
+        signal.signal(signal.SIGINT, _proxy_sigint)
+        uv_server.run()
+        return
+
+    repo_path = _ensure_repo(Path(target.location))
+    dd = DataDir(repo_path)
     has_lock = False
     try:
         dd.acquire_lock("ui", host="127.0.0.1", port=port)
