@@ -12,6 +12,8 @@ FIGURE = ROOT / "cairn/ui/src/components/FigureInteractiveCard.tsx"
 SCALAR = ROOT / "cairn/ui/src/components/ScalarPlotCard.tsx"
 MIN_SIZES = ROOT / "cairn/ui/src/components/card-kit/card-min-sizes.ts"
 POLICY = ROOT / "cairn/ui/src/components/card-kit/plot-card-policy.ts"
+BASELINE_PICKER = ROOT / "cairn/ui/src/components/card-kit/ExternalBaselinePicker.tsx"
+REFERENCE_DROP = ROOT / "cairn/ui/src/components/card-kit/use-reference-drop.ts"
 
 
 def test_plot_card_uses_stable_public_host_and_bounded_surface() -> None:
@@ -66,10 +68,19 @@ def test_settings_can_select_a_card_comparison_without_dragging() -> None:
     assert "comparisonMetric?: ComparisonSeriesRef" in source
     assert 'title="Compare with"' in source
     assert "<ExternalBaselinePicker" in source
-    assert "availableRunIds={availableRunIds}" in source
+    assert "availableRunIds={availableRunIds}" not in source
     assert 'kind: "compare"' in source
-    assert 'referenceMode?: "global" | "per-run"' in source
-    assert 'label="Reference mode"' in source
+    assert 'referenceMode?: "global" | "per-run"' not in source
+    assert 'label="Reference mode"' not in source
+    assert 'One global reference' not in source
+    assert "const referencePoints = referenceArtifactPoints[index] ?? []" in source
+    assert "Each image pane uses that tag from its own run." in source
+    assert "const isReferencePane = item?.name === comparisonMetric.name" in source
+    picker = BASELINE_PICKER.read_text()
+    assert "availableRunIds" not in picker
+    assert "pickedRunId" not in picker
+    assert "selectedRunId" not in picker
+    assert not REFERENCE_DROP.exists()
     assert "referenceArtifactPoints[index]" in source
     assert "operands: [referenceData, data]" in source
     assert 'presentation: selectedCompareOperation === "split" ? "split" : "difference"' in source

@@ -57,8 +57,6 @@ interface PlotCardSettings extends BaseCardSettings {
   comparisonOperation?: string;
   /** @deprecated Migrated into comparisonOperation; retained for saved cards. */
   comparisonPresentation?: "split" | "diff";
-  /** One shared reference, or the selected tag resolved separately per run. */
-  referenceMode?: "global" | "per-run";
   /** Optional fixed reference step; absent means follow the foreground iteration. */
   referenceStep?: number;
   /** Uniform pane settings persisted through cairn-plot's public session API. */
@@ -295,29 +293,19 @@ export default function CairnPlotCard({
     const multiRun = runIds.length > 1;
     return series.map((item) => seriesLabel(item, runId, multiRun, runIds));
   }, [series, runId, runIds]);
-  const availableRunIds = useMemo(() => [...new Set([
-    runId,
-    ...extraSeries.map((item) => item.runId),
-  ])], [runId, extraSeries]);
   const selectedCompareOperation = settings.comparisonPresentation === "split"
     ? "split"
     : settings.comparisonOperation ?? "absolute";
-  const referenceMode = settings.referenceMode ?? "global";
   const referenceBindings = useMemo(() => {
     if (metric.object_type !== "image" || !comparisonMetric) return [];
-    if (referenceMode === "global") {
-      return [{
-        runId: comparisonMetric.runId,
-        name: comparisonMetric.name,
-        contextHash: comparisonMetric.context_hash,
-      }];
-    }
+    // References are always local to each foreground run. The selected tag
+    // identifies content, never one globally privileged run.
     return series.map((item) => ({
       runId: item.runId,
       name: comparisonMetric.name,
       contextHash: comparisonMetric.context_hash,
     }));
-  }, [metric.object_type, comparisonMetric, referenceMode, series]);
+  }, [metric.object_type, comparisonMetric, series]);
   const allBindings = useMemo(() => [...bindings, ...referenceBindings], [bindings, referenceBindings]);
   const allQueries = useSequencesForRuns(allBindings);
   const queries = allQueries.slice(0, bindings.length);
@@ -395,25 +383,16 @@ export default function CairnPlotCard({
       if (!data) return [];
 
       if (metric.object_type === "image" && comparisonMetric) {
-        // A global reference is one exact selected series, tracked positionally
-        // through its own iteration sequence. Per-run mode resolves the selected
-        // tag independently in every foreground pane's run at the current step.
-        const referencePoints = referenceMode === "global"
-          ? referenceArtifactPoints[0] ?? []
-          : referenceArtifactPoints[index] ?? [];
+        // Resolve the selected reference tag independently inside this pane's
+        // run. There is deliberately no global run reference.
+        const referencePoints = referenceArtifactPoints[index] ?? [];
         const referenceTargetStep = settings.referenceStep ?? currentStep;
-        const referencePoint = settings.referenceStep != null
-          ? resolveAtStep(referencePoints, referenceTargetStep)
-          : referenceMode === "global"
-            ? referencePoints[Math.min(safeIdx, Math.max(0, referencePoints.length - 1))]
-            : resolveAtStep(referencePoints, referenceTargetStep);
+        const referencePoint = resolveAtStep(referencePoints, referenceTargetStep);
         const referenceData = referencePoint ? visualData("image", referencePoint) : null;
-        const isGlobalReferencePane = referenceMode === "global" &&
-          series[index]?.runId === comparisonMetric.runId &&
-          series[index]?.name === comparisonMetric.name &&
-          series[index]?.context_hash === comparisonMetric.context_hash;
-        if (isGlobalReferencePane) return [];
-        if (!referenceData) return [];
+        const item = series[index];
+        const isReferencePane = item?.name === comparisonMetric.name &&
+          item.context_hash === comparisonMetric.context_hash;
+        if (isReferencePane || !referenceData) return [];
         return [{
           kind: "compare",
           type: "image",
@@ -423,9 +402,7 @@ export default function CairnPlotCard({
           referenceIndex: 0,
           settings: { "compare.operation": selectedCompareOperation },
           props: {
-            labelA: referenceMode === "global"
-              ? comparisonMetric.name
-              : `${comparisonMetric.name} · reference`,
+            labelA: `${comparisonMetric.name} · reference`,
             labelB: labels[index] ?? metric.name,
           },
         }];
@@ -463,7 +440,7 @@ export default function CairnPlotCard({
     // its unstable array identity would update the expensive host on every
     // settings-panel slider event.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bindings, labels, metric.name, metric.object_type, queryDataKey, artifactPoints, referenceArtifactPoints, currentStep, safeIdx, settings.gridColumns, settings.showLabels, settings.syncGrid, settings.referenceStep, comparisonMetric, referenceMode, selectedCompareOperation, series]);
+  }, [bindings, labels, metric.name, metric.object_type, queryDataKey, artifactPoints, referenceArtifactPoints, currentStep, settings.gridColumns, settings.showLabels, settings.syncGrid, settings.referenceStep, comparisonMetric, selectedCompareOperation, series]);
 
   const handleSessionChange = useCallback((session: PlotSession) => {
     latestSessionRef.current = session;
@@ -645,15 +622,12 @@ export default function CairnPlotCard({
   const comparisonPicker = metric.object_type === "image" && (
     <SettingsSection title="Compare with" first>
       <p className="mb-1 text-xs text-fg-muted">
-        Choose a reference image tag. Every image pane in this card is compared against the global reference or its run-local copy.
+        Choose a reference image tag. Each image pane uses that tag from its own run.
       </p>
       {comparisonMetric && (
         <div className="mb-2 flex items-center gap-1 rounded border border-accent/40 bg-accent/5 px-2 py-1 text-xs text-fg-muted">
           <span className="mono min-w-0 flex-1 truncate">
             {comparisonMetric.name}
-            {comparisonMetric.runId !== runId
-              ? ` · ${comparisonMetric.runId.slice(0, 8)}`
-              : ""}
           </span>
           <button
             type="button"
@@ -670,10 +644,9 @@ export default function CairnPlotCard({
         objectType={metric.object_type}
         currentMetricName={metric.name}
         selected={comparisonMetric?.name}
-        availableRunIds={availableRunIds}
-        onSelect={(name, context_hash, selectedRunId) => {
+        onSelect={(name, context_hash) => {
           updateSettings({
-            comparisonMetric: { runId: selectedRunId, name, context_hash },
+            comparisonMetric: { runId, name, context_hash },
             comparisonPresentation: undefined,
             comparisonOperation: selectedCompareOperation,
           });
@@ -687,18 +660,6 @@ export default function CairnPlotCard({
   const comparisonPresentation = compareOperation === "split" ? "split" : "diff";
   const compareSettings = metric.object_type === "image" && settings.comparisonMetric && (
     <SettingsSection title="Comparison">
-      {availableRunIds.length > 1 && (
-        <Select<"global" | "per-run">
-          label="Reference mode"
-          value={referenceMode}
-          onChange={(referenceMode) => updateSettings({ referenceMode })}
-          options={[
-            { value: "per-run", label: "Per-run reference tag" },
-            { value: "global", label: "One global reference" },
-          ]}
-          description="Per-run resolves the selected tag separately in each pane's run. Global uses the exact selected run and tag for every pane."
-        />
-      )}
       <Select<string>
         label="Diff mode"
         value={compareOperation}

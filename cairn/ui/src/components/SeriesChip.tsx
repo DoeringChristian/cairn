@@ -12,46 +12,12 @@ import type { DragEvent } from "react";
 
 export const CAIRN_SERIES_MIME = "application/x-cairn-series";
 
-/**
- * MIME used when dragging a concrete, already-resolved viewport (the pane's
- * own rendered content at the current step) rather than a series identity.
- * Dropping THIS onto a reference drop target initiates a GLOBAL reference
- * (one shared baseline for every pane); dropping a `CAIRN_SERIES_MIME` chip
- * (a series identity, no bound image) initiates a PER-RUN reference (each
- * pane resolves its own copy of that series name, step-matched). See
- * `card-kit/use-reference-drop.ts`, the one shared implementation of this
- * drop-target contract used by the image card and all 3D cards.
- */
-export const CAIRN_IMAGE_MIME = "application/x-cairn-image";
-
 export interface SeriesRef {
   runId?: string;
   name: string;
   context_hash: string;
-  /** WS-VC6: the dragged series' own `object_type`, when the drag source
-   *  knows it (a card's own bottom-left viewport label always does — see
-   *  `startViewportDrag`'s callers). Optional/absent for the plain
-   *  per-run chip drag (`SeriesChip`'s own `onDragStart`) — that path stays
-   *  same-type only (cross-type compare was dropped; see the media cards'
-   *  wiring doc comment). */
+  /** Optional object type for consumers that need same-type filtering. */
   objectType?: string;
-}
-
-/**
- * Start dragging a concrete rendered viewport (image pane or 3D pane) as a
- * `CAIRN_IMAGE_MIME` payload — "the viewport label" drag source referenced
- * throughout the media-compare drop-target docs. One implementation shared
- * by `ImagePane`/`CompositeMediaPane` labels (image card) and `MultiPaneGrid`
- * pane badges (3D cards), so both drag identical payloads.
- */
-export function startViewportDrag(
-  e: DragEvent<Element>,
-  tag: SeriesRef,
-  label: string,
-): void {
-  e.dataTransfer.effectAllowed = "copy";
-  e.dataTransfer.setData(CAIRN_IMAGE_MIME, JSON.stringify(tag));
-  e.dataTransfer.setData("text/plain", label);
 }
 
 interface Props {
