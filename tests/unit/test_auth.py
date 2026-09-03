@@ -24,11 +24,15 @@ def test_reusable_local_access_token_is_printed_on_every_start(tmp_path, capsys)
     db = Database.open(dd.db_path)
     try:
         first = auth_core.ensure_local_token(db, dd.root)
-        _print_access_banner(db, token_plain=first, ui_url="http://localhost:4301")
+        first_login_url = _print_access_banner(
+            db, token_plain=first, ui_url="http://localhost:4301"
+        )
         first_output = capsys.readouterr().out
 
         second = auth_core.ensure_local_token(db, dd.root)
-        _print_access_banner(db, token_plain=second, ui_url="http://localhost:4301")
+        second_login_url = _print_access_banner(
+            db, token_plain=second, ui_url="http://localhost:4301"
+        )
         second_output = capsys.readouterr().out
 
         assert second == first
@@ -37,6 +41,8 @@ def test_reusable_local_access_token_is_printed_on_every_start(tmp_path, capsys)
         assert "Reusable local access token" in first_output
         assert "CAIRN_TOKEN=<token above>" in first_output
         assert "http://localhost:4301/login?otp=" in first_output
+        assert first_login_url is not None and first_login_url in first_output
+        assert second_login_url is not None and second_login_url in second_output
         principal = auth_core.verify_bearer_token(db, first)
         assert principal is not None
         assert principal.role == "write"

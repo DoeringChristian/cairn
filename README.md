@@ -44,7 +44,8 @@ for step, loss in training_loop():
 Browse results:
 
 ```bash
-cairn ui                      # serves http://localhost:4301/
+cairn ui                      # serves and opens http://localhost:4301/
+cairn ui --no-open-browser    # serve without opening a browser tab
 ```
 
 ## WAL mode — concurrent / distributed training

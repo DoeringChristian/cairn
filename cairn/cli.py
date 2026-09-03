@@ -130,12 +130,25 @@ def _ensure_repo(repo: Path) -> Path:
     return repo
 
 
+def _open_browser_soon(url: str) -> None:
+    """Open after uvicorn has had a moment to bind its listening socket."""
+    def _open() -> None:
+        try:
+            webbrowser.open(url)
+        except Exception:  # noqa: BLE001
+            pass
+
+    timer = threading.Timer(0.35, _open)
+    timer.daemon = True
+    timer.start()
+
+
 def _print_access_banner(
     db: Database,
     *,
     token_plain: str,
     ui_url: str | None,
-) -> None:
+) -> str | None:
     """Print the reusable same-user access token on every authenticated start.
 
     The token is stored in ``auth/local.token`` with mode 0600 and has the
@@ -155,11 +168,13 @@ def _print_access_banner(
         "",
         "  SDK/CLI:  CAIRN_TOKEN=<token above>  (or `cairn configure` + config.toml)",
     ]
+    browser_login_url = None
     if ui_url is not None:
         otp = _auth.create_otp(db, principal.token_id)
+        browser_login_url = f"{ui_url}/login?otp={otp}"
         lines += [
             "  Browser (one-time login link, single-use, expires in 15 min):",
-            f"    {ui_url}/login?otp={otp}",
+            f"    {browser_login_url}",
             "  ...or open the UI and paste the token into the login form.",
         ]
     lines += [
@@ -169,6 +184,7 @@ def _print_access_banner(
         "",
     ]
     click.echo("\n".join(lines))
+    return browser_login_url
 
 
 @main.command("server")
@@ -300,16 +316,14 @@ def server_cmd(
     ]
     click.echo("\n".join(banner_lines))
 
+    browser_url = f"http://localhost:{ui_port}/" if ui_app is not None else None
     if auth_enabled:
         ui_url = f"http://localhost:{ui_port}" if ui_app is not None else None
         assert local_token is not None
-        _print_access_banner(db, token_plain=local_token, ui_url=ui_url)
+        browser_url = _print_access_banner(db, token_plain=local_token, ui_url=ui_url) or browser_url
 
-    if open_browser and ui_app is not None and host in ("0.0.0.0", "127.0.0.1", "localhost"):
-        try:
-            webbrowser.open(f"http://localhost:{ui_port}/")
-        except Exception:  # noqa: BLE001
-            pass
+    if open_browser and browser_url is not None and host in ("0.0.0.0", "127.0.0.1", "localhost"):
+        _open_browser_soon(browser_url)
 
     servers: list[uvicorn.Server] = []
     threads: list[threading.Thread] = []
@@ -371,9 +385,10 @@ def server_cmd(
     ),
 )
 @click.option(
-    "--open-browser",
-    is_flag=True,
-    help="Open the UI in a browser tab after startup (off by default).",
+    "--open-browser/--no-open-browser",
+    default=True,
+    show_default=True,
+    help="Open the UI in a browser tab after startup.",
 )
 @click.option(
     "--no-auth",
@@ -435,10 +450,7 @@ def ui_cmd(
             f"  Press Ctrl+C to stop.\n"
         )
         if open_browser and host in ("0.0.0.0", "127.0.0.1", "localhost"):
-            try:
-                webbrowser.open(f"http://localhost:{port}/")
-            except Exception:  # noqa: BLE001
-                pass
+            _open_browser_soon(f"http://localhost:{port}/")
         uv_config = uvicorn.Config(
             app=app, host=host, port=port, log_level="info", lifespan="on"
         )
@@ -508,14 +520,12 @@ def ui_cmd(
         f"  Renderer: {'CPU (--no-webgpu)' if no_webgpu else 'WebGPU preferred'}\n"
         f"  Press Ctrl+C to stop.\n"
     )
+    browser_url = f"http://localhost:{port}/"
     if auth_enabled:
         assert local_token is not None
-        _print_access_banner(db, token_plain=local_token, ui_url=ui_url)
+        browser_url = _print_access_banner(db, token_plain=local_token, ui_url=ui_url) or browser_url
     if open_browser and host in ("0.0.0.0", "127.0.0.1", "localhost"):
-        try:
-            webbrowser.open(f"http://localhost:{port}/")
-        except Exception:  # noqa: BLE001
-            pass
+        _open_browser_soon(browser_url)
 
     uv_config = uvicorn.Config(
         app=app, host=host, port=port, log_level="info", lifespan="on"

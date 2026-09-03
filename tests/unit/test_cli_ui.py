@@ -249,10 +249,13 @@ def test_cairn_ui_remote_repo_selects_local_proxy(monkeypatch):
             transport=transport,
         )
 
+    opened = []
     monkeypatch.setattr(proxy, "create_proxy_app", capture_factory)
     monkeypatch.setattr(uvicorn.Server, "run", lambda self: None)
+    monkeypatch.setattr(cli, "_open_browser_soon", opened.append)
     monkeypatch.setenv("CAIRN_TOKEN", "from-environment")
 
+    captured_port = _free_port()
     result = CliRunner().invoke(
         cli.main,
         [
@@ -260,7 +263,7 @@ def test_cairn_ui_remote_repo_selects_local_proxy(monkeypatch):
             "--repo",
             "cairn://fermat:4300",
             "--port",
-            str(_free_port()),
+            str(captured_port),
             "--no-webgpu",
         ],
     )
@@ -274,6 +277,29 @@ def test_cairn_ui_remote_repo_selects_local_proxy(monkeypatch):
     assert "Remote:  http://fermat:4300" in result.output
     assert "from-environment" not in result.output
     assert "Renderer: CPU (--no-webgpu)" in result.output
+    assert opened == [f"http://localhost:{captured_port}/"]
+
+
+def test_cairn_ui_no_open_browser_opt_out(monkeypatch):
+    import uvicorn
+
+    opened = []
+    monkeypatch.setattr(uvicorn.Server, "run", lambda self: None)
+    monkeypatch.setattr(cli, "_open_browser_soon", opened.append)
+    monkeypatch.setenv("CAIRN_TOKEN", "from-environment")
+    result = CliRunner().invoke(
+        cli.main,
+        [
+            "ui",
+            "--repo",
+            "cairn://fermat:4300",
+            "--port",
+            str(_free_port()),
+            "--no-open-browser",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert opened == []
 
 
 def test_cairn_ui_remote_proxy_rejects_non_loopback_bind():
