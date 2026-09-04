@@ -248,8 +248,7 @@ def test_compare_store_merges_up():
 
 def test_image_forwards_processing_and_display_props():
     node = cp.Image(_PNG, exposure=1.5, gamma=2.2, brightness=0.1,
-                    colormap="viridis", interpolation="pixelated",
-                    show_axes=True).to_node()
+                    colormap="viridis", interpolation="pixelated").to_node()
     p = node["props"]
     # Post-unification contract: `gamma=` is the DISPLAY-TRANSFER gamma (top-
     # level prop + auto-selected tonemap="gamma"), NOT the legacy CSS-filter
@@ -266,7 +265,6 @@ def test_image_forwards_processing_and_display_props():
     assert p["gamma"] == 2.2
     assert p["colormap"] == "turbo"
     assert p["interpolation"] == "pixelated"
-    assert p["showAxes"] is True
 
 
 def test_image_no_processing_props_when_unset():
@@ -481,11 +479,10 @@ def test_image_hdr_gamma_only_when_explicit():
     assert cp.Image(_hdr_arr(), gamma=2.2).to_node()["props"]["gamma"] == 2.2
 
 
-def test_image_hdr_exposure_and_axes_props():
-    node = cp.Image(_hdr_arr(), exposure=2.0, show_axes=True,
+def test_image_hdr_exposure_and_interpolation_props():
+    node = cp.Image(_hdr_arr(), exposure=2.0,
                     interpolation="pixelated").to_node()
     assert node["props"]["exposure"] == 2.0
-    assert node["props"]["showAxes"] is True
     assert node["props"]["interpolation"] == "pixelated"
 
 

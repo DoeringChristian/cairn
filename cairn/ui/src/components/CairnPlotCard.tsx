@@ -45,7 +45,7 @@ type PlotSettingValues = Record<string, unknown>;
 interface PlotCardSettings extends BaseCardSettings {
   version: 1;
   /** One-shot migration marker for operation-aware encoding defaults. */
-  encodingDefaultsVersion?: 1;
+  encodingDefaultsVersion?: 1 | 2;
   gridColumns: GridColumns;
   syncGrid: boolean;
   showLabels: boolean;
@@ -82,7 +82,7 @@ const COMPARE_OPTIONS = [
   ["split", "Split"], ["absolute", "Absolute error"], ["signed", "Signed error"],
   ["squared", "Squared error"], ["relative_absolute", "Relative absolute"],
   ["relative_signed", "Relative signed"], ["relative_squared", "Relative squared"],
-  ["flip", "FLIP"], ["ssim", "SSIM"],
+  ["flip", "FLIP"], ["flip-hdr", "HDR-FLIP"], ["ssim", "SSIM"],
 ].map(([value, label]) => ({ value: value!, label: label! }));
 
 function latestArtifact(points: readonly SequencePoint[]): SequencePoint | undefined {
@@ -467,27 +467,42 @@ export default function CairnPlotCard({
 
   const encodingMigrationAppliedRef = useRef(false);
   useEffect(() => {
-    if (encodingMigrationAppliedRef.current || settings.encodingDefaultsVersion === 1) return;
+    if (encodingMigrationAppliedRef.current || settings.encodingDefaultsVersion === 2) return;
     encodingMigrationAppliedRef.current = true;
     const live = livePlotSettingsRef.current;
-    const operation = typeof live["compare.operation"] === "string"
+    const savedOperation = typeof live["compare.operation"] === "string"
       ? live["compare.operation"]
       : selectedCompareOperation;
+    // `compare.flipMode` was retired when HDR-FLIP became its own registry
+    // operation (`flip-hdr`), so the key is gone from `PlotSettings` and must
+    // be read (and dropped) through an untyped view of the saved cell.
+    const legacyFlipMode = (live as Record<string, unknown>)["compare.flipMode"];
+    const migratesHdrFlip = legacyFlipMode === "hdr" && savedOperation === "flip";
+    const operation = migratesHdrFlip ? "flip-hdr" : savedOperation;
     const currentEncoding = typeof live["image.encoding"] === "string"
       ? live["image.encoding"]
       : undefined;
     const migratedEncoding = operation !== "split" && currentEncoding === "srgb"
-      ? recommendedImageEncoding({
-          operation,
-          flipMode: live["compare.flipMode"] === "hdr" ? "hdr" : "sdr",
-        })
+      ? recommendedImageEncoding({ operation })
       : currentEncoding;
-    const migratedPlotSettings = migratedEncoding === currentEncoding
-      ? { ...live }
-      : { ...live, "image.encoding": migratedEncoding };
-    updateSettings({ encodingDefaultsVersion: 1, plotSettings: migratedPlotSettings });
+    const migratedPlotSettings: PlotSettingValues = { ...live };
+    if (migratedEncoding !== currentEncoding) {
+      migratedPlotSettings["image.encoding"] = migratedEncoding;
+    }
+    if (migratesHdrFlip) {
+      migratedPlotSettings["compare.operation"] = "flip-hdr";
+    }
+    delete (migratedPlotSettings as Record<string, unknown>)["compare.flipMode"];
+    updateSettings({
+      encodingDefaultsVersion: 2,
+      plotSettings: migratedPlotSettings,
+      ...(migratesHdrFlip ? { comparisonOperation: "flip-hdr" } : {}),
+    });
     if (migratedEncoding !== currentEncoding) {
       patchPlotSettings({ "image.encoding": migratedEncoding });
+    }
+    if (migratesHdrFlip) {
+      patchPlotSettings({ "compare.operation": "flip-hdr" });
     }
   }, [patchPlotSettings, selectedCompareOperation, settings.encodingDefaultsVersion, updateSettings]);
 
@@ -505,7 +520,6 @@ export default function CairnPlotCard({
       currentEncoding: typeof live["image.encoding"] === "string"
         ? live["image.encoding"]
         : undefined,
-      flipMode: live["compare.flipMode"] === "hdr" ? "hdr" : "sdr",
     }));
   }, [patchPlotSettings, selectedCompareOperation, updateSettings]);
 
@@ -666,14 +680,6 @@ export default function CairnPlotCard({
         onChange={changeCompareOperation}
         options={COMPARE_OPTIONS}
       />
-      {comparisonPresentation === "diff" && compareOperation === "flip" && (
-        <Select<"hdr" | "sdr">
-          label="FLIP evaluation"
-          value={livePlotSettings["compare.flipMode"] === "hdr" ? "hdr" : "sdr"}
-          onChange={(value) => patchPlotSettings({ "compare.flipMode": value })}
-          options={[{ value: "hdr", label: "HDR-FLIP" }, { value: "sdr", label: "SDR-FLIP" }]}
-        />
-      )}
       {comparisonPresentation === "split" && (
         <Slider
           label="Split position"
