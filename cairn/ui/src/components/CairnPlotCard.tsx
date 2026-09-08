@@ -15,6 +15,7 @@ import { useSequencesForRuns } from "../api/hooks";
 import { useCardSettings, type CardSettingsKey } from "../lib/card-settings";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { cairnPlotDataSource } from "../lib/cairn-plot";
+import { artifactFormat } from "../lib/artifact-format";
 import CardShell from "./CardShell";
 import type { BaseCardSettings } from "./card-kit";
 import { seriesLabel } from "./card-kit/series-identity";
@@ -89,13 +90,6 @@ function latestArtifact(points: readonly SequencePoint[]): SequencePoint | undef
   for (let index = points.length - 1; index >= 0; index--) {
     if (points[index]?.artifact_hash) return points[index];
   }
-  return undefined;
-}
-
-function artifactFormat(mime: string | null | undefined): string | undefined {
-  const value = mime?.toLowerCase() ?? "";
-  if (value.includes("openexr") || value.endsWith("/exr")) return "exr";
-  if (value.includes("numpy") || value.includes("npy")) return "npy";
   return undefined;
 }
 
