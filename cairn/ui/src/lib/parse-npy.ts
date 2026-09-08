@@ -2,12 +2,16 @@
  * Minimal `.npy` (NumPy array) reader for the browser.
  *
  * Supports NPY format v1.0/v2.0/v3.0 headers and the common numeric dtypes
- * produced by `numpy.save` (float32/64, (u)int8/16/32/64, bool). Values are
+ * produced by `numpy.save` (float16/32/64, (u)int8/16/32/64, bool). Values are
  * always returned as a `Float64Array` for uniform downstream math — int64/
  * uint64 are narrowed through `Number()` (fine for the counts/indices we plot;
  * values beyond 2^53 lose precision, which never happens for histogram counts
  * or the tensors we render). Big-endian arrays fall back to a per-element
  * `DataView` decode.
+ *
+ * float16 (`<f2`/`>f2`) is decoded by hand: the SDK saves torch tensors with
+ * `np.save` and no cast, so a half-precision tensor reaches us as `f2`, and
+ * there is no `Float16Array` under this tsconfig's ES2020 lib.
  *
  * Data payload of NPY is always aligned to 64 bytes (the header is padded so
  * `magic + version + headerlen + header` is a multiple of 64), so we can build
@@ -26,6 +30,28 @@ export interface NpyArray {
 }
 
 const MAGIC = [0x93, 0x4e, 0x55, 0x4d, 0x50, 0x59]; // \x93NUMPY
+
+/** Every `kind + itemsize` `decodeData` understands, for the error message. */
+const SUPPORTED_DTYPES = "f2, f4, f8, i1, i2, i4, i8, u1, u2, u4, u8, b1";
+
+/**
+ * IEEE-754 binary16 → a JS number, exactly. `bits` is the raw 16-bit pattern.
+ *
+ * exponent 0      → signed zero and the SUBNORMALS (mantissa × 2^-24);
+ * exponent 31     → ±Infinity (mantissa 0) or NaN;
+ * otherwise       → the normal (1.mantissa) × 2^(exponent-15), written as
+ *                   (mantissa + 1024) × 2^(exponent-25) to stay integral.
+ * Every result is representable in float32, so the caller may hold them in a
+ * `Float32Array` without loss.
+ */
+function halfToFloat(bits: number): number {
+  const sign = bits & 0x8000 ? -1 : 1;
+  const exponent = (bits >> 10) & 0x1f;
+  const mantissa = bits & 0x03ff;
+  if (exponent === 0) return sign * mantissa * 2 ** -24;
+  if (exponent === 0x1f) return mantissa === 0 ? sign * Infinity : NaN;
+  return sign * (mantissa + 0x400) * 2 ** (exponent - 25);
+}
 
 export function parseNpy(buffer: ArrayBuffer): NpyArray {
   const bytes = new Uint8Array(buffer);
@@ -87,6 +113,10 @@ function decodeData(
         return toF64(new Float64Array(buffer, offset, count));
       case "f4":
         return toF64(new Float32Array(buffer, offset, count));
+      case "f2":
+        return toF64(
+          Float32Array.from(new Uint16Array(buffer, offset, count), halfToFloat),
+        );
       case "i4":
         return toF64(new Int32Array(buffer, offset, count));
       case "i2":
@@ -120,6 +150,8 @@ function decodeData(
     const p = i * itemsize;
     if (kind === "f" && itemsize === 8) out[i] = view.getFloat64(p, littleEndian);
     else if (kind === "f" && itemsize === 4) out[i] = view.getFloat32(p, littleEndian);
+    else if (kind === "f" && itemsize === 2)
+      out[i] = halfToFloat(view.getUint16(p, littleEndian));
     else if (kind === "i" && itemsize === 4) out[i] = view.getInt32(p, littleEndian);
     else if (kind === "i" && itemsize === 2) out[i] = view.getInt16(p, littleEndian);
     else if (kind === "i" && itemsize === 1) out[i] = view.getInt8(p);
@@ -130,7 +162,11 @@ function decodeData(
       out[i] = Number(view.getBigInt64(p, littleEndian));
     else if (kind === "u" && itemsize === 8)
       out[i] = Number(view.getBigUint64(p, littleEndian));
-    else throw new Error(`parseNpy: unsupported dtype '${descr}'`);
+    else {
+      throw new Error(
+        `parseNpy: unsupported dtype '${descr}' (supported: ${SUPPORTED_DTYPES})`,
+      );
+    }
   }
   return out;
 }

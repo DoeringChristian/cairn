@@ -15,11 +15,28 @@ export interface TableData { columns: Array<{ name: string; type: "number" | "st
 export const SERIES_COLORS = ["#60a5fa", "#f59e0b", "#34d399", "#f472b6", "#a78bfa", "#fb7185"];
 export const COLORMAP_OPTIONS = ["turbo", "magma", "plasma", "gray"].map((id) => ({ id, label: id[0]!.toUpperCase() + id.slice(1) }));
 
+/**
+ * Mount one inline cairn-plot leaf inside a CARD.
+ *
+ * `sizing="fill"` is the load-bearing part: a card is a fixed-height flex
+ * column, so the plot has to take the height of the cell it is handed. Without
+ * it cairn-plot falls back to its standalone 400px chart box and every card
+ * shorter than that overflows — and the host keeps posting `cairn:resize` for
+ * an iframe that isn't there. Every call site must therefore give `InlinePlot`
+ * a definite-height cell (`flex-1 min-h-0` in the card body, or `h-full`).
+ */
 export function InlinePlot({ type, className, ...props }: { type: string; className?: string; [key: string]: unknown }) {
   const spec = {
     root: { kind: "plot", type, data: { kind: "inline", props } },
   } as PlotSpec;
-  return <PlotHost spec={spec} dataSource={cairnPlotDataSource} className={className ?? ""} />;
+  return (
+    <PlotHost
+      spec={spec}
+      dataSource={cairnPlotDataSource}
+      className={className ?? ""}
+      sizing="fill"
+    />
+  );
 }
 
 export function HistogramPlot(props: Record<string, unknown>) {

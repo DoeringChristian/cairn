@@ -387,11 +387,14 @@ export default function TableCard({
     }
     return (
       <>
-        <TableGrid
-          table={seedBlob.data}
-          rowsPerPage={settings.rowsPerPage}
-          hiddenColumns={settings.hiddenColumns}
-        />
+        {/* Definite-height cell: `InlinePlot` mounts with `sizing="fill"`. */}
+        <div className="flex-1 min-h-0">
+          <TableGrid
+            table={seedBlob.data}
+            rowsPerPage={settings.rowsPerPage}
+            hiddenColumns={settings.hiddenColumns}
+          />
+        </div>
         <StepSlider
           points={points}
           currentIndex={safeIdx}

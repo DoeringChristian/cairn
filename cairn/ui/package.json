@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
+    "test:unit": "node --experimental-strip-types --test \"src/**/*.test.ts\"",
     "gen:card-schema": "node scripts/gen-card-spec-schema.mjs",
     "check:card-schema": "node scripts/check-card-spec-schema.mjs",
     "smoke:plot": "npm --prefix ../../vendor/cairn-plot/ui run smoke:plot"
