@@ -74,6 +74,28 @@ export interface SequenceResponse {
   run_id: string;
   name: string;
   points: SequencePoint[];
+  /**
+   * Append cursor (max rowid) covering these points. Seeds the live-updates
+   * poller so it resumes past what this response already delivered.
+   */
+  cursor?: number;
+}
+
+/** A `/updates` point: a sequence point plus the keys that route it to a card. */
+export interface UpdatePoint extends SequencePoint {
+  name: string;
+  context_hash: string;
+}
+
+/** One poll of `GET /api/runs/{id}/updates?since=<cursor>`. */
+export interface UpdatesResponse {
+  run_id: string;
+  status: RunStatus;
+  /** Pass back as `since` on the next poll. */
+  cursor: number;
+  points: UpdatePoint[];
+  /** The server's LIMIT was hit — poll again immediately. */
+  more: boolean;
 }
 
 export interface RunDetailResponse {

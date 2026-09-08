@@ -11,6 +11,8 @@
 // `checkOk`, which redirects to /login?return=<path> before the caller's
 // `.catch`/error boundary ever sees it.
 
+import { seedRunCursor } from "./live-updates-core";
+
 function redirectToLogin(): void {
   if (typeof window === "undefined") return;
   if (window.location.pathname === "/login") return; // avoid a redirect loop
@@ -99,7 +101,7 @@ export const api = {
     get<{ sequences: import("./types").SequenceMeta[] }>(
       `/api/runs/${runId}/sequences`,
     ),
-  sequence: (
+  sequence: async (
     runId: string,
     name: string,
     opts: { context?: string;} = {},
@@ -107,10 +109,21 @@ export const api = {
     const q = new URLSearchParams();
     if (opts.context != null) q.set("context", opts.context);
     const qs = q.toString();
-    return get<import("./types").SequenceResponse>(
+    const res = await get<import("./types").SequenceResponse>(
       `/api/runs/${runId}/sequences/${encodeURIComponent(name)}${qs ? `?${qs}` : ""}`,
     );
+    // A full read tells the live-updates poller how far this run's append
+    // stream had got, so it can resume with deltas instead of having every
+    // card re-download its whole sequence every two seconds.
+    if (typeof res.cursor === "number") seedRunCursor(runId, res.cursor);
+    return res;
   },
+  /** Everything appended to a run's sequences after `since`. One poll per
+   * live run, app-wide — see api/live-updates.tsx. */
+  updates: (runId: string, since: number) =>
+    get<import("./types").UpdatesResponse>(
+      `/api/runs/${runId}/updates?since=${since}`,
+    ),
   artifactsForRun: (runId: string) =>
     get<import("./types").ArtifactsResponse>(`/api/runs/${runId}/artifacts`),
   artifactUrl: (hash: string) => `/api/artifacts/${hash}`,

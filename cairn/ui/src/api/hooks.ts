@@ -129,58 +129,41 @@ export function useSequences(runId: string) {
   return useQuery({
     queryKey: qk.sequences(runId),
     queryFn: () => api.sequences(runId),
-    refetchInterval: live ? 2_000 : false,
-  });
-}
-
-export function useSequence(
-  runId: string,
-  name: string,
-  opts: { context?: string;} = {},
-) {
-  const runQ = useQuery({
-    queryKey: qk.run(runId),
-    queryFn: () => api.run(runId),
-    staleTime: 5_000,
-    enabled: !!runId,
-  });
-  const live = runQ.data ? runQ.data.run.status === "running" : true;
-  return useQuery({
-    queryKey: qk.sequence(runId, name, opts),
-    queryFn: () => api.sequence(runId, name, opts),
+    // Deliberately still polled. This is the small GROUP BY roster of metric
+    // NAMES, not their points, and it is the only thing that makes a metric
+    // first logged mid-run appear at all — the live-updates poller appends
+    // into existing cached sequences and never creates new ones.
     refetchInterval: live ? 2_000 : false,
   });
 }
 
 /**
+ * One full read, then deltas. Liveness is NOT this hook's business any more:
+ * `LiveUpdatesProvider` (mounted once at the app root) polls one cursor-based
+ * `/updates` request per live run and appends new points into this query's
+ * cached data. Re-downloading the whole sequence every 2s is what saturated
+ * the server; `staleTime: Infinity` makes sure it never happens again.
+ */
+export function useSequence(
+  runId: string,
+  name: string,
+  opts: { context?: string;} = {},
+) {
+  return useQuery({
+    queryKey: qk.sequence(runId, name, opts),
+    queryFn: () => api.sequence(runId, name, opts),
+    staleTime: Infinity,
+  });
+}
+
+/**
  * Fetch sequences for multiple (runId, name, contextHash) specs at once —
- * e.g. a multi-run card. Mirrors `useSequence`'s status-gated polling: a
- * single deduped run-status lookup per distinct runId drives whether each
- * sequence query keeps polling.
+ * e.g. a multi-run card. Like `useSequence`, each spec is read in full once
+ * and then kept current by the app-wide live-updates poller.
  */
 export function useSequencesForRuns(
   specs: Array<{ runId: string; name: string; contextHash: string;}>,
 ) {
-  const distinctRunIds = useMemo(
-    () => Array.from(new Set(specs.map((s) => s.runId))),
-    [specs],
-  );
-
-  const runQueries = useQueries({
-    queries: distinctRunIds.map((rid) => ({
-      queryKey: qk.run(rid),
-      queryFn: () => api.run(rid),
-      staleTime: 5_000,
-      enabled: !!rid,
-    })),
-  });
-
-  const liveByRunId = new Map<string, boolean>();
-  distinctRunIds.forEach((rid, i) => {
-    const runQ = runQueries[i];
-    liveByRunId.set(rid, runQ?.data ? runQ.data.run.status === "running" : true);
-  });
-
   return useQueries({
     queries: specs.map((spec) => ({
       queryKey: qk.sequence(spec.runId, spec.name, spec.contextHash),
@@ -188,8 +171,7 @@ export function useSequencesForRuns(
         api.sequence(spec.runId, spec.name, {
           context: spec.contextHash || undefined,
         }),
-      staleTime: 2_000,
-      refetchInterval: (liveByRunId.get(spec.runId) ?? true) ? 2_000 : false,
+      staleTime: Infinity,
     })),
   });
 }

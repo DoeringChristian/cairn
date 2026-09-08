@@ -116,7 +116,10 @@ def create_app(
         async def _wal_ingestion_loop():
             while not _stop.is_set():
                 try:
-                    count = ingest_all(dd, _db, _blobs)
+                    # Off the event loop: ingestion is blocking file +
+                    # SQLite work, and running it inline stalls every
+                    # in-flight request for the length of a cycle.
+                    count = await asyncio.to_thread(ingest_all, dd, _db, _blobs)
                     if count > 0:
                         _log.debug("WAL ingestion: %d ops", count)
                 except Exception:  # noqa: BLE001
