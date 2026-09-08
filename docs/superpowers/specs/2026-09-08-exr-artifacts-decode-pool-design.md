@@ -281,11 +281,16 @@ export class DecodePool {
 
 Rules:
 
-- Workers spawn lazily, up to `size`; a job goes to an idle worker, else to
-  the least-loaded one, else it waits. Waiting jobs are served most-recent
-  first, matching `decode-queue.ts` (the newest request is what the user is
-  looking at).
-- `affinity` forces the worker; such jobs never wait on another worker.
+- Workers spawn lazily, up to `size`; a job goes to an idle worker, else it
+  waits in the pool. A worker handles one message at a time, so posting to a
+  busy worker would only move the queue into the worker where it can neither
+  be reordered nor aborted. Waiting jobs are served most-recent first,
+  matching `decode-queue.ts` (the newest request is what the user is looking
+  at).
+- `affinity` forces the worker and posts immediately; if that worker's slot
+  has been terminated the job rejects ("the worker holding this deep handle
+  is gone") and no worker is respawned for it, because a deep handle is a raw
+  pointer into the old WASM heap.
 - Abort before dispatch removes the job from the queue and rejects with the
   abort reason. Abort after dispatch cannot interrupt WASM: the job completes
   and its result is dropped; the worker is not terminated.
@@ -357,12 +362,16 @@ cairn-plot:
   worker and leaves the other's jobs pending; error event does the same;
   respawn after termination.
 - `decode-pool.browser.ts` harness (self-driving): decode eight distinct EXR
-  fixtures concurrently; assert at least two distinct workers reported, wall
-  time under the serial sum, and no `longtask` entry over 50 ms attributed
-  to the page during decoding (PerformanceObserver).
+  fixtures concurrently; assert at least two distinct workers reported and no
+  `longtask` entry over 50 ms attributed to the page during decoding
+  (PerformanceObserver); wall times are printed, not asserted (the fixtures
+  are 64×48, so a ratio would measure worker spawn cost). A deep fixture is
+  opened and flattened while other decodes are in flight, which holds only
+  if the handle stays on its worker. The harness runner bundles pages with
+  esbuild, which needs a plugin for Vite's `?worker&inline`; without it no
+  harness ever spawned the EXR worker.
 - `float-compare.browser.ts`: add an EXR × EXR and EXR × npy split/difference
   case using a committed half PIZ fixture.
-- `exr-deep-flatten.test.ts`: deep controller affinity through the fake pool.
 - Existing decoder tests keep running against the no-`Worker` path.
 
 ## 7. Compatibility
