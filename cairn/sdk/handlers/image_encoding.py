@@ -26,6 +26,7 @@ COMPRESSIONS: dict[str, Any] = {
     "dwab": OpenEXR.DWAB_COMPRESSION,
 }
 HALF_MAX = 65504.0
+FLOAT_MAX = float(np.finfo(np.float32).max)
 EXR_MAGIC = b"\x76\x2f\x31\x01"
 _CHANNELS_BY_COUNT = {1: "Y", 3: "RGB", 4: "RGBA"}
 
@@ -44,8 +45,25 @@ def _channel_count(arr: np.ndarray) -> int:
     return 1 if arr.ndim == 2 else int(arr.shape[-1])
 
 
+def _to_float32(arr: np.ndarray) -> np.ndarray:
+    """Cast to float32, clamping finite values that overflow it (never in place).
+
+    float32 is EXR's widest pixel type, so a float64 value beyond its range has
+    to become *something*: the nearest representable number, rather than the
+    ``inf`` (plus a RuntimeWarning) an unguarded cast produces. NaN and ±Inf are
+    representable and pass through untouched.
+    """
+    if arr.dtype == np.float32:
+        return arr
+    if arr.dtype.kind == "f" and arr.itemsize > 4:
+        # Clamp in the wider dtype so the cast itself can never overflow.
+        arr = np.where(np.isfinite(arr), np.clip(arr, -FLOAT_MAX, FLOAT_MAX), arr)
+    return arr.astype(np.float32)
+
+
 def _exceeds_half(arr: np.ndarray) -> bool:
-    finite = arr[np.isfinite(arr)]
+    values = _to_float32(arr)
+    finite = values[np.isfinite(values)]
     return bool(finite.size) and float(np.abs(finite).max()) > HALF_MAX
 
 
@@ -95,11 +113,9 @@ def image_encoding_for(
         if arr.dtype.kind in "iub":
             precision = "float"
         else:
-            precision = "float" if _exceeds_half(arr.astype(np.float32, copy=False)) else "half"
-    elif precision == "half" and arr.dtype.kind == "f":
-        clamped = _exceeds_half(arr.astype(np.float32, copy=False))
+            precision = "float" if _exceeds_half(arr) else "half"
     elif precision == "half":
-        clamped = _exceeds_half(arr.astype(np.float32))
+        clamped = _exceeds_half(arr)
     return ImageEncoding(
         container="exr", precision=precision, channels=channels, compression=compression, clamped=clamped
     )
@@ -108,7 +124,7 @@ def image_encoding_for(
 def encode_exr(arr: np.ndarray, enc: ImageEncoding) -> bytes:
     """Encode an HWC (or HW) array as a scanline OpenEXR with `enc`'s settings."""
     assert enc.container == "exr" and enc.channels and enc.precision and enc.compression
-    pixels = arr.astype(np.float32, copy=False)
+    pixels = _to_float32(arr)
     if enc.precision == "half":
         # Spec §3.1 rule 6: forced half CLAMPS out-of-range finite values (an
         # unguarded cast would overflow them to ±inf and warn). NaN/±Inf are

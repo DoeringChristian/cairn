@@ -186,9 +186,18 @@ class ImageHandler:
         """The storage keywords `image_encoding_for` understands, if supplied."""
         return {k: kwargs[k] for k in cls._OPTION_KEYS if k in kwargs}
 
+    @staticmethod
+    def _reject_png_channels(arr: np.ndarray | None) -> None:
+        """Refuse channel counts PNG cannot hold — as the artifact it must keep them all."""
+        if arr is not None and arr.ndim == 3 and arr.shape[-1] not in (1, 3, 4):
+            raise ValueError(f"PNG cannot store {arr.shape[-1]} channels; use format='npy'")
+
     def mime_type_for(self, obj: Any, **kwargs: Any) -> str:
         """Announce the container `serialize` will write for these same options."""
-        enc = image_encoding_for(self._array_for_storage(obj), **self._encoding_options(kwargs))
+        arr = self._array_for_storage(obj)
+        enc = image_encoding_for(arr, **self._encoding_options(kwargs))
+        if enc.container == "png":
+            self._reject_png_channels(arr)
         return self._MIME_BY_CONTAINER[enc.container]
 
     @staticmethod
@@ -208,7 +217,8 @@ class ImageHandler:
         return {"min": lo, "max": hi}
 
     @classmethod
-    def _to_pil(cls, obj: Any) -> PILImage.Image:
+    def _to_pil(cls, obj: Any, *, preview_only: bool = False) -> PILImage.Image:
+        """Render `obj` as a PIL image; `preview_only` when the PNG is not the artifact."""
         if isinstance(obj, PILImage.Image):
             return obj
         # Rasterize matplotlib / plotly figures when forced via cairn.Image(...).
@@ -250,8 +260,11 @@ class ImageHandler:
             return PILImage.fromarray(arr, mode="RGB")
         if arr.shape[-1] == 4:
             return PILImage.fromarray(arr, mode="RGBA")
-        # 1 channel, or a count no image format displays (stored as npy): show band 0
-        # rather than guess a colour meaning for the rest.
+        if arr.shape[-1] != 1 and not preview_only:
+            # The PNG *is* the artifact here, so dropping channels would lose data.
+            cls._reject_png_channels(arr)
+        # 1 channel, or a preview of a count no image format displays (the artifact is
+        # npy): show band 0 rather than guess a colour meaning for the rest.
         return PILImage.fromarray(np.ascontiguousarray(arr[..., 0]), mode="L")
 
     def serialize(
@@ -267,7 +280,9 @@ class ImageHandler:
     ) -> tuple[bytes, dict[str, Any]]:
         arr = self._array_for_storage(obj)
         enc = image_encoding_for(arr, format=format, precision=precision, compression=compression)
-        img = self._to_pil(obj)
+        if enc.container == "png":
+            self._reject_png_channels(arr)
+        img = self._to_pil(obj, preview_only=enc.container != "png")
         if enc.container == "exr":
             # OpenEXR keeps scene-linear/HDR values for cairn-plot's float path.
             data = encode_exr(arr, enc)
@@ -289,6 +304,7 @@ class ImageHandler:
             + base64.b64encode(tbuf.getvalue()).decode("ascii")
         )
 
+        # These describe the PREVIEW image; `hdr.shape` carries the stored array's shape.
         meta: dict[str, Any] = {
             "width": img.width,
             "height": img.height,

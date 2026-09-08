@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from cairn.sdk.handlers.image_encoding import (
-    EXR_MAGIC, HALF_MAX, ImageEncoding, decode_exr, encode_exr, image_encoding_for,
+    EXR_MAGIC, FLOAT_MAX, HALF_MAX, ImageEncoding, decode_exr, encode_exr, image_encoding_for,
 )
 
 
@@ -116,6 +116,29 @@ def test_forced_half_preserves_inf_and_nan():
         warnings.simplefilter("error")
         back = decode_exr(encode_exr(a, image_encoding_for(a, precision="half")))
     back = back.astype(np.float32)
+    assert np.isposinf(back[..., 0]).all()
+    assert np.isnan(back[..., 1]).all()
+    assert np.isneginf(back[..., 2]).all()
+
+
+def test_float64_beyond_float32_range_clamps_without_warning():
+    a = np.full((4, 4, 3), 1e300, np.float64)
+    a[0, 0] = -1e300
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        enc = image_encoding_for(a)
+        back = decode_exr(encode_exr(a, enc))
+    assert enc.precision == "float" and back.dtype == np.float32
+    np.testing.assert_array_equal(back[0, 0], np.full(3, -FLOAT_MAX, np.float32))
+    np.testing.assert_array_equal(back[1], np.full((4, 3), FLOAT_MAX, np.float32))
+    np.testing.assert_array_equal(a, np.where(a < 0, -1e300, 1e300))  # caller's array untouched
+
+
+def test_float64_specials_round_trip():
+    a = np.tile(np.array([np.inf, np.nan, -np.inf], np.float64), (2, 3, 1))
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        back = decode_exr(encode_exr(a, image_encoding_for(a)))
     assert np.isposinf(back[..., 0]).all()
     assert np.isnan(back[..., 1]).all()
     assert np.isneginf(back[..., 2]).all()

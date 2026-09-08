@@ -85,19 +85,38 @@ def test_two_channel_float_falls_back_to_npy(handler):
     data, meta = handler.serialize(arr)
     assert data.startswith(b"\x93NUMPY")
     assert meta["hdr"]["container"] == "npy" and meta["hdr"]["fallback_reason"] == "channel-layout"
+    np.testing.assert_array_equal(handler.deserialize(data), arr)
     with pytest.raises(ValueError, match="channel"):
         handler.serialize(arr, format="exr")
+    # PNG would be the artifact, not a preview, so it may not drop the extra channel.
+    with pytest.raises(ValueError, match="PNG cannot store 2 channels"):
+        handler.mime_type_for(arr, format="png")
+    with pytest.raises(ValueError, match="PNG cannot store 2 channels"):
+        handler.serialize(arr, format="png")
+
+
+def test_uint8_two_channel_is_rejected_not_flattened(handler):
+    arr = np.zeros((5, 7, 2), np.uint8)
+    with pytest.raises(ValueError, match="PNG cannot store 2 channels"):
+        handler.mime_type_for(arr)
+    with pytest.raises(ValueError, match="PNG cannot store 2 channels"):
+        handler.serialize(arr)
 
 
 def test_format_npy_and_png_are_honoured(handler):
-    arr = np.random.default_rng(2).random((4, 4, 3)).astype(np.float32)
+    arr = np.linspace(2.0, 30.0, 48, dtype=np.float32).reshape(4, 4, 3)
     assert handler.mime_type_for(arr, format="npy") == "application/x-npy"
     data, meta = handler.serialize(arr, format="npy")
     assert data.startswith(b"\x93NUMPY") and meta["hdr"]["container"] == "npy"
     assert handler.mime_type_for(arr, format="png") == "image/png"
     data, meta = handler.serialize(arr, format="png")
     assert data.startswith(b"\x89PNG") and meta["hdr"]["container"] == "png"
-    assert set(meta["hdr"]["tonemap"]) == {"min", "max"}
+    # The window the preview tone-map actually applied, not a nominal [0, 1].
+    assert meta["hdr"]["tonemap"] == {"min": 2.0, "max": 30.0}
+
+    in_range = np.random.default_rng(2).random((4, 4, 3)).astype(np.float32)
+    _, meta = handler.serialize(in_range, format="png")
+    assert meta["hdr"]["tonemap"] == {"min": 0.0, "max": 1.0}
 
 
 def test_uint8_rejects_hdr_formats_and_stays_png(handler):
