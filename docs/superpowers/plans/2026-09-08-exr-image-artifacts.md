@@ -42,8 +42,8 @@
 - [ ] **Step 1: Failing test**
 
 ```python
-# append to tests/unit/test_registry.py
-from cairn.sdk.handlers.registry import resolve_mime_type
+# append to tests/unit/test_registry.py (resolve_mime_type is already imported at line 8;
+# the existing test_content_dependent_mime_type keeps passing: kwargs=None still calls resolver(obj))
 
 
 class _OptionAware:
@@ -94,7 +94,7 @@ def resolve_mime_type(handler: TypeHandler, obj: Any, kwargs: dict[str, Any] | N
     return handler.mime_type
 ```
 
-`run.py`: line 438 → `resolve_mime_type(handler, payload, merged_kwargs)`; line 498 → pass the same merged kwargs dict that `serialize` received on line 497 (read the surrounding code: it is the kwargs variable used in `handler.serialize(payload, **...)` there); line 525 → the kwargs used by the `serialize` call directly above it. Every other handler's `mime_type_for` (grep `def mime_type_for` under `cairn/sdk/handlers/`) gains `**kwargs: Any` in its signature so the extra options never raise.
+`run.py`: line 438 (inside `track`) → `resolve_mime_type(handler, payload, merged_kwargs)` (`merged_kwargs` is assigned at `:415`); line 498 (inside `log_artifact`) → `resolve_mime_type(handler, payload, kwargs)` — the dict assigned at `:483`/`:488` and passed to `serialize` at `:494`; line 525 (inside `_log_versioned_artifact`) → `resolve_mime_type(handler, value, {})` — that path serializes with no call options (`:524`), so the third argument is empty. `ImageHandler.mime_type_for` is the only `mime_type_for` in `cairn/sdk/handlers/` (Task 3 gives it `**kwargs`).
 
 `pyproject.toml`: add `"openexr>=3.3",` after `"numpy>=1.24",`. Run `uv lock` and `uv sync`; commit `uv.lock`.
 
@@ -103,7 +103,7 @@ def resolve_mime_type(handler: TypeHandler, obj: Any, kwargs: dict[str, Any] | N
 - [ ] **Step 5: Commit**
 
 ```bash
-git add cairn/sdk/handlers/registry.py cairn/sdk/run.py tests/unit/test_registry.py pyproject.toml uv.lock $(git diff --name-only cairn/sdk/handlers)
+git add cairn/sdk/handlers/registry.py cairn/sdk/run.py tests/unit/test_registry.py pyproject.toml uv.lock
 git commit -m "Pass call options to mime resolution; add openexr dependency"
 ```
 
@@ -405,8 +405,7 @@ git commit -m "Add image encoding policy and OpenEXR codec"
 Replace `test_numpy_float_preserves_hdr_values` with:
 
 ```python
-def test_numpy_float_defaults_to_exr_half():
-    handler = ImageHandler()
+def test_numpy_float_defaults_to_exr_half(handler):
     arr = np.random.default_rng(1).random((6, 8, 3)).astype(np.float32) * 4
     assert handler.mime_type_for(arr) == "image/x-exr"
     data, meta = handler.serialize(arr)
@@ -420,31 +419,29 @@ def test_numpy_float_defaults_to_exr_half():
     np.testing.assert_allclose(back.astype(np.float32), arr, rtol=2 ** -11)
 
 
-def test_uint16_becomes_exr_float_exact():
-    handler = ImageHandler()
+def test_uint16_becomes_exr_float_exact(handler):
     arr = (np.arange(6 * 8, dtype=np.uint16).reshape(6, 8) * 900).astype(np.uint16)
     data, meta = handler.serialize(arr)
     assert meta["hdr"]["precision"] == "float" and meta["hdr"]["source_dtype"] == "uint16"
     np.testing.assert_array_equal(handler.deserialize(data), arr.astype(np.float32))
 
 
-def test_out_of_half_range_promotes_to_float():
-    handler = ImageHandler()
+def test_out_of_half_range_promotes_to_float(handler):
     arr = np.full((4, 4, 3), 1e5, np.float32)
     _, meta = handler.serialize(arr)
     assert meta["hdr"]["precision"] == "float" and meta["hdr"]["clamped"] is False
 
 
-def test_forced_half_records_clamped():
-    handler = ImageHandler()
+def test_forced_half_records_clamped(handler):
     arr = np.full((4, 4, 3), 1e5, np.float32)
     _, meta = handler.serialize(arr, precision="half")
     assert meta["hdr"]["precision"] == "half" and meta["hdr"]["clamped"] is True
 
 
-def test_two_channel_float_falls_back_to_npy():
-    handler = ImageHandler()
-    arr = np.zeros((4, 4, 2), np.float32)
+def test_two_channel_float_falls_back_to_npy(handler):
+    # (5, 7, 2): shape[0] ∉ {1,3,4}, so _array_for_storage's CHW heuristic leaves it alone
+    # (a (4,4,2) array would be transposed to (4,2,4) = RGBA and become EXR).
+    arr = np.zeros((5, 7, 2), np.float32)
     assert handler.mime_type_for(arr) == "application/x-npy"
     data, meta = handler.serialize(arr)
     assert data.startswith(b"\x93NUMPY")
@@ -453,8 +450,7 @@ def test_two_channel_float_falls_back_to_npy():
         handler.serialize(arr, format="exr")
 
 
-def test_format_npy_and_png_are_honoured():
-    handler = ImageHandler()
+def test_format_npy_and_png_are_honoured(handler):
     arr = np.random.default_rng(2).random((4, 4, 3)).astype(np.float32)
     assert handler.mime_type_for(arr, format="npy") == "application/x-npy"
     data, meta = handler.serialize(arr, format="npy")
@@ -465,8 +461,7 @@ def test_format_npy_and_png_are_honoured():
     assert set(meta["hdr"]["tonemap"]) == {"min", "max"}
 
 
-def test_uint8_rejects_hdr_formats_and_stays_png():
-    handler = ImageHandler()
+def test_uint8_rejects_hdr_formats_and_stays_png(handler):
     arr = np.zeros((4, 4, 3), np.uint8)
     assert handler.mime_type_for(arr) == "image/png"
     with pytest.raises(ValueError):
@@ -475,8 +470,7 @@ def test_uint8_rejects_hdr_formats_and_stays_png():
     assert data.startswith(b"\x89PNG") and "hdr" not in meta
 
 
-def test_options_with_wrong_format_raise():
-    handler = ImageHandler()
+def test_options_with_wrong_format_raise(handler):
     arr = np.zeros((4, 4, 3), np.float32)
     with pytest.raises(ValueError, match="precision"):
         handler.serialize(arr, format="npy", precision="half")
@@ -484,24 +478,16 @@ def test_options_with_wrong_format_raise():
         handler.mime_type_for(arr, format="png", compression="zip")
 
 
-def test_grayscale_float_roundtrips_2d():
-    handler = ImageHandler()
+def test_grayscale_float_roundtrips_2d(handler):
     arr = np.random.default_rng(3).random((5, 7)).astype(np.float32)
     data, meta = handler.serialize(arr)
     assert meta["hdr"]["shape"] == [5, 7]
     assert handler.deserialize(data).shape == (5, 7)
-
-
-def test_track_call_keyword_overrides_wrapper_keyword():
-    # merged_kwargs = {**wrapper_kwargs, **call_kwargs} in Run.track
-    from cairn.sdk.handlers.registry import resolve_mime_type
-    handler = ImageHandler()
-    arr = np.zeros((4, 4, 3), np.float32)
-    merged = {**{"format": "npy"}, **{"format": "exr"}}
-    assert resolve_mime_type(handler, arr, merged) == "image/x-exr"
 ```
 
-Existing `test_numpy_uint8_stays_png`, `test_numpy_grayscale`, `test_torch_tensor_chw` etc. keep passing; if `test_numpy_grayscale` or `test_torch_tensor_chw` serialize float arrays and assert npy bytes, update them to the EXR expectations above (same shape assertions, `hdr.container == "exr"`).
+(The new tests use the file's existing `handler` fixture, `tests/unit/test_handler_image.py:13-16`.)
+
+Only `test_numpy_float_preserves_hdr_values` changes; no other image test serializes a float array (`test_numpy_grayscale` and `test_torch_tensor_chw` use uint8; the overlays tests assert on `meta` only).
 
 - [ ] **Step 2: Run** — `uv run pytest tests/unit/test_handler_image.py -q` → FAIL.
 
@@ -517,6 +503,7 @@ class ImageHandler:
     mime_type = "image/png"
     exr_mime_type = "image/x-exr"
     npy_mime_type = "application/x-npy"
+    # `hdr_mime_type` is deleted: its only reference was the old mime_type_for.
 
     _OPTION_KEYS = ("format", "precision", "compression")
 
@@ -559,7 +546,7 @@ class ImageHandler:
                 meta["hdr"]["tonemap"] = self._tonemap_range(arr)
 ```
 
-`_tonemap_range(arr)` returns `{"min": a_min, "max": a_max}` using the same finite min/max `_to_pil` computes (factor the two lines in `_to_pil` lines 191-196 into a shared static helper so the preview and the metadata agree).
+`_tonemap_range(arr)` returns the range the preview tone-map ACTUALLY applied: `_to_pil` (`image.py:191-201`) has two branches — when `a_max <= 1.0 and a_min >= 0.0` it multiplies by 255 (range `{"min": 0.0, "max": 1.0}`), otherwise it normalises by `[a_min, a_max]`. Factor that decision into one static helper `_tonemap_window(arr) -> tuple[float, float]` used by both `_to_pil` and `_tonemap_range`, so preview and metadata cannot drift.
 
 `deserialize`:
 
@@ -609,7 +596,7 @@ from cairn.sdk.transport import Transport
 
 
 @pytest.fixture
-def transport(live_server, tmp_path):
+def transport(live_server):
     t = Transport(live_server, max_retries=1, backoff_base=0.001, backoff_cap=0.001)
     yield t
     t.close()
@@ -635,28 +622,30 @@ def test_float_image_is_exr_from_track_to_artifact_route(transport, reader):
         run.track(arr, name="render", step=0)
         run.track(arr, name="raw", step=0, format="npy")
         run.track(cairn.Image(arr[..., 0], precision="float"), name="gray", step=0)
+        # call keyword overrides wrapper keyword (Run.track merges {**wrapper, **call}, run.py:415)
+        run.track(cairn.Image(arr, format="npy"), name="override", step=0, format="exr")
     finally:
         run.finish()
-    seqs = reader.get(f"/api/runs/{run.id}/sequences").json()["sequences"]
-    by_name = {s["name"]: s for s in seqs}
     for name, mime, magic in [
         ("render", "image/x-exr", b"\x76\x2f\x31\x01"),
         ("raw", "application/x-npy", b"\x93NUMPY"),
         ("gray", "image/x-exr", b"\x76\x2f\x31\x01"),
+        ("override", "image/x-exr", b"\x76\x2f\x31\x01"),
     ]:
-        point = reader.get(f"/api/runs/{run.id}/sequences/{by_name[name]['id']}").json()["points"][0]
+        # detail route is keyed by NAME: routes/sequences.py:108, as in test_run_e2e.py:63
+        point = reader.get(f"/api/runs/{run.id}/sequences/{name}").json()["points"][0]
         assert point["artifact_mime"] == mime
         r = reader.get(f"/api/artifacts/{point['artifact_hash']}")
         assert r.status_code == 200 and r.headers["content-type"].startswith(mime)
         assert r.content.startswith(magic)
         assert r.headers["cache-control"].startswith("public")
-    gray_meta = reader.get(f"/api/runs/{run.id}/sequences/{by_name['gray']['id']}").json()["points"][0]["artifact_metadata"]
+    gray_meta = reader.get(f"/api/runs/{run.id}/sequences/gray").json()["points"][0]["artifact_metadata"]
     assert '"precision": "float"' in gray_meta or '"precision":"float"' in gray_meta
 ```
 
-The exact JSON field names for the sequence id, `artifact_hash`, `artifact_mime` and `artifact_metadata` must be taken from `cairn/ui/src/api/types.ts` (`SequencePoint`) and `cairn/server/routes/sequences.py`; adjust the test to the real names, keeping the three assertions (mime column, `Content-Type`, magic bytes). If the WAL is on by default in `cairn.Run`, this exercises it; if it is opt-in, enable it via the `Run` argument that turns it on (grep `wal` in `cairn/sdk/run.py`) so the artifact spills through `append_artifact`.
+`artifact_hash`, `artifact_mime`, `artifact_metadata` and `points` are the real JSON names (`routes/sequences.py:28-32`, `ui/src/api/types.ts:58-71`). Passing `transport=Transport(...)` attaches the WAL automatically (`run.py:249-253`), so the artifacts go through `append_artifact`; `local_wal` does not apply. The `transport`/`reader` fixtures are copied from `test_run_e2e.py` deliberately (no shared integration conftest defines them).
 
-- [ ] **Step 2: Run** — `uv run pytest tests/integration/test_image_exr_e2e.py -q` → PASS (after fixing field names).
+- [ ] **Step 2: Run** — `uv run pytest tests/integration/test_image_exr_e2e.py -q` → PASS.
 
 - [ ] **Step 3: UI table and test**
 
@@ -697,14 +686,13 @@ test("artifactFormat maps mimes to cairn-plot format hints", () => {
 });
 ```
 
-`CairnPlotCard.tsx`: remove the local `artifactFormat`, add `import { artifactFormat } from "@/lib/artifact-format";` (match the alias style of the file's other `lib/` imports).
+`CairnPlotCard.tsx`: remove the local `artifactFormat` (lines 95-100) and add `import { artifactFormat } from "../lib/artifact-format";` next to the file's other relative `../lib/` imports (lines 15-17); there is no `@/` alias in this project.
 
 - [ ] **Step 4: Run** — `cd cairn/ui && npm run test:unit && npm run build` → PASS.
 
-- [ ] **Step 5: Commit** (the pre-commit hook rebuilds `cairn/ui/dist`; include its changes)
+- [ ] **Step 5: Commit** (`.git/hooks/pre-commit` runs `npx vite build` and stages `cairn/ui/dist/` into this same commit; a build failure aborts the commit)
 
 ```bash
 git add tests/integration/test_image_exr_e2e.py cairn/ui/src/lib/artifact-format.ts cairn/ui/src/lib/artifact-format.test.ts cairn/ui/src/components/CairnPlotCard.tsx
 git commit -m "Test EXR images end to end; table-driven artifact format in the card"
-git status --short   # if the hook changed cairn/ui/dist, `git add cairn/ui/dist` and amend
 ```

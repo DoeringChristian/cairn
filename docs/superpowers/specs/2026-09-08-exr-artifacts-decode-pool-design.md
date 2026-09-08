@@ -84,10 +84,10 @@ way `boxes`/`masks` do today: as keywords on `run.track(...)` or on
 | `compression` | `"piz"`, `"zip"`, `"zips"`, `"none"`, `"dwaa"`, `"dwab"` | `"piz"` |
 
 ```python
-run.track("render", hdr_array)                       # EXR half PIZ
-run.track("depth", depth_u16, precision="float")     # EXR float channels
-run.track("raw", arr, format="npy")                  # raw npy, as before
-run.track("render", cairn.Image(hdr, compression="dwaa"))
+run.track(hdr_array, name="render")                       # EXR half PIZ
+run.track(depth_u16, name="depth", precision="float")     # EXR float channels
+run.track(arr, name="raw", format="npy")                  # raw npy, as before
+run.track(cairn.Image(hdr, compression="dwaa"), name="render")
 ```
 
 `precision` and `compression` apply to `format="exr"` only; passing them with
@@ -95,9 +95,10 @@ another format raises `ValueError`. Unknown values raise `ValueError`.
 
 The mime hook must see the options, so the optional handler hook becomes
 `mime_type_for(obj, **kwargs)` and `resolve_mime_type(handler, obj, kwargs)`
-in `handlers/registry.py`; the three call sites in `run.py` (`track`,
-`log_artifact`, `_log_versioned_artifact`) pass `merged_kwargs`. Handlers
-without the hook are unaffected.
+in `handlers/registry.py`; the call sites in `run.py` pass the options they
+gave `serialize` (`track`: merged wrapper+call keywords; `log_artifact`: its
+keywords; `_log_versioned_artifact`: none). Handlers without the hook are
+unaffected.
 
 `_array_for_storage` is unchanged (torch → numpy, CHW → HWC, contiguous).
 A pure function decides the encoding from the array and the options:
