@@ -435,7 +435,7 @@ class Run:
                 src_hash = self._transport.upload_artifact(source_blob, source_mime, {})
                 meta["source_hash"] = src_hash
             digest = self._transport.upload_artifact(
-                blob, resolve_mime_type(handler, payload), meta, object_type=handler.object_type,
+                blob, resolve_mime_type(handler, payload, merged_kwargs), meta, object_type=handler.object_type,
             )
             point["artifact_hash"] = digest
 
@@ -495,7 +495,7 @@ class Run:
         if metadata:
             meta = {**meta, **metadata}
         digest = self._transport.upload_artifact(
-            blob, resolve_mime_type(handler, payload), meta, object_type=object_type
+            blob, resolve_mime_type(handler, payload, kwargs), meta, object_type=object_type
         )
         self._transport.attach_artifact(self._run_id, name, digest, step)
         return digest
@@ -522,7 +522,7 @@ class Run:
             handler = self._registry.find_handler(value)
             if handler is not None:
                 blob, handler_meta = handler.serialize(value)
-                mime_type = resolve_mime_type(handler, value)
+                mime_type = resolve_mime_type(handler, value, {})
             elif isinstance(value, (bytes, bytearray)):
                 blob = bytes(value)
             else:

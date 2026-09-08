@@ -137,3 +137,38 @@ def test_image_wrapper_routes_to_image_handler():
     h = default_registry.find_handler(Image(42))
     assert h is not None
     assert h.object_type == "image"
+
+
+class _OptionAware:
+    object_type = "x"
+    mime_type = "application/octet-stream"
+
+    def can_handle(self, obj):
+        return True
+
+    def serialize(self, obj, **kwargs):
+        return b"", {}
+
+    def mime_type_for(self, obj, **kwargs):
+        return "text/plain" if kwargs.get("format") == "txt" else self.mime_type
+
+
+class _Plain:
+    object_type = "y"
+    mime_type = "application/y"
+
+    def can_handle(self, obj):
+        return True
+
+    def serialize(self, obj, **kwargs):
+        return b"", {}
+
+
+def test_resolve_mime_type_passes_call_options_to_hook():
+    assert resolve_mime_type(_OptionAware(), object(), {"format": "txt"}) == "text/plain"
+    assert resolve_mime_type(_OptionAware(), object(), {}) == "application/octet-stream"
+    assert resolve_mime_type(_OptionAware(), object()) == "application/octet-stream"
+
+
+def test_resolve_mime_type_without_hook_ignores_options():
+    assert resolve_mime_type(_Plain(), object(), {"format": "txt"}) == "application/y"
