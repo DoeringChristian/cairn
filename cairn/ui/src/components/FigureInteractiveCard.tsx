@@ -1,4 +1,4 @@
-import { useCallback, useState, useMemo, useRef } from "react";
+import { useCallback, useEffect, useState, useMemo, useRef } from "react";
 import { useQuery, useQueries } from "@tanstack/react-query";
 // @ts-expect-error - plotly.js-dist-min has no bundled types, but is runtime-compatible with the factory.
 import Plotly from "plotly.js-dist-min";
@@ -411,12 +411,43 @@ export default function FigureInteractiveCard({ runId, metric, extraSeries, cont
   // Also used in single-pane mode to track whether zoom has been modified.
   const [sharedView, setSharedView] = useState<SharedView>({});
   const [plotRevision, setPlotRevision] = useState(0);
+
+  // The shared view holds axis ranges captured from *one* figure. Those ranges
+  // are meaningless — and can leave the plot area empty, with no error — once
+  // the card shows a different figure whose data lies elsewhere on the axis,
+  // so drop them whenever the rendered figure's identity changes (the single
+  // pane's plotly source hash plus every multi-pane one).
+  const figureIdentity = useMemo(
+    () => [sourceHash ?? "", ...paneCurrents.map((p) => p.sourceHash ?? "")].join("|"),
+    [sourceHash, paneCurrents],
+  );
+  useEffect(() => {
+    setSharedView({});
+  }, [figureIdentity]);
+
   const viewModified = Object.keys(sharedView).length > 0;
   const updatingRef = useRef(false);
   const handlePaneRelayout = useCallback((view: SharedView) => {
     if (updatingRef.current) return;
     updatingRef.current = true;
-    setSharedView((prev) => ({ ...prev, ...view }));
+    // mirrors cairn-plot mergeRelayout; switch to the import after the
+    // submodule bump.
+    //
+    // A plain `{...prev, ...view}` accumulates: Plotly reports a reset as
+    // `xaxis.autorange: true` and a zoom as `xaxis.range[0]/[1]`, different
+    // keys, so both survive — and Plotly resolves that pair to autorange,
+    // making every zoom after a reset a silent no-op. Drop an axis's (or
+    // scene's) previous keys before merging in the ones this event carries.
+    setSharedView((prev) => {
+      const prefixOf = (k: string) => k.split(".")[0]!.replace(/\[\d+]$/, "");
+      const touched = new Set(Object.keys(view).map(prefixOf));
+      const next: SharedView = {};
+      for (const [k, v] of Object.entries(prev)) {
+        if (touched.has(prefixOf(k))) continue;
+        next[k] = v;
+      }
+      return { ...next, ...view };
+    });
     requestAnimationFrame(() => { updatingRef.current = false; });
   }, []);
   const resetView = useCallback(() => {
