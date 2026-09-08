@@ -20,6 +20,7 @@ import {
   checkFigureMergeable,
   Figure,
   mergeFigures,
+  mergeRelayout,
   useContainerSize,
   type FigureMergeEntry,
   type PlotlyFigureLike,
@@ -430,24 +431,11 @@ export default function FigureInteractiveCard({ runId, metric, extraSeries, cont
   const handlePaneRelayout = useCallback((view: SharedView) => {
     if (updatingRef.current) return;
     updatingRef.current = true;
-    // mirrors cairn-plot mergeRelayout; switch to the import after the
-    // submodule bump.
-    //
-    // A plain `{...prev, ...view}` accumulates: Plotly reports a reset as
-    // `xaxis.autorange: true` and a zoom as `xaxis.range[0]/[1]`, different
-    // keys, so both survive — and Plotly resolves that pair to autorange,
-    // making every zoom after a reset a silent no-op. Drop an axis's (or
-    // scene's) previous keys before merging in the ones this event carries.
-    setSharedView((prev) => {
-      const prefixOf = (k: string) => k.split(".")[0]!.replace(/\[\d+]$/, "");
-      const touched = new Set(Object.keys(view).map(prefixOf));
-      const next: SharedView = {};
-      for (const [k, v] of Object.entries(prev)) {
-        if (touched.has(prefixOf(k))) continue;
-        next[k] = v;
-      }
-      return { ...next, ...view };
-    });
+    // Replace an axis's (or scene's) previous keys with the ones this event
+    // carries: a reset (`autorange: true`) and a later zoom (`range[0/1]`) must
+    // never coexist, or Plotly resolves the pair to autorange (see cairn-plot
+    // `mergeRelayout`).
+    setSharedView((prev) => mergeRelayout(prev, view));
     requestAnimationFrame(() => { updatingRef.current = false; });
   }, []);
   const resetView = useCallback(() => {
