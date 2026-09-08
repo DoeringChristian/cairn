@@ -2,6 +2,8 @@ import type { ReactNode } from "react";
 import SplitPane from "../SplitPane";
 
 interface Props {
+  /** Explicit height of every grid row (e.g. "320px"); absent = fill the container. */
+  rowHeight?: string;
   /** One key per pane (series), used for React keys and to look up labels. */
   paneKeys: string[];
   /** Run label badge per pane key. Panes without an entry render no badge. */
@@ -24,6 +26,7 @@ interface Props {
  * run-label badge in the top-left corner of each pane.
  */
 export default function MultiPaneGrid({
+  rowHeight,
   paneKeys,
   labels,
   inModal,
@@ -45,7 +48,17 @@ export default function MultiPaneGrid({
   return (
     <div
       className="grid gap-1 flex-1 min-h-0 overflow-auto"
-      style={{ gridTemplateColumns: `repeat(${Math.min(paneKeys.length, 2)}, 1fr)` }}
+      // Rows need a DEFINITE height: a pane's content (a Plotly figure, an
+      // image surface) sizes itself to its pane with `h-full`, and a
+      // percentage height inside an auto-sized grid row collapses to 0 — the
+      // pane then shows nothing. Either the caller supplies a row height (the
+      // auto-height card path) or the grid fills its container and splits it
+      // evenly (the explicit-card-height path).
+      style={{
+        gridTemplateColumns: `repeat(${Math.min(paneKeys.length, 2)}, 1fr)`,
+        gridAutoRows: rowHeight ?? "minmax(0, 1fr)",
+        height: rowHeight ? undefined : "100%",
+      }}
     >
       {paneKeys.map((key, i) => (
         <div key={key} className="relative overflow-hidden">

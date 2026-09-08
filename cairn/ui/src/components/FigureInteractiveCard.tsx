@@ -508,7 +508,7 @@ export default function FigureInteractiveCard({ runId, metric, extraSeries, cont
   const cardWidth = cardSize.w;
 
   // Auto-height for figure containers
-  const { figAutoHeight } = useMemo(() => {
+  const { figAutoHeight, figRowHeight } = useMemo(() => {
     if (resolveCardHeight(settings, undefined, FIGURE_MIN_HEIGHT) != null) return { figAutoHeight: undefined, figRowHeight: undefined };
     if (cardWidth <= 0) return { figAutoHeight: "320px", figRowHeight: undefined };
     if (!isMulti) {
@@ -581,6 +581,7 @@ export default function FigureInteractiveCard({ runId, metric, extraSeries, cont
 
   const renderPaneGrid = (inModal: boolean) => (
     <MultiPaneGrid
+      rowHeight={figRowHeight}
       paneKeys={paneKeys}
       labels={paneLabels}
       inModal={inModal}
