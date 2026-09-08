@@ -26,6 +26,7 @@ COMPRESSIONS: dict[str, Any] = {
     "dwab": OpenEXR.DWAB_COMPRESSION,
 }
 HALF_MAX = 65504.0
+HALF_MIN_NORMAL = 6.103515625e-05
 FLOAT_MAX = float(np.finfo(np.float32).max)
 EXR_MAGIC = b"\x76\x2f\x31\x01"
 _CHANNELS_BY_COUNT = {1: "Y", 3: "RGB", 4: "RGBA"}
@@ -33,6 +34,13 @@ _CHANNELS_BY_COUNT = {1: "Y", 3: "RGB", 4: "RGBA"}
 
 @dataclass(frozen=True)
 class ImageEncoding:
+    """How one image array is stored.
+
+    ``clamped`` means half could not represent the array's range and a forced
+    ``precision="half"`` lost values to it — by overflow above ``HALF_MAX``, or by
+    underflow when every value sits below ``HALF_MIN_NORMAL``.
+    """
+
     container: str
     precision: str | None = None
     channels: str | None = None
@@ -61,10 +69,30 @@ def _to_float32(arr: np.ndarray) -> np.ndarray:
     return arr.astype(np.float32)
 
 
-def _exceeds_half(arr: np.ndarray) -> bool:
+def _max_abs_finite(arr: np.ndarray) -> float:
+    """Largest finite magnitude in `arr` (0.0 when it has none)."""
     values = _to_float32(arr)
     finite = values[np.isfinite(values)]
-    return bool(finite.size) and float(np.abs(finite).max()) > HALF_MAX
+    return float(np.abs(finite).max()) if finite.size else 0.0
+
+
+def _exceeds_half(arr: np.ndarray) -> bool:
+    return _max_abs_finite(arr) > HALF_MAX
+
+
+def _underflows_half(arr: np.ndarray) -> bool:
+    """True when the whole image sits inside half's subnormal range."""
+    return 0.0 < _max_abs_finite(arr) < HALF_MIN_NORMAL
+
+
+def _half_loses_range(arr: np.ndarray) -> bool:
+    """Half cannot carry these values: they overflow it, or all of them underflow it.
+
+    A 1e-7-scale radiance image is entirely subnormal in half — representable in
+    name only, at a handful of mantissa bits — so it belongs in float, exactly as
+    a >65504 image does. An all-zero image is fine: zero is exact in half.
+    """
+    return _exceeds_half(arr) or _underflows_half(arr)
 
 
 def image_encoding_for(
@@ -113,9 +141,9 @@ def image_encoding_for(
         if arr.dtype.kind in "iub":
             precision = "float"
         else:
-            precision = "float" if _exceeds_half(arr) else "half"
+            precision = "float" if _half_loses_range(arr) else "half"
     elif precision == "half":
-        clamped = _exceeds_half(arr)
+        clamped = _half_loses_range(arr)
     return ImageEncoding(
         container="exr", precision=precision, channels=channels, compression=compression, clamped=clamped
     )

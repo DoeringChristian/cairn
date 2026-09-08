@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import warnings
 
 import numpy as np
 import pytest
@@ -166,3 +167,21 @@ def test_torch_tensor_chw(handler):
     data, meta = handler.serialize(t)
     assert meta["width"] == 8
     assert meta["height"] == 8
+
+
+def test_large_constant_array_previews_without_dividing_by_zero(handler):
+    # 1e16 >= 2**53, so the tone-map window's degenerate-range guard cannot widen it.
+    arr = np.full((4, 4, 3), 1e16, np.float32)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        _, meta = handler.serialize(arr)
+    assert meta["preview"].startswith("data:image/png;base64,")
+
+
+def test_single_channel_shape_is_restored_from_metadata(handler):
+    arr = np.random.default_rng(5).random((5, 7, 1)).astype(np.float32)
+    data, meta = handler.serialize(arr)
+    assert meta["hdr"]["shape"] == [5, 7, 1]
+    # EXR stores (H, W, 1) as the `Y` channel, so the axis only comes back with metadata.
+    assert handler.deserialize(data).shape == (5, 7)
+    assert handler.deserialize(data, meta).shape == (5, 7, 1)

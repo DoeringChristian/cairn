@@ -2,15 +2,27 @@
 
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pytest
 
 import cairn
 from cairn.sdk.transport import Transport
+from cairn.sdk.wal import INLINE_ARTIFACT_MAX
 
 
 @pytest.fixture
-def transport(live_server):
+def wal_dir(tmp_path, monkeypatch):
+    """Run builds its own WAL over any injected transport (run.py:249-253); this
+    redirects it (and its artifact spill files) from the user cache into tmp_path."""
+    path = tmp_path / "wal"
+    monkeypatch.setenv("CAIRN_WAL_DIR", str(path))
+    return path
+
+
+@pytest.fixture
+def transport(live_server, wal_dir):
     t = Transport(live_server, max_retries=1, backoff_base=0.001, backoff_cap=0.001)
     yield t
     t.close()
@@ -54,4 +66,22 @@ def test_float_image_is_exr_from_track_to_artifact_route(transport, reader):
         assert r.content.startswith(magic)
         assert r.headers["cache-control"].startswith("public")
     gray_meta = reader.get(f"/api/runs/{run.id}/sequences/gray").json()["points"][0]["artifact_metadata"]
-    assert '"precision": "float"' in gray_meta or '"precision":"float"' in gray_meta
+    assert json.loads(gray_meta)["hdr"]["precision"] == "float"
+
+
+def test_exr_larger_than_the_wal_inline_limit_spills_to_a_file(transport, reader, wal_dir):
+    run = _run(transport)
+    # 512x512x3 half EXR, stored uncompressed => ~1.5 MB, past the 1 MB inline cap.
+    arr = np.random.default_rng(1).random((512, 512, 3)).astype(np.float32)
+    try:
+        run.track(cairn.Image(arr, compression="none"), name="big", step=0)
+        # Assert before finish(): a fully-acked WAL is cleanup()ed there, spills and all.
+        spills = list(wal_dir.glob(f"{run.id}.artifact.*.bin"))
+        assert spills and spills[0].stat().st_size > INLINE_ARTIFACT_MAX
+    finally:
+        run.finish()
+    point = reader.get(f"/api/runs/{run.id}/sequences/big").json()["points"][0]
+    assert point["artifact_mime"] == "image/x-exr"
+    r = reader.get(f"/api/artifacts/{point['artifact_hash']}")
+    assert r.status_code == 200 and r.headers["content-type"].startswith("image/x-exr")
+    assert r.content.startswith(b"\x76\x2f\x31\x01")

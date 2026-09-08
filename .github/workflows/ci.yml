@@ -48,13 +48,16 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          # >= 22: `npm run test:unit` runs the TS tests through --experimental-strip-types.
+          node-version: "22"
           cache: "npm"
           cache-dependency-path: cairn/ui/package-lock.json
 
       - run: npm ci
 
       - run: npm run typecheck
+
+      - run: npm run test:unit
 
       - run: npm run build
 

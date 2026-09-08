@@ -253,7 +253,7 @@ class TypeHandler(Protocol):
 |---|---|---|---|
 | `scalar` | `int`, `float`, `bool` | inline in DB | value itself |
 | `text` | `str` (when tracked as sequence) | inline or blob if >1KB | truncated |
-| `image` | `PIL.Image`, `np.ndarray` (HWC/HW), `torch.Tensor` | PNG blob | 128px thumbnail as data URI |
+| `image` | `PIL.Image`, `np.ndarray` (HWC/HW), `torch.Tensor` | PNG blob (uint8/PIL); OpenEXR half PIZ blob for float/int arrays (`format=`/`precision=`/`compression=` options), npy fallback | 128px thumbnail as data URI |
 | `audio` | `np.ndarray` + sample_rate kwarg, `torch.Tensor` | WAV or FLAC blob | duration + waveform peaks array |
 | `video` | `np.ndarray` (TxHxWxC), path to video file | MP4 blob (use imageio-ffmpeg) | first frame thumbnail + duration |
 | `figure` | `matplotlib.Figure`, Plotly `Figure` | dual: PNG + source (pickle for mpl, JSON for plotly) | PNG thumbnail |

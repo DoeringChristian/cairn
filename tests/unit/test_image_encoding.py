@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from cairn.sdk.handlers.image_encoding import (
-    EXR_MAGIC, FLOAT_MAX, HALF_MAX, ImageEncoding, decode_exr, encode_exr, image_encoding_for,
+    EXR_MAGIC, FLOAT_MAX, HALF_MAX, HALF_MIN_NORMAL, ImageEncoding, decode_exr, encode_exr, image_encoding_for,
 )
 
 
@@ -142,3 +142,27 @@ def test_float64_specials_round_trip():
     assert np.isposinf(back[..., 0]).all()
     assert np.isnan(back[..., 1]).all()
     assert np.isneginf(back[..., 2]).all()
+
+
+def test_all_subnormal_half_range_promotes_to_float():
+    a = (np.random.default_rng(4).random((8, 8, 3)) * 1e-7).astype(np.float32)
+    enc = image_encoding_for(a)
+    assert enc.precision == "float" and enc.clamped is False
+    np.testing.assert_array_equal(decode_exr(encode_exr(a, enc)), a)
+
+
+def test_forced_half_on_subnormal_range_records_clamped():
+    a = (np.random.default_rng(4).random((8, 8, 3)) * 1e-7).astype(np.float32)
+    assert image_encoding_for(a, precision="half").clamped is True
+
+
+def test_all_zero_image_stays_half():
+    a = np.zeros((8, 8, 3), np.float32)
+    enc = image_encoding_for(a)
+    assert enc.precision == "half" and enc.clamped is False
+
+
+def test_normal_range_image_is_unaffected_by_the_underflow_rule():
+    a = np.full((8, 8, 3), HALF_MIN_NORMAL, np.float32)
+    assert image_encoding_for(a).precision == "half"
+    assert image_encoding_for(rgb()).precision == "half"

@@ -249,8 +249,11 @@ class ImageHandler:
         if arr.dtype != np.uint8:
             # Preview only: the artifact keeps the original scene-linear values.
             lo, hi = cls._tonemap_window(arr)
+            # A constant array too large for `lo + 1.0` to move (>= 2**53) leaves a
+            # zero-width window; render it flat rather than dividing by zero.
+            rng = (hi - lo) or 1.0
             safe = np.nan_to_num(arr, nan=lo, posinf=hi, neginf=lo)
-            arr = ((safe - lo) / (hi - lo) * 255.0).clip(0, 255).astype(np.uint8)
+            arr = ((safe - lo) / rng * 255.0).clip(0, 255).astype(np.uint8)
 
         if arr.ndim == 2:
             return PILImage.fromarray(arr, mode="L")
@@ -341,7 +344,13 @@ class ImageHandler:
     def deserialize(self, data: bytes, metadata: dict[str, Any] | None = None) -> Any:
         """Decode preserved EXR or NPY pixels, or PNG bytes."""
         if data.startswith(EXR_MAGIC):
-            return decode_exr(data)
+            arr = decode_exr(data)
+            # EXR has no 1-channel-with-axis type: (H, W, 1) is written as the `Y`
+            # channel and decodes to (H, W). `hdr.shape` restores the caller's layout.
+            shape = ((metadata or {}).get("hdr") or {}).get("shape")
+            if shape is not None and tuple(shape) == arr.shape + (1,):
+                arr = arr.reshape(tuple(shape))
+            return arr
         if data.startswith(b"\x93NUMPY"):
             return np.load(io.BytesIO(data), allow_pickle=False)
         return PILImage.open(io.BytesIO(data))
