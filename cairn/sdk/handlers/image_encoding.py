@@ -108,7 +108,13 @@ def image_encoding_for(
 def encode_exr(arr: np.ndarray, enc: ImageEncoding) -> bytes:
     """Encode an HWC (or HW) array as a scanline OpenEXR with `enc`'s settings."""
     assert enc.container == "exr" and enc.channels and enc.precision and enc.compression
-    pixels = arr.astype(np.float16 if enc.precision == "half" else np.float32)
+    pixels = arr.astype(np.float32, copy=False)
+    if enc.precision == "half":
+        # Spec §3.1 rule 6: forced half CLAMPS out-of-range finite values (an
+        # unguarded cast would overflow them to ±inf and warn). NaN/±Inf are
+        # representable in half and pass through untouched.
+        pixels = np.where(np.isfinite(pixels), np.clip(pixels, -HALF_MAX, HALF_MAX), pixels)
+        pixels = pixels.astype(np.float16)
     if pixels.ndim == 3 and pixels.shape[-1] == 1:
         pixels = pixels[..., 0]
     pixels = np.ascontiguousarray(pixels)

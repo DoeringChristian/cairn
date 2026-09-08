@@ -1,8 +1,10 @@
+import warnings
+
 import numpy as np
 import pytest
 
 from cairn.sdk.handlers.image_encoding import (
-    EXR_MAGIC, ImageEncoding, decode_exr, encode_exr, image_encoding_for,
+    EXR_MAGIC, HALF_MAX, ImageEncoding, decode_exr, encode_exr, image_encoding_for,
 )
 
 
@@ -96,3 +98,24 @@ def test_exr_dwaa_is_lossy_but_close():
     a = rgb(h=32, w=32)
     back = decode_exr(encode_exr(a, image_encoding_for(a, compression="dwaa")))
     np.testing.assert_allclose(back.astype(np.float32), a, rtol=0.02, atol=0.02)
+
+
+def test_forced_half_clamps_finite_values_without_warning():
+    a = np.full((4, 4, 3), 1e5, np.float32)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        enc = image_encoding_for(a, precision="half")
+        back = decode_exr(encode_exr(a, enc))
+    assert enc.precision == "half" and enc.clamped is True
+    np.testing.assert_array_equal(back.astype(np.float32), np.full((4, 4, 3), HALF_MAX, np.float32))
+
+
+def test_forced_half_preserves_inf_and_nan():
+    a = np.tile(np.array([np.inf, np.nan, -np.inf], np.float32), (2, 3, 1))
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        back = decode_exr(encode_exr(a, image_encoding_for(a, precision="half")))
+    back = back.astype(np.float32)
+    assert np.isposinf(back[..., 0]).all()
+    assert np.isnan(back[..., 1]).all()
+    assert np.isneginf(back[..., 2]).all()

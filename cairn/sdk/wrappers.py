@@ -43,6 +43,21 @@ class Image(_TypeWrapper):
             masks={"seg": class_id_array_2d},   # uint8 class ids, 0 = background
             class_labels={0: "background", 1: "cat", 2: "dog"},
         ), name="detections", step=step)
+
+    Storage keywords (float/int arrays only — PIL images, figures and uint8
+    arrays are display values and are always stored as PNG):
+
+    * ``format`` — ``"exr"`` (default), ``"npy"`` (exact bytes, any channel
+      count) or ``"png"`` (tone-mapped 8-bit preview only).
+    * ``precision`` — ``"auto"`` (default: half unless values exceed the half
+      range), ``"half"`` (clamps to ±65504) or ``"float"``; ``format="exr"`` only.
+    * ``compression`` — ``"piz"`` (default), ``"zip"``, ``"zips"``, ``"none"``,
+      or ``"dwaa"``/``"dwab"`` which are **lossy**; ``format="exr"`` only.
+
+    ::
+
+        run.track(cairn.Image(hdr_array, format="exr", precision="float"),
+                  name="radiance", step=step)
     """
 
     object_type = "image"

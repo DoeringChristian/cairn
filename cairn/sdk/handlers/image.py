@@ -1,4 +1,22 @@
-"""Image handler — PIL/u8 → PNG; wider numpy/torch arrays → NPY.
+"""Image handler — PIL/u8 → PNG; float/int arrays → OpenEXR (half PIZ by default), npy or PNG on request.
+
+Storage options travel with the value (``cairn.Image(arr, format=...)`` or the
+``run.track(..., format=...)`` keywords) and are read by both ``mime_type_for``
+and ``serialize`` so the recorded mime type always matches the bytes:
+
+* ``format`` — ``"exr"`` (default for non-u8 arrays), ``"npy"`` (exact bytes,
+  any channel count) or ``"png"`` (tone-mapped 8-bit). PIL images, figures and
+  uint8 arrays are display values and stay PNG; asking for another format
+  raises. A defaulted EXR falls back to npy when the channel count is not
+  1, 3 or 4 (``hdr.fallback_reason == "channel-layout"``).
+* ``precision`` — ``"auto"`` (half unless values exceed the half range),
+  ``"half"`` or ``"float"``; ``format="exr"`` only.
+* ``compression`` — ``"piz"`` (default), ``"zip"``, ``"zips"``, ``"none"``, or
+  the lossy ``"dwaa"``/``"dwab"``; ``format="exr"`` only.
+
+Non-u8 arrays record an ``hdr`` metadata block describing what was written
+(container, precision, compression, source dtype, shape, clamped,
+fallback_reason, plus the ``tonemap`` window for PNG).
 
 Optionally carries **overlay annotations** (bounding boxes + segmentation
 masks) supplied via ``cairn.Image(img, boxes=..., masks=..., class_labels=...)``.
@@ -24,6 +42,7 @@ from PIL import Image as PILImage
 
 from ..wrappers import _TypeWrapper
 from ._optional import try_import
+from .image_encoding import EXR_MAGIC, decode_exr, encode_exr, image_encoding_for
 
 MAX_BOXES = 500
 MAX_MASK_B64_BYTES = 2 * 1024 * 1024
@@ -126,7 +145,15 @@ def _build_masks(
 class ImageHandler:
     object_type = "image"
     mime_type = "image/png"
-    hdr_mime_type = "application/x-npy"
+    exr_mime_type = "image/x-exr"
+    npy_mime_type = "application/x-npy"
+
+    _OPTION_KEYS = ("format", "precision", "compression")
+    _MIME_BY_CONTAINER = {
+        "png": mime_type,
+        "exr": exr_mime_type,
+        "npy": npy_mime_type,
+    }
 
     def can_handle(self, obj: Any) -> bool:
         if isinstance(obj, _TypeWrapper):
@@ -154,10 +181,31 @@ class ImageHandler:
             arr = np.transpose(arr, (1, 2, 0))
         return np.ascontiguousarray(arr)
 
-    def mime_type_for(self, obj: Any) -> str:
-        """Preserve non-u8 arrays as NPY so cairn-plot receives HDR values."""
-        arr = self._array_for_storage(obj)
-        return self.hdr_mime_type if arr is not None and arr.dtype != np.uint8 else self.mime_type
+    @classmethod
+    def _encoding_options(cls, kwargs: dict[str, Any]) -> dict[str, Any]:
+        """The storage keywords `image_encoding_for` understands, if supplied."""
+        return {k: kwargs[k] for k in cls._OPTION_KEYS if k in kwargs}
+
+    def mime_type_for(self, obj: Any, **kwargs: Any) -> str:
+        """Announce the container `serialize` will write for these same options."""
+        enc = image_encoding_for(self._array_for_storage(obj), **self._encoding_options(kwargs))
+        return self._MIME_BY_CONTAINER[enc.container]
+
+    @staticmethod
+    def _tonemap_window(arr: np.ndarray) -> tuple[float, float]:
+        """The value window the preview tone-map stretches onto [0, 255]."""
+        finite = arr[np.isfinite(arr)]
+        a_min = float(finite.min()) if finite.size else 0.0
+        a_max = float(finite.max()) if finite.size else 1.0
+        if a_max <= 1.0 and a_min >= 0.0:
+            return 0.0, 1.0
+        return (a_min, a_max) if a_max > a_min else (a_min, a_min + 1.0)
+
+    @classmethod
+    def _tonemap_range(cls, arr: np.ndarray) -> dict[str, float]:
+        """`_tonemap_window` as metadata, so preview and `hdr` cannot drift."""
+        lo, hi = cls._tonemap_window(arr)
+        return {"min": lo, "max": hi}
 
     @classmethod
     def _to_pil(cls, obj: Any) -> PILImage.Image:
@@ -189,26 +237,22 @@ class ImageHandler:
             raise TypeError(f"Cannot coerce {type(obj)!r} to an image")
 
         if arr.dtype != np.uint8:
-            finite = arr[np.isfinite(arr)]
-            a_min = float(finite.min()) if finite.size else 0.0
-            a_max = float(finite.max()) if finite.size else 1.0
-            safe = np.nan_to_num(arr, nan=a_min, posinf=a_max, neginf=a_min)
-            if a_max <= 1.0 and a_min >= 0.0:
-                arr = (safe * 255.0).clip(0, 255).astype(np.uint8)
-            else:
-                # Preview only: the artifact keeps the original scene-linear values.
-                rng = a_max - a_min if a_max > a_min else 1.0
-                arr = ((safe - a_min) / rng * 255.0).clip(0, 255).astype(np.uint8)
+            # Preview only: the artifact keeps the original scene-linear values.
+            lo, hi = cls._tonemap_window(arr)
+            safe = np.nan_to_num(arr, nan=lo, posinf=hi, neginf=lo)
+            arr = ((safe - lo) / (hi - lo) * 255.0).clip(0, 255).astype(np.uint8)
 
         if arr.ndim == 2:
             return PILImage.fromarray(arr, mode="L")
-        if arr.shape[-1] == 1:
-            return PILImage.fromarray(arr[..., 0], mode="L")
+        if arr.ndim != 3 or arr.shape[-1] < 1:
+            raise ValueError(f"Unsupported image shape {arr.shape}")
         if arr.shape[-1] == 3:
             return PILImage.fromarray(arr, mode="RGB")
         if arr.shape[-1] == 4:
             return PILImage.fromarray(arr, mode="RGBA")
-        raise ValueError(f"Unsupported image shape {arr.shape}")
+        # 1 channel, or a count no image format displays (stored as npy): show band 0
+        # rather than guess a colour meaning for the rest.
+        return PILImage.fromarray(np.ascontiguousarray(arr[..., 0]), mode="L")
 
     def serialize(
         self,
@@ -216,17 +260,24 @@ class ImageHandler:
         boxes: Any = None,
         masks: Any = None,
         class_labels: Any = None,
+        format: str | None = None,
+        precision: str = "auto",
+        compression: str = "piz",
         **kwargs: Any,
     ) -> tuple[bytes, dict[str, Any]]:
         arr = self._array_for_storage(obj)
+        enc = image_encoding_for(arr, format=format, precision=precision, compression=compression)
         img = self._to_pil(obj)
-        buf = io.BytesIO()
-        if arr is not None and arr.dtype != np.uint8:
-            # NPY preserves scene-linear/HDR values for cairn-plot's float path.
-            np.save(buf, arr, allow_pickle=False)
+        if enc.container == "exr":
+            # OpenEXR keeps scene-linear/HDR values for cairn-plot's float path.
+            data = encode_exr(arr, enc)
         else:
-            img.save(buf, format="PNG")
-        data = buf.getvalue()
+            buf = io.BytesIO()
+            if enc.container == "npy":
+                np.save(buf, arr, allow_pickle=False)
+            else:
+                img.save(buf, format="PNG")
+            data = buf.getvalue()
 
         # 128-px tone-mapped thumbnail preview remains browser-native.
         thumb = img.copy()
@@ -246,6 +297,19 @@ class ImageHandler:
             "preview": preview,
         }
 
+        if arr is not None and arr.dtype != np.uint8:
+            meta["hdr"] = {
+                "container": enc.container,
+                "precision": enc.precision,
+                "compression": enc.compression,
+                "source_dtype": str(arr.dtype),
+                "shape": list(arr.shape),
+                "clamped": enc.clamped,
+                "fallback_reason": enc.fallback_reason,
+            }
+            if enc.container == "png":
+                meta["hdr"]["tonemap"] = self._tonemap_range(arr)
+
         # Optional overlay annotations — stored inline in metadata (the sidecar),
         # since one artifact per point is a hard ingest constraint.
         norm_labels = _normalize_class_labels(class_labels)
@@ -259,7 +323,9 @@ class ImageHandler:
         return data, meta
 
     def deserialize(self, data: bytes, metadata: dict[str, Any] | None = None) -> Any:
-        """Decode either preserved NPY pixels or legacy PNG bytes."""
+        """Decode preserved EXR or NPY pixels, or PNG bytes."""
+        if data.startswith(EXR_MAGIC):
+            return decode_exr(data)
         if data.startswith(b"\x93NUMPY"):
             return np.load(io.BytesIO(data), allow_pickle=False)
         return PILImage.open(io.BytesIO(data))
