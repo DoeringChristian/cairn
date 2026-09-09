@@ -28,10 +28,14 @@ One credential, two carriers, one read:
   `sweep_expired`, `SESSION_TTL_*`, and the `last_used_at` touch are removed.
   The `last_used_at` column stays in the schema (additive migrations only) but
   is no longer written; `cairn token list` stops displaying it.
-- `/api/auth/login`, `/api/auth/otp` and `/api/auth/ssh/verify` end by setting
-  the `cairn_token` cookie to the plaintext token they just verified or minted
-  (`HttpOnly; SameSite=Lax; Path=/`; `max_age` = the token's remaining lifetime
-  when it has `expires_at`, else 400 days). `/api/auth/logout` clears the
+- `/api/auth/login` (pasted token) sets the `cairn_token` cookie to that
+  token. `/api/auth/otp` (the one-time URL printed at launch) and
+  `/api/auth/ssh/verify` mint a fresh per-browser token with the same role and
+  set the cookie to its plaintext, because a plaintext is never stored and an
+  OTP only knows a token id. Browser tokens appear in `cairn token list` and
+  are revoked individually. Cookie attributes: `HttpOnly; SameSite=Lax;
+  Path=/`; `max_age` = the token's remaining lifetime when it has
+  `expires_at`, else 400 days. `/api/auth/logout` clears the
   cookie and nothing else. `/api/auth/session` reports the principal resolved
   from the request, still never 401.
 - Revocation is `cairn token revoke`: the token row is disabled and every
