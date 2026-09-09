@@ -3,25 +3,24 @@ import {
   comparisonOperationSettingsPatch,
   mountPlot,
   recommendedImageEncoding,
-  type DataSpec,
   type MountedPlot,
   type PlotNode,
   type PlotSession,
   type PlotSpec,
 } from "@cairn-plot";
 
-import type { SequenceMeta, SequencePoint } from "../api/types";
+import type { SequenceMeta } from "../api/types";
 import { useSequencesForRuns } from "../api/hooks";
 import { useCardSettings, type CardSettingsKey } from "../lib/card-settings";
 import type { ComparisonSeriesRef } from "../lib/comparisons";
 import { cairnPlotDataSource } from "../lib/cairn-plot";
-import { artifactFormat } from "../lib/artifact-format";
 import CardShell from "./CardShell";
 import type { BaseCardSettings } from "./card-kit";
 import { seriesLabel } from "./card-kit/series-identity";
 import { useRunInfo } from "./card-kit/use-run-info";
-import { resolveAtStep } from "./card-kit/resolve-at-step";
+import { buildPlotSpec } from "./card-kit/build-plot-spec";
 import { useStepSlider } from "./card-kit/use-step-slider";
+import { useOverlaySlot } from "./card-kit/use-overlay-slot";
 import StepSlider from "./StepSlider";
 import { ExternalBaselinePicker } from "./card-kit/ExternalBaselinePicker";
 import { plotCardPolicy } from "./card-kit/plot-card-policy";
@@ -85,42 +84,6 @@ const COMPARE_OPTIONS = [
   ["relative_signed", "Relative signed"], ["relative_squared", "Relative squared"],
   ["flip", "FLIP"], ["flip-hdr", "HDR-FLIP"], ["ssim", "SSIM"],
 ].map(([value, label]) => ({ value: value!, label: label! }));
-
-function latestArtifact(points: readonly SequencePoint[]): SequencePoint | undefined {
-  for (let index = points.length - 1; index >= 0; index--) {
-    if (points[index]?.artifact_hash) return points[index];
-  }
-  return undefined;
-}
-
-function metadata(point: SequencePoint): Record<string, string | number | boolean | null> {
-  if (!point.artifact_metadata) return {};
-  try {
-    const value = JSON.parse(point.artifact_metadata) as unknown;
-    return value !== null && typeof value === "object" && !Array.isArray(value)
-      ? value as Record<string, string | number | boolean | null>
-      : {};
-  } catch {
-    return {};
-  }
-}
-
-function visualData(type: string, point: SequencePoint): DataSpec | null {
-  const hash = point.artifact_hash;
-  if (!hash) return null;
-  if (type === "image") {
-    return {
-      kind: "image",
-      hash,
-      metadata: point.artifact_metadata,
-      format: artifactFormat(point.artifact_mime),
-    };
-  }
-  if (type === "pointcloud" || type === "mesh" || type === "volume" || type === "boxes3d") {
-    return { kind: "npz", hash, objectType: type, meta: metadata(point) };
-  }
-  return null;
-}
 
 function firstCellSettings(session: PlotSession): PlotSettingValues {
   const firstLeaf = Object.entries(session.cells).find(([id]) => id.startsWith("cell:"));
@@ -228,6 +191,7 @@ export default function CairnPlotCard({
   const latestSessionRef = useRef<PlotSession | null>(null);
   const persistTimerRef = useRef<number | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsSlot = useOverlaySlot(settingsOpen);
   const settingsKey = useMemo<CardSettingsKey>(() => settingsKeyOverride ?? ({
     runId,
     metricName: metric.name,
@@ -308,9 +272,10 @@ export default function CairnPlotCard({
   // only on actual query changes so exposure/pan/session updates do not call
   // mountPlot.update() and rebuild plot topology.
   const queryDataKey = allQueries.map((query) => `${query.dataUpdatedAt}:${query.isLoading ? 1 : 0}`).join("|");
-  const { artifactPoints, referenceArtifactPoints, globalStepPoints } = useMemo(() => {
-    const points = queries.map((query) =>
-      (query.data?.points ?? []).filter((point) => point.artifact_hash),
+  const { seriesPoints, artifactPoints, referenceArtifactPoints, globalStepPoints } = useMemo(() => {
+    const all = queries.map((query) => query.data?.points ?? []);
+    const points = all.map((seriesPoints) =>
+      seriesPoints.filter((point) => point.artifact_hash),
     );
     const references = referenceQueries.map((query) =>
       (query.data?.points ?? []).filter((point) => point.artifact_hash),
@@ -322,6 +287,7 @@ export default function CairnPlotCard({
       }
     }
     return {
+      seriesPoints: all,
       artifactPoints: points,
       referenceArtifactPoints: references,
       globalStepPoints: [...byStep.entries()]
@@ -336,114 +302,36 @@ export default function CairnPlotCard({
     updateSettings,
   });
 
-  const spec = useMemo<PlotSpec | null>(() => {
-    if (allQueries.some((query) => query.isLoading)) return null;
-    if (metric.object_type === "scalar") {
-      const scalarSeries = queries.map((query, index) => ({
-        key: `${bindings[index]?.runId}:${bindings[index]?.name}:${bindings[index]?.contextHash}`,
-        label: labels[index] ?? `series ${index + 1}`,
-        color: SERIES_COLORS[index % SERIES_COLORS.length]!,
-        points: (query.data?.points ?? [])
-          .filter((point) => point.scalar_value != null)
-          .map((point) => ({
-            x: point.step,
-            y: point.scalar_value!,
-            wallTime: point.wall_time,
-            context: point.context,
-          })),
-      }));
-      return {
-        root: {
-          kind: "grid",
-          children: [{
-            kind: "plot",
-            type: "scalar",
-            data: {
-              kind: "inline",
-              props: {
-                series: scalarSeries,
-                xAxis: "step",
-                showLegend: scalarSeries.length > 1,
-                smoothing: 0,
-                outlierPct: [0, 100],
-              },
-            },
-          }],
-          cols: 1,
-          rowHeights: ["minmax(0, 1fr)"],
-          gap: "0.75rem",
-          switchable: false,
-        },
-      };
-    }
-
-    const children = queries.flatMap<PlotNode>((query, index) => {
-      const point = metric.object_type === "image"
-        ? resolveAtStep(artifactPoints[index] ?? [], currentStep)
-        : latestArtifact(query.data?.points ?? []);
-      if (!point) return [];
-      const data = visualData(metric.object_type, point);
-      if (!data) return [];
-
-      if (metric.object_type === "image" && comparisonMetric) {
-        // Resolve the selected reference tag independently inside this pane's
-        // run. There is deliberately no global run reference.
-        const referencePoints = referenceArtifactPoints[index] ?? [];
-        const referenceTargetStep = settings.referenceStep ?? currentStep;
-        const referencePoint = resolveAtStep(referencePoints, referenceTargetStep);
-        const referenceData = referencePoint ? visualData("image", referencePoint) : null;
-        const item = series[index];
-        const isReferencePane = item?.name === comparisonMetric.name &&
-          item.context_hash === comparisonMetric.context_hash;
-        if (isReferencePane || !referenceData) return [];
-        return [{
-          kind: "compare",
-          type: "image",
-          presentation: selectedCompareOperation === "split" ? "split" : "difference",
-          operands: [referenceData, data],
-          strategy: "reference",
-          referenceIndex: 0,
-          settings: { "compare.operation": selectedCompareOperation },
-          props: {
-            labelA: `${comparisonMetric.name} · reference`,
-            labelB: labels[index] ?? metric.name,
-          },
-        }];
-      }
-
-      const props = {
-        ...(settings.showLabels ? { label: labels[index] ?? metric.name } : {}),
-        ...(metric.object_type === "image" ? { holdPreviousWhileLoading: true } : {}),
-      };
-      return [{
-        kind: "plot",
-        type: metric.object_type,
-        data,
-        ...(Object.keys(props).length > 0 ? { props } : {}),
-      }];
-    });
-    if (children.length === 0) return null;
-    const configuredColumns = settings.gridColumns === "auto"
-      ? Math.ceil(Math.sqrt(children.length))
-      : Number(settings.gridColumns);
-    const columns = Math.max(1, Math.min(configuredColumns, children.length));
-    const rows = Math.ceil(children.length / columns);
-    return {
-      root: {
-        kind: "grid",
-        children,
-        cols: columns,
-        rowHeights: Array.from({ length: rows }, () => "minmax(0, 1fr)"),
-        gap: "0.75rem",
-        switchable: false,
-        shared: { sync: { settings: settings.syncGrid } },
-      },
-    };
-    // `queries` is intentionally represented by `queryDataKey`: depending on
-    // its unstable array identity would update the expensive host on every
-    // settings-panel slider event.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bindings, labels, metric.name, metric.object_type, queryDataKey, artifactPoints, referenceArtifactPoints, currentStep, settings.gridColumns, settings.showLabels, settings.syncGrid, settings.referenceStep, comparisonMetric, selectedCompareOperation, series]);
+  // H5: the host must stay mounted while some sequences still load. The spec
+  // is built from whatever runs already have data; a run without data is simply
+  // absent from the grid until it arrives, and only a card with nothing at all
+  // renders the loading placeholder.
+  const anyLoading = allQueries.some((query) => query.isLoading);
+  const spec = useMemo<PlotSpec | null>(() => buildPlotSpec({
+    objectType: metric.object_type,
+    metricName: metric.name,
+    bindings,
+    labels,
+    seriesPoints,
+    artifactPoints,
+    referenceArtifactPoints,
+    anyLoading,
+    currentStep,
+    referenceStep: settings.referenceStep,
+    comparison: comparisonMetric
+      ? { name: comparisonMetric.name, contextHash: comparisonMetric.context_hash }
+      : null,
+    compareOperation: selectedCompareOperation,
+    gridColumns: settings.gridColumns,
+    syncGrid: settings.syncGrid,
+    showLabels: settings.showLabels,
+    seriesColors: SERIES_COLORS,
+  }),
+  // `queries` is intentionally represented by `queryDataKey`: depending on
+  // its unstable array identity would update the expensive host on every
+  // settings-panel slider event.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [bindings, labels, metric.name, metric.object_type, queryDataKey, seriesPoints, artifactPoints, referenceArtifactPoints, anyLoading, currentStep, settings.gridColumns, settings.showLabels, settings.syncGrid, settings.referenceStep, comparisonMetric, selectedCompareOperation]);
 
   const handleSessionChange = useCallback((session: PlotSession) => {
     latestSessionRef.current = session;
@@ -781,13 +669,21 @@ export default function CairnPlotCard({
       onRemove={onRemove}
       onSettings={() => setSettingsOpen(true)}
       settingsPanel={settingsPanel}
-      modalContent={settingsOpen ? plotContent : null}
+      modalContent={<div ref={settingsSlot.slotRef} className="h-full w-full" />}
       modalOpen={settingsOpen}
       onModalClose={() => setSettingsOpen(false)}
       scrollIntoViewOnMount={autoOpenSettings}
     >
-      <div className="mt-2 min-h-0 min-w-0 flex-1 overflow-hidden">
-        {settingsOpen ? null : plotContent}
+      {/* H4: one stable tree position for the plot host. Opening the settings
+          panel only re-styles this box into the modal's reserved slot, so the
+          mounted cairn-plot root — and every pane's decoded image — survives. */}
+      <div
+        className={settingsOpen
+          ? "min-h-0 min-w-0 overflow-hidden"
+          : "mt-2 min-h-0 min-w-0 flex-1 overflow-hidden"}
+        style={settingsSlot.style}
+      >
+        {plotContent}
       </div>
     </CardShell>
   );
