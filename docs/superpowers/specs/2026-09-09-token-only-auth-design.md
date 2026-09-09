@@ -25,7 +25,9 @@ One credential, two carriers, one read:
   Both resolve through the same function: sha256 the value, look the hash up in
   `tokens`, `compare_digest`, check `disabled` and `expires_at`. No write.
 - The `sessions` table, `create_session`, `verify_session`, `delete_session`,
-  `sweep_expired`, `SESSION_TTL_*`, and the `last_used_at` touch are removed.
+  `SESSION_TTL_*`, and the `last_used_at` touch are removed. `sweep_expired`
+  stays as the garbage collector for OTP and nonce rows and runs on the mint
+  paths only.
   The `last_used_at` column stays in the schema (additive migrations only) but
   is no longer written; `cairn token list` stops displaying it.
 - `/api/auth/login` (pasted token) sets the `cairn_token` cookie to that
@@ -61,7 +63,10 @@ One credential, two carriers, one read:
   token.
 - The browser cookie now holds the token itself rather than an opaque session
   id. A stolen cookie is a stolen token; `HttpOnly` still keeps it away from
-  page scripts.
+  page scripts. `SameSite=Lax` is unchanged, so the CSRF posture is the same
+  as before even though a few multipart upload routes exist.
+- Every OTP or SSH browser login adds one token row; they accumulate in
+  `cairn token list` until revoked. That is the per-browser revocation handle.
 
 ## 4. Testing
 
