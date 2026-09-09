@@ -358,7 +358,16 @@ export default function CairnPlotCard({
           children: [{
             kind: "plot",
             type: "scalar",
-            data: { kind: "inline", props: { series: scalarSeries, xAxis: "step", showLegend: scalarSeries.length > 1 } },
+            data: {
+              kind: "inline",
+              props: {
+                series: scalarSeries,
+                xAxis: "step",
+                showLegend: scalarSeries.length > 1,
+                smoothing: 0,
+                outlierPct: [0, 100],
+              },
+            },
           }],
           cols: 1,
           rowHeights: ["minmax(0, 1fr)"],

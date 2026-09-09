@@ -33,9 +33,6 @@ import {
   ScalarPlot,
   SERIES_COLORS,
   mapToXAxis,
-  strideDownsample,
-  emaSmooth,
-  filterOutliers,
   type AxisSource,
   type AxisScale,
   type Series,
@@ -186,19 +183,13 @@ export default function ScalarPlotCard({
       const raw: SequencePoint[] = resp?.points ?? [];
       const rid = m.runId ?? runId;
 
-      let mapped = mapToXAxis(raw, settings.xAxis, runCreatedAtByRunId.get(rid));
-      mapped = strideDownsample(mapped, effectiveMetrics.length > 10 ? 500 : Infinity);
-      const { smoothed, raw: rawPts } = emaSmooth(mapped, settings.smoothing);
-      const [pLo, pHi] = settings.outlierPct;
-      const filtered = filterOutliers(smoothed, pLo, pHi);
-      const filteredRaw = rawPts ? filterOutliers(rawPts, pLo, pHi) : null;
+      const mapped = mapToXAxis(raw, settings.xAxis, runCreatedAtByRunId.get(rid));
 
       return {
         key: k,
         label: seriesLabel(m.name, m.context_hash, rid, multipleRuns, allRunIds),
         color: SERIES_COLORS[idx % SERIES_COLORS.length]!,
-        points: filtered,
-        rawPoints: filteredRaw,
+        points: mapped,
       };
     });
 
@@ -207,9 +198,6 @@ export default function ScalarPlotCard({
   }, [
     effectiveMetrics,
     settings.xAxis,
-    settings.smoothing,
-    settings.outlierPct[0],
-    settings.outlierPct[1],
     multipleRuns,
     runId,
     runCreatedAtByRunId,
@@ -542,6 +530,8 @@ export default function ScalarPlotCard({
     view: settings.viewport,
     onViewChange: (v: ScalarSettings["viewport"]) =>
       updateSettings({ viewport: v }),
+    smoothing: settings.smoothing,
+    outlierPct: settings.outlierPct,
     lineType: settings.lineType,
     showLegend: settings.showLegend,
     tooltip: settings.tooltip,
