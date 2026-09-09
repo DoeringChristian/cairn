@@ -329,37 +329,23 @@ def test_uppercase_api_path_also_refused_by_spa(auth_env):
 
 
 # ---------------------------------------------------------------------------
-# Cookie login/logout
-#
-# These three still describe the OLD session-cookie routes. Task 1 removed the
-# session primitives from ``cairn/server/auth.py``; the ``/api/auth/login``,
-# ``/otp`` and ``/logout`` handlers are rewritten (and these tests replaced) in
-# Task 2 of the token-only-auth plan. Marked xfail meanwhile so the failure is
-# recorded rather than hidden.
+# Cookie login/logout: the cookie carries the token itself
 # ---------------------------------------------------------------------------
 
-_TASK2 = pytest.mark.xfail(
-    reason="session routes are rewritten in Task 2 (token cookie)", strict=False
-)
 
-
-@_TASK2
-def test_login_sets_httponly_cookie_and_grants_access(auth_env):
-    _app, c, tokens = auth_env
-    resp = c.post("/api/auth/login", json={"token": tokens["write"]})
-    assert resp.status_code == 200
-    assert resp.json()["role"] == "write"
-    set_cookie = resp.headers.get("set-cookie", "")
-    assert "httponly" in set_cookie.lower()
-    assert "samesite=lax" in set_cookie.lower()
-
-    # TestClient persists cookies across requests automatically.
-    resp2 = c.get("/api/auth/session")
-    assert resp2.json()["authenticated"] is True
-    assert resp2.json()["role"] == "write"
-
-    resp3 = c.post("/api/projects", json={"name": "via-cookie"})
-    assert resp3.status_code == 200
+def test_login_sets_token_cookie_and_logout_clears_it(auth_env):
+    app, client, tokens = auth_env
+    db = app.state.db
+    r = client.post("/api/auth/login", json={"token": tokens["write"]})
+    assert r.status_code == 200 and r.json() == {"name": "write-token", "role": "write"}
+    assert r.cookies.get("cairn_token") == tokens["write"]
+    assert "cairn_session" not in r.cookies
+    set_cookie = r.headers["set-cookie"].lower()
+    assert "httponly" in set_cookie and "samesite=lax" in set_cookie
+    assert client.get("/api/runs").status_code == 200  # TestClient keeps the jar
+    r = client.post("/api/auth/logout")
+    assert r.status_code == 200
+    assert client.get("/api/runs").status_code == 401
 
 
 def test_login_invalid_token_401(auth_env):
@@ -368,15 +354,35 @@ def test_login_invalid_token_401(auth_env):
     assert resp.status_code == 401
 
 
-@_TASK2
-def test_logout_clears_session(auth_env):
-    _app, c, tokens = auth_env
-    c.post("/api/auth/login", json={"token": tokens["read"]})
-    assert c.get("/api/auth/session").json()["authenticated"] is True
-    resp = c.post("/api/auth/logout")
-    assert resp.status_code == 200
-    assert c.get("/api/auth/session").json()["authenticated"] is False
-    assert c.get("/api/projects").status_code == 401
+def test_session_route_reports_principal_from_either_carrier(auth_env):
+    app, client, tokens = auth_env
+    db = app.state.db
+    assert client.get("/api/auth/session").json()["authenticated"] is False
+    assert (
+        client.get(
+            "/api/auth/session", headers={"Authorization": f"Bearer {tokens['read']}"}
+        ).json()["role"]
+        == "read"
+    )
+    assert (
+        client.get("/api/auth/session", cookies={"cairn_token": tokens["read"]}).json()[
+            "authenticated"
+        ]
+        is True
+    )
+
+
+def test_cookie_max_age_follows_token_expiry(auth_env):
+    app, client, tokens = auth_env
+    db = app.state.db
+    from cairn.server import auth
+
+    tid, plain = auth.create_token(db, name="hourly", role="read", expires_at=auth._iso_in(3600))
+    r = client.post("/api/auth/login", json={"token": plain})
+    set_cookie = r.headers["set-cookie"]
+    assert "Max-Age=" in set_cookie
+    age = int(set_cookie.split("Max-Age=")[1].split(";")[0])
+    assert 3500 <= age <= 3600
 
 
 def test_session_endpoint_reports_disabled_when_auth_off(noauth_env):
@@ -392,21 +398,28 @@ def test_session_endpoint_reports_disabled_when_auth_off(noauth_env):
 # ---------------------------------------------------------------------------
 
 
-@_TASK2
-def test_otp_exchange_and_single_use(auth_env):
-    app, c, tokens = auth_env
+def test_otp_exchange_sets_token_cookie(auth_env):
+    app, client, tokens = auth_env
     db = app.state.db
-    principal = auth_core.verify_bearer_token(db, tokens["admin"])
-    otp = auth_core.create_otp(db, principal.token_id)
+    from cairn.server import auth
 
-    resp = c.post("/api/auth/otp", json={"otp": otp})
-    assert resp.status_code == 200
-    assert resp.json()["role"] == "admin"
+    tid = auth.get_token(db, "read-token")["id"]
+    otp = auth.create_otp(db, tid)
+    r = client.post("/api/auth/otp", json={"otp": otp})
+    assert r.status_code == 200 and r.cookies.get("cairn_token")
+    assert r.json()["role"] == "read"
+    assert client.get("/api/runs").status_code == 200
+
+    # The cookie holds a *fresh* per-browser token, not the OTP's backing one:
+    # a plaintext is never stored, and this is the per-browser revoke handle.
+    browser = auth.verify_token(db, r.cookies.get("cairn_token"))
+    assert browser is not None and browser.role == "read"
+    assert browser.token_id != tid
+    assert browser.name.startswith("read-token-browser-")
 
     # Second use of the same OTP must fail — single-use.
-    c.cookies.clear()
-    resp2 = c.post("/api/auth/otp", json={"otp": otp})
-    assert resp2.status_code == 401
+    client.cookies.clear()
+    assert client.post("/api/auth/otp", json={"otp": otp}).status_code == 401
 
 
 def test_otp_expired_rejected(tmp_path):
@@ -536,31 +549,62 @@ def test_ssh_verify_rejects_unknown_key(auth_env):
     assert resp.status_code == 401
 
 
-@pytest.mark.skipif(not HAS_SSH_KEYGEN, reason="ssh-keygen not available")
-def test_ssh_login_full_round_trip(auth_env, tmp_path):
-    app, c, _tokens = auth_env
-    dd = app.state.data_dir
+def _authorize_ssh_key(dd, tmp_path, role: str = "admin"):
+    """Generate a keypair and authorize it in ``DATA_DIR/auth/authorized_keys``."""
     keyfile = tmp_path / "id_test"
     subprocess.run(
         ["ssh-keygen", "-t", "ed25519", "-N", "", "-f", str(keyfile), "-C", "tester"],
         check=True, capture_output=True,
     )
     pubkey_line = (tmp_path / "id_test.pub").read_text().strip()
-
     auth_dir = dd.root / "auth"
     auth_dir.mkdir(parents=True, exist_ok=True)
-    (auth_dir / "authorized_keys").write_text(pubkey_line + " role=admin\n")
+    (auth_dir / "authorized_keys").write_text(f"{pubkey_line} role={role}\n")
+    return keyfile, pubkey_line
 
-    challenge = c.get("/api/auth/ssh/challenge").json()
-    nonce, namespace = challenge["nonce"], challenge["namespace"]
 
+def _sign_nonce(keyfile, tmp_path, nonce: str, namespace: str) -> str:
     message_path = tmp_path / "message"
     message_path.write_text(nonce)
     subprocess.run(
         ["ssh-keygen", "-Y", "sign", "-f", str(keyfile) + ".pub", "-n", namespace, str(message_path)],
         check=True, capture_output=True,
     )
-    signature = (tmp_path / "message.sig").read_text()
+    return (tmp_path / "message.sig").read_text()
+
+
+@pytest.mark.skipif(not HAS_SSH_KEYGEN, reason="needs ssh-keygen")
+def test_ssh_verify_sets_token_cookie(auth_env, tmp_path):
+    app, client, _tokens = auth_env
+    keyfile, pubkey_line = _authorize_ssh_key(app.state.data_dir, tmp_path)
+    challenge = client.get("/api/auth/ssh/challenge").json()
+    signature = _sign_nonce(keyfile, tmp_path, challenge["nonce"], challenge["namespace"])
+
+    r = client.post(
+        "/api/auth/ssh/verify",
+        json={
+            "nonce": challenge["nonce"],
+            "namespace": challenge["namespace"],
+            "pubkey": pubkey_line,
+            "signature": signature,
+            "name": "ssh-cookie-tester",
+        },
+    )
+    assert r.status_code == 200, r.text
+    # The browser is logged in by the same plaintext the CLI receives in the body.
+    assert r.cookies.get("cairn_token") == r.json()["token"]
+    assert client.get("/api/runs").status_code == 200
+
+
+@pytest.mark.skipif(not HAS_SSH_KEYGEN, reason="ssh-keygen not available")
+def test_ssh_login_full_round_trip(auth_env, tmp_path):
+    app, c, _tokens = auth_env
+    dd = app.state.data_dir
+    keyfile, pubkey_line = _authorize_ssh_key(dd, tmp_path)
+
+    challenge = c.get("/api/auth/ssh/challenge").json()
+    nonce, namespace = challenge["nonce"], challenge["namespace"]
+    signature = _sign_nonce(keyfile, tmp_path, nonce, namespace)
 
     resp = c.post(
         "/api/auth/ssh/verify",

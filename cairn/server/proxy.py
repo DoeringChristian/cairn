@@ -49,7 +49,7 @@ def _request_headers(request: Request, *, token: str | None) -> list[tuple[bytes
         for name, value in raw
         if name.lower() not in drop
         # A configured server-side token owns authentication. Do not let a
-        # browser override it or replace the proxy's upstream session cookie.
+        # browser override it with its own header or cairn_token cookie.
         and not (token is not None and name.lower() in {b"authorization", b"cookie"})
     ]
     if token is not None:
@@ -118,8 +118,9 @@ def create_proxy_app(
 ) -> FastAPI:
     """Serve the bundled UI locally and stream its API calls to ``upstream``.
 
-    ``token`` remains server-side. When absent, browser login is proxied
-    unchanged and the upstream session cookie is rebound to the local origin.
+    ``token`` remains server-side and is attached as ``Authorization: Bearer``
+    to every relayed request. When absent, browser login is proxied unchanged
+    and the upstream ``cairn_token`` cookie is rebound to the local origin.
     ``transport`` is an injection seam for protocol tests.
     """
     upstream = upstream_url.rstrip("/")
@@ -140,16 +141,19 @@ def create_proxy_app(
         app.state.proxy_client = client
         try:
             if token is not None:
+                # Token mode carries `Authorization: Bearer` on every relayed
+                # request, so there is nothing to log in to. One probe with the
+                # header just fails fast on a bad or revoked CAIRN_TOKEN
+                # instead of 401ing the first page load.
                 try:
-                    session = await client.get("/api/auth/session")
+                    session = await client.get(
+                        "/api/auth/session",
+                        headers={"authorization": f"Bearer {token}"},
+                    )
                     session.raise_for_status()
                     state = session.json()
-                    if state.get("auth_enabled", True):
-                        login = await client.post("/api/auth/login", json={"token": token})
-                        if login.status_code != 200:
-                            raise RuntimeError(
-                                f"remote Cairn rejected CAIRN_TOKEN (HTTP {login.status_code})"
-                            )
+                    if state.get("auth_enabled", True) and not state.get("authenticated"):
+                        raise RuntimeError("remote Cairn rejected CAIRN_TOKEN")
                 except (httpx.HTTPError, ValueError) as exc:
                     raise RuntimeError(f"cannot authenticate with remote Cairn at {upstream}: {exc}") from exc
             yield
@@ -178,8 +182,9 @@ def create_proxy_app(
         async def configured_token_logout(request: Request):
             if not _same_origin(request):
                 return JSONResponse({"detail": "cross-origin proxy request rejected"}, status_code=403)
-            # CAIRN_TOKEN is process-level authority. Do not delete the shared
-            # upstream session and strand the UI in a half-authenticated state.
+            # CAIRN_TOKEN is process-level authority: there is no per-browser
+            # credential to clear, and relaying the logout upstream would only
+            # strand the UI in a half-authenticated state.
             return JSONResponse({"ok": True, "auth_source": "CAIRN_TOKEN"})
 
     @app.api_route(
@@ -201,9 +206,9 @@ def create_proxy_app(
         try:
             upstream_response = await client.send(upstream_request, stream=True)
             if token is None:
-                # Browser-mode sessions belong to the browser cookie, not this
-                # process-wide AsyncClient. Otherwise one browser login would
-                # silently authenticate every local browser profile.
+                # Browser-mode credentials belong to the browser cookie, not
+                # this process-wide AsyncClient. Otherwise one browser login
+                # would silently authenticate every local browser profile.
                 client.cookies.clear()
         except httpx.HTTPError as exc:
             return JSONResponse(

@@ -210,10 +210,6 @@ def create_app(
     for router in (ingest.router, import_export.router):
         app.include_router(router, dependencies=[Depends(require("write"))])
 
-    # WebSocket: gates itself (session cookie only, checked before accept()
-    # a websocket route, so this one is deliberately excluded from the
-    # dependencies= loops above.
-
     if mount_ui:
         _mount_spa_or_placeholder(app, disable_webgpu=disable_webgpu)
     else:

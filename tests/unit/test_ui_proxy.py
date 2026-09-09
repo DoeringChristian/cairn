@@ -21,14 +21,10 @@ def test_proxy_keeps_configured_token_server_side_and_serves_spa():
     async def upstream(request: httpx.Request) -> httpx.Response:
         seen.append(request)
         if request.url.path == "/api/auth/session":
-            authenticated = "cairn_session=upstream" in request.headers.get("cookie", "")
+            # Token mode authenticates with the bearer header on every request,
+            # including the start-up probe. There is no cookie login any more.
+            authenticated = request.headers.get("authorization") == "Bearer secret"
             return _json({"authenticated": authenticated, "auth_enabled": True})
-        if request.url.path == "/api/auth/login":
-            assert json.loads((await request.aread()).decode()) == {"token": "secret"}
-            return _json(
-                {"name": "local-process", "role": "write"},
-                headers={"set-cookie": "cairn_session=upstream; Path=/; HttpOnly"},
-            )
         assert request.headers["authorization"] == "Bearer secret"
         assert request.headers.get("x-probe") == "yes"
         return _json({"ok": True})
@@ -59,6 +55,24 @@ def test_proxy_keeps_configured_token_server_side_and_serves_spa():
     protected = next(request for request in seen if request.url.path == "/api/protected")
     assert protected.url == "http://fermat:4300/api/protected?x=1"
     assert all(request.url.path != "/api/auth/logout" for request in seen)
+    # The proxy never exchanges CAIRN_TOKEN for a session cookie.
+    assert all(request.url.path != "/api/auth/login" for request in seen)
+
+
+def test_proxy_rejects_configured_token_the_remote_refuses():
+    async def upstream(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/auth/session":
+            return _json({"authenticated": False, "auth_enabled": True})
+        return _json({"ok": True})
+
+    app = create_proxy_app(
+        "http://fermat:4300",
+        token="stale",
+        transport=httpx.MockTransport(upstream),
+    )
+    with pytest.raises(RuntimeError, match="CAIRN_TOKEN"):
+        with TestClient(app):
+            pass
 
 
 def test_proxy_rejects_upstream_url_credentials():
@@ -74,20 +88,20 @@ def test_proxy_browser_login_rebinds_cookie_and_logout():
                 {"name": "user", "role": "write"},
                 headers={
                     "set-cookie": (
-                        "cairn_session=browser-session; Domain=fermat; "
+                        "cairn_token=browser-session; Domain=fermat; "
                         "Path=/; Secure; HttpOnly; SameSite=lax"
                     )
                 },
             )
         if request.url.path == "/api/auth/session":
-            authenticated = "cairn_session=browser-session" in request.headers.get("cookie", "")
+            authenticated = "cairn_token=browser-session" in request.headers.get("cookie", "")
             return _json({"authenticated": authenticated, "auth_enabled": True})
         if request.url.path == "/api/auth/logout":
             return _json(
                 {"ok": True},
                 headers={
                     "set-cookie": (
-                        "cairn_session=; Domain=fermat; Path=/; Secure; "
+                        "cairn_token=; Domain=fermat; Path=/; Secure; "
                         "Max-Age=0; HttpOnly"
                     )
                 },

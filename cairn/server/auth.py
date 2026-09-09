@@ -373,7 +373,7 @@ def find_authorized_key(dd: DataDir, keytype: str, keyblob: str) -> dict[str, st
 # ---------------------------------------------------------------------------
 
 
-def _principal_from_request(request: Request) -> Principal | None:
+def principal_from_request(request: Request) -> Principal | None:
     """Resolve the caller's identity from ``Authorization: Bearer`` (SDK/CLI)
     or the ``cairn_token`` cookie (browser). Both carry the same credential;
     the header wins when both are present. Never writes."""
@@ -400,7 +400,7 @@ def require_role(min_role: str) -> Callable[[Request], Principal | None]:
     def _dep(request: Request) -> Principal | None:
         if not getattr(request.app.state, "auth_enabled", False):
             return None
-        principal = _principal_from_request(request)
+        principal = principal_from_request(request)
         if principal is None:
             raise HTTPException(status_code=401, detail="authentication required")
         if ROLE_RANK[principal.role] < min_rank:
