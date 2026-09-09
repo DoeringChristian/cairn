@@ -54,9 +54,12 @@ def _request_headers(request: Request, *, token: str | None) -> list[tuple[bytes
     ]
     if token is not None:
         headers.append((b"authorization", f"Bearer {token}".encode("ascii")))
-    elif not any(name.lower() == b"cookie" for name, _ in headers):
-        # Explicitly suppress the shared HTTPX cookie jar: browser-mode auth
-        # must be carried only by this browser request's local cookie.
+    if not any(name.lower() == b"cookie" for name, _ in headers):
+        # Explicitly suppress the shared HTTPX cookie jar: an already-present
+        # Cookie header (even an empty one) makes the jar skip its merge.
+        # Browser-mode auth must be carried only by this browser request's own
+        # cookie; token mode must send no cookie at all and strips this
+        # placeholder again once the request is built.
         headers.append((b"cookie", b""))
     return headers
 
@@ -203,18 +206,25 @@ def create_proxy_app(
             headers=_request_headers(request, token=token),
             content=None if request.method in {"GET", "HEAD"} else request.stream(),
         )
+        if token is not None:
+            # CAIRN_TOKEN is the only credential the remote may see. The
+            # placeholder header set above already blocked the jar merge; drop
+            # it so nothing cookie-shaped leaves this process at all.
+            upstream_request.headers.pop("cookie", None)
         try:
             upstream_response = await client.send(upstream_request, stream=True)
-            if token is None:
-                # Browser-mode credentials belong to the browser cookie, not
-                # this process-wide AsyncClient. Otherwise one browser login
-                # would silently authenticate every local browser profile.
-                client.cookies.clear()
         except httpx.HTTPError as exc:
             return JSONResponse(
                 {"detail": f"remote Cairn is unavailable: {exc}"},
                 status_code=502,
             )
+        finally:
+            # Credentials never belong to this process-wide AsyncClient. In
+            # browser mode a stored cookie would silently authenticate every
+            # local browser profile; in token mode an upstream Set-Cookie —
+            # a relayed /api/auth/login answers with one — would otherwise be
+            # merged into every later relayed request.
+            client.cookies.clear()
 
         local_origin = f"{request.url.scheme}://{request.url.netloc}"
         response = StreamingResponse(

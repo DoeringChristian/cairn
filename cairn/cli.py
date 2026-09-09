@@ -942,11 +942,13 @@ def token_list_cmd(repo: Path | None) -> None:
             return
         # No LAST_USED column: resolving a request never writes, so
         # ``tokens.last_used_at`` is no longer maintained.
-        click.echo(f"{'NAME':<24} {'ROLE':<8} {'STATUS':<10} CREATED")
+        # NAME is 34 wide: a per-browser token minted by /api/auth/otp is
+        # "<parent>-browser-<16 hex>", which reaches 32 characters.
+        click.echo(f"{'NAME':<34} {'ROLE':<8} {'STATUS':<10} CREATED")
         for r in rows:
             status = "disabled" if r["disabled"] else ("expired" if r["expires_at"] and r["expires_at"] <= datetime.now(timezone.utc).isoformat() else "active")
             click.echo(
-                f"{r['name']:<24} {r['role']:<8} {status:<10} {r['created_at']}"
+                f"{r['name']:<34} {r['role']:<8} {status:<10} {r['created_at']}"
             )
     finally:
         db.close()

@@ -152,17 +152,16 @@ def test_otp_rejected_when_backing_token_expired(tmp_path):
 
 
 def test_header_and_cookie_resolve_same_principal(auth_env):
-    app, client, tokens = auth_env
-    db = app.state.db
+    _app, client, tokens = auth_env
     plain = tokens["read"]
     assert _authed_get(client, "/api/runs", bearer=plain).status_code == 200
     assert _authed_get(client, "/api/runs", cookie=plain).status_code == 200
+    client.cookies.clear()  # carry nothing over into the unauthenticated case
     assert _authed_get(client, "/api/runs").status_code == 401
 
 
 def test_header_wins_over_cookie(auth_env):
-    app, client, tokens = auth_env
-    db = app.state.db
+    _app, client, tokens = auth_env
     r = client.get(
         "/api/auth/session",
         headers={"Authorization": f"Bearer {tokens['admin']}"},
@@ -172,21 +171,20 @@ def test_header_wins_over_cookie(auth_env):
 
 
 def test_disabled_and_expired_tokens_fail_on_both_carriers(auth_env):
-    app, client, tokens = auth_env
+    app, client, _tokens = auth_env
     db = app.state.db
-    from cairn.server import auth
-
-    tid, plain = auth.create_token(db, name="short", role="read", expires_at=auth._iso_in(-1))
+    _tid, plain = auth_core.create_token(
+        db, name="short", role="read", expires_at=auth_core._iso_in(-1)
+    )
     assert _authed_get(client, "/api/runs", bearer=plain).status_code == 401
     assert _authed_get(client, "/api/runs", cookie=plain).status_code == 401
-    tid2, plain2 = auth.create_token(db, name="gone", role="read")
-    assert auth.revoke_token(db, tid2)
+    tid2, plain2 = auth_core.create_token(db, name="gone", role="read")
+    assert auth_core.revoke_token(db, tid2)
     assert _authed_get(client, "/api/runs", cookie=plain2).status_code == 401
 
 
 def test_stale_session_cookie_is_ignored(auth_env):
-    app, client, tokens = auth_env
-    db = app.state.db
+    _app, client, _tokens = auth_env
     assert client.get("/api/runs", cookies={"cairn_session": "0" * 64}).status_code == 401
 
 
@@ -205,8 +203,6 @@ def test_authenticated_read_never_writes(auth_env, monkeypatch):
 
 
 def test_no_session_symbols_remain():
-    from cairn.server import auth
-
     for name in (
         "create_session",
         "verify_session",
@@ -215,25 +211,23 @@ def test_no_session_symbols_remain():
         "SESSION_TTL_DAYS",
         "SESSION_TTL_SECONDS",
     ):
-        assert not hasattr(auth, name), name
+        assert not hasattr(auth_core, name), name
 
 
 def test_sweep_expired_still_collects_otp_and_nonce_rows(auth_env):
-    app, client, tokens = auth_env
+    app, _client, _tokens = auth_env
     db = app.state.db
-    from cairn.server import auth
-
-    tid = auth.get_token(db, "read-token")["id"]
+    tid = auth_core.get_token(db, "read-token")["id"]
     db.write(
         "INSERT INTO auth_otp (otp_hash, token_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
-        ["dead", tid, auth._iso_in(-100), auth._iso_in(-50)],
+        ["dead", tid, auth_core._iso_in(-100), auth_core._iso_in(-50)],
     )
     db.write(
         "INSERT INTO auth_nonces (nonce_hash, namespace, created_at, expires_at) "
         "VALUES (?, ?, ?, ?)",
-        ["dead", "ssh", auth._iso_in(-100), auth._iso_in(-50)],
+        ["dead", "ssh", auth_core._iso_in(-100), auth_core._iso_in(-50)],
     )
-    auth.create_otp(db, tid)  # mint paths sweep
+    auth_core.create_otp(db, tid)  # mint paths sweep
     assert db.read_one("SELECT COUNT(*) FROM auth_otp WHERE otp_hash = 'dead'")[0] == 0
     assert db.read_one("SELECT COUNT(*) FROM auth_nonces WHERE nonce_hash = 'dead'")[0] == 0
 
@@ -334,8 +328,7 @@ def test_uppercase_api_path_also_refused_by_spa(auth_env):
 
 
 def test_login_sets_token_cookie_and_logout_clears_it(auth_env):
-    app, client, tokens = auth_env
-    db = app.state.db
+    _app, client, tokens = auth_env
     r = client.post("/api/auth/login", json={"token": tokens["write"]})
     assert r.status_code == 200 and r.json() == {"name": "write-token", "role": "write"}
     assert r.cookies.get("cairn_token") == tokens["write"]
@@ -355,8 +348,7 @@ def test_login_invalid_token_401(auth_env):
 
 
 def test_session_route_reports_principal_from_either_carrier(auth_env):
-    app, client, tokens = auth_env
-    db = app.state.db
+    _app, client, tokens = auth_env
     assert client.get("/api/auth/session").json()["authenticated"] is False
     assert (
         client.get(
@@ -373,11 +365,11 @@ def test_session_route_reports_principal_from_either_carrier(auth_env):
 
 
 def test_cookie_max_age_follows_token_expiry(auth_env):
-    app, client, tokens = auth_env
+    app, client, _tokens = auth_env
     db = app.state.db
-    from cairn.server import auth
-
-    tid, plain = auth.create_token(db, name="hourly", role="read", expires_at=auth._iso_in(3600))
+    _tid, plain = auth_core.create_token(
+        db, name="hourly", role="read", expires_at=auth_core._iso_in(3600)
+    )
     r = client.post("/api/auth/login", json={"token": plain})
     set_cookie = r.headers["set-cookie"]
     assert "Max-Age=" in set_cookie
@@ -399,12 +391,10 @@ def test_session_endpoint_reports_disabled_when_auth_off(noauth_env):
 
 
 def test_otp_exchange_sets_token_cookie(auth_env):
-    app, client, tokens = auth_env
+    app, client, _tokens = auth_env
     db = app.state.db
-    from cairn.server import auth
-
-    tid = auth.get_token(db, "read-token")["id"]
-    otp = auth.create_otp(db, tid)
+    tid = auth_core.get_token(db, "read-token")["id"]
+    otp = auth_core.create_otp(db, tid)
     r = client.post("/api/auth/otp", json={"otp": otp})
     assert r.status_code == 200 and r.cookies.get("cairn_token")
     assert r.json()["role"] == "read"
@@ -412,7 +402,7 @@ def test_otp_exchange_sets_token_cookie(auth_env):
 
     # The cookie holds a *fresh* per-browser token, not the OTP's backing one:
     # a plaintext is never stored, and this is the per-browser revoke handle.
-    browser = auth.verify_token(db, r.cookies.get("cairn_token"))
+    browser = auth_core.verify_token(db, r.cookies.get("cairn_token"))
     assert browser is not None and browser.role == "read"
     assert browser.token_id != tid
     assert browser.name.startswith("read-token-browser-")
@@ -420,6 +410,26 @@ def test_otp_exchange_sets_token_cookie(auth_env):
     # Second use of the same OTP must fail — single-use.
     client.cookies.clear()
     assert client.post("/api/auth/otp", json={"otp": otp}).status_code == 401
+
+
+def test_otp_browser_token_inherits_parent_expiry(auth_env):
+    """A short-lived (``--expires``) token must not be laundered into an
+    unlimited browser token through the one-time login URL."""
+    app, client, _tokens = auth_env
+    db = app.state.db
+    expires_at = auth_core._iso_in(3600)
+    parent_id, _plain = auth_core.create_token(
+        db, name="hourly-parent", role="read", expires_at=expires_at
+    )
+    otp = auth_core.create_otp(db, parent_id)
+
+    r = client.post("/api/auth/otp", json={"otp": otp})
+    assert r.status_code == 200
+    browser = auth_core.verify_token(db, r.cookies.get("cairn_token"))
+    assert browser is not None and browser.token_id != parent_id
+    assert auth_core.get_token(db, browser.token_id)["expires_at"] == expires_at
+    age = int(r.headers["set-cookie"].split("Max-Age=")[1].split(";")[0])
+    assert 3500 <= age <= 3600
 
 
 def test_otp_expired_rejected(tmp_path):

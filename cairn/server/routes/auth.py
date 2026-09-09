@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .. import auth
 from ..storage.db import Database
@@ -49,16 +49,41 @@ def _set_auth_cookie(response: Response, db: Database, token_id: str, plaintext:
     )
 
 
+def _unique_token_name(db: Database, base: str) -> str:
+    """``base``, or ``base-2``/``base-3``/… if that name is taken.
+
+    ``tokens.name`` is UNIQUE, and both minting routes have already consumed a
+    single-use credential by the time they insert — a collision must not turn
+    into a 500 that also burns the OTP or nonce.
+    """
+    name = base
+    suffix = 1
+    while db.read_columns("SELECT id FROM tokens WHERE name = ?", [name]):
+        suffix += 1
+        name = f"{base}-{suffix}"
+    return name
+
+
 def _mint_browser_token(db: Database, principal: auth.Principal) -> tuple[str, str]:
-    """Mint a per-browser token mirroring ``principal``'s role.
+    """Mint a per-browser token mirroring ``principal``'s role and expiry.
 
     The OTP and SSH login paths only know a token *id* or a public key, and a
     plaintext is never stored, so there is nothing to put in the cookie — a
     fresh token is the only option. Each one shows up in ``cairn token list``
     and is the revocation handle for that browser.
+
+    The parent's ``expires_at`` is inherited (``None`` stays ``None``): a
+    short-lived ``--expires`` token must not be laundered into an unlimited
+    browser credential by visiting its login URL.
     """
-    name = f"{principal.name}-browser-{secrets.token_hex(4)}"
-    return auth.create_token(db, name=name, role=principal.role)
+    parent = auth.get_token(db, principal.token_id)
+    name = _unique_token_name(db, f"{principal.name}-browser-{secrets.token_hex(8)}")
+    return auth.create_token(
+        db,
+        name=name,
+        role=principal.role,
+        expires_at=parent["expires_at"] if parent else None,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -67,7 +92,9 @@ def _mint_browser_token(db: Database, principal: auth.Principal) -> tuple[str, s
 
 
 class LoginRequest(BaseModel):
-    token: str
+    # Bounded so an oversized body is refused before it is hashed. Tokens are
+    # 43 characters (`secrets.token_urlsafe(32)`); the ceiling is generous.
+    token: str = Field(max_length=512)
 
 
 @router.post("/login")
@@ -199,11 +226,7 @@ def ssh_verify(body: SSHVerifyRequest, request: Request, response: Response) -> 
         raise HTTPException(status_code=401, detail="signature verification failed")
 
     name = (body.name or f"ssh-{secrets.token_hex(4)}").strip() or f"ssh-{secrets.token_hex(4)}"
-    base_name = name
-    suffix = 1
-    while db.read_columns("SELECT id FROM tokens WHERE name = ?", [name]):
-        suffix += 1
-        name = f"{base_name}-{suffix}"
+    name = _unique_token_name(db, name)
 
     token_id, plaintext = auth.create_token(db, name=name, role=role)
     # The CLI reads the plaintext from the body; a browser doing the same call
