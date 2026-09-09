@@ -142,6 +142,7 @@ def create_proxy_app(
             transport=transport,
         )
         app.state.proxy_client = client
+        app.state.token_identity = {"name": None, "role": None}
         try:
             if token is not None:
                 # Token mode carries `Authorization: Bearer` on every relayed
@@ -157,6 +158,11 @@ def create_proxy_app(
                     state = session.json()
                     if state.get("auth_enabled", True) and not state.get("authenticated"):
                         raise RuntimeError("remote Cairn rejected CAIRN_TOKEN")
+                    # Who CAIRN_TOKEN is, for the local login routes below.
+                    app.state.token_identity = {
+                        "name": state.get("name"),
+                        "role": state.get("role"),
+                    }
                 except (httpx.HTTPError, ValueError) as exc:
                     raise RuntimeError(f"cannot authenticate with remote Cairn at {upstream}: {exc}") from exc
             yield
@@ -189,6 +195,18 @@ def create_proxy_app(
             # credential to clear, and relaying the logout upstream would only
             # strand the UI in a half-authenticated state.
             return JSONResponse({"ok": True, "auth_source": "CAIRN_TOKEN"})
+
+        @app.post("/api/auth/login")
+        @app.post("/api/auth/otp")
+        async def configured_token_login(request: Request):
+            # Already authenticated by CAIRN_TOKEN, so there is nothing to log
+            # into. Answering locally with the identity the start-up probe
+            # reported lets the UI's login page complete, and — unlike relaying
+            # — mints no per-browser token on the remote for a credential the
+            # proxy would immediately throw away.
+            if not _same_origin(request):
+                return JSONResponse({"detail": "cross-origin proxy request rejected"}, status_code=403)
+            return JSONResponse(dict(request.app.state.token_identity))
 
     @app.api_route(
         "/api/{path:path}",

@@ -215,7 +215,12 @@ SCHEMA_SQL: list[str] = [
         created_at    TEXT NOT NULL,
         last_used_at  TEXT,
         expires_at    TEXT,
-        disabled      INTEGER NOT NULL DEFAULT 0
+        disabled      INTEGER NOT NULL DEFAULT 0,
+        -- The token this one was derived from (a per-browser token minted by
+        -- /api/auth/otp). Revoking a parent revokes its children. No FK: the
+        -- migrations here stay additive, and ALTER TABLE ADD COLUMN cannot
+        -- add a constraint to an existing database.
+        parent_id     TEXT
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_tokens_hash ON tokens(token_hash)",
@@ -272,6 +277,7 @@ def apply_migrations(con: sqlite3.Connection) -> int:
     # Incremental column migrations for existing databases.
     _add_column_if_missing(con, "runs", "last_heartbeat", "TEXT")
     _add_column_if_missing(con, "artifacts", "object_type", "TEXT")
+    _add_column_if_missing(con, "tokens", "parent_id", "TEXT")
 
     # The one destructive statement in this file. Auth is token-only: the
     # browser carries the token itself in the ``cairn_token`` cookie, so

@@ -63,7 +63,7 @@ def test_proxy_never_forwards_cookies_in_token_mode():
     """CAIRN_TOKEN is the only credential the remote may see.
 
     Neither a browser's own ``cairn_token`` cookie nor one the remote sets on a
-    relayed login may reach upstream: the first would let a browser swap
+    relayed response may reach upstream: the first would let a browser swap
     identities, the second would contaminate the process-wide HTTPX jar and
     ride along on every later relayed request.
     """
@@ -74,10 +74,10 @@ def test_proxy_never_forwards_cookies_in_token_mode():
         if request.url.path == "/api/auth/session":
             authenticated = request.headers.get("authorization") == "Bearer secret"
             return _json({"authenticated": authenticated, "auth_enabled": True})
-        if request.url.path == "/api/auth/login":
+        if request.url.path == "/api/sets-cookie":
             return _json(
-                {"name": "admin", "role": "admin"},
-                headers={"set-cookie": "cairn_token=pasted-admin; Path=/; HttpOnly"},
+                {"ok": True},
+                headers={"set-cookie": "cairn_token=upstream-admin; Path=/; HttpOnly"},
             )
         return _json({"ok": True})
 
@@ -88,17 +88,58 @@ def test_proxy_never_forwards_cookies_in_token_mode():
     )
     with TestClient(app) as client:
         client.cookies.set("cairn_token", "browser-admin")
-        assert client.post("/api/auth/login", json={"token": "browser-admin"}).status_code == 200
+        assert client.get("/api/sets-cookie").json() == {"ok": True}
         assert client.get("/api/protected").json() == {"ok": True}
 
     assert [request.url.path for request in seen] == [
         "/api/auth/session",
-        "/api/auth/login",
+        "/api/sets-cookie",
         "/api/protected",
     ]
     for request in seen:
         assert request.headers["authorization"] == "Bearer secret"
         assert "cookie" not in request.headers
+
+
+def test_proxy_answers_token_mode_logins_locally():
+    """With CAIRN_TOKEN configured there is nothing to log into. The login
+    routes are answered from the start-up probe's identity, so the UI's login
+    page completes without minting a per-browser token upstream."""
+    seen: list[httpx.Request] = []
+
+    async def upstream(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.path == "/api/auth/session":
+            return _json(
+                {
+                    "authenticated": True,
+                    "auth_enabled": True,
+                    "name": "local-process",
+                    "role": "write",
+                }
+            )
+        return _json({"ok": True})
+
+    app = create_proxy_app(
+        "http://fermat:4300",
+        token="secret",
+        transport=httpx.MockTransport(upstream),
+    )
+    identity = {"name": "local-process", "role": "write"}
+    with TestClient(app) as client:
+        assert client.post("/api/auth/login", json={"token": "pasted"}).json() == identity
+        assert client.post("/api/auth/otp", json={"otp": "one-time"}).json() == identity
+        # Cross-origin protected, like the local logout route.
+        assert (
+            client.post(
+                "/api/auth/login",
+                json={"token": "pasted"},
+                headers={"origin": "https://evil.example", "sec-fetch-site": "cross-site"},
+            ).status_code
+            == 403
+        )
+
+    assert [request.url.path for request in seen] == ["/api/auth/session"]
 
 
 def test_proxy_rejects_configured_token_the_remote_refuses():

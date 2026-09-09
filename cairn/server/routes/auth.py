@@ -74,15 +74,24 @@ def _mint_browser_token(db: Database, principal: auth.Principal) -> tuple[str, s
 
     The parent's ``expires_at`` is inherited (``None`` stays ``None``): a
     short-lived ``--expires`` token must not be laundered into an unlimited
-    browser credential by visiting its login URL.
+    browser credential by visiting its login URL. ``parent_id`` records the
+    link, so revoking the parent revokes this token with it.
+
+    Fails closed: with no parent row there is no expiry and no revocation
+    handle to inherit, and minting anyway would hand out an unlimited token.
     """
     parent = auth.get_token(db, principal.token_id)
+    if parent is None:
+        raise HTTPException(
+            status_code=401, detail="the token behind this login no longer exists"
+        )
     name = _unique_token_name(db, f"{principal.name}-browser-{secrets.token_hex(8)}")
     return auth.create_token(
         db,
         name=name,
         role=principal.role,
-        expires_at=parent["expires_at"] if parent else None,
+        expires_at=parent["expires_at"],
+        parent_id=parent["id"],
     )
 
 
@@ -111,7 +120,7 @@ def login(body: LoginRequest, request: Request, response: Response) -> dict[str,
 
 
 class OtpRequest(BaseModel):
-    otp: str
+    otp: str = Field(max_length=512)
 
 
 @router.post("/otp")
@@ -170,11 +179,14 @@ def ssh_challenge(request: Request) -> dict[str, str]:
 
 
 class SSHVerifyRequest(BaseModel):
-    nonce: str
-    namespace: str
-    pubkey: str
-    signature: str
-    name: str | None = None
+    # Bounded so an oversized body is refused before any of it is hashed,
+    # written to a temp file, or handed to ssh-keygen. A public key line and a
+    # signature blob both fit comfortably in 4 KiB.
+    nonce: str = Field(max_length=4096)
+    namespace: str = Field(max_length=4096)
+    pubkey: str = Field(max_length=4096)
+    signature: str = Field(max_length=4096)
+    name: str | None = Field(default=None, max_length=64)
 
 
 @router.post("/ssh/verify")

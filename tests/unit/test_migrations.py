@@ -118,6 +118,22 @@ def test_hash_context_handles_malformed_string():
     assert out != ""
 
 
+def test_tokens_gain_parent_id_column(conn):
+    conn.execute(
+        "CREATE TABLE tokens (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, "
+        "token_hash TEXT NOT NULL UNIQUE, role TEXT NOT NULL, created_at TEXT NOT NULL, "
+        "last_used_at TEXT, expires_at TEXT, disabled INTEGER NOT NULL DEFAULT 0)"
+    )
+    conn.execute(
+        "INSERT INTO tokens VALUES ('t1', 'admin', 'hash', 'admin', '2025-01-01', NULL, NULL, 0)"
+    )
+    conn.commit()
+    apply_migrations(conn)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(tokens)")}
+    assert "parent_id" in cols
+    assert conn.execute("SELECT parent_id FROM tokens WHERE id = 't1'").fetchone() == (None,)
+
+
 def test_sessions_table_is_dropped(conn):
     conn.execute(
         "CREATE TABLE sessions (id TEXT PRIMARY KEY, token_id TEXT NOT NULL, "

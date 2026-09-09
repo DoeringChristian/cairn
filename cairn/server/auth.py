@@ -111,11 +111,15 @@ def create_token(
     name: str,
     role: str,
     expires_at: str | None = None,
+    parent_id: str | None = None,
 ) -> tuple[str, str]:
     """Create a token row. Returns ``(token_id, plaintext)``.
 
     The plaintext is returned exactly once — callers must show it to the
     operator/user immediately and never log or persist it elsewhere.
+
+    ``parent_id`` records that this token was *derived* from another one (a
+    per-browser token minted from an OTP), so revoking the parent revokes it.
     """
     if role not in ROLE_RANK:
         raise ValueError(f"invalid role {role!r}; must be one of {ROLES}")
@@ -123,40 +127,49 @@ def create_token(
     plaintext = generate_secret(32)
     db.write(
         """INSERT INTO tokens (id, name, token_hash, role, created_at,
-                                last_used_at, expires_at, disabled)
-           VALUES (?, ?, ?, ?, ?, NULL, ?, 0)""",
-        [token_id, name, hash_secret(plaintext), role, _now_iso(), expires_at],
+                                last_used_at, expires_at, disabled, parent_id)
+           VALUES (?, ?, ?, ?, ?, NULL, ?, 0, ?)""",
+        [token_id, name, hash_secret(plaintext), role, _now_iso(), expires_at, parent_id],
     )
     return token_id, plaintext
 
 
+_TOKEN_COLUMNS = "id, name, role, created_at, last_used_at, expires_at, disabled, parent_id"
+
+
 def list_tokens(db: Database) -> list[dict[str, Any]]:
-    return db.read_columns(
-        """SELECT id, name, role, created_at, last_used_at, expires_at, disabled
-           FROM tokens ORDER BY created_at"""
-    )
+    return db.read_columns(f"SELECT {_TOKEN_COLUMNS} FROM tokens ORDER BY created_at")
 
 
 def get_token(db: Database, ident: str) -> dict[str, Any] | None:
     """Look up a token by id OR name (both are unique)."""
     rows = db.read_columns(
-        "SELECT id, name, role, created_at, last_used_at, expires_at, disabled "
-        "FROM tokens WHERE id = ? OR name = ?",
+        f"SELECT {_TOKEN_COLUMNS} FROM tokens WHERE id = ? OR name = ?",
         [ident, ident],
     )
     return rows[0] if rows else None
 
 
 def revoke_token(db: Database, ident: str) -> bool:
-    """Disable a token by id or name. Every client holding it — header or
-    cookie — fails at its next request. Returns False if no such token
-    exists."""
+    """Disable a token by id or name, together with every token derived from
+    it. Returns False if no such token exists.
+
+    Revocation is the only way to end all access, so it has to reach the
+    per-browser tokens an OTP login minted from this one — otherwise a revoked
+    credential would live on in every browser that used its login URL. The
+    cascade runs one way: revoking a browser token leaves its parent, and the
+    other browsers, alone.
+    """
     row = get_token(db, ident)
     if row is None:
         return False
     with db.transaction() as con:
-        con.execute("UPDATE tokens SET disabled = 1 WHERE id = ?", [row["id"]])
-    return True
+        cur = con.execute(
+            "UPDATE tokens SET disabled = 1 WHERE id = ? OR parent_id = ?",
+            [row["id"], row["id"]],
+        )
+        changed = cur.rowcount
+    return changed > 0
 
 
 def verify_token(db: Database, plaintext: str) -> Principal | None:

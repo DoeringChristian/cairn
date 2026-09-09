@@ -942,13 +942,17 @@ def token_list_cmd(repo: Path | None) -> None:
             return
         # No LAST_USED column: resolving a request never writes, so
         # ``tokens.last_used_at`` is no longer maintained.
-        # NAME is 34 wide: a per-browser token minted by /api/auth/otp is
-        # "<parent>-browser-<16 hex>", which reaches 32 characters.
-        click.echo(f"{'NAME':<34} {'ROLE':<8} {'STATUS':<10} CREATED")
+        # NAME is 40 wide: a per-browser token minted by /api/auth/otp is named
+        # "<parent>-browser-<16 hex>", i.e. its parent's name plus 25
+        # characters, so a long parent name still overflows the column.
+        # PARENT is the short id of the token a browser login derived from;
+        # revoking that parent revokes this row with it.
+        click.echo(f"{'NAME':<40} {'ROLE':<8} {'STATUS':<10} {'PARENT':<10} CREATED")
         for r in rows:
             status = "disabled" if r["disabled"] else ("expired" if r["expires_at"] and r["expires_at"] <= datetime.now(timezone.utc).isoformat() else "active")
+            parent = (r["parent_id"] or "")[:8]
             click.echo(
-                f"{r['name']:<34} {r['role']:<8} {status:<10} {r['created_at']}"
+                f"{r['name']:<40} {r['role']:<8} {status:<10} {parent:<10} {r['created_at']}"
             )
     finally:
         db.close()

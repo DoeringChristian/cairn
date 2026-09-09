@@ -7,11 +7,13 @@ import subprocess
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from cairn.cli import _print_access_banner
 from cairn.server import auth as auth_core
 from cairn.server.app import create_app
+from cairn.server.routes import auth as auth_routes
 from cairn.server.storage.datadir import DataDir
 from cairn.server.storage.db import Database
 
@@ -430,6 +432,54 @@ def test_otp_browser_token_inherits_parent_expiry(auth_env):
     assert auth_core.get_token(db, browser.token_id)["expires_at"] == expires_at
     age = int(r.headers["set-cookie"].split("Max-Age=")[1].split(";")[0])
     assert 3500 <= age <= 3600
+
+
+def test_revoking_a_parent_cascades_to_its_browser_tokens(auth_env):
+    """``cairn token revoke`` is the only way to end all access, so it has to
+    reach the per-browser tokens derived from the revoked one."""
+    app, client, _tokens = auth_env
+    db = app.state.db
+    parent_id, parent_plain = auth_core.create_token(db, name="laptop", role="write")
+    otp = auth_core.create_otp(db, parent_id)
+    browser_plain = client.post("/api/auth/otp", json={"otp": otp}).cookies.get("cairn_token")
+    client.cookies.clear()
+    browser = auth_core.verify_token(db, browser_plain)
+    assert browser is not None
+    assert auth_core.get_token(db, browser.token_id)["parent_id"] == parent_id
+
+    assert auth_core.revoke_token(db, "laptop") is True
+    assert auth_core.verify_token(db, parent_plain) is None
+    assert auth_core.verify_token(db, browser_plain) is None
+    assert _authed_get(client, "/api/runs", bearer=browser_plain).status_code == 401
+    assert _authed_get(client, "/api/runs", cookie=browser_plain).status_code == 401
+
+
+def test_revoking_a_browser_token_leaves_its_parent_working(auth_env):
+    """The cascade runs one way: a browser token is the revocation handle for
+    that browser alone."""
+    app, client, _tokens = auth_env
+    db = app.state.db
+    parent_id, parent_plain = auth_core.create_token(db, name="desktop", role="write")
+    otp = auth_core.create_otp(db, parent_id)
+    browser_plain = client.post("/api/auth/otp", json={"otp": otp}).cookies.get("cairn_token")
+    client.cookies.clear()
+    browser = auth_core.verify_token(db, browser_plain)
+
+    assert auth_core.revoke_token(db, browser.token_id) is True
+    assert auth_core.verify_token(db, browser_plain) is None
+    assert auth_core.verify_token(db, parent_plain) is not None
+    assert _authed_get(client, "/api/runs", bearer=parent_plain).status_code == 200
+
+
+def test_mint_browser_token_fails_closed_without_a_parent_row(auth_env):
+    """No parent row means no expiry and no revocation handle to inherit —
+    refuse rather than mint an unlimited credential."""
+    app, _client, _tokens = auth_env
+    db = app.state.db
+    ghost = auth_core.Principal(token_id="does-not-exist", name="ghost", role="admin")
+    with pytest.raises(HTTPException) as excinfo:
+        auth_routes._mint_browser_token(db, ghost)
+    assert excinfo.value.status_code == 401
 
 
 def test_otp_expired_rejected(tmp_path):
