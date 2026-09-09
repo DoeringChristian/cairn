@@ -202,8 +202,10 @@ SCHEMA_SQL: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_artifact_versions_producer ON artifact_versions(created_by_run)",
     "CREATE INDEX IF NOT EXISTS idx_run_inputs_artifact ON run_inputs(artifact_version_id)",
     # ── Auth tables (workstream AUTH) ──────────────────────────────────
-    # Plaintext secrets (tokens, session ids, OTPs, nonces) are never
-    # persisted — only sha256 hex digests. See cairn/server/auth.py.
+    # Plaintext secrets (tokens, OTPs, nonces) are never persisted — only
+    # sha256 hex digests. See cairn/server/auth.py.
+    # ``last_used_at`` is retained for compatibility but no longer written:
+    # resolving a request must not write. See the token-only-auth design.
     """
     CREATE TABLE IF NOT EXISTS tokens (
         id            TEXT PRIMARY KEY,
@@ -217,15 +219,6 @@ SCHEMA_SQL: list[str] = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_tokens_hash ON tokens(token_hash)",
-    """
-    CREATE TABLE IF NOT EXISTS sessions (
-        id            TEXT PRIMARY KEY,
-        token_id      TEXT NOT NULL REFERENCES tokens(id),
-        created_at    TEXT NOT NULL,
-        expires_at    TEXT NOT NULL
-    )
-    """,
-    "CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token_id)",
     """
     CREATE TABLE IF NOT EXISTS auth_otp (
         otp_hash      TEXT PRIMARY KEY,
@@ -279,6 +272,16 @@ def apply_migrations(con: sqlite3.Connection) -> int:
     # Incremental column migrations for existing databases.
     _add_column_if_missing(con, "runs", "last_heartbeat", "TEXT")
     _add_column_if_missing(con, "artifacts", "object_type", "TEXT")
+
+    # The one destructive statement in this file. Auth is token-only: the
+    # browser carries the token itself in the ``cairn_token`` cookie, so
+    # sessions no longer exist. Dropping the table is safe because its rows
+    # were ephemeral by construction (every one carried an expiry) and
+    # nothing references them — no foreign key points at ``sessions``, and no
+    # code reads it. The worst outcome for a user is that open browser tabs
+    # holding an old ``cairn_session`` cookie must log in again.
+    con.execute("DROP INDEX IF EXISTS idx_sessions_token")
+    con.execute("DROP TABLE IF EXISTS sessions")
 
     existing = con.execute("SELECT version FROM schema_version").fetchall()
     if not existing:

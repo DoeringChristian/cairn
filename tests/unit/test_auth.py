@@ -1,4 +1,4 @@
-"""Auth: tokens, sessions, OTP, WS gating, SSH login, role enforcement."""
+"""Auth: tokens, OTP, SSH login, role enforcement."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
-from starlette.websockets import WebSocketDisconnect
 
 from cairn.cli import _print_access_banner
 from cairn.server import auth as auth_core
@@ -79,6 +78,12 @@ def _bearer(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def _authed_get(client, path, *, bearer=None, cookie=None):
+    headers = {"Authorization": f"Bearer {bearer}"} if bearer else {}
+    cookies = {"cairn_token": cookie} if cookie else {}
+    return client.get(path, headers=headers, cookies=cookies)
+
+
 # ---------------------------------------------------------------------------
 # Token hashing / CRUD
 # ---------------------------------------------------------------------------
@@ -125,27 +130,6 @@ def test_expired_token_rejected(tmp_path):
         db.close()
 
 
-def test_session_rejected_when_backing_token_expired(tmp_path):
-    """A short-lived (--expires) token must not yield a session cookie that
-    outlives it. Regression for the verify_session token-expiry gap."""
-    dd = DataDir(tmp_path / "cairn")
-    db = Database.open(dd.db_path)
-    try:
-        future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
-        token_id, _plain = auth_core.create_token(
-            db, name="shortlived", role="read", expires_at=future
-        )
-        session_id = auth_core.create_session(db, token_id)
-        # Still valid while the token is unexpired.
-        assert auth_core.verify_session(db, session_id) is not None
-        # Force-expire the backing token (session's own expiry is untouched).
-        past = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
-        db.write("UPDATE tokens SET expires_at = ? WHERE id = ?", [past, token_id])
-        assert auth_core.verify_session(db, session_id) is None
-    finally:
-        db.close()
-
-
 def test_otp_rejected_when_backing_token_expired(tmp_path):
     """The OTP path must honor the backing token's expiry too. Regression
     for the consume_otp token-expiry gap."""
@@ -162,14 +146,96 @@ def test_otp_rejected_when_backing_token_expired(tmp_path):
         db.close()
 
 
-def test_revoke_drops_live_sessions(auth_env):
-    app, _c, tokens = auth_env
+# ---------------------------------------------------------------------------
+# One credential, two carriers (Authorization: Bearer / cairn_token cookie)
+# ---------------------------------------------------------------------------
+
+
+def test_header_and_cookie_resolve_same_principal(auth_env):
+    app, client, tokens = auth_env
     db = app.state.db
-    principal = auth_core.verify_bearer_token(db, tokens["write"])
-    session_id = auth_core.create_session(db, principal.token_id)
-    assert auth_core.verify_session(db, session_id) is not None
-    auth_core.revoke_token(db, "write-token")
-    assert auth_core.verify_session(db, session_id) is None
+    plain = tokens["read"]
+    assert _authed_get(client, "/api/runs", bearer=plain).status_code == 200
+    assert _authed_get(client, "/api/runs", cookie=plain).status_code == 200
+    assert _authed_get(client, "/api/runs").status_code == 401
+
+
+def test_header_wins_over_cookie(auth_env):
+    app, client, tokens = auth_env
+    db = app.state.db
+    r = client.get(
+        "/api/auth/session",
+        headers={"Authorization": f"Bearer {tokens['admin']}"},
+        cookies={"cairn_token": tokens["read"]},
+    )
+    assert r.json()["role"] == "admin"
+
+
+def test_disabled_and_expired_tokens_fail_on_both_carriers(auth_env):
+    app, client, tokens = auth_env
+    db = app.state.db
+    from cairn.server import auth
+
+    tid, plain = auth.create_token(db, name="short", role="read", expires_at=auth._iso_in(-1))
+    assert _authed_get(client, "/api/runs", bearer=plain).status_code == 401
+    assert _authed_get(client, "/api/runs", cookie=plain).status_code == 401
+    tid2, plain2 = auth.create_token(db, name="gone", role="read")
+    assert auth.revoke_token(db, tid2)
+    assert _authed_get(client, "/api/runs", cookie=plain2).status_code == 401
+
+
+def test_stale_session_cookie_is_ignored(auth_env):
+    app, client, tokens = auth_env
+    db = app.state.db
+    assert client.get("/api/runs", cookies={"cairn_session": "0" * 64}).status_code == 401
+
+
+def test_authenticated_read_never_writes(auth_env, monkeypatch):
+    app, client, tokens = auth_env
+    db = app.state.db
+    writes = []
+    orig_write, orig_tx = db.write, db.transaction
+    monkeypatch.setattr(db, "write", lambda *a, **k: (writes.append(a), orig_write(*a, **k)))
+    monkeypatch.setattr(
+        db, "transaction", lambda *a, **k: (writes.append(("tx",)), orig_tx(*a, **k))[1]
+    )
+    assert _authed_get(client, "/api/runs", cookie=tokens["read"]).status_code == 200
+    assert _authed_get(client, "/api/runs", bearer=tokens["read"]).status_code == 200
+    assert writes == []
+
+
+def test_no_session_symbols_remain():
+    from cairn.server import auth
+
+    for name in (
+        "create_session",
+        "verify_session",
+        "delete_session",
+        "SESSION_COOKIE",
+        "SESSION_TTL_DAYS",
+        "SESSION_TTL_SECONDS",
+    ):
+        assert not hasattr(auth, name), name
+
+
+def test_sweep_expired_still_collects_otp_and_nonce_rows(auth_env):
+    app, client, tokens = auth_env
+    db = app.state.db
+    from cairn.server import auth
+
+    tid = auth.get_token(db, "read-token")["id"]
+    db.write(
+        "INSERT INTO auth_otp (otp_hash, token_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
+        ["dead", tid, auth._iso_in(-100), auth._iso_in(-50)],
+    )
+    db.write(
+        "INSERT INTO auth_nonces (nonce_hash, namespace, created_at, expires_at) "
+        "VALUES (?, ?, ?, ?)",
+        ["dead", "ssh", auth._iso_in(-100), auth._iso_in(-50)],
+    )
+    auth.create_otp(db, tid)  # mint paths sweep
+    assert db.read_one("SELECT COUNT(*) FROM auth_otp WHERE otp_hash = 'dead'")[0] == 0
+    assert db.read_one("SELECT COUNT(*) FROM auth_nonces WHERE nonce_hash = 'dead'")[0] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -263,10 +329,21 @@ def test_uppercase_api_path_also_refused_by_spa(auth_env):
 
 
 # ---------------------------------------------------------------------------
-# Session lifecycle (cookie login/logout)
+# Cookie login/logout
+#
+# These three still describe the OLD session-cookie routes. Task 1 removed the
+# session primitives from ``cairn/server/auth.py``; the ``/api/auth/login``,
+# ``/otp`` and ``/logout`` handlers are rewritten (and these tests replaced) in
+# Task 2 of the token-only-auth plan. Marked xfail meanwhile so the failure is
+# recorded rather than hidden.
 # ---------------------------------------------------------------------------
 
+_TASK2 = pytest.mark.xfail(
+    reason="session routes are rewritten in Task 2 (token cookie)", strict=False
+)
 
+
+@_TASK2
 def test_login_sets_httponly_cookie_and_grants_access(auth_env):
     _app, c, tokens = auth_env
     resp = c.post("/api/auth/login", json={"token": tokens["write"]})
@@ -291,6 +368,7 @@ def test_login_invalid_token_401(auth_env):
     assert resp.status_code == 401
 
 
+@_TASK2
 def test_logout_clears_session(auth_env):
     _app, c, tokens = auth_env
     c.post("/api/auth/login", json={"token": tokens["read"]})
@@ -314,6 +392,7 @@ def test_session_endpoint_reports_disabled_when_auth_off(noauth_env):
 # ---------------------------------------------------------------------------
 
 
+@_TASK2
 def test_otp_exchange_and_single_use(auth_env):
     app, c, tokens = auth_env
     db = app.state.db

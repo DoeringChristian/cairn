@@ -940,12 +940,13 @@ def token_list_cmd(repo: Path | None) -> None:
         if not rows:
             click.echo("(no tokens)")
             return
-        click.echo(f"{'NAME':<24} {'ROLE':<8} {'STATUS':<10} {'CREATED':<26} LAST_USED")
+        # No LAST_USED column: resolving a request never writes, so
+        # ``tokens.last_used_at`` is no longer maintained.
+        click.echo(f"{'NAME':<24} {'ROLE':<8} {'STATUS':<10} CREATED")
         for r in rows:
             status = "disabled" if r["disabled"] else ("expired" if r["expires_at"] and r["expires_at"] <= datetime.now(timezone.utc).isoformat() else "active")
             click.echo(
-                f"{r['name']:<24} {r['role']:<8} {status:<10} {r['created_at']:<26} "
-                f"{r['last_used_at'] or '-'}"
+                f"{r['name']:<24} {r['role']:<8} {status:<10} {r['created_at']}"
             )
     finally:
         db.close()

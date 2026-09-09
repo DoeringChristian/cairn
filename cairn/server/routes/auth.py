@@ -91,17 +91,14 @@ def session_info(request: Request) -> dict[str, Any]:
     not an error."""
     if not getattr(request.app.state, "auth_enabled", False):
         return {"authenticated": True, "auth_enabled": False, "name": None, "role": "admin"}
-    db = get_db(request)
-    session_id = request.cookies.get(auth.SESSION_COOKIE)
-    if session_id:
-        principal = auth.verify_session(db, session_id)
-        if principal is not None:
-            return {
-                "authenticated": True,
-                "auth_enabled": True,
-                "name": principal.name,
-                "role": principal.role,
-            }
+    principal = auth._principal_from_request(request)
+    if principal is not None:
+        return {
+            "authenticated": True,
+            "auth_enabled": True,
+            "name": principal.name,
+            "role": principal.role,
+        }
     return {"authenticated": False, "auth_enabled": True, "name": None, "role": None}
 
 

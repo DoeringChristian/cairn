@@ -1,13 +1,23 @@
-"""Authentication core: tokens, sessions, one-time login, SSH nonces.
+"""Authentication core: tokens, one-time login, SSH nonces.
 
-Design (see ``.superpowers/sdd/spec-auth.md``):
+Design (see ``.superpowers/sdd/spec-auth.md`` and
+``docs/superpowers/specs/2026-09-09-token-only-auth-design.md``):
 
-* Tokens are the foundation. Roles are coarse and hierarchical: ``read`` <
-  ``write`` < ``admin``. Plaintext tokens are shown exactly once, at
-  creation; only their sha256 hex digest is ever persisted.
-* Browsers authenticate via an HttpOnly session cookie (created from a
-  token via ``/api/auth/login``, or from a one-time login URL via
-  ``/api/auth/otp``). The SDK/CLI authenticate via ``Authorization: Bearer``.
+* Tokens are the foundation, and the *only* credential. Roles are coarse and
+  hierarchical: ``read`` < ``write`` < ``admin``. Plaintext tokens are shown
+  exactly once, at creation; only their sha256 hex digest is ever persisted.
+* One credential, two carriers, one read: a request presents the token either
+  as ``Authorization: Bearer <token>`` (SDK/CLI) or as the HttpOnly cookie
+  ``cairn_token=<token>`` (browser). The header wins when both are sent. Both
+  carriers resolve through :func:`verify_token`. There are no sessions.
+* **Resolving a request never writes.** Authentication is a pure read: hash,
+  look up, ``compare_digest``, check ``disabled``/``expires_at``. Nothing is
+  touched on the request path — no sliding session expiry, no ``last_used_at``
+  bookkeeping (the column stays in the schema but is never written). Every
+  write is an fsync on the single shared connection, so a write here would tax
+  every authenticated request.
+* Only the credential-*minting* paths write: ``create_token``, ``create_otp``,
+  ``create_nonce``, and the single-use consumption of an OTP/nonce.
 * Every secret lookup follows the same pattern: hash the presented secret,
   look it up by exact hash match, then re-verify with
   ``secrets.compare_digest`` before trusting the row — defense in depth
@@ -40,16 +50,19 @@ from .storage.db import Database
 ROLE_RANK: dict[str, int] = {"read": 0, "write": 1, "admin": 2}
 ROLES = tuple(ROLE_RANK)
 
-SESSION_COOKIE = "cairn_session"
-SESSION_TTL_DAYS = 30
-SESSION_TTL_SECONDS = SESSION_TTL_DAYS * 86400
+# The browser carries the token itself in this HttpOnly cookie.
+AUTH_COOKIE = "cairn_token"
+# Fallback cookie lifetime for a token with no ``expires_at`` (~13 months;
+# the practical ceiling browsers apply to a cookie's Max-Age).
+DEFAULT_COOKIE_MAX_AGE = 400 * 86400
 OTP_TTL_MINUTES = 15
 NONCE_TTL_MINUTES = 5
 
 
 @dataclass(frozen=True)
 class Principal:
-    """The authenticated identity behind a request (Bearer token or session)."""
+    """The authenticated identity behind a request (its token, from either
+    carrier)."""
 
     token_id: str
     name: str
@@ -135,20 +148,25 @@ def get_token(db: Database, ident: str) -> dict[str, Any] | None:
 
 
 def revoke_token(db: Database, ident: str) -> bool:
-    """Disable a token by id or name and drop any live sessions minted from
-    it. Returns False if no such token exists."""
+    """Disable a token by id or name. Every client holding it — header or
+    cookie — fails at its next request. Returns False if no such token
+    exists."""
     row = get_token(db, ident)
     if row is None:
         return False
     with db.transaction() as con:
         con.execute("UPDATE tokens SET disabled = 1 WHERE id = ?", [row["id"]])
-        con.execute("DELETE FROM sessions WHERE token_id = ?", [row["id"]])
     return True
 
 
-def verify_bearer_token(db: Database, plaintext: str) -> Principal | None:
-    """Validate an ``Authorization: Bearer`` token. Touches ``last_used_at``
-    on success (best-effort bookkeeping)."""
+def verify_token(db: Database, plaintext: str) -> Principal | None:
+    """Resolve a presented token to its principal, or ``None``.
+
+    Pure read — both carriers (``Authorization: Bearer`` and the
+    ``cairn_token`` cookie) land here and nothing is written. ``last_used_at``
+    is deliberately NOT touched: it would turn every authenticated request
+    into an fsync on the shared connection.
+    """
     if not plaintext:
         return None
     h = hash_secret(plaintext)
@@ -166,83 +184,50 @@ def verify_bearer_token(db: Database, plaintext: str) -> Principal | None:
         return None
     if expires_at and expires_at <= _now_iso():
         return None
-    db.write("UPDATE tokens SET last_used_at = ? WHERE id = ?", [_now_iso(), token_id])
     return Principal(token_id=token_id, name=name, role=role)
 
 
+#: Historical name, kept for the CLI access banner and the login route.
+verify_bearer_token = verify_token
+
+
+def cookie_max_age(db: Database, token_id: str) -> int:
+    """Cookie ``Max-Age`` for a token: its remaining lifetime, or the default
+    when it never expires. Always >= 1, so a token that is still valid never
+    hands the browser an already-expired cookie."""
+    row = db.read_one("SELECT expires_at FROM tokens WHERE id = ?", [token_id])
+    expires_at = row[0] if row else None
+    if not expires_at:
+        return DEFAULT_COOKIE_MAX_AGE
+    try:
+        expires = datetime.fromisoformat(expires_at)
+    except ValueError:
+        return DEFAULT_COOKIE_MAX_AGE
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    return max(1, int((expires - _now()).total_seconds()))
+
+
 # ---------------------------------------------------------------------------
-# Sessions (browser cookie)
+# Expiry housekeeping
 # ---------------------------------------------------------------------------
 
 
 def sweep_expired(db: Database) -> None:
-    """Opportunistic, bounded best-effort GC of expired sessions/otp/nonce
-    rows. Called from the (relatively rare) credential-minting paths so the
-    tables don't accumulate dead rows forever; a full periodic sweep is out
-    of scope. Never raises — housekeeping must not break the caller."""
+    """Opportunistic, bounded best-effort GC of expired otp/nonce rows.
+    Called from the (relatively rare) credential-minting paths so the tables
+    don't accumulate dead rows forever; a full periodic sweep is out of
+    scope. Never raises — housekeeping must not break the caller.
+
+    Deliberately NOT called from the request path: it writes.
+    """
     try:
         now = _now_iso()
         with db.transaction() as con:
-            con.execute("DELETE FROM sessions WHERE expires_at <= ?", [now])
             con.execute("DELETE FROM auth_otp WHERE expires_at <= ?", [now])
             con.execute("DELETE FROM auth_nonces WHERE expires_at <= ?", [now])
     except Exception:  # noqa: BLE001 - best-effort housekeeping
         pass
-
-
-def create_session(db: Database, token_id: str) -> str:
-    sweep_expired(db)
-    session_id = generate_secret(32)
-    now = _now_iso()
-    expires = _iso_in(SESSION_TTL_SECONDS)
-    db.write(
-        "INSERT INTO sessions (id, token_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
-        [session_id, token_id, now, expires],
-    )
-    return session_id
-
-
-def verify_session(db: Database, session_id: str) -> Principal | None:
-    """Validate a session cookie value and slide its expiry forward.
-
-    Enforces BOTH the session's own sliding expiry AND the backing token's
-    ``expires_at`` — otherwise a short-lived (``--expires``) token could be
-    exchanged for a session cookie that outlives it by up to
-    ``SESSION_TTL_DAYS``.
-    """
-    if not session_id:
-        return None
-    row = db.read_one(
-        """SELECT s.id, s.token_id, s.expires_at, t.name, t.role, t.disabled,
-                  t.expires_at
-           FROM sessions s JOIN tokens t ON t.id = s.token_id
-           WHERE s.id = ?""",
-        [session_id],
-    )
-    if row is None:
-        return None
-    sid, token_id, expires_at, name, role, disabled, token_expires_at = row
-    if not secrets_equal(sid, session_id):
-        return None
-    if disabled:
-        return None
-    now = _now_iso()
-    if expires_at <= now:
-        db.write("DELETE FROM sessions WHERE id = ?", [sid])
-        return None
-    # Backing token expiry (same check as verify_bearer_token). Drop the
-    # session too — the token that authorized it is no longer valid.
-    if token_expires_at and token_expires_at <= now:
-        db.write("DELETE FROM sessions WHERE id = ?", [sid])
-        return None
-    # Sliding expiry: extend on every successful use.
-    db.write("UPDATE sessions SET expires_at = ? WHERE id = ?", [_iso_in(SESSION_TTL_SECONDS), sid])
-    return Principal(token_id=token_id, name=name, role=role)
-
-
-def delete_session(db: Database, session_id: str) -> None:
-    if session_id:
-        db.write("DELETE FROM sessions WHERE id = ?", [session_id])
 
 
 # ---------------------------------------------------------------------------
@@ -251,6 +236,7 @@ def delete_session(db: Database, session_id: str) -> None:
 
 
 def create_otp(db: Database, token_id: str) -> str:
+    sweep_expired(db)
     otp = generate_secret(24)
     db.write(
         "INSERT INTO auth_otp (otp_hash, token_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
@@ -297,6 +283,7 @@ def consume_otp(db: Database, otp: str) -> Principal | None:
 
 
 def create_nonce(db: Database, namespace: str) -> str:
+    sweep_expired(db)
     nonce = generate_secret(24)
     db.write(
         "INSERT INTO auth_nonces (nonce_hash, namespace, created_at, expires_at) VALUES (?, ?, ?, ?)",
@@ -388,15 +375,15 @@ def find_authorized_key(dd: DataDir, keytype: str, keyblob: str) -> dict[str, st
 
 def _principal_from_request(request: Request) -> Principal | None:
     """Resolve the caller's identity from ``Authorization: Bearer`` (SDK/CLI)
-    or the session cookie (browser). Bearer takes priority when both are
-    present."""
+    or the ``cairn_token`` cookie (browser). Both carry the same credential;
+    the header wins when both are present. Never writes."""
     db: Database = request.app.state.db
     authz = request.headers.get("authorization")
     if authz and authz.lower().startswith("bearer "):
-        return verify_bearer_token(db, authz[7:].strip())
-    session_id = request.cookies.get(SESSION_COOKIE)
-    if session_id:
-        return verify_session(db, session_id)
+        return verify_token(db, authz[7:].strip())
+    cookie_token = request.cookies.get(AUTH_COOKIE)
+    if cookie_token:
+        return verify_token(db, cookie_token)
     return None
 
 

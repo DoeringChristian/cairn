@@ -116,3 +116,18 @@ def test_hash_context_accepts_json_string():
 def test_hash_context_handles_malformed_string():
     out = hash_context("not json at all")
     assert out != ""
+
+
+def test_sessions_table_is_dropped(conn):
+    conn.execute(
+        "CREATE TABLE sessions (id TEXT PRIMARY KEY, token_id TEXT NOT NULL, "
+        "created_at TEXT NOT NULL, expires_at TEXT NOT NULL)"
+    )
+    conn.execute("CREATE INDEX idx_sessions_token ON sessions(token_id)")
+    conn.commit()
+    apply_migrations(conn)
+    assert "sessions" not in _tables(conn)
+    assert "idx_sessions_token" not in {
+        r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")
+    }
+    assert "tokens" in _tables(conn)
