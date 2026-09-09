@@ -97,15 +97,19 @@ test("no session id falls back to a positional key", () => {
   }
 });
 
-test("an expanded comparison keeps its cells under its pane id", () => {
-  const cellIds = topologyOf(compareInput({ compareOperation: "split" }));
-  assert.ok(cellIds.length > 0);
-  for (const cell of cellIds) {
-    if (cell.startsWith("stack:")) continue;
-    assert.ok(
-      paneIds(BINDINGS).some((id) => cell.startsWith(`cell:root/${id}`)),
-      `session cell ${cell} is not under a pane id`,
-    );
+test("a two-operand compare node is one cell, under its own pane id", () => {
+  // Every compare node this card builds has exactly two operands (a reference
+  // and one foreground), which cairn-plot renders as a single pane rather than
+  // expanding into a `<path>/comparison/<childId>` sub-grid. The multi-output
+  // expansion path needs the image plot definition registered (`planComparison`
+  // → `requirePlotType`), which the bare node runner cannot load, so it is
+  // cairn-plot's own `session-topology.test.ts` that covers it.
+  const ids = paneIds(BINDINGS);
+  for (const operation of ["split", "absolute"]) {
+    const cellIds = topologyOf(compareInput({ compareOperation: operation }));
+    const cells = cellIds.filter((cell) => cell.startsWith("cell:"));
+    assert.equal(cells.length, ids.length);
+    assert.deepEqual(cells.sort(), ids.map((id) => `cell:root/${id}`).sort());
   }
 });
 
@@ -135,8 +139,10 @@ test("the card never authors a session id itself", () => {
   for (const write of ["session.cells[", "session.grids["]) {
     assert.ok(!source.includes(write), `CairnPlotCard writes ${write}…`);
   }
+  // ...and that it seeds the persisted settings per cell, rather than through a
+  // one-shot boolean that leaves every later pane on the plot's defaults.
   assert.ok(
-    source.includes("patchSettings"),
-    "persisted settings must be applied through patchSettings",
+    source.includes("seededCellIdsRef") && source.includes("nextSeedBatch("),
+    "persisted settings must be seeded per session cell",
   );
 });

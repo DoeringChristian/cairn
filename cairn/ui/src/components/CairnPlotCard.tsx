@@ -17,7 +17,8 @@ import CardShell from "./CardShell";
 import type { BaseCardSettings } from "./card-kit";
 import { seriesLabel } from "./card-kit/series-identity";
 import { useRunInfo } from "./card-kit/use-run-info";
-import { buildPlotSpec } from "./card-kit/build-plot-spec";
+import { buildPlotSpec, seriesKey } from "./card-kit/build-plot-spec";
+import { forgetDepartedCells, nextSeedBatch } from "./card-kit/seed-cell-settings";
 import { useStepSlider } from "./card-kit/use-step-slider";
 import { useOverlaySlot } from "./card-kit/use-overlay-slot";
 import StepSlider from "./StepSlider";
@@ -170,10 +171,12 @@ export default function CairnPlotCard({
   const cardRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<MountedPlot | null>(null);
   const latestSessionRef = useRef<PlotSession | null>(null);
-  // Cleared for every freshly mounted host: its cells register with default
-  // settings, and the persisted ones are patched in on the first session
-  // notification (see handleSessionChange).
-  const persistedSettingsAppliedRef = useRef(false);
+  // Session cells that have already received the persisted settings. Cleared
+  // for every freshly mounted host: its cells register with the plot's defaults.
+  // Not a boolean — cells appear over time (a comparison binding adds panes, a
+  // run's pane appears with its first artifact, the first spec may have no
+  // children at all), and each one needs the patch exactly once.
+  const seededCellIdsRef = useRef<Set<string>>(new Set());
   const persistTimerRef = useRef<number | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const settingsSlot = useOverlaySlot(settingsOpen);
@@ -230,7 +233,7 @@ export default function CairnPlotCard({
         context_hash: item.context_hash,
       })),
     ].filter((item) => {
-      const key = `${item.runId}:${item.name}:${item.context_hash}`;
+      const key = seriesKey({ runId: item.runId, name: item.name, contextHash: item.context_hash });
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
@@ -250,6 +253,10 @@ export default function CairnPlotCard({
   const selectedCompareOperation = settings.comparisonPresentation === "split"
     ? "split"
     : settings.comparisonOperation ?? "absolute";
+  // Read from the session-change callback, which must not take a new identity
+  // every time the operation changes (it is a prop of the memoised host).
+  const selectedCompareOperationRef = useRef(selectedCompareOperation);
+  selectedCompareOperationRef.current = selectedCompareOperation;
   const referenceBindings = useMemo(() => {
     if (metric.object_type !== "image" || !comparisonMetric) return [];
     // References are always local to each foreground run. The selected tag
@@ -332,22 +339,26 @@ export default function CairnPlotCard({
 
   const handleSessionChange = useCallback((session: PlotSession) => {
     latestSessionRef.current = session;
-    if (!persistedSettingsAppliedRef.current) {
-      persistedSettingsAppliedRef.current = true;
-      // The session ids are derived by cairn-plot from node identity
-      // (`cell:root/<child id>`, and one level deeper for an expanded compare),
-      // so a host can never author them from the outside — an authored session
-      // is pruned on `setTopology` and the saved settings are lost. Patch them
-      // in instead: `patchSettings` fans over the compiled topology, i.e. over
-      // exactly the cells that just registered.
-      const saved = persistedPlotSettingsRef.current;
-      if (saved && Object.keys(saved).length > 0) {
-        plotRef.current?.patchSettings(saved);
-        // That patch notifies synchronously; this notification still carries
-        // the cells' defaults, and writing it back would erase what was saved.
-        return;
-      }
+    // The session ids are derived by cairn-plot from node identity
+    // (`cell:root/<child id>`, and one level deeper for an expanded compare),
+    // so a host can never author them from the outside — an authored session is
+    // pruned on `setTopology` and the saved settings are lost. Patch them in
+    // instead: `patchSettings` fans over the compiled topology, i.e. over the
+    // cells that exist right now.
+    const cellIds = Object.keys(session.cells);
+    forgetDepartedCells(seededCellIdsRef.current, cellIds);
+    const saved = persistedPlotSettingsRef.current;
+    const pending = nextSeedBatch(cellIds, seededCellIdsRef.current);
+    if (pending.length > 0 && saved && Object.keys(saved).length > 0) {
+      for (const id of pending) seededCellIdsRef.current.add(id);
+      plotRef.current?.patchSettings(saved);
+      // The patch notifies on the NEXT MICROTASK (the controller coalesces its
+      // notifications), and that notification is the one carrying the seeded
+      // settings. This one still holds the cells' defaults, so writing it back
+      // would erase what was saved.
+      return;
     }
+
     const next = firstCellSettings(session);
     if (JSON.stringify(next) !== JSON.stringify(livePlotSettingsRef.current)) {
       livePlotSettingsRef.current = next;
@@ -356,7 +367,14 @@ export default function CairnPlotCard({
     if (JSON.stringify(next) !== JSON.stringify(persistedPlotSettingsRef.current)) {
       schedulePlotSettingsPersist(next);
     }
-  }, [schedulePlotSettingsPersist]);
+    // A pane can author the comparison operation itself (its own compare
+    // control). Mirror it back into the card so the settings dropdown never
+    // disagrees with what the panes are actually showing.
+    const paneOperation = next["compare.operation"];
+    if (typeof paneOperation === "string" && paneOperation !== selectedCompareOperationRef.current) {
+      updateSettings({ comparisonOperation: paneOperation, comparisonPresentation: undefined });
+    }
+  }, [schedulePlotSettingsPersist, updateSettings]);
 
   const patchPlotSettings = useCallback((patch: PlotSettingValues) => {
     const next = applySettingsPatch(livePlotSettingsRef.current, patch);
@@ -435,9 +453,9 @@ export default function CairnPlotCard({
       className="h-full min-h-0 min-w-0 overflow-hidden"
       onMount={(mounted) => {
         plotRef.current = mounted;
-        // A new host means new cells with default settings; re-apply the
-        // persisted ones on its first session notification.
-        persistedSettingsAppliedRef.current = false;
+        // A new host means new cells with default settings; every one of them
+        // has to be seeded again.
+        seededCellIdsRef.current = new Set();
       }}
       onSessionChange={handleSessionChange}
     />

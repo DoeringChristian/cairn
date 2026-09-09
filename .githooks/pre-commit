@@ -13,9 +13,14 @@
 
 if git diff --cached --name-only | grep -qE '^(cairn/ui/src/|vendor/cairn-plot($|/))'; then
     echo "UI source or vendored cairn-plot changed — rebuilding dist..."
-    (cd cairn/ui && npx vite build) >/dev/null 2>&1
+    # Captured rather than streamed (a green build is 40 lines of chunk sizes),
+    # but a failure is useless without it — print the whole log before bailing.
+    build_log=$( (cd cairn/ui && npx vite build) 2>&1 )
     if [ $? -ne 0 ]; then
-        echo "ERROR: vite build failed. Fix build errors before committing."
+        echo "ERROR: vite build failed. Fix build errors before committing." >&2
+        echo "--- vite output ---" >&2
+        printf '%s\n' "$build_log" >&2
+        echo "--- end vite output ---" >&2
         exit 1
     fi
     git add cairn/ui/dist/

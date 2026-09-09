@@ -85,8 +85,11 @@ function latestArtifact(points: readonly SequencePoint[]): SequencePoint | undef
   return undefined;
 }
 
-/** The one spelling of a series' identity, shared by pane ids and scalar keys. */
-function seriesKey(binding: SeriesBinding | undefined): string {
+/**
+ * The one spelling of a series' identity — pane ids, scalar series keys, and
+ * the card's own de-duplication of its binding list.
+ */
+export function seriesKey(binding: SeriesBinding | undefined): string {
   return `${binding?.runId}:${binding?.name}:${binding?.contextHash}`;
 }
 
