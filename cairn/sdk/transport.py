@@ -20,6 +20,25 @@ from .wal import WriteAheadLog
 
 log = logging.getLogger(__name__)
 
+
+def _quiet_http_client_logs() -> None:
+    """Keep httpx's per-request INFO lines out of the training log.
+
+    httpx logs "HTTP Request: POST …/batch" for every flush and every artifact
+    HEAD probe, which swamps a sweep's own output as soon as the application
+    enables INFO logging. Raise the client loggers to WARNING, but only when
+    the user has not configured them explicitly (level still NOTSET), so
+    `logging.getLogger("httpx").setLevel(logging.INFO)` keeps working for
+    debugging.
+    """
+    for name in ("httpx", "httpcore"):
+        client_log = logging.getLogger(name)
+        if client_log.level == logging.NOTSET:
+            client_log.setLevel(logging.WARNING)
+
+
+_quiet_http_client_logs()
+
 T = TypeVar("T")
 
 DEFAULT_MAX_RETRIES = 5

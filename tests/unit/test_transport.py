@@ -183,3 +183,26 @@ def test_drain_spill_specific_run(transport, tmp_path):
     assert t.drain_spill("a") == 1
     assert not (tmp_path / "spill" / "a").exists()
     assert (tmp_path / "spill" / "b" / "x.json").exists()
+
+
+def test_httpx_request_lines_are_silenced_unless_configured(caplog):
+    import importlib
+    import logging
+
+    from cairn.sdk import transport as transport_mod
+
+    for name in ("httpx", "httpcore"):
+        logging.getLogger(name).setLevel(logging.NOTSET)
+    importlib.reload(transport_mod)
+    assert logging.getLogger("httpx").level == logging.WARNING
+    assert logging.getLogger("httpcore").level == logging.WARNING
+    with caplog.at_level(logging.INFO):
+        logging.getLogger("httpx").info("HTTP Request: POST http://x/batch")
+    assert "HTTP Request" not in caplog.text
+
+    # An explicit user setting is respected on the next import.
+    logging.getLogger("httpx").setLevel(logging.INFO)
+    importlib.reload(transport_mod)
+    assert logging.getLogger("httpx").level == logging.INFO
+    logging.getLogger("httpx").setLevel(logging.NOTSET)
+    logging.getLogger("httpcore").setLevel(logging.NOTSET)
