@@ -2,11 +2,28 @@ import { useCallback, useLayoutEffect, useState, type CSSProperties } from "reac
 
 interface Rect { top: number; left: number; width: number; height: number }
 
+/**
+ * One above `CardDetailModal`'s `z-50` container, so the promoted content
+ * paints over the modal's backdrop and inside its reserved slot. Keep the two
+ * in step if either changes.
+ */
+const ABOVE_CARD_MODAL_Z = 60;
+
 export interface OverlaySlot {
   /** Ref for the empty box inside the overlay that reserves the content's area. */
   slotRef: (node: HTMLDivElement | null) => void;
   /** Style for the content box: `undefined` while closed, a fixed rect while open. */
   style: CSSProperties | undefined;
+}
+
+function readRect(node: HTMLElement): Rect {
+  const box = node.getBoundingClientRect();
+  return { top: box.top, left: box.left, width: box.width, height: box.height };
+}
+
+function sameRect(a: Rect | null, b: Rect): boolean {
+  return a !== null && a.top === b.top && a.left === b.left
+    && a.width === b.width && a.height === b.height;
 }
 
 /**
@@ -19,13 +36,32 @@ export interface OverlaySlot {
  * where it is and only its *style* changes: the overlay renders an empty slot,
  * this hook measures it, and the content is positioned `fixed` over that rect.
  *
- * The rect is measured in a layout effect on the same commit that mounts the
- * slot, so the promotion happens before the browser paints.
+ * The first measurement happens in the ref callback, i.e. during the commit
+ * that inserts the slot and before any layout effect, so no 0×0 or unpositioned
+ * frame is ever painted. It is then re-measured from this hook's layout effect
+ * (which runs after the overlay's own layout effects, e.g. the body-scroll lock
+ * in `use-modal-behavior`, so it sees the post-lock viewport) and afterwards on
+ * `ResizeObserver`, `resize`, and capture-phase `scroll` — the last one because
+ * a scroll in any ancestor scroller moves the slot without resizing it.
+ *
+ * CONSTRAINT: no ancestor of the promoted content may establish a containing
+ * block for `position: fixed` — that is, none of them may set `transform`,
+ * `perspective`, `filter`, `backdrop-filter`, `contain: paint/layout/strict`, or
+ * `will-change` on any of those. The rect this hook produces is viewport-
+ * relative; under such an ancestor the content would be positioned against that
+ * ancestor's box instead and land in the wrong place. (Verified for the card
+ * chain and `index.css` when this was written.)
  */
 export function useOverlaySlot(open: boolean): OverlaySlot {
   const [slot, setSlot] = useState<HTMLElement | null>(null);
   const [rect, setRect] = useState<Rect | null>(null);
-  const slotRef = useCallback((node: HTMLDivElement | null) => setSlot(node), []);
+
+  const slotRef = useCallback((node: HTMLDivElement | null) => {
+    // Measure before the state update that re-renders with the fixed style, so
+    // the promoted box is already positioned on its very first painted frame.
+    setRect(node ? readRect(node) : null);
+    setSlot(node);
+  }, []);
 
   useLayoutEffect(() => {
     if (!open || !slot) {
@@ -33,30 +69,45 @@ export function useOverlaySlot(open: boolean): OverlaySlot {
       return;
     }
     const measure = (): void => {
-      const box = slot.getBoundingClientRect();
-      setRect((prev) => (prev
-        && prev.top === box.top && prev.left === box.left
-        && prev.width === box.width && prev.height === box.height)
-        ? prev
-        : { top: box.top, left: box.left, width: box.width, height: box.height });
+      const box = readRect(slot);
+      setRect((prev) => (sameRect(prev, box) ? prev : box));
     };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(slot);
     window.addEventListener("resize", measure);
+    // Capture phase: scroll does not bubble from an inner scroller.
+    window.addEventListener("scroll", measure, true);
     return () => {
       observer.disconnect();
       window.removeEventListener("resize", measure);
+      window.removeEventListener("scroll", measure, true);
     };
   }, [open, slot]);
 
   const style: CSSProperties | undefined = !open
     ? undefined
     : rect
-      ? { position: "fixed", top: rect.top, left: rect.left, width: rect.width, height: rect.height, zIndex: 60 }
-      // The slot has not been measured yet (it mounts in this same commit).
-      // Stay hidden for that beat instead of flashing at the in-card position.
-      : { position: "fixed", top: 0, left: 0, width: 0, height: 0, zIndex: 60, visibility: "hidden" };
+      ? {
+        position: "fixed",
+        top: rect.top,
+        left: rect.left,
+        width: rect.width,
+        height: rect.height,
+        zIndex: ABOVE_CARD_MODAL_Z,
+      }
+      // Defensive: the slot is measured in its own ref callback, so this only
+      // covers a commit where the overlay is open but the slot is not mounted.
+      // Stay hidden rather than flashing at the in-card position.
+      : {
+        position: "fixed",
+        top: 0,
+        left: 0,
+        width: 0,
+        height: 0,
+        zIndex: ABOVE_CARD_MODAL_Z,
+        visibility: "hidden",
+      };
 
   return { slotRef, style };
 }

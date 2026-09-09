@@ -5,21 +5,33 @@ export interface SteppedPoint {
   step: number;
 }
 
+export interface ResolveAtStepOptions {
+  /**
+   * Fall back to the smallest point *above* `step` when the run has nothing at
+   * or below it. Opt-in: it is what keeps a comparison pane on screen for a run
+   * whose first artifact lands later than its neighbours', but cards that treat
+   * "nothing logged yet at this step" as a real, displayable state
+   * (VideoPlayerCard, FigureInteractiveCard) must keep seeing `null`.
+   */
+  nearest?: boolean;
+}
+
 /**
- * Nearest point to `step`: the largest point with `point.step <= step`, and —
- * when the run only starts logging after `step` — the smallest point above it.
- * `null` only when the run has no points at all.
+ * Largest point with `point.step <= step`; `null` when none qualifies.
  *
- * Nearest (rather than "largest ≤ step, else null") is what keeps a pane on
- * screen for a run whose first artifact lands later than another run's. Callers
- * used to paper over the null with `?? points[0]`, which is exactly the point
- * this now returns for a below-first step; the callers that did not paper over
- * it dropped the pane out of the grid instead.
+ * With `{ nearest: true }` a run that only starts logging above `step` resolves
+ * to its first point instead, so `null` then means only "this run has no points
+ * at all".
  *
  * Assumes `points` are sorted ascending by step (as returned by the sequence
- * API). The scan short-circuits once it passes `step`.
+ * API). The scan short-circuits once it passes `step`, so callers relying on
+ * that ordering keep their previous behavior.
  */
-export function resolveAtStep<T extends SteppedPoint>(points: T[], step: number): T | null {
+export function resolveAtStep<T extends SteppedPoint>(
+  points: T[],
+  step: number,
+  options?: ResolveAtStepOptions,
+): T | null {
   let best: T | null = null;
   for (const p of points) {
     if (p.step <= step) {
@@ -27,7 +39,7 @@ export function resolveAtStep<T extends SteppedPoint>(points: T[], step: number)
       continue;
     }
     // First point above `step`; with ascending input it is the smallest one.
-    if (best === null) return p;
+    if (best === null && options?.nearest) return p;
     break;
   }
   return best;

@@ -5,6 +5,9 @@ import type { SequencePoint } from "../../api/types";
 
 const COLORS = ["#60a5fa", "#f59e0b", "#34d399"] as const;
 
+const ID_A = "runA:render:ctx";
+const ID_B = "runB:render:ctx";
+
 function point(step: number, hash: string): SequencePoint {
   return {
     step,
@@ -54,6 +57,11 @@ function children(input: BuildPlotSpecInput): IdentifiedPlotNode[] {
   return (spec.root as { kind: "grid"; children: IdentifiedPlotNode[] }).children;
 }
 
+function dataOf(node: IdentifiedPlotNode): { kind: string; hash?: string | null } {
+  assert.equal(node.kind, "plot");
+  return (node as { data: { kind: string; hash?: string | null } }).data;
+}
+
 const REFERENCE_POINTS = [
   [point(0, "ra0"), point(10, "ra10")],
   [point(0, "rb0"), point(10, "rb10")],
@@ -67,13 +75,16 @@ function compareInput(overrides: Partial<BuildPlotSpecInput> = {}): BuildPlotSpe
   });
 }
 
-test("compare panes hold the previous frame while the next step resolves", () => {
+test("compare panes ask to hold the previous frame while the next step resolves", () => {
   const nodes = children(compareInput());
   assert.equal(nodes.length, 2);
   for (const node of nodes) {
     assert.equal(node.kind, "compare");
-    // H3: this was set only on the plain-image branch, so compare panes blanked
-    // to "Loading…" on every step change.
+    // H3: the flag was set only on the plain-image branch, which the comparison
+    // branch returned before reaching. cairn-plot currently drops it for compare
+    // nodes (comparison-plan allowlist + the `!diffSpec` gate in host-adapter);
+    // the runtime honouring it lands with the next cairn-plot bump. Emitting it
+    // is this side's half of the contract.
     assert.equal(node.props?.holdPreviousWhileLoading, true);
   }
 });
@@ -84,19 +95,20 @@ test("plain image panes keep the hold flag", () => {
   }
 });
 
-test("every child carries a stable id equal to its run id", () => {
-  assert.deepEqual(children(imageInput()).map((n) => n.id), ["runA", "runB"]);
-  assert.deepEqual(children(compareInput()).map((n) => n.id), ["runA", "runB"]);
+test("every child carries the full series key as its id", () => {
+  assert.deepEqual(children(imageInput()).map((n) => n.id), [ID_A, ID_B]);
+  assert.deepEqual(children(compareInput()).map((n) => n.id), [ID_A, ID_B]);
 });
 
-test("two series of the same run get distinct ids", () => {
-  const bindings = [
-    { runId: "runA", name: "render", contextHash: "ctx" },
-    { runId: "runA", name: "albedo", contextHash: "ctx" },
-    { runId: "runB", name: "render", contextHash: "ctx" },
-  ];
-  assert.deepEqual(paneIds(bindings), ["runA:render:ctx", "runA:albedo:ctx", "runB"]);
-  assert.equal(new Set(paneIds(bindings)).size, 3);
+test("paneIds is the full series key, unconditionally and stably", () => {
+  const solo = [{ runId: "runA", name: "render", contextHash: "ctx" }];
+  // Unique even for one binding, and unchanged when siblings are added — a key
+  // that only disambiguated on collision would re-key this pane below.
+  assert.deepEqual(paneIds(solo), [ID_A]);
+  const withSibling = [...solo, { runId: "runA", name: "albedo", contextHash: "ctx" }];
+  assert.deepEqual(paneIds(withSibling), [ID_A, "runA:albedo:ctx"]);
+  assert.equal(paneIds(withSibling)[0], paneIds(solo)[0]);
+  assert.equal(new Set(paneIds(withSibling)).size, 2);
 });
 
 test("a run whose first artifact is above the step keeps its pane", () => {
@@ -114,17 +126,35 @@ test("a run whose first artifact is above the step keeps its pane", () => {
   });
   const nodes = children(input);
   // H6: this pane used to be dropped out of the grid entirely.
-  assert.deepEqual(nodes.map((n) => n.id), ["runA", "runB"]);
+  assert.deepEqual(nodes.map((n) => n.id), [ID_A, ID_B]);
   assert.equal(nodes[1]!.kind, "compare");
 });
 
-test("a run with no points at all stays out of the grid without nulling the card", () => {
+test("a run with no artifact at all still gets an unavailable pane", () => {
+  // F3: one child per binding, always — a missing artifact holds its cell with
+  // a null hash, which cairn-plot renders as "Image unavailable".
   const input = imageInput({
     artifactPoints: [[point(0, "a0"), point(10, "a10")], []],
     seriesPoints: [[point(0, "a0"), point(10, "a10")], []],
   });
   const nodes = children(input);
-  assert.deepEqual(nodes.map((n) => n.id), ["runA"]);
+  assert.deepEqual(nodes.map((n) => n.id), [ID_A, ID_B]);
+  assert.deepEqual(dataOf(nodes[1]!), { kind: "image", hash: null });
+  assert.equal(nodes[1]!.props?.holdPreviousWhileLoading, true);
+  assert.equal(nodes[1]!.props?.label, "run B");
+});
+
+test("the child count always equals the binding count", () => {
+  const cases: BuildPlotSpecInput[] = [
+    imageInput(),
+    compareInput(),
+    imageInput({ artifactPoints: [[], []], seriesPoints: [[point(0, "a0")], []] }),
+    compareInput({ referenceArtifactPoints: [[], []] }),
+    compareInput({ artifactPoints: [[point(0, "a0")], []], seriesPoints: [[point(0, "a0")], []] }),
+  ];
+  for (const input of cases) {
+    assert.equal(children(input).length, input.bindings.length);
+  }
 });
 
 test("the spec is built while one run is still loading", () => {
@@ -135,17 +165,22 @@ test("the spec is built while one run is still loading", () => {
     artifactPoints: [[point(0, "a0"), point(10, "a10")], []],
     seriesPoints: [[point(0, "a0"), point(10, "a10")], []],
   });
-  const spec = buildPlotSpec(input);
-  assert.ok(spec, "expected a spec while one run loads");
-  assert.deepEqual(children(input).map((n) => n.id), ["runA"]);
+  const nodes = children(input);
+  assert.deepEqual(nodes.map((n) => n.id), [ID_A, ID_B]);
+  assert.deepEqual(dataOf(nodes[0]!), {
+    kind: "image", hash: "a10", metadata: null, format: "exr",
+  } as never);
+  assert.equal(dataOf(nodes[1]!).hash, null);
 });
 
 test("a compare pane whose reference has not arrived falls back to the plain image", () => {
   const input = compareInput({ anyLoading: true, referenceArtifactPoints: [[], []] });
   const nodes = children(input);
-  assert.deepEqual(nodes.map((n) => n.id), ["runA", "runB"]);
+  assert.deepEqual(nodes.map((n) => n.id), [ID_A, ID_B]);
   for (const node of nodes) {
     assert.equal(node.kind, "plot");
+    assert.equal(dataOf(node).kind, "image");
+    assert.notEqual(dataOf(node).hash, null);
     assert.equal(node.props?.holdPreviousWhileLoading, true);
   }
 });
@@ -159,14 +194,29 @@ test("nothing at all while loading still yields the loading placeholder", () => 
   assert.equal(spec, null);
 });
 
-test("the pane that is itself the reference is not compared against itself", () => {
+test("nothing at all once settled yields unavailable panes, not a null card", () => {
+  const nodes = children(imageInput({
+    anyLoading: false,
+    artifactPoints: [[], []],
+    seriesPoints: [[], []],
+  }));
+  assert.equal(nodes.length, 2);
+  for (const node of nodes) assert.equal(dataOf(node).hash, null);
+});
+
+test("the pane that is itself the reference shows its own image, and keeps its cell", () => {
   const input = compareInput({
     bindings: [
       { runId: "runA", name: "render", contextHash: "ctx" },
       { runId: "runB", name: "target", contextHash: "ctxRef" },
     ],
   });
-  assert.deepEqual(children(input).map((n) => n.id), ["runA"]);
+  const nodes = children(input);
+  assert.equal(nodes.length, 2);
+  assert.equal(nodes[0]!.kind, "compare");
+  // Never compared against itself, but no longer dropped from the grid either.
+  assert.equal(nodes[1]!.kind, "plot");
+  assert.equal(dataOf(nodes[1]!).hash, "b10");
 });
 
 test("compare nodes carry the selected operation and presentation", () => {
@@ -180,6 +230,18 @@ test("compare nodes carry the selected operation and presentation", () => {
   assert.equal(flip.settings?.["compare.operation"], "flip");
 });
 
+test("a 3D run with no artifact gets a null-hash npz pane", () => {
+  const nodes = children(imageInput({
+    objectType: "pointcloud",
+    artifactPoints: [[], []],
+    seriesPoints: [[point(0, "a0")], []],
+  }));
+  assert.equal(nodes.length, 2);
+  assert.deepEqual(dataOf(nodes[1]!), {
+    kind: "npz", hash: null, objectType: "pointcloud", meta: {},
+  } as never);
+});
+
 test("the scalar branch still builds one grid child with an id", () => {
   const spec = buildPlotSpec(imageInput({
     objectType: "scalar",
@@ -188,5 +250,5 @@ test("the scalar branch still builds one grid child with an id", () => {
   assert.ok(spec);
   const nodes = (spec.root as { children: IdentifiedPlotNode[] }).children;
   assert.equal(nodes.length, 1);
-  assert.equal(nodes[0]!.id, "runA");
+  assert.equal(nodes[0]!.id, ID_A);
 });

@@ -7,15 +7,19 @@ import { resolveAtStep } from "./resolve-at-step.ts";
  * Pure authored-spec construction for `CairnPlotCard`.
  *
  * It lives outside the `.tsx` card on purpose: `node --experimental-strip-types
- * --test` cannot load `.tsx`, and the rules this module encodes (never drop a
- * pane that has data, never null the whole card while one run is still
- * loading, hold the previous frame in compare panes) are exactly the ones that
- * need regression tests.
+ * --test` cannot load `.tsx`, and the rules this module encodes (one child per
+ * binding, always; stable pane ids; never null the whole card while one run is
+ * still loading; hold the previous frame in compare panes) are exactly the ones
+ * that need regression tests.
  */
 
-/** cairn-plot's spec has no `id` field; the runtime passes it through and the
- *  grid keys cells by it, so a pane keeps its component identity when siblings
- *  appear, disappear or reorder. */
+/**
+ * cairn-plot's grid keys its cells by `child.id`, so a pane keeps its component
+ * identity (and its decoded texture) when siblings appear, disappear or
+ * reorder. `id?: string` landed on the spec in cairn-plot 30b1ffa; the
+ * intersection keeps this module compiling against the vendored revision until
+ * the submodule bump, and is a no-op afterwards.
+ */
 export type IdentifiedPlotNode = PlotNode & { id?: string };
 
 export interface SeriesBinding {
@@ -66,7 +70,7 @@ function metadata(point: SequencePoint): Record<string, string | number | boolea
   }
 }
 
-export function visualData(type: string, point: SequencePoint): DataSpec | null {
+function visualData(type: string, point: SequencePoint): DataSpec | null {
   const hash = point.artifact_hash;
   if (!hash) return null;
   if (type === "image") {
@@ -83,7 +87,7 @@ export function visualData(type: string, point: SequencePoint): DataSpec | null 
   return null;
 }
 
-export function latestArtifact(points: readonly SequencePoint[]): SequencePoint | undefined {
+function latestArtifact(points: readonly SequencePoint[]): SequencePoint | undefined {
   for (let index = points.length - 1; index >= 0; index--) {
     if (points[index]?.artifact_hash) return points[index];
   }
@@ -91,20 +95,28 @@ export function latestArtifact(points: readonly SequencePoint[]): SequencePoint 
 }
 
 /**
- * Stable per-pane ids. A pane is a run, so the id is the run id; a card that
- * shows two series of the *same* run would otherwise collide, so those (and
- * only those) fall back to the full series key. The disambiguation reads the
- * whole binding list, never the surviving children, so an id does not change
- * when a sibling pane appears or disappears.
+ * Stable per-pane ids. The full series key, unconditionally: it is unique even
+ * when one run contributes several series to a card, and — unlike a key that
+ * only disambiguates on collision — it does not change when a sibling series is
+ * added or removed. cairn-plot keys grid cells by this, so a stable value is
+ * what stops a pane from being torn down and rebuilt.
  */
 export function paneIds(bindings: readonly SeriesBinding[]): string[] {
-  const counts = new Map<string, number>();
-  for (const binding of bindings) {
-    counts.set(binding.runId, (counts.get(binding.runId) ?? 0) + 1);
+  return bindings.map((b) => `${b.runId}:${b.name}:${b.contextHash}`);
+}
+
+/**
+ * The "nothing to show for this binding" pane. cairn-plot's spec declares
+ * `hash: string | null` and renders a null hash as "Image unavailable", so a
+ * binding with no artifact at the selected step still occupies its grid cell
+ * instead of collapsing the layout and re-keying every neighbour.
+ */
+function placeholderData(objectType: string): DataSpec | null {
+  if (objectType === "image") return { kind: "image", hash: null };
+  if (objectType === "pointcloud" || objectType === "mesh" || objectType === "volume" || objectType === "boxes3d") {
+    return { kind: "npz", hash: null, objectType, meta: {} };
   }
-  return bindings.map((binding) => (counts.get(binding.runId) ?? 0) > 1
-    ? `${binding.runId}:${binding.name}:${binding.contextHash}`
-    : binding.runId);
+  return null;
 }
 
 function gridSpec(children: IdentifiedPlotNode[], input: BuildPlotSpecInput): PlotSpec {
@@ -169,9 +181,12 @@ function buildScalarSpec(input: BuildPlotSpecInput, ids: string[]): PlotSpec {
 
 /**
  * Build the authored spec, or `null` when there is genuinely nothing to show
- * yet (no run has delivered a single point). A run that is still loading while
- * another already has data is simply absent from the grid — the card must not
- * unmount the whole plot host underneath the runs that do have data.
+ * yet (no run has delivered a single point, and something is still loading).
+ *
+ * Every binding always produces exactly one child — a binding whose run has no
+ * artifact at the selected step gets an explicit unavailable pane rather than
+ * disappearing. The grid layout is therefore a pure function of the binding
+ * list, so panes never reflow or re-key as data arrives.
  */
 export function buildPlotSpec(input: BuildPlotSpecInput): PlotSpec | null {
   const ids = paneIds(input.bindings);
@@ -182,66 +197,75 @@ export function buildPlotSpec(input: BuildPlotSpecInput): PlotSpec | null {
 
   const isImage = input.objectType === "image";
   const children = input.bindings.flatMap<IdentifiedPlotNode>((binding, index) => {
-    const id = ids[index] ?? binding.runId;
+    const id = ids[index] ?? `${binding.runId}:${binding.name}:${binding.contextHash}`;
+    const label = input.labels[index] ?? input.metricName;
     const point = isImage
       // Nearest, not "≤ step or nothing": a run whose first artifact lands
-      // after the slider position keeps its pane instead of vanishing.
-      ? resolveAtStep(input.artifactPoints[index] ?? [], input.currentStep)
+      // after the slider position keeps showing its earliest frame.
+      ? resolveAtStep(input.artifactPoints[index] ?? [], input.currentStep, { nearest: true })
       : latestArtifact(input.seriesPoints[index] ?? []);
-    // `null` here means the run has no artifact at all (still loading, or
-    // never logged one). cairn-plot's spec has no message/placeholder node
-    // kind, so such a run stays out of the grid — but it never nulls the card.
-    if (!point) return [];
-    const data = visualData(input.objectType, point);
-    if (!data) return [];
+    const data = point ? visualData(input.objectType, point) : null;
 
-    if (isImage && input.comparison) {
-      const item = input.bindings[index];
-      const isReferencePane = item?.name === input.comparison.name &&
-        item.contextHash === input.comparison.contextHash;
-      // A pane cannot be compared against itself.
-      if (isReferencePane) return [];
-      // Resolve the selected reference tag independently inside this pane's
-      // run. There is deliberately no global run reference.
-      const referencePoint = resolveAtStep(
-        input.referenceArtifactPoints[index] ?? [],
-        input.referenceStep ?? input.currentStep,
-      );
-      const referenceData = referencePoint ? visualData("image", referencePoint) : null;
-      if (referenceData) {
-        return [{
-          kind: "compare",
-          id,
-          type: "image",
-          presentation: input.compareOperation === "split" ? "split" : "difference",
-          operands: [referenceData, data],
-          strategy: "reference",
-          referenceIndex: 0,
-          settings: { "compare.operation": input.compareOperation },
-          props: {
-            labelA: `${input.comparison.name} · reference`,
-            labelB: input.labels[index] ?? input.metricName,
-            // Compare panes must keep the frame they already painted while the
-            // next step resolves, exactly like the plain image panes below.
-            holdPreviousWhileLoading: true,
-          },
-        }];
-      }
-      // The reference operand has not arrived (or this run never logged it).
-      // Fall through to the plain image pane rather than dropping the run.
-    }
-
-    const props = {
-      ...(input.showLabels ? { label: input.labels[index] ?? input.metricName } : {}),
+    const imageProps = {
+      ...(input.showLabels ? { label } : {}),
       ...(isImage ? { holdPreviousWhileLoading: true } : {}),
     };
-    return [{
+    const plotNode = (nodeData: DataSpec): IdentifiedPlotNode => ({
       kind: "plot",
       id,
       type: input.objectType,
-      data,
-      ...(Object.keys(props).length > 0 ? { props } : {}),
-    }];
+      data: nodeData,
+      ...(Object.keys(imageProps).length > 0 ? { props: imageProps } : {}),
+    });
+
+    if (!data) {
+      // No artifact at this step (still loading, never logged, or a hash-less
+      // point). Hold the cell with an explicit unavailable pane.
+      const placeholder = placeholderData(input.objectType);
+      // Only an object type cairn-plot cannot render at all has no placeholder;
+      // that is a card-level "unsupported", not a per-run gap.
+      return placeholder ? [plotNode(placeholder)] : [];
+    }
+
+    if (isImage && input.comparison) {
+      const isReferencePane = binding.name === input.comparison.name &&
+        binding.contextHash === input.comparison.contextHash;
+      // A pane cannot be compared against itself; it shows its own image, and
+      // keeps its cell, instead of being dropped from the grid.
+      if (!isReferencePane) {
+        // Resolve the selected reference tag independently inside this pane's
+        // run. There is deliberately no global run reference.
+        const referencePoint = resolveAtStep(
+          input.referenceArtifactPoints[index] ?? [],
+          input.referenceStep ?? input.currentStep,
+          { nearest: true },
+        );
+        const referenceData = referencePoint ? visualData("image", referencePoint) : null;
+        if (referenceData) {
+          return [{
+            kind: "compare",
+            id,
+            type: "image",
+            presentation: input.compareOperation === "split" ? "split" : "difference",
+            operands: [referenceData, data],
+            strategy: "reference",
+            referenceIndex: 0,
+            settings: { "compare.operation": input.compareOperation },
+            props: {
+              labelA: `${input.comparison.name} · reference`,
+              labelB: label,
+              // Compare panes must keep the frame they already painted while
+              // the next step resolves, exactly like the plain image panes.
+              holdPreviousWhileLoading: true,
+            },
+          }];
+        }
+        // The reference operand has not arrived (or this run never logged it).
+        // Fall through to the plain image pane rather than dropping the run.
+      }
+    }
+
+    return [plotNode(data)];
   });
 
   if (children.length === 0) return null;
