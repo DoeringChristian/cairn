@@ -14,11 +14,15 @@ import { resolveAtStep } from "./resolve-at-step.ts";
  */
 
 /**
- * cairn-plot's grid keys its cells by `child.id`, so a pane keeps its component
- * identity (and its decoded texture) when siblings appear, disappear or
- * reorder. `id?: string` landed on the spec in cairn-plot 30b1ffa; the
- * intersection keeps this module compiling against the vendored revision until
- * the submodule bump, and is a no-op afterwards.
+ * `id?: string` landed on cairn-plot's spec in 30b1ffa; the intersection keeps
+ * this module compiling against the currently vendored revision and is a no-op
+ * after the submodule bump.
+ *
+ * cairn-plot's grid will key its cells by `child.id` once that bump lands, so a
+ * pane keeps its component identity (and its decoded texture) when siblings
+ * appear, disappear or reorder. Until then the grid still keys by index, and it
+ * is the "one child per image binding, always" invariant below that keeps those
+ * indices stable.
  */
 export type IdentifiedPlotNode = PlotNode & { id?: string };
 
@@ -94,29 +98,37 @@ function latestArtifact(points: readonly SequencePoint[]): SequencePoint | undef
   return undefined;
 }
 
+/** The one spelling of a series' identity, shared by pane ids and scalar keys. */
+function seriesKey(binding: SeriesBinding | undefined): string {
+  return `${binding?.runId}:${binding?.name}:${binding?.contextHash}`;
+}
+
 /**
  * Stable per-pane ids. The full series key, unconditionally: it is unique even
  * when one run contributes several series to a card, and — unlike a key that
  * only disambiguates on collision — it does not change when a sibling series is
- * added or removed. cairn-plot keys grid cells by this, so a stable value is
- * what stops a pane from being torn down and rebuilt.
+ * added or removed. A stable value is what stops a pane from being torn down
+ * and rebuilt once cairn-plot keys its grid cells by it.
  */
 export function paneIds(bindings: readonly SeriesBinding[]): string[] {
-  return bindings.map((b) => `${b.runId}:${b.name}:${b.contextHash}`);
+  return bindings.map(seriesKey);
 }
 
 /**
- * The "nothing to show for this binding" pane. cairn-plot's spec declares
- * `hash: string | null` and renders a null hash as "Image unavailable", so a
- * binding with no artifact at the selected step still occupies its grid cell
- * instead of collapsing the layout and re-keying every neighbour.
+ * The "nothing to show for this binding" pane, for image cards only.
+ *
+ * cairn-plot's `DataSpec` declares `hash: string | null`, and its image panes
+ * handle the null: the GPU pane shows an empty checkerboard, the CPU pane shows
+ * "no image". Either way the binding keeps its grid cell instead of collapsing
+ * the layout and shifting every neighbour.
+ *
+ * The 3D types deliberately have no placeholder: `plots/three/register.ts`
+ * throws on a null npz hash ("npz DataSpec has no hash to resolve"), which the
+ * host surfaces as a red "Plot error" pane. 3D cards therefore keep a
+ * variable-length grid, and an artifact-less run stays out of it.
  */
 function placeholderData(objectType: string): DataSpec | null {
-  if (objectType === "image") return { kind: "image", hash: null };
-  if (objectType === "pointcloud" || objectType === "mesh" || objectType === "volume" || objectType === "boxes3d") {
-    return { kind: "npz", hash: null, objectType, meta: {} };
-  }
-  return null;
+  return objectType === "image" ? { kind: "image", hash: null } : null;
 }
 
 function gridSpec(children: IdentifiedPlotNode[], input: BuildPlotSpecInput): PlotSpec {
@@ -140,7 +152,7 @@ function gridSpec(children: IdentifiedPlotNode[], input: BuildPlotSpecInput): Pl
 
 function buildScalarSpec(input: BuildPlotSpecInput, ids: string[]): PlotSpec {
   const scalarSeries = input.seriesPoints.map((points, index) => ({
-    key: `${input.bindings[index]?.runId}:${input.bindings[index]?.name}:${input.bindings[index]?.contextHash}`,
+    key: seriesKey(input.bindings[index]),
     label: input.labels[index] ?? `series ${index + 1}`,
     color: input.seriesColors[index % input.seriesColors.length]!,
     points: points
@@ -183,10 +195,12 @@ function buildScalarSpec(input: BuildPlotSpecInput, ids: string[]): PlotSpec {
  * Build the authored spec, or `null` when there is genuinely nothing to show
  * yet (no run has delivered a single point, and something is still loading).
  *
- * Every binding always produces exactly one child — a binding whose run has no
- * artifact at the selected step gets an explicit unavailable pane rather than
- * disappearing. The grid layout is therefore a pure function of the binding
- * list, so panes never reflow or re-key as data arrives.
+ * On an **image** card every binding produces exactly one child: a binding whose
+ * run has no artifact at the selected step gets an explicit unavailable pane
+ * rather than disappearing, so the grid layout is a pure function of the binding
+ * list and panes never reflow or shift as data arrives. Other object types have
+ * no renderable placeholder (see `placeholderData`) and keep a variable-length
+ * grid.
  */
 export function buildPlotSpec(input: BuildPlotSpecInput): PlotSpec | null {
   const ids = paneIds(input.bindings);
@@ -197,7 +211,7 @@ export function buildPlotSpec(input: BuildPlotSpecInput): PlotSpec | null {
 
   const isImage = input.objectType === "image";
   const children = input.bindings.flatMap<IdentifiedPlotNode>((binding, index) => {
-    const id = ids[index] ?? `${binding.runId}:${binding.name}:${binding.contextHash}`;
+    const id = ids[index]!;
     const label = input.labels[index] ?? input.metricName;
     const point = isImage
       // Nearest, not "≤ step or nothing": a run whose first artifact lands
@@ -220,10 +234,10 @@ export function buildPlotSpec(input: BuildPlotSpecInput): PlotSpec | null {
 
     if (!data) {
       // No artifact at this step (still loading, never logged, or a hash-less
-      // point). Hold the cell with an explicit unavailable pane.
+      // point). Image cards hold the cell with an explicit unavailable pane;
+      // every other type has no placeholder cairn-plot can render, so the run
+      // stays out of the grid.
       const placeholder = placeholderData(input.objectType);
-      // Only an object type cairn-plot cannot render at all has no placeholder;
-      // that is a card-level "unsupported", not a per-run gap.
       return placeholder ? [plotNode(placeholder)] : [];
     }
 

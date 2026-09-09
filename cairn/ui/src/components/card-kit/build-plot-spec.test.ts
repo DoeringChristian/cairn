@@ -131,8 +131,9 @@ test("a run whose first artifact is above the step keeps its pane", () => {
 });
 
 test("a run with no artifact at all still gets an unavailable pane", () => {
-  // F3: one child per binding, always — a missing artifact holds its cell with
-  // a null hash, which cairn-plot renders as "Image unavailable".
+  // F3: one child per image binding, always — a missing artifact holds its cell
+  // with a null hash (an empty checkerboard on the GPU pane, "no image" on the
+  // CPU pane) rather than collapsing the grid.
   const input = imageInput({
     artifactPoints: [[point(0, "a0"), point(10, "a10")], []],
     seriesPoints: [[point(0, "a0"), point(10, "a10")], []],
@@ -144,7 +145,7 @@ test("a run with no artifact at all still gets an unavailable pane", () => {
   assert.equal(nodes[1]!.props?.label, "run B");
 });
 
-test("the child count always equals the binding count", () => {
+test("an image card's child count always equals the binding count", () => {
   const cases: BuildPlotSpecInput[] = [
     imageInput(),
     compareInput(),
@@ -230,16 +231,33 @@ test("compare nodes carry the selected operation and presentation", () => {
   assert.equal(flip.settings?.["compare.operation"], "flip");
 });
 
-test("a 3D run with no artifact gets a null-hash npz pane", () => {
+test("a 3D run with no artifact stays out of the grid", () => {
+  // No npz placeholder: cairn-plot's three resolver throws on a null hash
+  // ("npz DataSpec has no hash to resolve"), which the host surfaces as a red
+  // "Plot error" pane. 3D cards keep a variable-length grid instead.
   const nodes = children(imageInput({
     objectType: "pointcloud",
-    artifactPoints: [[], []],
+    labels: ["run A", "run B"],
     seriesPoints: [[point(0, "a0")], []],
+    artifactPoints: [[point(0, "a0")], []],
   }));
-  assert.equal(nodes.length, 2);
-  assert.deepEqual(dataOf(nodes[1]!), {
-    kind: "npz", hash: null, objectType: "pointcloud", meta: {},
+  assert.equal(nodes.length, 1);
+  assert.equal(nodes[0]!.id, ID_A);
+  assert.deepEqual(dataOf(nodes[0]!), {
+    kind: "npz", hash: "a0", objectType: "pointcloud", meta: {},
   } as never);
+});
+
+test("an unsupported object type never yields a null-hash pane", () => {
+  for (const objectType of ["pointcloud", "mesh", "volume", "boxes3d", "text"]) {
+    const spec = buildPlotSpec(imageInput({
+      objectType,
+      artifactPoints: [[], []],
+      seriesPoints: [[], []],
+      anyLoading: false,
+    }));
+    assert.equal(spec, null, `${objectType} produced a spec`);
+  }
 });
 
 test("the scalar branch still builds one grid child with an id", () => {

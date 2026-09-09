@@ -302,10 +302,11 @@ export default function CairnPlotCard({
     updateSettings,
   });
 
-  // H5: the host must stay mounted while some sequences still load. The spec
-  // is built from whatever runs already have data; a run without data is simply
-  // absent from the grid until it arrives, and only a card with nothing at all
-  // renders the loading placeholder.
+  // H5: the host must stay mounted while some sequences still load. The spec is
+  // built from whatever runs already have data; on an image card a run without
+  // data holds its cell with an unavailable pane, on other card types it stays
+  // out of the grid until it arrives. Only a card where nothing has arrived at
+  // all renders the loading placeholder (which does unmount the host).
   const anyLoading = allQueries.some((query) => query.isLoading);
   const spec = useMemo<PlotSpec | null>(() => buildPlotSpec({
     objectType: metric.object_type,

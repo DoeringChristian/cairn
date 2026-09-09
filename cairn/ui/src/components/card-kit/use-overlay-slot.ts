@@ -38,11 +38,13 @@ function sameRect(a: Rect | null, b: Rect): boolean {
  *
  * The first measurement happens in the ref callback, i.e. during the commit
  * that inserts the slot and before any layout effect, so no 0×0 or unpositioned
- * frame is ever painted. It is then re-measured from this hook's layout effect
- * (which runs after the overlay's own layout effects, e.g. the body-scroll lock
- * in `use-modal-behavior`, so it sees the post-lock viewport) and afterwards on
- * `ResizeObserver`, `resize`, and capture-phase `scroll` — the last one because
- * a scroll in any ancestor scroller moves the slot without resizing it.
+ * frame is ever painted. The layout effect deliberately does not reset the rect
+ * on that commit — its `slot` is still stale there — and re-measures once the
+ * node is known: it runs after the overlay's own layout effects (child-first
+ * ordering), e.g. the body-scroll lock in `use-modal-behavior`, so it sees the
+ * post-lock viewport, still before paint. It then tracks `ResizeObserver`,
+ * `resize`, and capture-phase `scroll` (rAF-coalesced) — the last one because a
+ * scroll in any ancestor scroller moves the slot without resizing it.
  *
  * CONSTRAINT: no ancestor of the promoted content may establish a containing
  * block for `position: fixed` — that is, none of them may set `transform`,
@@ -57,31 +59,52 @@ export function useOverlaySlot(open: boolean): OverlaySlot {
   const [rect, setRect] = useState<Rect | null>(null);
 
   const slotRef = useCallback((node: HTMLDivElement | null) => {
-    // Measure before the state update that re-renders with the fixed style, so
-    // the promoted box is already positioned on its very first painted frame.
+    // Measure here, in the commit that inserts the slot and before any layout
+    // effect, so the promoted box is already positioned on its first painted
+    // frame. The effect below must not clobber this with a stale `slot`.
     setRect(node ? readRect(node) : null);
     setSlot(node);
   }, []);
 
   useLayoutEffect(() => {
-    if (!open || !slot) {
+    if (!open) {
       setRect(null);
       return;
     }
+    // `slot` is still the pre-ref-callback value on the commit that mounts the
+    // slot (state set from a ref callback is only visible on the next render),
+    // so bail out rather than discarding the ref callback's measurement. The
+    // `slot` dependency re-runs this the moment the real node is known.
+    if (!slot) return;
+
+    let frame = 0;
     const measure = (): void => {
       const box = readRect(slot);
       setRect((prev) => (sameRect(prev, box) ? prev : box));
     };
+    // Scroll fires far faster than the screen updates; one measurement per
+    // frame is all a repositioned box can use.
+    const measureNextFrame = (): void => {
+      if (frame !== 0) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        measure();
+      });
+    };
+
+    // Runs after the overlay's own layout effects (child-first ordering), so
+    // this sees the post-scroll-lock viewport, still before paint.
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(slot);
     window.addEventListener("resize", measure);
     // Capture phase: scroll does not bubble from an inner scroller.
-    window.addEventListener("scroll", measure, true);
+    window.addEventListener("scroll", measureNextFrame, true);
     return () => {
+      if (frame !== 0) cancelAnimationFrame(frame);
       observer.disconnect();
       window.removeEventListener("resize", measure);
-      window.removeEventListener("scroll", measure, true);
+      window.removeEventListener("scroll", measureNextFrame, true);
     };
   }, [open, slot]);
 
@@ -96,8 +119,8 @@ export function useOverlaySlot(open: boolean): OverlaySlot {
         height: rect.height,
         zIndex: ABOVE_CARD_MODAL_Z,
       }
-      // Defensive: the slot is measured in its own ref callback, so this only
-      // covers a commit where the overlay is open but the slot is not mounted.
+      // Defensive: the slot measures itself in its ref callback, so this only
+      // covers a commit where the overlay is open but no slot is mounted yet.
       // Stay hidden rather than flashing at the in-card position.
       : {
         position: "fixed",
