@@ -13,7 +13,7 @@ export { useIframeAutoHeight } from "./use-iframe-auto-height";
 export type { IframeAutoHeightOptions } from "./use-iframe-auto-height";
 export { resolveAtStep } from "./resolve-at-step";
 export { buildPlotSpec } from "./build-plot-spec";
-export type { BuildPlotSpecInput, IdentifiedPlotNode } from "./build-plot-spec";
+export type { BuildPlotSpecInput } from "./build-plot-spec";
 export { useOverlaySlot } from "./use-overlay-slot";
 export type { OverlaySlot } from "./use-overlay-slot";
 export { useStepSlider } from "./use-step-slider";

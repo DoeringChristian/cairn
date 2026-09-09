@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildPlotSpec, paneIds, type BuildPlotSpecInput, type IdentifiedPlotNode } from "./build-plot-spec.ts";
+import { buildPlotSpec, paneIds, type BuildPlotSpecInput } from "./build-plot-spec.ts";
+import type { PlotNode } from "@cairn-plot";
 import type { SequencePoint } from "../../api/types";
 
 const COLORS = ["#60a5fa", "#f59e0b", "#34d399"] as const;
@@ -50,14 +51,14 @@ function imageInput(overrides: Partial<BuildPlotSpecInput> = {}): BuildPlotSpecI
   };
 }
 
-function children(input: BuildPlotSpecInput): IdentifiedPlotNode[] {
+function children(input: BuildPlotSpecInput): PlotNode[] {
   const spec = buildPlotSpec(input);
   assert.ok(spec, "expected a spec");
   assert.equal(spec.root.kind, "grid");
-  return (spec.root as { kind: "grid"; children: IdentifiedPlotNode[] }).children;
+  return (spec.root as { kind: "grid"; children: PlotNode[] }).children;
 }
 
-function dataOf(node: IdentifiedPlotNode): { kind: string; hash?: string | null } {
+function dataOf(node: PlotNode): { kind: string; hash?: string | null } {
   assert.equal(node.kind, "plot");
   return (node as { data: { kind: string; hash?: string | null } }).data;
 }
@@ -81,10 +82,9 @@ test("compare panes ask to hold the previous frame while the next step resolves"
   for (const node of nodes) {
     assert.equal(node.kind, "compare");
     // H3: the flag was set only on the plain-image branch, which the comparison
-    // branch returned before reaching. cairn-plot currently drops it for compare
-    // nodes (comparison-plan allowlist + the `!diffSpec` gate in host-adapter);
-    // the runtime honouring it lands with the next cairn-plot bump. Emitting it
-    // is this side's half of the contract.
+    // branch returned before reaching. cairn-plot's comparison plan now carries
+    // it onto the expanded leaves (`comparison-plan.ts`), so the runtime honours
+    // it for compare panes too.
     assert.equal(node.props?.holdPreviousWhileLoading, true);
   }
 });
@@ -266,7 +266,7 @@ test("the scalar branch still builds one grid child with an id", () => {
     seriesPoints: [[{ ...point(0, "a0"), scalar_value: 1, object_type: "scalar" }], []],
   }));
   assert.ok(spec);
-  const nodes = (spec.root as { children: IdentifiedPlotNode[] }).children;
+  const nodes = (spec.root as { children: PlotNode[] }).children;
   assert.equal(nodes.length, 1);
   assert.equal(nodes[0]!.id, ID_A);
 });

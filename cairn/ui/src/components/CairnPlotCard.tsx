@@ -4,7 +4,6 @@ import {
   mountPlot,
   recommendedImageEncoding,
   type MountedPlot,
-  type PlotNode,
   type PlotSession,
   type PlotSpec,
 } from "@cairn-plot";
@@ -90,24 +89,6 @@ function firstCellSettings(session: PlotSession): PlotSettingValues {
   return firstLeaf?.[1].settings as PlotSettingValues | undefined ?? {};
 }
 
-function initialSession(spec: PlotSpec, settings: PlotSettingValues): PlotSession {
-  const session: PlotSession = { cells: {}, grids: {} };
-  const visit = (node: PlotNode, path: string): void => {
-    if (node.kind !== "grid") {
-      session.cells[`cell:${path}`] = { settings: { ...settings } };
-      return;
-    }
-    session.grids[`grid:${path}`] = {
-      layout: node.initialLayout ?? "grid",
-      activeSlot: 0,
-    };
-    if (node.children.length > 0) session.cells[`stack:${path}`] = { settings: { ...settings } };
-    node.children.forEach((child, index) => visit(child, `${path}/${index}`));
-  };
-  visit(spec.root, "root");
-  return session;
-}
-
 /**
  * React adapter over cairn-plot's supported imperative host. Its private React
  * root is updated only when the authored spec changes, not whenever CardShell
@@ -189,6 +170,10 @@ export default function CairnPlotCard({
   const cardRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<MountedPlot | null>(null);
   const latestSessionRef = useRef<PlotSession | null>(null);
+  // Cleared for every freshly mounted host: its cells register with default
+  // settings, and the persisted ones are patched in on the first session
+  // notification (see handleSessionChange).
+  const persistedSettingsAppliedRef = useRef(false);
   const persistTimerRef = useRef<number | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const settingsSlot = useOverlaySlot(settingsOpen);
@@ -232,14 +217,25 @@ export default function CairnPlotCard({
     updateSettings({ plotSettings: persistedPlotSettingsRef.current });
   }, [updateSettings]);
 
-  const series = useMemo(() => [
-    { runId, name: metric.name, context_hash: metric.context_hash },
-    ...extraSeries.map((item) => ({
-      runId: item.runId,
-      name: item.name,
-      context_hash: item.context_hash,
-    })),
-  ], [runId, metric.name, metric.context_hash, extraSeries]);
+  // De-duplicated by identity: cairn-plot keys its grid cells (and their saved
+  // settings) by the pane id built from this triple, and a repeat would collapse
+  // two panes onto one key.
+  const series = useMemo(() => {
+    const seen = new Set<string>();
+    return [
+      { runId, name: metric.name, context_hash: metric.context_hash },
+      ...extraSeries.map((item) => ({
+        runId: item.runId,
+        name: item.name,
+        context_hash: item.context_hash,
+      })),
+    ].filter((item) => {
+      const key = `${item.runId}:${item.name}:${item.context_hash}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [runId, metric.name, metric.context_hash, extraSeries]);
   const bindings = useMemo(() => series.map((item) => ({
     runId: item.runId,
     name: item.name,
@@ -336,6 +332,22 @@ export default function CairnPlotCard({
 
   const handleSessionChange = useCallback((session: PlotSession) => {
     latestSessionRef.current = session;
+    if (!persistedSettingsAppliedRef.current) {
+      persistedSettingsAppliedRef.current = true;
+      // The session ids are derived by cairn-plot from node identity
+      // (`cell:root/<child id>`, and one level deeper for an expanded compare),
+      // so a host can never author them from the outside — an authored session
+      // is pruned on `setTopology` and the saved settings are lost. Patch them
+      // in instead: `patchSettings` fans over the compiled topology, i.e. over
+      // exactly the cells that just registered.
+      const saved = persistedPlotSettingsRef.current;
+      if (saved && Object.keys(saved).length > 0) {
+        plotRef.current?.patchSettings(saved);
+        // That patch notifies synchronously; this notification still carries
+        // the cells' defaults, and writing it back would erase what was saved.
+        return;
+      }
+    }
     const next = firstCellSettings(session);
     if (JSON.stringify(next) !== JSON.stringify(livePlotSettingsRef.current)) {
       livePlotSettingsRef.current = next;
@@ -418,13 +430,15 @@ export default function CairnPlotCard({
   const plot = spec ? (
     <StablePlotHost
       spec={spec}
-      initial={latestSessionRef.current ?? (
-        settings.plotSettings && Object.keys(settings.plotSettings).length > 0
-          ? initialSession(spec, settings.plotSettings)
-          : undefined
-      )}
+      // Only a session cairn-plot itself emitted — never one authored here.
+      initial={latestSessionRef.current ?? undefined}
       className="h-full min-h-0 min-w-0 overflow-hidden"
-      onMount={(mounted) => { plotRef.current = mounted; }}
+      onMount={(mounted) => {
+        plotRef.current = mounted;
+        // A new host means new cells with default settings; re-apply the
+        // persisted ones on its first session notification.
+        persistedSettingsAppliedRef.current = false;
+      }}
       onSessionChange={handleSessionChange}
     />
   ) : <div className="p-4 text-sm text-fg-muted">Loading…</div>;

@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Auto-rebuild cairn/ui/dist/ when the committed bundle would otherwise go stale.
+# The dist must be checked in because pip installs can't always build.
+#
+# Two triggers, and BOTH matter:
+#   - cairn/ui/src/  — the app's own source.
+#   - vendor/cairn-plot — the submodule pointer. The UI bundles the vendored
+#     cairn-plot TS source, so a bump changes the bundle even though no file
+#     under cairn/ui/src/ was touched. Rebuilding only on the first trigger is
+#     how the dist silently fell a submodule bump behind.
+#
+# Install (once per clone): git config core.hooksPath .githooks
+
+if git diff --cached --name-only | grep -qE '^(cairn/ui/src/|vendor/cairn-plot($|/))'; then
+    echo "UI source or vendored cairn-plot changed — rebuilding dist..."
+    (cd cairn/ui && npx vite build) >/dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        echo "ERROR: vite build failed. Fix build errors before committing."
+        exit 1
+    fi
+    git add cairn/ui/dist/
+    echo "dist/ rebuilt and staged."
+fi

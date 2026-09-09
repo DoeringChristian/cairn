@@ -8,23 +8,10 @@ import { resolveAtStep } from "./resolve-at-step.ts";
  *
  * It lives outside the `.tsx` card on purpose: `node --experimental-strip-types
  * --test` cannot load `.tsx`, and the rules this module encodes (one child per
- * binding, always; stable pane ids; never null the whole card while one run is
- * still loading; hold the previous frame in compare panes) are exactly the ones
- * that need regression tests.
+ * image binding, always; stable pane ids; never null the whole card while one
+ * run is still loading; hold the previous frame in compare panes) are exactly
+ * the ones that need regression tests.
  */
-
-/**
- * `id?: string` landed on cairn-plot's spec in 30b1ffa; the intersection keeps
- * this module compiling against the currently vendored revision and is a no-op
- * after the submodule bump.
- *
- * cairn-plot's grid will key its cells by `child.id` once that bump lands, so a
- * pane keeps its component identity (and its decoded texture) when siblings
- * appear, disappear or reorder. Until then the grid still keys by index, and it
- * is the "one child per image binding, always" invariant below that keeps those
- * indices stable.
- */
-export type IdentifiedPlotNode = PlotNode & { id?: string };
 
 export interface SeriesBinding {
   runId: string;
@@ -107,8 +94,9 @@ function seriesKey(binding: SeriesBinding | undefined): string {
  * Stable per-pane ids. The full series key, unconditionally: it is unique even
  * when one run contributes several series to a card, and — unlike a key that
  * only disambiguates on collision — it does not change when a sibling series is
- * added or removed. A stable value is what stops a pane from being torn down
- * and rebuilt once cairn-plot keys its grid cells by it.
+ * added or removed. cairn-plot keys both the React cell and its session path
+ * (`cell:root/<id>`) off this value, so a stable one is what stops a pane — and
+ * its saved settings — from being handed to a different run on a reorder.
  */
 export function paneIds(bindings: readonly SeriesBinding[]): string[] {
   return bindings.map(seriesKey);
@@ -131,7 +119,7 @@ function placeholderData(objectType: string): DataSpec | null {
   return objectType === "image" ? { kind: "image", hash: null } : null;
 }
 
-function gridSpec(children: IdentifiedPlotNode[], input: BuildPlotSpecInput): PlotSpec {
+function gridSpec(children: PlotNode[], input: BuildPlotSpecInput): PlotSpec {
   const configuredColumns = input.gridColumns === "auto"
     ? Math.ceil(Math.sqrt(children.length))
     : Number(input.gridColumns);
@@ -164,7 +152,7 @@ function buildScalarSpec(input: BuildPlotSpecInput, ids: string[]): PlotSpec {
         context: point.context,
       })),
   }));
-  const child: IdentifiedPlotNode = {
+  const child: PlotNode = {
     kind: "plot",
     id: ids[0] ?? "scalar",
     type: "scalar",
@@ -210,7 +198,7 @@ export function buildPlotSpec(input: BuildPlotSpecInput): PlotSpec | null {
   if (input.objectType === "scalar") return buildScalarSpec(input, ids);
 
   const isImage = input.objectType === "image";
-  const children = input.bindings.flatMap<IdentifiedPlotNode>((binding, index) => {
+  const children = input.bindings.flatMap<PlotNode>((binding, index) => {
     const id = ids[index]!;
     const label = input.labels[index] ?? input.metricName;
     const point = isImage
@@ -224,7 +212,7 @@ export function buildPlotSpec(input: BuildPlotSpecInput): PlotSpec | null {
       ...(input.showLabels ? { label } : {}),
       ...(isImage ? { holdPreviousWhileLoading: true } : {}),
     };
-    const plotNode = (nodeData: DataSpec): IdentifiedPlotNode => ({
+    const plotNode = (nodeData: DataSpec): PlotNode => ({
       kind: "plot",
       id,
       type: input.objectType,

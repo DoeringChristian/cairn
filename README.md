@@ -238,6 +238,14 @@ cd cairn/ui && npm install && npm run build
 uv run pytest
 ```
 
+`cairn/ui/dist` is checked in (pip installs can't always build it). Install the
+repo's hooks once per clone so it is rebuilt whenever the UI source *or* the
+vendored cairn-plot submodule changes:
+
+```bash
+git config core.hooksPath .githooks
+```
+
 For UI development with HMR:
 
 ```bash
