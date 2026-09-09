@@ -83,6 +83,8 @@ feature.
   indirection, generalized to run selectors.
 * **Auth** (`server/auth.py`): Bearer token (SDK/CLI) or HttpOnly session cookie
   (browser, 30-day sliding), roles `read<write<admin`, one-time login OTP
+  *(superseded 2026-09-09 by token-only auth: the cookie now carries the token
+  itself and there are no sessions — see `2026-09-09-token-only-auth-design.md`)*
   (`/api/auth/otp`, single-use, 15 min). `--no-auth` sets `auth_enabled=False` →
   `require_role` becomes a no-op (`auth.py:403`).
 * **CORS** (`app.py:150`): auth-off → `allow_origins=["*"]`; auth-on →

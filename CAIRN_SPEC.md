@@ -12,7 +12,7 @@ The implementation target is a v1 that a single user or small team can install w
 
 These are explicitly out of scope. Do not build them. If you find yourself tempted, stop and revisit this list.
 
-- Authentication, authorization, RBAC — v1 assumes a trusted local network
+- Federated identity (SSO/OAuth). Auth itself is in scope: see the token-only model below (a token printed at launch, sent as `Authorization: Bearer` or carried in the HttpOnly `cairn_token` cookie).
 - Public-internet deployment, TLS termination, reverse-proxy hardening
 - Horizontal scaling — one server process, one disk
 - Model registry
@@ -669,7 +669,9 @@ For artifacts, serve with HTTP Range support so video scrubbing and audio seekin
 
 #### CORS and binding
 
-Default bind is `0.0.0.0:4300` — the server must be reachable from other machines on the network. CORS is permissive by default (`Access-Control-Allow-Origin: *`) because the v1 threat model is "trusted local network." A `--bind 127.0.0.1` flag is available for users who want local-only. Document clearly that Cairn has no auth and should not be exposed to the public internet.
+Default bind is `0.0.0.0:4300` — the server must be reachable from other machines on the network. A `--bind 127.0.0.1` flag is available for users who want local-only.
+
+Auth is token-only (2026-09-09). The server prints a token at launch; every request carries it either as `Authorization: Bearer <token>` (SDK, CLI, the `cairn ui --repo` proxy) or in the HttpOnly `cairn_token` cookie set by `/api/auth/login`, the one-time login URL, or the SSH login. Verification is a sha256 lookup in the `tokens` table with a constant-time compare and never writes. There are no sessions and no idle expiry: a cookie is valid exactly as long as its token; `cairn token revoke` ends all access for that token, and `/api/auth/logout` only clears the browser's cookie. The cookie is `SameSite=Lax`, which keeps cross-site form posts from carrying it even though a few multipart upload routes exist. CORS is closed when auth is enabled and permissive only with `--no-auth`.
 
 ### `cairn server` command
 
@@ -991,7 +993,7 @@ Flag these before or during implementation — don't guess:
 - UI framework specifics (component library? shadcn/ui is a reasonable default).
 - Zeroconf/mDNS: in v1 or post-v1? Proposal: implement last in v1, but gate behind `--advertise` flag.
 - Retention policy for old runs — v1 proposes no automatic deletion, but should `cairn gc` be in scope?
-- Auth: we're assuming trusted LAN for v1. If that's not true for your environment, we need to revisit before implementation starts — adding auth later is a breaking change for client setup.
+- Auth: token-only, see the Networking section. Run with `--no-auth` only on a trusted local network.
 - Logo / branding — out of scope for v1 implementation, but note for later.
 
 ## Testing strategy

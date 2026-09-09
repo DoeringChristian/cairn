@@ -279,7 +279,7 @@ def apply_migrations(con: sqlite3.Connection) -> int:
     # were ephemeral by construction (every one carried an expiry) and
     # nothing references them — no foreign key points at ``sessions``, and no
     # code reads it. The worst outcome for a user is that open browser tabs
-    # holding an old ``cairn_session`` cookie must log in again.
+    # holding a cookie from the old session model must log in again.
     con.execute("DROP INDEX IF EXISTS idx_sessions_token")
     con.execute("DROP TABLE IF EXISTS sessions")
 
