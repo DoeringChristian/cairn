@@ -4,8 +4,8 @@
 //
 // Reuses the exact `ComparisonTemplateCard` shape (and, by structural typing,
 // `ComparisonTemplate` itself) from lib/comparisons/templates.ts — a
-// template's cards (multi-run cards keyed by type, series cards by
-// metricName + contextHash + settings) mean the same thing whether they
+// template's cards (multi-run cards keyed by type, series cards by the
+// metric keys they display + settings) mean the same thing whether they
 // were captured from a comparison or a report, so `applyReportTemplateToRuns`
 // (apply-template.ts) can reuse `matchTemplateCards`/`buildSeqMap` from
 // lib/comparisons/apply-template.ts verbatim instead of re-implementing
@@ -14,7 +14,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { loadJson, saveJson, storageKeys } from "../storage";
-import type { ComparisonTemplate, ComparisonTemplateCard } from "../comparisons";
+import { normalizeTemplateCards, type ComparisonTemplate, type ComparisonTemplateCard } from "../comparisons";
 import { newId } from "./ids";
 import {
   deleteReportTemplateFromServer,
@@ -35,7 +35,10 @@ function isReportTemplate(x: unknown): x is ReportTemplate {
 export function loadReportTemplates(projectId: string): ReportTemplate[] {
   const parsed = loadJson<unknown[]>(localStorage, storageKeys.reportTemplates(projectId));
   if (!Array.isArray(parsed)) return [];
-  return parsed.filter(isReportTemplate);
+  return parsed.filter(isReportTemplate).map((t) => ({
+    ...t,
+    cards: normalizeTemplateCards(t.cards as unknown as unknown[]),
+  }));
 }
 
 export function saveReportTemplates(projectId: string, list: ReportTemplate[]): void {

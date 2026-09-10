@@ -26,7 +26,7 @@ import { Link, useLocation, useParams } from "react-router-dom";
 import { RUN_SELECTOR_FETCH_LIMIT, useReport, useRuns, useUpdateReport } from "../api/hooks";
 import { formatRelative } from "../lib/format";
 import { loadCardSettings } from "../lib/card-settings";
-import { isMultiRunCardType, type ComparisonTemplateCard } from "../lib/comparisons";
+import { templateCardOf, type ComparisonTemplateCard } from "../lib/comparisons";
 import {
   allReportCards,
   buildReportPayload,
@@ -264,17 +264,14 @@ export default function ReportEditorPage() {
     const templateName = prompt("Template name:", name);
     if (!templateName) return;
     const cards = allReportCards(blocks);
-    const templateCards: ComparisonTemplateCard[] = cards.map((card) => {
-      const settingsKey = cardSettingsKeyForReport(reportId, card);
-      const cardSettings = loadCardSettings<Record<string, unknown>>(settingsKey);
-      const isMultiRun = isMultiRunCardType(card.type);
-      return {
-        type: card.type,
-        metricName: isMultiRun ? card.type : (card.series[0]?.name ?? card.id),
-        contextHash: isMultiRun ? undefined : card.series[0]?.context_hash,
-        settings: cardSettings ?? undefined,
-      };
-    });
+    const templateCards: ComparisonTemplateCard[] = cards.map((card) =>
+      templateCardOf(
+        card,
+        loadCardSettings<Record<string, unknown>>(
+          cardSettingsKeyForReport(reportId, card),
+        ) ?? undefined,
+      ),
+    );
     createReportTemplate(projectId, templateName, templateCards);
   };
 

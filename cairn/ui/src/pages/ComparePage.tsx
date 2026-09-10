@@ -31,6 +31,7 @@ import {
   setComparisonRunSelector,
   syncComparisonsFromServer,
   syncComparisonToServer,
+  templateCardOf,
   useComparisons,
   useTemplates,
   type ApplyTemplateResult,
@@ -963,21 +964,17 @@ function ComparisonView({
             onClick={() => {
               const name = prompt("Template name:", comparison.name);
               if (!name) return;
-              const templateCards: ComparisonTemplateCard[] = comparison.cards.map((card) => {
-                const settingsKey = cardSettingsKeyFor(comparison.id, card);
-                const cardSettings = loadCardSettings<Record<string, unknown>>(settingsKey);
-                // Multi-run cards (parallel/scatter/bar/tile) don't correspond to
-                // a metric name — key them by type so onApplyTemplate/
-                // applyTemplateToRuns can find them regardless of what label
-                // (if any) their synthetic series happened to carry.
-                const isMultiRun = isMultiRunCardType(card.type);
-                return {
-                  type: card.type,
-                  metricName: isMultiRun ? card.type : (card.series[0]?.name ?? card.id),
-                  contextHash: isMultiRun ? undefined : card.series[0]?.context_hash,
-                  settings: cardSettings ?? undefined,
-                };
-              });
+              // A template card records the card's type plus every metric key
+              // it displays (multi-run cards carry none and match on type) —
+              // see `templateCardOf`.
+              const templateCards: ComparisonTemplateCard[] = comparison.cards.map((card) =>
+                templateCardOf(
+                  card,
+                  loadCardSettings<Record<string, unknown>>(
+                    cardSettingsKeyFor(comparison.id, card),
+                  ) ?? undefined,
+                ),
+              );
               createTemplate(projectId, name, templateCards);
             }}
             className="btn text-xs"

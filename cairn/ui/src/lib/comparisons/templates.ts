@@ -4,23 +4,11 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { loadJson, saveJson, storageKeys } from "../storage";
-import type { ComparisonCard } from "./types";
+import { normalizeTemplateCards, type ComparisonTemplateCard } from "./template-cards";
 import { newId } from "./store";
 import { deleteTemplateFromServer, syncTemplateToServer, syncTemplatesFromServer } from "./template-sync";
 
-export interface ComparisonTemplateCard {
-  type: ComparisonCard["type"];
-  metricName: string;
-  /**
-   * Context hash of the original card's primary series ("" = no context).
-   * Lets `matchTemplateCards` prefer the same context when a run emits the
-   * same metric name under several contexts (e.g. train/val). Absent on
-   * templates saved before this field existed or on multi-run cards, where
-   * it's meaningless — both are treated as "no preference".
-   */
-  contextHash?: string;
-  settings?: Record<string, unknown>;
-}
+export type { ComparisonTemplateCard };
 
 export interface ComparisonTemplate {
   id: string;
@@ -44,7 +32,10 @@ function isComparisonTemplate(x: unknown): x is ComparisonTemplate {
 export function loadTemplates(projectId: string): ComparisonTemplate[] {
   const parsed = loadJson<unknown[]>(localStorage, storageKeys.comparisonTemplates(projectId));
   if (!Array.isArray(parsed)) return [];
-  return parsed.filter(isComparisonTemplate);
+  return parsed.filter(isComparisonTemplate).map((t) => ({
+    ...t,
+    cards: normalizeTemplateCards(t.cards as unknown as unknown[]),
+  }));
 }
 
 export function saveTemplates(

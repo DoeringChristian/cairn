@@ -18,6 +18,8 @@ export const storageKeys = {
   runLayout: (runId: string) => `cairn:run-layout:${runId}`,
   collapsedSections: (scope: string) => `cairn:collapsed-sections:${scope}`,
   comparisons: (projectId: string) => `cairn:comparisons:${projectId}`,
+  /** Per-project default view of the Metrics & Media tab — see lib/project-view.ts. */
+  projectView: (projectId: string) => `cairn:project-view:${projectId}`,
   comparisonTemplates: (projectId: string) => `cairn:comparison-templates:${projectId}`,
   reportTemplates: (projectId: string) => `cairn:report-templates:${projectId}`,
   streamMode: "cairn:stream-mode",

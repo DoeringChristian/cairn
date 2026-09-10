@@ -11,25 +11,25 @@ import { api } from "../../api/client";
 import { saveCardSettings } from "../card-settings";
 import { addCardsToComparison, createComparison, loadComparisons } from "./store";
 import { cardSettingsKeyFor } from "./sync";
-import { isMultiRunCardType, MULTI_RUN_CARD_LABELS } from "./types";
 import type { ComparisonCard } from "./types";
-import type { ComparisonTemplate, ComparisonTemplateCard } from "./templates";
+import { matchTemplateCards } from "./template-match";
+import type { MatchedTemplateCard, SeqMap, SeriesEntry } from "./template-match";
+import type { ComparisonTemplate } from "./templates";
 
-export interface SeriesEntry {
-  runId: string;
-  name: string;
-  context_hash: string;
-}
+// Matching itself lives in ./template-match.ts (pure); re-exported here so
+// the historical import site keeps working.
+export { matchTemplateCards };
+export type { SeriesEntry, MatchedTemplateCard, SeqMap };
 
-export interface MatchedTemplateCard {
-  tc: ComparisonTemplateCard;
-  series: SeriesEntry[];
-}
-
-/** metric name -> series entries available across the given runs. */
-export type SeqMap = Map<string, SeriesEntry[]>;
-
-/** Fetch sequences for `runIds` and build the metric-name -> series map used by `matchTemplateCards`. */
+/**
+ * Fetch sequences for `runIds` and build the metric-name -> series map used by
+ * `matchTemplateCards`.
+ *
+ * One entry per (run, context) — a run emitting the same metric under several
+ * contexts (train/val) contributes one entry per context, so a template key
+ * that recorded a context can actually prefer it. `matchTemplateCards` narrows
+ * back to one series per run when the key expresses no context preference.
+ */
 export async function buildSeqMap(runIds: string[]): Promise<SeqMap> {
   const seqResults = await Promise.all(runIds.map((rid) => api.sequences(rid)));
   const seqMap: SeqMap = new Map();
@@ -39,65 +39,15 @@ export async function buildSeqMap(runIds: string[]): Promise<SeqMap> {
       const entry: SeriesEntry = { runId, name: seq.name, context_hash: seq.context_hash };
       const existing = seqMap.get(seq.name);
       if (existing) {
-        if (!existing.some((s) => s.runId === runId)) existing.push(entry);
+        if (!existing.some((s) => s.runId === runId && s.context_hash === seq.context_hash)) {
+          existing.push(entry);
+        }
       } else {
         seqMap.set(seq.name, [entry]);
       }
     }
   });
   return seqMap;
-}
-
-/**
- * Pure matching: decide which template cards can be reconstructed from
- * `runIds` given `seqMap` (see `buildSeqMap`).
- *
- * - Multi-run cards (parallel/scatter/bar/tile) span the run set directly —
- *   they don't correspond to a metric name, so they always match as long as
- *   at least one run is given. This is also what makes templates saved by
- *   the old code backward-compatible: the old save-template path stored
- *   `metricName` as the card's UI label ("Parallel Coordinates", etc, from
- *   AddCardModal's synthetic entry), which is ignored here since we branch
- *   on `tc.type` — never on `metricName` — for multi-run cards.
- * - Per-metric cards match when `metricName` has at least one series in
- *   `seqMap`. When the template recorded a `contextHash` (added cards save
- *   it; older templates omit it), series under that exact context are
- *   preferred — falling back to any context so older/partial data still
- *   matches.
- */
-export function matchTemplateCards(
-  template: ComparisonTemplate,
-  runIds: string[],
-  seqMap: SeqMap,
-): MatchedTemplateCard[] {
-  const matched: MatchedTemplateCard[] = [];
-  for (const tc of template.cards) {
-    if (isMultiRunCardType(tc.type)) {
-      if (runIds.length === 0) continue;
-      const label = MULTI_RUN_CARD_LABELS[tc.type];
-      matched.push({
-        tc,
-        series: runIds.map((runId) => ({
-          runId,
-          name: label,
-          context_hash: "",
-        })),
-      });
-      continue;
-    }
-
-    if (tc.metricName.startsWith("system.")) continue;
-    const candidates = seqMap.get(tc.metricName);
-    if (!candidates?.length) continue;
-
-    let series = candidates;
-    if (tc.contextHash) {
-      const inContext = candidates.filter((s) => s.context_hash === tc.contextHash);
-      if (inContext.length > 0) series = inContext;
-    }
-    matched.push({ tc, series });
-  }
-  return matched;
 }
 
 export interface ApplyTemplateResult {

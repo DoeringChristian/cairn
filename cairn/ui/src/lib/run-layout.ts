@@ -42,6 +42,17 @@ export function cardKeyOf(meta: SequenceMeta): string {
   return `${meta.name}::${meta.context_hash}`;
 }
 
+/**
+ * Inverse of `cardKeyOf` — splits on the FIRST `::` (metric names may not
+ * contain it, context hashes never do). Used to label a card that isn't
+ * present in the current run (e.g. one hidden from the project view).
+ */
+export function parseCardKey(cardKey: string): { name: string; contextHash: string } {
+  const sep = cardKey.indexOf("::");
+  if (sep === -1) return { name: cardKey, contextHash: "" };
+  return { name: cardKey.slice(0, sep), contextHash: cardKey.slice(sep + 2) };
+}
+
 export function loadRunLayout(runId: string): RunLayout {
   const parsed = loadJson<Partial<RunLayout>>(localStorage, storageKeys.runLayout(runId));
   if (!parsed || parsed.version !== 1) return { ...EMPTY_LAYOUT };

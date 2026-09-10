@@ -10,12 +10,15 @@ import {
   isEmptyLayout,
   loadRunLayout,
   moveCard,
+  parseCardKey,
   resetRunLayout,
   saveRunLayout,
 } from "../lib/run-layout";
 import type { RunLayout } from "../lib/run-layout";
 import { loadJson, saveJson, storageKeys } from "../lib/storage";
 import { CameraSyncContext, DEFAULT_CAMERA_SYNC_GROUP } from "../lib/camera-sync";
+import { useProjectId } from "../lib/project-context";
+import { useProjectView } from "../lib/project-view";
 
 interface Props {
   runId: string;
@@ -41,6 +44,12 @@ function saveCollapsedSections(runId: string, set: Set<string>): void {
 
 export default function CardGrid({ runId, sequences }: Props) {
   const [layout, setLayout] = useState<RunLayout>(() => loadRunLayout(runId));
+
+  // Which cards this project shows by default. Removing a card here removes
+  // it for every run in the project (see lib/project-view.ts).
+  const projectId = useProjectId();
+  const { hidden, hide, show, showAll } = useProjectView(projectId);
+  const [managingHidden, setManagingHidden] = useState(false);
 
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(
     () => loadCollapsedSections(runId),
@@ -88,9 +97,14 @@ export default function CardGrid({ runId, sequences }: Props) {
   }, [runId]);
 
   const sections = useMemo(() => {
-    const auto = groupIntoSections(sequences);
+    const visible = sequences.filter((s) => !hidden.has(cardKeyOf(s)));
+    const auto = groupIntoSections(visible);
     return applyLayout(auto, layout);
-  }, [sequences, layout]);
+  }, [sequences, layout, hidden]);
+
+  // Every removed card, whether or not this run logs it — a card removed
+  // while viewing another run must still be restorable from here.
+  const hiddenKeys = useMemo(() => Array.from(hidden).sort(), [hidden]);
 
   if (sequences.length === 0) {
     return <p className="text-fg-muted">No metrics logged for this run yet.</p>;
@@ -101,17 +115,39 @@ export default function CardGrid({ runId, sequences }: Props) {
   return (
     <CameraSyncContext.Provider value={DEFAULT_CAMERA_SYNC_GROUP}>
       <div className="space-y-8">
-        {showReset && (
-          <div className="flex justify-end">
-            <button
-              type="button"
-              onClick={handleReset}
-              className="text-xs text-fg-muted underline underline-offset-2 hover:text-fg"
-              title="Clear persisted card layout for this run"
-            >
-              reset layout
-            </button>
+        {(showReset || hiddenKeys.length > 0) && (
+          <div className="flex items-center justify-end gap-3">
+            {hiddenKeys.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setManagingHidden((v) => !v)}
+                className="text-xs text-fg-muted underline underline-offset-2 hover:text-fg"
+                title="Cards removed from this project's default view"
+              >
+                {hiddenKeys.length} hidden · manage
+              </button>
+            )}
+            {showReset && (
+              <button
+                type="button"
+                onClick={handleReset}
+                className="text-xs text-fg-muted underline underline-offset-2 hover:text-fg"
+                title="Clear persisted card layout for this run"
+              >
+                reset layout
+              </button>
+            )}
           </div>
+        )}
+        {managingHidden && hiddenKeys.length > 0 && (
+          <HiddenCardsPanel
+            hiddenKeys={hiddenKeys}
+            onShow={show}
+            onShowAll={() => {
+              showAll();
+              setManagingHidden(false);
+            }}
+          />
         )}
         {sections.map((section) => {
           const entries = toEntries(section.items);
@@ -129,7 +165,13 @@ export default function CardGrid({ runId, sequences }: Props) {
               <ReorderableCardGrid
                 cards={entries.map((entry) => ({
                   key: cardKeyOf(entry.primary),
-                  content: <CardFor runId={runId} entry={entry} />,
+                  content: (
+                    <CardFor
+                      runId={runId}
+                      entry={entry}
+                      onRemove={hide ? () => hide(cardKeyOf(entry.primary)) : undefined}
+                    />
+                  ),
                 }))}
                 onReorder={(fromKey, toKey) => {
                   const src = { cardKey: fromKey, section: section.name };
@@ -201,6 +243,63 @@ function toEntries(metas: SequenceMeta[]): Entry[] {
   return metas.map((m) => ({ primary: m, extras: [] }));
 }
 
-function CardFor({ runId, entry }: { runId: string; entry: Entry }) {
-  return <CardRenderer runId={runId} metric={entry.primary} />;
+function CardFor({
+  runId,
+  entry,
+  onRemove,
+}: {
+  runId: string;
+  entry: Entry;
+  onRemove?: () => void;
+}) {
+  return <CardRenderer runId={runId} metric={entry.primary} onRemove={onRemove} />;
+}
+
+// -----------------------------------------------------------------------------
+// Removed-cards panel: the "add back" half of the per-project default view.
+// -----------------------------------------------------------------------------
+
+function HiddenCardsPanel({
+  hiddenKeys,
+  onShow,
+  onShowAll,
+}: {
+  hiddenKeys: string[];
+  onShow: (cardKey: string) => void;
+  onShowAll: () => void;
+}) {
+  return (
+    <div className="card p-3">
+      <div className="mb-2 flex items-baseline justify-between gap-2">
+        <span className="text-xs font-semibold uppercase tracking-wide text-fg-muted">
+          Removed from this project&rsquo;s view
+        </span>
+        <button
+          type="button"
+          onClick={onShowAll}
+          className="text-xs text-fg-muted underline underline-offset-2 hover:text-fg"
+        >
+          show all
+        </button>
+      </div>
+      <ul className="flex flex-wrap gap-1.5">
+        {hiddenKeys.map((key) => {
+          const { name, contextHash } = parseCardKey(key);
+          return (
+            <li key={key}>
+              <button
+                type="button"
+                onClick={() => onShow(key)}
+                className="mono inline-flex items-center gap-1 rounded bg-bg-hover px-1.5 py-0.5 text-xs text-fg-muted hover:text-fg"
+                title={contextHash ? `${name} (context ${contextHash.slice(0, 8)})` : `Show ${name}`}
+              >
+                <span aria-hidden="true">+</span>
+                {name}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
 }
