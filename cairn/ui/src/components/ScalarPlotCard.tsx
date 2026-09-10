@@ -530,6 +530,11 @@ export default function ScalarPlotCard({
     view: settings.viewport,
     onViewChange: (v: ScalarSettings["viewport"]) =>
       updateSettings({ viewport: v }),
+    // The card owns the axis scales, so cairn-plot's toolbar offers its
+    // per-axis log/linear toggle only because we accept the change here —
+    // the same setting the panel's X/Y scale selects write.
+    onScaleChange: (axis: "x" | "y", scale: AxisScale) =>
+      updateSettings(axis === "x" ? { xScale: scale } : { yScale: scale }),
     smoothing: settings.smoothing,
     outlierPct: settings.outlierPct,
     lineType: settings.lineType,
