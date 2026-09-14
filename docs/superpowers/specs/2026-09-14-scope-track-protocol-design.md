@@ -89,7 +89,8 @@ here for.
    prefix and the **same** `step`/`context`, call `value.__cairn_track__(child)`,
    ignore its return value.
 3. Otherwise → a leaf: `run.track(value, joined_name, step=..., context=...,
-   **kwargs)` exactly as today.
+   **kwargs)` — the scope's bound `step` is always passed, so the leaf never
+   reaches the (now internal) auto-increment.
 
 `Run.track` applies the same three rules, with the run itself as the root scope.
 
@@ -170,7 +171,7 @@ class Scope:
     def track(self, value: Any, name: str = "", **kwargs: Any) -> None: ...
     def scope(self, name: str) -> "Scope": ...   # child with a joined prefix
     @property
-    def step(self) -> int | None: ...
+    def step(self) -> int: ...          # always bound; never None
     @property
     def run(self) -> Run: ...
 ```
