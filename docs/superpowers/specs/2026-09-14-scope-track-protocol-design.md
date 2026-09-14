@@ -1,6 +1,8 @@
 # `cairn.Scope` and the `__cairn_track__` protocol
 
-**Status:** approved design, not yet implemented.
+**Status:** IMPLEMENTED 2026-09-14 (`cairn/sdk/scope.py`, `Run.track`/`Run.scope`,
+`tests/unit/test_scope_track_protocol.py`). The `step` break landed immediately —
+no deprecation window, per the owner: cairn has no external users yet.
 **Date:** 2026-09-14
 
 ## Why
@@ -181,19 +183,14 @@ class Scope:
 
 ## Open questions
 
-1. **Deprecation window.** The `step` break above is stated as an immediate
-   `TypeError`. cairn is 0.1.0 and only 4 internal call sites omit `step`, so a
-   hard break is defensible — but external users may rely on the auto-increment.
-   The alternative is one release of `DeprecationWarning` + auto-increment before
-   the raise.
-2. **`final=True`.** The original sketch has `run.scope(step=it, final=True)`,
+1. **`final=True`.** The original sketch has `run.scope(step=it, final=True)`,
    but `final` has **no meaning in cairn today** — it is absent from the whole
    track path. It needs a definition before it ships (candidate: mark each
    sequence touched by this scope as complete, so a viewer can stop expecting
    more steps). Until then, leave it out rather than invent the semantics.
-3. **Collision policy** — raise, or last-write-wins? Raising is safer but turns a
+2. **Collision policy** — raise, or last-write-wins? Raising is safer but turns a
    typo into a crashed training run, which is a real cost mid-experiment.
-4. **Should `Scope` be a context manager too?** `Run` already is. A `with` form
+3. **Should `Scope` be a context manager too?** `Run` already is. A `with` form
    would give a natural flush point (batching a step's writes into one commit).
    Not required by this design; worth revisiting if per-step write volume shows
    up in profiling.
@@ -204,3 +201,25 @@ Once this lands, the `research-project` skill drops its own `track.py` and
 imports from cairn, which also removes its `sub` helper and its parameter-name
 rule. The skill can be rewritten against these names ahead of implementation so
 the two match on landing.
+
+
+## Implementation notes (2026-09-14)
+
+Shipped as specified. Collision policy stayed OPEN, so the walk does **not**
+detect two children resolving to the same joined name — it records both, which is
+cairn's existing behaviour for two points at one `(name, step)`. Deciding to raise
+is a separate, additive change.
+
+Verified end to end — one `run.track(model, "model", step=it)` over six
+iterations, with an optional member present only on even ones:
+
+```
+model.aux.k            steps=[0, 2, 4]
+model.aux.rms          steps=[0, 2, 4]
+model.encoding.k       steps=[0, 1, 2, 3, 4, 5]
+model.encoding.rms     steps=[0, 1, 2, 3, 4, 5]
+model.loss             steps=[0, 1, 2, 3, 4, 5]
+```
+
+`model.aux.*` lands on the iterations it actually existed on. Under the old
+auto-increment those same points would have been numbered 0, 1, 2.

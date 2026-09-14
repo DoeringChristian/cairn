@@ -356,6 +356,7 @@ def test_table_dataref_shapes_columns_and_rows(tmp_path):
     run.track(
         cairn.Table(columns=["epoch", "acc"], data=[[1, 0.5], [2, 0.9]]),
         name="metrics",
+        step=0,
     )
     run.finish()
 

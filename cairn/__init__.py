@@ -30,6 +30,7 @@ from .config import configure  # noqa: E402
 
 _LAZY_ATTRS: dict[str, str] = {
     "Run": ".sdk.run",
+    "Scope": ".sdk.scope",
     "ArtifactVersion": ".sdk.run",
     "Reader": ".sdk.reader",
     "query_url": ".sdk.query_urls",
@@ -104,6 +105,7 @@ def __dir__() -> list[str]:
 __all__ = [
     "__version__",
     "Run",
+    "Scope",
     "configure",
     "register_handler",
     "Reader",

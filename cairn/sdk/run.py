@@ -35,6 +35,7 @@ from ..sdk.handlers.registry import HandlerRegistry, default_registry, resolve_m
 from ..sdk.wrappers import _TypeWrapper
 from .buffer import MetricBuffer
 from .local import LocalTransport, _RepoServedByOtherError
+from .scope import Scope
 from .transport import Transport
 from .wal import WriteAheadLog
 from ..server.storage.datadir import DataDir, RepoLockedError
@@ -281,7 +282,7 @@ class Run:
         self._sys_collector: SystemMetricsCollector | None = None
         if capture_system_metrics:
             self._sys_collector = SystemMetricsCollector(
-                track=lambda n, v: self.track(v, name=n),
+                track=lambda n, v: self._track_sample(n, v),
                 interval=system_metrics_interval,
                 include_per_core=system_metrics_include_per_core,
             )
@@ -378,18 +379,71 @@ class Run:
 
     # ---- tracking ---------------------------------------------------------
 
+    def scope(self, *, step: int, context: Any | None = None) -> "Scope":
+        """A :class:`~cairn.sdk.scope.Scope` with ``step``/``context`` bound.
+
+        The SECONDARY entry point. `Run` is already the root scope, so
+        ``run.track(model, "model", step=it)`` walks a component tree on its own;
+        this exists for the case recursion cannot reach — handing a pre-bound
+        logger to a plain function that is not a component::
+
+            evaluate(model, run.scope(step=it))
+        """
+        if self._finished:
+            raise RuntimeError("Run has already been finished")
+        return Scope(self, "", step=step, context=context)
+
     def track(
         self,
         value: Any,
         name: str,
-        step: int | None = None,
+        step: int,
         context: Any | None = None,
         **kwargs: Any,
     ) -> None:
-        """Record a point in the named sequence.
+        """Record ``value`` in the named sequence at ``step``.
 
-        ``step`` auto-increments per ``(name, context)`` if omitted.
+        ``step`` is REQUIRED. It used to default to a per-``(name, context)``
+        auto-increment, which is coherent for one sequence and silently wrong
+        across a component tree: a member recorded on only some iterations would
+        keep counting from zero and its points would claim iterations that were
+        not theirs. The iteration is now named exactly once, here — and every
+        ``__cairn_track__`` below inherits it.
+
+        If ``value`` implements ``__cairn_track__`` this walks the component tree
+        instead of recording a leaf, threading this ``name`` down as the prefix.
+        ``None`` is a silent skip.
         """
+        if self._finished:
+            raise RuntimeError("Run has already been finished")
+        if value is None:
+            return
+        if hasattr(value, "__cairn_track__"):
+            Scope(self, "", step=step, context=context).track(value, name, **kwargs)
+            return
+        self._track_leaf(value, name, step=step, context=context, **kwargs)
+
+    def _track_sample(self, name: str, value: Any) -> None:
+        """Record a TIMER-SAMPLED point, numbering it with the per-name counter.
+
+        The one legitimate stepless caller is the system-metrics collector: its
+        samples are taken on a wall-clock interval, not per training iteration,
+        so there is no step to supply and a per-name counter is exactly right.
+        Kept off the public API so the counter cannot silently renumber a tree.
+        """
+        self._track_leaf(value, name, step=None, context=None)
+
+    def _track_leaf(
+        self,
+        value: Any,
+        name: str,
+        *,
+        step: int | None,
+        context: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Record ONE point — no protocol dispatch. ``step=None`` auto-increments
+        (see :meth:`_track_sample`; never reachable from the public API)."""
         if self._finished:
             raise RuntimeError("Run has already been finished")
 
