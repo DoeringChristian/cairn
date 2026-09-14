@@ -104,13 +104,54 @@ run.track(model, "model")  →  model.encoding.rms
 An empty segment is dropped, so `run.track(model, "")` yields un-prefixed leaf
 names and `scope.track(x, "")` records at the parent's own name.
 
+## `step` becomes required (breaking)
+
+**Ruling:** `step` is always supplied explicitly, *except* inside a scope, where
+it is baked in. `run.track(model, "model", step=it)` is the only place the
+iteration is named; every `__cairn_track__` below it receives the right name and
+the right step automatically.
+
+Today `step` defaults to `None` and `_next_step` (`cairn/sdk/run.py:723`)
+auto-increments a counter **per `(name, context)`** — one counter per sequence
+name. That is coherent for a single sequence and incoherent across a tree.
+Demonstrated, tracking `rms` every iteration and `encoding.rms` only on even
+ones:
+
+```
+rms            steps=[0, 1, 2, 3, 4, 5]  values=[0, 1, 2, 3, 4, 5]
+encoding.rms   steps=[0, 1, 2]           values=[0, 2, 4]
+```
+
+At "step 1", `rms` is iteration 1 while `encoding.rms` is iteration 2. Nothing
+errors; the step numbers simply lie, and every downstream x-axis, comparison and
+diff inherits that. The `scope.track(None, …)` silent-skip rule actively
+*encourages* this shape, since an optional member that is `None` on some
+iterations lands on a subset of them and drifts from its siblings.
+
+So the default is not merely unhelpful for a tree — it produces wrong data that
+looks right. It goes away:
+
+- `Run.track(value, name, step, ...)` — `step` is **required**. It is already the
+  third positional parameter, so call sites that pass it positionally are
+  unaffected.
+- Omitting it raises a `TypeError` naming the sequence and pointing at
+  `run.scope(step=...)`, rather than inventing a number.
+- **Blast radius (measured by AST over `cairn/`, `examples/`, `tests/`): 109
+  call sites already pass `step`; 4 do not.** Three are tests. The fourth is the
+  genuine exception below.
+
+**The one legitimate stepless caller** is `SystemMetricsCollector`
+(`cairn/sdk/run.py:284`, `track=lambda n, v: self.track(v, name=n)`). System
+metrics are sampled on a timer, not per iteration: there is no step to supply and
+a per-name counter is exactly right. It moves to an internal
+`Run._track_sample(name, value)` that keeps `_next_step`, so the counter survives
+for the one case it suits and leaves the public API.
+
 ## Rules
 
 - **Inheritance.** A child scope inherits `step` and `context` from its parent.
-  Set once at the root; leaves need nothing threaded. This is why binding `step`
-  matters at all: `run.track` auto-increments `step` per `(name, context)` when
-  omitted, so an unbound tree walk would scatter one logical iteration across
-  independently-incrementing sequences.
+  Set once at the root; leaves need nothing threaded — that is the whole point of
+  the scope, and with `step` now required it is also the only way a tree gets one.
 - **Cycles.** The walk carries a set of `id()`s of objects already visited *on
   the current path*; re-entering one is skipped rather than recursed. A component
   graph with a back-reference (child holding a parent) must not hang.
@@ -139,14 +180,19 @@ class Scope:
 
 ## Open questions
 
-1. **`final=True`.** The original sketch has `run.scope(step=it, final=True)`,
+1. **Deprecation window.** The `step` break above is stated as an immediate
+   `TypeError`. cairn is 0.1.0 and only 4 internal call sites omit `step`, so a
+   hard break is defensible — but external users may rely on the auto-increment.
+   The alternative is one release of `DeprecationWarning` + auto-increment before
+   the raise.
+2. **`final=True`.** The original sketch has `run.scope(step=it, final=True)`,
    but `final` has **no meaning in cairn today** — it is absent from the whole
    track path. It needs a definition before it ships (candidate: mark each
    sequence touched by this scope as complete, so a viewer can stop expecting
    more steps). Until then, leave it out rather than invent the semantics.
-2. **Collision policy** — raise, or last-write-wins? Raising is safer but turns a
+3. **Collision policy** — raise, or last-write-wins? Raising is safer but turns a
    typo into a crashed training run, which is a real cost mid-experiment.
-3. **Should `Scope` be a context manager too?** `Run` already is. A `with` form
+4. **Should `Scope` be a context manager too?** `Run` already is. A `with` form
    would give a natural flush point (batching a step's writes into one commit).
    Not required by this design; worth revisiting if per-step write volume shows
    up in profiling.
