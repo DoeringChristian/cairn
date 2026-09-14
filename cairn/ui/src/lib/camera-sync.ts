@@ -2,7 +2,7 @@ import { createContext, useContext, useId } from "react";
 
 /**
  * Live camera-sync group for a 3D card's OWN panes to mirror each other's
- * orbit/zoom/pan in real time. See `cairn-plot/three/camera-sync.ts` for the
+ * orbit/zoom/pan in real time. See `cairn/ui/src/lib/camera-sync.ts` for the
  * underlying framework-free pub/sub bus that actually carries the
  * position/target/zoom updates.
  *

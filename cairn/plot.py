@@ -121,8 +121,16 @@ register_resolvers(
 # re-exported above for the pure/self-contained composable path.
 # ---------------------------------------------------------------------------
 
-# `mode` values for the "one-pane" media-compare compositor — mirrors
-# `Extract<MediaCompareModeKind, "split"|"blend"|"diff">`.
+# `mode` values for the "one-pane" media-compare compositor these CARD helpers
+# drive (`media_compare` and friends, below) — read by
+# `cairn/ui/src/components/card-kit/CompareSettingsPanel.tsx`.
+#
+# NOT the vocabulary of `cp.Compare`, the pure cairn-plot composable re-exported
+# from this module: that one takes `split`/`signed`/`abs`/`square`/`rel_*`/
+# `flip`/`flip_hdr`/`ssim` and validates them itself. Two different compare
+# surfaces share this namespace — passing a mode from one to the other raises.
+# (The previous note here cited a TypeScript `MediaCompareModeKind` type that no
+# longer exists.)
 _COMPARE_MODES = ("split", "blend", "diff")
 
 
