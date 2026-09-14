@@ -469,6 +469,22 @@ export default function CairnPlotCard({
         onChange={(value) => patchPlotSettings({ "image.encoding": value })}
         options={DISPLAY_OPTIONS}
       />
+      {/* Diff mode lives HERE, directly under Encoding, rather than in the
+          "Comparison" section below — deliberate, user-directed placement. The
+          two are changed one after the other (pick an error metric, then pick
+          the colormap that reads it), and `DISPLAY_OPTIONS` is where the
+          colormaps live, so separating them put nine unrelated controls between
+          two paired decisions. Its sub-controls (split position, reference
+          pinning) stay in "Comparison": they are touched far less often and
+          read the same state, so they keep working from there. */}
+      {settings.comparisonMetric && (
+        <Select<string>
+          label="Diff mode"
+          value={selectedCompareOperation}
+          onChange={changeCompareOperation}
+          options={COMPARE_OPTIONS}
+        />
+      )}
       <Slider
         label="Exposure"
         value={numberSetting(livePlotSettings, "image.exposureEV", 0)}
@@ -507,11 +523,30 @@ export default function CairnPlotCard({
         step={0.5}
         format={(value) => `${value.toFixed(1)}×`}
       />
+      {/* "Automatic" is the ABSENT key, and it has to be offered: the renderer
+          derives its own reduction when `image.reduce` is unset, from the
+          display operation AND the source's channel count
+          (`defaultReduceForDisplayOperation` — Turbo means MEAN regardless of
+          arity, while a k>=3 source otherwise means LUMINANCE). Those inputs are
+          renderer-internal, so ANY constant fallback here is a lie: the old
+          `?? "mean"` made this control read "Mean" while a Magma pane was
+          actually reducing by luminance. Absent now shows as "Automatic", and
+          picking it writes `undefined`, which both this card's
+          `applySettingsPatch` and cairn-plot's `patchCellSettings` treat as a
+          delete — handing the choice back to the renderer. */}
       <Select<string>
         label="Channel reduction"
-        value={String(livePlotSettings["image.reduce"] ?? "mean")}
-        onChange={(value) => patchPlotSettings({ "image.reduce": value })}
-        options={[{ value: "mean", label: "Mean" }, { value: "luminance", label: "Luminance" }]}
+        value={typeof livePlotSettings["image.reduce"] === "string"
+          ? String(livePlotSettings["image.reduce"])
+          : "auto"}
+        onChange={(value) => patchPlotSettings({
+          "image.reduce": value === "auto" ? undefined : value,
+        })}
+        options={[
+          { value: "auto", label: "Automatic" },
+          { value: "mean", label: "Mean" },
+          { value: "luminance", label: "Luminance" },
+        ]}
       />
       <NumberInput
         label="Range minimum"
@@ -598,12 +633,9 @@ export default function CairnPlotCard({
   const comparisonPresentation = compareOperation === "split" ? "split" : "diff";
   const compareSettings = metric.object_type === "image" && settings.comparisonMetric && (
     <SettingsSection title="Comparison">
-      <Select<string>
-        label="Diff mode"
-        value={compareOperation}
-        onChange={changeCompareOperation}
-        options={COMPARE_OPTIONS}
-      />
+      {/* "Diff mode" itself is rendered up in "Image display", next to
+          Encoding — see the note there. What remains here are its
+          less-frequently-touched sub-controls. */}
       {comparisonPresentation === "split" && (
         <Slider
           label="Split position"
