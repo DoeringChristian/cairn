@@ -180,7 +180,7 @@ class DataDir:
     # concurrently (SQLite WAL mode allows it — see the "Running
     # concurrently" note above). ``servers.json`` is therefore a small LIST
     # of live entries, not a single holder, so notebook-side rendering
-    # (``cairn.ui.elements.CardElement._resolve_server``) can auto-detect
+    # (``cairn_ui.cards.elements.CardElement._resolve_server``) can auto-detect
     # *some* reachable server on this repo regardless of which port it
     # landed on (``cairn ui``'s port auto-increments when its default is
     # taken). Entries are pruned by liveness (pid) on every read/write;

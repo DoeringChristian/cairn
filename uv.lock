@@ -360,6 +360,16 @@ provides-extras = ["plot", "ui", "media", "hf", "discovery", "examples", "dev"]
 name = "cairn-ui"
 version = "0.2.0"
 source = { editable = "packages/cairn-ui" }
+dependencies = [
+    { name = "cairn-plot" },
+    { name = "cairn-track" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "cairn-plot", editable = "vendor/cairn-plot" },
+    { name = "cairn-track", editable = "." },
+]
 
 [[package]]
 name = "certifi"

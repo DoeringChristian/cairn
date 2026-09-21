@@ -16,8 +16,8 @@ import json as _json
 import uuid as _uuid
 from typing import Any, Sequence
 
-from ..sdk.reader import DataRef
-from .card_spec import CardSettingsSpec, CardSpec, SeriesRef
+from cairn.sdk.reader import DataRef
+from .spec import CardSettingsSpec, CardSpec, SeriesRef
 from .elements import CardElement
 
 __all__ = [

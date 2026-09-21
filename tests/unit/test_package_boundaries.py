@@ -53,7 +53,7 @@ def test_server_never_imports_the_sdk() -> None:
 # Tokens that mean "I know where the viewer bundle lives on disk".
 _UI_PATH_TOKENS = re.compile(
     r"""CAIRN_UI_DIST
-      | \bcairn_ui\b
+      | \bcairn_ui\b(?!\.cards)   # the bundle-locating package, not the card surface
       | ["'](?:index|embed|plot)\.html["']
       | ["']assets["']
       | ["']_dist["']
@@ -63,10 +63,12 @@ _UI_PATH_TOKENS = re.compile(
 
 
 def test_only_cairn_viewer_knows_where_the_ui_bundle_lives() -> None:
-    """One module owns the viewer's location; everyone else asks it.
+    """One module owns where the bundle's FILES are; everyone else asks it.
 
     If a second module learns the bundle's path, the next person to touch it
-    re-couples the wheel to the viewer without noticing.
+    re-couples the wheel to the viewer without noticing. Binding to
+    ``cairn_ui.cards`` — the viewer's own Python surface — is a different thing
+    and stays allowed: that is a package import, not filesystem knowledge.
     """
     offenders: list[str] = []
     for p in _py_files(REPO / "cairn"):

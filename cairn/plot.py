@@ -110,16 +110,37 @@ register_resolvers(
     serialize_boxes3d=_serialize_boxes3d,
 )
 
-# Compatibility re-export: these now live in `cairn.ui`. Kept importable from
-# `cairn.plot` for one release so existing notebooks keep working.
-from .ui.compare import (  # noqa: E402,F401
-    boxes_compare,
-    image_compare,
-    media_compare,
-    mesh_compare,
-    pointcloud_compare,
-    volume_compare,
+# Compatibility shim: the card helpers moved to `cairn.ui`. Kept reachable from
+# `cairn.plot` for one release — but resolved LAZILY, because they live in the
+# viewer distribution and eagerly importing them would make the renderer extra
+# depend on the viewer extra.
+_MOVED_TO_UI = (
+    "media_compare",
+    "image_compare",
+    "mesh_compare",
+    "pointcloud_compare",
+    "volume_compare",
+    "boxes_compare",
 )
+
+
+def __getattr__(name: str):
+    if name in _MOVED_TO_UI:
+        try:
+            from cairn_ui.cards import compare as _compare
+        except ImportError as exc:
+            raise ImportError(
+                f"`cairn.plot.{name}` moved to `cairn.ui.{name}` and ships with "
+                "the viewer.\n"
+                "\n"
+                "    pip install 'cairn-track[ui]'\n"
+                "\n"
+                "It builds a card for the browser to render rather than drawing "
+                "anything, which is why it lives there now."
+            ) from exc
+        return getattr(_compare, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 # The public surface = the standalone cairn_plot surface + the compatibility
 # re-export of the card helpers above.

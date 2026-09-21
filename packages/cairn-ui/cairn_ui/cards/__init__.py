@@ -1,16 +1,16 @@
-"""cairn.ui — drive the Cairn browser viewer from Python.
+"""cairn_ui.cards — drive the Cairn browser viewer from Python.
 
-Needs ``pip install 'cairn-track[ui]'``. This is the authoring half of the
-viewer: it builds card specs the browser's renderer consumes, and elements that
-embed those cards in a notebook. It renders nothing itself.
+The authoring half of the viewer: it builds card specs the browser's renderer
+consumes, and elements that embed those cards in a notebook. It renders nothing
+itself — the browser does, at ``/embed/card``.
 
-Not to be confused with two neighbours:
+Reached as :mod:`cairn.ui`, which is a thin binding onto this module, the way
+:mod:`cairn.plot` binds onto ``cairn_plot``. It lives here rather than in
+cairn-track because it is part of the viewer, not part of the tracker.
 
-* ``cairn-ui`` — the separate distribution holding the built browser bundle.
-  This package drives that viewer; it does not contain it, and never names its
-  files (see :mod:`cairn.viewer`, which owns that).
-* :mod:`cairn.plot` — the renderer surface (``cairn-track[plot]``). Use it to
-  draw a chart; use this to put a Cairn *card* on screen.
+Deliberately NOT imported by ``cairn_ui/__init__.py``: ``cairn.viewer`` imports
+that package to locate the bundle, and pulling this in would make the server
+import the renderer.
 
 Everything here needs a reachable cairn server that is *serving* the viewer,
 since a card is ultimately rendered by the browser at ``/embed/card``. Without
@@ -25,7 +25,7 @@ you want if the viewer should also run *here* — it adds the bundle and implies
 
 from __future__ import annotations
 
-from .card_spec import CardSettingsSpec, CardSpec, SeriesRef
+from .spec import CardSettingsSpec, CardSpec, SeriesRef
 from .compare import (
     boxes_compare,
     image_compare,

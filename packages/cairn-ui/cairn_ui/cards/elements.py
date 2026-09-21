@@ -42,7 +42,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from .. import config as _config
+from cairn import config as _config
 
 # Re-export the pure display objects (factored out to plot_elements.py for the
 # cairn-plot packaging split) so callers importing them from here are unchanged.
@@ -182,7 +182,7 @@ class CardElement(Element):
     def _advertised_candidates(repo_path: str) -> list[str]:
         """Live server URLs advertised for ``repo_path``, newest first."""
         try:
-            from ..server.storage.datadir import read_live_servers
+            from cairn.server.storage.datadir import read_live_servers
 
             entries = read_live_servers(Path(repo_path))
         except Exception:  # noqa: BLE001 - discovery must never raise

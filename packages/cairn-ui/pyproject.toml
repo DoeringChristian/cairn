@@ -4,7 +4,7 @@ name = "cairn-ui"
 # shapes and the card-spec schema that server produces, so skew is a bug rather
 # than a compatibility window. Pinned by a test in the root project.
 version = "0.2.0"
-description = "Prebuilt browser viewer for cairn-track. Data only."
+description = "The Cairn browser viewer: the built bundle, plus the Python surface that drives it."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
@@ -17,8 +17,14 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Topic :: Scientific/Engineering :: Visualization",
 ]
-# Deliberately empty: cairn-track depends on THIS, never the reverse.
-dependencies = []
+# The card surface needs the tracker's DataRef and config to resolve run[tag]
+# handles and find a server, and the renderer's Element and spec models to build
+# a card. cairn-track[ui] depending back on this package is the ordinary plugin
+# shape — that extra points here, this points at base cairn-track.
+dependencies = [
+    "cairn-track",
+    "cairn-plot>=0.1,<0.2",
+]
 
 [project.urls]
 Repository = "https://github.com/anthropics/cairn"
@@ -26,6 +32,10 @@ Repository = "https://github.com/anthropics/cairn"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.uv.sources]
+cairn-track = { path = "../..", editable = true }
+cairn-plot = { path = "../../vendor/cairn-plot", editable = true }
 
 [tool.hatch.build.targets.wheel]
 packages = ["cairn_ui"]
