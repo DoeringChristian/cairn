@@ -7,7 +7,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from cairn.server.app import _browser_shell, create_app
+from cairn import viewer
+from cairn.server.app import create_app
 
 
 _UI = Path(__file__).resolve().parents[2] / "cairn" / "ui"
@@ -21,16 +22,12 @@ def test_no_webgpu_app_serves_cpu_override(tmp_path: Path) -> None:
     assert '__cairnPlotRenderMode="cpu"' in response.text
 
 
-def test_no_webgpu_shell_override_precedes_the_app_module(tmp_path: Path) -> None:
-    shell = tmp_path / "index.html"
-    shell.write_text(
-        '<html><head><script type="module" src="/app.js"></script></head></html>',
-        encoding="utf-8",
-    )
-    rendered = _browser_shell(shell, disable_webgpu=True).decode()
+def test_no_webgpu_shell_override_precedes_the_app_module() -> None:
+    """Pure bytes->bytes, so this needs no bundle and never skips."""
+    shell = b'<html><head><script type="module" src="/app.js"></script></head></html>'
+    rendered = viewer.inject_cpu_override(shell).decode()
     override_at = rendered.index('__cairnPlotRenderMode="cpu"')
     assert override_at < rendered.index("</head>")
-    assert _browser_shell(shell, disable_webgpu=False) == shell.read_bytes()
 
 
 @pytest.mark.parametrize("shell", ["index.html", "plot.html", "embed.html"])

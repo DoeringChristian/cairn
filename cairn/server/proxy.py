@@ -16,7 +16,7 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from .app import _mount_spa_or_placeholder
+from .ui_mount import mount_viewer
 
 _HOP_BY_HOP = {
     b"connection",
@@ -258,5 +258,5 @@ def create_proxy_app(
         return response
 
     # Register the API catch-all before the SPA fallback.
-    _mount_spa_or_placeholder(app, disable_webgpu=disable_webgpu)
+    mount_viewer(app, disable_webgpu=disable_webgpu)
     return app

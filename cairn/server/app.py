@@ -16,13 +16,11 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-import os
 from pathlib import Path
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
 
 from . import auth as auth_core
 from .embed_specs import EmbedSpecStore
@@ -46,6 +44,7 @@ from .routes import (
     sequences,
     source,
 )
+from .ui_mount import mount_viewer
 from .storage.blobs import BlobStore
 from .storage.datadir import DataDir, default_data_dir
 from .storage.db import Database
@@ -211,7 +210,7 @@ def create_app(
         app.include_router(router, dependencies=[Depends(require("write"))])
 
     if mount_ui:
-        _mount_spa_or_placeholder(app, disable_webgpu=disable_webgpu)
+        mount_viewer(app, disable_webgpu=disable_webgpu)
     else:
         @app.get("/", include_in_schema=False)
         def _ingest_root() -> JSONResponse:
@@ -227,113 +226,3 @@ def create_app(
             )
 
     return app
-
-
-def _resolve_ui_dist() -> Path:
-    """Locate the cairn-ui build (refactor §1b: the UI is its own package).
-
-    `CAIRN_UI_DIST` overrides; default is the bundled cairn/ui/dist.
-    """
-    env = os.environ.get("CAIRN_UI_DIST")
-    if env:
-        return Path(env)
-    return Path(__file__).resolve().parent.parent / "ui" / "dist"
-
-
-def _browser_shell(path: Path, *, disable_webgpu: bool) -> bytes:
-    content = path.read_bytes()
-    if not disable_webgpu:
-        return content
-    override = b'<script>globalThis.__cairnPlotRenderMode="cpu";</script>'
-    marker = b"</head>"
-    return content.replace(marker, override + marker, 1)
-
-
-def _mount_spa_or_placeholder(app: FastAPI, *, disable_webgpu: bool = False) -> None:
-    """Mount the built React bundle with SPA-style fallback routing.
-
-    Any request that isn't handled by an ``/api/*`` route and doesn't match
-    a static asset in ``ui/dist/`` gets ``index.html`` so React Router can
-    handle client-side routing (e.g. ``/p/demo/r/abc123/metrics``).
-    """
-    ui_dist = _resolve_ui_dist()
-    if (ui_dist / "index.html").exists():
-        index_html = _browser_shell(
-            ui_dist / "index.html", disable_webgpu=disable_webgpu
-        )
-
-        # Mount static assets first (JS, CSS, images, etc.)
-        app.mount(
-            "/assets",
-            StaticFiles(directory=str(ui_dist / "assets")),
-            name="ui-assets",
-        )
-
-        # WS-EMBED: serve the standalone embed entry at /embed/card. This is a
-        # SEPARATE HTML bundle (embed.html + embed-main.tsx) from the SPA, so
-        # it must be registered BEFORE the SPA catch-all below — otherwise the
-        # catch-all would swallow /embed/card and serve the full app shell
-        # instead of the minimal one-card embed. ?sid=... selects the spec.
-        embed_html_path = ui_dist / "embed.html"
-        if embed_html_path.exists():
-            embed_html = _browser_shell(
-                embed_html_path, disable_webgpu=disable_webgpu
-            )
-
-            @app.get("/embed/card", include_in_schema=False)
-            async def _embed_card() -> Response:
-                from fastapi.responses import Response
-
-                return Response(content=embed_html, media_type="text/html")
-
-        # cairn-plot (Phase B): serve the standalone plot entry at /plot. Like
-        # /embed/card this is a SEPARATE HTML bundle (plot.html + plot-main.tsx)
-        # from the SPA, so it must be registered BEFORE the SPA catch-all below
-        # — otherwise the catch-all swallows /plot and serves the app shell. It
-        # is the ENDPOINT-mode variant's shell (?src=/?sid= select the
-        # descriptor); LOCAL-mode plots are self-contained and need no server.
-        plot_html_path = ui_dist / "plot.html"
-        if plot_html_path.exists():
-            plot_html = _browser_shell(
-                plot_html_path, disable_webgpu=disable_webgpu
-            )
-
-            @app.get("/plot", include_in_schema=False)
-            async def _plot() -> Response:
-                from fastapi.responses import Response
-
-                return Response(content=plot_html, media_type="text/html")
-
-        # SPA catch-all: serve index.html for any non-API, non-asset path.
-        # Explicitly refuse anything under /api/ instead of falling through
-        # to index.html — registration order alone (API routers registered
-        # first) already prevents this for *known* /api/* routes, but a
-        # typo'd or unregistered /api/* path would otherwise silently 200
-        # with the HTML shell instead of a clean 404. All data lives behind
-        # /api/*, so this path must never serve the SPA.
-        @app.get("/{path:path}", include_in_schema=False)
-        async def _spa_fallback(path: str) -> Response:
-            from fastapi.responses import JSONResponse, Response
-
-            # Case-insensitive: refuse /API/... too. No route matches an
-            # uppercased /API/* today so there's no live data leak, but this
-            # keeps the "shell never serves under the api namespace" invariant
-            # airtight regardless of path casing.
-            lowered = path.lower()
-            if lowered == "api" or lowered.startswith("api/"):
-                return JSONResponse({"detail": "not found"}, status_code=404)
-            return Response(content=index_html, media_type="text/html")
-    else:
-        @app.get("/", include_in_schema=False)
-        def _no_ui() -> JSONResponse:
-            return JSONResponse(
-                {
-                    "status": "no_ui",
-                    "message": (
-                        "Cairn is running but the UI bundle is not present. "
-                        "Build it with `cd ui-src && npm run build`, or use "
-                        "the API at /api/."
-                    ),
-                },
-                status_code=200,
-            )
