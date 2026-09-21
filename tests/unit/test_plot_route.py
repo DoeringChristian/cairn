@@ -22,8 +22,8 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def test_plot_route_serves_shell(client):
-    r = client.get("/plot")
+def test_plot_route_serves_shell(ui_client):
+    r = ui_client.get("/plot")
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("text/html")
     # The plot entry's mount point — the standalone shell, NOT the SPA (which
@@ -33,6 +33,6 @@ def test_plot_route_serves_shell(client):
     assert "assets/plot-" in r.text
 
 
-def test_plot_route_matches_committed_bytes(client):
+def test_plot_route_matches_committed_bytes(ui_client):
     # Served bytes are the committed dist/plot.html, read once at startup.
-    assert client.get("/plot").content == (_DIST / "plot.html").read_bytes()
+    assert ui_client.get("/plot").content == (_DIST / "plot.html").read_bytes()

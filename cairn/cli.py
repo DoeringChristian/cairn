@@ -32,6 +32,7 @@ from typing import Any
 import click
 
 from . import config as _config
+from . import viewer as _viewer
 from .sdk.transport import Transport, default_spill_dir
 
 from .server import auth as _auth
@@ -233,6 +234,12 @@ def server_cmd(
     """Start the Cairn tracking server (ingest-only unless ``--ui``)."""
     import uvicorn
 
+    if ui and not _viewer.is_available():
+        raise click.ClickException(
+            _viewer.NOT_INSTALLED_HINT
+            + "\n\nOr drop `--ui` to run the ingest-only tracking server."
+        )
+
     if advertise and no_auth:
         click.echo(
             "WARN: --advertise + --no-auth broadcasts an UNAUTHENTICATED "
@@ -415,6 +422,11 @@ def ui_cmd(
     ``CAIRN_TOKEN`` to authenticate server-side, or omit it and log in through
     the browser. ``--no-auth`` applies only to local-repo mode.
     """
+    # First, before resolving the target, acquiring a repo lock or registering a
+    # live server — so a missing viewer cannot leave any of that behind.
+    if not _viewer.is_available():
+        raise click.ClickException(_viewer.NOT_INSTALLED_HINT)
+
     import uvicorn
 
     target = _config.resolve_target(repo=repo or str(_default_repo()))
@@ -598,6 +610,19 @@ def list_cmd(
         t.close()
 
 
+def _server_lacks_viewer(t: Transport) -> bool:
+    """True when the server answers `/` with a no-viewer marker.
+
+    Any failure to tell is reported as False: a probe that cannot decide must
+    not suppress the browser.
+    """
+    try:
+        body = t.get("/").json()
+    except Exception:  # noqa: BLE001
+        return False
+    return isinstance(body, dict) and body.get("status") in {"no_ui", "ingest"}
+
+
 @main.command("open")
 @click.argument("run_id")
 @click.option("--no-browser", is_flag=True)
@@ -612,6 +637,18 @@ def open_cmd(run_id: str, no_browser: bool) -> None:
         )
         click.echo(url)
         if not no_browser:
+            # Whether that server serves the viewer is its property, not a local
+            # install question, so the URL is always printed and the exit code
+            # stays 0. But opening a browser onto a JSON blob is the actively
+            # bad outcome, so probe once and say so instead.
+            if _server_lacks_viewer(t):
+                click.echo(
+                    "note: that server is not serving the viewer, so the URL "
+                    "above will not render. Install it there:  "
+                    "pip install 'cairn-track[ui]'",
+                    err=True,
+                )
+                return
             try:
                 webbrowser.open(url)
             except Exception:  # noqa: BLE001

@@ -59,7 +59,7 @@ def create_app(
     db: Database | None = None,
     blobs: BlobStore | None = None,
     data_dir_obj: DataDir | None = None,
-    mount_ui: bool = True,
+    mount_ui: bool = False,
     auth_enabled: bool = False,
     disable_webgpu: bool = False,
 ) -> FastAPI:
@@ -74,9 +74,12 @@ def create_app(
         blobs: Optional pre-constructed ``BlobStore`` (paired with ``db``).
         data_dir_obj: Optional pre-constructed ``DataDir`` (paired with
             ``db``). Used by the ingest/UI route helpers.
-        mount_ui: When True (default), mount the React SPA at ``/``. Set
-            False on the ingest-only server in a dual-port deployment so the
-            SPA is served exclusively by the UI app.
+        mount_ui: Mount the browser viewer at ``/``. Defaults to False: the
+            viewer is a separate, optionally-installed distribution
+            (``pip install 'cairn-track[ui]'``), so a server is API-only
+            unless a caller asks for it. ``cairn ui`` and ``cairn server --ui``
+            opt in. When True but no viewer is installed, ``/`` serves the
+            ``no_ui`` placeholder rather than failing.
         auth_enabled: When True, every ``/api/*`` route except
             ``/api/health`` and ``/api/auth/*`` requires a Bearer token or
             session cookie (see ``cairn/server/auth.py``). Defaults to

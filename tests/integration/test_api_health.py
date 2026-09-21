@@ -20,14 +20,16 @@ def test_info(client):
     assert "data_dir" in body
 
 
-def test_root_serves_spa_or_placeholder(client):
-    """When the viewer is installed we serve HTML; otherwise the JSON placeholder."""
-    from cairn import viewer
-
+def test_root_is_api_only_by_default(client):
+    """A server built without `mount_ui` never serves a page."""
     r = client.get("/")
     assert r.status_code == 200
-    if viewer.is_available():
-        assert r.headers["content-type"].startswith("text/html")
-        assert "<html" in r.text.lower()
-    else:
-        assert r.json()["status"] == "no_ui"
+    assert r.json()["status"] == "ingest"
+
+
+def test_root_serves_the_spa_when_the_viewer_is_mounted(ui_client):
+    """Stronger than branching on bundle presence: this cannot pass vacuously."""
+    r = ui_client.get("/")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/html")
+    assert "<html" in r.text.lower()

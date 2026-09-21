@@ -38,12 +38,30 @@ def blob_store(data_dir: DataDir) -> BlobStore:
 
 @pytest.fixture
 def app(tmp_path):
-    return create_app(data_dir=tmp_path / "cairn")
+    # Explicit even though it is now the default: the API tests that use this
+    # must not depend on whether a viewer happens to be installed.
+    return create_app(data_dir=tmp_path / "cairn", mount_ui=False)
 
 
 @pytest.fixture
 def client(app):
     with TestClient(app) as c:
+        yield c
+
+
+@pytest.fixture
+def ui_app(tmp_path):
+    """An app with the viewer mounted; skips when cairn-ui is not installed."""
+    from cairn import viewer
+
+    if not viewer.is_available():
+        pytest.skip("cairn-ui viewer not installed")
+    return create_app(data_dir=tmp_path / "cairn", mount_ui=True)
+
+
+@pytest.fixture
+def ui_client(ui_app):
+    with TestClient(ui_app) as c:
         yield c
 
 

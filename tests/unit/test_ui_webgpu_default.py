@@ -14,8 +14,9 @@ from cairn.server.app import create_app
 _UI = Path(__file__).resolve().parents[2] / "packages" / "cairn-ui"
 
 
+@pytest.mark.skipif(not viewer.is_available(), reason="cairn-ui viewer not installed")
 def test_no_webgpu_app_serves_cpu_override(tmp_path: Path) -> None:
-    app = create_app(data_dir=tmp_path / ".cairn", disable_webgpu=True)
+    app = create_app(data_dir=tmp_path / ".cairn", mount_ui=True, disable_webgpu=True)
     with TestClient(app) as client:
         response = client.get("/")
     assert response.status_code == 200
