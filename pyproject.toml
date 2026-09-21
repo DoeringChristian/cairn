@@ -18,7 +18,6 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "cairn-plot",
     "fastapi>=0.110.0",
     "uvicorn[standard]>=0.27.0",
     "pydantic>=2.0",
@@ -41,7 +40,9 @@ dependencies = [
 # CLI and the HTTP API all work without this. Pinned exactly and bumped in
 # lock-step — the bundle encodes the /api/* response shapes and the card-spec
 # schema this server produces, so skew is a bug, not a compatibility window.
-ui = ["cairn-ui==0.2.0"]
+# cairn-plot rides along: everything it is needed for here — cairn.plot, the
+# embed cards, cairn.Report — drives the browser viewer, so it ships with it.
+ui = ["cairn-ui==0.2.0", "cairn-plot>=0.1,<0.2"]
 media = [
     "matplotlib>=3.7",
     "plotly>=5.18",
@@ -61,7 +62,10 @@ examples = [
     "marimo>=0.10",
 ]
 dev = [
+    # The viewer half, so a dev checkout can exercise everything the `ui`
+    # extra unlocks.
     "cairn-ui",
+    "cairn-plot",
     "pytest>=8.0",
     "pytest-cov>=4.1",
     "pytest-asyncio>=0.23",
@@ -84,10 +88,10 @@ cairn = "cairn.cli:main"
 [project.urls]
 Repository = "https://github.com/anthropics/cairn"
 
-# The cairn-plot rendering library now lives in the standalone `cairn-plot`
-# repository (github.com/doeringchristian/cairn-plot), consumed here as a git
-# submodule at `vendor/cairn-plot` (pinned commit). In dev it resolves editable
-# from that checkout; on release it pins `cairn-plot>=0.1,<0.2`.
+# cairn-plot lives in a standalone repository
+# (github.com/doeringchristian/cairn-plot), consumed here as a git submodule at
+# `vendor/cairn-plot` (pinned commit). It is a dependency of the `ui` extra, not
+# of cairn-track itself; in dev it resolves editable from that checkout.
 [tool.uv.sources]
 cairn-plot = { path = "vendor/cairn-plot", editable = true }
 cairn-ui = { path = "packages/cairn-ui", editable = true }

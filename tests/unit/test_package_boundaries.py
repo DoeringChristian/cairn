@@ -115,7 +115,7 @@ def test_cairn_ui_is_pinned_in_lock_step_with_cairn_track() -> None:
     ui = tomllib.loads(ui_pyproject.read_text())
     version = root["project"]["version"]
     assert ui["project"]["version"] == version
-    assert root["project"]["optional-dependencies"]["ui"] == [f"cairn-ui=={version}"]
+    assert f"cairn-ui=={version}" in root["project"]["optional-dependencies"]["ui"]
 
 
 def test_default_create_app_never_imports_the_viewer_package() -> None:
@@ -134,3 +134,57 @@ def test_default_create_app_never_imports_the_viewer_package() -> None:
     env.pop("CAIRN_UI_DIST", None)
     result = subprocess.run([sys.executable, "-c", code], env=env, cwd=REPO)
     assert result.returncode == 0, "a default create_app() imported cairn_ui"
+
+
+#: Modules that drive the browser viewer from Python. They are reachable only
+#: with the `ui` extra, so nothing on the tracking or serving path may import
+#: them — that is what keeps `pip install cairn-track` free of a renderer.
+_VIEWER_MODULES = re.compile(
+    r"^\s*(?:from|import)\s+"
+    r"(?:cairn\.)?(?:\.*)"
+    r"(?:plot|sdk\.plot|sdk\.elements|sdk\.report|sdk\.card_spec)"
+    r"(?:\.|\s|$)",
+    re.M,
+)
+
+#: The tracking path proper, plus the server. Everything here must work from a
+#: base install.
+_TRACKING_ROOTS = (
+    REPO / "cairn" / "sdk" / "run.py",
+    REPO / "cairn" / "sdk" / "reader.py",
+    REPO / "cairn" / "sdk" / "transport.py",
+    REPO / "cairn" / "sdk" / "wal.py",
+    REPO / "cairn" / "sdk" / "handlers",
+    REPO / "cairn" / "server",
+)
+
+
+def test_the_tracking_path_never_imports_the_viewer_surface() -> None:
+    """cairn-track is the tracker and the server; the viewer is an extra."""
+    offenders: list[str] = []
+    for root in _TRACKING_ROOTS:
+        files = _py_files(root) if root.is_dir() else [root]
+        for p in files:
+            for m in _VIEWER_MODULES.finditer(p.read_text()):
+                offenders.append(f"{p.relative_to(REPO)}: {m.group(0).strip()}")
+    assert not offenders, (
+        "the tracking path must work without `cairn-track[ui]`; these reach "
+        "the viewer surface:\n" + "\n".join(offenders)
+    )
+
+
+def test_logging_a_run_never_imports_the_renderer() -> None:
+    """A training job pulls no renderer — proven, not assumed.
+
+    Fresh subprocess: sys.modules pollution from another test would make an
+    in-process check vacuous.
+    """
+    code = (
+        "import sys, cairn;"
+        "cairn.Run;"
+        "import cairn.sdk.run;"
+        "sys.exit(1 if 'cairn_plot' in sys.modules else 0)"
+    )
+    env = {**os.environ, "PYTHONPATH": str(REPO)}
+    result = subprocess.run([sys.executable, "-c", code], env=env, cwd=REPO)
+    assert result.returncode == 0, "the tracking path imported cairn_plot"

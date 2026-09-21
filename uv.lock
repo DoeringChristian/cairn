@@ -244,7 +244,6 @@ name = "cairn-track"
 version = "0.2.0"
 source = { editable = "." }
 dependencies = [
-    { name = "cairn-plot" },
     { name = "click" },
     { name = "fastapi" },
     { name = "httpx" },
@@ -265,6 +264,7 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
+    { name = "cairn-plot" },
     { name = "cairn-ui" },
     { name = "freezegun" },
     { name = "imageio" },
@@ -300,12 +300,14 @@ media = [
     { name = "soundfile" },
 ]
 ui = [
+    { name = "cairn-plot" },
     { name = "cairn-ui" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "cairn-plot", editable = "vendor/cairn-plot" },
+    { name = "cairn-plot", marker = "extra == 'dev'", editable = "vendor/cairn-plot" },
+    { name = "cairn-plot", marker = "extra == 'ui'", editable = "vendor/cairn-plot" },
     { name = "cairn-ui", marker = "extra == 'dev'", editable = "packages/cairn-ui" },
     { name = "cairn-ui", marker = "extra == 'ui'", editable = "packages/cairn-ui" },
     { name = "click", specifier = ">=8.1.0" },

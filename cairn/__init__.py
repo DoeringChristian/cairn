@@ -83,18 +83,42 @@ if TYPE_CHECKING:  # static-analysis only — never executed, never eager at run
     )
 
 
+#: Attributes that live on the viewer side of the boundary. cairn-track is the
+#: tracker and the server; everything that drives the browser viewer from Python
+#: — the renderer surface, the embed cards, the notebook report container — is
+#: reachable only with `pip install \'cairn-track[ui]\'`. Listed here so a
+#: missing extra reports itself instead of surfacing as a bare ImportError on
+#: `cairn_plot` from three modules deep.
+_VIEWER_ATTRS = frozenset({"plot", "Report"})
+
+_VIEWER_HINT = (
+    "`cairn.{name}` needs the Cairn viewer extra.\n"
+    "\n"
+    "    pip install \'cairn-track[ui]\'        (or: uv add \'cairn-track[ui]\')\n"
+    "\n"
+    "cairn-track itself is the tracker and the server: logging, the reader, the\n"
+    "CLI and the HTTP API all work without it. `cairn.{name}` drives the browser\n"
+    "viewer, so it ships with the viewer."
+)
+
+
 def __getattr__(name: str):
     """PEP 562 lazy loader for the top-level API (see module docstring)."""
-    if name == "plot":
-        module = importlib.import_module(".plot", __name__)
-        globals()["plot"] = module
-        return module
-    target = _LAZY_ATTRS.get(name)
-    if target is not None:
-        module = importlib.import_module(target, __name__)
-        value = getattr(module, name)
-        globals()[name] = value  # cache — subsequent lookups skip __getattr__
-        return value
+    try:
+        if name == "plot":
+            module = importlib.import_module(".plot", __name__)
+            globals()["plot"] = module
+            return module
+        target = _LAZY_ATTRS.get(name)
+        if target is not None:
+            module = importlib.import_module(target, __name__)
+            value = getattr(module, name)
+            globals()[name] = value  # cache — subsequent lookups skip __getattr__
+            return value
+    except ImportError as exc:
+        if name in _VIEWER_ATTRS:
+            raise ImportError(_VIEWER_HINT.format(name=name)) from exc
+        raise
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
