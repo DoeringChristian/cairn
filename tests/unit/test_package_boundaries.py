@@ -4,7 +4,10 @@ The server (``cairn/server/``) is TYPE-AGNOSTIC: it stores rows +
 content-addressed blobs + an opaque ``object_type`` and never imports the
 SDK's handlers, wrappers, or card specs. The query grammar lives server-side
 (``cairn/server/query_grammar.py`` + ``_operators.py``); the reader keeps a
-MARKED MIRROR pinned by ``schema/query-vectors.json``.
+MARKED MIRROR pinned by ``schema/query-vectors.json``. (An earlier version of
+this docstring also claimed a TypeScript mirror pinned by the same file from the
+UI's test suite. There is none — the UI filters runs client-side through its own
+run-selector. Do not assert a guarantee nothing enforces.)
 
 The reverse direction (sdk → server) is legal in the monolith — local-mode
 runs use the storage layer directly.
@@ -15,6 +18,7 @@ module may know where the viewer bundle lives.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -188,3 +192,25 @@ def test_logging_a_run_never_imports_the_renderer() -> None:
     env = {**os.environ, "PYTHONPATH": str(REPO)}
     result = subprocess.run([sys.executable, "-c", code], env=env, cwd=REPO)
     assert result.returncode == 0, "the tracking path imported cairn_plot"
+
+
+def test_standalone_cairn_plot_imports_no_cairn_modules() -> None:
+    """``import cairn_plot`` must pull in ZERO ``cairn.*`` modules.
+
+    The renderer is a separate distribution, installable and usable with no
+    cairn-track present; if it reached back into cairn the two would be a cycle.
+    Inherited from the import-purity gate that policed the original extraction.
+    """
+    probe = (
+        "import json, sys, cairn_plot;"
+        "print(json.dumps(sorted("
+        "m for m in sys.modules if m == 'cairn' or m.startswith('cairn.'))))"
+    )
+    env = {**os.environ, "PYTHONPATH": str(REPO)}
+    proc = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, text=True, env=env, cwd=REPO
+    )
+    if proc.returncode != 0:
+        pytest.skip("cairn_plot not installed (base install, no `ui` extra)")
+    leaked = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert not leaked, f"importing cairn_plot pulled in cairn modules: {leaked}"

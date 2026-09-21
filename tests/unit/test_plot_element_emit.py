@@ -17,7 +17,7 @@ import re
 import pytest
 
 import cairn.plot as cplot
-from cairn.sdk import _plot_bundle as pb
+from cairn_plot import bundle as pb
 from cairn.sdk.card_spec import PlotDescriptorSpec
 from cairn.sdk.elements import PlotElement
 

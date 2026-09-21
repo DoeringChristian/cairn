@@ -24,7 +24,7 @@ import pytest
 
 import cairn
 import cairn.plot as cplot
-from cairn.sdk import _plot_bundle as _pb
+from cairn_plot import bundle as _pb
 from cairn.sdk.card_spec import CardSpec, CardsSpec, PlotDescriptorSpec, RunsSpec
 from cairn.sdk.elements import CardElement, HtmlElement, PlotElement
 from cairn.sdk.reader import DataRef, Reader

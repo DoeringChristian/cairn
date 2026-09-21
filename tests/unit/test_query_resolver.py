@@ -15,10 +15,8 @@ import pytest
 from cairn.server.query_resolver import (
     QueryError,
     QueryNotFound,
-    QueryRunSelectorSpec,
     parse_query_params,
     resolve,
-    resolve_run_ids,
 )
 
 
@@ -269,21 +267,3 @@ def test_step_latest_and_explicit(fresh_db):
 # ---------------------------------------------------------------------------
 # QueryRunSelector multi-run port
 # ---------------------------------------------------------------------------
-
-def test_resolve_run_ids_latest_n(seeded):
-    db, _ = seeded
-    ids = resolve_run_ids(db, QueryRunSelectorSpec(mode="latest-n", n=2))
-    assert ids == ["cccccccccccc", "bbbbbbbbbbbb"]
-
-
-def test_resolve_run_ids_newest_per_name(seeded):
-    db, _ = seeded
-    ids = resolve_run_ids(db, QueryRunSelectorSpec(mode="newest-per-name"))
-    # One per distinct display name, newest-first: exp-b (cccc), exp-a (bbbb).
-    assert ids == ["cccccccccccc", "bbbbbbbbbbbb"]
-
-
-def test_resolve_run_ids_tag_filter(seeded):
-    db, _ = seeded
-    ids = resolve_run_ids(db, QueryRunSelectorSpec(mode="latest-n", tags=["best"]))
-    assert set(ids) == {"cccccccccccc", "bbbbbbbbbbbb"}

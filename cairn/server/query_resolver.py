@@ -6,7 +6,6 @@ Python reader (``cairn/sdk/reader.py``). It ports three things into one pure,
 HTTP-free module so they can be unit-tested directly against a ``Database``:
 
 * the ``QueryRunSelector`` schema (``mode: latest-n | newest-per-name``,
-  ``namePattern`` glob, all-of ``tags``, ``n``) — see :func:`resolve_run_ids`,
   a faithful mirror of ``resolveRunSelectorFromRuns``;
 * ``RunQuery``'s Django-style ``field__op=value`` filter semantics
   (``reader.py``) — the operator table is imported verbatim from the reader so
@@ -449,62 +448,3 @@ def resolve(db: Database, spec: QuerySpec) -> ResolvedArtifact:
             detail += f" at step {spec.step}"
         raise QueryNotFound(detail)
     return art
-
-
-@dataclass(frozen=True)
-class QueryRunSelectorSpec:
-    """Pure port of the ``QueryRunSelector`` schema (card_spec.py / TS).
-
-    Resolves to a *list* of run ids (multi-run cards), unlike :func:`resolve`
-    which addresses a single artifact.
-    """
-
-    mode: Literal["latest-n", "newest-per-name"]
-    name_pattern: str | None = None
-    tags: list[str] | None = None
-    n: int | None = None
-
-
-DEFAULT_RUN_SELECTOR_N = 5
-
-
-def resolve_run_ids(
-    db: Database, selector: QueryRunSelectorSpec, *, project: str | None = None,
-) -> list[str]:
-    """Server-side twin of ``resolveRunSelectorFromRuns`` (run-selector.ts).
-
-    Returns the run ids the selector picks, newest-first.
-    """
-    clauses: list[str] = []
-    params: list[Any] = []
-    if project:
-        clauses.append("project_id = ?")
-        params.append(project)
-    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    rows = db.read_columns(
-        f"SELECT id, display_name, tags, created_at FROM runs {where} "
-        "ORDER BY created_at DESC",
-        params,
-    )
-    candidates = [
-        r for r in rows
-        if _matches_name(r.get("display_name"), selector.name_pattern)
-        and _matches_tags(r.get("tags"), selector.tags)
-    ]
-
-    if selector.mode == "latest-n":
-        n = selector.n if selector.n is not None else DEFAULT_RUN_SELECTOR_N
-        return [r["id"] for r in candidates[: int(n)]]
-
-    # newest-per-name: first occurrence per display name (newest-first order).
-    seen: set[str] = set()
-    out: list[str] = []
-    for r in candidates:
-        key = r.get("display_name") or r["id"]
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(r["id"])
-        if selector.n is not None and len(out) >= int(selector.n):
-            break
-    return out
