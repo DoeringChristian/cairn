@@ -123,7 +123,7 @@ register_resolvers(
 
 # `mode` values for the "one-pane" media-compare compositor these CARD helpers
 # drive (`media_compare` and friends, below) — read by
-# `cairn/ui/src/components/card-kit/CompareSettingsPanel.tsx`.
+# `packages/cairn-ui/src/components/card-kit/CompareSettingsPanel.tsx`.
 #
 # NOT the vocabulary of `cp.Compare`, the pure cairn-plot composable re-exported
 # from this module: that one takes `split`/`signed`/`abs`/`square`/`rel_*`/

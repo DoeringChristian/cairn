@@ -37,7 +37,7 @@ export default defineConfig({
     ],
   },
   build: {
-    outDir: "./dist",
+    outDir: "./cairn_ui/_dist",
     emptyOutDir: true,
     // Keep the output small and easy to inspect.
     sourcemap: false,

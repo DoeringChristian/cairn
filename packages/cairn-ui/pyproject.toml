@@ -1,0 +1,50 @@
+[project]
+name = "cairn-ui"
+# MUST equal cairn-track's version. The bundle encodes the /api/* response
+# shapes and the card-spec schema that server produces, so skew is a bug rather
+# than a compatibility window. Pinned by a test in the root project.
+version = "0.2.0"
+description = "Prebuilt browser viewer for cairn-track. Data only."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Cairn contributors" }]
+keywords = ["cairn", "experiment-tracking", "viewer"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Visualization",
+]
+# Deliberately empty: cairn-track depends on THIS, never the reverse.
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/anthropics/cairn"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["cairn_ui"]
+# `_dist/` is bundler output that is nevertheless committed, so installing never
+# needs Node. Explicit `artifacts` so hatchling ships it regardless of how it
+# reads build-output heuristics.
+artifacts = ["cairn_ui/_dist/**/*"]
+
+[tool.hatch.build.targets.sdist]
+# Ship the TypeScript sources too, so the sdist is rebuildable from scratch.
+include = [
+    "cairn_ui/",
+    "src/",
+    "scripts/",
+    "*.html",
+    "*.json",
+    "*.ts",
+    "*.js",
+    "README.md",
+    "pyproject.toml",
+]
+exclude = ["node_modules", "*.tsbuildinfo"]

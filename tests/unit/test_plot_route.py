@@ -5,23 +5,20 @@ both serve a separate HTML bundle read once at startup, registered before the
 SPA catch-all. The route exists only when the UI `dist/plot.html` is present
 (the committed build), so these tests skip cleanly on a source-only checkout.
 Uses the shared ``client`` fixture (``tests/conftest.py``), which builds an
-app with the UI mounted from ``cairn/ui/dist``.
+app with the UI mounted from the cairn-ui bundle.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
-import cairn.server.app as app_module
+from cairn import viewer
 
-_UI_DIST = Path(app_module.__file__).resolve().parent.parent / "ui" / "dist"
-_PLOT_HTML = _UI_DIST / "plot.html"
+_DIST = viewer.dist_path()
 
 pytestmark = pytest.mark.skipif(
-    not _PLOT_HTML.exists(),
-    reason="ui/dist/plot.html not built; skip the /plot shell route test",
+    _DIST is None or not (_DIST / "plot.html").is_file(),
+    reason="cairn-ui viewer not installed; skip the /plot shell route test",
 )
 
 
@@ -38,4 +35,4 @@ def test_plot_route_serves_shell(client):
 
 def test_plot_route_matches_committed_bytes(client):
     # Served bytes are the committed dist/plot.html, read once at startup.
-    assert client.get("/plot").content == _PLOT_HTML.read_bytes()
+    assert client.get("/plot").content == (_DIST / "plot.html").read_bytes()

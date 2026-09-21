@@ -82,20 +82,12 @@ def _from_installed_package() -> Path | None:
     return candidate if _is_complete(candidate) else None
 
 
-#: Checkout-relative bundle locations, newest first. The second entry is the
-#: pre-split home; it disappears when the UI tree moves to packages/cairn-ui.
-_CHECKOUT_CANDIDATES = (
-    ("packages", "cairn-ui", "cairn_ui", _DIST_DIRNAME),
-    ("cairn", "ui", "dist"),
-)
-
-
 def _from_dev_checkout() -> Path | None:
+    """Running straight out of a clone with nothing installed."""
     for parent in Path(__file__).resolve().parents:
-        for parts in _CHECKOUT_CANDIDATES:
-            candidate = parent.joinpath(*parts)
-            if _is_complete(candidate):
-                return candidate
+        candidate = parent / "packages" / "cairn-ui" / "cairn_ui" / _DIST_DIRNAME
+        if _is_complete(candidate):
+            return candidate
     return None
 
 

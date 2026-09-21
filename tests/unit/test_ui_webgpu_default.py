@@ -11,7 +11,7 @@ from cairn import viewer
 from cairn.server.app import create_app
 
 
-_UI = Path(__file__).resolve().parents[2] / "cairn" / "ui"
+_UI = Path(__file__).resolve().parents[2] / "packages" / "cairn-ui"
 
 
 def test_no_webgpu_app_serves_cpu_override(tmp_path: Path) -> None:
@@ -31,7 +31,7 @@ def test_no_webgpu_shell_override_precedes_the_app_module() -> None:
 
 
 @pytest.mark.parametrize("shell", ["index.html", "plot.html", "embed.html"])
-@pytest.mark.parametrize("root", [_UI, _UI / "dist"], ids=["source", "built"])
+@pytest.mark.parametrize("root", [_UI, _UI / "cairn_ui" / "_dist"], ids=["source", "built"])
 def test_browser_shell_prefers_webgpu_with_explicit_override(root: Path, shell: str) -> None:
     html = (root / shell).read_text(encoding="utf-8")
     config_at = html.index("__cairnPlotRenderMode")

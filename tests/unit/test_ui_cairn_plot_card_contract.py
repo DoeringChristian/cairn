@@ -2,18 +2,26 @@
 
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).parents[2]
-CARD = ROOT / "cairn/ui/src/components/CairnPlotCard.tsx"
-SHELL = ROOT / "cairn/ui/src/components/CardShell.tsx"
-RESIZE = ROOT / "cairn/ui/src/components/CardResizeHandle.tsx"
-CSS = ROOT / "cairn/ui/src/index.css"
-FIGURE = ROOT / "cairn/ui/src/components/FigureInteractiveCard.tsx"
-SCALAR = ROOT / "cairn/ui/src/components/ScalarPlotCard.tsx"
-MIN_SIZES = ROOT / "cairn/ui/src/components/card-kit/card-min-sizes.ts"
-POLICY = ROOT / "cairn/ui/src/components/card-kit/plot-card-policy.ts"
-BASELINE_PICKER = ROOT / "cairn/ui/src/components/card-kit/ExternalBaselinePicker.tsx"
-REFERENCE_DROP = ROOT / "cairn/ui/src/components/card-kit/use-reference-drop.ts"
+UI_SRC = ROOT / "packages/cairn-ui/src"
+pytestmark = pytest.mark.skipif(
+    not UI_SRC.is_dir(),
+    reason="UI source is not part of the cairn-track sdist",
+)
+
+CARD = UI_SRC / "components/CairnPlotCard.tsx"
+SHELL = UI_SRC / "components/CardShell.tsx"
+RESIZE = UI_SRC / "components/CardResizeHandle.tsx"
+CSS = UI_SRC / "index.css"
+FIGURE = UI_SRC / "components/FigureInteractiveCard.tsx"
+SCALAR = UI_SRC / "components/ScalarPlotCard.tsx"
+MIN_SIZES = UI_SRC / "components/card-kit/card-min-sizes.ts"
+POLICY = UI_SRC / "components/card-kit/plot-card-policy.ts"
+BASELINE_PICKER = UI_SRC / "components/card-kit/ExternalBaselinePicker.tsx"
+REFERENCE_DROP = UI_SRC / "components/card-kit/use-reference-drop.ts"
 
 
 def test_plot_card_uses_stable_public_host_and_bounded_surface() -> None:

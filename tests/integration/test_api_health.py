@@ -21,19 +21,12 @@ def test_info(client):
 
 
 def test_root_serves_spa_or_placeholder(client):
-    """When the UI bundle exists we serve HTML; otherwise the JSON placeholder."""
-    import pathlib
+    """When the viewer is installed we serve HTML; otherwise the JSON placeholder."""
+    from cairn import viewer
 
     r = client.get("/")
     assert r.status_code == 200
-    ui_dist = (
-        pathlib.Path(__file__).resolve().parents[2]
-        / "cairn"
-        / "ui"
-        / "dist"
-        / "index.html"
-    )
-    if ui_dist.exists():
+    if viewer.is_available():
         assert r.headers["content-type"].startswith("text/html")
         assert "<html" in r.text.lower()
     else:

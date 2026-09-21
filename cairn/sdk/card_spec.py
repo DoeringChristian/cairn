@@ -1,7 +1,7 @@
 """WS-SCHEMA: pydantic mirror of the card-spec single source of truth.
 
 The authoritative definition lives in TypeScript
-(``cairn/ui/src/lib/cards/card-spec.ts``); ``npm run gen:card-schema``
+(``packages/cairn-ui/src/lib/cards/card-spec.ts``); ``npm run gen:card-schema``
 derives ``docs/schemas/cairn-card-spec.schema.json`` from it. THIS module is
 a hand-written pydantic v2 mirror of that JSON Schema, kept honest by
 ``tests/unit/test_card_spec_conformance.py`` (asserts the models match the
@@ -76,7 +76,7 @@ __all__ = [
 ]
 
 # The canonical card-type vocabulary. Mirrors `CARD_TYPES` in
-# cairn/ui/src/lib/cards/card-spec.ts — the conformance test asserts this
+# packages/cairn-ui/src/lib/cards/card-spec.ts — the conformance test asserts this
 # tuple equals the committed schema's CardType enum (same members, same
 # order), so a card type added on the TS side without updating this fails CI.
 CARD_TYPES: tuple[str, ...] = (

@@ -55,7 +55,7 @@ from .plot_elements import (  # noqa: F401  - re-exported for zero caller change
 log = logging.getLogger(__name__)
 
 # Reuses the EXISTING `cairn:resize` postMessage protocol
-# (`cairn/ui/src/components/card-kit/use-iframe-auto-height.ts`,
+# (`packages/cairn-ui/src/components/card-kit/use-iframe-auto-height.ts`,
 # `PluginCard.tsx`) — the embed page posts `{type:"cairn:resize", height,
 # protocolVersion:1}` to `parent`; this ~15-line listener (design spec §4.4)
 # sets the outer iframe's height from it, clamped to sane bounds.
