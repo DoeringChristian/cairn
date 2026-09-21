@@ -954,18 +954,14 @@ cairn-track/
   tests/
     unit/
     integration/
-  packages/
-    cairn-ui/          # SEPARATE DISTRIBUTION — the viewer, never in the cairn-track wheel
-      pyproject.toml   # depends on cairn-track + cairn-plot
+  vendor/              # SEPARATE REPOS, vendored as submodules
+    cairn-plot/        # the renderer
+    cairn-ui/          # the viewer: React app + built bundle + its Python surface
       cairn_ui/
-        __init__.py    # dist_path() only — kept light; cairn.viewer imports this
-        _dist/         # built browser assets, committed so installing needs no Node
-        cards/         # the Python surface that drives the viewer (reached as cairn.ui)
-      src/             # React/TypeScript source
-      package.json
-      vite.config.ts
-  vendor/
-    cairn-plot/        # SEPARATE REPO (submodule) — the renderer
+        __init__.py    #   dist_path() only — kept light; cairn.viewer imports this
+        _dist/         #   built browser assets, committed so installing needs no Node
+        cards/         #   the Python surface driving the viewer (reached as cairn.ui)
+      src/             #   React/TypeScript source
 ```
 
 `cairn-track` ships tracking and the server, and nothing else: `cairn/` holds

@@ -1,3 +1,6 @@
 [submodule "vendor/cairn-plot"]
 	path = vendor/cairn-plot
 	url = https://github.com/doeringchristian/cairn-plot
+[submodule "vendor/cairn-ui"]
+	path = vendor/cairn-ui
+	url = https://github.com/DoeringChristian/cairn-ui

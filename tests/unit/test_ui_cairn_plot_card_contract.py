@@ -6,7 +6,7 @@ import pytest
 
 
 ROOT = Path(__file__).parents[2]
-UI_SRC = ROOT / "packages/cairn-ui/src"
+UI_SRC = ROOT / "vendor/cairn-ui/src"
 pytestmark = pytest.mark.skipif(
     not UI_SRC.is_dir(),
     reason="UI source is not part of the cairn-track sdist",

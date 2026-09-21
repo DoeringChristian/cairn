@@ -1,7 +1,7 @@
 """WS-SCHEMA conformance: the hand-written pydantic mirror in
-``packages/cairn-ui/cairn_ui/cards/spec.py`` must match the committed JSON Schema
+``vendor/cairn-ui/cairn_ui/cards/spec.py`` must match the committed JSON Schema
 ``docs/schemas/cairn-card-spec.schema.json`` (which is itself generated from
-the authoritative TS in ``packages/cairn-ui/src/lib/cards/card-spec.ts``).
+the authoritative TS in ``vendor/cairn-ui/src/lib/cards/card-spec.ts``).
 
 This is the Python half of the anti-drift chain: TS -> JSON Schema
 (``npm run check:card-schema`` guards TS<->schema) -> pydantic (this test

@@ -233,28 +233,20 @@ package, via a uv path source, and the TS renderer source the app build bundles
 come from there). Clone with submodules:
 
 ```bash
-git clone --recurse-submodules https://github.com/anthropics/cairn
+git clone --recurse-submodules https://github.com/DoeringChristian/cairn
 # already cloned? pull the submodule in:
 git submodule update --init --recursive
 ```
 
 ```bash
 uv sync --extra dev
-cd packages/cairn-ui && npm install && npm run build
 uv run pytest
 ```
 
-`uv sync --extra dev` installs the viewer editable from `packages/cairn-ui`, so
-a dev checkout behaves like a full install.
-
-The built bundle at `packages/cairn-ui/cairn_ui/_dist` is checked in, because it
-is the `cairn-ui` wheel's payload and installing must never need Node. Install
-the repo's hooks once per clone so it is rebuilt whenever the UI source *or* the
-vendored cairn-plot submodule changes:
-
-```bash
-git config core.hooksPath .githooks
-```
+`uv sync --extra dev` installs the viewer editable from `vendor/cairn-ui`, so a
+dev checkout behaves like a full install. The viewer is developed in its own
+repository ([cairn-ui](https://github.com/DoeringChristian/cairn-ui)); this one
+vendors it as a submodule, so building the browser bundle happens there.
 
 Building against a bundle somewhere else — another checkout, a `vite build
 --watch` output — is what `CAIRN_UI_DIST` is for. It wins outright: if it names
@@ -268,7 +260,7 @@ For UI development with HMR:
 uv run cairn server --repo ./.cairn
 
 # terminal 2
-cd packages/cairn-ui && npm run dev   # http://localhost:5173, proxies /api to :4300
+cd vendor/cairn-ui && npm run dev   # http://localhost:5173, proxies /api to :4300
 ```
 
 ## License

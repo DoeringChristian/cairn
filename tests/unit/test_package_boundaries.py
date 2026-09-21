@@ -57,7 +57,7 @@ _UI_PATH_TOKENS = re.compile(
       | ["'](?:index|embed|plot)\.html["']
       | ["']assets["']
       | ["']_dist["']
-      | ["']packages/cairn-ui""",
+      | ["']vendor/cairn-ui""",
     re.X,
 )
 
@@ -102,7 +102,7 @@ def test_the_cairn_track_wheel_payload_holds_no_ui_bytes() -> None:
     )
     assert not strays, (
         "cairn/ is the cairn-track wheel payload; UI assets belong in "
-        "packages/cairn-ui/:\n" + "\n".join(strays)
+        "vendor/cairn-ui/:\n" + "\n".join(strays)
     )
 
 
@@ -115,7 +115,7 @@ def test_cairn_ui_is_pinned_in_lock_step_with_cairn_track() -> None:
 
     ui_pyproject = REPO / "packages" / "cairn-ui" / "pyproject.toml"
     if not ui_pyproject.is_file():
-        pytest.skip("packages/cairn-ui absent (installed or sdist checkout)")
+        pytest.skip("vendor/cairn-ui absent (installed or sdist checkout)")
 
     root = tomllib.loads((REPO / "pyproject.toml").read_text())
     ui = tomllib.loads(ui_pyproject.read_text())

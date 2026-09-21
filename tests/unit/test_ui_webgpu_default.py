@@ -11,7 +11,7 @@ from cairn import viewer
 from cairn.server.app import create_app
 
 
-_UI = Path(__file__).resolve().parents[2] / "packages" / "cairn-ui"
+_UI = Path(__file__).resolve().parents[2] / "vendor" / "cairn-ui"
 
 
 @pytest.mark.skipif(not viewer.is_available(), reason="cairn-ui viewer not installed")
@@ -32,8 +32,12 @@ def test_no_webgpu_shell_override_precedes_the_app_module() -> None:
 
 
 @pytest.mark.parametrize("shell", ["index.html", "plot.html", "embed.html"])
-@pytest.mark.parametrize("root", [_UI, _UI / "cairn_ui" / "_dist"], ids=["source", "built"])
+@pytest.mark.parametrize(
+    "root", [_UI, viewer.dist_path()], ids=["source", "built"]
+)
 def test_browser_shell_prefers_webgpu_with_explicit_override(root: Path, shell: str) -> None:
+    if root is None or not (root / shell).is_file():
+        pytest.skip("cairn-ui checkout or bundle not present")
     html = (root / shell).read_text(encoding="utf-8")
     config_at = html.index("__cairnPlotRenderMode")
     mount_at = html.index('type="module"')

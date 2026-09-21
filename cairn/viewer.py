@@ -95,7 +95,7 @@ def _from_installed_package() -> Path | None:
 def _from_dev_checkout() -> Path | None:
     """Running straight out of a clone with nothing installed."""
     for parent in Path(__file__).resolve().parents:
-        candidate = parent / "packages" / "cairn-ui" / "cairn_ui" / _DIST_DIRNAME
+        candidate = parent / "vendor" / "cairn-ui" / "cairn_ui" / _DIST_DIRNAME
         if _is_complete(candidate):
             return candidate
     return None

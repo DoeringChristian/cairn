@@ -1,5 +1,5 @@
 """WS-PYAPI deliverables 2+3: `cairn.plot` element builders + the display
-protocol (`packages/cairn-ui/cairn_ui/cards/elements.py`).
+protocol (`vendor/cairn-ui/cairn_ui/cards/elements.py`).
 
 Covers:
 * Each builder emits a schema-VALID `CardSpec` (round-tripped through

@@ -31,48 +31,8 @@ jobs:
       - name: Run pytest
         run: uv run --python ${{ matrix.python }} pytest -q -m "not torch and not slow"
 
-  ui:
-    name: UI typecheck + build
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: packages/cairn-ui
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          # The app build consumes the cairn-plot renderer source from the
-          # vendored submodule (vendor/cairn-plot) via the @cairn-plot alias.
-          submodules: recursive
-
-      - uses: actions/setup-node@v4
-        with:
-          # >= 22: `npm run test:unit` runs the TS tests through --experimental-strip-types.
-          node-version: "22"
-          cache: "npm"
-          cache-dependency-path: packages/cairn-ui/package-lock.json
-
-      - run: npm ci
-
-      - run: npm run typecheck
-
-      - run: npm run test:unit
-
-      - run: npm run build
-
-      # The committed bundle IS the cairn-ui wheel's payload, and the
-      # pre-commit rebuild hook is opt-in per clone (core.hooksPath), so a
-      # stale bundle would otherwise ship silently. Verified reproducible:
-      # rebuilding this tree reproduces the committed bytes exactly.
-      - name: Committed bundle is not stale
-        run: git diff --exit-code -- cairn_ui/_dist
-
-      # The plot TS→JSON-schema contract and the lib→app import boundary are now
-      # enforced in the standalone cairn-plot repo's own CI (the library lives
-      # there); the monorepo keeps only the app-card schema drift guard.
-      - run: npm run check:card-schema
-
   packaging:
-    name: two wheels, one of them UI-free
+    name: the cairn-track wheel carries no UI
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -80,7 +40,9 @@ jobs:
           submodules: recursive
       - uses: astral-sh/setup-uv@v5
       - run: uv build --wheel --out-dir dist .
-      - run: uv build --wheel --out-dir dist packages/cairn-ui
+      # cairn-ui is built and released from its own repository; here it is a
+      # submodule, built only so the install checks below have a wheel to use.
+      - run: uv build --wheel --out-dir dist vendor/cairn-ui
 
       - name: cairn-track ships no UI
         run: |

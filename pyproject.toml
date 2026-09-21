@@ -101,7 +101,7 @@ Repository = "https://github.com/anthropics/cairn"
 # of cairn-track itself; in dev it resolves editable from that checkout.
 [tool.uv.sources]
 cairn-plot = { path = "vendor/cairn-plot", editable = true }
-cairn-ui = { path = "packages/cairn-ui", editable = true }
+cairn-ui = { path = "vendor/cairn-ui", editable = true }
 
 [build-system]
 requires = ["hatchling"]
@@ -109,14 +109,14 @@ build-backend = "hatchling.build"
 
 # `packages = ["cairn"]` ships EVERYTHING under cairn/ that is not ignored, not
 # just the .py files — which is how 87 .ts and 79 .tsx files used to ride along
-# beside the bundle. The viewer now lives in packages/cairn-ui, so cairn/ holds
+# beside the bundle. The viewer now lives in vendor/cairn-ui, so cairn/ holds
 # Python and nothing else; tests/unit/test_package_boundaries.py keeps it that
 # way. No build hook: there is nothing here to build.
 [tool.hatch.build.targets.wheel]
 packages = ["cairn"]
 
 [tool.hatch.build.targets.sdist]
-# The viewer is its own sdist (packages/cairn-ui); nothing is excluded here
+# The viewer is its own sdist (vendor/cairn-ui); nothing is excluded here
 # because nothing UI-shaped is under cairn/ any more.
 include = [
     "cairn/",

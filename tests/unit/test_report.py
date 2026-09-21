@@ -1,5 +1,5 @@
 """WS-PYAPI deliverable 4: `cairn.Report` — an inline-only notebook
-container (no server push; see packages/cairn-ui/cairn_ui/cards/report.py's module docstring for
+container (no server push; see vendor/cairn-ui/cairn_ui/cards/report.py's module docstring for
 why `.publish()` was dropped in favor of "the notebook IS the report").
 
 `Report._repr_html_()` must concatenate every `.md()`/`.add()`ed block, in
