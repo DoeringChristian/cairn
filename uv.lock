@@ -241,7 +241,7 @@ provides-extras = ["media", "math", "dev"]
 
 [[package]]
 name = "cairn-track"
-version = "0.1.1"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "cairn-plot" },
@@ -265,6 +265,7 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
+    { name = "cairn-ui" },
     { name = "freezegun" },
     { name = "imageio" },
     { name = "imageio-ffmpeg" },
@@ -298,10 +299,15 @@ media = [
     { name = "plotly" },
     { name = "soundfile" },
 ]
+ui = [
+    { name = "cairn-ui" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "cairn-plot", editable = "vendor/cairn-plot" },
+    { name = "cairn-ui", marker = "extra == 'dev'", editable = "packages/cairn-ui" },
+    { name = "cairn-ui", marker = "extra == 'ui'", editable = "packages/cairn-ui" },
     { name = "click", specifier = ">=8.1.0" },
     { name = "datasets", marker = "extra == 'hf'", specifier = ">=2.18" },
     { name = "fastapi", specifier = ">=0.110.0" },
@@ -342,7 +348,12 @@ requires-dist = [
     { name = "zeroconf", marker = "extra == 'discovery'", specifier = ">=0.132" },
     { name = "zstandard", specifier = ">=0.22.0" },
 ]
-provides-extras = ["media", "hf", "discovery", "examples", "dev"]
+provides-extras = ["ui", "media", "hf", "discovery", "examples", "dev"]
+
+[[package]]
+name = "cairn-ui"
+version = "0.2.0"
+source = { editable = "packages/cairn-ui" }
 
 [[package]]
 name = "certifi"
