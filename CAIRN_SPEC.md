@@ -943,10 +943,10 @@ cairn-track/
         source.py
         compare.py
         health.py
-      downsample.py    # LTTB + bucketing
       advertise.py     # optional zeroconf/mDNS broadcaster
-    ui/
-      dist/            # built React assets, shipped in wheel
+    viewer.py          # the ONE module that knows where the cairn-ui bundle lives
+    plot.py            # binding onto cairn_plot        (`cairn-track[plot]`)
+    ui.py              # binding onto cairn_ui.cards    (`cairn-track[ui]`)
     cli.py             # click-based CLI: server, list, open, rm, export, sync, ping, configure
     integrations/
       __init__.py
@@ -954,16 +954,23 @@ cairn-track/
   tests/
     unit/
     integration/
-  ui-src/              # React source (excluded from wheel)
-    package.json
-    vite.config.ts
-    src/
-      App.tsx
-      components/
-      pages/
-      api/             # generated from OpenAPI spec
-      types.ts
+  packages/
+    cairn-ui/          # SEPARATE DISTRIBUTION — the viewer, never in the cairn-track wheel
+      pyproject.toml   # depends on cairn-track + cairn-plot
+      cairn_ui/
+        __init__.py    # dist_path() only — kept light; cairn.viewer imports this
+        _dist/         # built browser assets, committed so installing needs no Node
+        cards/         # the Python surface that drives the viewer (reached as cairn.ui)
+      src/             # React/TypeScript source
+      package.json
+      vite.config.ts
+  vendor/
+    cairn-plot/        # SEPARATE REPO (submodule) — the renderer
 ```
+
+`cairn-track` ships tracking and the server, and nothing else: `cairn/` holds
+Python and no browser assets, enforced by `tests/unit/test_package_boundaries.py`.
+The viewer and the renderer are optional extras.
 
 ## Implementation order (suggested)
 

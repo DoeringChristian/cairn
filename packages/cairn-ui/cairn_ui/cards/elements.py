@@ -84,6 +84,9 @@ _DEFAULT_IFRAME_HEIGHT = 420
 _CAIRN_UI_DEFAULT_PORT = 4301
 
 
+_log = logging.getLogger(__name__)
+
+
 class CardElement(Element):
     """A server-backed ``CardSpec`` — renders as a live ``/embed/card`` iframe.
 
@@ -186,6 +189,10 @@ class CardElement(Element):
 
             entries = read_live_servers(Path(repo_path))
         except Exception:  # noqa: BLE001 - discovery must never raise
+            # Never raising is right; never SAYING anything is not. A broken
+            # import in here once made discovery silently return nothing, which
+            # presented as "embeds can't find my server" with no thread to pull.
+            _log.debug("advertised-server lookup failed for %s", repo_path, exc_info=True)
             return []
         entries = sorted(entries, key=lambda e: e.get("started_at") or "", reverse=True)
         urls = []
