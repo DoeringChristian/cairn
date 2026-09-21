@@ -26,8 +26,6 @@ jobs:
         run: uv python install ${{ matrix.python }}
 
       - name: Sync dev dependencies
-        env:
-          CAIRN_SKIP_UI_BUILD: "1"
         run: uv sync --python ${{ matrix.python }} --extra dev
 
       - name: Run pytest
@@ -38,7 +36,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: cairn/ui
+        working-directory: packages/cairn-ui
     steps:
       - uses: actions/checkout@v4
         with:
@@ -51,7 +49,7 @@ jobs:
           # >= 22: `npm run test:unit` runs the TS tests through --experimental-strip-types.
           node-version: "22"
           cache: "npm"
-          cache-dependency-path: cairn/ui/package-lock.json
+          cache-dependency-path: packages/cairn-ui/package-lock.json
 
       - run: npm ci
 
@@ -61,7 +59,79 @@ jobs:
 
       - run: npm run build
 
+      # The committed bundle IS the cairn-ui wheel's payload, and the
+      # pre-commit rebuild hook is opt-in per clone (core.hooksPath), so a
+      # stale bundle would otherwise ship silently. Verified reproducible:
+      # rebuilding this tree reproduces the committed bytes exactly.
+      - name: Committed bundle is not stale
+        run: git diff --exit-code -- cairn_ui/_dist
+
       # The plot TS→JSON-schema contract and the lib→app import boundary are now
       # enforced in the standalone cairn-plot repo's own CI (the library lives
       # there); the monorepo keeps only the app-card schema drift guard.
       - run: npm run check:card-schema
+
+  packaging:
+    name: two wheels, one of them UI-free
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: astral-sh/setup-uv@v5
+      - run: uv build --wheel --out-dir dist .
+      - run: uv build --wheel --out-dir dist packages/cairn-ui
+
+      - name: cairn-track ships no UI
+        run: |
+          python - <<'PY'
+          import glob, os, zipfile
+          wheel, = glob.glob("dist/cairn_track-*.whl")
+          names = zipfile.ZipFile(wheel).namelist()
+          strays = [
+              n for n in names
+              if n.endswith((".html", ".tsx", ".ts", ".css", ".mjs", ".map", ".woff2"))
+              or "/assets/" in n
+          ]
+          assert not strays, strays
+          size = os.path.getsize(wheel)
+          assert size < 2_000_000, f"{size} bytes: the UI is creeping back in"
+          print(f"cairn-track: {size/1e6:.2f} MB, {len(names)} entries, no UI")
+          PY
+
+      - name: cairn-ui ships the bundle
+        run: |
+          python - <<'PY'
+          import glob, zipfile
+          wheel, = glob.glob("dist/cairn_ui-*.whl")
+          names = set(zipfile.ZipFile(wheel).namelist())
+          for shell in ("index.html", "embed.html", "plot.html"):
+              assert f"cairn_ui/_dist/{shell}" in names, shell
+          assert any(n.startswith("cairn_ui/_dist/assets/") for n in names)
+          PY
+
+      - name: cairn-track installs and runs with no Node and no viewer
+        run: |
+          python -m venv /tmp/clean
+          /tmp/clean/bin/pip install --quiet dist/cairn_track-*.whl
+          /tmp/clean/bin/cairn --help > /dev/null
+          cd /tmp   # keep the repo off sys.path so this tests the INSTALL
+          /tmp/clean/bin/python -c "
+          from cairn.server.app import create_app
+          from cairn import viewer
+          assert not viewer.is_available()
+          create_app()
+          "
+          if /tmp/clean/bin/cairn ui --repo /tmp/r 2>/tmp/err; then
+            echo "cairn ui should have failed without the viewer"; exit 1
+          fi
+          grep -q "cairn-track\[ui\]" /tmp/err
+
+      - name: and works once the viewer is installed
+        run: |
+          /tmp/clean/bin/pip install --quiet dist/cairn_ui-*.whl
+          cd /tmp
+          /tmp/clean/bin/python -c "
+          from cairn import viewer
+          assert viewer.is_available(), 'viewer wheel did not register'
+          "

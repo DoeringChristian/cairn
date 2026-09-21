@@ -13,11 +13,17 @@ All modes share the same on-disk format — a repo created locally can later be 
 ## Install
 
 ```bash
-pip install cairn-track
+pip install cairn-track          # tracking, the CLI and the HTTP API
+pip install 'cairn-track[ui]'    # ...plus the browser viewer
 ```
+
+The base install carries no browser assets and needs no Node — which is the
+point on a compute node that will only ever log metrics. `cairn ui` and
+`cairn server --ui` need the `ui` extra and say so if it is missing.
 
 Optional extras:
 
+- `cairn-track[ui]` — the browser viewer (`cairn ui`, `cairn server --ui`)
 - `cairn-track[media]` — matplotlib, plotly, imageio, soundfile for richer media handlers
 - `cairn-track[hf]` — HuggingFace Trainer integration
 - `cairn-track[discovery]` — zeroconf/mDNS server discovery on the LAN
@@ -234,17 +240,26 @@ git submodule update --init --recursive
 
 ```bash
 uv sync --extra dev
-cd cairn/ui && npm install && npm run build
+cd packages/cairn-ui && npm install && npm run build
 uv run pytest
 ```
 
-`cairn/ui/dist` is checked in (pip installs can't always build it). Install the
-repo's hooks once per clone so it is rebuilt whenever the UI source *or* the
+`uv sync --extra dev` installs the viewer editable from `packages/cairn-ui`, so
+a dev checkout behaves like a full install.
+
+The built bundle at `packages/cairn-ui/cairn_ui/_dist` is checked in, because it
+is the `cairn-ui` wheel's payload and installing must never need Node. Install
+the repo's hooks once per clone so it is rebuilt whenever the UI source *or* the
 vendored cairn-plot submodule changes:
 
 ```bash
 git config core.hooksPath .githooks
 ```
+
+Building against a bundle somewhere else — another checkout, a `vite build
+--watch` output — is what `CAIRN_UI_DIST` is for. It wins outright: if it names
+something unusable, no viewer is served rather than silently falling back to the
+installed one.
 
 For UI development with HMR:
 
@@ -253,7 +268,7 @@ For UI development with HMR:
 uv run cairn server --repo ./.cairn
 
 # terminal 2
-cd cairn/ui && npm run dev   # http://localhost:5173, proxies /api to :4300
+cd packages/cairn-ui && npm run dev   # http://localhost:5173, proxies /api to :4300
 ```
 
 ## License
