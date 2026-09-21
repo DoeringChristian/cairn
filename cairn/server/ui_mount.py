@@ -26,7 +26,7 @@ def mount_viewer(app: FastAPI, *, disable_webgpu: bool = False) -> bool:
     from fastapi.staticfiles import StaticFiles
 
     assets = viewer.assets_dir()
-    index_html = viewer.shell("index.html", disable_webgpu=disable_webgpu)
+    index_html = viewer.shell(viewer.INDEX, disable_webgpu=disable_webgpu)
     if index_html is None or assets is None:
         _mount_placeholder(app)
         return False
@@ -37,14 +37,14 @@ def mount_viewer(app: FastAPI, *, disable_webgpu: bool = False) -> bool:
     # WS-EMBED and the standalone cairn-plot entry are SEPARATE HTML bundles
     # from the SPA, so both must be registered BEFORE the catch-all below —
     # otherwise it swallows them and serves the full app shell instead.
-    embed_html = viewer.shell("embed.html", disable_webgpu=disable_webgpu)
+    embed_html = viewer.shell(viewer.EMBED, disable_webgpu=disable_webgpu)
     if embed_html is not None:
 
         @app.get("/embed/card", include_in_schema=False)
         async def _embed_card() -> Response:
             return Response(content=embed_html, media_type="text/html")
 
-    plot_html = viewer.shell("plot.html", disable_webgpu=disable_webgpu)
+    plot_html = viewer.shell(viewer.PLOT, disable_webgpu=disable_webgpu)
     if plot_html is not None:
 
         @app.get("/plot", include_in_schema=False)

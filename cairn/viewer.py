@@ -18,11 +18,16 @@ _log = logging.getLogger(__name__)
 
 _ENV_OVERRIDE = "CAIRN_UI_DIST"
 _DIST_DIRNAME = "_dist"
-_INDEX = "index.html"
 _ASSETS = "assets"
 
-#: The three separately-built HTML entries the viewer ships.
-SHELLS = ("index.html", "embed.html", "plot.html")
+#: The three separately-built HTML entries the viewer ships. Named here so no
+#: other module has to spell a filename — see the boundary test.
+INDEX = "index.html"
+EMBED = "embed.html"
+PLOT = "plot.html"
+SHELLS = (INDEX, EMBED, PLOT)
+
+_INDEX = INDEX  # internal alias kept for the completeness check below
 
 NOT_INSTALLED_HINT = (
     "The Cairn viewer is not installed.\n"
