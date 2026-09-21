@@ -1,5 +1,5 @@
 """WS-PYAPI deliverable 4: `cairn.Report` — an inline-only notebook
-container (no server push; see cairn/sdk/report.py's module docstring for
+container (no server push; see cairn/ui/report.py's module docstring for
 why `.publish()` was dropped in favor of "the notebook IS the report").
 
 `Report._repr_html_()` must concatenate every `.md()`/`.add()`ed block, in
@@ -13,7 +13,7 @@ from __future__ import annotations
 import pytest
 
 import cairn
-from cairn.sdk.elements import CardElement, HtmlElement
+from cairn.ui.elements import CardElement, HtmlElement
 
 
 def test_report_is_empty_by_default():
@@ -48,7 +48,7 @@ def test_report_md_renders_bullet_list():
 
 
 def test_report_add_appends_element_html_no_server(monkeypatch):
-    import cairn.sdk.elements as elements_mod
+    import cairn.ui.elements as elements_mod
 
     monkeypatch.setattr(
         elements_mod._config, "resolve_server", lambda explicit=None: "http://127.0.0.1:1"

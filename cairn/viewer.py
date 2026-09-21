@@ -16,6 +16,11 @@ from pathlib import Path
 
 _log = logging.getLogger(__name__)
 
+#: The distribution that provides the bundle. Named here because this module
+#: owns everything about cairn-ui's identity — including, per the boundary test,
+#: its import name.
+PACKAGE = "cairn_ui"
+
 _ENV_OVERRIDE = "CAIRN_UI_DIST"
 _DIST_DIRNAME = "_dist"
 _ASSETS = "assets"

@@ -16,9 +16,8 @@ never parses markdown and never re-implements ``cardFromSpec``.
 
 The PLOT-descriptor slice of this mirror (``PlotSpec``/``PlotDescriptorSpec``/
 ``DataSpec``/``PlotNode``/… — everything the pure ``cairn.plot`` path imports)
-now lives in the app-decoupled :mod:`cairn.sdk.plot_spec` (P2-M1 packaging
-split) and is **re-exported** here verbatim, so ``from cairn.sdk.card_spec
-import PlotSpec`` and the conformance tests keep working unchanged.
+comes from ``cairn_plot.spec`` and is **re-exported** here verbatim, so
+``from cairn.ui.card_spec import PlotDescriptorSpec`` keeps working.
 """
 
 from __future__ import annotations
@@ -27,11 +26,10 @@ from typing import Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict
 
-# Re-export the pure plot-descriptor models (factored out to plot_spec.py for
-# the cairn-plot packaging split). `_Strict` is shared by the app-card models
-# below and the plot models — it lives in the pure module so plot_spec.py never
-# imports back into card_spec.py.
-from .plot_spec import (  # noqa: F401  - re-exported for zero caller changes
+# The plot-descriptor models come straight from the renderer distribution;
+# `_Strict` (BaseModel + extra="forbid") is shared by them and by the card
+# models below.
+from cairn_plot.spec import (  # noqa: F401  - re-exported for zero caller changes
     CompareSpec,
     DataSpec,
     GridSpec,

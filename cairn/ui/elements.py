@@ -22,13 +22,13 @@ new render path" constraint:
   ``cairn.config`` + server discovery).
 * :class:`PlotElement` / :class:`HtmlElement` — the **pure**, self-contained
   display objects (no server round trip). They live in the app-decoupled
-  :mod:`cairn.sdk.plot_elements` (P2-M1 packaging split) and are re-exported
-  here so every existing ``from cairn.sdk.elements import PlotElement`` keeps
+  ``cairn_plot.elements`` and are re-exported
+  here so every existing ``from cairn.ui.elements import PlotElement`` keeps
   working.
 
 Raw, non-plot MEDIA (an in-memory image/mesh/volume array with no run to
 anchor a ``SeriesRef`` to) has **no** self-contained render path today — the
-card-spec schema (``cairn/sdk/card_spec.py``) has no inline-data variant.
+card-spec schema (``cairn/ui/card_spec.py``) has no inline-data variant.
 That is WS-INLINE (design spec §6.3, deferred); builders that hit this case
 raise a clear ``NotImplementedError`` rather than silently doing something
 half-right (see ``cairn/plot.py``'s ``_resolve_series``).
@@ -46,7 +46,7 @@ from .. import config as _config
 
 # Re-export the pure display objects (factored out to plot_elements.py for the
 # cairn-plot packaging split) so callers importing them from here are unchanged.
-from .plot_elements import (  # noqa: F401  - re-exported for zero caller changes
+from cairn_plot.elements import (  # noqa: F401  - re-exported for zero caller changes
     Element,
     HtmlElement,
     PlotElement,

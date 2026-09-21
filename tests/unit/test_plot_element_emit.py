@@ -18,8 +18,8 @@ import pytest
 
 import cairn.plot as cplot
 from cairn_plot import bundle as pb
-from cairn.sdk.card_spec import PlotDescriptorSpec
-from cairn.sdk.elements import PlotElement
+from cairn.ui.card_spec import PlotDescriptorSpec
+from cairn.ui.elements import PlotElement
 
 # A 1x1 opaque PNG.
 _PNG = bytes.fromhex(

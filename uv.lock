@@ -299,6 +299,9 @@ media = [
     { name = "plotly" },
     { name = "soundfile" },
 ]
+plot = [
+    { name = "cairn-plot" },
+]
 ui = [
     { name = "cairn-plot" },
     { name = "cairn-ui" },
@@ -307,7 +310,8 @@ ui = [
 [package.metadata]
 requires-dist = [
     { name = "cairn-plot", marker = "extra == 'dev'", editable = "vendor/cairn-plot" },
-    { name = "cairn-plot", marker = "extra == 'ui'", editable = "vendor/cairn-plot" },
+    { name = "cairn-plot", marker = "extra == 'plot'", editable = "vendor/cairn-plot" },
+    { name = "cairn-track", extras = ["plot"], marker = "extra == 'ui'" },
     { name = "cairn-ui", marker = "extra == 'dev'", editable = "packages/cairn-ui" },
     { name = "cairn-ui", marker = "extra == 'ui'", editable = "packages/cairn-ui" },
     { name = "click", specifier = ">=8.1.0" },
@@ -350,7 +354,7 @@ requires-dist = [
     { name = "zeroconf", marker = "extra == 'discovery'", specifier = ">=0.132" },
     { name = "zstandard", specifier = ">=0.22.0" },
 ]
-provides-extras = ["ui", "media", "hf", "discovery", "examples", "dev"]
+provides-extras = ["plot", "ui", "media", "hf", "discovery", "examples", "dev"]
 
 [[package]]
 name = "cairn-ui"

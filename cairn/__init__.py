@@ -35,7 +35,7 @@ _LAZY_ATTRS: dict[str, str] = {
     "Reader": ".sdk.reader",
     "query_url": ".sdk.query_urls",
     "register_handler": ".sdk.handlers.registry",
-    "Report": ".sdk.report",
+    "Report": ".ui.report",
     "Artifact": ".sdk.wrappers",
     "Audio": ".sdk.wrappers",
     "Boxes3D": ".sdk.wrappers",
@@ -57,9 +57,10 @@ _LAZY_ATTRS: dict[str, str] = {
 
 if TYPE_CHECKING:  # static-analysis only — never executed, never eager at runtime.
     from . import plot as plot
+    from . import ui as ui
     from .sdk.query_urls import query_url
     from .sdk.reader import Reader
-    from .sdk.report import Report
+    from .ui.report import Report
     from .sdk.run import ArtifactVersion, Run
     from .sdk.handlers.registry import register_handler
     from .sdk.wrappers import (
@@ -83,31 +84,46 @@ if TYPE_CHECKING:  # static-analysis only — never executed, never eager at run
     )
 
 
-#: Attributes that live on the viewer side of the boundary. cairn-track is the
-#: tracker and the server; everything that drives the browser viewer from Python
-#: — the renderer surface, the embed cards, the notebook report container — is
-#: reachable only with `pip install \'cairn-track[ui]\'`. Listed here so a
-#: missing extra reports itself instead of surfacing as a bare ImportError on
-#: `cairn_plot` from three modules deep.
-_VIEWER_ATTRS = frozenset({"plot", "Report"})
+#: Attributes gated behind an optional extra, and which extra unlocks each.
+#: cairn-track is the tracker and the server; drawing and the browser viewer are
+#: opt-in halves, like ray[tune] / ray[serve]. Listed here so a missing extra
+#: reports itself instead of surfacing as a bare ImportError on `cairn_plot`
+#: from three modules deep.
+_EXTRA_FOR = {
+    "plot": "plot",
+    "ui": "ui",
+    "Report": "ui",
+}
 
-_VIEWER_HINT = (
-    "`cairn.{name}` needs the Cairn viewer extra.\n"
+_WHAT = {
+    "plot": "the renderer surface",
+    "ui": "the Cairn viewer surface (cards, embeds, the notebook report)",
+    "Report": "the notebook report container",
+}
+
+from . import viewer as _viewer  # stdlib-only; widens no import closure
+
+#: Import names that belong to the optional distributions themselves. A missing
+#: one means "extra not installed"; anything else is a genuine error.
+_OPTIONAL_DISTS = frozenset({"cairn_plot", _viewer.PACKAGE})
+
+_EXTRA_HINT = (
+    "`cairn.{name}` is {what}, which needs an optional extra.\n"
     "\n"
-    "    pip install \'cairn-track[ui]\'        (or: uv add \'cairn-track[ui]\')\n"
+    "    pip install \'cairn-track[{extra}]\'"
+    "        (or: uv add \'cairn-track[{extra}]\')\n"
     "\n"
     "cairn-track itself is the tracker and the server: logging, the reader, the\n"
-    "CLI and the HTTP API all work without it. `cairn.{name}` drives the browser\n"
-    "viewer, so it ships with the viewer."
+    "CLI and the HTTP API all work without it."
 )
 
 
 def __getattr__(name: str):
     """PEP 562 lazy loader for the top-level API (see module docstring)."""
     try:
-        if name == "plot":
-            module = importlib.import_module(".plot", __name__)
-            globals()["plot"] = module
+        if name in ("plot", "ui"):
+            module = importlib.import_module(f".{name}", __name__)
+            globals()[name] = module
             return module
         target = _LAZY_ATTRS.get(name)
         if target is not None:
@@ -116,8 +132,16 @@ def __getattr__(name: str):
             globals()[name] = value  # cache — subsequent lookups skip __getattr__
             return value
     except ImportError as exc:
-        if name in _VIEWER_ATTRS:
-            raise ImportError(_VIEWER_HINT.format(name=name)) from exc
+        # Only translate a MISSING OPTIONAL DISTRIBUTION into an install hint.
+        # Any other ImportError from inside these modules is a real bug, and
+        # dressing it up as "install the extra" would send people to fix their
+        # environment instead of the code.
+        extra = _EXTRA_FOR.get(name)
+        missing = getattr(exc, "name", None) or ""
+        if extra is not None and missing.split(".")[0] in _OPTIONAL_DISTS:
+            raise ImportError(
+                _EXTRA_HINT.format(name=name, what=_WHAT[name], extra=extra)
+            ) from exc
         raise
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
@@ -136,6 +160,7 @@ __all__ = [
     "query_url",
     "ArtifactVersion",
     "plot",
+    "ui",
     "Report",
     "Artifact",
     "Image",

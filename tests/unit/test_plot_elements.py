@@ -1,9 +1,9 @@
 """WS-PYAPI deliverables 2+3: `cairn.plot` element builders + the display
-protocol (`cairn/sdk/elements.py`).
+protocol (`cairn/ui/elements.py`).
 
 Covers:
 * Each builder emits a schema-VALID `CardSpec` (round-tripped through
-  `cairn.sdk.card_spec.CardSpec`/`CardsSpec`) when given a `run[tag]` handle.
+  `cairn.ui.card_spec.CardSpec`/`CardsSpec`) when given a `run[tag]` handle.
 * `media_compare`/`*_compare` set `settings.mode` + two series ("compare"
   sugar).
 * Raw (non-`DataRef`) data on media builders (`image`/`mesh`/...) raises a
@@ -25,8 +25,8 @@ import pytest
 import cairn
 import cairn.plot as cplot
 from cairn_plot import bundle as _pb
-from cairn.sdk.card_spec import CardSpec, CardsSpec, PlotDescriptorSpec, RunsSpec
-from cairn.sdk.elements import CardElement, HtmlElement, PlotElement
+from cairn.ui.card_spec import CardSpec, CardsSpec, PlotDescriptorSpec, RunsSpec
+from cairn.ui.elements import CardElement, HtmlElement, PlotElement
 from cairn.sdk.reader import DataRef, Reader
 
 
@@ -242,7 +242,7 @@ def test_dataref_step_becomes_settings_step(two_runs):
 def test_pointcloud_raw_emits_self_contained_plotelement():
     # G3a: cp.pointcloud(raw) bakes an npz DataSpec + the three.js addon, no
     # server needed.
-    from cairn.sdk.elements import PlotElement
+    from cairn.ui.elements import PlotElement
 
     xyz = np.random.default_rng(0).random((64, 3)).astype("float32")
     el = cplot.pointcloud(xyz)
@@ -388,7 +388,7 @@ def test_card_element_spec_is_reusable_in_a_cairn_fence_shaped_doc(two_runs):
 
 
 def test_card_element_repr_html_no_server_falls_back_to_text(monkeypatch):
-    import cairn.sdk.elements as elements_mod
+    import cairn.ui.elements as elements_mod
 
     # Force every candidate (advertised servers.json entries, the
     # config-default probe, the `cairn ui` CLI-default-port probe) to read
@@ -437,7 +437,7 @@ def test_resolve_server_prefers_advertised_servers_json_over_default(
 
     # Config-default candidate deliberately unreachable — proves the
     # advertised entry is what's actually being used, not a lucky fallback.
-    import cairn.sdk.elements as elements_mod
+    import cairn.ui.elements as elements_mod
 
     monkeypatch.setattr(elements_mod._config, "resolve_server", lambda explicit=None: "http://127.0.0.1:1")
 
@@ -455,7 +455,7 @@ def test_resolve_server_ignores_stale_advertised_entry(tmp_path, monkeypatch):
     dd.servers_path.write_text(
         json.dumps([{"pid": 999999999, "mode": "ui", "host": "127.0.0.1", "port": 65000}])
     )
-    import cairn.sdk.elements as elements_mod
+    import cairn.ui.elements as elements_mod
 
     probed: list[str] = []
 
@@ -505,7 +505,7 @@ def test_reader_server_threaded_from_http_reader_wins_over_config(monkeypatch):
     the element, so the card renders against the SAME server the reader
     queried — no `cairn.configure`/`CAIRN_REPO` needed, and it beats the
     (deliberately unreachable) global-config default."""
-    import cairn.sdk.elements as elements_mod
+    import cairn.ui.elements as elements_mod
 
     # Global config points somewhere dead — proves reader_server is used.
     monkeypatch.setattr(elements_mod._config, "resolve_server", lambda explicit=None: "http://127.0.0.1:1")

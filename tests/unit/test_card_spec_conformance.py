@@ -1,5 +1,5 @@
 """WS-SCHEMA conformance: the hand-written pydantic mirror in
-``cairn/sdk/card_spec.py`` must match the committed JSON Schema
+``cairn/ui/card_spec.py`` must match the committed JSON Schema
 ``docs/schemas/cairn-card-spec.schema.json`` (which is itself generated from
 the authoritative TS in ``packages/cairn-ui/src/lib/cards/card-spec.ts``).
 
@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from cairn.sdk import card_spec as cs
+from cairn.ui import card_spec as cs
 
 _SCHEMA_PATH = (
     Path(__file__).resolve().parents[2] / "docs" / "schemas" / "cairn-card-spec.schema.json"

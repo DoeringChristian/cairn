@@ -40,9 +40,16 @@ dependencies = [
 # CLI and the HTTP API all work without this. Pinned exactly and bumped in
 # lock-step — the bundle encodes the /api/* response shapes and the card-spec
 # schema this server produces, so skew is a bug, not a compatibility window.
-# cairn-plot rides along: everything it is needed for here — cairn.plot, the
-# embed cards, cairn.Report — drives the browser viewer, so it ships with it.
-ui = ["cairn-ui==0.2.0", "cairn-plot>=0.1,<0.2"]
+# Two halves, gated separately like ray[tune] / ray[serve].
+#
+#   [plot] unlocks `cairn.plot` — the renderer surface.
+#   [ui]   unlocks `cairn.ui` (cards, embeds, the notebook report container)
+#          AND the browser viewer itself.
+#
+# [ui] implies [plot]: the card surface subclasses cairn-plot's Element and
+# builds on its spec models, so a viewer install without a renderer cannot work.
+plot = ["cairn-plot>=0.1,<0.2"]
+ui = ["cairn-track[plot]", "cairn-ui==0.2.0"]
 media = [
     "matplotlib>=3.7",
     "plotly>=5.18",

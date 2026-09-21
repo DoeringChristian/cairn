@@ -13,7 +13,7 @@ The markdown->HTML conversion (a small, deliberately minimal CommonMark
 subset) and the self-contained :class:`~cairn.sdk.plot_report.PlotReport`
 (``cp.Report``) now live in the app-decoupled :mod:`cairn.sdk.plot_report`
 (P2-M1 packaging split); both are re-exported here so ``from
-cairn.sdk.report import PlotReport`` and the notebook ``Report`` below keep
+cairn.ui.report import PlotReport`` and the notebook ``Report`` below keep
 working unchanged.
 """
 
@@ -22,11 +22,11 @@ from __future__ import annotations
 import html as _html
 from typing import Any
 
-from .plot_elements import Element
+from cairn_plot.elements import Element
 
 # Re-export the pure markdown helper + self-contained report (factored out to
 # plot_report.py for the cairn-plot packaging split).
-from .plot_report import (  # noqa: F401  - re-exported for zero caller changes
+from cairn_plot.report import (  # noqa: F401  - re-exported for zero caller changes
     PlotReport,
     _element_html,
     _inline_markdown,
