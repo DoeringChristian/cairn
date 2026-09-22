@@ -48,8 +48,21 @@ dependencies = [
 #
 # [ui] implies [plot]: the card surface subclasses cairn-plot's Element and
 # builds on its spec models, so a viewer install without a renderer cannot work.
-plot = ["cairn-plot>=0.1,<0.2"]
-ui = ["cairn-track[plot]", "cairn-ui==0.2.0"]
+#
+# Both are pinned to a git commit rather than a version range, because neither
+# is on PyPI (nor is cairn-track). A range would send pip to an index that
+# answers 404, so `pip install 'cairn-track[ui]'` would fail at resolution
+# before it ever got to the wheels. A commit is also the honest expression of
+# the lock-step rule above: not a window, one build. Bump these together with
+# vendor/<pkg>; test_package_boundaries.py enforces that they agree. Swap both
+# back to version ranges the day the packages are published.
+plot = [
+    "cairn-plot @ git+https://github.com/doeringchristian/cairn-plot@fadd844f890c674966d9f0af8d4e46bf96e42725",
+]
+ui = [
+    "cairn-track[plot]",
+    "cairn-ui @ git+https://github.com/DoeringChristian/cairn-ui@eaed0e68ea963e55108fc0b1b25c38343f8c4ab0",
+]
 media = [
     "matplotlib>=3.7",
     "plotly>=5.18",
@@ -70,9 +83,9 @@ examples = [
 ]
 dev = [
     # The viewer half, so a dev checkout can exercise everything the `ui`
-    # extra unlocks.
-    "cairn-ui",
-    "cairn-plot",
+    # extra unlocks. Via the extra, so the git pins live in exactly one place;
+    # [tool.uv.sources] below redirects both to the local checkouts anyway.
+    "cairn-track[ui]",
     "pytest>=8.0",
     "pytest-cov>=4.1",
     "pytest-asyncio>=0.23",
@@ -106,6 +119,12 @@ cairn-ui = { path = "vendor/cairn-ui", editable = true }
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+# Required for the `@ git+...` pins in [plot] and [ui]. Hatchling refuses direct
+# references by default because PyPI rejects any distribution carrying one —
+# the right guard, and the thing to undo when these packages get published.
+[tool.hatch.metadata]
+allow-direct-references = true
 
 # `packages = ["cairn"]` ships EVERYTHING under cairn/ that is not ignored, not
 # just the .py files — which is how 87 .ts and 79 .tsx files used to ride along

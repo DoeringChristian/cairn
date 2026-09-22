@@ -106,22 +106,88 @@ def test_the_cairn_track_wheel_payload_holds_no_ui_bytes() -> None:
     )
 
 
-def test_cairn_ui_is_pinned_in_lock_step_with_cairn_track() -> None:
-    """Bundle and /api/* contract ship together; a version window would lie."""
+def _load_toml(path):
     try:
         import tomllib
     except ModuleNotFoundError:  # py3.10
         import tomli as tomllib  # type: ignore[no-redef]
+    return tomllib.loads(path.read_text())
 
-    ui_pyproject = REPO / "packages" / "cairn-ui" / "pyproject.toml"
+
+def _submodule_head(name: str) -> str:
+    """The commit vendor/<name> is actually checked out at.
+
+    Deliberately the working-tree HEAD rather than the pointer recorded in the
+    parent commit: the suite runs against the checked-out submodule, so that is
+    the code under test, and a pin naming anything else means what was tested is
+    not what an install would fetch.
+    """
+    return subprocess.run(
+        ["git", "-C", str(REPO / "vendor" / name), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+
+def _pin_sha(requirements: list[str], dist: str) -> str:
+    """The commit a `dist @ git+...@<sha>` requirement names."""
+    for req in requirements:
+        m = re.match(rf"^{re.escape(dist)}\s*@\s*git\+\S+@([0-9a-f]{{40}})$", req)
+        if m:
+            return m.group(1)
+    raise AssertionError(
+        f"no 40-char git pin for {dist!r} in {requirements!r}. Neither cairn-plot "
+        f"nor cairn-ui is on an index, so a bare version specifier cannot "
+        f"resolve — pip answers 404 and the extra is uninstallable."
+    )
+
+
+def test_cairn_ui_is_pinned_in_lock_step_with_cairn_track() -> None:
+    """Bundle and /api/* contract ship together; a version window would lie."""
+    ui_pyproject = REPO / "vendor" / "cairn-ui" / "pyproject.toml"
     if not ui_pyproject.is_file():
         pytest.skip("vendor/cairn-ui absent (installed or sdist checkout)")
 
-    root = tomllib.loads((REPO / "pyproject.toml").read_text())
-    ui = tomllib.loads(ui_pyproject.read_text())
-    version = root["project"]["version"]
-    assert ui["project"]["version"] == version
-    assert f"cairn-ui=={version}" in root["project"]["optional-dependencies"]["ui"]
+    root = _load_toml(REPO / "pyproject.toml")
+    ui = _load_toml(ui_pyproject)
+    assert ui["project"]["version"] == root["project"]["version"]
+
+
+def test_the_optional_extras_name_commits_that_exist_here() -> None:
+    """A git pin that drifts from the submodule ships untested code.
+
+    The extras must install exactly the cairn-plot and cairn-ui the suite just
+    exercised. This is the check that catches a bumped submodule with a stale
+    pin, which resolves fine and is silently the wrong build.
+    """
+    if not (REPO / "vendor" / "cairn-ui" / ".git").exists():
+        pytest.skip("submodules absent (installed or sdist checkout)")
+
+    extras = _load_toml(REPO / "pyproject.toml")["project"]["optional-dependencies"]
+    assert _pin_sha(extras["plot"], "cairn-plot") == _submodule_head("cairn-plot")
+    assert _pin_sha(extras["ui"], "cairn-ui") == _submodule_head("cairn-ui")
+
+
+def test_only_this_repo_names_the_cairn_plot_commit() -> None:
+    """Exactly one voice may pin cairn-plot, and it is `cairn-track[ui]`.
+
+    cairn-ui needs cairn-plot too, but if it names a URL as well, uv refuses the
+    pair the moment a dev checkout redirects cairn-plot to a local path —
+    "conflicting URLs for package cairn-plot". A range there is satisfied by
+    whatever this pin provides, so the range is the correct thing for it to
+    declare and this test stops the URL growing back.
+    """
+    ui_pyproject = REPO / "vendor" / "cairn-ui" / "pyproject.toml"
+    if not ui_pyproject.is_file():
+        pytest.skip("vendor/cairn-ui absent (installed or sdist checkout)")
+
+    theirs = _load_toml(ui_pyproject)["project"]["dependencies"]
+    urls = [r for r in theirs if "@" in r and "git+" in r]
+    assert not urls, (
+        "vendor/cairn-ui must declare version ranges, not URLs — cairn-track[ui] "
+        "is the single place that names a commit:\n" + "\n".join(urls)
+    )
 
 
 def test_default_create_app_never_imports_the_viewer_package() -> None:

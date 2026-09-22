@@ -97,3 +97,32 @@ jobs:
           from cairn import viewer
           assert viewer.is_available(), 'viewer wheel did not register'
           "
+
+      # Everything above installs the two wheels BY PATH, which proves they work
+      # together but never asks pip to resolve the extra. That is the hole the
+      # `[ui]` extra fell through: it named version ranges for three packages
+      # that are on no index, so `pip install 'cairn-track[ui]'` 404'd before it
+      # reached a wheel. This step is the only one that exercises the git pins.
+      - name: the [ui] extra resolves from a bare wheel
+        run: |
+          python -m venv /tmp/extra
+          /tmp/extra/bin/pip install --quiet "$(echo dist/cairn_track-*.whl)[ui]"
+          cd /tmp   # keep the repo off sys.path so this tests the INSTALL
+          /tmp/extra/bin/python -c "
+          import cairn_plot, cairn_ui
+          from cairn import viewer
+          import cairn
+          assert viewer.is_available()
+          cairn.ui; cairn.plot
+          "
+
+      - name: the [plot] extra resolves and pulls no viewer
+        run: |
+          python -m venv /tmp/plotonly
+          /tmp/plotonly/bin/pip install --quiet "$(echo dist/cairn_track-*.whl)[plot]"
+          cd /tmp
+          /tmp/plotonly/bin/python -c "
+          import cairn, importlib.util
+          cairn.plot
+          assert importlib.util.find_spec('cairn_ui') is None, '[plot] dragged the viewer in'
+          "

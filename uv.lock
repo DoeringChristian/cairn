@@ -309,10 +309,9 @@ ui = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cairn-plot", marker = "extra == 'dev'", editable = "vendor/cairn-plot" },
     { name = "cairn-plot", marker = "extra == 'plot'", editable = "vendor/cairn-plot" },
     { name = "cairn-track", extras = ["plot"], marker = "extra == 'ui'" },
-    { name = "cairn-ui", marker = "extra == 'dev'", editable = "vendor/cairn-ui" },
+    { name = "cairn-track", extras = ["ui"], marker = "extra == 'dev'" },
     { name = "cairn-ui", marker = "extra == 'ui'", editable = "vendor/cairn-ui" },
     { name = "click", specifier = ">=8.1.0" },
     { name = "datasets", marker = "extra == 'hf'", specifier = ">=2.18" },
