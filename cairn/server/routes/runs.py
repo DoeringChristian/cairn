@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Query, Request
 
+from ..storage.db import Database
 from ._common import get_data_dir, get_db, require_run
 
 _log = logging.getLogger(__name__)
@@ -86,7 +88,56 @@ def list_runs(
         [*params, limit, offset],
     )
     (total,) = db.read_one(f"SELECT COUNT(*) FROM runs {where}", params) or (0,)
+    resolved = _resolved_values(db, [r["id"] for r in rows])
+    for row in rows:
+        row["values"] = resolved.get(row["id"], {})
     return {"runs": rows, "total": total, "limit": limit, "offset": offset}
+
+
+def _resolved_values(
+    db: Database, run_ids: list[str]
+) -> dict[str, dict[str, Any]]:
+    """What the run table shows per run: last metric, summary wins.
+
+    Two sources, one column set. A scalar sequence contributes its LAST point,
+    which is what "acc" usually means in a table; an explicit ``summary`` key of
+    the same name replaces it, because the author saying "this is the number"
+    outranks whatever the series happened to end on (early stopping, a final
+    eval batch, a crash mid-epoch).
+
+    The merge lives here rather than at ingest so summary stays a record of what
+    was DECLARED. Auto-filling it on every track() would make this preference
+    unobservable and leave no way to tell a claim from a leftover.
+
+    Two queries for the whole page, not two per run: a run table is the one
+    place where an N+1 is guaranteed to be N=limit.
+    """
+    if not run_ids:
+        return {}
+    holes = ",".join("?" * len(run_ids))
+    out: dict[str, dict[str, Any]] = {rid: {} for rid in run_ids}
+
+    # Last scalar point per (run, name). MAX(step) can tie across contexts;
+    # either tied row is an equally good "last", so the dict keeps one.
+    for r in db.read_columns(
+        f"""SELECT s.run_id AS run_id, s.name AS name, s.scalar_value AS value
+              FROM sequences s
+              JOIN (SELECT run_id, name, MAX(step) AS step
+                      FROM sequences
+                     WHERE run_id IN ({holes}) AND scalar_value IS NOT NULL
+                     GROUP BY run_id, name) m
+                ON s.run_id = m.run_id AND s.name = m.name AND s.step = m.step
+             WHERE s.scalar_value IS NOT NULL""",
+        list(run_ids),
+    ):
+        out[r["run_id"]][r["name"]] = r["value"]
+
+    for r in db.read_columns(
+        f"SELECT run_id, key, value FROM summary WHERE run_id IN ({holes})",
+        list(run_ids),
+    ):
+        out[r["run_id"]][r["key"]] = json.loads(r["value"])
+    return out
 
 
 @router.get("/runs/{run_id}")

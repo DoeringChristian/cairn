@@ -283,3 +283,77 @@ def test_wal_replay_restores_both_channels(tmp_path):
         assert _keys(db, "summary", "r1") == {"acc": "0.9"}
     finally:
         db.close()
+
+
+# --- the read-time merge the run table uses ------------------------------
+
+
+def _track(client, run_id, name, step, value):
+    return client.post(
+        f"/api/runs/{run_id}/batch",
+        json={"points": [{
+            "name": name, "step": step, "wall_time": "2026-01-01T00:00:00+00:00",
+            "object_type": "scalar", "scalar_value": value,
+        }]},
+    )
+
+
+def _values(client, run_id):
+    runs = client.get("/api/runs").json()["runs"]
+    return next(r["values"] for r in runs if r["id"] == run_id)
+
+
+def test_the_run_table_shows_a_metrics_last_point(client):
+    run_id = _new_run(client)
+    for step, v in enumerate([3.0, 2.0, 1.0]):
+        _track(client, run_id, "loss", step, v)
+    assert _values(client, run_id) == {"loss": 1.0}
+
+
+def test_an_explicit_summary_key_overrides_the_last_point(client):
+    """The whole point of the split: a claim outranks a leftover.
+
+    The series ends at 1.0 because that was the last epoch logged; the author
+    says the result is 0.5 (best checkpoint, early stop, final eval). The table
+    shows 0.5, and `summary` still records only what was declared.
+    """
+    run_id = _new_run(client)
+    for step, v in enumerate([3.0, 2.0, 1.0]):
+        _track(client, run_id, "loss", step, v)
+    client.post(f"/api/runs/{run_id}/summary", json={"summary": {"loss": 0.5}})
+
+    assert _values(client, run_id)["loss"] == 0.5
+    # The override is a READ-time preference; storage still separates them.
+    body = client.get(f"/api/runs/{run_id}").json()
+    assert {s["key"]: s["value"] for s in body["summary"]} == {"loss": "0.5"}
+
+
+def test_summary_only_keys_appear_as_columns_too(client):
+    run_id = _new_run(client)
+    client.post(f"/api/runs/{run_id}/summary", json={"summary": {"params_m": 7}})
+    assert _values(client, run_id) == {"params_m": 7}
+
+
+def test_a_run_with_nothing_logged_resolves_to_no_columns(client):
+    assert _values(client, _new_run(client)) == {}
+
+
+def test_values_do_not_bleed_between_runs(client):
+    a, b = _new_run(client), _new_run(client)
+    _track(client, a, "acc", 0, 0.1)
+    client.post(f"/api/runs/{b}/summary", json={"summary": {"acc": 0.9}})
+    assert _values(client, a) == {"acc": 0.1}
+    assert _values(client, b) == {"acc": 0.9}
+
+
+def test_non_scalar_sequences_are_not_table_columns(client):
+    """An image tag is not a number; it must not become a sortable column."""
+    run_id = _new_run(client)
+    client.post(
+        f"/api/runs/{run_id}/batch",
+        json={"points": [{
+            "name": "preview", "step": 0, "wall_time": "2026-01-01T00:00:00+00:00",
+            "object_type": "image", "artifact_hash": None,
+        }]},
+    )
+    assert "preview" not in _values(client, run_id)
