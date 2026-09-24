@@ -105,8 +105,9 @@ Repository = "https://github.com/anthropics/cairn"
 
 # cairn-plot lives in a standalone repository
 # (github.com/doeringchristian/cairn-plot), consumed here as a git submodule at
-# `vendor/cairn-plot` (pinned commit). It is a dependency of the `ui` extra, not
-# of cairn-track itself; in dev it resolves editable from that checkout.
+# `vendor/cairn-plot` (pinned commit). It backs the `plot` extra only (neither
+# cairn-track itself nor the viewer needs it); in dev it resolves editable from
+# that checkout.
 [tool.uv.sources]
 cairn-plot = { path = "vendor/cairn-plot", editable = true }
 cairn-ui = { path = "vendor/cairn-ui", editable = true }
