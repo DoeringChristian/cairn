@@ -116,7 +116,40 @@ class Video(_TypeWrapper):
 
 
 class Histogram(_TypeWrapper):
+    """A histogram, from raw values or already-binned counts.
+
+    From values (binned at log time into ``bins`` equal-width bins)::
+
+        run.track(cairn.Histogram(weights, bins=64), name="weights", step=step)
+
+    Precomputed, when the binning happened elsewhere (``torch.histc``,
+    TensorBoard, ...). ``edges`` has one more entry than ``counts``::
+
+        run.track(cairn.Histogram(counts=counts, edges=edges), name="grads", step=step)
+
+    Pass exactly one of ``values`` or ``counts`` + ``edges``.
+    """
+
     object_type = "histogram"
+
+    def __init__(
+        self,
+        values: Any = None,
+        bins: int = 64,
+        *,
+        counts: Any = None,
+        edges: Any = None,
+    ):
+        if values is not None:
+            if counts is not None or edges is not None:
+                raise ValueError("cairn.Histogram takes values OR counts + edges, not both")
+            self.obj = values
+            self.kwargs = {"bins": bins}
+        else:
+            if counts is None or edges is None:
+                raise ValueError("cairn.Histogram needs values, or both counts and edges")
+            self.obj = None
+            self.kwargs = {"counts": counts, "edges": edges}
 
 
 class Tensor(_TypeWrapper):

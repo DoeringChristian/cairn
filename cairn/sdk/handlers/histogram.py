@@ -29,8 +29,16 @@ class HistogramHandler:
         return False
 
     def serialize(
-        self, obj: Any, bins: int = 64, **kwargs: Any
+        self,
+        obj: Any,
+        bins: int = 64,
+        *,
+        counts: Any = None,
+        edges: Any = None,
+        **kwargs: Any,
     ) -> tuple[bytes, dict[str, Any]]:
+        if counts is not None or edges is not None:
+            return self._serialize_binned(counts, edges)
         torch = try_import("torch")
         if torch is not None and isinstance(obj, torch.Tensor):
             arr = obj.detach().cpu().numpy()
@@ -38,9 +46,6 @@ class HistogramHandler:
             arr = np.asarray(obj)
         flat = arr.reshape(-1).astype(np.float64)
         counts, edges = np.histogram(flat, bins=bins)
-        buf = io.BytesIO()
-        np.savez_compressed(buf, counts=counts, edges=edges)
-        data = buf.getvalue()
         meta = {
             "num_bins": int(len(counts)),
             "min": float(flat.min()) if flat.size else 0.0,
@@ -48,7 +53,35 @@ class HistogramHandler:
             "count": int(flat.size),
             "mean": float(flat.mean()) if flat.size else 0.0,
         }
-        return data, meta
+        return self._pack(counts, edges), meta
+
+    def _serialize_binned(self, counts: Any, edges: Any) -> tuple[bytes, dict[str, Any]]:
+        """Precomputed bins: store them as given; stats come from the bins."""
+        if counts is None or edges is None:
+            raise ValueError("a precomputed histogram needs both counts and edges")
+        counts = _to_numpy(counts).reshape(-1)
+        edges = _to_numpy(edges).reshape(-1).astype(np.float64)
+        if len(edges) != len(counts) + 1:
+            raise ValueError(
+                f"histogram edges must have len(counts) + 1 entries, "
+                f"got {len(edges)} edges for {len(counts)} counts"
+            )
+        total = float(counts.sum())
+        mids = (edges[:-1] + edges[1:]) / 2
+        meta = {
+            "num_bins": int(len(counts)),
+            "min": float(edges[0]) if edges.size else 0.0,
+            "max": float(edges[-1]) if edges.size else 0.0,
+            "count": int(round(total)),
+            "mean": float((mids * counts).sum() / total) if total > 0 else 0.0,
+        }
+        return self._pack(counts, edges), meta
+
+    @staticmethod
+    def _pack(counts: np.ndarray, edges: np.ndarray) -> bytes:
+        buf = io.BytesIO()
+        np.savez_compressed(buf, counts=counts, edges=edges)
+        return buf.getvalue()
 
     def deserialize(
         self, data: bytes, metadata: dict[str, Any] | None = None,
@@ -56,3 +89,10 @@ class HistogramHandler:
         """Load .npz bytes into ``(counts, edges)`` numpy arrays."""
         loaded = np.load(io.BytesIO(data))
         return loaded["counts"], loaded["edges"]
+
+
+def _to_numpy(x: Any) -> np.ndarray:
+    torch = try_import("torch")
+    if torch is not None and isinstance(x, torch.Tensor):
+        return x.detach().cpu().numpy()
+    return np.asarray(x)

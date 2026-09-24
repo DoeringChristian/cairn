@@ -300,6 +300,7 @@ run.track(cairn.Figure(fig), name="loss_curve", step=100)
 run.track(cairn.Image(np_array), name="prediction", step=100)   # 2D/3D array → image (PNG)
 run.track(cairn.Image(hdr, encoding="exr:dwab"), name="radiance", step=100)  # keep HDR values
 run.track(cairn.Histogram(np_array), name="weights", step=100)  # 1D array → histogram
+run.track(cairn.Histogram(counts=c, edges=e), name="grads", step=100)  # already binned; len(e) == len(c) + 1
 run.track(cairn.Tensor(np_array), name="activations", step=100) # raw array, no interpretation
 run.track(cairn.Audio(np_array, sample_rate=16000), name="sample", step=100)
 run.track(cairn.Video(np_array, fps=30), name="rollout", step=100)
