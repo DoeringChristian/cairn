@@ -4,7 +4,7 @@ Dispatches only via the ``cairn.Table`` wrapper (a bare ``list``/``dict`` is
 ambiguous and already claimed by other handlers, so ``can_handle`` is always
 False). The blob is::
 
-    {"columns": [{"name": str, "type": "number"|"string"|"bool"|"other"}],
+    {"columns": [{"name": str, "type": "number"|"string"|"bool"|"media"|"other"}],
      "data": [[...], ...],
      "truncated": bool}   # only present when the row cap was hit
 
@@ -12,6 +12,11 @@ Values are coerced to JSON-native types; anything else is ``str()``-ed. Rows are
 capped at ``MAX_ROWS`` at log time (the original count lands in metadata). The
 metadata carries everything the card header needs without fetching the blob:
 ``n_rows``, ``n_cols`` and the first 20 column names.
+
+A media cell (``cairn.Image``/``Audio``/``Video``) is uploaded as its own
+artifact by the SDK before serialization and reaches this handler as
+``{"$media": {"hash", "mime_type", "object_type"}}``; it passes through
+unchanged and its column is typed ``"media"``.
 """
 
 from __future__ import annotations
@@ -27,8 +32,15 @@ from ._optional import try_import
 MAX_ROWS = 10_000
 
 
+def is_media_cell(value: Any) -> bool:
+    """A ``{"$media": {...}}`` reference to a separately uploaded artifact."""
+    return isinstance(value, dict) and isinstance(value.get("$media"), dict)
+
+
 def _classify(value: Any) -> str:
     """Classify a single non-null value into a column-type bucket."""
+    if is_media_cell(value):
+        return "media"
     # bool must be checked before int (bool is an int subclass).
     if isinstance(value, (bool, np.bool_)):
         return "bool"
@@ -52,6 +64,8 @@ def _coerce(value: Any) -> Any:
         # JSON has no NaN/Inf — drop them to null so the blob stays valid.
         return f if math.isfinite(f) else None
     if isinstance(value, str):
+        return value
+    if is_media_cell(value):
         return value
     return str(value)
 

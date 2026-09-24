@@ -33,6 +33,7 @@ _LAZY_ATTRS: dict[str, str] = {
     "Scope": ".sdk.scope",
     "ArtifactVersion": ".sdk.run",
     "Reader": ".sdk.reader",
+    "MediaRef": ".sdk.reader",
     "query_url": ".sdk.query_urls",
     "register_handler": ".sdk.handlers.registry",
     "Artifact": ".sdk.wrappers",
@@ -58,7 +59,7 @@ if TYPE_CHECKING:  # static-analysis only — never executed, never eager at run
     from . import plot as plot
     from . import ui as ui
     from .sdk.query_urls import query_url
-    from .sdk.reader import Reader
+    from .sdk.reader import MediaRef, Reader
     from .sdk.run import ArtifactVersion, Run
     from .sdk.handlers.registry import register_handler
     from .sdk.wrappers import (
@@ -153,6 +154,7 @@ __all__ = [
     "configure",
     "register_handler",
     "Reader",
+    "MediaRef",
     "query_url",
     "ArtifactVersion",
     "plot",

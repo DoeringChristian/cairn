@@ -46,7 +46,8 @@ GALLERY_MIME = "application/vnd.cairn.image-gallery+json"
 
 
 def _referenced_hashes(blobs: BlobStore, h: str, row: dict[str, Any] | None) -> list[str]:
-    """Hashes of other artifacts this one names: a figure's ``source_hash``, a gallery's images."""
+    """Hashes of other artifacts this one names: a figure's ``source_hash``, a
+    gallery's images, a table's media cells (``media_hashes``)."""
     if row is None:
         return []
     meta = row.get("metadata")
@@ -56,6 +57,8 @@ def _referenced_hashes(blobs: BlobStore, h: str, row: dict[str, Any] | None) -> 
         except json.JSONDecodeError:
             meta = None
     refs = [meta["source_hash"]] if isinstance(meta, dict) and meta.get("source_hash") else []
+    if isinstance(meta, dict):
+        refs += list(meta.get("media_hashes") or [])
     if row.get("mime_type") == GALLERY_MIME:
         data, _ = blobs.get(h)
         refs += [item["hash"] for item in json.loads(data)["images"]]
