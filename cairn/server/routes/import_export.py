@@ -19,6 +19,7 @@ from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from ...sdk.handlers.image import GALLERY_MIME
 from ._common import get_blobs, get_data_dir, get_db, utc_now
 
 router = APIRouter(prefix="/api", tags=["import-export"])
@@ -32,6 +33,23 @@ EXPORT_VERSION = 1
 
 class ExportRequest(BaseModel):
     run_ids: list[str]
+
+
+def _referenced_hashes(blobs: Any, h: str, row: dict[str, Any] | None) -> list[str]:
+    """Hashes of other artifacts this one names: a figure's ``source_hash``, a gallery's images."""
+    if row is None:
+        return []
+    meta = row.get("metadata")
+    if isinstance(meta, str):
+        try:
+            meta = json.loads(meta)
+        except json.JSONDecodeError:
+            meta = None
+    refs = [meta["source_hash"]] if isinstance(meta, dict) and meta.get("source_hash") else []
+    if row.get("mime_type") == GALLERY_MIME:
+        data, _ = blobs.get(h)
+        refs += [item["hash"] for item in json.loads(data)["images"]]
+    return refs
 
 
 @router.post("/export")
@@ -96,8 +114,12 @@ def export_runs(body: ExportRequest, request: Request) -> StreamingResponse:
                 art_hashes.add(row["hash"])
             zf.writestr(prefix + "run_artifacts.json", json.dumps(named_arts, default=str))
 
-            # Write artifact blobs (deduped across runs).
-            for h in art_hashes:
+            # Write artifact blobs (deduped across runs). An artifact can name
+            # others — a figure its source, a gallery its images — so the queue
+            # grows as referenced blobs are discovered.
+            pending = list(art_hashes)
+            while pending:
+                h = pending.pop()
                 if h in seen_artifacts:
                     continue
                 seen_artifacts.add(h)
@@ -106,6 +128,7 @@ def export_runs(body: ExportRequest, request: Request) -> StreamingResponse:
                 meta_rows = db.read_columns(
                     "SELECT mime_type, metadata, object_type FROM artifacts WHERE hash = ?", [h],
                 )
+                pending.extend(_referenced_hashes(blobs, h, meta_rows[0] if meta_rows else None))
                 mime = meta_rows[0]["mime_type"] if meta_rows else "application/octet-stream"
                 ext = mimetypes.guess_extension(mime) or ""
                 data, _ = blobs.get(h)

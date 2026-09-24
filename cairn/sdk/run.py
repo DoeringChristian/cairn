@@ -33,7 +33,8 @@ from ..sdk.capture.git import capture_git
 from ..sdk.capture.source import build_source_archive, find_project_root
 from ..sdk.capture.system import SystemMetricsCollector
 from ..sdk.handlers.registry import HandlerRegistry, default_registry, resolve_mime_type
-from ..sdk.wrappers import _TypeWrapper
+from ..sdk.handlers.image import GALLERY_MIME
+from ..sdk.wrappers import Image, _TypeWrapper
 from .buffer import MetricBuffer
 from .local import LocalTransport, _RepoServedByOtherError
 from .scope import Scope
@@ -448,6 +449,10 @@ class Run:
         if self._finished:
             raise RuntimeError("Run has already been finished")
 
+        if isinstance(value, (list, tuple)) and value and all(isinstance(v, Image) for v in value):
+            self._track_gallery(list(value), name, step=step, context=context, **kwargs)
+            return
+
         # Unwrap explicit type wrappers.
         wrapper_kwargs: dict[str, Any] = {}
         if isinstance(value, _TypeWrapper):
@@ -495,6 +500,38 @@ class Run:
             point["artifact_hash"] = digest
 
         self._metric_buffer.append(point)
+
+    def _track_gallery(
+        self,
+        images: list[Image],
+        name: str,
+        *,
+        step: int | None,
+        context: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Record several images as ONE point: each image is its own artifact,
+        and the point's artifact is a manifest listing them (``GALLERY_MIME``)."""
+        handler = self._registry.find_by_type("image")
+        assert handler is not None
+        items: list[dict[str, Any]] = []
+        for image in images:
+            merged = {**image.kwargs, **kwargs}
+            blob, meta = handler.serialize(image.obj, **merged)
+            mime = resolve_mime_type(handler, image.obj, merged)
+            digest = self._transport.upload_artifact(blob, mime, meta, object_type="image")
+            items.append({"hash": digest, "mime_type": mime, "metadata": meta})
+        manifest = json.dumps({"images": items}).encode()
+        meta = {"gallery": len(items), "preview": items[0]["metadata"].get("preview"), "encoding": "gallery"}
+        digest = self._transport.upload_artifact(manifest, GALLERY_MIME, meta, object_type="image")
+        self._metric_buffer.append({
+            "name": name,
+            "step": self._next_step(name, context, step),
+            "wall_time": _now_iso(),
+            "context": context,
+            "object_type": "image",
+            "artifact_hash": digest,
+        })
 
     def log_artifact(
         self,

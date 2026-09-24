@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator, Protocol, runtime_checkable
 
 from .. import config as _config
+from .handlers.image import GALLERY_MIME
 
 
 # ---------------------------------------------------------------------------
@@ -422,7 +423,8 @@ class Run:
         handler's ``deserialize()`` method:
 
         - ``artifact``  → unpickled Python object (any picklable type)
-        - ``image``     → PIL.Image (PNG), ndarray (``exr``/``npy`` encodings)
+        - ``image``     → PIL.Image (PNG), ndarray (``exr``/``npy`` encodings);
+          a gallery (a tracked list of images) → a list of those
         - ``audio``     → ``(samples: np.ndarray, sample_rate: int)``
         - ``video``     → np.ndarray (T, H, W, C)
         - ``tensor``    → np.ndarray
@@ -452,6 +454,11 @@ class Run:
                 meta = _json.loads(meta)
             except _json.JSONDecodeError:
                 meta = {}
+        if a.get("mime_type") == GALLERY_MIME:
+            return [
+                handler.deserialize(self._backend.get_artifact_bytes(item["hash"]), item.get("metadata") or {})
+                for item in json.loads(data)["images"]
+            ]
         return handler.deserialize(data, meta or {})
 
     def artifact_path(self, name: str, step: int | None = None) -> Path | None:
