@@ -112,7 +112,7 @@ def export_runs(body: ExportRequest, request: Request) -> StreamingResponse:
                     art_hashes.add(h)
 
             named_arts = db.read_columns(
-                "SELECT name, hash, step FROM run_artifacts WHERE run_id = ?", [run_id],
+                "SELECT name, hash, step, created_at FROM run_artifacts WHERE run_id = ?", [run_id],
             )
             for row in named_arts:
                 art_hashes.add(row["hash"])
@@ -305,8 +305,10 @@ async def import_runs(request: Request, file: UploadFile = File(...)) -> dict[st
                 named_arts = json.loads(zf.read(ra_name))
                 for ra in named_arts:
                     db.write(
-                        "INSERT OR IGNORE INTO run_artifacts (run_id, name, hash, step) VALUES (?, ?, ?, ?)",
-                        [new_id, ra["name"], ra["hash"], ra.get("step", -1)],
+                        """INSERT OR IGNORE INTO run_artifacts (run_id, name, hash, step, created_at)
+                           VALUES (?, ?, ?, ?, ?)""",
+                        [new_id, ra["name"], ra["hash"], ra.get("step", -1),
+                         ra.get("created_at") or utc_now().isoformat()],
                     )
             except (json.JSONDecodeError, KeyError):
                 pass
