@@ -188,6 +188,11 @@ def _print_access_banner(
     return browser_login_url
 
 
+def _uvicorn_logging(verbose: bool) -> dict[str, object]:
+    """Warnings only by default, so the startup banner (URLs, token) stays on screen."""
+    return {"log_level": "info" if verbose else "warning", "access_log": verbose}
+
+
 @main.command("server")
 @click.option("--host", default="0.0.0.0", show_default=True)
 @click.option("--port", default=4300, show_default=True, type=int,
@@ -221,6 +226,11 @@ def _print_access_banner(
     is_flag=True,
     help="Disable authentication (local/debugging only — auth is ON by default).",
 )
+@click.option(
+    "--verbose",
+    is_flag=True,
+    help="Show the HTTP server's info and access logs (default: warnings only).",
+)
 def server_cmd(
     host: str,
     port: int,
@@ -230,6 +240,7 @@ def server_cmd(
     ui: bool,
     advertise: bool,
     no_auth: bool,
+    verbose: bool,
 ) -> None:
     """Start the Cairn tracking server (ingest-only unless ``--ui``)."""
     import uvicorn
@@ -336,14 +347,14 @@ def server_cmd(
     threads: list[threading.Thread] = []
 
     ingest_config = uvicorn.Config(
-        app=ingest_app, host=host, port=port, log_level="info", lifespan="on"
+        app=ingest_app, host=host, port=port, lifespan="on", **_uvicorn_logging(verbose)
     )
     ingest_server = uvicorn.Server(ingest_config)
     servers.append(ingest_server)
 
     if ui_app is not None:
         ui_config = uvicorn.Config(
-            app=ui_app, host=host, port=ui_port, log_level="warning", lifespan="on"
+            app=ui_app, host=host, port=ui_port, lifespan="on", **_uvicorn_logging(verbose)
         )
         ui_server = uvicorn.Server(ui_config)
         servers.append(ui_server)
@@ -402,12 +413,18 @@ def server_cmd(
     is_flag=True,
     help="Disable authentication (local/debugging only — auth is ON by default).",
 )
+@click.option(
+    "--verbose",
+    is_flag=True,
+    help="Show the HTTP server's info and access logs (default: warnings only).",
+)
 def ui_cmd(
     host: str,
     port: int,
     repo: str | None,
     open_browser: bool,
     no_auth: bool,
+    verbose: bool,
 ) -> None:
     """Serve the Cairn viewer over a local repo or remote Cairn server.
 
@@ -456,7 +473,7 @@ def ui_cmd(
         if open_browser and host in ("0.0.0.0", "127.0.0.1", "localhost"):
             _open_browser_soon(f"http://localhost:{port}/")
         uv_config = uvicorn.Config(
-            app=app, host=host, port=port, log_level="info", lifespan="on"
+            app=app, host=host, port=port, lifespan="on", **_uvicorn_logging(verbose)
         )
         uv_server = uvicorn.Server(uv_config)
 
@@ -530,7 +547,7 @@ def ui_cmd(
         _open_browser_soon(browser_url)
 
     uv_config = uvicorn.Config(
-        app=app, host=host, port=port, log_level="info", lifespan="on"
+        app=app, host=host, port=port, lifespan="on", **_uvicorn_logging(verbose)
     )
     uv_server = uvicorn.Server(uv_config)
 

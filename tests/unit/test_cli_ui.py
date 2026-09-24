@@ -290,6 +290,28 @@ def test_cairn_ui_no_open_browser_opt_out(monkeypatch):
     assert opened == []
 
 
+@pytest.mark.parametrize("flags,level,access", [([], "warning", False), (["--verbose"], "info", True)])
+def test_cairn_ui_logs_warnings_only_unless_verbose(monkeypatch, flags, level, access):
+    import uvicorn
+
+    configs = []
+    real_init = uvicorn.Config.__init__
+
+    def capture(self, *args, **kwargs):
+        configs.append(kwargs)
+        real_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(uvicorn.Config, "__init__", capture)
+    monkeypatch.setattr(uvicorn.Server, "run", lambda self: None)
+    monkeypatch.setenv("CAIRN_TOKEN", "from-environment")
+    result = CliRunner().invoke(
+        cli.main,
+        ["ui", "--repo", "cairn://fermat:4300", "--port", str(_free_port()), "--no-open-browser", *flags],
+    )
+    assert result.exit_code == 0, result.output
+    assert [(c["log_level"], c["access_log"]) for c in configs] == [(level, access)]
+
+
 def test_cairn_ui_remote_proxy_rejects_non_loopback_bind():
     result = CliRunner().invoke(
         cli.main,
