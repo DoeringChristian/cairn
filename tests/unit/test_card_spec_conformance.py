@@ -24,9 +24,11 @@ from pydantic import ValidationError
 
 from cairn_ui.cards import spec as cs
 
+# Resolved through the installed (editable) cairn_ui package, so the test
+# follows whichever cairn-ui checkout the environment points at.
 _SCHEMA_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "vendor" / "cairn-ui" / "docs" / "schemas" / "cairn-card-spec.schema.json"
+    Path(cs.__file__).resolve().parents[2]
+    / "docs" / "schemas" / "cairn-card-spec.schema.json"
 )
 
 
