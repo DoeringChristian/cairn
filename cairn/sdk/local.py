@@ -20,6 +20,7 @@ import hashlib
 import json
 import logging
 import os
+import secrets
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -260,6 +261,8 @@ class LocalTransport:
         """Ensure the artifact family exists and create a new version."""
         if self._use_wal:
             self._wal_write("create_artifact_version", {
+                # Client-generated so replaying the WAL is idempotent.
+                "version_id": secrets.token_hex(8),
                 "project_id": project_id,
                 "family_name": family_name,
                 "family_type": family_type,

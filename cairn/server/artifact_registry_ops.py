@@ -303,12 +303,24 @@ def create_artifact_version(
     metadata: dict[str, Any] | None = None,
     created_by_run: str | None = None,
     aliases: list[str] | None = None,
+    version_id: str | None = None,
 ) -> dict[str, Any]:
-    """High-level: ensure family exists, create version from pre-uploaded blob."""
+    """High-level: ensure family exists, create version from pre-uploaded blob.
+
+    ``version_id`` is client-generated on the WAL path, which makes the op
+    idempotent: a WAL drained twice finds the version already there and
+    returns it instead of creating the next version number.
+    """
+    if version_id is not None:
+        existing = db.read_columns("SELECT id FROM artifact_versions WHERE id = ?", [version_id])
+        if existing:
+            out = get_version(db, version_id)
+            out["family_name"] = family_name
+            return out
     family = get_or_create_family(db, project_id=project_id, name=family_name, type=family_type)
     family_id = family["id"]
     now = _now_iso()
-    version_id = _new_id()
+    version_id = version_id or _new_id()
 
     with db.transaction() as con:
         row = con.execute(

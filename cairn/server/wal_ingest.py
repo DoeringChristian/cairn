@@ -79,125 +79,128 @@ def _ensure_artifact_row(db: Database, p: dict[str, Any]) -> None:
     )
 
 
-def ingest_wal(db: Database, data_dir: DataDir, blobs: BlobStore, wal_path: Path) -> int:
-    """Drain a single WAL file into the central DB. Returns number of ops processed."""
+def _apply_op(
+    db: Database,
+    data_dir: DataDir,
+    blobs: BlobStore,
+    op: str,
+    payload: dict[str, Any],
+    run_id: str | None,
+) -> str | None:
+    """Apply one WAL record to the DB. Returns the WAL's run id (updated by
+    ``create_run``) so later records without a ``run_id`` resolve to it.
+
+    The single dispatcher for both the full and the incremental drain: a new
+    WAL op is one branch here. Every branch must be idempotent, because a WAL
+    that was drained incrementally while its run was live is drained again in
+    full once the run's lock goes away.
+    """
+    if op == "create_run":
+        _ensure_run_exists(db, payload)
+        return payload["run_id"]
+
+    if op == "artifact_meta":
+        _ensure_artifact_row(db, payload)
+        return run_id
+
+    if op == "create_artifact_version":
+        from . import artifact_registry_ops
+
+        artifact_registry_ops.create_artifact_version(
+            db,
+            project_id=payload["project_id"],
+            family_name=payload["family_name"],
+            family_type=payload.get("family_type", "artifact"),
+            digest=payload["hash"],
+            size_bytes=payload["size_bytes"],
+            metadata=payload.get("metadata"),
+            created_by_run=payload.get("created_by_run"),
+            aliases=payload.get("aliases"),
+            version_id=payload.get("version_id"),
+        )
+        return run_id
+
+    rid = payload.get("run_id", run_id)
+    if not rid:
+        log.debug("WAL op %r without a run id — skipping", op)
+        return run_id
+
+    try:
+        if op == "batch":
+            ingest_ops.insert_batch(db, rid, payload["points"])
+        elif op == "params":
+            ingest_ops.set_params(db, rid, payload["params"])
+        elif op == "summary":
+            ingest_ops.set_summary(db, rid, payload["summary"])
+        elif op == "logs":
+            ingest_ops.insert_logs(db, data_dir, rid, payload["lines"])
+        elif op == "finish":
+            ingest_ops.finish_run(
+                db, rid,
+                status=payload.get("status", "completed"),
+                exit_code=payload.get("exit_code"),
+            )
+        elif op == "set_tags":
+            ingest_ops.set_tags(db, rid, payload["tags"])
+        elif op == "set_notes":
+            ingest_ops.set_notes(db, rid, payload["notes"])
+        elif op == "attach_artifact":
+            ingest_ops.attach_artifact(
+                db, blobs, rid,
+                name=payload["name"],
+                digest=payload["hash"],
+                step=payload.get("step"),
+            )
+        elif op == "record_artifact_input":
+            from . import artifact_registry_ops
+
+            artifact_registry_ops.record_input(
+                db, run_id=rid,
+                artifact_version_id=payload["artifact_version_id"],
+                role=payload.get("role", "input"),
+            )
+        elif op == "source":
+            # The archive is already in the blob store; copy it and the
+            # manifest into the run's source dir.
+            src_dir = data_dir.run_source_dir(rid)
+            manifest = payload.get("manifest", {})
+            blob_hash = payload.get("hash")
+            if blob_hash and blobs.exists(blob_hash):
+                archive_data = blobs.get(blob_hash)[0]
+                (src_dir / "tree.tar.zst").write_bytes(archive_data)
+                (src_dir / "manifest.json").write_text(json.dumps(manifest))
+        elif op == "heartbeat":
+            ingest_ops.heartbeat(db, rid)
+        else:
+            log.debug("unknown WAL op %r — skipping", op)
+    except ingest_ops.RunNotFound:
+        log.warning("WAL %s for unknown run %s — skipping", op, rid)
+    except ValueError as exc:
+        # attach_artifact with a blob that never arrived.
+        log.warning("WAL %s for run %s failed: %s", op, rid, exc)
+    return run_id
+
+
+def _drain_lines(
+    db: Database, data_dir: DataDir, blobs: BlobStore, lines: Any,
+) -> int:
     count = 0
     run_id: str | None = None
-
-    with open(wal_path, encoding="utf-8") as f:
-        for line in f:
-            record = _safe_json(line)
-            if not record:
-                continue
-            payload = record.get("payload", {})
-            op = record.get("op", "")
-            count += 1
-
-            if op == "create_run":
-                _ensure_run_exists(db, payload)
-                run_id = payload["run_id"]
-
-            elif op == "batch":
-                rid = payload.get("run_id", run_id)
-                if rid:
-                    try:
-                        ingest_ops.insert_batch(db, rid, payload["points"])
-                    except ingest_ops.RunNotFound:
-                        log.warning("WAL batch for unknown run %s — skipping", rid)
-
-            elif op == "params":
-                rid = payload.get("run_id", run_id)
-                if rid:
-                    try:
-                        ingest_ops.set_params(db, rid, payload["params"])
-                    except ingest_ops.RunNotFound:
-                        log.warning("WAL params for unknown run %s — skipping", rid)
-
-            elif op == "summary":
-                rid = payload.get("run_id", run_id)
-                if rid:
-                    try:
-                        ingest_ops.set_summary(db, rid, payload["summary"])
-                    except ingest_ops.RunNotFound:
-                        log.warning("WAL summary for unknown run %s — skipping", rid)
-
-            elif op == "logs":
-                rid = payload.get("run_id", run_id)
-                if rid:
-                    try:
-                        ingest_ops.insert_logs(db, data_dir, rid, payload["lines"])
-                    except ingest_ops.RunNotFound:
-                        log.warning("WAL logs for unknown run %s — skipping", rid)
-
-            elif op == "finish":
-                rid = payload.get("run_id", run_id)
-                if rid:
-                    try:
-                        ingest_ops.finish_run(
-                            db, rid,
-                            status=payload.get("status", "completed"),
-                            exit_code=payload.get("exit_code"),
-                        )
-                    except ingest_ops.RunNotFound:
-                        log.warning("WAL finish for unknown run %s — skipping", rid)
-
-            elif op == "set_tags":
-                rid = payload.get("run_id", run_id)
-                if rid:
-                    try:
-                        ingest_ops.set_tags(db, rid, payload["tags"])
-                    except ingest_ops.RunNotFound:
-                        pass
-
-            elif op == "set_notes":
-                rid = payload.get("run_id", run_id)
-                if rid:
-                    try:
-                        ingest_ops.set_notes(db, rid, payload["notes"])
-                    except ingest_ops.RunNotFound:
-                        pass
-
-            elif op == "artifact_meta":
-                _ensure_artifact_row(db, payload)
-
-            elif op == "attach_artifact":
-                rid = payload.get("run_id", run_id)
-                if rid:
-                    try:
-                        ingest_ops.attach_artifact(
-                            db, blobs, rid,
-                            name=payload["name"],
-                            digest=payload["hash"],
-                            step=payload.get("step"),
-                        )
-                    except (ingest_ops.RunNotFound, ValueError):
-                        pass
-
-            elif op == "source":
-                rid = payload.get("run_id", run_id)
-                if rid:
-                    # Source archive is already in the blob store.
-                    # Write manifest to run source dir.
-                    src_dir = data_dir.run_source_dir(rid)
-                    manifest = payload.get("manifest", {})
-                    blob_hash = payload.get("hash")
-                    if blob_hash and blobs.exists(blob_hash):
-                        archive_data = blobs.get(blob_hash)[0]
-                        (src_dir / "tree.tar.zst").write_bytes(archive_data)
-                        (src_dir / "manifest.json").write_text(json.dumps(manifest))
-
-            elif op == "heartbeat":
-                rid = payload.get("run_id", run_id)
-                if rid:
-                    try:
-                        ingest_ops.heartbeat(db, rid)
-                    except ingest_ops.RunNotFound:
-                        pass
-
-            else:
-                log.debug("unknown WAL op %r — skipping", op)
-
+    for line in lines:
+        record = _safe_json(line)
+        if not record:
+            continue
+        count += 1
+        run_id = _apply_op(
+            db, data_dir, blobs, record.get("op", ""), record.get("payload", {}), run_id,
+        )
     return count
+
+
+def ingest_wal(db: Database, data_dir: DataDir, blobs: BlobStore, wal_path: Path) -> int:
+    """Drain a single WAL file into the central DB. Returns number of ops processed."""
+    with open(wal_path, encoding="utf-8") as f:
+        return _drain_lines(db, data_dir, blobs, f)
 
 
 # Tracks how far we've read into each active WAL (by file path → byte offset).
@@ -213,106 +216,18 @@ def _ingest_wal_incremental(
     EOF, ingest those lines, and remember the offset for next time.
     """
     key = str(wal_path)
-    offset = _wal_offsets.get(key, 0)
-    count = 0
-    run_id: str | None = None
-
     try:
-        with open(wal_path, encoding="utf-8") as f:
-            f.seek(offset)
-            for line in f:
-                record = _safe_json(line)
-                if not record:
-                    continue
-                payload = record.get("payload", {})
-                op = record.get("op", "")
-                count += 1
-
-                if op == "create_run":
-                    _ensure_run_exists(db, payload)
-                    run_id = payload["run_id"]
-                elif op == "batch":
-                    rid = payload.get("run_id", run_id)
-                    if rid:
-                        try:
-                            ingest_ops.insert_batch(db, rid, payload["points"])
-                        except ingest_ops.RunNotFound:
-                            pass
-                elif op == "params":
-                    rid = payload.get("run_id", run_id)
-                    if rid:
-                        try:
-                            ingest_ops.set_params(db, rid, payload["params"])
-                        except ingest_ops.RunNotFound:
-                            pass
-                elif op == "summary":
-                    rid = payload.get("run_id", run_id)
-                    if rid:
-                        try:
-                            ingest_ops.set_summary(db, rid, payload["summary"])
-                        except ingest_ops.RunNotFound:
-                            pass
-                elif op == "logs":
-                    rid = payload.get("run_id", run_id)
-                    if rid:
-                        try:
-                            ingest_ops.insert_logs(db, data_dir, rid, payload["lines"])
-                        except ingest_ops.RunNotFound:
-                            pass
-                elif op == "finish":
-                    rid = payload.get("run_id", run_id)
-                    if rid:
-                        try:
-                            ingest_ops.finish_run(db, rid, status=payload.get("status", "completed"), exit_code=payload.get("exit_code"))
-                        except ingest_ops.RunNotFound:
-                            pass
-                elif op == "set_tags":
-                    rid = payload.get("run_id", run_id)
-                    if rid:
-                        try:
-                            ingest_ops.set_tags(db, rid, payload["tags"])
-                        except ingest_ops.RunNotFound:
-                            pass
-                elif op == "set_notes":
-                    rid = payload.get("run_id", run_id)
-                    if rid:
-                        try:
-                            ingest_ops.set_notes(db, rid, payload["notes"])
-                        except ingest_ops.RunNotFound:
-                            pass
-                elif op == "artifact_meta":
-                    _ensure_artifact_row(db, payload)
-                elif op == "attach_artifact":
-                    rid = payload.get("run_id", run_id)
-                    if rid:
-                        try:
-                            ingest_ops.attach_artifact(db, blobs, rid, name=payload["name"], digest=payload["hash"], step=payload.get("step"))
-                        except (ingest_ops.RunNotFound, ValueError):
-                            pass
-                elif op == "source":
-                    rid = payload.get("run_id", run_id)
-                    if rid:
-                        src_dir = data_dir.run_source_dir(rid)
-                        manifest = payload.get("manifest", {})
-                        blob_hash = payload.get("hash")
-                        if blob_hash and blobs.exists(blob_hash):
-                            archive_data = blobs.get(blob_hash)[0]
-                            (src_dir / "tree.tar.zst").write_bytes(archive_data)
-                            (src_dir / "manifest.json").write_text(json.dumps(manifest))
-                elif op == "heartbeat":
-                    rid = payload.get("run_id", run_id)
-                    if rid:
-                        try:
-                            ingest_ops.heartbeat(db, rid)
-                        except ingest_ops.RunNotFound:
-                            pass
-
-            # Remember where we stopped.
-            _wal_offsets[key] = f.tell()
+        with open(wal_path, "rb") as f:
+            f.seek(_wal_offsets.get(key, 0))
+            chunk = f.read()
     except OSError:
-        pass
-
-    return count
+        return 0
+    # Only complete lines: the writer may be mid-append, and a torn last line
+    # must be read again next cycle rather than skipped.
+    complete = chunk[: chunk.rfind(b"\n") + 1]
+    _wal_offsets[key] = _wal_offsets.get(key, 0) + len(complete)
+    lines = complete.decode("utf-8").splitlines()
+    return _drain_lines(db, data_dir, blobs, lines)
 
 
 def ingest_all(data_dir: DataDir, db: Database, blobs: BlobStore) -> int:
