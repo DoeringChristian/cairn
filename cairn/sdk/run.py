@@ -29,12 +29,12 @@ from .. import config
 from ..sdk import handlers as _handlers_pkg  # noqa: F401  - register built-ins
 from ..sdk.capture import stdout as stdout_capture
 from ..sdk.capture.env import capture_env as _capture_env
-from ..sdk.capture.git import capture_git
+from ..sdk.capture.git import capture_git, diff_text
 from ..sdk.capture.source import build_source_archive, find_project_root
 from ..sdk.capture.system import SystemMetricsCollector
 from ..sdk.handlers.registry import HandlerRegistry, default_registry, resolve_mime_type
 from ..sdk.handlers.image import GALLERY_MIME
-from ..sdk.wrappers import Image, _TypeWrapper
+from ..sdk.wrappers import Image, Text, _TypeWrapper
 from .buffer import MetricBuffer
 from .connect import open_transport
 from .local import LocalTransport
@@ -160,6 +160,7 @@ class Run:
                     "sha": git_info["sha"],
                     "branch": git_info["branch"],
                     "dirty": git_info["dirty"],
+                    "remote": git_info["remote"],
                 }
                 if git_info
                 else None
@@ -231,6 +232,7 @@ class Run:
                     "include": tuple(source_include) if source_include else None,
                     "exclude": tuple(source_exclude) if source_exclude else None,
                     "max_file_size_mb": source_max_file_size_mb,
+                    "diff": diff_text(git_info) if git_info else "",
                 },
                 daemon=True,
                 name="cairn-source-upload",
@@ -780,7 +782,13 @@ class Run:
         include: tuple[str, ...] | None,
         exclude: tuple[str, ...] | None,
         max_file_size_mb: float,
+        diff: str = "",
     ) -> None:
+        if diff:
+            try:
+                self.log_artifact(Text(diff), name="git.diff")
+            except Exception:  # noqa: BLE001
+                log.warning("git diff upload failed", exc_info=True)
         try:
             if root_override is not None:
                 root = Path(root_override).resolve()
