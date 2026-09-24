@@ -166,7 +166,7 @@ def test_tags_and_notes(transport, reader):
     assert row["notes"] == "test run"
 
 
-def test_context_separates_series(transport, reader):
+def test_prefixed_names_are_separate_series(transport, reader):
     run = cairn.Run(
         project="p",
         capture_source=False,
@@ -178,9 +178,12 @@ def test_context_separates_series(transport, reader):
     try:
         for i in range(3):
             run.track(1.0, name="loss", step=i)
-            run.track(2.0, name="loss", step=i, context={"subset": "val"})
+            run.track(2.0, name="val.loss", step=i)
     finally:
         run.finish()
     seqs = reader.get(f"/api/runs/{run.id}/sequences").json()["sequences"]
-    loss_seqs = [s for s in seqs if s["name"] == "loss"]
-    assert len(loss_seqs) == 2
+    by_name = {s["name"]: s for s in seqs}
+    assert set(by_name) == {"loss", "val.loss"}
+    assert len(seqs) == 2
+    assert set(by_name["loss"]) == {"name", "object_type", "min_step", "max_step", "count"}
+    assert by_name["loss"]["count"] == by_name["val.loss"]["count"] == 3

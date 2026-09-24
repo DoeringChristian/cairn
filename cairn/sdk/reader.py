@@ -54,8 +54,6 @@ class GitInfo:
 class SequenceInfo:
     name: str
     object_type: str
-    context: str | None
-    context_hash: str
     min_step: int
     max_step: int
     count: int
@@ -235,7 +233,7 @@ class DataRef:
     construction time. Resolution happens only when something actually
     needs the data: ``.resolve()`` fetches it eagerly (via the existing
     ``Run.sequence``/``Run.artifact``), and ``cairn.plot`` element builders
-    resolve just the ``(runId, name, context_hash)`` triple needed to build
+    resolve just the ``(runId, name)`` pair needed to build
     a server-anchored ``SeriesRef`` (no bytes ever move for that path — the
     card renders by reference through ``/embed/card``).
 
@@ -286,18 +284,6 @@ class DataRef:
         from .query_urls import build_query_url
         step: str | int = self.step if self.step is not None else "latest"
         return build_query_url(base, tag=self.tag, run=f"id:{self.run.id}", step=step)
-
-    def context_hash(self) -> str:
-        """Resolve the ``context_hash`` for this tag (for a ``SeriesRef``).
-
-        A single network/DB round trip against the run's sequence index
-        (``Run.sequences()``); "" (the "no context" sentinel) when the tag
-        isn't a tracked sequence at all (e.g. a plain named artifact).
-        """
-        for info in self.run.sequences():
-            if info.name == self.tag:
-                return info.context_hash
-        return ""
 
     def __repr__(self) -> str:
         step_part = f"[{self.step}]" if self.step is not None else ""
@@ -408,21 +394,13 @@ class Run:
 
     # ---- Sequences ----
 
-    def history(self, keys: list[str] | None = None, context: Any = None) -> Any:
+    def history(self, keys: list[str] | None = None) -> Any:
         """Scalar history as a wide pandas DataFrame: one row per step, one
         column per sequence name (None: all scalar sequences).
 
-        ``context`` keeps only points logged with that context (None: all);
-        a name logged under several contexts needs ``context=`` to pick one.
         Needs the ``[export]`` extra.
         """
-        long = _history_frame(self._backend, [self], keys, context)
-        per_name = long.groupby("name")["context"].agg(lambda c: len({json.dumps(x, sort_keys=True) for x in c}))
-        ambiguous = sorted(per_name[per_name > 1].index)
-        if ambiguous:
-            raise ValueError(
-                f"{ambiguous} were logged under several contexts; pass context= to pick one"
-            )
+        long = _history_frame(self._backend, [self], keys)
         wide = long.pivot(index="step", columns="name", values="value")
         wide.columns.name = None
         return wide
@@ -432,11 +410,11 @@ class Run:
         return [SequenceInfo(**r) for r in rows]
 
     def sequence(
-        self, name: str, *, context: str | None = None,
+        self, name: str, *,
         step_from: int | None = None, step_to: int | None = None,
     ) -> Sequence:
         rows = self._backend.get_sequence(
-            self.id, name, context=context,
+            self.id, name,
             step_from=step_from, step_to=step_to,
         )
         return Sequence([SequencePoint(
@@ -793,32 +771,25 @@ def _get_field_value(run: "Run", field: str, sub_field: str | None) -> Any:
 
 
 _PAGE = 1000  # /api/runs caps limit at 1000
-_HISTORY_COLUMNS = ["run_id", "run_name", "name", "context", "step", "wall_time", "value"]
+_HISTORY_COLUMNS = ["run_id", "run_name", "name", "step", "wall_time", "value"]
 
 
-def _history_frame(backend: _Backend, runs: list[Run], keys: list[str] | None, context: Any) -> Any:
+def _history_frame(backend: _Backend, runs: list[Run], keys: list[str] | None) -> Any:
     """Long-format scalar history of ``runs`` (see :meth:`RunQuery.history`)."""
     try:
         import pandas as pd
     except ImportError as exc:
         raise ImportError("history() needs pandas: pip install 'cairn-track[export]'") from exc
-    from ..server.storage.migrations import hash_context
-
-    want = hash_context(context) if context is not None else None
     names = {r.id: r.name for r in runs}
     ids = list(names)
     records: list[dict[str, Any]] = []
     for i in range(0, len(ids), 200):
         for series in backend.scalar_series(ids[i:i + 200], keys):
             for p in series["points"]:
-                ctx = _parse_json(p["context"])
-                if want is not None and hash_context(ctx) != want:
-                    continue
                 records.append({
                     "run_id": series["run_id"],
                     "run_name": names[series["run_id"]],
                     "name": series["name"],
-                    "context": ctx,
                     "step": p["step"],
                     "wall_time": p["wall_time"],
                     "value": p["value"],
@@ -949,15 +920,14 @@ class RunQuery:
 
         return result
 
-    def history(self, keys: list[str] | None = None, context: Any = None) -> Any:
+    def history(self, keys: list[str] | None = None) -> Any:
         """Scalar history of every matching run as a long pandas DataFrame.
 
-        Columns: ``run_id, run_name, name, context, step, wall_time, value``.
-        ``keys`` selects sequence names (None: all scalar sequences);
-        ``context`` keeps only points logged with that context (None: all).
+        Columns: ``run_id, run_name, name, step, wall_time, value``.
+        ``keys`` selects sequence names (None: all scalar sequences).
         Needs the ``[export]`` extra.
         """
-        return _history_frame(self._backend, self.list(), keys, context)
+        return _history_frame(self._backend, self.list(), keys)
 
     def first(self) -> Run | None:
         runs = self._clone(sort_desc=False, limit_n=self._limit_n or 1000).list()
@@ -1029,7 +999,7 @@ class _Backend(Protocol):
                   limit: int, offset: int, sort_col: str, sort_desc: bool) -> tuple[list[dict[str, Any]], int]: ...
     def get_run(self, run_id: str) -> dict[str, Any]: ...
     def list_sequences(self, run_id: str) -> list[dict[str, Any]]: ...
-    def get_sequence(self, run_id: str, name: str, *, context: str | None,
+    def get_sequence(self, run_id: str, name: str, *,
                      step_from: int | None, step_to: int | None,
 ) -> list[dict[str, Any]]: ...
     def scalar_series(self, run_ids: list[str], names: list[str] | None) -> list[dict[str, Any]]: ...
@@ -1146,24 +1116,20 @@ class _LocalBackend:
 
     def list_sequences(self, run_id: str) -> list[dict[str, Any]]:
         return self._db.read_columns(
-            """SELECT name, object_type, context, context_hash,
+            """SELECT name, MAX(object_type) AS object_type,
                       MIN(step) AS min_step, MAX(step) AS max_step, COUNT(*) AS count
                FROM sequences WHERE run_id = ?
-               GROUP BY name, object_type, context, context_hash
+               GROUP BY name
                ORDER BY name""",
             [run_id],
         )
 
     def get_sequence(
         self, run_id: str, name: str, *,
-        context: str | None = None,
         step_from: int | None = None, step_to: int | None = None,
     ) -> list[dict[str, Any]]:
         clauses = ["s.run_id = ?", "s.name = ?"]
         params: list[Any] = [run_id, name]
-        if context is not None:
-            clauses.append("s.context_hash = ?")
-            params.append(context)
         if step_from is not None:
             clauses.append("s.step >= ?")
             params.append(step_from)
@@ -1173,7 +1139,7 @@ class _LocalBackend:
         where = " AND ".join(clauses)
         rows = self._db.read_columns(
             f"""SELECT s.step, s.wall_time, s.scalar_value, s.artifact_hash,
-                       s.context, s.object_type, s.metadata,
+                       s.object_type, s.metadata,
                        a.mime_type AS artifact_mime, a.size_bytes AS artifact_size,
                        a.metadata AS artifact_metadata
                 FROM sequences s
@@ -1378,12 +1344,9 @@ class _HttpBackend:
 
     def get_sequence(
         self, run_id: str, name: str, *,
-        context: str | None = None,
         step_from: int | None = None, step_to: int | None = None,
     ) -> list[dict[str, Any]]:
         params: dict[str, Any] = {}
-        if context is not None:
-            params["context"] = context
         if step_from is not None:
             params["step_from"] = step_from
         if step_to is not None:

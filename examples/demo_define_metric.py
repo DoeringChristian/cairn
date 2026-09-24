@@ -25,12 +25,12 @@ on the ``epoch`` series as their x-axis (joined on step).
     uv run cairn ui --repo /tmp/cairn-define-metric/.cairn --port 4316
 
     # browse http://localhost:4316/
-    #   - Runs table: loss / val/loss / val/acc columns show min / min / max.
+    #   - Runs table: loss / val.loss / val.acc columns show min / min / max.
     #   - A run's Overview → Metrics: the "From" column says min, max, last
     #     or summary for each metric.
-    #   - Select all three runs → Compare → Overview: val/loss and loss are
-    #     green where lowest, val/acc where highest.
-    #   - Metrics & Media: val/* charts start on the "epoch" x-axis.
+    #   - Select all three runs → Compare → Overview: val.loss and loss are
+    #     green where lowest, val.acc where highest.
+    #   - Metrics & Media: val.* charts start on the "epoch" x-axis.
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ STEPS = 300
 STEPS_PER_EPOCH = 30
 
 # (name, lr, step where validation is best) — each run overfits after that step,
-# so its LAST val/loss is worse than its best.
+# so its LAST val.loss is worse than its best.
 RUNS = [("lr-1e-3", 1e-3, 240), ("lr-3e-3", 3e-3, 150), ("lr-1e-2", 1e-2, 60)]
 
 
@@ -58,8 +58,8 @@ def main() -> None:
         # Lower is better for every loss, higher for accuracy. Without these
         # rules each would show its LAST value, i.e. after overfitting.
         run.define_metric("loss", summary="min")
-        run.define_metric("val/*", step_metric="epoch", summary="min")
-        run.define_metric("val/acc", summary="max")  # exact name beats "val/*"
+        run.define_metric("val.*", step_metric="epoch", summary="min")
+        run.define_metric("val.acc", summary="max")  # exact name beats "val.*"
 
         for step in range(STEPS):
             run.track(math.exp(-step * lr * 3) + 0.02 * rng.random(), name="loss", step=step)
@@ -67,8 +67,8 @@ def main() -> None:
                 # Validation: improves until best_step, then overfits.
                 gap = abs(step - best_step) / STEPS / 2
                 run.track(step // STEPS_PER_EPOCH, name="epoch", step=step)
-                run.track(0.2 + gap + 0.01 * rng.random(), name="val/loss", step=step)
-                run.track(0.9 - gap + 0.01 * rng.random(), name="val/acc", step=step)
+                run.track(0.2 + gap + 0.01 * rng.random(), name="val.loss", step=step)
+                run.track(0.9 - gap + 0.01 * rng.random(), name="val.acc", step=step)
 
         # An explicit summary key wins over any rule.
         run.summary(best_epoch=best_step // STEPS_PER_EPOCH)

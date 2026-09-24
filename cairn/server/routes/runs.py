@@ -106,8 +106,7 @@ def _resolved_values(
     holes = ",".join("?" * len(run_ids))
     out: dict[str, dict[str, Any]] = {rid: {} for rid in run_ids}
 
-    # Last scalar point per (run, name). MAX(step) can tie across contexts;
-    # either tied row is an equally good "last", so the dict keeps one.
+    # Last scalar point per (run, name).
     for r in db.read_columns(
         f"""SELECT s.run_id AS run_id, s.name AS name, s.scalar_value AS value
               FROM sequences s

@@ -70,7 +70,7 @@ def _import_run(transport: Any, acc: Any, project: str, name: str) -> str | None
 
     def add(tag: str, step: int, wall: float, **fields: Any) -> None:
         times.append(wall)
-        points.append({"name": tag, "step": int(step), "wall_time": _iso(wall), "context": None, **fields})
+        points.append({"name": tag, "step": int(step), "wall_time": _iso(wall), **fields})
 
     def blob(object_type: str, obj: Any, **kw: Any) -> str:
         handler = default_registry.find_by_type(object_type)

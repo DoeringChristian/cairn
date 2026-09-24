@@ -135,20 +135,15 @@ def main() -> None:
 
     print("Logging scalars + per-step images...")
     for step in range(num_steps):
-        # Scalars — train and val loss with context
+        # Scalars — train and val loss, split by name prefix
         train_loss = 2.5 * math.exp(-step / 15.0) + random.uniform(0, 0.05)
         val_loss = train_loss + 0.1 + random.uniform(-0.02, 0.1)
         acc = min(0.99, 0.1 + (1 - math.exp(-step / 10.0)) * 0.9)
 
         run.track(train_loss, name="train.loss", step=step)
-        run.track(val_loss, name="train.loss", step=step, context={"subset": "val"})
+        run.track(val_loss, name="val.loss", step=step)
         run.track(acc, name="train.accuracy", step=step)
-        run.track(
-            acc + random.uniform(-0.05, 0.0),
-            name="train.accuracy",
-            step=step,
-            context={"subset": "val"},
-        )
+        run.track(acc + random.uniform(-0.05, 0.0), name="val.accuracy", step=step)
 
         # Metric that lives in its own section (no dot prefix)
         run.track(random.uniform(0.5, 1.0), name="grad_norm", step=step)

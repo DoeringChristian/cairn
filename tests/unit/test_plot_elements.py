@@ -397,7 +397,7 @@ def test_card_element_repr_html_no_server_falls_back_to_text(monkeypatch):
     # mocking the health probe itself is the only environment-independent
     # way to simulate "nothing reachable".
     monkeypatch.setattr(elements_mod.CardElement, "_probe", staticmethod(lambda url: False))
-    el = CardElement({"type": "scalar", "series": [{"runId": "r1", "name": "loss", "context_hash": ""}]})
+    el = CardElement({"type": "scalar", "series": [{"runId": "r1", "name": "loss"}]})
     html = el._repr_html_()
     assert "<iframe" not in html
     assert "no reachable cairn server" in html
@@ -408,7 +408,7 @@ def test_card_element_repr_html_no_server_falls_back_to_text(monkeypatch):
 def test_card_element_repr_html_live_server_returns_iframe_with_resolving_sid(live_server):
     import httpx
 
-    spec = {"type": "scalar", "series": [{"runId": "r1", "name": "loss", "context_hash": ""}]}
+    spec = {"type": "scalar", "series": [{"runId": "r1", "name": "loss"}]}
     el = CardElement(spec, server=live_server)
     html = el._repr_html_()
     assert "<iframe" in html

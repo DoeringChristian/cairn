@@ -722,7 +722,7 @@ def rm_cmd(run_id: str) -> None:
     default="json",
     help="json: the run and its raw points (with --project: the table as a "
          "list of records). csv/parquet: one row per scalar point (run_id, "
-         "name, context, step, wall_time, value); parquet needs the [export] extra.",
+         "name, step, wall_time, value); parquet needs the [export] extra.",
 )
 @click.option(
     "--out",
@@ -746,9 +746,7 @@ def export_cmd(
         run = t.get(f"/api/runs/{run_id}").json()
         seqs_meta = t.get(f"/api/runs/{run_id}/sequences").json()["sequences"]
         seqs: dict[str, list[dict[str, Any]]] = {}
-        # One fetch per name: a name logged under several contexts lists once
-        # per context, and the unfiltered fetch already returns all of them.
-        for name in dict.fromkeys(s["name"] for s in seqs_meta):
+        for name in (s["name"] for s in seqs_meta):
             seqs[name] = t.get(f"/api/runs/{run_id}/sequences/{name}").json()["points"]
         if fmt == "json":
             out.write_text(json.dumps({"run": run, "sequences": seqs}, default=str, indent=2))
@@ -757,7 +755,6 @@ def export_cmd(
                 {
                     "run_id": run_id,
                     "name": name,
-                    "context": p.get("context"),
                     "step": p.get("step"),
                     "wall_time": p.get("wall_time"),
                     "value": p.get("scalar_value"),
@@ -772,7 +769,7 @@ def export_cmd(
         t.close()
 
 
-_EXPORT_COLUMNS = ["run_id", "name", "context", "step", "wall_time", "value"]
+_EXPORT_COLUMNS = ["run_id", "name", "step", "wall_time", "value"]
 
 
 def _export_project(project: str, filters: tuple[str, ...], fmt: str, out: Path) -> None:
@@ -793,12 +790,11 @@ def _export_project(project: str, filters: tuple[str, ...], fmt: str, out: Path)
             df = reader.runs(project).filter(**kwargs).history()
         except ImportError as exc:
             raise click.ClickException(str(exc)) from exc
-    # Contexts as JSON text, times as ISO strings: the single-run export's shape.
+    # Times as ISO strings: the single-run export's shape.
     columns = list(df.columns)
     rows = [
         {
             **r,
-            "context": json.dumps(r["context"]) if r["context"] is not None else None,
             "wall_time": r["wall_time"].isoformat(),
         }
         for r in df.astype(object).to_dict(orient="records")

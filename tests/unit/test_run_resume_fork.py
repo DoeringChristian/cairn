@@ -21,9 +21,9 @@ QUIET = dict(
 )
 
 
-def _pt(name, step, wall, value=None, context=None):
+def _pt(name, step, wall, value=None):
     return {
-        "name": name, "step": step, "wall_time": wall, "context": context,
+        "name": name, "step": step, "wall_time": wall,
         "object_type": "scalar", "scalar_value": float(step if value is None else value),
     }
 

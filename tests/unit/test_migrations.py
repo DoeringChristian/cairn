@@ -9,7 +9,6 @@ import pytest
 from cairn.server.storage.migrations import (
     SCHEMA_VERSION,
     apply_migrations,
-    hash_context,
 )
 
 
@@ -91,31 +90,16 @@ def test_indexes_created(conn):
     assert "idx_log_lines_run" in names
 
 
-def test_hash_context_deterministic():
-    a = hash_context({"subset": "train", "epoch": 1})
-    b = hash_context({"epoch": 1, "subset": "train"})
-    assert a == b and a != ""
-
-
-def test_hash_context_empty_cases():
-    assert hash_context(None) == ""
-    assert hash_context({}) == ""
-    assert hash_context("") == ""
-
-
-def test_hash_context_distinguishes_different_payloads():
-    assert hash_context({"subset": "train"}) != hash_context({"subset": "val"})
-
-
-def test_hash_context_accepts_json_string():
-    a = hash_context({"x": 1})
-    b = hash_context('{"x": 1}')
-    assert a == b
-
-
-def test_hash_context_handles_malformed_string():
-    out = hash_context("not json at all")
-    assert out != ""
+def test_sequences_keyed_by_run_name_step(conn):
+    apply_migrations(conn)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(sequences)")}
+    assert not {"context", "context_hash"} & cols
+    conn.execute("INSERT INTO projects VALUES ('p', 'p', '2025-01-01', NULL, NULL)")
+    conn.execute("INSERT INTO runs (id, project_id, created_at, status) VALUES ('r', 'p', '2025-01-01', 'running')")
+    row = "INSERT INTO sequences (run_id, name, step, wall_time, object_type) VALUES ('r', 'loss', 0, 't', 'scalar')"
+    conn.execute(row)
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(row)
 
 
 def test_tokens_gain_parent_id_column(conn):
@@ -162,10 +146,9 @@ _OLD_SCHEMA = [
         "user" TEXT, tags TEXT, notes TEXT, last_heartbeat TEXT)""",
     """CREATE TABLE sequences (
         run_id TEXT NOT NULL REFERENCES runs(id), name TEXT NOT NULL,
-        step INTEGER NOT NULL, wall_time TEXT NOT NULL, context TEXT,
-        context_hash TEXT NOT NULL DEFAULT '', object_type TEXT NOT NULL,
+        step INTEGER NOT NULL, wall_time TEXT NOT NULL, object_type TEXT NOT NULL,
         scalar_value REAL, artifact_hash TEXT,
-        PRIMARY KEY (run_id, name, step, context_hash))""",
+        PRIMARY KEY (run_id, name, step))""",
     "CREATE TABLE schema_version (version INTEGER NOT NULL)",
     "INSERT INTO schema_version VALUES (2)",
     "INSERT INTO projects VALUES ('p', 'p', '2025-01-01', NULL, NULL)",

@@ -31,8 +31,7 @@ router = APIRouter(prefix="/api/embed", tags=["embed"])
 
 class EmbedSpecCreate(BaseModel):
     # A viewer card descriptor, e.g.
-    # {"type": "scalar", "series": [{"runId": "...", "name": "loss",
-    #  "context_hash": ""}]}. Kept as a free-form dict so the embed entry and
+    # {"type": "scalar", "series": [{"runId": "...", "name": "loss"}]}. Kept as a free-form dict so the embed entry and
     # the viewer's card types stay the single source of truth for its shape.
     spec: dict[str, Any]
 

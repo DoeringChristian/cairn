@@ -1,18 +1,8 @@
-"""SQLite schema + idempotent migration runner.
-
-Spec deviation: the CAIRN_SPEC puts a JSON ``context`` column in the primary
-key of ``sequences``. SQLite doesn't allow complex types in PKs either, so we
-derive a ``context_hash`` TEXT column (md5 of sorted-key JSON, empty string for
-NULL context) and key on that. The original ``context`` JSON is still stored
-and queryable.
-"""
+"""SQLite schema + idempotent migration runner."""
 
 from __future__ import annotations
 
-import hashlib
-import json
 import sqlite3
-from typing import Any
 
 SCHEMA_VERSION = 2  # Bumped from 1 (DuckDB) to 2 (SQLite). Breaking change.
 
@@ -90,14 +80,12 @@ SCHEMA_SQL: list[str] = [
         name          TEXT NOT NULL,
         step          INTEGER NOT NULL,
         wall_time     TEXT NOT NULL,
-        context       TEXT,
-        context_hash  TEXT NOT NULL DEFAULT '',
         object_type   TEXT NOT NULL,
         scalar_value  REAL,
         artifact_hash TEXT,
         -- Per-point JSON (e.g. a media caption); NULL when there is none.
         metadata      TEXT,
-        PRIMARY KEY (run_id, name, step, context_hash)
+        PRIMARY KEY (run_id, name, step)
     )
     """,
     """
@@ -340,23 +328,6 @@ _ADDED_COLUMN_INDEXES: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_runs_parent ON runs(parent_run_id)",
     "CREATE INDEX IF NOT EXISTS idx_runs_sweep ON runs(sweep_id)",
 ]
-
-
-def hash_context(context: Any) -> str:
-    """Derive the deterministic hash used as part of the sequences PK.
-
-    ``None`` / empty context yields an empty string (avoids extra bucket).
-    """
-    if context is None or context == {} or context == "":
-        return ""
-    if isinstance(context, str):
-        try:
-            parsed = json.loads(context)
-        except json.JSONDecodeError:
-            return hashlib.md5(context.encode("utf-8")).hexdigest()
-        return hash_context(parsed)
-    canonical = json.dumps(context, sort_keys=True, separators=(",", ":"))
-    return hashlib.md5(canonical.encode("utf-8")).hexdigest()
 
 
 def _add_column_if_missing(

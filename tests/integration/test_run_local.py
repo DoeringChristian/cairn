@@ -47,7 +47,7 @@ def test_local_run_full_lifecycle(tmp_path):
         run.config(hparams={"lr": 3e-4, "batch": 16})
         for step in range(5):
             run.track(float(step) * 0.5, name="loss", step=step)
-            run.track(float(step) * 0.6, name="loss", step=step, context={"subset": "val"})
+            run.track(float(step) * 0.6, name="val.loss", step=step)
         # Image
         img = PILImage.new("RGB", (4, 4), (255, 0, 0))
         run.track(img, name="preview", step=0)
@@ -71,10 +71,10 @@ def test_local_run_full_lifecycle(tmp_path):
         assert "hparams.batch" in keys
         # Scalars
         (count,) = db.read_one(
-            "SELECT COUNT(*) FROM sequences WHERE run_id = ? AND name = 'loss'",
+            "SELECT COUNT(*) FROM sequences WHERE run_id = ? AND name IN ('loss', 'val.loss')",
             [run_id],
         )
-        assert count == 10  # 5 steps × 2 contexts
+        assert count == 10  # 5 steps × 2 series
         # Image artifact
         (imgcount,) = db.read_one(
             "SELECT COUNT(*) FROM sequences WHERE run_id = ? AND name = 'preview'",

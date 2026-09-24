@@ -115,10 +115,10 @@ def test_x_axis_sources_match_schema(defs):
     (literal, _none) = field.annotation.__args__  # Optional[Literal[...]]
     assert list(_literal_values(literal)) == defs["AxisSource"]["enum"]
     settings = cs.CardSettingsSpec(
-        xAxis="metric", xMetric=cs.XMetricRef(name="epoch", context_hash=""),
+        xAxis="metric", xMetric=cs.XMetricRef(name="epoch"),
     )
     assert settings.model_dump(exclude_none=True) == {
-        "xAxis": "metric", "xMetric": {"name": "epoch", "context_hash": ""},
+        "xAxis": "metric", "xMetric": {"name": "epoch"},
     }
 
 
@@ -135,7 +135,7 @@ def test_sample_spec_round_trips_and_is_schema_shaped(defs):
             cs.CardSpec(
                 id="card_1",
                 type="scalar",
-                series=[cs.SeriesRef(runId="run_a", name="val/loss", context_hash="")],
+                series=[cs.SeriesRef(runId="run_a", name="val.loss")],
                 settings=cs.CardSettingsSpec(version=1, yScale="log", smoothing=0.6),
             )
         ],

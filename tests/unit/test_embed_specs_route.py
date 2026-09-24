@@ -18,7 +18,7 @@ from cairn.server.app import create_app
 def test_post_get_roundtrip(client):
     spec = {
         "type": "scalar",
-        "series": [{"runId": "run-abc", "name": "loss", "context_hash": ""}],
+        "series": [{"runId": "run-abc", "name": "loss"}],
     }
     created = client.post("/api/embed/specs", json={"spec": spec})
     assert created.status_code == 200
@@ -33,7 +33,7 @@ def test_post_get_roundtrip(client):
 
 
 def test_post_is_content_hash_idempotent(client):
-    spec = {"type": "image", "series": [{"runId": "r1", "name": "img", "context_hash": ""}]}
+    spec = {"type": "image", "series": [{"runId": "r1", "name": "img"}]}
     sid1 = client.post("/api/embed/specs", json={"spec": spec}).json()["sid"]
     sid2 = client.post("/api/embed/specs", json={"spec": spec}).json()["sid"]
     assert sid1 == sid2
@@ -57,6 +57,6 @@ def test_embed_routes_reject_unauthenticated_when_auth_enabled(auth_client):
     # auth ON an unauthenticated caller (no cookie / no Bearer) must be
     # rejected on BOTH the POST and the GET. (--no-auth mode, exercised by
     # the `client` fixture above, is unaffected.)
-    spec = {"type": "scalar", "series": [{"runId": "r1", "name": "loss", "context_hash": ""}]}
+    spec = {"type": "scalar", "series": [{"runId": "r1", "name": "loss"}]}
     assert auth_client.post("/api/embed/specs", json={"spec": spec}).status_code == 401
     assert auth_client.get("/api/embed/specs/deadbeefdeadbeef").status_code == 401

@@ -269,7 +269,7 @@ class Transport:
         ).json()
 
     def sequence_steps(self, run_id: str) -> list[dict[str, Any]]:
-        """Each of the run's series as ``{name, context, max_step}``."""
+        """Each of the run's series as ``{name, max_step}``."""
         return self.get(f"/api/runs/{run_id}/sequences").json()["sequences"]
 
     def attach_artifact(

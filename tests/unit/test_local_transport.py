@@ -47,7 +47,6 @@ def test_batch_and_sequence_readback(transport):
                 "name": "loss",
                 "step": i,
                 "wall_time": _iso(i),
-                "context": None,
                 "object_type": "scalar",
                 "scalar_value": float(i) * 0.1,
             }
@@ -140,11 +139,9 @@ def test_concurrent_transports_on_same_repo(tmp_path):
         assert r1["run_id"] != r2["run_id"]
         # Both can write batches
         t1.post_batch(r1["run_id"], [{"name": "loss", "step": 0, "scalar_value": 1.0,
-                                       "wall_time": "2025-01-01T00:00:00", "object_type": "scalar",
-                                       "context": None, "context_hash": ""}])
+                                       "wall_time": "2025-01-01T00:00:00", "object_type": "scalar"}])
         t2.post_batch(r2["run_id"], [{"name": "loss", "step": 0, "scalar_value": 2.0,
-                                       "wall_time": "2025-01-01T00:00:00", "object_type": "scalar",
-                                       "context": None, "context_hash": ""}])
+                                       "wall_time": "2025-01-01T00:00:00", "object_type": "scalar"}])
     finally:
         t1.close()
         t2.close()

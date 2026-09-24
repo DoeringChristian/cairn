@@ -9,7 +9,6 @@ from unittest.mock import MagicMock
 import pytest
 
 import cairn
-from cairn.server.storage.migrations import hash_context
 
 _RUN_KW = dict(
     capture_source=False,
@@ -36,10 +35,10 @@ def _importorskip(name: str):
         pytest.skip(f"{name} unavailable: {exc}")
 
 
-def _seq(repo, run_id, name, context=None):
+def _seq(repo, run_id, name):
     with cairn.Reader(repo) as reader:
         run = reader.run(run_id)
-        return run.status, run.sequence(name, context=hash_context(context)).values
+        return run.status, run.sequence(name).values
 
 
 # ---- Lightning ---------------------------------------------------------------
@@ -119,15 +118,15 @@ def _keras():
     return _importorskip("keras")
 
 
-def test_keras_callback_val_context():
+def test_keras_callback_val_prefix():
     _keras()
     from cairn.integrations.keras import CairnCallback
 
     run = MagicMock()
     cb = CairnCallback(run=run)
     cb.on_epoch_end(2, {"loss": 0.5, "val_loss": 0.6, "accuracy": 0.9})
-    calls = {(c.kwargs["name"], str(c.kwargs.get("context"))): c.kwargs["step"] for c in run.track.call_args_list}
-    assert calls == {("loss", "None"): 2, ("loss", "{'subset': 'val'}"): 2, ("accuracy", "None"): 2}
+    calls = {c.kwargs["name"]: c.kwargs["step"] for c in run.track.call_args_list}
+    assert calls == {"loss": 2, "val.loss": 2, "accuracy": 2}
     cb.on_train_end()
     run.finish.assert_not_called()
 
@@ -146,7 +145,7 @@ def test_keras_fit_end_to_end(tmp_path):
     model.fit(x, y, epochs=3, batch_size=8, validation_split=0.25, verbose=0, callbacks=[cb])
 
     status, train = _seq(repo, cb.run.id, "loss")
-    _, val = _seq(repo, cb.run.id, "loss", context={"subset": "val"})
+    _, val = _seq(repo, cb.run.id, "val.loss")
     assert status == "completed"
     assert len(train) == 3 and len(val) == 3
     # 3 batches/epoch x 3 epochs = 9 batches → every 2nd: 4 points.
@@ -164,9 +163,9 @@ def test_xgboost_after_iteration_fake_run():
     cb = CairnCallback(run=run)
     stop = cb.after_iteration(None, 4, {"train": {"rmse": [0.9, 0.5]}, "val": {"rmse": [(0.7, 0.1)]}})
     assert stop is False
-    got = {(c.kwargs["context"]["subset"], c.args[0]) for c in run.track.call_args_list}
-    assert got == {("train", 0.5), ("val", 0.7)}
-    assert all(c.kwargs["step"] == 4 and c.kwargs["name"] == "rmse" for c in run.track.call_args_list)
+    got = {(c.kwargs["name"], c.args[0]) for c in run.track.call_args_list}
+    assert got == {("train.rmse", 0.5), ("val.rmse", 0.7)}
+    assert all(c.kwargs["step"] == 4 for c in run.track.call_args_list)
 
 
 def test_xgboost_train_end_to_end(tmp_path):
@@ -183,7 +182,7 @@ def test_xgboost_train_end_to_end(tmp_path):
     xgb.train({"objective": "reg:squarederror"}, dtrain, num_boost_round=5,
               evals=[(dtrain, "train"), (dval, "val")], callbacks=[cb], verbose_eval=False)
 
-    status, train = _seq(repo, cb.run.id, "rmse", context={"subset": "train"})
-    _, val = _seq(repo, cb.run.id, "rmse", context={"subset": "val"})
+    status, train = _seq(repo, cb.run.id, "train.rmse")
+    _, val = _seq(repo, cb.run.id, "val.rmse")
     assert status == "completed"
     assert len(train) == 5 and len(val) == 5

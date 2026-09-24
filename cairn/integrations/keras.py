@@ -7,8 +7,7 @@ Usage::
     model.fit(x, y, validation_split=0.1, callbacks=[CairnCallback(project="cls")])
 
 Epoch metrics are tracked at ``step=epoch``; Keras' ``val_<name>`` keys become
-``<name>`` with ``context={"subset": "val"}``, so train and validation curves
-share one sequence name. ``log_every_n_batches=N`` additionally tracks the
+``val.<name>``. ``log_every_n_batches=N`` additionally tracks the
 running batch metrics as ``batch/<name>`` at the global batch index.
 """
 
@@ -79,7 +78,7 @@ class CairnCallback(keras.callbacks.Callback):
             except (TypeError, ValueError):
                 continue
             if k.startswith("val_"):
-                self._run.track(value, name=k[4:], step=epoch, context={"subset": "val"})
+                self._run.track(value, name=f"val.{k[4:]}", step=epoch)
             else:
                 self._run.track(value, name=k, step=epoch)
 

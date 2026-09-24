@@ -69,10 +69,10 @@ def _attach_named_artifact(db, run_id, name, digest, step=-1):
 
 def _add_seq_point(db, run_id, name, step, *, scalar=None, digest=None, object_type="scalar"):
     db.write(
-        "INSERT OR IGNORE INTO sequences (run_id, name, step, wall_time, context, "
-        "context_hash, object_type, scalar_value, artifact_hash) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [run_id, name, step, "2026-01-01T00:00:00+00:00", None, "",
+        "INSERT OR IGNORE INTO sequences (run_id, name, step, wall_time, "
+        "object_type, scalar_value, artifact_hash) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [run_id, name, step, "2026-01-01T00:00:00+00:00",
          object_type, scalar, digest],
     )
 

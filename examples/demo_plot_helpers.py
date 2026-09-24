@@ -99,7 +99,7 @@ def run_variant(name: str, seed: int, confidence_scale: float) -> cairn.Run:
 
         run.track(accuracy, name="eval.accuracy", step=step)
         run.track(train_loss, name="train.loss", step=step)
-        run.track(val_loss, name="train.loss", step=step, context={"subset": "val"})
+        run.track(val_loss, name="val.loss", step=step)
 
         # 1. confusion_matrix — raw counts.
         run.track(

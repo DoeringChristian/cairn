@@ -1,4 +1,4 @@
-"""`cairn.Scope` — a run with a name prefix, a step and a context bound to it.
+"""`cairn.Scope` — a run with a name prefix and a step bound to it.
 
 A component knows best what is worth recording about itself, so it implements
 ``__cairn_track__(self, scope)`` and calls ``scope.track(value, name)``. The
@@ -18,7 +18,7 @@ caller never re-lists another object's internals:
 
     run.track(model, "model", step=it)               # walks the whole tree
 
-A ``Scope`` is precisely :meth:`Run.track` with ``step``/``context`` pre-bound
+A ``Scope`` is precisely :meth:`Run.track` with ``step`` pre-bound
 plus a name prefix — nothing more. ``Run`` itself is the root scope, which is why
 ``run.track`` can walk a component with no extra API; :meth:`Run.scope` exists for
 the case recursion cannot reach, namely handing a bound logger to a plain
@@ -63,13 +63,13 @@ def join_names(prefix: str, name: str) -> str:
 
 
 class Scope:
-    """A bound logging position: run + name prefix + step + context.
+    """A bound logging position: run + name prefix + step.
 
     Never constructed directly — obtain one from :meth:`Run.scope`, or receive one
     in ``__cairn_track__``.
     """
 
-    __slots__ = ("_run", "_prefix", "_step", "_context", "_seen", "_depth")
+    __slots__ = ("_run", "_prefix", "_step", "_seen", "_depth")
 
     def __init__(
         self,
@@ -77,14 +77,12 @@ class Scope:
         prefix: str = "",
         *,
         step: int,
-        context: Any | None = None,
         seen: frozenset[int] = frozenset(),
         depth: int = 0,
     ) -> None:
         self._run = run
         self._prefix = prefix
         self._step = step
-        self._context = context
         self._seen = seen
         self._depth = depth
 
@@ -101,11 +99,6 @@ class Scope:
         return self._step
 
     @property
-    def context(self) -> Any | None:
-        """The bound context, inherited by every child."""
-        return self._context
-
-    @property
     def name(self) -> str:
         """This scope's name prefix (``""`` at the root)."""
         return self._prefix
@@ -115,14 +108,13 @@ class Scope:
     def scope(self, name: str) -> "Scope":
         """A child scope one level deeper, with ``name`` joined onto the prefix.
 
-        Step and context are inherited: set once at the root, and every leaf
+        The step is inherited: set once at the root, and every leaf
         beneath it lands on the same iteration.
         """
         return Scope(
             self._run,
             join_names(self._prefix, name),
             step=self._step,
-            context=self._context,
             seen=self._seen,
             depth=self._depth,
         )
@@ -158,16 +150,13 @@ class Scope:
                 self._run,
                 full,
                 step=self._step,
-                context=self._context,
                 seen=self._seen | {ident},
                 depth=self._depth + 1,
             )
             tracker(child)
             return
 
-        self._run._track_leaf(
-            value, full, step=self._step, context=self._context, **kwargs
-        )
+        self._run._track_leaf(value, full, step=self._step, **kwargs)
 
     def config(self, *args: Any, **kwargs: Any) -> None:
         """Record INPUTS of this component, under the scope's name.

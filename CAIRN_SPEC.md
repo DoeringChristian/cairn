@@ -125,11 +125,10 @@ CREATE TABLE sequences (
     name          VARCHAR NOT NULL,       -- metric name, e.g. "loss"
     step          BIGINT NOT NULL,
     wall_time     TIMESTAMP NOT NULL,
-    context       JSON,                   -- e.g. {"subset": "train"} — nullable
     object_type   VARCHAR NOT NULL,       -- 'scalar'|'image'|'audio'|'video'|'figure'|'histogram'|'text'|'tensor'
     scalar_value  DOUBLE,                 -- set if object_type='scalar'
     artifact_hash VARCHAR,                -- set if non-scalar; points to artifacts table
-    PRIMARY KEY (run_id, name, step, context)
+    PRIMARY KEY (run_id, name, step)
 );
 
 CREATE TABLE artifacts (
@@ -163,7 +162,7 @@ CREATE INDEX idx_log_lines_run ON log_lines(run_id, line_no);
 ```
 
 Design notes:
-- `context` on `sequences` is the Aim trick — lets you log `loss` with `{"subset": "train"}` and `{"subset": "val"}` as separate series without namespace pollution.
+- A sequence is identified by `(run, name)` alone. Splits such as train/val or several eval datasets are name prefixes, `.`-joined like `cairn.Scope` names: `loss` and `val.loss`, `eval.accuracy`.
 - `scalar_value` is denormalized into the sequences table for speed. Non-scalars go through `artifact_hash`.
 - `log_lines` stores CLI output row-per-line so the UI can paginate and search. The `combined.log` file on disk is the canonical source; this table is a queryable index.
 - Run IDs are 12-char hex (48 bits of hash space) — short enough for URLs, long enough for no practical collisions at single-user scale.
@@ -206,7 +205,7 @@ run = cairn.Run(
 
 run["hparams"] = {"lr": 3e-4, "batch_size": 32}  # flat or nested dict
 run.track(0.5, name="loss", step=0)
-run.track(0.6, name="loss", step=0, context={"subset": "val"})
+run.track(0.6, name="val.loss", step=0)
 run.track(pil_image, name="predictions", step=100)
 run.finish()  # or use context manager: with cairn.Run(...) as run:
 ```
@@ -586,7 +585,7 @@ Many clients may push to the server concurrently. The server uses a single DuckD
 ```python
 cairn.Run(project, task, name=None, tags=None, notes=None, repo=None,
           capture_source=True, capture_stdout=True, capture_env=True, ...)
-run.track(value, name, step=None, context=None, **kwargs)  # step auto-increments if None
+run.track(value, name, step=None, **kwargs)  # step auto-increments if None
 run["key"] = value          # param setter (dict-like)
 run.log_artifact(obj, name, step=None)  # one-off artifact (not a sequence)
 run.set_tag(tag)
@@ -619,7 +618,7 @@ POST /api/runs/{run_id}/params                      -> set/update params
      body: { params: {key: value, ...} }
 
 POST /api/runs/{run_id}/batch                       -> batch of sequence points
-     body: { points: [{name, step, wall_time, context?, scalar_value? | artifact_hash?, object_type}, ...] }
+     body: { points: [{name, step, wall_time, scalar_value? | artifact_hash?, object_type}, ...] }
 
 POST /api/runs/{run_id}/logs                        -> batch of stdout/stderr lines
      body: { lines: [{stream, wall_time, line_no, content}, ...] }
@@ -646,7 +645,7 @@ GET  /api/projects/{project_id}/tasks/{task_id}     -> task detail
 GET  /api/runs                                      -> list runs (query: project, task, status, limit, offset)
 GET  /api/runs/{run_id}                             -> run detail (params, tags, env, git, etc.)
 GET  /api/runs/{run_id}/sequences                   -> list sequence names + metadata (no values)
-GET  /api/runs/{run_id}/sequences/{name}            -> sequence values (query: context, step_from, step_to, max_points)
+GET  /api/runs/{run_id}/sequences/{name}            -> sequence values (query: step_from, step_to, max_points)
 GET  /api/runs/{run_id}/artifacts                   -> list artifacts
 GET  /api/runs/{run_id}/logs                        -> paginated log lines (query: offset, limit, stream, since)
 GET  /api/runs/{run_id}/source/tree                 -> file tree from manifest
@@ -767,7 +766,7 @@ This is the main working view, directly inspired by W&B's workspace. Two-pane la
 
 **Main pane (workspace canvas):**
 - "Add panels" / search bar at the top — lets users filter which metric cards are visible (by name).
-- The card grid: one card per unique `(name, context)` pair, aggregating data from all *visible* (checked) runs as overlaid series.
+- The card grid: one card per sequence name, aggregating data from all *visible* (checked) runs as overlaid series.
 - When only one run is visible, cards show that single run's data (as in the W&B screenshot).
 - When multiple runs are visible, scalar cards become multi-series plots (one series per run, colored by run).
 - System metrics group at the bottom, collapsible.
@@ -813,7 +812,7 @@ Everything logged during a run — scalars, images, audio, video, figures, histo
 
 **v1 behavior (fixed layout, auto-generated):**
 
-- On first load, the server generates a default layout: one card per unique `(name, context)` pair across all logged sequences, plus one card per artifact name.
+- On first load, the server generates a default layout: one card per sequence name across all logged sequences, plus one card per artifact name.
 - Cards are arranged in a responsive grid, sized based on card type (scalar plots are wider than image thumbnails).
 - Section grouping follows the `.`-prefix rule described above.
 - Card types map to sequence `object_type`:
@@ -833,7 +832,7 @@ Every card is a React component that receives:
 ```typescript
 interface CardProps {
   runIds: string[];        // one or more; card renders overlay when > 1
-  config: CardConfig;      // type-specific (metric name, context, etc.)
+  config: CardConfig;      // type-specific (metric name, etc.)
   size: { w: number; h: number };  // grid cells in v2; responsive in v1
   onEdit?: () => void;     // no-op in v1, used in v2
 }
@@ -1111,7 +1110,7 @@ The `layout` JSON structure is an array of card entries:
     {
       "id": "card_abc",
       "type": "scalar_plot",
-      "config": {"metric": "loss", "contexts": ["train", "val"]},
+      "config": {"metric": "loss"},
       "position": {"x": 0, "y": 0, "w": 6, "h": 4}
     },
     {

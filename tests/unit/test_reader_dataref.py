@@ -2,7 +2,7 @@
 
 ``run[tag]`` must return a lazy handle immediately — no sequence/artifact
 fetch at construction time — and resolve only when asked to (``.resolve()``,
-``.context_hash()``, or optional step-indexing ``run[tag][step]``).
+or optional step-indexing ``run[tag][step]``).
 """
 
 from __future__ import annotations
@@ -118,15 +118,6 @@ def test_dataref_resolve_scalar_sequence_with_step(populated_repo):
         reader.close()
 
 
-def test_dataref_context_hash_known_and_unknown_tag(populated_repo):
-    repo, run_id = populated_repo
-    reader = Reader(repo=str(repo))
-    try:
-        r = reader.run(run_id)
-        assert r["loss"].context_hash() == ""
-        assert r["does-not-exist"].context_hash() == ""
-    finally:
-        reader.close()
 
 
 def test_dataref_repr(populated_repo):

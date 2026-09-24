@@ -1,7 +1,7 @@
 """In-memory, short-lived store for embed card specs (WS-EMBED).
 
 An *embed spec* is a small JSON card descriptor (a viewer ``ComparisonCard``:
-``{type, series:[{runId, name, context_hash}]}``) that the ``/embed/card``
+``{type, series:[{runId, name}]}``) that the ``/embed/card``
 entry renders standalone in an iframe. Specs are throwaway render inputs, not
 domain data — so they live in process memory with a TTL rather than in the
 database (no migration, no persistence across restarts needed).

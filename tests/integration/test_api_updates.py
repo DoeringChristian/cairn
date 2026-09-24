@@ -35,7 +35,7 @@ def test_updates_from_zero_returns_everything_with_a_cursor(client):
             "points": [
                 _point("loss", 0, 1.0),
                 _point("loss", 1, 0.5),
-                _point("acc", 0, 0.1, context={"subset": "val"}),
+                _point("val.acc", 0, 0.1),
             ]
         },
     )
@@ -50,25 +50,20 @@ def test_updates_from_zero_returns_everything_with_a_cursor(client):
     assert len(pts) == 3
     # Every point carries the routing keys the client needs to find the
     # cached sequence query, plus the same shape as the sequence endpoint.
-    assert {p["name"] for p in pts} == {"loss", "acc"}
+    assert {p["name"] for p in pts} == {"loss", "val.acc"}
     for p in pts:
         assert set(p) == {
             "name",
-            "context_hash",
             "step",
             "wall_time",
             "scalar_value",
             "artifact_hash",
-            "context",
             "object_type",
             "metadata",
             "artifact_mime",
             "artifact_size",
             "artifact_metadata",
         }
-    acc = next(p for p in pts if p["name"] == "acc")
-    assert acc["context_hash"] != ""
-    assert json.loads(acc["context"]) == {"subset": "val"}
 
 
 def test_updates_since_cursor_returns_only_new_points(client):

@@ -8,7 +8,7 @@ Usage::
               callbacks=[CairnCallback(project="gbm")])
 
 Each boosting round tracks the latest value of every eval metric as
-``<metric>`` at ``step=<round>`` with ``context={"subset": <eval name>}``.
+``<eval name>.<metric>`` at ``step=<round>`` (``train.rmse``, ``val.rmse``).
 """
 
 from __future__ import annotations
@@ -59,7 +59,7 @@ class CairnCallback(TrainingCallback):
                 last = values[-1]
                 # xgb.cv logs (mean, std) pairs.
                 value = last[0] if isinstance(last, tuple) else last
-                self._run.track(float(value), name=metric, step=epoch, context={"subset": subset})
+                self._run.track(float(value), name=f"{subset}.{metric}", step=epoch)
         return False
 
     def after_training(self, model: Any) -> Any:

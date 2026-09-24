@@ -151,13 +151,13 @@ Each metric has one final value per run — what the runs table, the run
 overview, the comparison table and `final_metric` filters show. It is, in
 order: an explicit `run.summary(name=...)` key; else a
 `run.define_metric(name, summary="min"|"max"|"mean"|"last")` rule (`name` may
-be a glob like `"val/*"`; an exact name beats a glob); else the last logged
+be a glob like `"val.*"`; an exact name beats a glob); else the last logged
 point. Rules are applied when values are read, so they never change logged
 data. A `"min"` rule also makes the comparison table colour lower as better.
 
 ```python
-run.define_metric("val/*", step_metric="epoch", summary="min")  # plot vs epoch, report best
-run.define_metric("val/acc", summary="max")
+run.define_metric("val.*", step_metric="epoch", summary="min")  # plot vs epoch, report best
+run.define_metric("val.acc", summary="max")
 ```
 
 See `examples/demo_define_metric.py`.

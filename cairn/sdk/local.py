@@ -234,10 +234,10 @@ class LocalTransport:
         return {"run_id": new_id, "project_id": pid, "url": f"/p/{pid}/r/{new_id}"}
 
     def sequence_steps(self, run_id: str) -> list[dict[str, Any]]:
-        """Each of the run's series as ``{name, context, max_step}``."""
+        """Each of the run's series as ``{name, max_step}``."""
         return self.read_columns(
-            "SELECT name, context, MAX(step) AS max_step FROM sequences "
-            "WHERE run_id = ? GROUP BY name, context_hash",
+            "SELECT name, MAX(step) AS max_step FROM sequences "
+            "WHERE run_id = ? GROUP BY name",
             [run_id],
         )
 

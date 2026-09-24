@@ -18,7 +18,6 @@ from .routes._common import flatten, parse_timestamp, slugify, utc_now, value_ty
 from .storage.blobs import BlobStore
 from .storage.datadir import DataDir
 from .storage.db import Database
-from .storage.migrations import hash_context
 
 
 class RunNotFound(LookupError):
@@ -173,16 +172,12 @@ def insert_batch(
     _require_run(db, run_id)
     rows = []
     for p in points:
-        ctx = p.get("context")
-        ctx_json = json.dumps(ctx) if ctx is not None else None
         rows.append(
             (
                 run_id,
                 p["name"],
                 p["step"],
                 p["wall_time"],
-                ctx_json,
-                hash_context(ctx),
                 p["object_type"],
                 p.get("scalar_value"),
                 p.get("artifact_hash"),
@@ -192,9 +187,9 @@ def insert_batch(
     db.executemany(
         """
         INSERT OR IGNORE INTO sequences (
-            run_id, name, step, wall_time, context, context_hash,
+            run_id, name, step, wall_time,
             object_type, scalar_value, artifact_hash, metadata
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         rows,
     )
@@ -453,7 +448,7 @@ _HISTORY_KEEP = (
 )
 
 _SEQUENCE_COLUMNS = (
-    "name, step, wall_time, context, context_hash, object_type, "
+    "name, step, wall_time, object_type, "
     "scalar_value, artifact_hash, metadata"
 )
 

@@ -369,7 +369,6 @@ def restore_archive(
                 )
 
         for row in _read_json(zf, prefix + "sequences.json", []):
-            row.setdefault("context_hash", "")
             row.setdefault("object_type", "scalar")
             row.setdefault("wall_time", "")
             _insert(db, "sequences", seq_cols, dict(row, run_id=new_id))

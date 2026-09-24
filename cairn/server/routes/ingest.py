@@ -65,7 +65,6 @@ class SequencePoint(BaseModel):
     name: str
     step: int
     wall_time: str
-    context: Any | None = None
     object_type: str
     scalar_value: float | None = None
     artifact_hash: str | None = None
@@ -174,7 +173,7 @@ def post_batch(run_id: str, body: BatchRequest, request: Request) -> dict[str, A
     except ingest_ops.RunNotFound as exc:
         raise _run_not_found(exc) from None
     except Exception as exc:  # noqa: BLE001
-        # Duplicate (run_id, name, step, context_hash) → 409.
+        # Duplicate (run_id, name, step) → 409.
         raise HTTPException(status_code=409, detail=str(exc)) from None
     return {"accepted": accepted}
 

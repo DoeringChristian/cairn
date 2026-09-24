@@ -7,12 +7,10 @@ thinning for render performance is a client/renderer concern.
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from ..storage.migrations import hash_context
 from ._common import get_db, require_run
 
 router = APIRouter(prefix="/api", tags=["sequences"])
@@ -29,7 +27,7 @@ UPDATES_LIMIT = 5000
 # it, and a client holding a cursor from another epoch starts over.
 _POINT_COLUMNS = """s.rowid AS _rowid,
                s.step, s.wall_time, s.scalar_value, s.artifact_hash,
-               s.context, s.object_type, s.metadata,
+               s.object_type, s.metadata,
                a.mime_type AS artifact_mime,
                a.size_bytes AS artifact_size,
                a.metadata AS artifact_metadata"""
@@ -62,7 +60,7 @@ def get_updates(
     require_run(db, run_id)  # 404 gate
     rows = db.read_columns(
         f"""
-        SELECT s.name, s.context_hash,
+        SELECT s.name,
                {_POINT_COLUMNS}
         FROM sequences s
         LEFT JOIN artifacts a ON a.hash = s.artifact_hash
@@ -96,12 +94,12 @@ def list_sequences(run_id: str, request: Request) -> dict[str, Any]:
     require_run(db, run_id)
     rows = db.read_columns(
         """
-        SELECT name, object_type, context, context_hash,
+        SELECT name, MAX(object_type) AS object_type,
                MIN(step) AS min_step, MAX(step) AS max_step,
                COUNT(*) AS count
         FROM sequences
         WHERE run_id = ?
-        GROUP BY name, object_type, context, context_hash
+        GROUP BY name
         ORDER BY name
         """,
         [run_id],
@@ -114,7 +112,6 @@ def get_sequence(
     run_id: str,
     name: str,
     request: Request,
-    context: str | None = Query(default=None),
     step_from: int | None = Query(default=None),
     step_to: int | None = Query(default=None),
 ) -> dict[str, Any]:
@@ -123,15 +120,6 @@ def get_sequence(
 
     clauses = ["run_id = ?", "name = ?"]
     params: list[Any] = [run_id, name]
-    if context is not None:
-        # Accept either a raw JSON dict or the opaque context_hash.
-        try:
-            ctx_obj = json.loads(context)
-            clauses.append("context_hash = ?")
-            params.append(hash_context(ctx_obj))
-        except json.JSONDecodeError:
-            clauses.append("context_hash = ?")
-            params.append(context)
     if step_from is not None:
         clauses.append("step >= ?")
         params.append(step_from)
@@ -141,26 +129,9 @@ def get_sequence(
 
     # LEFT JOIN so non-artifact (scalar) rows still come through. The UI
     # needs artifact_meta + mime_type for media cards (audio peaks, figure
-    # has_source / source_hash, histogram bin count, etc.).
-    prefixed_clauses = [c.replace("run_id", "s.run_id").replace("name", "s.name")
-                        if ("run_id" in c or c.startswith("name ")) else c
-                        for c in clauses]
-    # Safer: just prefix explicitly since the clauses come from a small set.
-    prefixed_clauses = []
-    for c in clauses:
-        # ``clauses`` values are like "run_id = ?", "name = ?",
-        # "context_hash = ?", "step >= ?", "step <= ?". Prefix bare column refs
-        # with ``s.`` so they're unambiguous after the JOIN.
-        if c.startswith("run_id "):
-            prefixed_clauses.append("s." + c)
-        elif c.startswith("name "):
-            prefixed_clauses.append("s." + c)
-        elif c.startswith("context_hash "):
-            prefixed_clauses.append("s." + c)
-        elif c.startswith("step "):
-            prefixed_clauses.append("s." + c)
-        else:
-            prefixed_clauses.append(c)
+    # has_source / source_hash, histogram bin count, etc.). Every clause is
+    # on a ``sequences`` column, so prefix it with ``s.`` after the JOIN.
+    prefixed_clauses = ["s." + c for c in clauses]
 
     rows = db.read_columns(
         f"""

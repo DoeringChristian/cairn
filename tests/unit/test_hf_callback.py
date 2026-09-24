@@ -33,7 +33,7 @@ def test_on_log_tracks_scalars():
     assert call_names == {"loss", "learning_rate"}
 
 
-def test_on_evaluate_uses_eval_context():
+def test_on_evaluate_prefixes_eval():
     from cairn.integrations.huggingface import CairnCallback
 
     mock_run = MagicMock()
@@ -46,8 +46,10 @@ def test_on_evaluate_uses_eval_context():
 
     cb.on_evaluate(args, state, control, metrics={"eval_loss": 0.2, "eval_accuracy": 0.9})
     assert mock_run.track.call_count == 2
+    names = {call.kwargs.get("name") for call in mock_run.track.call_args_list}
+    assert names == {"eval.loss", "eval.accuracy"}
     for call in mock_run.track.call_args_list:
-        assert call.kwargs.get("context") == {"subset": "eval"}
+        assert "context" not in call.kwargs
 
 
 def test_on_train_end_finishes_owned_run():

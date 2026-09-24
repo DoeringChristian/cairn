@@ -9,6 +9,9 @@ Usage::
         ...,
         callbacks=[CairnCallback(project="ft")],
     )
+
+Evaluation metrics (``eval_<metric>`` in the Trainer) are tracked as
+``eval.<metric>`` at ``step=global_step``.
 """
 
 from __future__ import annotations
@@ -96,7 +99,8 @@ class CairnCallback(TrainerCallback):
         step = int(state.global_step)
         for k, v in metrics.items():
             try:
-                self._run.track(float(v), name=k, step=step, context={"subset": "eval"})
+                name = k[len("eval_"):] if k.startswith("eval_") else k
+                self._run.track(float(v), name=f"eval.{name}", step=step)
             except (TypeError, ValueError):
                 continue
 

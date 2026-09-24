@@ -81,14 +81,6 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _context_key(context: Any) -> tuple:
-    if context is None:
-        return ()
-    if isinstance(context, dict):
-        return tuple(sorted((str(k), str(v)) for k, v in context.items()))
-    return (str(context),)
-
-
 class Run:
     """A single experiment execution.
 
@@ -189,7 +181,7 @@ class Run:
 
         # Bookkeeping
         self._finished = False
-        self._step_counters: dict[tuple, int] = {}
+        self._step_counters: dict[str, int] = {}
         self._step_lock = threading.Lock()
         self._line_counter = 0
         self._line_lock = threading.Lock()
@@ -413,8 +405,8 @@ class Run:
 
     # ---- tracking ---------------------------------------------------------
 
-    def scope(self, *, step: int, context: Any | None = None) -> "Scope":
-        """A :class:`~cairn.sdk.scope.Scope` with ``step``/``context`` bound.
+    def scope(self, *, step: int) -> "Scope":
+        """A :class:`~cairn.sdk.scope.Scope` with ``step`` bound.
 
         The SECONDARY entry point. `Run` is already the root scope, so
         ``run.track(model, "model", step=it)`` walks a component tree on its own;
@@ -425,19 +417,18 @@ class Run:
         """
         if self._finished:
             raise RuntimeError("Run has already been finished")
-        return Scope(self, "", step=step, context=context)
+        return Scope(self, "", step=step)
 
     def track(
         self,
         value: Any,
         name: str,
         step: int,
-        context: Any | None = None,
         **kwargs: Any,
     ) -> None:
         """Record ``value`` in the named sequence at ``step``.
 
-        ``step`` is REQUIRED. It used to default to a per-``(name, context)``
+        ``step`` is REQUIRED. It used to default to a per-name
         auto-increment, which is coherent for one sequence and silently wrong
         across a component tree: a member recorded on only some iterations would
         keep counting from zero and its points would claim iterations that were
@@ -453,9 +444,9 @@ class Run:
         if value is None:
             return
         if hasattr(value, "__cairn_track__"):
-            Scope(self, "", step=step, context=context).track(value, name, **kwargs)
+            Scope(self, "", step=step).track(value, name, **kwargs)
             return
-        self._track_leaf(value, name, step=step, context=context, **kwargs)
+        self._track_leaf(value, name, step=step, **kwargs)
 
     def _track_sample(self, name: str, value: Any) -> None:
         """Record a TIMER-SAMPLED point, numbering it with the per-name counter.
@@ -465,7 +456,7 @@ class Run:
         so there is no step to supply and a per-name counter is exactly right.
         Kept off the public API so the counter cannot silently renumber a tree.
         """
-        self._track_leaf(value, name, step=None, context=None)
+        self._track_leaf(value, name, step=None)
 
     def _track_leaf(
         self,
@@ -473,7 +464,6 @@ class Run:
         name: str,
         *,
         step: int | None,
-        context: Any | None = None,
         **kwargs: Any,
     ) -> None:
         """Record ONE point — no protocol dispatch. ``step=None`` auto-increments
@@ -482,7 +472,7 @@ class Run:
             raise RuntimeError("Run has already been finished")
 
         if isinstance(value, (list, tuple)) and value and all(isinstance(v, Image) for v in value):
-            self._track_gallery(list(value), name, step=step, context=context, **kwargs)
+            self._track_gallery(list(value), name, step=step, **kwargs)
             return
 
         # Unwrap explicit type wrappers.
@@ -503,7 +493,7 @@ class Run:
                 "wrap with cairn.Image/Figure/Tensor/... to force a handler."
             )
 
-        effective_step = self._next_step(name, context, step)
+        effective_step = self._next_step(name, step)
         if step is not None:
             self._last_step = step if self._last_step is None else max(self._last_step, step)
         merged_kwargs = {**wrapper_kwargs, **kwargs}
@@ -515,7 +505,6 @@ class Run:
             "name": name,
             "step": effective_step,
             "wall_time": _now_iso(),
-            "context": context,
             "object_type": object_type,
         }
         if caption is not None:
@@ -548,7 +537,6 @@ class Run:
         name: str,
         *,
         step: int | None,
-        context: Any | None = None,
         **kwargs: Any,
     ) -> None:
         """Record several images as ONE point: each image is its own artifact,
@@ -573,9 +561,8 @@ class Run:
         digest = self._transport.upload_artifact(manifest, GALLERY_MIME, meta, object_type="image")
         point: dict[str, Any] = {
             "name": name,
-            "step": self._next_step(name, context, step),
+            "step": self._next_step(name, step),
             "wall_time": _now_iso(),
-            "context": context,
             "object_type": "image",
             "artifact_hash": digest,
         }
@@ -1020,27 +1007,23 @@ class Run:
     # ---- internals --------------------------------------------------------
 
     def _seed_step_counters(self, run_id: str) -> None:
-        """Continue the per-series counters past ``run_id``'s recorded steps.
+        """Continue the per-name counters past ``run_id``'s recorded steps.
 
         Only timer-sampled ``system.*`` points use the counters; without the
         seed a resumed or forked run's samples would restart at step 0 and be
         dropped as duplicates of the ones already stored.
         """
         for s in self._transport.sequence_steps(run_id):
-            ctx = s.get("context")
-            if isinstance(ctx, str):
-                ctx = json.loads(ctx)
-            key = (s["name"], _context_key(ctx))
-            self._step_counters[key] = max(self._step_counters.get(key, 0), s["max_step"] + 1)
+            name = s["name"]
+            self._step_counters[name] = max(self._step_counters.get(name, 0), s["max_step"] + 1)
 
-    def _next_step(self, name: str, context: Any, explicit: int | None) -> int:
-        key = (name, _context_key(context))
+    def _next_step(self, name: str, explicit: int | None) -> int:
         with self._step_lock:
             if explicit is not None:
-                self._step_counters[key] = explicit + 1
+                self._step_counters[name] = explicit + 1
                 return explicit
-            cur = self._step_counters.get(key, 0)
-            self._step_counters[key] = cur + 1
+            cur = self._step_counters.get(name, 0)
+            self._step_counters[name] = cur + 1
             return cur
 
     def _on_captured_line(self, event: dict[str, Any]) -> None:

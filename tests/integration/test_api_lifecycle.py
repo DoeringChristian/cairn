@@ -48,7 +48,7 @@ def test_full_lifecycle(client):
     assert r.status_code == 200
     assert r.json()["updated"] == 2
 
-    # 3. Batch — two scalar points and one with context
+    # 3. Batch — two train-loss points and one val-loss point
     r = client.post(
         f"/api/runs/{rid}/batch",
         json={
@@ -68,10 +68,9 @@ def test_full_lifecycle(client):
                     "scalar_value": 0.5,
                 },
                 {
-                    "name": "loss",
+                    "name": "val.loss",
                     "step": 0,
                     "wall_time": iso_now(),
-                    "context": {"subset": "val"},
                     "object_type": "scalar",
                     "scalar_value": 1.2,
                 },
@@ -152,10 +151,10 @@ def test_full_lifecycle(client):
 
     seqs = client.get(f"/api/runs/{rid}/sequences").json()["sequences"]
     names = {s["name"] for s in seqs}
-    assert names == {"loss", "predictions"}
+    assert names == {"loss", "val.loss", "predictions"}
 
     loss = client.get(f"/api/runs/{rid}/sequences/loss").json()
-    assert len(loss["points"]) == 3
+    assert len(loss["points"]) == 2
 
     artifacts_list = client.get(f"/api/runs/{rid}/artifacts").json()
     assert any(a["hash"] == digest for a in artifacts_list["from_sequences"])
