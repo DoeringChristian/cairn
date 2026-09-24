@@ -1,6 +1,6 @@
 """Export and import runs as ZIP archives.
 
-Export bundles run metadata, params, sequences, artifacts, logs, and
+Export bundles run metadata, params, summary, sequences, artifacts, logs, and
 source code into a single ZIP that can be imported into another Cairn
 instance.
 """
@@ -81,13 +81,17 @@ def export_runs(body: ExportRequest, request: Request) -> StreamingResponse:
             params = db.read_columns(
                 "SELECT key, value, value_type FROM params WHERE run_id = ?", [run_id],
             )
+            summary = db.read_columns(
+                "SELECT key, value, value_type FROM summary WHERE run_id = ?", [run_id],
+            )
 
             prefix = f"{run_id}/"
 
-            # run.json — metadata + params.
+            # run.json — metadata, params and summary.
             zf.writestr(prefix + "run.json", json.dumps({
                 "run": run,
                 "params": params,
+                "summary": summary,
             }, default=str, indent=2))
 
             # sequences.json — all sequence points.
@@ -224,6 +228,7 @@ async def import_runs(request: Request, file: UploadFile = File(...)) -> dict[st
         run_data = json.loads(zf.read(run_json_name))
         run = run_data["run"]
         params = run_data.get("params", [])
+        summary = run_data.get("summary", [])
 
         new_id = secrets.token_hex(6)
 
@@ -262,12 +267,13 @@ async def import_runs(request: Request, file: UploadFile = File(...)) -> dict[st
             ],
         )
 
-        # Insert params.
-        for p in params:
-            db.write(
-                "INSERT OR IGNORE INTO params (run_id, key, value, value_type) VALUES (?, ?, ?, ?)",
-                [new_id, p["key"], p["value"], p.get("value_type", "str")],
-            )
+        # Insert params and summary (same row shape).
+        for table, rows in (("params", params), ("summary", summary)):
+            for p in rows:
+                db.write(
+                    f"INSERT OR IGNORE INTO {table} (run_id, key, value, value_type) VALUES (?, ?, ?, ?)",
+                    [new_id, p["key"], p["value"], p.get("value_type", "str")],
+                )
 
         # Insert sequences.
         seq_json_name = prefix + "sequences.json"

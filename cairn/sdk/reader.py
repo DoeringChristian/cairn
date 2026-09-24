@@ -271,6 +271,7 @@ class Run:
         self._raw = raw
         self._backend = backend
         self._params: dict[str, Any] | None = None
+        self._summary: dict[str, Any] | None = None
 
     @property
     def id(self) -> str:
@@ -308,15 +309,25 @@ class Run:
     def tags(self) -> list[str]:
         return _parse_json(self._raw.get("tags")) or []
 
+    def _key_values(self, table: str) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        for p in self._backend.get_run(self.id).get(table, []):
+            val = _parse_json(p["value"])
+            out[p["key"]] = val if val is not None else p["value"]
+        return out
+
     @property
     def params(self) -> dict[str, Any]:
         if self._params is None:
-            data = self._backend.get_run(self.id)
-            self._params = {}
-            for p in data.get("params", []):
-                val = _parse_json(p["value"])
-                self._params[p["key"]] = val if val is not None else p["value"]
+            self._params = self._key_values("params")
         return self._params
+
+    @property
+    def summary(self) -> dict[str, Any]:
+        """Values recorded with ``run.summary(...)`` (flattened dotted keys)."""
+        if self._summary is None:
+            self._summary = self._key_values("summary")
+        return self._summary
 
     @property
     def config(self) -> dict[str, Any]:
@@ -601,6 +612,8 @@ def _get_field_value(run: "Run", field: str, sub_field: str | None) -> Any:
     if field == "params":
         # params__lr or just lr (param fallback handled at parse time)
         return run.params.get(sub_field) if sub_field else None
+    if field == "summary":
+        return run.summary.get(sub_field) if sub_field else None
     # Default: treat field as a param key.
     if sub_field:
         # e.g. hparams__lr → params["hparams.lr"]
@@ -630,7 +643,8 @@ class RunQuery:
     ``endswith``, ``isnull``.
 
     Special field roots: ``metrics`` (final scalar value), ``params``
-    (explicit param lookup), ``tags`` (list membership). Any other root
+    (explicit param lookup), ``summary`` (a ``run.summary`` value), ``tags``
+    (list membership). Any other root
     is treated as a param key.
     """
 
@@ -879,7 +893,11 @@ class _LocalBackend:
             "SELECT key, value, value_type FROM params WHERE run_id = ? ORDER BY key",
             [run_id],
         )
-        return {"run": rows[0], "params": params}
+        summary = self._db.read_columns(
+            "SELECT key, value, value_type FROM summary WHERE run_id = ? ORDER BY key",
+            [run_id],
+        )
+        return {"run": rows[0], "params": params, "summary": summary}
 
     def list_sequences(self, run_id: str) -> list[dict[str, Any]]:
         return self._db.read_columns(
@@ -1286,6 +1304,7 @@ def _load_zip_to_tempdir(zip_path: Path) -> tuple[Path, Path]:
             run_data = _json.loads(zf.read(run_json_name))
             run = run_data["run"]
             params = run_data.get("params", [])
+            summary = run_data.get("summary", [])
 
             project_id = run.get("project_id", "imported")
             existing = db.read_columns("SELECT id FROM projects WHERE id = ?", [project_id])
@@ -1318,11 +1337,12 @@ def _load_zip_to_tempdir(zip_path: Path) -> tuple[Path, Path]:
                     run.get("notes"),
                 ],
             )
-            for p in params:
-                db.write(
-                    "INSERT OR IGNORE INTO params (run_id, key, value, value_type) VALUES (?, ?, ?, ?)",
-                    [original_id, p["key"], p["value"], p.get("value_type", "str")],
-                )
+            for table, table_rows in (("params", params), ("summary", summary)):
+                for p in table_rows:
+                    db.write(
+                        f"INSERT OR IGNORE INTO {table} (run_id, key, value, value_type) VALUES (?, ?, ?, ?)",
+                        [original_id, p["key"], p["value"], p.get("value_type", "str")],
+                    )
             seq_json_name = prefix + "sequences.json"
             if seq_json_name in zf.namelist():
                 for row in _json.loads(zf.read(seq_json_name)):

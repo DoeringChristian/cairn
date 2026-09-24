@@ -285,9 +285,9 @@ def _matches_tags(tags_json: str | None, want: list[str] | None) -> bool:
 # Field resolution + predicate evaluation (mirror of reader._get_field_value)
 # ---------------------------------------------------------------------------
 
-def _param_value(db: Database, run_id: str, key: str) -> Any:
+def _param_value(db: Database, run_id: str, key: str, table: str = "params") -> Any:
     rows = db.read_columns(
-        "SELECT value FROM params WHERE run_id = ? AND key = ?", [run_id, key]
+        f"SELECT value FROM {table} WHERE run_id = ? AND key = ?", [run_id, key]
     )
     if not rows:
         return None
@@ -317,6 +317,8 @@ def _field_value(db: Database, run_row: dict[str, Any], pred: Predicate) -> Any:
         return _final_metric(db, run_row["id"], sub) if sub else None
     if fld == "params":
         return _param_value(db, run_row["id"], sub) if sub else None
+    if fld == "summary":
+        return _param_value(db, run_row["id"], sub, table="summary") if sub else None
     # Default: treat the field as a (possibly dotted) param key.
     full = f"{fld}.{sub}" if sub else fld
     return _param_value(db, run_row["id"], full)
