@@ -513,7 +513,8 @@ def get_lineage_graph(
     """Build a DAG of artifact versions and runs.
 
     Returns ``{"nodes": [...], "edges": [...]}``.
-    Nodes have ``type`` = "artifact_version" or "run".
+    Nodes have ``type`` = "artifact_version" or "run"; run nodes carry
+    ``label`` (the display name) and ``metadata.status``.
     Edges have ``source``, ``target``, ``relation`` ("produced" or "consumed").
     """
     # Gather all versions in the project (optionally filtered by family)
@@ -540,7 +541,9 @@ def get_lineage_graph(
 
     nodes: list[dict[str, Any]] = []
     edges: list[dict[str, Any]] = []
-    seen_runs: set[str] = set()
+    # Run ids in first-seen order; their nodes are built at the end from one
+    # batched lookup.
+    seen_runs: dict[str, None] = {}
 
     for v in versions:
         nodes.append({
@@ -554,9 +557,7 @@ def get_lineage_graph(
         # Producer run -> version edge
         if v["created_by_run"]:
             run_id = v["created_by_run"]
-            if run_id not in seen_runs:
-                seen_runs.add(run_id)
-                nodes.append({"id": run_id, "type": "run"})
+            seen_runs.setdefault(run_id)
             edges.append({
                 "source": run_id,
                 "target": v["id"],
@@ -576,13 +577,39 @@ def get_lineage_graph(
             version_ids,
         )
         for inp in inputs:
-            if inp["run_id"] not in seen_runs:
-                seen_runs.add(inp["run_id"])
-                nodes.append({"id": inp["run_id"], "type": "run"})
+            seen_runs.setdefault(inp["run_id"])
             edges.append({
                 "source": inp["artifact_version_id"],
                 "target": inp["run_id"],
                 "relation": "consumed",
             })
 
+    nodes.extend(_run_nodes(db, list(seen_runs)))
     return {"nodes": nodes, "edges": edges}
+
+
+def _run_nodes(db: Database, run_ids: list[str]) -> list[dict[str, Any]]:
+    """Lineage nodes for ``run_ids``: label = display name, metadata.status.
+
+    A run that no longer exists (deleted after producing a version) still
+    gets a node, labelled by nothing, so its edges keep an endpoint.
+    """
+    if not run_ids:
+        return []
+    holes = ",".join("?" * len(run_ids))
+    info = {
+        r["id"]: r
+        for r in db.read_columns(
+            f"SELECT id, display_name, status FROM runs WHERE id IN ({holes})",
+            run_ids,
+        )
+    }
+    out: list[dict[str, Any]] = []
+    for rid in run_ids:
+        row = info.get(rid)
+        node: dict[str, Any] = {"id": rid, "type": "run"}
+        if row is not None:
+            node["label"] = row["display_name"]
+            node["metadata"] = {"status": row["status"]}
+        out.append(node)
+    return out
