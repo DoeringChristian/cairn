@@ -43,7 +43,7 @@ run = cairn.Run(
     name="baseline-cnn",
     repo="./.cairn",          # or: export CAIRN_REPO=./.cairn
 )
-run["hparams"] = {"lr": 3e-4, "batch_size": 32}
+run.config({"hparams": {"lr": 3e-4, "batch_size": 32}})
 for step, loss in training_loop():
     run.track(loss, name="loss", step=step)
 ```
@@ -91,7 +91,7 @@ run = cairn.Run(
     name="baseline-cnn",
     repo="cairn://192.168.1.42:4300",
 )
-run["hparams"] = {"lr": 3e-4, "batch_size": 32}
+run.config({"hparams": {"lr": 3e-4, "batch_size": 32}})
 run.track(0.5, name="loss", step=0)
 ```
 
