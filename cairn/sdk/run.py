@@ -86,7 +86,17 @@ def _context_key(context: Any) -> tuple:
 
 
 class Run:
-    """A single experiment execution."""
+    """A single experiment execution.
+
+    ``mode="disabled"`` (or ``cairn.configure(mode=...)``, ``CAIRN_MODE``, the
+    config file's ``mode`` key) returns a run whose every method is a no-op:
+    no repo, no server, no threads. It is still a ``cairn.Run``.
+    """
+
+    def __new__(cls, *args: Any, mode: str | None = None, **kwargs: Any) -> Run:
+        if cls is Run and config.resolve_mode(mode) == "disabled":
+            return object.__new__(_DisabledRun)
+        return object.__new__(cls)
 
     def __init__(
         self,
@@ -116,6 +126,7 @@ class Run:
         timeout: float = 10.0,
         registry: HandlerRegistry | None = None,
         transport: Transport | LocalTransport | None = None,
+        mode: str | None = None,
     ):
         self._registry = registry or default_registry
         self._wal: WriteAheadLog | None = None
@@ -836,6 +847,72 @@ class Run:
             self._transport.upload_source(self._run_id, archive, manifest)
         except Exception:  # noqa: BLE001
             log.warning("source capture failed", exc_info=True)
+
+
+class _DisabledRun(Run):
+    """What ``cairn.Run`` returns in disabled mode: every method is a no-op.
+
+    ``scope()`` still hands out a real :class:`Scope`, which walks components
+    into these no-ops.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self._run_id = secrets.token_hex(16)
+        self._project = kwargs.get("project", args[0] if args else None)
+        self._tags = list(kwargs.get("tags") or [])
+        self._finished = False
+
+    @property
+    def url(self) -> None:  # type: ignore[override]
+        return None
+
+    def track(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+    def _track_leaf(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+    def _track_sample(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+    def _merge_mapping(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return {}
+
+    def config(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+    def summary(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+    def log_artifact(self, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
+        pass
+
+    def use_artifact(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+    def set_tag(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+    def set_tags(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+    def remove_tag(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+    def add_note(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+    def alert(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+    def watch(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+    def unwatch(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+    def finish(self, *args: Any, **kwargs: Any) -> None:
+        self._finished = True
 
 
 def configure(**kwargs: Any) -> None:

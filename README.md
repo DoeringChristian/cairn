@@ -138,6 +138,13 @@ The `repo=` parameter accepts:
 - A filesystem path: `/path/to/.cairn` or `./.cairn` → local mode
 - A URL: `cairn://host:port` → HTTP server mode
 
+## Disabled mode
+
+`mode="disabled"` turns every `Run` method into a no-op: no repo, no server,
+no threads. Set it with `cairn.Run(mode="disabled")`, `cairn.configure(mode="disabled")`,
+`CAIRN_MODE=disabled`, or `mode = "disabled"` in the config file (in that
+priority order). The default is `"enabled"`.
+
 ## Run IDs
 
 Run IDs are 128-bit hex strings (32 characters), generated client-side. The UI shows the first 6 characters (git-style short hash) with click-to-copy for the full ID. Existing shorter IDs from earlier versions remain valid.

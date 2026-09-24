@@ -196,6 +196,26 @@ def resolve_token(explicit: str | None = None) -> str | None:
     return str(token) if token else None
 
 
+MODES = ("enabled", "disabled")
+"""``disabled`` makes ``cairn.Run`` a no-op: nothing is written, no thread starts."""
+
+
+def resolve_mode(explicit: str | None = None) -> str:
+    """Resolve the run mode: explicit ``Run(mode=)`` > ``configure(mode=)`` >
+    ``CAIRN_MODE`` env var > config file ``mode`` key > ``"enabled"``."""
+    if explicit is not None:
+        mode = explicit
+    elif "mode" in _configured:
+        mode = str(_configured["mode"])
+    elif os.environ.get("CAIRN_MODE"):
+        mode = os.environ["CAIRN_MODE"]
+    else:
+        mode = str(load_config_file().get("mode", "enabled"))
+    if mode not in MODES:
+        raise ValueError(f"cairn mode must be one of {MODES}, got {mode!r}")
+    return mode
+
+
 def resolve_target(
     repo: str | Path | None = None,
     server: str | None = None,
