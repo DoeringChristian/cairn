@@ -33,6 +33,8 @@ _LAZY_ATTRS: dict[str, str] = {
     "Scope": ".sdk.scope",
     "ArtifactVersion": ".sdk.run",
     "Reader": ".sdk.reader",
+    "sweep": ".sdk.sweep",
+    "Sweep": ".sdk.sweep",
     "query_url": ".sdk.query_urls",
     "register_handler": ".sdk.handlers.registry",
     "Artifact": ".sdk.wrappers",
@@ -60,6 +62,7 @@ if TYPE_CHECKING:  # static-analysis only — never executed, never eager at run
     from .sdk.query_urls import query_url
     from .sdk.reader import Reader
     from .sdk.run import ArtifactVersion, Run
+    from .sdk.sweep import Sweep, sweep
     from .sdk.handlers.registry import register_handler
     from .sdk.wrappers import (
         Artifact,
@@ -153,6 +156,8 @@ __all__ = [
     "configure",
     "register_handler",
     "Reader",
+    "sweep",
+    "Sweep",
     "query_url",
     "ArtifactVersion",
     "plot",

@@ -16,6 +16,7 @@ import atexit
 import inspect
 import json
 import logging
+import os
 import secrets
 import signal
 import sys
@@ -129,6 +130,11 @@ class Run:
             self._owns_transport = True
         self._project = project
         self._name = name
+        # Launched by `cairn agent`: join its sweep and take the trial's params.
+        trial_id = None
+        if sweep_id is None and os.environ.get("CAIRN_SWEEP_ID"):
+            sweep_id = os.environ["CAIRN_SWEEP_ID"]
+            trial_id = os.environ.get("CAIRN_TRIAL_ID") or None
         self._timeout = timeout
         # The run's tag list, kept client-side: the ``set_tags`` op replaces
         # the whole list, and WAL-mode LocalTransport has no DB to read it back.
@@ -300,6 +306,21 @@ class Run:
             sys.excepthook = _excepthook
         except Exception:  # noqa: BLE001
             self._prev_excepthook = None  # type: ignore[assignment]
+
+        if trial_id:
+            self._join_trial(sweep_id, trial_id)
+
+    def _join_trial(self, sweep_id: str, trial_id: str) -> None:
+        """Link this run to its sweep trial and record the trial's params as config."""
+        try:
+            trial = self._transport.report_trial(
+                sweep_id, trial_id, run_id=self._run_id, status="running",
+            )
+        except Exception:
+            self.finish(status="failed")
+            raise
+        if trial.get("params"):
+            self.config(trial["params"])
 
     # ---- properties -------------------------------------------------------
 

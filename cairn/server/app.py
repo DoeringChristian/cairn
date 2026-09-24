@@ -43,6 +43,7 @@ from .routes import (
     runs,
     sequences,
     source,
+    sweeps,
 )
 from .ui_mount import mount_viewer
 from .storage.blobs import BlobStore
@@ -209,6 +210,7 @@ def create_app(
         report_templates.router,
         artifact_registry.router,
         embed.router,
+        sweeps.router,
     ):
         app.include_router(router, dependencies=[Depends(require("read"))])
 

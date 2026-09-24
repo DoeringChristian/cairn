@@ -338,6 +338,43 @@ class LocalTransport:
                 self.db, run_id=run_id, artifact_version_id=artifact_version_id, role=role,
             )
 
+    # ---- sweeps (direct mode only: a trial claim needs an answer now) ---------
+
+    def _sweep_db(self) -> Database:
+        if self._use_wal:
+            raise RuntimeError(
+                "sweeps need a server or a direct-mode repo: WAL mode never writes the "
+                "database, so it cannot claim trials. Drop local_wal=True, or start "
+                "`cairn server` on the repo."
+            )
+        return self.db
+
+    def create_sweep(self, body: dict[str, Any]) -> dict[str, Any]:
+        from ..server import sweep_ops
+        body = dict(body)
+        return sweep_ops.create_sweep(self._sweep_db(), space=body.pop("parameters"), **body)
+
+    def list_sweeps(self, project: str | None = None) -> list[dict[str, Any]]:
+        from ..server import sweep_ops
+        from ..server.routes._common import slugify
+        return sweep_ops.list_sweeps(self._sweep_db(), slugify(project) if project else None)
+
+    def get_sweep(self, sweep_id: str) -> dict[str, Any]:
+        from ..server import sweep_ops
+        return sweep_ops.get_sweep(self._sweep_db(), sweep_id)
+
+    def sweep_action(self, sweep_id: str, action: str) -> dict[str, Any]:
+        from ..server import sweep_ops
+        return sweep_ops.set_status(self._sweep_db(), sweep_id, action)
+
+    def next_trial(self, sweep_id: str) -> dict[str, Any]:
+        from ..server import sweep_ops
+        return sweep_ops.next_trial(self._sweep_db(), sweep_id)
+
+    def report_trial(self, sweep_id: str, trial_id: str, **body: Any) -> dict[str, Any]:
+        from ..server import sweep_ops
+        return sweep_ops.report_trial(self._sweep_db(), sweep_id, trial_id, **body)
+
     def download_artifact_bytes(self, digest: str) -> bytes:
         """Download raw artifact bytes by hash from the local blob store."""
         data, _ = self.blobs.get(digest)
