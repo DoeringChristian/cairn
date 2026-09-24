@@ -363,6 +363,25 @@ class Run:
 
     # ---- Sequences ----
 
+    def history(self, keys: list[str] | None = None, context: Any = None) -> Any:
+        """Scalar history as a wide pandas DataFrame: one row per step, one
+        column per sequence name (None: all scalar sequences).
+
+        ``context`` keeps only points logged with that context (None: all);
+        a name logged under several contexts needs ``context=`` to pick one.
+        Needs the ``[export]`` extra.
+        """
+        long = _history_frame(self._backend, [self], keys, context)
+        per_name = long.groupby("name")["context"].agg(lambda c: len({json.dumps(x, sort_keys=True) for x in c}))
+        ambiguous = sorted(per_name[per_name > 1].index)
+        if ambiguous:
+            raise ValueError(
+                f"{ambiguous} were logged under several contexts; pass context= to pick one"
+            )
+        wide = long.pivot(index="step", columns="name", values="value")
+        wide.columns.name = None
+        return wide
+
     def sequences(self) -> list[SequenceInfo]:
         rows = self._backend.list_sequences(self.id)
         return [SequenceInfo(**r) for r in rows]
@@ -529,6 +548,18 @@ class Run:
         """Return versioned artifacts produced by this run."""
         return self._backend.get_run_outputs(self.id)
 
+    def edit(self) -> RunEditor:
+        """An editing handle for this run (config, summary, tags, name,
+        notes). Use it as a context manager, or ``close()`` it::
+
+            with reader.run(run_id).edit() as e:
+                e.set_summary(test_acc=0.93)
+                e.add_tag("best")
+
+        Raises ``ValueError`` for a Reader over an exported ``.zip``.
+        """
+        return RunEditor(self, self._backend.edit_target)
+
     def __repr__(self) -> str:
         name = self.name or self.id
         return f"Run({name!r}, status={self.status!r}, project={self.project!r})"
@@ -545,6 +576,85 @@ class Run:
         if not isinstance(tag, str):
             raise TypeError(f"Run.__getitem__ expects a string tag, got {type(tag)}")
         return DataRef(self, tag)
+
+
+class RunEditor:
+    """Write access to one existing run, from :meth:`Run.edit`.
+
+    Writes go through the same transport resolution as ``cairn.Run``: the
+    repo DB directly, or the server that holds the repo (or the ``cairn://``
+    server the Reader reads). The :class:`Run` it came from sees the edits.
+    """
+
+    def __init__(self, run: Run, target: str) -> None:
+        from .connect import open_transport
+
+        self._run = run
+        self._transport, _ = open_transport(target)
+
+    def set_config(self, *args: Any, **kwargs: Any) -> None:
+        """Merge keys into the run's config (like ``cairn.Run.config``)."""
+        values = _merge_mappings("set_config", args, kwargs)
+        if values:
+            self._transport.post_params(self._run.id, values)
+            self._run._params = None
+
+    def set_summary(self, *args: Any, **kwargs: Any) -> None:
+        """Merge keys into the run's summary (like ``cairn.Run.summary``)."""
+        values = _merge_mappings("set_summary", args, kwargs)
+        if values:
+            self._transport.post_summary(self._run.id, values)
+            self._run._summary = None
+
+    def delete_keys(self, which: str, keys: list[str]) -> None:
+        """Delete ``keys`` from ``"config"`` or ``"summary"``. Keys are the
+        dotted keys; a key also removes the keys nested under it."""
+        tables = {"config": "params", "summary": "summary"}
+        if which not in tables:
+            raise ValueError(f"which must be 'config' or 'summary', got {which!r}")
+        self._transport.delete_keys(self._run.id, tables[which], list(keys))
+        self._run._params = None
+        self._run._summary = None
+
+    def set_tags(self, tags: list[str]) -> None:
+        """Replace the run's tags."""
+        self._transport.set_tags(self._run.id, list(tags))
+        self._run._raw["tags"] = json.dumps(list(tags))
+
+    def add_tag(self, tag: str) -> None:
+        tags = self._run.tags
+        if tag not in tags:
+            self.set_tags([*tags, tag])
+
+    def remove_tag(self, tag: str) -> None:
+        self.set_tags([t for t in self._run.tags if t != tag])
+
+    def rename(self, name: str) -> None:
+        self._transport.rename_run(self._run.id, name)
+        self._run._raw["display_name"] = name
+
+    def set_notes(self, notes: str) -> None:
+        self._transport.set_notes(self._run.id, notes)
+        self._run._raw["notes"] = notes
+
+    def close(self) -> None:
+        self._transport.close()
+
+    def __enter__(self) -> RunEditor:
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        self.close()
+
+
+def _merge_mappings(who: str, args: tuple, kwargs: dict) -> dict[str, Any]:
+    merged: dict[str, Any] = {}
+    for a in args:
+        if not isinstance(a, dict):
+            raise TypeError(f"{who}() positional args must be mappings")
+        merged.update(a)
+    merged.update(kwargs)
+    return merged
 
 
 # ---------------------------------------------------------------------------
@@ -633,6 +743,42 @@ def _get_field_value(run: "Run", field: str, sub_field: str | None) -> Any:
     return run.params.get(field)
 
 
+_PAGE = 1000  # /api/runs caps limit at 1000
+_HISTORY_COLUMNS = ["run_id", "run_name", "name", "context", "step", "wall_time", "value"]
+
+
+def _history_frame(backend: _Backend, runs: list[Run], keys: list[str] | None, context: Any) -> Any:
+    """Long-format scalar history of ``runs`` (see :meth:`RunQuery.history`)."""
+    try:
+        import pandas as pd
+    except ImportError as exc:
+        raise ImportError("history() needs pandas: pip install 'cairn-track[export]'") from exc
+    from ..server.storage.migrations import hash_context
+
+    want = hash_context(context) if context is not None else None
+    names = {r.id: r.name for r in runs}
+    ids = list(names)
+    records: list[dict[str, Any]] = []
+    for i in range(0, len(ids), 200):
+        for series in backend.scalar_series(ids[i:i + 200], keys):
+            for p in series["points"]:
+                ctx = _parse_json(p["context"])
+                if want is not None and hash_context(ctx) != want:
+                    continue
+                records.append({
+                    "run_id": series["run_id"],
+                    "run_name": names[series["run_id"]],
+                    "name": series["name"],
+                    "context": ctx,
+                    "step": p["step"],
+                    "wall_time": p["wall_time"],
+                    "value": p["value"],
+                })
+    df = pd.DataFrame(records, columns=_HISTORY_COLUMNS)
+    df["wall_time"] = pd.to_datetime(df["wall_time"], utc=True, format="ISO8601")
+    return df
+
+
 class RunQuery:
     """Lazy query builder for runs. Executes on .list()/.first()/.last()/iteration.
 
@@ -714,15 +860,26 @@ class RunQuery:
         return self._clone(limit_n=n)
 
     def list(self) -> list[Run]:
-        """Execute the query and return matching runs."""
-        runs, _ = self._backend.list_runs(
-            project=self._project,
-            status=self._status,
-            limit=self._limit_n or 1000,
-            offset=0,
-            sort_col=self._sort_col,
-            sort_desc=self._sort_desc,
-        )
+        """Execute the query and return matching runs.
+
+        Filters other than ``status`` run client-side, so with filters every
+        page of runs is fetched first and the limit applies after filtering.
+        """
+        runs: list[dict[str, Any]] = []
+        pushdown = self._limit_n if self._limit_n and not self._filters else None
+        while True:
+            page = _PAGE if pushdown is None else min(_PAGE, pushdown - len(runs))
+            rows, total = self._backend.list_runs(
+                project=self._project,
+                status=self._status,
+                limit=page,
+                offset=len(runs),
+                sort_col=self._sort_col,
+                sort_desc=self._sort_desc,
+            )
+            runs.extend(rows)
+            if not rows or len(runs) >= total or (pushdown is not None and len(runs) >= pushdown):
+                break
         result = [Run(r, self._backend) for r in runs]
 
         # Apply Django-style filters client-side.
@@ -742,6 +899,16 @@ class RunQuery:
             result = result[:self._limit_n]
 
         return result
+
+    def history(self, keys: list[str] | None = None, context: Any = None) -> Any:
+        """Scalar history of every matching run as a long pandas DataFrame.
+
+        Columns: ``run_id, run_name, name, context, step, wall_time, value``.
+        ``keys`` selects sequence names (None: all scalar sequences);
+        ``context`` keeps only points logged with that context (None: all).
+        Needs the ``[export]`` extra.
+        """
+        return _history_frame(self._backend, self.list(), keys, context)
 
     def first(self) -> Run | None:
         runs = self._clone(sort_desc=False, limit_n=self._limit_n or 1000).list()
@@ -816,6 +983,7 @@ class _Backend(Protocol):
     def get_sequence(self, run_id: str, name: str, *, context: str | None,
                      step_from: int | None, step_to: int | None,
 ) -> list[dict[str, Any]]: ...
+    def scalar_series(self, run_ids: list[str], names: list[str] | None) -> list[dict[str, Any]]: ...
     def list_artifacts(self, run_id: str) -> dict[str, Any]: ...
     def get_artifact_bytes(self, digest: str) -> bytes: ...
     def get_artifact_path(self, digest: str) -> Path | None: ...
@@ -844,7 +1012,7 @@ def _api_run_row(row: dict[str, Any]) -> dict[str, Any]:
 
 
 class _LocalBackend:
-    def __init__(self, repo: str | Path) -> None:
+    def __init__(self, repo: str | Path, *, zip_source: str | None = None) -> None:
         from ..server.storage.blobs import BlobStore
         from ..server.storage.datadir import DataDir
         from ..server.storage.db import Database
@@ -854,6 +1022,15 @@ class _LocalBackend:
         self._db = Database.open(self._dd.db_path)
         self._blobs = BlobStore(self._dd.artifacts_dir)
         self._ingest_all = _ingest_all
+        self._zip_source = zip_source
+
+    @property
+    def edit_target(self) -> str:
+        """Where edits go: the repo dir, through ``open_transport`` (which
+        reaches a server holding the repo over HTTP)."""
+        if self._zip_source is not None:
+            raise ValueError(f"runs read from an exported archive ({self._zip_source}) can't be edited")
+        return str(self._dd.root)
 
     @property
     def repo_path(self) -> str:
@@ -957,6 +1134,11 @@ class _LocalBackend:
         )
         # Simple downsampling if requested.
         return rows
+
+    def scalar_series(self, run_ids: list[str], names: list[str] | None) -> list[dict[str, Any]]:
+        from ..server.routes.compare import scalar_series
+
+        return scalar_series(self._db, run_ids, names)
 
     def list_artifacts(self, run_id: str) -> dict[str, Any]:
         named = self._db.read_columns(
@@ -1115,6 +1297,10 @@ class _HttpBackend:
         `cairn.configure`/`CAIRN_REPO`/`server=`."""
         return self._base
 
+    @property
+    def edit_target(self) -> str:
+        return self._base
+
     def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         resp = self._client.get(path, params=params)
         resp.raise_for_status()
@@ -1154,6 +1340,11 @@ class _HttpBackend:
         if step_to is not None:
             params["step_to"] = step_to
         return self._get(f"/api/runs/{run_id}/sequences/{name}", params=params)["points"]
+
+    def scalar_series(self, run_ids: list[str], names: list[str] | None) -> list[dict[str, Any]]:
+        resp = self._client.post("/api/compare", json={"run_ids": run_ids, "metrics": names})
+        resp.raise_for_status()
+        return resp.json()["series"]
 
     def list_artifacts(self, run_id: str) -> dict[str, Any]:
         return self._get(f"/api/runs/{run_id}/artifacts")
@@ -1309,7 +1500,7 @@ class Reader:
         # into a tempdir and read from there.
         if repo is not None and str(repo).endswith(".zip"):
             self._tempdir, repo_path = _load_zip_to_tempdir(Path(repo))
-            self._backend: _LocalBackend | _HttpBackend = _LocalBackend(repo_path)
+            self._backend: _LocalBackend | _HttpBackend = _LocalBackend(repo_path, zip_source=str(repo))
             self._zip_source: str | None = str(repo)
             return
         self._tempdir = None

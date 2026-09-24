@@ -232,6 +232,18 @@ class LocalTransport:
         else:
             ingest_ops.set_notes(self.db, run_id, notes)
 
+    def rename_run(self, run_id: str, name: str) -> None:
+        if self._use_wal:
+            self._wal_write("rename_run", {"run_id": run_id, "name": name})
+        else:
+            ingest_ops.rename_run(self.db, run_id, name)
+
+    def delete_keys(self, run_id: str, table: str, keys: list[str]) -> None:
+        if self._use_wal:
+            self._wal_write("delete_keys", {"run_id": run_id, "table": table, "keys": keys})
+        else:
+            ingest_ops.delete_keys(self.db, run_id, table, keys)
+
     def attach_artifact(self, run_id: str, name: str, digest: str, step: int | None = None) -> None:
         if self._use_wal:
             self._wal_write("attach_artifact", {"run_id": run_id, "name": name, "hash": digest, "step": step})

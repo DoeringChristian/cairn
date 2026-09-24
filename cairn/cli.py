@@ -683,23 +683,46 @@ def rm_cmd(run_id: str) -> None:
 @main.command("export")
 @click.argument("run_id", required=False)
 @click.option(
+    "--project",
+    default=None,
+    help="Export every run of this project (instead of RUN_ID) as one table "
+         "of scalar points with a run_name column; needs the [export] extra.",
+)
+@click.option(
+    "--filter",
+    "filters",
+    multiple=True,
+    metavar="KEY=VALUE",
+    help="With --project: keep runs matching a Reader filter, e.g. "
+         "status=completed, lr__gt=0.001, tags__contains=best. VALUE is "
+         "parsed as JSON when it can be. Repeatable.",
+)
+@click.option(
     "--format",
     "fmt",
     type=click.Choice(["json", "csv", "parquet"]),
     default="json",
-    help="json: the run and its raw points. csv/parquet: one row per scalar "
-         "point (run_id, name, context, step, wall_time, value); parquet needs "
-         "the [export] extra.",
+    help="json: the run and its raw points (with --project: the table as a "
+         "list of records). csv/parquet: one row per scalar point (run_id, "
+         "name, context, step, wall_time, value); parquet needs the [export] extra.",
 )
 @click.option(
     "--out",
     type=click.Path(dir_okay=False, path_type=Path),
     required=True,
 )
-def export_cmd(run_id: str | None, fmt: str, out: Path) -> None:
-    """Download a run's data to a local file."""
-    if run_id is None:
-        raise click.UsageError("RUN_ID is required")
+def export_cmd(
+    run_id: str | None, project: str | None, filters: tuple[str, ...], fmt: str, out: Path,
+) -> None:
+    """Download a run's (or a project's runs') data to a local file."""
+    if (run_id is None) == (project is None):
+        raise click.UsageError("pass either RUN_ID or --project")
+    if filters and project is None:
+        raise click.UsageError("--filter needs --project")
+    if project is not None:
+        _export_project(project, filters, fmt, out)
+        click.echo(f"exported to {out}")
+        return
     t = _client()
     try:
         run = t.get(f"/api/runs/{run_id}").json()
@@ -734,13 +757,49 @@ def export_cmd(run_id: str | None, fmt: str, out: Path) -> None:
 _EXPORT_COLUMNS = ["run_id", "name", "context", "step", "wall_time", "value"]
 
 
-def _write_table(rows: list[dict[str, Any]], fmt: str, out: Path) -> None:
+def _export_project(project: str, filters: tuple[str, ...], fmt: str, out: Path) -> None:
+    """Every (filtered) run of ``project`` through ``RunQuery.history``."""
+    from .sdk.reader import Reader
+
+    kwargs: dict[str, Any] = {}
+    for f in filters:
+        key, sep, raw = f.partition("=")
+        if not sep or not key:
+            raise click.UsageError(f"--filter expects KEY=VALUE, got {f!r}")
+        try:
+            kwargs[key] = json.loads(raw)
+        except json.JSONDecodeError:
+            kwargs[key] = raw
+    with Reader(_config.resolve_server()) as reader:
+        try:
+            df = reader.runs(project).filter(**kwargs).history()
+        except ImportError as exc:
+            raise click.ClickException(str(exc)) from exc
+    # Contexts as JSON text, times as ISO strings: the single-run export's shape.
+    columns = list(df.columns)
+    rows = [
+        {
+            **r,
+            "context": json.dumps(r["context"]) if r["context"] is not None else None,
+            "wall_time": r["wall_time"].isoformat(),
+        }
+        for r in df.astype(object).to_dict(orient="records")
+    ]
+    if fmt == "json":
+        out.write_text(json.dumps(rows, default=str, indent=2))
+    else:
+        _write_table(rows, fmt, out, columns)
+
+
+def _write_table(
+    rows: list[dict[str, Any]], fmt: str, out: Path, columns: list[str] = _EXPORT_COLUMNS,
+) -> None:
     """Write long-format point rows as CSV (stdlib) or parquet (pandas+pyarrow)."""
     if fmt == "csv":
         import csv
 
         with open(out, "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=_EXPORT_COLUMNS)
+            writer = csv.DictWriter(f, fieldnames=columns)
             writer.writeheader()
             writer.writerows(rows)
         return
@@ -751,7 +810,7 @@ def _write_table(rows: list[dict[str, Any]], fmt: str, out: Path) -> None:
             "parquet export needs pandas and pyarrow: pip install 'cairn-track[export]'"
         ) from exc
     try:
-        pd.DataFrame(rows, columns=_EXPORT_COLUMNS).to_parquet(out, index=False)
+        pd.DataFrame(rows, columns=columns).to_parquet(out, index=False)
     except ImportError as exc:
         raise click.ClickException(
             "parquet export needs pyarrow: pip install 'cairn-track[export]'"
@@ -869,6 +928,32 @@ def diff_cmd(run_id: str, repo: str | None, summary: bool) -> None:
                 click.echo(line.rstrip("\n"))
     finally:
         reader.close()
+
+
+@main.command("import-tb")
+@click.argument("logdir", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option("--project", default=None, help="Project to import into. Default: LOGDIR's name.")
+@click.option(
+    "--repo",
+    default=None,
+    help="Path to a .cairn/ directory or cairn://host:port URL. "
+         "Default: env/config, else ./.cairn.",
+)
+def import_tb_cmd(logdir: Path, project: str | None, repo: str | None) -> None:
+    """Import TensorBoard event files: one run per event directory.
+
+    Scalars, images and histograms keep their step and wall time. Needs the
+    [tb] extra.
+    """
+    from .sdk.import_tb import import_tensorboard
+
+    try:
+        run_ids = import_tensorboard(logdir, project=project, repo=repo)
+    except ImportError as exc:
+        raise click.ClickException(str(exc)) from exc
+    for run_id in run_ids:
+        click.echo(run_id)
+    click.echo(f"imported {len(run_ids)} run(s)", err=True)
 
 
 @main.command("sync")

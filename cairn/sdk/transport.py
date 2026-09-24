@@ -230,6 +230,12 @@ class Transport:
     def set_notes(self, run_id: str, notes: str) -> None:
         self.post_json(f"/api/runs/{run_id}/notes", {"notes": notes})
 
+    def rename_run(self, run_id: str, name: str) -> None:
+        self._request("PATCH", f"/api/runs/{run_id}", json={"display_name": name})
+
+    def delete_keys(self, run_id: str, table: str, keys: list[str]) -> None:
+        self._request("DELETE", f"/api/runs/{run_id}/{table}", json={"keys": keys})
+
     def heartbeat(self, run_id: str) -> None:
         self.post_json(f"/api/runs/{run_id}/heartbeat", {})
 
