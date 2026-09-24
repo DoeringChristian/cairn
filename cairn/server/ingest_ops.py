@@ -298,6 +298,8 @@ def delete_run(db: Database, data_dir: DataDir, run_id: str) -> None:
     # child rows; run each DELETE as its own auto-committed stmt.
     db.write("DELETE FROM sequences WHERE run_id = ?", [run_id])
     db.write("DELETE FROM params WHERE run_id = ?", [run_id])
+    db.write("DELETE FROM summary WHERE run_id = ?", [run_id])
+    db.write("DELETE FROM run_inputs WHERE run_id = ?", [run_id])
     db.write("DELETE FROM log_lines WHERE run_id = ?", [run_id])
     db.write("DELETE FROM run_artifacts WHERE run_id = ?", [run_id])
     db.write("DELETE FROM runs WHERE id = ?", [run_id])
