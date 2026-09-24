@@ -15,7 +15,7 @@ from typing import Any
 import numpy as np
 import OpenEXR
 
-FORMATS = ("exr", "npy", "png")
+CONTAINERS = ("png", "exr", "npy")
 PRECISIONS = ("half", "float", "auto")
 COMPRESSIONS: dict[str, Any] = {
     "piz": OpenEXR.PIZ_COMPRESSION,
@@ -25,6 +25,7 @@ COMPRESSIONS: dict[str, Any] = {
     "dwaa": OpenEXR.DWAA_COMPRESSION,
     "dwab": OpenEXR.DWAB_COMPRESSION,
 }
+DEFAULT_ENCODING = "png"
 HALF_MAX = 65504.0
 HALF_MIN_NORMAL = 6.103515625e-05
 FLOAT_MAX = float(np.finfo(np.float32).max)
@@ -45,8 +46,14 @@ class ImageEncoding:
     precision: str | None = None
     channels: str | None = None
     compression: str | None = None
-    fallback_reason: str | None = None
     clamped: bool = False
+
+    @property
+    def name(self) -> str:
+        """Canonical encoding string, e.g. ``"png"`` or ``"exr:dwab:half"``."""
+        if self.container == "exr":
+            return f"exr:{self.compression}:{self.precision}"
+        return self.container
 
 
 def _channel_count(arr: np.ndarray) -> int:
@@ -95,46 +102,49 @@ def _half_loses_range(arr: np.ndarray) -> bool:
     return _exceeds_half(arr) or _underflows_half(arr)
 
 
-def image_encoding_for(
-    arr: np.ndarray | None,
-    *,
-    format: str | None = None,
-    precision: str = "auto",
-    compression: str = "piz",
-) -> ImageEncoding:
-    """Decide how an image array is stored. `format=None` means "not given"."""
-    if format is not None and format not in FORMATS:
-        raise ValueError(f"format must be one of {FORMATS}, got {format!r}")
-    if precision not in PRECISIONS:
-        raise ValueError(f"precision must be one of {PRECISIONS}, got {precision!r}")
+def parse_encoding(encoding: str) -> tuple[str, str, str]:
+    """Split ``"png" | "npy" | "exr[:<compression>[:<precision>]]"`` into its parts.
+
+    Returns ``(container, compression, precision)``; the EXR parts default to
+    ``"piz"`` and ``"auto"`` and are meaningless for the other containers.
+    """
+    container, *rest = str(encoding).lower().split(":")
+    if container not in CONTAINERS:
+        raise ValueError(f"encoding must start with one of {CONTAINERS}, got {encoding!r}")
+    if container != "exr":
+        if rest:
+            raise ValueError(f"encoding {container!r} takes no options, got {encoding!r}")
+        return container, "piz", "auto"
+    if len(rest) > 2:
+        raise ValueError(f"encoding must be 'exr[:<compression>[:<precision>]]', got {encoding!r}")
+    compression = rest[0] if len(rest) > 0 and rest[0] else "piz"
+    precision = rest[1] if len(rest) > 1 and rest[1] else "auto"
     if compression not in COMPRESSIONS:
-        raise ValueError(f"compression must be one of {tuple(COMPRESSIONS)}, got {compression!r}")
-    explicit = format is not None
-    fmt = format or "exr"
-    if fmt != "exr" and (precision != "auto" or compression != "piz"):
-        if precision != "auto":
-            raise ValueError("precision applies to format='exr' only")
-        raise ValueError("compression applies to format='exr' only")
+        raise ValueError(f"EXR compression must be one of {tuple(COMPRESSIONS)}, got {compression!r}")
+    if precision not in PRECISIONS:
+        raise ValueError(f"EXR precision must be one of {PRECISIONS}, got {precision!r}")
+    return container, compression, precision
 
-    display_only = arr is None or arr.dtype == np.uint8
-    if display_only:
-        if explicit and fmt != "png":
-            what = "PIL/figure images" if arr is None else "uint8 arrays"
-            raise ValueError(f"{what} hold display values and are stored as PNG; format={fmt!r} is not allowed")
-        return ImageEncoding(container="png")
 
-    if fmt == "png":
+def image_encoding_for(arr: np.ndarray | None, encoding: str = DEFAULT_ENCODING) -> ImageEncoding:
+    """Decide how an image is stored. `arr` is None for PIL images and figures."""
+    container, compression, precision = parse_encoding(encoding)
+
+    if arr is None:
+        if container != "png":
+            raise ValueError(f"PIL/figure images hold display values and are stored as PNG; encoding={encoding!r} is not allowed")
         return ImageEncoding(container="png")
-    if fmt == "npy":
+    if arr.dtype == np.uint8 and container != "png":
+        raise ValueError(f"uint8 arrays hold display values and are stored as PNG; encoding={encoding!r} is not allowed")
+
+    count = _channel_count(arr)
+    if container == "npy":
         return ImageEncoding(container="npy")
-
-    channels = _CHANNELS_BY_COUNT.get(_channel_count(arr))
-    if channels is None:
-        if explicit:
-            raise ValueError(
-                f"format='exr' needs 1, 3 or 4 channels, got {_channel_count(arr)}; use format='npy'"
-            )
-        return ImageEncoding(container="npy", fallback_reason="channel-layout")
+    if count not in _CHANNELS_BY_COUNT:
+        hint = "" if arr.dtype == np.uint8 else "; use encoding='npy'"
+        raise ValueError(f"encoding={encoding!r} needs 1, 3 or 4 channels, got {count}{hint}")
+    if container == "png":
+        return ImageEncoding(container="png")
 
     clamped = False
     if precision == "auto":
@@ -145,7 +155,11 @@ def image_encoding_for(
     elif precision == "half":
         clamped = _half_loses_range(arr)
     return ImageEncoding(
-        container="exr", precision=precision, channels=channels, compression=compression, clamped=clamped
+        container="exr",
+        precision=precision,
+        channels=_CHANNELS_BY_COUNT[count],
+        compression=compression,
+        clamped=clamped,
     )
 
 

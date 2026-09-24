@@ -174,6 +174,11 @@ def log_run(name: str, tags: list[str], params: dict, transform_fn) -> None:
 
         run.track(result, name="output", step=step)
 
+        # The same output kept as scene-linear float in OpenEXR. The viewer shows
+        # its thumbnail and offers the file for download.
+        linear = (np.asarray(result, dtype=np.float32) / 255.0) ** 2.2
+        run.track(cairn.Image(linear, encoding="exr:dwab"), name="output_linear", step=step)
+
         # Also log the reference so per-run comparison is possible
         run.track(base, name="reference", step=step)
 

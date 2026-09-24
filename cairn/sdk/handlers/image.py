@@ -1,22 +1,24 @@
-"""Image handler — PIL/u8 → PNG; float/int arrays → OpenEXR (half PIZ by default), npy or PNG on request.
+"""Image handler — everything is stored as PNG unless ``encoding=`` says otherwise.
 
-Storage options travel with the value (``cairn.Image(arr, format=...)`` or the
-``run.track(..., format=...)`` keywords) and are read by both ``mime_type_for``
-and ``serialize`` so the recorded mime type always matches the bytes:
+The storage choice travels with the value (``cairn.Image(arr, encoding=...)`` or
+``run.track(..., encoding=...)``) and is read by both ``mime_type_for`` and
+``serialize`` so the recorded mime type always matches the bytes:
 
-* ``format`` — ``"exr"`` (default for non-u8 arrays), ``"npy"`` (exact bytes,
-  any channel count) or ``"png"`` (tone-mapped 8-bit). PIL images, figures and
-  uint8 arrays are display values and stay PNG; asking for another format
-  raises. A defaulted EXR falls back to npy when the channel count is not
-  1, 3 or 4 (``hdr.fallback_reason == "channel-layout"``).
-* ``precision`` — ``"auto"`` (half unless values exceed the half range),
-  ``"half"`` or ``"float"``; ``format="exr"`` only.
-* ``compression`` — ``"piz"`` (default), ``"zip"``, ``"zips"``, ``"none"``, or
-  the lossy ``"dwaa"``/``"dwab"``; ``format="exr"`` only.
+* ``"png"`` (default) — 8-bit PNG. Non-u8 arrays are tone-mapped: values
+  already in [0, 1] scale to [0, 255], anything else is min–max stretched; the
+  window used is recorded as ``hdr.tonemap``.
+* ``"exr[:<compression>[:<precision>]]"`` — OpenEXR keeping scene-linear
+  values; compression ``piz`` (default), ``zip``, ``zips``, ``none`` or the
+  lossy ``dwaa``/``dwab``; precision ``auto`` (half unless the values don't fit),
+  ``half`` or ``float``. E.g. ``"exr:dwab"``.
+* ``"npy"`` — exact array bytes, any channel count.
 
-Non-u8 arrays record an ``hdr`` metadata block describing what was written
-(container, precision, compression, source dtype, shape, clamped,
-fallback_reason, plus the ``tonemap`` window for PNG).
+PIL images, figures and uint8 arrays are display values and are always PNG.
+PNG and EXR need 1, 3 or 4 channels; anything else must ask for ``"npy"``.
+
+Every image records ``encoding`` (canonical, e.g. ``"exr:dwab:half"``) in its
+metadata; non-u8 arrays also record an ``hdr`` block (source dtype, shape,
+clamped, plus the ``tonemap`` window when stored as PNG).
 
 Optionally carries **overlay annotations** (bounding boxes + segmentation
 masks) supplied via ``cairn.Image(img, boxes=..., masks=..., class_labels=...)``.
@@ -42,7 +44,7 @@ from PIL import Image as PILImage
 
 from ..wrappers import _TypeWrapper
 from ._optional import try_import
-from .image_encoding import EXR_MAGIC, decode_exr, encode_exr, image_encoding_for
+from .image_encoding import DEFAULT_ENCODING, EXR_MAGIC, decode_exr, encode_exr, image_encoding_for
 
 MAX_BOXES = 500
 MAX_MASK_B64_BYTES = 2 * 1024 * 1024
@@ -148,7 +150,6 @@ class ImageHandler:
     exr_mime_type = "image/x-exr"
     npy_mime_type = "application/x-npy"
 
-    _OPTION_KEYS = ("format", "precision", "compression")
     _MIME_BY_CONTAINER = {
         "png": mime_type,
         "exr": exr_mime_type,
@@ -181,23 +182,9 @@ class ImageHandler:
             arr = np.transpose(arr, (1, 2, 0))
         return np.ascontiguousarray(arr)
 
-    @classmethod
-    def _encoding_options(cls, kwargs: dict[str, Any]) -> dict[str, Any]:
-        """The storage keywords `image_encoding_for` understands, if supplied."""
-        return {k: kwargs[k] for k in cls._OPTION_KEYS if k in kwargs}
-
-    @staticmethod
-    def _reject_png_channels(arr: np.ndarray | None) -> None:
-        """Refuse channel counts PNG cannot hold — as the artifact it must keep them all."""
-        if arr is not None and arr.ndim == 3 and arr.shape[-1] not in (1, 3, 4):
-            raise ValueError(f"PNG cannot store {arr.shape[-1]} channels; use format='npy'")
-
-    def mime_type_for(self, obj: Any, **kwargs: Any) -> str:
-        """Announce the container `serialize` will write for these same options."""
-        arr = self._array_for_storage(obj)
-        enc = image_encoding_for(arr, **self._encoding_options(kwargs))
-        if enc.container == "png":
-            self._reject_png_channels(arr)
+    def mime_type_for(self, obj: Any, encoding: str = DEFAULT_ENCODING, **kwargs: Any) -> str:
+        """Announce the container `serialize` will write for this same encoding."""
+        enc = image_encoding_for(self._array_for_storage(obj), encoding)
         return self._MIME_BY_CONTAINER[enc.container]
 
     @staticmethod
@@ -217,8 +204,8 @@ class ImageHandler:
         return {"min": lo, "max": hi}
 
     @classmethod
-    def _to_pil(cls, obj: Any, *, preview_only: bool = False) -> PILImage.Image:
-        """Render `obj` as a PIL image; `preview_only` when the PNG is not the artifact."""
+    def _to_pil(cls, obj: Any) -> PILImage.Image:
+        """Render `obj` as an 8-bit PIL image (the PNG artifact, or the preview of one)."""
         if isinstance(obj, PILImage.Image):
             return obj
         # Rasterize matplotlib / plotly figures when forced via cairn.Image(...).
@@ -247,7 +234,6 @@ class ImageHandler:
             raise TypeError(f"Cannot coerce {type(obj)!r} to an image")
 
         if arr.dtype != np.uint8:
-            # Preview only: the artifact keeps the original scene-linear values.
             lo, hi = cls._tonemap_window(arr)
             # A constant array too large for `lo + 1.0` to move (>= 2**53) leaves a
             # zero-width window; render it flat rather than dividing by zero.
@@ -263,11 +249,8 @@ class ImageHandler:
             return PILImage.fromarray(arr, mode="RGB")
         if arr.shape[-1] == 4:
             return PILImage.fromarray(arr, mode="RGBA")
-        if arr.shape[-1] != 1 and not preview_only:
-            # The PNG *is* the artifact here, so dropping channels would lose data.
-            cls._reject_png_channels(arr)
-        # 1 channel, or a preview of a count no image format displays (the artifact is
-        # npy): show band 0 rather than guess a colour meaning for the rest.
+        # 1 channel, or the preview of an npy artifact whose channel count no image
+        # format displays: show band 0 rather than guess a colour meaning for the rest.
         return PILImage.fromarray(np.ascontiguousarray(arr[..., 0]), mode="L")
 
     def serialize(
@@ -276,18 +259,13 @@ class ImageHandler:
         boxes: Any = None,
         masks: Any = None,
         class_labels: Any = None,
-        format: str | None = None,
-        precision: str = "auto",
-        compression: str = "piz",
+        encoding: str = DEFAULT_ENCODING,
         **kwargs: Any,
     ) -> tuple[bytes, dict[str, Any]]:
         arr = self._array_for_storage(obj)
-        enc = image_encoding_for(arr, format=format, precision=precision, compression=compression)
-        if enc.container == "png":
-            self._reject_png_channels(arr)
-        img = self._to_pil(obj, preview_only=enc.container != "png")
+        enc = image_encoding_for(arr, encoding)
+        img = self._to_pil(obj)
         if enc.container == "exr":
-            # OpenEXR keeps scene-linear/HDR values for cairn-plot's float path.
             data = encode_exr(arr, enc)
         else:
             buf = io.BytesIO()
@@ -314,17 +292,14 @@ class ImageHandler:
             "channels": len(img.getbands()),
             "mode": img.mode,
             "preview": preview,
+            "encoding": enc.name,
         }
 
         if arr is not None and arr.dtype != np.uint8:
             meta["hdr"] = {
-                "container": enc.container,
-                "precision": enc.precision,
-                "compression": enc.compression,
                 "source_dtype": str(arr.dtype),
                 "shape": list(arr.shape),
                 "clamped": enc.clamped,
-                "fallback_reason": enc.fallback_reason,
             }
             if enc.container == "png":
                 meta["hdr"]["tonemap"] = self._tonemap_range(arr)

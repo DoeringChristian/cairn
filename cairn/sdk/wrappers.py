@@ -44,20 +44,22 @@ class Image(_TypeWrapper):
             class_labels={0: "background", 1: "cat", 2: "dog"},
         ), name="detections", step=step)
 
-    Storage keywords (float/int arrays only — PIL images, figures and uint8
-    arrays are display values and are always stored as PNG):
+    ``encoding`` picks the storage (float/int arrays only — PIL images, figures
+    and uint8 arrays are display values and always PNG):
 
-    * ``format`` — ``"exr"`` (default), ``"npy"`` (exact bytes, any channel
-      count) or ``"png"`` (tone-mapped 8-bit preview only).
-    * ``precision`` — ``"auto"`` (default: half unless values exceed the half
-      range), ``"half"`` (clamps to ±65504) or ``"float"``; ``format="exr"`` only.
-    * ``compression`` — ``"piz"`` (default), ``"zip"``, ``"zips"``, ``"none"``,
-      or ``"dwaa"``/``"dwab"`` which are **lossy**; ``format="exr"`` only.
+    * ``"png"`` (default) — 8-bit; non-u8 values in [0, 1] scale to [0, 255],
+      anything else is min–max stretched.
+    * ``"exr[:<compression>[:<precision>]]"`` — OpenEXR keeping scene-linear
+      values. Compression ``piz`` (default), ``zip``, ``zips``, ``none`` or the
+      **lossy** ``dwaa``/``dwab``; precision ``auto`` (default: half unless the
+      values don't fit), ``half`` or ``float``.
+    * ``"npy"`` — exact array bytes, any channel count.
 
     ::
 
-        run.track(cairn.Image(hdr_array, format="exr", precision="float"),
-                  name="radiance", step=step)
+        run.track(cairn.Image(hdr_array, encoding="exr:dwab"), name="radiance", step=step)
+
+    The viewer displays PNG; other encodings show a thumbnail and a download.
     """
 
     object_type = "image"

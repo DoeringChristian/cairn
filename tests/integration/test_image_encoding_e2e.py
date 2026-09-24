@@ -1,4 +1,4 @@
-"""A float image logged through Run.track arrives as image/x-exr end to end."""
+"""A float image logged through Run.track is PNG by default and EXR/npy on request, end to end."""
 
 from __future__ import annotations
 
@@ -41,18 +41,20 @@ def _run(transport):
                      capture_env=False, capture_system_metrics=False, transport=transport)
 
 
-def test_float_image_is_exr_from_track_to_artifact_route(transport, reader):
+def test_image_encoding_from_track_to_artifact_route(transport, reader):
     run = _run(transport)
     arr = np.random.default_rng(0).random((16, 24, 3)).astype(np.float32)
     try:
-        run.track(arr, name="render", step=0)
-        run.track(arr, name="raw", step=0, format="npy")
-        run.track(cairn.Image(arr[..., 0], precision="float"), name="gray", step=0)
-        # call keyword overrides wrapper keyword (Run.track merges {**wrapper, **call}, run.py:415)
-        run.track(cairn.Image(arr, format="npy"), name="override", step=0, format="exr")
+        run.track(arr, name="default", step=0)
+        run.track(cairn.Image(arr, encoding="exr:dwab"), name="render", step=0)
+        run.track(arr, name="raw", step=0, encoding="npy")
+        run.track(cairn.Image(arr[..., 0], encoding="exr::float"), name="gray", step=0)
+        # call keyword overrides wrapper keyword (Run.track merges {**wrapper, **call})
+        run.track(cairn.Image(arr, encoding="npy"), name="override", step=0, encoding="exr")
     finally:
         run.finish()
     for name, mime, magic in [
+        ("default", "image/png", b"\x89PNG"),
         ("render", "image/x-exr", b"\x76\x2f\x31\x01"),
         ("raw", "application/x-npy", b"\x93NUMPY"),
         ("gray", "image/x-exr", b"\x76\x2f\x31\x01"),
@@ -66,7 +68,7 @@ def test_float_image_is_exr_from_track_to_artifact_route(transport, reader):
         assert r.content.startswith(magic)
         assert r.headers["cache-control"].startswith("public")
     gray_meta = reader.get(f"/api/runs/{run.id}/sequences/gray").json()["points"][0]["artifact_metadata"]
-    assert json.loads(gray_meta)["hdr"]["precision"] == "float"
+    assert json.loads(gray_meta)["encoding"] == "exr:piz:float"
 
 
 def test_exr_larger_than_the_wal_inline_limit_spills_to_a_file(transport, reader, wal_dir):
@@ -74,7 +76,7 @@ def test_exr_larger_than_the_wal_inline_limit_spills_to_a_file(transport, reader
     # 512x512x3 half EXR, stored uncompressed => ~1.5 MB, past the 1 MB inline cap.
     arr = np.random.default_rng(1).random((512, 512, 3)).astype(np.float32)
     try:
-        run.track(cairn.Image(arr, compression="none"), name="big", step=0)
+        run.track(cairn.Image(arr, encoding="exr:none"), name="big", step=0)
         # Assert before finish(): a fully-acked WAL is cleanup()ed there, spills and all.
         spills = list(wal_dir.glob(f"{run.id}.artifact.*.bin"))
         assert spills and spills[0].stat().st_size > INLINE_ARTIFACT_MAX

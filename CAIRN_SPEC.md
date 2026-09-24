@@ -253,7 +253,7 @@ class TypeHandler(Protocol):
 |---|---|---|---|
 | `scalar` | `int`, `float`, `bool` | inline in DB | value itself |
 | `text` | `str` (when tracked as sequence) | inline or blob if >1KB | truncated |
-| `image` | `PIL.Image`, `np.ndarray` (HWC/HW), `torch.Tensor` | PNG blob (uint8/PIL); OpenEXR half PIZ blob for float/int arrays (`format=`/`precision=`/`compression=` options), npy fallback | 128px thumbnail as data URI |
+| `image` | `PIL.Image`, `np.ndarray` (HWC/HW), `torch.Tensor` | PNG blob by default (non-u8 arrays tone-mapped to 8 bit); `encoding="exr[:<compression>[:<precision>]]"` keeps HDR values as OpenEXR, `encoding="npy"` stores exact bytes. The viewer shows PNG and offers other encodings as a download | 128px thumbnail as data URI |
 | `audio` | `np.ndarray` + sample_rate kwarg, `torch.Tensor` | WAV or FLAC blob | duration + waveform peaks array |
 | `video` | `np.ndarray` (TxHxWxC), path to video file | MP4 blob (use imageio-ffmpeg) | first frame thumbnail + duration |
 | `figure` | `matplotlib.Figure`, Plotly `Figure` | dual: PNG + source (pickle for mpl, JSON for plotly) | PNG thumbnail |
@@ -297,7 +297,8 @@ run.track(cairn.Image(fig), name="loss_curve", step=100)
 run.track(cairn.Figure(fig), name="loss_curve", step=100)
 
 # Also useful for disambiguating numpy arrays
-run.track(cairn.Image(np_array), name="prediction", step=100)   # 2D/3D array → image
+run.track(cairn.Image(np_array), name="prediction", step=100)   # 2D/3D array → image (PNG)
+run.track(cairn.Image(hdr, encoding="exr:dwab"), name="radiance", step=100)  # keep HDR values
 run.track(cairn.Histogram(np_array), name="weights", step=100)  # 1D array → histogram
 run.track(cairn.Tensor(np_array), name="activations", step=100) # raw array, no interpretation
 run.track(cairn.Audio(np_array, sample_rate=16000), name="sample", step=100)

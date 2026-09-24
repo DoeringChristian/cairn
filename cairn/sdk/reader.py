@@ -422,7 +422,7 @@ class Run:
         handler's ``deserialize()`` method:
 
         - ``artifact``  → unpickled Python object (any picklable type)
-        - ``image``     → PIL.Image
+        - ``image``     → PIL.Image (PNG), ndarray (``exr``/``npy`` encodings)
         - ``audio``     → ``(samples: np.ndarray, sample_rate: int)``
         - ``video``     → np.ndarray (T, H, W, C)
         - ``tensor``    → np.ndarray
