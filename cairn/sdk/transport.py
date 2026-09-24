@@ -216,10 +216,12 @@ class Transport:
             return False
 
     def finish_run(
-        self, run_id: str, status: str, exit_code: int | None = None
+        self, run_id: str, status: str, exit_code: int | None = None,
+        ended_at: str | None = None,
     ) -> None:
         self.post_json(
-            f"/api/runs/{run_id}/finish", {"status": status, "exit_code": exit_code}
+            f"/api/runs/{run_id}/finish",
+            {"status": status, "exit_code": exit_code, "ended_at": ended_at},
         )
 
     def set_tags(self, run_id: str, tags: list[str]) -> None:
@@ -377,7 +379,8 @@ class Transport:
         elif e.op == "finish":
             self.post_json(
                 f"/api/runs/{p['run_id']}/finish",
-                {"status": p.get("status", "completed"), "exit_code": p.get("exit_code")},
+                {"status": p.get("status", "completed"), "exit_code": p.get("exit_code"),
+                 "ended_at": p.get("ended_at")},
             )
         else:
             log.warning("unknown WAL op %r at seq %d", e.op, e.seq)

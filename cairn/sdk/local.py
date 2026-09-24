@@ -21,6 +21,8 @@ import json
 import logging
 import os
 import secrets
+import sqlite3
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -79,8 +81,11 @@ class LocalTransport:
         self._closed = False
 
         if use_wal:
-            # WAL mode: no DB access.
+            # WAL mode: every write goes to the WAL; reads (read_columns) use
+            # a read-only connection opened on first use.
             self.db = None  # type: ignore[assignment]
+            self._ro_conn: sqlite3.Connection | None = None
+            self._ro_lock = threading.Lock()
             self._wal_dir = self.data_dir.root / "wals"
             self._wal_dir.mkdir(parents=True, exist_ok=True)
             self._wal_path: Path | None = None
@@ -102,6 +107,32 @@ class LocalTransport:
         os.fsync(self._wal_fh.fileno())
         return self._wal_seq
 
+    # ---- synchronous reads ----------------------------------------------------
+
+    def read_columns(self, sql: str, params: list[Any] | None = None) -> list[dict[str, Any]]:
+        """Run a read query against the repo DB; rows as dicts.
+
+        Direct mode reads through the transport's own connection. WAL mode
+        never writes the DB, so it reads through a separate READ-ONLY
+        connection (``mode=ro``) and sees only what the ingester has drained
+        so far — this process's own un-drained WAL ops are not visible. A
+        repo whose DB does not exist yet reads as empty.
+        """
+        if not self._use_wal:
+            return self.db.read_columns(sql, params)
+        with self._ro_lock:
+            if self._ro_conn is None:
+                path = self.data_dir.db_path
+                if not path.exists():
+                    return []
+                self._ro_conn = sqlite3.connect(
+                    f"{path.resolve().as_uri()}?mode=ro", uri=True,
+                    check_same_thread=False, timeout=10.0,
+                )
+            cur = self._ro_conn.execute(sql, params or [])
+            cols = [d[0] for d in cur.description]
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
+
     # ---- lifecycle -----------------------------------------------------------
 
     def close(self) -> None:
@@ -116,38 +147,34 @@ class LocalTransport:
                     pass
             if self._lock_path and self._lock_path.exists():
                 self._lock_path.unlink(missing_ok=True)
+            with self._ro_lock:
+                if self._ro_conn is not None:
+                    self._ro_conn.close()
+                    self._ro_conn = None
         else:
             self.db.close()
 
     # ---- high-level ops ------------------------------------------------------
 
     def create_run(self, body: dict[str, Any]) -> dict[str, Any]:
-        if self._use_wal:
-            run_id = body["run_id"]
-            project = body["project"]
-            project_id = project.lower().replace(" ", "-")
-            self._wal_path = self._wal_dir / f"{run_id}.wal.jsonl"
-            self._lock_path = self._wal_dir / f"{run_id}.lock"
-            self._lock_path.write_text(str(os.getpid()))
-            self._wal_fh = open(self._wal_path, "a")  # noqa: SIM115
-            now = datetime.now(timezone.utc).isoformat()
-            self._wal_write("create_run", {
-                "run_id": run_id, "project": project, "project_id": project_id,
-                "name": body.get("name"), "tags": body.get("tags"),
-                "notes": body.get("notes"), "env": body.get("env"),
-                "git": body.get("git"), "cli_args": body.get("cli_args"),
-                "hostname": body.get("hostname"), "user": body.get("user"),
-                "created_at": now,
-            })
-            return {"run_id": run_id, "project_id": project_id, "url": f"/p/{project_id}/r/{run_id}"}
-        else:
-            return ingest_ops.create_run(
-                self.db, project=body["project"], run_id=body.get("run_id"),
-                name=body.get("name"), tags=body.get("tags"),
-                notes=body.get("notes"), env=body.get("env"),
-                git=body.get("git"), cli_args=body.get("cli_args"),
-                hostname=body.get("hostname"), user=body.get("user"),
-            )
+        """Create a run from a create body (the ``POST /api/runs`` shape)."""
+        fields = {k: body.get(k) for k in ingest_ops.CREATE_RUN_FIELDS}
+        if not self._use_wal:
+            return ingest_ops.create_run(self.db, project=body["project"], **fields)
+        run_id = body["run_id"]
+        project = body["project"]
+        project_id = ingest_ops.slugify(project)
+        self._wal_path = self._wal_dir / f"{run_id}.wal.jsonl"
+        self._lock_path = self._wal_dir / f"{run_id}.lock"
+        self._lock_path.write_text(str(os.getpid()))
+        self._wal_fh = open(self._wal_path, "a")  # noqa: SIM115
+        self._wal_write("create_run", {
+            **fields,
+            "project": project,
+            "project_id": project_id,
+            "created_at": fields["created_at"] or datetime.now(timezone.utc).isoformat(),
+        })
+        return {"run_id": run_id, "project_id": project_id, "url": f"/p/{project_id}/r/{run_id}"}
 
     def post_batch(self, run_id: str, points: list[dict[str, Any]]) -> bool:
         try:
@@ -183,12 +210,15 @@ class LocalTransport:
             log.exception("post_logs failed for run %s", run_id)
             return False
 
-    def finish_run(self, run_id: str, status: str, exit_code: int | None = None) -> None:
+    def finish_run(
+        self, run_id: str, status: str, exit_code: int | None = None,
+        ended_at: str | None = None,
+    ) -> None:
         if self._use_wal:
-            now = datetime.now(timezone.utc).isoformat()
-            self._wal_write("finish", {"run_id": run_id, "status": status, "exit_code": exit_code, "ended_at": now})
+            ended_at = ended_at or datetime.now(timezone.utc).isoformat()
+            self._wal_write("finish", {"run_id": run_id, "status": status, "exit_code": exit_code, "ended_at": ended_at})
         else:
-            ingest_ops.finish_run(self.db, run_id, status, exit_code)
+            ingest_ops.finish_run(self.db, run_id, status, exit_code, ended_at)
 
     def set_tags(self, run_id: str, tags: list[str]) -> None:
         if self._use_wal:

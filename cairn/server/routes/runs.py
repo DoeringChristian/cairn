@@ -10,7 +10,7 @@ from typing import Any
 from fastapi import APIRouter, Query, Request
 
 from ..storage.db import Database
-from ._common import get_data_dir, get_db, require_run
+from ._common import api_run_row, get_data_dir, get_db, require_run
 
 _log = logging.getLogger(__name__)
 
@@ -60,6 +60,14 @@ def list_runs(
     request: Request,
     project: str | None = Query(default=None),
     status: str | None = Query(default=None),
+    group: str | None = Query(default=None),
+    job_type: str | None = Query(default=None),
+    sweep_id: str | None = Query(default=None),
+    include: str | None = Query(
+        default=None,
+        description="Comma-separated extras per run: 'params' adds a "
+                    "{key: value} map of the run's config (values JSON-decoded).",
+    ),
     limit: int = Query(default=50, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
@@ -71,27 +79,53 @@ def list_runs(
 
     clauses: list[str] = []
     params: list[Any] = []
-    if project:
-        clauses.append("project_id = ?")
-        params.append(project)
-    if status:
-        clauses.append("status = ?")
-        params.append(status)
+    for column, value in (
+        ("project_id", project),
+        ("status", status),
+        ("run_group", group),
+        ("job_type", job_type),
+        ("sweep_id", sweep_id),
+    ):
+        if value:
+            clauses.append(f"{column} = ?")
+            params.append(value)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     # Exclude env_snapshot from list responses — it's large and only needed
     # on the run detail page.  SELECT * would include it for every row.
     rows = db.read_columns(
         f"""SELECT id, project_id, display_name, created_at, ended_at, status,
-                   exit_code, git_sha, git_dirty, git_branch, cli_args,
-                   hostname, "user", tags, notes, last_heartbeat
+                   exit_code, git_sha, git_dirty, git_branch, git_remote, cli_args,
+                   hostname, "user", tags, notes, last_heartbeat,
+                   parent_run_id, fork_step, data_epoch, run_group, job_type,
+                   sweep_id, stop_requested
             FROM runs {where} ORDER BY created_at DESC LIMIT ? OFFSET ?""",
         [*params, limit, offset],
     )
     (total,) = db.read_one(f"SELECT COUNT(*) FROM runs {where}", params) or (0,)
-    resolved = _resolved_values(db, [r["id"] for r in rows])
+    run_ids = [r["id"] for r in rows]
+    resolved = _resolved_values(db, run_ids)
+    extras = {part.strip() for part in (include or "").split(",") if part.strip()}
+    run_params = _params_by_run(db, run_ids) if "params" in extras else None
     for row in rows:
+        api_run_row(row)
         row["values"] = resolved.get(row["id"], {})
+        if run_params is not None:
+            row["params"] = run_params.get(row["id"], {})
     return {"runs": rows, "total": total, "limit": limit, "offset": offset}
+
+
+def _params_by_run(db: Database, run_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """Each run's params as ``{key: decoded value}``, one query for the page."""
+    if not run_ids:
+        return {}
+    holes = ",".join("?" * len(run_ids))
+    out: dict[str, dict[str, Any]] = {rid: {} for rid in run_ids}
+    for r in db.read_columns(
+        f"SELECT run_id, key, value FROM params WHERE run_id IN ({holes})",
+        list(run_ids),
+    ):
+        out[r["run_id"]][r["key"]] = json.loads(r["value"])
+    return out
 
 
 def _resolved_values(

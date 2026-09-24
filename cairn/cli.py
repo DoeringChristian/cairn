@@ -292,11 +292,15 @@ def server_cmd(
     ingest_app = create_app(
         db=db, blobs=blobs, data_dir_obj=dd, mount_ui=False, auth_enabled=auth_enabled,
     )
-    # UI app (ingest + read + SPA). Only built if UI is enabled.
+    # UI app (ingest + read + SPA). Only built if UI is enabled. It shares
+    # the ingest app's DB, so the ingest app alone runs the background loops.
     ui_app = (
         None
         if not ui
-        else create_app(db=db, blobs=blobs, data_dir_obj=dd, mount_ui=True, auth_enabled=auth_enabled)
+        else create_app(
+            db=db, blobs=blobs, data_dir_obj=dd, mount_ui=True,
+            auth_enabled=auth_enabled, background_tasks=False,
+        )
     )
 
     advertiser = None

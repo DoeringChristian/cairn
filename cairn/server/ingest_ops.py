@@ -11,9 +11,10 @@ from __future__ import annotations
 import json
 import secrets
 import shutil
+from datetime import datetime
 from typing import Any
 
-from .routes._common import flatten, slugify, utc_now, value_type
+from .routes._common import flatten, parse_timestamp, slugify, utc_now, value_type
 from .storage.blobs import BlobStore
 from .storage.datadir import DataDir
 from .storage.db import Database
@@ -31,6 +32,17 @@ def _require_run(db: Database, run_id: str) -> dict[str, Any]:
     return rows[0]
 
 
+#: Every optional ``create_run`` field, as the create body / WAL payload
+#: spells it. LocalTransport and the WAL replay forward exactly these keys, so
+#: a new field is added here, to ``create_run``'s signature, and to
+#: ``CreateRunRequest``.
+CREATE_RUN_FIELDS: tuple[str, ...] = (
+    "run_id", "name", "tags", "notes", "env", "git", "cli_args", "hostname",
+    "user", "created_at", "group", "job_type", "sweep_id", "parent_run_id",
+    "fork_step",
+)
+
+
 def create_run(
     db: Database,
     *,
@@ -44,12 +56,23 @@ def create_run(
     cli_args: list[str] | None = None,
     hostname: str | None = None,
     user: str | None = None,
+    created_at: str | datetime | None = None,
+    group: str | None = None,
+    job_type: str | None = None,
+    sweep_id: str | None = None,
+    parent_run_id: str | None = None,
+    fork_step: int | None = None,
 ) -> dict[str, Any]:
-    """Create a run (and its project if needed). Returns metadata dict."""
+    """Create a run (and its project if needed). Returns metadata dict.
+
+    ``created_at`` backdates the run (imports, WAL replay); default now.
+    ``group`` is stored in the ``run_group`` column.
+    """
     project_id = slugify(project)
     if not run_id:
         run_id = secrets.token_hex(16)
     now = utc_now()
+    created = parse_timestamp(created_at) or now
 
     with db.transaction() as con:
         con.execute(
@@ -64,19 +87,22 @@ def create_run(
             """
             INSERT INTO runs (
                 id, project_id, display_name, created_at, ended_at,
-                status, exit_code, git_sha, git_dirty, git_branch,
+                status, exit_code, git_sha, git_dirty, git_branch, git_remote,
                 cli_args, env_snapshot, hostname, "user", tags, notes,
-                last_heartbeat
-            ) VALUES (?, ?, ?, ?, NULL, 'running', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                last_heartbeat, parent_run_id, fork_step, run_group, job_type,
+                sweep_id
+            ) VALUES (?, ?, ?, ?, NULL, 'running', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                      ?, ?, ?, ?, ?, ?)
             """,
             [
                 run_id,
                 project_id,
                 name,
-                now,
+                created,
                 git.get("sha") if git else None,
                 git.get("dirty") if git else None,
                 git.get("branch") if git else None,
+                git.get("remote") if git else None,
                 json.dumps(cli_args) if cli_args is not None else None,
                 json.dumps(env) if env is not None else None,
                 hostname,
@@ -84,6 +110,11 @@ def create_run(
                 json.dumps(tags) if tags is not None else None,
                 notes,
                 now,  # last_heartbeat
+                parent_run_id,
+                fork_step,
+                group,
+                job_type,
+                sweep_id,
             ],
         )
 
@@ -155,14 +186,15 @@ def insert_batch(
                 p["object_type"],
                 p.get("scalar_value"),
                 p.get("artifact_hash"),
+                json.dumps(p["metadata"]) if p.get("metadata") is not None else None,
             )
         )
     db.executemany(
         """
         INSERT OR IGNORE INTO sequences (
             run_id, name, step, wall_time, context, context_hash,
-            object_type, scalar_value, artifact_hash
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            object_type, scalar_value, artifact_hash, metadata
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         rows,
     )
@@ -266,11 +298,14 @@ def finish_run(
     run_id: str,
     status: str = "completed",
     exit_code: int | None = None,
+    ended_at: str | datetime | None = None,
 ) -> None:
+    """End a run. ``ended_at`` defaults to now (imports and WAL replay pass
+    the time the run actually ended)."""
     _require_run(db, run_id)
     db.write(
         "UPDATE runs SET status = ?, ended_at = ?, exit_code = ? WHERE id = ?",
-        [status, utc_now(), exit_code, run_id],
+        [status, parse_timestamp(ended_at) or utc_now(), exit_code, run_id],
     )
 
 
@@ -302,6 +337,10 @@ def delete_run(db: Database, data_dir: DataDir, run_id: str) -> None:
     db.write("DELETE FROM run_inputs WHERE run_id = ?", [run_id])
     db.write("DELETE FROM log_lines WHERE run_id = ?", [run_id])
     db.write("DELETE FROM run_artifacts WHERE run_id = ?", [run_id])
+    db.write("DELETE FROM alerts WHERE run_id = ?", [run_id])
+    db.write("DELETE FROM metric_defs WHERE run_id = ?", [run_id])
+    # Trials and forks outlive the run; they just lose the link.
+    db.write("UPDATE sweep_trials SET run_id = NULL WHERE run_id = ?", [run_id])
     db.write("DELETE FROM runs WHERE id = ?", [run_id])
     for d in (data_dir.logs_dir / run_id, data_dir.sources_dir / run_id):
         if d.exists():

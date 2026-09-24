@@ -30,6 +30,7 @@ class GitInfo(BaseModel):
     sha: str | None = None
     branch: str | None = None
     dirty: bool | None = None
+    remote: str | None = None
 
 
 class CreateRunRequest(BaseModel):
@@ -43,6 +44,13 @@ class CreateRunRequest(BaseModel):
     cli_args: list[str] | None = None
     hostname: str | None = None
     user: str | None = None
+    #: ISO-8601; backdates the run (imports). Default: now.
+    created_at: str | None = None
+    group: str | None = None
+    job_type: str | None = None
+    sweep_id: str | None = None
+    parent_run_id: str | None = None
+    fork_step: int | None = None
 
 
 class ParamsRequest(BaseModel):
@@ -61,6 +69,7 @@ class SequencePoint(BaseModel):
     object_type: str
     scalar_value: float | None = None
     artifact_hash: str | None = None
+    metadata: dict[str, Any] | None = None
 
 
 class BatchRequest(BaseModel):
@@ -82,6 +91,8 @@ class LogsRequest(BaseModel):
 class FinishRequest(BaseModel):
     status: str = Field(default="completed")
     exit_code: int | None = None
+    #: ISO-8601; when the run actually ended (imports). Default: now.
+    ended_at: str | None = None
 
 
 class TagsRequest(BaseModel):
@@ -112,19 +123,7 @@ def _run_not_found(exc: ingest_ops.RunNotFound) -> HTTPException:
 def create_run(body: CreateRunRequest, request: Request) -> dict[str, Any]:
     db = get_db(request)
     try:
-        return ingest_ops.create_run(
-            db,
-            project=body.project,
-            run_id=body.run_id,
-            name=body.name,
-            tags=body.tags,
-            notes=body.notes,
-            env=body.env,
-            git=body.git.model_dump() if body.git else None,
-            cli_args=body.cli_args,
-            hostname=body.hostname,
-            user=body.user,
-        )
+        return ingest_ops.create_run(db, **body.model_dump())
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
 
@@ -262,9 +261,11 @@ def finish_run(
 ) -> dict[str, Any]:
     db = get_db(request)
     try:
-        ingest_ops.finish_run(db, run_id, body.status, body.exit_code)
+        ingest_ops.finish_run(db, run_id, body.status, body.exit_code, body.ended_at)
     except ingest_ops.RunNotFound as exc:
         raise _run_not_found(exc) from None
+    except ValueError as exc:  # unparseable ended_at
+        raise HTTPException(status_code=400, detail=str(exc)) from None
     return {"run_id": run_id, "status": body.status}
 
 

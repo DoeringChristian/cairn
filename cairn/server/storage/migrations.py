@@ -49,7 +49,21 @@ SCHEMA_SQL: list[str] = [
         "user"        TEXT,
         tags          TEXT,
         notes         TEXT,
-        last_heartbeat TEXT
+        last_heartbeat TEXT,
+        -- A fork's parent and the step it was forked at. No FK: the parent
+        -- may be deleted (or not imported) while the fork lives on.
+        parent_run_id TEXT,
+        fork_step     INTEGER,
+        -- Bumped whenever a run's history is rewritten (rewind), so a live
+        -- client knows its rowid cursor is stale.
+        data_epoch    INTEGER DEFAULT 0,
+        git_remote    TEXT,
+        -- "group" is reserved in SQL; the API field is ``group``.
+        run_group     TEXT,
+        job_type      TEXT,
+        sweep_id      TEXT,
+        -- Timestamp of a stop request from the UI; NULL when none is pending.
+        stop_requested TEXT
     )
     """,
     """
@@ -81,6 +95,8 @@ SCHEMA_SQL: list[str] = [
         object_type   TEXT NOT NULL,
         scalar_value  REAL,
         artifact_hash TEXT,
+        -- Per-point JSON (e.g. a media caption); NULL when there is none.
+        metadata      TEXT,
         PRIMARY KEY (run_id, name, step, context_hash)
     )
     """,
@@ -210,6 +226,62 @@ SCHEMA_SQL: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_artifact_versions_family ON artifact_versions(family_id, version DESC)",
     "CREATE INDEX IF NOT EXISTS idx_artifact_versions_producer ON artifact_versions(created_by_run)",
     "CREATE INDEX IF NOT EXISTS idx_run_inputs_artifact ON run_inputs(artifact_version_id)",
+    # ── Alerts, metric definitions, sweeps ─────────────────────────────
+    # Ids are client-generated TEXT everywhere so a replayed WAL op is an
+    # INSERT OR IGNORE, never a duplicate row.
+    """
+    CREATE TABLE IF NOT EXISTS alerts (
+        id            TEXT PRIMARY KEY,
+        run_id        TEXT NOT NULL REFERENCES runs(id),
+        project_id    TEXT NOT NULL,
+        level         TEXT NOT NULL,
+        title         TEXT NOT NULL,
+        text          TEXT,
+        created_at    TEXT NOT NULL,
+        -- Set when the webhook delivery claimed the row.
+        delivered_at  TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_alerts_project ON alerts(project_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_alerts_run ON alerts(run_id)",
+    """
+    CREATE TABLE IF NOT EXISTS metric_defs (
+        run_id        TEXT NOT NULL REFERENCES runs(id),
+        -- A metric name or an fnmatch glob.
+        name          TEXT NOT NULL,
+        step_metric   TEXT,
+        summary       TEXT,
+        PRIMARY KEY (run_id, name)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS sweeps (
+        id            TEXT PRIMARY KEY,
+        project_id    TEXT NOT NULL REFERENCES projects(id),
+        name          TEXT,
+        method        TEXT NOT NULL,
+        space         TEXT NOT NULL,
+        metric        TEXT,
+        goal          TEXT,
+        command       TEXT,
+        status        TEXT NOT NULL,
+        created_at    TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_sweeps_project ON sweeps(project_id)",
+    """
+    CREATE TABLE IF NOT EXISTS sweep_trials (
+        id            TEXT PRIMARY KEY,
+        sweep_id      TEXT NOT NULL REFERENCES sweeps(id),
+        -- No FK: a trial outlives a deleted run.
+        run_id        TEXT,
+        params        TEXT NOT NULL,
+        status        TEXT NOT NULL,
+        value         REAL,
+        created_at    TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_sweep_trials_sweep ON sweep_trials(sweep_id)",
     # ── Auth tables (workstream AUTH) ──────────────────────────────────
     # Plaintext secrets (tokens, OTPs, nonces) are never persisted — only
     # sha256 hex digests. See cairn/server/auth.py.
@@ -252,6 +324,24 @@ SCHEMA_SQL: list[str] = [
 ]
 
 
+# Columns added to ``runs`` after its first release (also in SCHEMA_SQL).
+_ADDED_RUN_COLUMNS: list[tuple[str, str]] = [
+    ("parent_run_id", "TEXT"),
+    ("fork_step", "INTEGER"),
+    ("data_epoch", "INTEGER DEFAULT 0"),
+    ("git_remote", "TEXT"),
+    ("run_group", "TEXT"),
+    ("job_type", "TEXT"),
+    ("sweep_id", "TEXT"),
+    ("stop_requested", "TEXT"),
+]
+
+_ADDED_COLUMN_INDEXES: list[str] = [
+    "CREATE INDEX IF NOT EXISTS idx_runs_parent ON runs(parent_run_id)",
+    "CREATE INDEX IF NOT EXISTS idx_runs_sweep ON runs(sweep_id)",
+]
+
+
 def hash_context(context: Any) -> str:
     """Derive the deterministic hash used as part of the sequences PK.
 
@@ -287,6 +377,13 @@ def apply_migrations(con: sqlite3.Connection) -> int:
     _add_column_if_missing(con, "runs", "last_heartbeat", "TEXT")
     _add_column_if_missing(con, "artifacts", "object_type", "TEXT")
     _add_column_if_missing(con, "tokens", "parent_id", "TEXT")
+    for column, col_type in _ADDED_RUN_COLUMNS:
+        _add_column_if_missing(con, "runs", column, col_type)
+    _add_column_if_missing(con, "sequences", "metadata", "TEXT")
+    # Indexes on added columns run after the ALTERs: in SCHEMA_SQL they would
+    # fail on a database that predates the column.
+    for stmt in _ADDED_COLUMN_INDEXES:
+        con.execute(stmt)
 
     # The one destructive statement in this file. Auth is token-only: the
     # browser carries the token itself in the ``cairn_token`` cookie, so

@@ -36,11 +36,11 @@ from ..sdk.handlers.registry import HandlerRegistry, default_registry, resolve_m
 from ..sdk.handlers.image import GALLERY_MIME
 from ..sdk.wrappers import Image, _TypeWrapper
 from .buffer import MetricBuffer
-from .local import LocalTransport, _RepoServedByOtherError
+from .connect import open_transport
+from .local import LocalTransport
 from .scope import Scope
 from .transport import Transport
 from .wal import WriteAheadLog
-from ..server.storage.datadir import DataDir, RepoLockedError
 
 log = logging.getLogger(__name__)
 
@@ -84,70 +84,6 @@ def _context_key(context: Any) -> tuple:
     return (str(context),)
 
 
-def _url_from_holder(holder: dict[str, Any]) -> str | None:
-    """Reconstruct an HTTP base URL from a lock-file holder dict, if it has
-    both ``host`` and ``port``. Returns None otherwise.
-    """
-    host = holder.get("host")
-    port = holder.get("port")
-    if isinstance(host, str) and isinstance(port, int):
-        return f"http://{host}:{port}"
-    return None
-
-
-def _probe_server(url: str) -> None:
-    """Probe ``<url>/api/health`` and warn if unreachable.
-
-    Used when the user explicitly passes ``repo="cairn://host:port"`` — without
-    this, the user only learns about a wrong host/port from cryptic httpx
-    retry errors deep in the run. Emits a clear warning at startup so the
-    cause is obvious.
-    """
-    import httpx
-
-    try:
-        resp = httpx.get(f"{url}/api/health", timeout=2.0)
-        if resp.status_code != 200:
-            raise RuntimeError(f"status {resp.status_code}")
-    except Exception as exc:  # noqa: BLE001
-        cairn_url = url.replace("http://", "cairn://", 1) if url.startswith("http://") else url
-        log.warning(
-            "Cairn server at %s did not respond to /api/health (%s). "
-            "Run creation and writes will likely fail — check that the "
-            "server is running on this host:port.",
-            cairn_url, exc,
-        )
-
-
-def _verify_reachable(url: str, repo: Path) -> None:
-    """Probe ``<url>/api/health`` so the SDK fails fast if the holder is hung.
-
-    Raises :class:`RepoLockedError` with an actionable message if the
-    holder's declared endpoint doesn't respond with 200.
-    """
-    import httpx
-
-    try:
-        resp = httpx.get(f"{url}/api/health", timeout=2.0)
-        if resp.status_code != 200:
-            raise RuntimeError(f"status {resp.status_code}")
-    except Exception as exc:  # noqa: BLE001
-        lock_path = DataDir(repo).lock_path
-        raise RepoLockedError(
-            repo,
-            {
-                "mode": "unreachable",
-                "pid": "?",
-                "hint": (
-                    f"The repo lock at {lock_path} claims a server/UI is "
-                    f"running at {url}, but {url}/api/health didn't "
-                    f"respond ({exc}). Restart the UI or delete the lock "
-                    f"file if the owning process is truly gone."
-                ),
-            },
-        ) from exc
-
-
 class Run:
     """A single experiment execution."""
 
@@ -158,6 +94,12 @@ class Run:
         name: str | None = None,
         tags: list[str] | None = None,
         notes: str | None = None,
+        group: str | None = None,
+        job_type: str | None = None,
+        sweep_id: str | None = None,
+        parent_run_id: str | None = None,
+        fork_step: int | None = None,
+        created_at: str | datetime | None = None,
         repo: str | Path | None = None,
         local_wal: bool = False,
         capture_source: bool = True,
@@ -181,30 +123,9 @@ class Run:
             self._owns_transport = False
             self._server = getattr(transport, "server_url", "")
         else:
-            target = config.resolve_target(repo=repo)
-            if target.is_local:
-                try:
-                    self._transport = LocalTransport(target.location, use_wal=local_wal)
-                    self._server = self._transport.server_url
-                except _RepoServedByOtherError as exc:
-                    url = _url_from_holder(exc.holder)
-                    if url is None:
-                        raise
-                    _verify_reachable(url, Path(target.location))
-                    # Same-user local trust (spec §7): the serving process
-                    # leaves auth/local.token in the data dir for exactly
-                    # this upgrade path.
-                    local_tok = Path(target.location) / "auth" / "local.token"
-                    tok = local_tok.read_text().strip() if local_tok.exists() else None
-                    self._transport = Transport(url, timeout=timeout, token=tok)
-                    self._server = url
-            else:
-                # cairn:// URL → HTTP mode. Probe /api/health so we fail
-                # fast (with a clear message) instead of silently buffering
-                # writes to an unreachable address.
-                _probe_server(target.location)
-                self._transport = Transport(target.location, timeout=timeout)
-                self._server = target.location
+            self._transport, self._server = open_transport(
+                repo, local_wal=local_wal, timeout=timeout,
+            )
             self._owns_transport = True
         self._project = project
         self._name = name
@@ -246,6 +167,14 @@ class Run:
             "cli_args": env_snapshot["cli_args"] if env_snapshot else None,
             "hostname": env_snapshot["hostname"] if env_snapshot else None,
             "user": env_snapshot["user"] if env_snapshot else None,
+            "group": group,
+            "job_type": job_type,
+            "sweep_id": sweep_id,
+            "parent_run_id": parent_run_id,
+            "fork_step": fork_step,
+            "created_at": (
+                created_at.isoformat() if isinstance(created_at, datetime) else created_at
+            ),
         }
         resp = self._transport.create_run(create_body)
         self._run_id: str = resp["run_id"]

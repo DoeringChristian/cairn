@@ -26,7 +26,7 @@ UPDATES_LIMIT = 5000
 # what a sequence read hands back as its starting point.
 _POINT_COLUMNS = """s.rowid AS _rowid,
                s.step, s.wall_time, s.scalar_value, s.artifact_hash,
-               s.context, s.object_type,
+               s.context, s.object_type, s.metadata,
                a.mime_type AS artifact_mime,
                a.size_bytes AS artifact_size,
                a.metadata AS artifact_metadata"""

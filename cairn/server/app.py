@@ -61,6 +61,7 @@ def create_app(
     data_dir_obj: DataDir | None = None,
     mount_ui: bool = False,
     auth_enabled: bool = False,
+    background_tasks: bool = True,
 ) -> FastAPI:
     """Build a FastAPI app.
 
@@ -85,6 +86,10 @@ def create_app(
             False so existing test fixtures (``tests/conftest.py``) and
             library callers of ``create_app()`` are unaffected; the CLI
             (``cairn server`` / ``cairn ui``) opts in unless ``--no-auth``.
+        background_tasks: Run the lifespan's background loops (WAL
+            ingestion, and any other periodic repo maintenance). Exactly one
+            app per repo may run them: ``cairn server --ui`` builds a second
+            app on the same DB and passes False for it.
     """
     owns_db = db is None
     if (db is None) != (blobs is None) or (db is None) != (data_dir_obj is None):
@@ -128,13 +133,16 @@ def create_app(
                 except asyncio.TimeoutError:
                     pass  # normal — loop again
 
-        task = asyncio.create_task(_wal_ingestion_loop())
+        tasks: list[asyncio.Task] = []
+        if background_tasks:
+            tasks.append(asyncio.create_task(_wal_ingestion_loop()))
 
         try:
             yield
         finally:
             _stop.set()
-            task.cancel()
+            for task in tasks:
+                task.cancel()
             if owns_db:
                 _db.close()
 

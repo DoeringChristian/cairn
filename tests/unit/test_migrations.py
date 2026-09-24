@@ -147,3 +147,77 @@ def test_sessions_table_is_dropped(conn):
         r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")
     }
     assert "tokens" in _tables(conn)
+
+
+# The runs/sequences DDL as it stood before parent/fork/epoch/group/... and
+# per-point metadata were added.
+_OLD_SCHEMA = [
+    "CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, "
+    "created_at TEXT NOT NULL, description TEXT, tags TEXT)",
+    """CREATE TABLE runs (
+        id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+        display_name TEXT, created_at TEXT NOT NULL, ended_at TEXT,
+        status TEXT NOT NULL, exit_code INTEGER, git_sha TEXT, git_dirty INTEGER,
+        git_branch TEXT, cli_args TEXT, env_snapshot TEXT, hostname TEXT,
+        "user" TEXT, tags TEXT, notes TEXT, last_heartbeat TEXT)""",
+    """CREATE TABLE sequences (
+        run_id TEXT NOT NULL REFERENCES runs(id), name TEXT NOT NULL,
+        step INTEGER NOT NULL, wall_time TEXT NOT NULL, context TEXT,
+        context_hash TEXT NOT NULL DEFAULT '', object_type TEXT NOT NULL,
+        scalar_value REAL, artifact_hash TEXT,
+        PRIMARY KEY (run_id, name, step, context_hash))""",
+    "CREATE TABLE schema_version (version INTEGER NOT NULL)",
+    "INSERT INTO schema_version VALUES (2)",
+    "INSERT INTO projects VALUES ('p', 'p', '2025-01-01', NULL, NULL)",
+    "INSERT INTO runs (id, project_id, created_at, status) "
+    "VALUES ('r', 'p', '2025-01-01', 'completed')",
+    "INSERT INTO sequences (run_id, name, step, wall_time, object_type, scalar_value) "
+    "VALUES ('r', 'loss', 0, '2025-01-01', 'scalar', 1.0)",
+]
+
+
+def _columns(con, table: str) -> set[str]:
+    return {r[1] for r in con.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
+def test_old_database_gains_new_columns_and_tables(conn):
+    for stmt in _OLD_SCHEMA:
+        conn.execute(stmt)
+    conn.commit()
+
+    apply_migrations(conn)
+
+    assert {
+        "parent_run_id", "fork_step", "data_epoch", "git_remote", "run_group",
+        "job_type", "sweep_id", "stop_requested",
+    } <= _columns(conn, "runs")
+    assert "metadata" in _columns(conn, "sequences")
+    assert {"alerts", "metric_defs", "sweeps", "sweep_trials"} <= _tables(conn)
+    indexes = {r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='index'"
+    ).fetchall()}
+    assert {"idx_runs_parent", "idx_runs_sweep", "idx_alerts_project"} <= indexes
+    # Existing rows survive; the added columns read as their defaults.
+    row = conn.execute(
+        "SELECT status, data_epoch, run_group, stop_requested FROM runs WHERE id = 'r'"
+    ).fetchone()
+    assert row == ("completed", 0, None, None)
+    assert conn.execute("SELECT scalar_value, metadata FROM sequences").fetchone() == (1.0, None)
+    # A second pass is a no-op.
+    apply_migrations(conn)
+
+
+def test_fresh_schema_matches_migrated_schema(tmp_path):
+    """SCHEMA_SQL and the column migrations describe the same runs/sequences."""
+    fresh = sqlite3.connect(str(tmp_path / "fresh.db"))
+    old = sqlite3.connect(str(tmp_path / "old.db"))
+    try:
+        apply_migrations(fresh)
+        for stmt in _OLD_SCHEMA:
+            old.execute(stmt)
+        apply_migrations(old)
+        for table in ("runs", "sequences"):
+            assert _columns(fresh, table) == _columns(old, table)
+    finally:
+        fresh.close()
+        old.close()

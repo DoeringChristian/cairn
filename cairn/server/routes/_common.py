@@ -35,15 +35,39 @@ def get_blobs(request: Request) -> BlobStore:
     return request.app.state.blobs
 
 
+def api_run_row(row: dict[str, Any]) -> dict[str, Any]:
+    """A ``runs`` row in API shape: the ``run_group`` column is the ``group``
+    field (GROUP is a reserved word in SQL, so only the column is renamed)."""
+    if "run_group" in row:
+        row["group"] = row.pop("run_group")
+    return row
+
+
 def require_run(db: Database, run_id: str) -> dict[str, Any]:
     rows = db.read_columns("SELECT * FROM runs WHERE id = ?", [run_id])
     if not rows:
         raise HTTPException(status_code=404, detail=f"run {run_id} not found")
-    return rows[0]
+    return api_run_row(rows[0])
 
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def parse_timestamp(value: str | datetime | None) -> datetime | None:
+    """A caller-supplied timestamp as an aware UTC datetime (naive = UTC).
+
+    Timestamps are stored the way ``utc_now()`` values are, so a supplied
+    ``created_at`` sorts consistently with server-stamped ones.
+    """
+    if value is None:
+        return None
+    dt = value if isinstance(value, datetime) else datetime.fromisoformat(
+        value.replace("Z", "+00:00")
+    )
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 
 def value_type(v: Any) -> str:

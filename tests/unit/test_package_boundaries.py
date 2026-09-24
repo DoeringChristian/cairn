@@ -41,7 +41,7 @@ def test_server_never_imports_the_sdk() -> None:
     for p in _py_files(SERVER):
         src = p.read_text()
         for m in re.finditer(
-            r"^\s*(?:from|import)\s+(?:cairn\.sdk|\.\.sdk)(?:\.|\s|$)", src, re.M
+            r"^\s*(?:from|import)\s+(?:cairn\.sdk|\.{2,}sdk)(?:\.|\s|$)", src, re.M
         ):
             offenders.append(f"{p.relative_to(REPO)}: {m.group(0).strip()}")
     assert not offenders, (

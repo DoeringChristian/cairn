@@ -33,6 +33,7 @@ dependencies = [
     "python-multipart>=0.0.9",
     "tomli-w>=1.0.0",
     "tomli>=2.0.0; python_version < '3.11'",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -79,6 +80,23 @@ examples = [
 export = [
     "pandas>=2.0",
     "pyarrow>=14.0",
+]
+# Framework integrations (cairn.integrations.*) and `cairn import-tb`.
+tb = [
+    "tensorboard>=2.14",
+]
+lightning = [
+    "lightning>=2.0",
+]
+keras = [
+    "keras>=3.0",
+]
+xgboost = [
+    "xgboost>=2.0",
+]
+# Bayesian search for sweeps (method: bayes); grid and random need nothing.
+sweep = [
+    "optuna>=3.5",
 ]
 dev = [
     # Both optional halves (and the export deps), so a dev checkout can

@@ -35,7 +35,11 @@ def _safe_json(line: str) -> dict[str, Any] | None:
 
 
 def _ensure_run_exists(db: Database, p: dict[str, Any]) -> None:
-    """Create the run + project rows if they don't exist yet."""
+    """Create the run + project rows if they don't exist yet.
+
+    The payload's ``created_at`` is the client's clock at creation, so a WAL
+    drained long after the run started still dates the run correctly.
+    """
     run_id = p["run_id"]
     # Check if already ingested.
     rows = db.read_columns("SELECT id FROM runs WHERE id = ?", [run_id])
@@ -44,15 +48,7 @@ def _ensure_run_exists(db: Database, p: dict[str, Any]) -> None:
     ingest_ops.create_run(
         db,
         project=p["project"],
-        run_id=run_id,
-        name=p.get("name"),
-        tags=p.get("tags"),
-        notes=p.get("notes"),
-        env=p.get("env"),
-        git=p.get("git"),
-        cli_args=p.get("cli_args"),
-        hostname=p.get("hostname"),
-        user=p.get("user"),
+        **{k: p.get(k) for k in ingest_ops.CREATE_RUN_FIELDS},
     )
 
 
@@ -139,6 +135,7 @@ def _apply_op(
                 db, rid,
                 status=payload.get("status", "completed"),
                 exit_code=payload.get("exit_code"),
+                ended_at=payload.get("ended_at"),
             )
         elif op == "set_tags":
             ingest_ops.set_tags(db, rid, payload["tags"])

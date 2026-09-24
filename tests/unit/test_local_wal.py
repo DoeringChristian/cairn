@@ -113,3 +113,28 @@ def test_torn_last_line_is_read_next_cycle(tmp_path):
     finally:
         t.close()
         db.close()
+
+
+def test_read_columns_is_read_only_and_sees_drained_rows(tmp_path):
+    import sqlite3
+
+    import pytest
+
+    repo = tmp_path / ".cairn"
+    t = LocalTransport(repo, use_wal=True)
+    try:
+        # No DB file yet (nothing ever drained): reads are empty.
+        assert not DataDir(repo).db_path.exists()
+        assert t.read_columns("SELECT id FROM runs") == []
+
+        rid = t.create_run({"project": "p", "run_id": "d" * 32})["run_id"]
+        # The run's own WAL ops are invisible until the ingester drains them.
+        db = _drain(repo)
+        db.close()
+        assert t.read_columns("SELECT id, status FROM runs WHERE id = ?", [rid]) == [
+            {"id": rid, "status": "running"}
+        ]
+        with pytest.raises(sqlite3.OperationalError, match="readonly"):
+            t.read_columns("UPDATE runs SET status = 'x'")
+    finally:
+        t.close()

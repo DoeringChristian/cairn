@@ -350,6 +350,14 @@ class Run:
         return self._raw.get("hostname")
 
     @property
+    def group(self) -> str | None:
+        return self._raw.get("group")
+
+    @property
+    def job_type(self) -> str | None:
+        return self._raw.get("job_type")
+
+    @property
     def notes(self) -> str | None:
         return self._raw.get("notes")
 
@@ -570,7 +578,10 @@ _OPERATORS: dict[str, "Callable[[Any, Any], bool]"] = {
 
 # Top-level fields on a Run that can be filtered. Anything else is treated
 # as a param lookup (params.<key>).
-_RUN_FIELDS = {"name", "status", "project", "tags", "id", "hostname", "user", "notes"}
+_RUN_FIELDS = {
+    "name", "status", "project", "tags", "id", "hostname", "user", "notes",
+    "group", "job_type",
+}
 
 
 def _parse_lookup(key: str) -> tuple[str, str, str | None]:
@@ -825,6 +836,13 @@ class _Backend(Protocol):
 # Local backend — direct SQLite access
 # ---------------------------------------------------------------------------
 
+def _api_run_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Local rows in the same shape the HTTP backend returns."""
+    from ..server.routes._common import api_run_row
+
+    return api_run_row(row)
+
+
 class _LocalBackend:
     def __init__(self, repo: str | Path) -> None:
         from ..server.storage.blobs import BlobStore
@@ -883,10 +901,11 @@ class _LocalBackend:
             [*params, limit, offset],
         )
         (total,) = self._db.read_one(f"SELECT COUNT(*) FROM runs {where}", params) or (0,)
-        return rows, total
+        return [_api_run_row(r) for r in rows], total
 
     def get_run(self, run_id: str) -> dict[str, Any]:
-        rows = self._db.read_columns("SELECT * FROM runs WHERE id = ?", [run_id])
+        self._drain_wals()
+        rows = [_api_run_row(r) for r in self._db.read_columns("SELECT * FROM runs WHERE id = ?", [run_id])]
         if not rows:
             raise KeyError(f"Run {run_id!r} not found")
         params = self._db.read_columns(
@@ -1232,17 +1251,16 @@ def _load_zip_to_tempdir(zip_path: Path) -> tuple[Path, Path]:
     """Load an exported Cairn ZIP into a fresh tempdir-backed .cairn/ repo.
 
     Returns ``(tempdir, repo_path)``. Caller is responsible for cleaning up
-    ``tempdir`` (Reader does this on ``close()``).
+    ``tempdir`` (Reader does this on ``close()``). Run ids are preserved: the
+    repo is fresh, so there is nothing to collide with.
     """
-    import json as _json
-    import secrets as _secrets
     import tempfile as _tempfile
     import zipfile as _zipfile
 
+    from ..server.run_archive import restore_archive
     from ..server.storage.blobs import BlobStore as _BlobStore
     from ..server.storage.datadir import DataDir as _DataDir
     from ..server.storage.db import Database as _Database
-    from ..server.ingest_ops import utc_now as _utc_now
 
     if not zip_path.exists():
         raise FileNotFoundError(f"Cairn ZIP archive not found: {zip_path}")
@@ -1251,147 +1269,14 @@ def _load_zip_to_tempdir(zip_path: Path) -> tuple[Path, Path]:
     repo_path = tempdir / ".cairn"
     dd = _DataDir(repo_path)
     db = _Database.open(dd.db_path)
-    blobs = _BlobStore(dd.artifacts_dir)
-
-    with _zipfile.ZipFile(zip_path) as zf:
-        try:
-            manifest = _json.loads(zf.read("manifest.json"))
-        except (KeyError, _json.JSONDecodeError) as e:
-            db.close()
-            raise ValueError(f"Invalid Cairn ZIP archive (no manifest.json): {zip_path}") from e
-
-        run_ids = manifest.get("run_ids", [])
-
-        # Restore artifacts (shared across runs).
-        for name in zf.namelist():
-            if name.startswith("artifacts/") and not name.endswith(".meta.json") and not name.endswith("/"):
-                basename = name.split("/", 1)[1]
-                h = basename.rsplit(".", 1)[0] if "." in basename else basename
-                if blobs.exists(h):
-                    continue
-                data = zf.read(name)
-                meta_name = f"artifacts/{h}.meta.json"
-                mime = "application/octet-stream"
-                metadata: Any = None
-                object_type: str | None = None
-                if meta_name in zf.namelist():
-                    try:
-                        meta_info = _json.loads(zf.read(meta_name))
-                        mime = meta_info.get("mime_type", mime)
-                        object_type = meta_info.get("object_type")
-                        m = meta_info.get("metadata")
-                        metadata = _json.loads(m) if isinstance(m, str) else m
-                    except (_json.JSONDecodeError, KeyError):
-                        pass
-                digest, size = blobs.put(data, mime, metadata)
-                db.write(
-                    """INSERT OR IGNORE INTO artifacts
-                       (hash, mime_type, size_bytes, metadata, object_type, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?)""",
-                    [digest, mime, size,
-                     _json.dumps(metadata) if metadata else "{}",
-                     object_type,
-                     _utc_now().isoformat()],
-                )
-
-        # Restore each run, preserving original IDs (read-only context — no
-        # collision risk since we're in a fresh tempdir).
-        for original_id in run_ids:
-            prefix = f"{original_id}/"
-            run_json_name = prefix + "run.json"
-            if run_json_name not in zf.namelist():
-                continue
-            run_data = _json.loads(zf.read(run_json_name))
-            run = run_data["run"]
-            params = run_data.get("params", [])
-            summary = run_data.get("summary", [])
-
-            project_id = run.get("project_id", "imported")
-            existing = db.read_columns("SELECT id FROM projects WHERE id = ?", [project_id])
-            if not existing:
-                db.write(
-                    "INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)",
-                    [project_id, project_id, _utc_now().isoformat()],
-                )
-            db.write(
-                """INSERT OR IGNORE INTO runs (id, project_id, display_name, created_at, ended_at,
-                                               status, exit_code, git_sha, git_dirty, git_branch,
-                                               cli_args, env_snapshot, hostname, "user", tags, notes)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                [
-                    original_id,
-                    project_id,
-                    run.get("display_name") or run.get("id", original_id),
-                    run.get("created_at", _utc_now().isoformat()),
-                    run.get("ended_at"),
-                    run.get("status", "completed"),
-                    run.get("exit_code"),
-                    run.get("git_sha"),
-                    run.get("git_dirty"),
-                    run.get("git_branch"),
-                    run.get("cli_args"),
-                    run.get("env_snapshot"),
-                    run.get("hostname"),
-                    run.get("user"),
-                    run.get("tags"),
-                    run.get("notes"),
-                ],
-            )
-            for table, table_rows in (("params", params), ("summary", summary)):
-                for p in table_rows:
-                    db.write(
-                        f"INSERT OR IGNORE INTO {table} (run_id, key, value, value_type) VALUES (?, ?, ?, ?)",
-                        [original_id, p["key"], p["value"], p.get("value_type", "str")],
-                    )
-            seq_json_name = prefix + "sequences.json"
-            if seq_json_name in zf.namelist():
-                for row in _json.loads(zf.read(seq_json_name)):
-                    db.write(
-                        """INSERT OR IGNORE INTO sequences
-                           (run_id, name, step, wall_time, context, context_hash,
-                            object_type, scalar_value, artifact_hash)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        [
-                            original_id, row["name"], row["step"],
-                            row.get("wall_time", ""), row.get("context"),
-                            row.get("context_hash", ""),
-                            row.get("object_type", "scalar"),
-                            row.get("scalar_value"), row.get("artifact_hash"),
-                        ],
-                    )
-            ra_name = prefix + "run_artifacts.json"
-            if ra_name in zf.namelist():
-                try:
-                    for ra in _json.loads(zf.read(ra_name)):
-                        db.write(
-                            """INSERT OR IGNORE INTO run_artifacts
-                               (run_id, name, hash, step, created_at) VALUES (?, ?, ?, ?, ?)""",
-                            [original_id, ra["name"], ra["hash"],
-                             ra.get("step") if ra.get("step") is not None else -1,
-                             _utc_now().isoformat()],
-                        )
-                except (_json.JSONDecodeError, KeyError):
-                    pass
-            # Logs
-            log_prefix = prefix + "logs/"
-            for name in zf.namelist():
-                if name.startswith(log_prefix) and not name.endswith("/"):
-                    fname = name[len(log_prefix):]
-                    run_log_dir = dd.logs_dir / original_id
-                    run_log_dir.mkdir(parents=True, exist_ok=True)
-                    (run_log_dir / fname).write_bytes(zf.read(name))
-            # Source
-            src_prefix = prefix + "source/"
-            for name in zf.namelist():
-                if name.startswith(src_prefix) and not name.endswith("/"):
-                    fname = name[len(src_prefix):]
-                    run_src_dir = dd.sources_dir / original_id
-                    run_src_dir.mkdir(parents=True, exist_ok=True)
-                    (run_src_dir / fname).write_bytes(zf.read(name))
-
-    db.close()
-    # Suppress unused secrets import warning by using it implicitly.
-    _ = _secrets
+    try:
+        with _zipfile.ZipFile(zip_path) as zf:
+            try:
+                restore_archive(db, _BlobStore(dd.artifacts_dir), dd, zf, keep_ids=True)
+            except ValueError as e:
+                raise ValueError(f"Invalid Cairn ZIP archive (no manifest.json): {zip_path}") from e
+    finally:
+        db.close()
     return tempdir, repo_path
 
 

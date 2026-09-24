@@ -47,8 +47,11 @@ class QueryNotFound(LookupError):
 
 # Top-level run columns filterable directly (everything else is a param key).
 # Mirrors ``reader._RUN_FIELDS`` but maps to DB column names where they differ.
-_RUN_FIELDS = {"name", "status", "project", "tags", "id", "hostname", "user", "notes"}
-_FIELD_TO_COLUMN = {"name": "display_name", "project": "project_id"}
+_RUN_FIELDS = {
+    "name", "status", "project", "tags", "id", "hostname", "user", "notes",
+    "group", "job_type",
+}
+_FIELD_TO_COLUMN = {"name": "display_name", "project": "project_id", "group": "run_group"}
 
 
 @dataclass(frozen=True)

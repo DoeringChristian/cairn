@@ -61,6 +61,7 @@ def test_updates_from_zero_returns_everything_with_a_cursor(client):
             "artifact_hash",
             "context",
             "object_type",
+            "metadata",
             "artifact_mime",
             "artifact_size",
             "artifact_metadata",
