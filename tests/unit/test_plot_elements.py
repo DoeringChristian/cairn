@@ -24,9 +24,12 @@ import pytest
 
 import cairn
 import cairn.plot as cplot
+import cairn.ui as cui
 from cairn_plot import bundle as _pb
-from cairn_ui.cards.spec import CardSpec, CardsSpec, PlotDescriptorSpec, RunsSpec
-from cairn_ui.cards.elements import CardElement, HtmlElement, PlotElement
+from cairn_plot.spec import PlotDescriptorSpec
+from cairn_ui.cards.spec import CardSpec, CardsSpec, RunsSpec
+from cairn_plot.elements import HtmlElement, PlotElement
+from cairn_ui.cards.elements import CardElement
 from cairn.sdk.reader import DataRef, Reader
 
 
@@ -149,25 +152,22 @@ def test_scalar_with_dataref_emits_schema_valid_plot(two_runs):
     assert [p["x"] for p in series[0]["points"]] == [0, 1, 2]
 
 
-def test_media_compare_sets_two_series_and_mode(two_runs):
+def test_media_compare_sets_one_series_per_source(two_runs):
     _reader, run_a, run_b = two_runs
-    el = cplot.media_compare(run_a["loss"], run_b["loss"], mode="diff")
+    el = cui.media_compare(run_a["loss"], run_b["loss"])
     spec = _validate_card_spec(el.spec)
     assert spec.type == "image"
     assert [s.runId for s in spec.series] == [run_a.id, run_b.id]
-    assert spec.settings is not None
+
+
+def test_image_compare_same_run_becomes_a_reference_split(two_runs):
+    _reader, run_a, _run_b = two_runs
+    el = cui.image_compare(run_a["loss"], run_a["thing"])
+    spec = _validate_card_spec(el.spec)
+    assert spec.type == "image"
+    assert [s.name for s in spec.series] == ["loss"]
     settings = spec.settings.model_dump(exclude_none=True)
-    assert settings.get("mode") == "diff"
-    # RC1 (WS-MCFIX): a real reference designated — index 0 (`a`) — or the
-    # compositor's diff/split/blend never resolve a pane to diff against and
-    # silently render as unmodified "side" output.
-    assert settings.get("baselineIndex") == 0
-
-
-def test_media_compare_rejects_bad_mode(two_runs):
-    _reader, run_a, run_b = two_runs
-    with pytest.raises(ValueError):
-        cplot.media_compare(run_a["loss"], run_b["loss"], mode="not-a-mode")
+    assert settings["reference"]["name"] == "thing"
 
 
 def _mesh_raw():
@@ -213,19 +213,19 @@ def test_single_view_3d_builders_emit_self_contained_plotelement(fn, args, objec
 @pytest.mark.parametrize(
     "fn,card_type",
     [
-        (cplot.image_compare, "image"),
-        (cplot.mesh_compare, "mesh"),
-        (cplot.pointcloud_compare, "pointcloud"),
-        (cplot.volume_compare, "volume"),
-        (cplot.boxes_compare, "boxes3d"),
+        (cui.image_compare, "image"),
+        (cui.mesh_compare, "mesh"),
+        (cui.pointcloud_compare, "pointcloud"),
+        (cui.volume_compare, "volume"),
+        (cui.boxes_compare, "boxes3d"),
     ],
 )
-def test_typed_compare_wrappers_delegate_to_media_compare(two_runs, fn, card_type):
+def test_typed_compare_wrappers_across_runs_are_side_by_side(two_runs, fn, card_type):
     _reader, run_a, run_b = two_runs
-    el = fn(run_a["thing"], run_b["thing"], mode="blend")
+    el = fn(run_a["thing"], run_b["thing"])
     spec = _validate_card_spec(el.spec)
     assert spec.type == card_type
-    assert spec.settings.model_dump(exclude_none=True).get("mode") == "blend"
+    assert [s.runId for s in spec.series] == [run_a.id, run_b.id]
 
 
 def test_dataref_step_becomes_settings_step(two_runs):
@@ -233,7 +233,7 @@ def test_dataref_step_becomes_settings_step(two_runs):
     # single-view builders are now self-contained PlotElements (G3b), so the
     # remaining CardElement path is `media_compare` — which still threads step.
     _reader, run_a, run_b = two_runs
-    el = cplot.media_compare(run_a["loss"][2], run_b["loss"], mode="blend")
+    el = cui.media_compare(run_a["loss"][2], run_b["loss"])
     spec = _validate_card_spec(el.spec)
     assert spec.settings is not None
     assert spec.settings.model_dump(exclude_none=True).get("step") == 2.0
@@ -242,7 +242,7 @@ def test_dataref_step_becomes_settings_step(two_runs):
 def test_pointcloud_raw_emits_self_contained_plotelement():
     # G3a: cp.pointcloud(raw) bakes an npz DataSpec + the three.js addon, no
     # server needed.
-    from cairn_ui.cards.elements import PlotElement
+    from cairn_plot.elements import PlotElement
 
     xyz = np.random.default_rng(0).random((64, 3)).astype("float32")
     el = cplot.pointcloud(xyz)
@@ -256,7 +256,7 @@ def test_media_compare_raw_data_raises_notimplemented():
     raw_a = np.zeros((4, 4, 3), dtype=np.uint8)
     raw_b = np.ones((4, 4, 3), dtype=np.uint8)
     with pytest.raises(NotImplementedError, match="WS-INLINE"):
-        cplot.media_compare(raw_a, raw_b)
+        cui.media_compare(raw_a, raw_b)
 
 
 def test_scalar_raw_data_bakes_local_plot_element():
@@ -377,7 +377,7 @@ def test_card_element_spec_is_reusable_in_a_cairn_fence_shaped_doc(two_runs):
     ```cairn fence root) without further translation — no card-spec fork.
     (Uses `media_compare`, the remaining `CardElement`-emitting builder.)"""
     _reader, run_a, run_b = two_runs
-    el = cplot.media_compare(run_a["loss"], run_b["loss"])
+    el = cui.media_compare(run_a["loss"], run_b["loss"])
     doc = CardsSpec(runs=RunsSpec(ids=[run_a.id]), cards=[CardSpec.model_validate(el.spec)])
     assert doc.cards[0].series[0].runId == run_a.id
 
@@ -487,7 +487,7 @@ def test_plot_builder_threads_repo_path_and_autodiscovers_live_server(two_runs, 
     try:
         # `media_compare` returns a CardElement (iframe) whose server is
         # auto-discovered from the Reader's repo — the path this fix targets.
-        el = cplot.media_compare(run_a["loss"], run_a["loss"])
+        el = cui.media_compare(run_a["loss"], run_a["loss"])
         assert el._repo_path == repo_path
         html = el._repr_html_()
         assert f"http://localhost:{parts.port}/embed/card?sid=" in html
@@ -527,7 +527,7 @@ def test_plot_builder_threads_reader_server_end_to_end(two_runs_http_reader):
 
     port = urlsplit(reader._backend.server_url).port
     # media_compare → CardElement iframe against the reader's own server.
-    el = cplot.media_compare(run_a["loss"], run_a["loss"])
+    el = cui.media_compare(run_a["loss"], run_a["loss"])
     html = el._repr_html_()
     assert f":{port}/embed/card?sid=" in html
     sid = html.split("sid=", 1)[1].split('"', 1)[0]

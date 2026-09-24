@@ -303,15 +303,13 @@ plot = [
     { name = "cairn-plot" },
 ]
 ui = [
-    { name = "cairn-plot" },
     { name = "cairn-ui" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "cairn-plot", marker = "extra == 'plot'", editable = "vendor/cairn-plot" },
-    { name = "cairn-track", extras = ["plot"], marker = "extra == 'ui'" },
-    { name = "cairn-track", extras = ["ui"], marker = "extra == 'dev'" },
+    { name = "cairn-track", extras = ["ui", "plot"], marker = "extra == 'dev'" },
     { name = "cairn-ui", marker = "extra == 'ui'", editable = "vendor/cairn-ui" },
     { name = "click", specifier = ">=8.1.0" },
     { name = "datasets", marker = "extra == 'hf'", specifier = ">=2.18" },
@@ -360,15 +358,11 @@ name = "cairn-ui"
 version = "0.2.0"
 source = { editable = "vendor/cairn-ui" }
 dependencies = [
-    { name = "cairn-plot" },
     { name = "cairn-track" },
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "cairn-plot", specifier = ">=0.1,<0.2" },
-    { name = "cairn-track" },
-]
+requires-dist = [{ name = "cairn-track" }]
 
 [[package]]
 name = "certifi"

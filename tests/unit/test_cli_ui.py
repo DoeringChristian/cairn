@@ -236,18 +236,9 @@ def test_cairn_ui_remote_repo_selects_local_proxy(monkeypatch):
     captured = {}
     real_factory = proxy.create_proxy_app
 
-    def capture_factory(upstream, *, token=None, disable_webgpu=False, transport=None):
-        captured.update(
-            upstream=upstream,
-            token=token,
-            disable_webgpu=disable_webgpu,
-        )
-        return real_factory(
-            upstream,
-            token=token,
-            disable_webgpu=disable_webgpu,
-            transport=transport,
-        )
+    def capture_factory(upstream, *, token=None, transport=None):
+        captured.update(upstream=upstream, token=token)
+        return real_factory(upstream, token=token, transport=transport)
 
     opened = []
     monkeypatch.setattr(proxy, "create_proxy_app", capture_factory)
@@ -264,19 +255,16 @@ def test_cairn_ui_remote_repo_selects_local_proxy(monkeypatch):
             "cairn://fermat:4300",
             "--port",
             str(captured_port),
-            "--no-webgpu",
         ],
     )
     assert result.exit_code == 0, result.output
     assert captured == {
         "upstream": "http://fermat:4300",
         "token": "from-environment",
-        "disable_webgpu": True,
     }
     assert "Cairn UI proxy" in result.output
     assert "Remote:  http://fermat:4300" in result.output
     assert "from-environment" not in result.output
-    assert "Renderer: CPU (--no-webgpu)" in result.output
     assert opened == [f"http://localhost:{captured_port}/"]
 
 

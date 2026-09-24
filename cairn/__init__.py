@@ -35,7 +35,6 @@ _LAZY_ATTRS: dict[str, str] = {
     "Reader": ".sdk.reader",
     "query_url": ".sdk.query_urls",
     "register_handler": ".sdk.handlers.registry",
-    "Report": ".ui",
     "Artifact": ".sdk.wrappers",
     "Audio": ".sdk.wrappers",
     "Boxes3D": ".sdk.wrappers",
@@ -60,7 +59,6 @@ if TYPE_CHECKING:  # static-analysis only — never executed, never eager at run
     from . import ui as ui
     from .sdk.query_urls import query_url
     from .sdk.reader import Reader
-    from .ui import Report
     from .sdk.run import ArtifactVersion, Run
     from .sdk.handlers.registry import register_handler
     from .sdk.wrappers import (
@@ -92,13 +90,11 @@ if TYPE_CHECKING:  # static-analysis only — never executed, never eager at run
 _EXTRA_FOR = {
     "plot": "plot",
     "ui": "ui",
-    "Report": "ui",
 }
 
 _WHAT = {
     "plot": "the renderer surface",
-    "ui": "the Cairn viewer surface (cards, embeds, the notebook report)",
-    "Report": "the notebook report container",
+    "ui": "the Cairn viewer surface (cards and notebook embeds)",
 }
 
 from . import viewer as _viewer  # stdlib-only; widens no import closure
@@ -161,7 +157,6 @@ __all__ = [
     "ArtifactVersion",
     "plot",
     "ui",
-    "Report",
     "Artifact",
     "Image",
     "Figure",

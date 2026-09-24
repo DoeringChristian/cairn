@@ -36,32 +36,27 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# The browser viewer. `cairn-track` itself ships no UI assets: tracking, the
-# CLI and the HTTP API all work without this. Pinned exactly and bumped in
-# lock-step — the bundle encodes the /api/* response shapes and the card-spec
-# schema this server produces, so skew is a bug, not a compatibility window.
-# Two halves, gated separately like ray[tune] / ray[serve].
+# The optional halves, gated separately.
 #
-#   [plot] unlocks `cairn.plot` — the renderer surface.
-#   [ui]   unlocks `cairn.ui` (cards, embeds, the notebook report container)
-#          AND the browser viewer itself.
-#
-# [ui] implies [plot]: the card surface subclasses cairn-plot's Element and
-# builds on its spec models, so a viewer install without a renderer cannot work.
+#   [plot] unlocks `cairn.plot` — cairn-plot, for notebooks and standalone
+#          HTML reports.
+#   [ui]   unlocks `cairn.ui` (cards and notebook embeds) AND the browser
+#          viewer itself. The viewer draws with its own libraries; it does
+#          not need cairn-plot.
 #
 # Both are pinned to a git commit rather than a version range, because neither
 # is on PyPI (nor is cairn-track). A range would send pip to an index that
 # answers 404, so `pip install 'cairn-track[ui]'` would fail at resolution
-# before it ever got to the wheels. A commit is also the honest expression of
-# the lock-step rule above: not a window, one build. Bump these together with
-# vendor/<pkg>; test_package_boundaries.py enforces that they agree. Swap both
-# back to version ranges the day the packages are published.
+# before it ever got to the wheels. The viewer pin is lock-step with this
+# server — the bundle encodes the /api/* response shapes and the card-spec
+# schema — so bump it together with vendor/cairn-ui; test_package_boundaries.py
+# enforces that they agree. Swap both back to version ranges the day the
+# packages are published.
 plot = [
     "cairn-plot @ git+https://github.com/doeringchristian/cairn-plot@fadd844f890c674966d9f0af8d4e46bf96e42725",
 ]
 ui = [
-    "cairn-track[plot]",
-    "cairn-ui @ git+https://github.com/DoeringChristian/cairn-ui@1bd31c0640853502c30a720a66bfa1e29a3f9300",
+    "cairn-ui @ git+https://github.com/DoeringChristian/cairn-ui@87205840e1392e315f952825d907eebe46e93b17",
 ]
 media = [
     "matplotlib>=3.7",
@@ -82,10 +77,10 @@ examples = [
     "marimo>=0.10",
 ]
 dev = [
-    # The viewer half, so a dev checkout can exercise everything the `ui`
-    # extra unlocks. Via the extra, so the git pins live in exactly one place;
+    # Both optional halves, so a dev checkout can exercise everything they
+    # unlock. Via the extras, so the git pins live in exactly one place;
     # [tool.uv.sources] below redirects both to the local checkouts anyway.
-    "cairn-track[ui]",
+    "cairn-track[ui,plot]",
     "pytest>=8.0",
     "pytest-cov>=4.1",
     "pytest-asyncio>=0.23",

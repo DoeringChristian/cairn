@@ -25,12 +25,11 @@ _ENV_OVERRIDE = "CAIRN_UI_DIST"
 _DIST_DIRNAME = "_dist"
 _ASSETS = "assets"
 
-#: The three separately-built HTML entries the viewer ships. Named here so no
+#: The separately-built HTML entries the viewer ships. Named here so no
 #: other module has to spell a filename — see the boundary test.
 INDEX = "index.html"
 EMBED = "embed.html"
-PLOT = "plot.html"
-SHELLS = (INDEX, EMBED, PLOT)
+SHELLS = (INDEX, EMBED)
 
 _INDEX = INDEX  # internal alias kept for the completeness check below
 
@@ -126,19 +125,7 @@ def assets_dir() -> Path | None:
     return None if dist is None else dist / _ASSETS
 
 
-def inject_cpu_override(html: bytes) -> bytes:
-    """Pin cairn-plot to its CPU renderer before the app module runs.
-
-    An inline script placed just before ``</head>``: module scripts are
-    deferred, so this executes first regardless of where the bundler hoisted
-    them.
-    """
-    marker = b"</head>"
-    override = b'<script>globalThis.__cairnPlotRenderMode="cpu";</script>'
-    return html.replace(marker, override + marker, 1)
-
-
-def shell(name: str, *, disable_webgpu: bool = False) -> bytes | None:
+def shell(name: str) -> bytes | None:
     """Read one browser shell, or None when the viewer or that shell is absent."""
     if name not in SHELLS:
         raise ValueError(f"unknown viewer shell: {name!r}")
@@ -148,8 +135,7 @@ def shell(name: str, *, disable_webgpu: bool = False) -> bytes | None:
     path = dist / name
     if not path.is_file():
         return None
-    content = path.read_bytes()
-    return inject_cpu_override(content) if disable_webgpu else content
+    return path.read_bytes()
 
 
 def version() -> str | None:

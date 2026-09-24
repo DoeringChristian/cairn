@@ -61,7 +61,6 @@ def create_app(
     data_dir_obj: DataDir | None = None,
     mount_ui: bool = False,
     auth_enabled: bool = False,
-    disable_webgpu: bool = False,
 ) -> FastAPI:
     """Build a FastAPI app.
 
@@ -86,9 +85,6 @@ def create_app(
             False so existing test fixtures (``tests/conftest.py``) and
             library callers of ``create_app()`` are unaffected; the CLI
             (``cairn server`` / ``cairn ui``) opts in unless ``--no-auth``.
-        disable_webgpu: Inject a pre-bootstrap CPU renderer override into the
-            served browser shells. Used by ``cairn ui --no-webgpu`` for
-            deterministic development and fallback testing.
     """
     owns_db = db is None
     if (db is None) != (blobs is None) or (db is None) != (data_dir_obj is None):
@@ -213,7 +209,7 @@ def create_app(
         app.include_router(router, dependencies=[Depends(require("write"))])
 
     if mount_ui:
-        mount_viewer(app, disable_webgpu=disable_webgpu)
+        mount_viewer(app)
     else:
         @app.get("/", include_in_schema=False)
         def _ingest_root() -> JSONResponse:

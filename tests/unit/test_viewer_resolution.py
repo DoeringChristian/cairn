@@ -70,14 +70,10 @@ def test_the_default_app_registers_no_spa_catch_all(tmp_path) -> None:
     assert TestClient(app).get("/definitely-not-a-route").status_code == 404
 
 
-@pytest.mark.parametrize("disable_webgpu", [False, True])
-def test_shell_applies_the_cpu_override_only_when_asked(
-    tmp_path, monkeypatch, disable_webgpu: bool
-) -> None:
-    monkeypatch.setenv("CAIRN_UI_DIST", str(_bundle(tmp_path / "b")))
-    html = viewer.shell(viewer.INDEX, disable_webgpu=disable_webgpu)
-    assert html is not None
-    assert (b'__cairnPlotRenderMode="cpu"' in html) is disable_webgpu
+def test_shell_serves_the_bundle_bytes_unchanged(tmp_path, monkeypatch) -> None:
+    bundle = _bundle(tmp_path / "b")
+    monkeypatch.setenv("CAIRN_UI_DIST", str(bundle))
+    assert viewer.shell(viewer.INDEX) == (bundle / "index.html").read_bytes()
 
 
 def test_shell_rejects_a_name_that_is_not_a_known_entry(tmp_path, monkeypatch) -> None:

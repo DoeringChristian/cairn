@@ -16,10 +16,9 @@ On top of that pure surface it layers cairn's run-integration extras, which
   tracking-handler serializers so raw tabular / 3D-array data
   (``cp.Table(df)`` / ``cp.PointCloud(arr)``) shapes through the exact same
   ``handlers/*`` code the tracking path uses;
-The comparison card helpers that used to live here moved to :mod:`cairn.ui`
-(``cairn.ui.media_compare`` and friends): they build a card spec for the
-browser's renderer rather than rendering anything, so they belong with the rest
-of the viewer surface. They are re-exported below for one release.
+The comparison card helpers live in :mod:`cairn.ui` (``cairn.ui.media_compare``
+and friends): they build a card spec for the browser's viewer rather than
+rendering anything.
 """
 
 from __future__ import annotations
@@ -110,45 +109,4 @@ register_resolvers(
     serialize_boxes3d=_serialize_boxes3d,
 )
 
-# Compatibility shim: the card helpers moved to `cairn.ui`. Kept reachable from
-# `cairn.plot` for one release — but resolved LAZILY, because they live in the
-# viewer distribution and eagerly importing them would make the renderer extra
-# depend on the viewer extra.
-_MOVED_TO_UI = (
-    "media_compare",
-    "image_compare",
-    "mesh_compare",
-    "pointcloud_compare",
-    "volume_compare",
-    "boxes_compare",
-)
-
-
-def __getattr__(name: str):
-    if name in _MOVED_TO_UI:
-        try:
-            from cairn_ui.cards import compare as _compare
-        except ImportError as exc:
-            raise ImportError(
-                f"`cairn.plot.{name}` moved to `cairn.ui.{name}` and ships with "
-                "the viewer.\n"
-                "\n"
-                "    pip install 'cairn-track[ui]'\n"
-                "\n"
-                "It builds a card for the browser to render rather than drawing "
-                "anything, which is why it lives there now."
-            ) from exc
-        return getattr(_compare, name)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-# The public surface = the standalone cairn_plot surface + the compatibility
-# re-export of the card helpers above.
-__all__ = list(_cairn_plot.__all__) + [
-    "media_compare",
-    "image_compare",
-    "mesh_compare",
-    "pointcloud_compare",
-    "volume_compare",
-    "boxes_compare",
-]
+__all__ = list(_cairn_plot.__all__)

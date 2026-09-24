@@ -24,6 +24,7 @@ point on a compute node that will only ever log metrics. `cairn ui` and
 Optional extras:
 
 - `cairn-track[ui]` — the browser viewer (`cairn ui`, `cairn server --ui`)
+- `cairn-track[plot]` — `cairn.plot`, for notebooks and standalone HTML reports
 - `cairn-track[media]` — matplotlib, plotly, imageio, soundfile for richer media handlers
 - `cairn-track[hf]` — HuggingFace Trainer integration
 - `cairn-track[discovery]` — zeroconf/mDNS server discovery on the LAN
@@ -227,14 +228,15 @@ uv run --extra examples --extra media marimo edit examples/marimo_cairn_demo.py
 
 This project uses [uv](https://docs.astral.sh/uv/) for Python and npm for the UI.
 
-The [cairn-plot](https://github.com/doeringchristian/cairn-plot) rendering
-library is vendored as a git submodule at `vendor/cairn-plot` (both the Python
-package, via a uv path source, and the TS renderer source the app build bundles
-come from there). Clone with submodules:
+The browser viewer ([cairn-ui](https://github.com/DoeringChristian/cairn-ui))
+and the [cairn-plot](https://github.com/doeringchristian/cairn-plot) notebook /
+HTML-report library are vendored as git submodules under `vendor/`. The viewer
+does not use cairn-plot; `cairn.plot` (the `plot` extra) does. Clone with
+submodules:
 
 ```bash
 git clone --recurse-submodules https://github.com/DoeringChristian/cairn
-# already cloned? pull the submodule in:
+# already cloned? pull the submodules in:
 git submodule update --init --recursive
 ```
 
