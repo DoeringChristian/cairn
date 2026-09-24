@@ -134,7 +134,7 @@ def test_m1_json_script_safe_escapes_all_breakout_sequences():
 
 def test_m2_no_external_cdn_or_network(figure_obj):
     # M2 is about the EMIT WRAPPER: the offline HTML Python generates must not
-    # pull a CDN (the plot.html shell's font-awesome `<link>` must NOT appear)
+    # pull a CDN (no font-awesome `<link>` like the viewer's shells carry)
     # nor add any external src/href/@import. Strip the inlined core JS + CSS AND
     # the figure-addon JS first (O2 bundle-split) — the bundled plotly
     # legitimately carries W3C XML namespace URIs and map-tile attribution string

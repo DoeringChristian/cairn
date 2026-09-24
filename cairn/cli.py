@@ -411,8 +411,8 @@ def ui_cmd(
 ) -> None:
     """Serve the Cairn viewer over a local repo or remote Cairn server.
 
-    A remote ``--repo cairn://HOST:PORT`` keeps the page on loopback (and thus
-    WebGPU-capable) while proxying relative API requests to the server. Set
+    A remote ``--repo cairn://HOST:PORT`` keeps the page on loopback (a browser
+    secure context) while proxying relative API requests to the server. Set
     ``CAIRN_TOKEN`` to authenticate server-side, or omit it and log in through
     the browser. ``--no-auth`` applies only to local-repo mode.
     """

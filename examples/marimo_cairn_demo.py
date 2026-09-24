@@ -4,8 +4,7 @@ Shows the cairn read API (``cairn.Reader``) and the pure-numpy Plotly
 helpers in ``cairn.plot`` (confusion_matrix, roc_curve, pr_curve, bar,
 line_series — see ``cairn/plot.py``) rendering directly inside marimo
 cells, plus the WS-PYAPI Python element/report API — ``run[tag]`` lazy
-handles, ``cairn.plot.media_compare``/friends, and the notebook-only
-``cairn.Report`` container (see
+handles, ``cairn.ui.media_compare``/friends, and ``cairn.plot.Report`` (see
 ``docs/superpowers/specs/2026-07-07-notebook-python-and-embed.md``, the
 WS-PYAPI section + §11).
 
@@ -246,7 +245,7 @@ def _(cairn, latest_run):
 def _(mo):
     mo.md(
         r"""
-        ## 4. `cairn.plot` elements + `cairn.Report` (WS-PYAPI)
+        ## 4. Viewer cards + `cairn.plot.Report` (WS-PYAPI)
 
         A Python **element**/report API lets you build individual
         cairn-plot elements — and assemble a lightweight report from them —
@@ -257,10 +256,10 @@ def _(mo):
         `run[tag]` (added to `cairn.sdk.reader.Run`) is a **lazy** handle
         over a tracked sequence/artifact — it resolves only when an element
         actually renders, never at `run[tag]` construction time.
-        `cairn.plot.media_compare(a, b, mode=...)` (alongside the
-        single-view `scalar`/`image`/`mesh`/`pointcloud`/`volume`/`boxes`/
-        `table`/`figure` builders in the same module) takes such handles and
-        builds one schema-validated card spec. The returned `Element`
+        `cairn.ui.media_compare(a, b)` / `cairn.ui.image_compare(a, b)` take
+        such handles and build one schema-validated viewer card spec (the
+        `cairn.plot` builders — `scalar`/`image`/`figure`/… — draw
+        self-contained plots instead). The returned `CardElement`
         implements `_repr_html_`/`_repr_mimebundle_`, so it renders as a
         live `/embed/card` iframe right here in the cell **when a cairn
         server is reachable** (start one with `cairn ui --repo
@@ -268,10 +267,11 @@ def _(mo):
         auto-discovered, no port needed), and falls back to an inline
         notice — no exception — when one isn't.
 
-        `cairn.Report` is a **notebook-only container** (no server
-        `publish()` — the notebook itself is the report): `.md(...)`
-        appends prose, `.add(el)` appends an element, and the report's own
-        `_repr_html_` renders every block inline, in order.
+        `cairn.plot.Report` assembles prose and plots: `.md(...)` appends
+        prose, `.add(component)` a `cairn.plot` component, and `.html(...)`
+        raw markup — which is how a viewer card goes in
+        (`report.html(card._repr_html_())`). It renders inline via
+        `_repr_html_`, or `.save(path)` writes one HTML file.
 
         `media_compare` needs *image* data, which `demo_plot_helpers.py`
         (section 2/3's project) doesn't log — seed it separately with:
@@ -298,15 +298,13 @@ def _(cairn, latest_run, mo, reader):
         run_a, run_b = _image_runs[0], _image_runs[1]
 
         # `run[tag]` is a LAZY handle — no fetch happens on this line.
-        # `media_compare` builds + schema-validates one card spec from the
-        # two handles ("diff" = the pixel-diff image-space compositor); a
-        # single-series element would be e.g.
-        # `cairn.plot.scalar(run_a["quality.mae"])`.
-        el = cairn.plot.media_compare(run_a["output"], run_b["output"], mode="diff")
+        # `media_compare` builds + schema-validates one viewer card spec from
+        # the two handles: one pane per run, zoom kept together.
+        el = cairn.ui.media_compare(run_a["output"], run_b["output"])
 
-        report = cairn.Report(name="Image comparison", project="image-comparison-demo")
+        report = cairn.plot.Report(title="Image comparison")
         report.md(f"## Results\nComparing `{run_a.name}` vs. `{run_b.name}`.")
-        report.add(el)
+        report.html(el._repr_html_())
         pyapi_demo = report  # renders inline via _repr_html_/_repr_mimebundle_
     elif latest_run is not None and "eval.roc_curve" in [
         s.name for s in latest_run.sequences()
@@ -315,7 +313,7 @@ def _(cairn, latest_run, mo, reader):
         # server-backed element (never a dead cell) from whatever real data
         # section 2/3's query above already found.
         el = cairn.plot.figure(latest_run["eval.roc_curve"])
-        report = cairn.Report(name="ROC curve", project="plot-helpers-demo")
+        report = cairn.plot.Report(title="ROC curve")
         report.md(
             "No `image-comparison-demo` runs found (2+ needed to demo "
             "`media_compare`) — generate them with `uv run --extra examples "

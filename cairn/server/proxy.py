@@ -1,6 +1,6 @@
 """Local SPA + same-origin proxy for a remote Cairn server.
 
-The browser loads Cairn from loopback (a WebGPU secure context) and talks only
+The browser loads Cairn from loopback (a browser secure context) and talks only
 relative ``/api/*`` URLs. This app streams those requests to the selected
 remote server, keeping CORS and remote credentials out of browser configuration.
 """

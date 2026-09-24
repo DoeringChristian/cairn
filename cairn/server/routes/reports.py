@@ -48,7 +48,7 @@ _FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})[ \t]*(.*)$")
 
 def _count_source_segments(source: str) -> int:
     """B11 fix: count top-level blocks directly from `source` for a
-    source-only report (SDK/`cairn.Report` ships `{source}` with no
+    source-only report (a client that ships only `{source}`, with no
     `blocks[]` cache — see AR1 §6) instead of misreporting "0 blocks".
 
     Approximates `lib/reports/markdown-source.ts`'s `splitFences`: a run of

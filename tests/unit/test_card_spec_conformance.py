@@ -1,6 +1,6 @@
 """WS-SCHEMA conformance: the hand-written pydantic mirror in
 ``vendor/cairn-ui/cairn_ui/cards/spec.py`` must match the committed JSON Schema
-``docs/schemas/cairn-card-spec.schema.json`` (which is itself generated from
+``vendor/cairn-ui/docs/schemas/cairn-card-spec.schema.json`` (which is itself generated from
 the authoritative TS in ``vendor/cairn-ui/src/lib/cards/card-spec.ts``).
 
 This is the Python half of the anti-drift chain: TS -> JSON Schema
@@ -25,7 +25,8 @@ from pydantic import ValidationError
 from cairn_ui.cards import spec as cs
 
 _SCHEMA_PATH = (
-    Path(__file__).resolve().parents[2] / "docs" / "schemas" / "cairn-card-spec.schema.json"
+    Path(__file__).resolve().parents[2]
+    / "vendor" / "cairn-ui" / "docs" / "schemas" / "cairn-card-spec.schema.json"
 )
 
 

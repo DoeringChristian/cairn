@@ -55,6 +55,16 @@ session-level plans live in `~/.claude/plans/`.
 
 ### UI
 
+- ✅ **Viewer without cairn-plot** — charts on uPlot (scalars) and Plotly
+  (everything else), images in a zoom/pan viewer whose only comparison is an
+  A/B divider against a reference tag (← / → flip to either side), 3D on
+  three.js. Encodings the browser can't decode (EXR, npy, volumes) show a
+  thumbnail and a download. `cairn.Image` logs PNG unless `encoding=` asks for
+  EXR. cairn-plot remains the notebook / HTML-report library (`cairn.plot`).
+
+- 💭 **Image overlays** — boxes / masks / class labels are still logged but
+  not drawn by the new image viewer.
+
 - ✅ Card download buttons (artifacts) + chart export (SVG/PNG/JPG composite)
 - ✅ Image comparison with per-run/global ref, split/blend modes, quick diff
 - ✅ Shift-select in runs table and comparison sidebar

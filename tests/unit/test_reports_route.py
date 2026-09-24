@@ -57,8 +57,8 @@ def test_list_reports_summary_and_block_count(client):
 
 
 def test_list_reports_block_count_source_only(client):
-    # B11: an SDK/`cairn.Report`-created report ships `{source}` with no
-    # `blocks[]` cache (AR1 §6) — block_count must not misreport "0 blocks".
+    # B11: a source-only report ships `{source}` with no `blocks[]` cache
+    # (AR1 §6) — block_count must not misreport "0 blocks".
     project_id = _make_project(client)
     source_payload = {
         "source": "Some intro prose.\n\n```cairn\nruns:\n  ids: []\ncards: []\n```\n\nMore prose after.\n",
