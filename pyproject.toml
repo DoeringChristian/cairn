@@ -76,11 +76,15 @@ discovery = [
 examples = [
     "marimo>=0.10",
 ]
+export = [
+    "pandas>=2.0",
+    "pyarrow>=14.0",
+]
 dev = [
-    # Both optional halves, so a dev checkout can exercise everything they
-    # unlock. Via the extras, so the git pins live in exactly one place;
+    # Both optional halves (and the export deps), so a dev checkout can
+    # exercise everything they unlock. Via the extras, so the git pins live in exactly one place;
     # [tool.uv.sources] below redirects both to the local checkouts anyway.
-    "cairn-track[ui,plot]",
+    "cairn-track[ui,plot,export]",
     "pytest>=8.0",
     "pytest-cov>=4.1",
     "pytest-asyncio>=0.23",
@@ -95,6 +99,7 @@ dev = [
     "soundfile>=0.12",
     "zeroconf>=0.132",
     "transformers>=4.40",
+    "torch>=2.0",
 ]
 
 [project.scripts]

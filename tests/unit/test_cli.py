@@ -122,6 +122,75 @@ def test_export_json(live_server, monkeypatch, tmp_path):
     assert "loss" in payload["sequences"]
 
 
+def _seed_two_context_run(live_server) -> str:
+    import httpx
+
+    with httpx.Client(base_url=live_server) as c:
+        rid = c.post("/api/runs", json={"project": "p"}).json()["run_id"]
+        c.post(
+            f"/api/runs/{rid}/batch",
+            json={
+                "points": [
+                    {"name": "loss", "step": 0, "wall_time": "2025-01-01T00:00:00Z",
+                     "object_type": "scalar", "scalar_value": 0.5},
+                    {"name": "loss", "step": 1, "wall_time": "2025-01-01T00:00:01Z",
+                     "object_type": "scalar", "scalar_value": 0.25},
+                    {"name": "loss", "step": 0, "wall_time": "2025-01-01T00:00:02Z",
+                     "context": {"subset": "val"},
+                     "object_type": "scalar", "scalar_value": 0.75},
+                ]
+            },
+        )
+    return rid
+
+
+def test_export_csv_has_context_and_no_duplicates(live_server, monkeypatch, tmp_path):
+    import csv
+
+    monkeypatch.setenv("CAIRN_SERVER", live_server)
+    rid = _seed_two_context_run(live_server)
+    out = tmp_path / "run.csv"
+    result = CliRunner().invoke(
+        cli.main, ["export", rid, "--format", "csv", "--out", str(out)]
+    )
+    assert result.exit_code == 0, result.output
+    with open(out, newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert list(rows[0]) == ["run_id", "name", "context", "step", "wall_time", "value"]
+    # Three points, each once — the name lists twice (two contexts) but is
+    # fetched once.
+    assert len(rows) == 3
+    val = [r for r in rows if r["context"]]
+    assert len(val) == 1 and json.loads(val[0]["context"]) == {"subset": "val"}
+
+
+def test_export_parquet_writes_real_parquet(live_server, monkeypatch, tmp_path):
+    pd = pytest.importorskip("pandas")
+    pytest.importorskip("pyarrow")
+
+    monkeypatch.setenv("CAIRN_SERVER", live_server)
+    rid = _seed_two_context_run(live_server)
+    out = tmp_path / "run.parquet"
+    result = CliRunner().invoke(
+        cli.main, ["export", rid, "--format", "parquet", "--out", str(out)]
+    )
+    assert result.exit_code == 0, result.output
+    assert out.read_bytes()[:4] == b"PAR1"
+    df = pd.read_parquet(out)
+    assert list(df.columns) == ["run_id", "name", "context", "step", "wall_time", "value"]
+    assert len(df) == 3
+    assert sorted(df["value"].tolist()) == [0.25, 0.5, 0.75]
+    assert set(df["run_id"]) == {rid}
+
+
+def test_export_without_run_id_is_a_usage_error(tmp_path):
+    result = CliRunner().invoke(
+        cli.main, ["export", "--format", "csv", "--out", str(tmp_path / "x.csv")]
+    )
+    assert result.exit_code == 2
+    assert "RUN_ID" in result.output
+
+
 def test_sync_nothing_to_do(tmp_path, monkeypatch):
     runner = CliRunner()
     # Empty WAL dir + empty spill (R3: sync scans the WAL dir).

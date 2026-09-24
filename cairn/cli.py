@@ -677,52 +677,81 @@ def rm_cmd(run_id: str) -> None:
 
 
 @main.command("export")
-@click.argument("run_id")
+@click.argument("run_id", required=False)
 @click.option(
     "--format",
     "fmt",
-    type=click.Choice(["json", "parquet"]),
+    type=click.Choice(["json", "csv", "parquet"]),
     default="json",
+    help="json: the run and its raw points. csv/parquet: one row per scalar "
+         "point (run_id, name, context, step, wall_time, value); parquet needs "
+         "the [export] extra.",
 )
 @click.option(
     "--out",
     type=click.Path(dir_okay=False, path_type=Path),
     required=True,
 )
-def export_cmd(run_id: str, fmt: str, out: Path) -> None:
+def export_cmd(run_id: str | None, fmt: str, out: Path) -> None:
     """Download a run's data to a local file."""
+    if run_id is None:
+        raise click.UsageError("RUN_ID is required")
     t = _client()
     try:
         run = t.get(f"/api/runs/{run_id}").json()
         seqs_meta = t.get(f"/api/runs/{run_id}/sequences").json()["sequences"]
         seqs: dict[str, list[dict[str, Any]]] = {}
-        for s in seqs_meta:
-            pts = t.get(
-                f"/api/runs/{run_id}/sequences/{s['name']}",
-            ).json()["points"]
-            seqs.setdefault(s["name"], []).extend(pts)
-        payload = {"run": run, "sequences": seqs}
+        # One fetch per name: a name logged under several contexts lists once
+        # per context, and the unfiltered fetch already returns all of them.
+        for name in dict.fromkeys(s["name"] for s in seqs_meta):
+            seqs[name] = t.get(f"/api/runs/{run_id}/sequences/{name}").json()["points"]
         if fmt == "json":
-            out.write_text(json.dumps(payload, default=str, indent=2))
+            out.write_text(json.dumps({"run": run, "sequences": seqs}, default=str, indent=2))
         else:
-            import csv
-
-            rows = []
-            for name, pts in seqs.items():
-                for p in pts:
-                    rows.append({
-                        "run_id": run_id,
-                        "name": name,
-                        "step": p.get("step"),
-                        "value": p.get("scalar_value"),
-                    })
-            with open(out, "w", newline="") as f:
-                writer = csv.DictWriter(f, fieldnames=["run_id", "name", "step", "value"])
-                writer.writeheader()
-                writer.writerows(rows)
+            rows = [
+                {
+                    "run_id": run_id,
+                    "name": name,
+                    "context": p.get("context"),
+                    "step": p.get("step"),
+                    "wall_time": p.get("wall_time"),
+                    "value": p.get("scalar_value"),
+                }
+                for name, pts in seqs.items()
+                for p in pts
+                if p.get("scalar_value") is not None
+            ]
+            _write_table(rows, fmt, out)
         click.echo(f"exported to {out}")
     finally:
         t.close()
+
+
+_EXPORT_COLUMNS = ["run_id", "name", "context", "step", "wall_time", "value"]
+
+
+def _write_table(rows: list[dict[str, Any]], fmt: str, out: Path) -> None:
+    """Write long-format point rows as CSV (stdlib) or parquet (pandas+pyarrow)."""
+    if fmt == "csv":
+        import csv
+
+        with open(out, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=_EXPORT_COLUMNS)
+            writer.writeheader()
+            writer.writerows(rows)
+        return
+    try:
+        import pandas as pd
+    except ImportError as exc:
+        raise click.ClickException(
+            "parquet export needs pandas and pyarrow: pip install 'cairn-track[export]'"
+        ) from exc
+    try:
+        pd.DataFrame(rows, columns=_EXPORT_COLUMNS).to_parquet(out, index=False)
+    except ImportError as exc:
+        raise click.ClickException(
+            "parquet export needs pyarrow: pip install 'cairn-track[export]'"
+        ) from exc
 
 
 @main.command("diff")
