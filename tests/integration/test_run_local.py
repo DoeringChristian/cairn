@@ -193,3 +193,26 @@ def test_local_mode_uses_env_var(tmp_path, monkeypatch):
         assert count == 1
     finally:
         db.close()
+
+
+def test_set_tag_adds_and_remove_tag_removes(tmp_path):
+    import json
+
+    repo = tmp_path / ".cairn"
+    with cairn.Run(
+        project="p", tags=["base"], repo=repo,
+        capture_source=False, capture_stdout=False,
+        capture_env=False, capture_system_metrics=False,
+    ) as run:
+        run.set_tag("a")
+        run.set_tag("b")
+        run.set_tag("a")  # already present: no duplicate
+        run.remove_tag("base")
+        run.remove_tag("missing")  # absent: ignored
+        rid = run.id
+    db, _ = _inspect(repo)
+    try:
+        (tags,) = db.read_one("SELECT tags FROM runs WHERE id = ?", [rid])
+        assert json.loads(tags) == ["a", "b"]
+    finally:
+        db.close()

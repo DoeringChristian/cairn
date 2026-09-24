@@ -209,6 +209,9 @@ class Run:
         self._project = project
         self._name = name
         self._timeout = timeout
+        # The run's tag list, kept client-side: the ``set_tags`` op replaces
+        # the whole list, and WAL-mode LocalTransport has no DB to read it back.
+        self._tags: list[str] = list(tags or [])
 
         # Bookkeeping
         self._finished = False
@@ -696,10 +699,20 @@ class Run:
             self._transport.post_summary(self._run_id, merged)
 
     def set_tag(self, tag: str) -> None:
-        self._transport.set_tags(self._run_id, [tag])
+        """Add one tag, keeping the ones the run already has."""
+        if tag not in self._tags:
+            self._tags.append(tag)
+        self._transport.set_tags(self._run_id, list(self._tags))
+
+    def remove_tag(self, tag: str) -> None:
+        """Remove one tag; a tag the run doesn't have is ignored."""
+        self._tags = [t for t in self._tags if t != tag]
+        self._transport.set_tags(self._run_id, list(self._tags))
 
     def set_tags(self, tags: list[str]) -> None:
-        self._transport.set_tags(self._run_id, list(tags))
+        """Replace the run's tags."""
+        self._tags = list(tags)
+        self._transport.set_tags(self._run_id, list(self._tags))
 
     def add_note(self, text: str) -> None:
         self._transport.set_notes(self._run_id, text)
