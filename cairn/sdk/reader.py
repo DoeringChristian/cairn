@@ -363,6 +363,25 @@ class Run:
 
     # ---- Sequences ----
 
+    def history(self, keys: list[str] | None = None, context: Any = None) -> Any:
+        """Scalar history as a wide pandas DataFrame: one row per step, one
+        column per sequence name (None: all scalar sequences).
+
+        ``context`` keeps only points logged with that context (None: all);
+        a name logged under several contexts needs ``context=`` to pick one.
+        Needs the ``[export]`` extra.
+        """
+        long = _history_frame(self._backend, [self], keys, context)
+        per_name = long.groupby("name")["context"].agg(lambda c: len({json.dumps(x, sort_keys=True) for x in c}))
+        ambiguous = sorted(per_name[per_name > 1].index)
+        if ambiguous:
+            raise ValueError(
+                f"{ambiguous} were logged under several contexts; pass context= to pick one"
+            )
+        wide = long.pivot(index="step", columns="name", values="value")
+        wide.columns.name = None
+        return wide
+
     def sequences(self) -> list[SequenceInfo]:
         rows = self._backend.list_sequences(self.id)
         return [SequenceInfo(**r) for r in rows]
@@ -633,6 +652,42 @@ def _get_field_value(run: "Run", field: str, sub_field: str | None) -> Any:
     return run.params.get(field)
 
 
+_PAGE = 1000  # /api/runs caps limit at 1000
+_HISTORY_COLUMNS = ["run_id", "run_name", "name", "context", "step", "wall_time", "value"]
+
+
+def _history_frame(backend: _Backend, runs: list[Run], keys: list[str] | None, context: Any) -> Any:
+    """Long-format scalar history of ``runs`` (see :meth:`RunQuery.history`)."""
+    try:
+        import pandas as pd
+    except ImportError as exc:
+        raise ImportError("history() needs pandas: pip install 'cairn-track[export]'") from exc
+    from ..server.storage.migrations import hash_context
+
+    want = hash_context(context) if context is not None else None
+    names = {r.id: r.name for r in runs}
+    ids = list(names)
+    records: list[dict[str, Any]] = []
+    for i in range(0, len(ids), 200):
+        for series in backend.scalar_series(ids[i:i + 200], keys):
+            for p in series["points"]:
+                ctx = _parse_json(p["context"])
+                if want is not None and hash_context(ctx) != want:
+                    continue
+                records.append({
+                    "run_id": series["run_id"],
+                    "run_name": names[series["run_id"]],
+                    "name": series["name"],
+                    "context": ctx,
+                    "step": p["step"],
+                    "wall_time": p["wall_time"],
+                    "value": p["value"],
+                })
+    df = pd.DataFrame(records, columns=_HISTORY_COLUMNS)
+    df["wall_time"] = pd.to_datetime(df["wall_time"], utc=True, format="ISO8601")
+    return df
+
+
 class RunQuery:
     """Lazy query builder for runs. Executes on .list()/.first()/.last()/iteration.
 
@@ -714,15 +769,26 @@ class RunQuery:
         return self._clone(limit_n=n)
 
     def list(self) -> list[Run]:
-        """Execute the query and return matching runs."""
-        runs, _ = self._backend.list_runs(
-            project=self._project,
-            status=self._status,
-            limit=self._limit_n or 1000,
-            offset=0,
-            sort_col=self._sort_col,
-            sort_desc=self._sort_desc,
-        )
+        """Execute the query and return matching runs.
+
+        Filters other than ``status`` run client-side, so with filters every
+        page of runs is fetched first and the limit applies after filtering.
+        """
+        runs: list[dict[str, Any]] = []
+        pushdown = self._limit_n if self._limit_n and not self._filters else None
+        while True:
+            page = _PAGE if pushdown is None else min(_PAGE, pushdown - len(runs))
+            rows, total = self._backend.list_runs(
+                project=self._project,
+                status=self._status,
+                limit=page,
+                offset=len(runs),
+                sort_col=self._sort_col,
+                sort_desc=self._sort_desc,
+            )
+            runs.extend(rows)
+            if not rows or len(runs) >= total or (pushdown is not None and len(runs) >= pushdown):
+                break
         result = [Run(r, self._backend) for r in runs]
 
         # Apply Django-style filters client-side.
@@ -742,6 +808,16 @@ class RunQuery:
             result = result[:self._limit_n]
 
         return result
+
+    def history(self, keys: list[str] | None = None, context: Any = None) -> Any:
+        """Scalar history of every matching run as a long pandas DataFrame.
+
+        Columns: ``run_id, run_name, name, context, step, wall_time, value``.
+        ``keys`` selects sequence names (None: all scalar sequences);
+        ``context`` keeps only points logged with that context (None: all).
+        Needs the ``[export]`` extra.
+        """
+        return _history_frame(self._backend, self.list(), keys, context)
 
     def first(self) -> Run | None:
         runs = self._clone(sort_desc=False, limit_n=self._limit_n or 1000).list()
@@ -816,6 +892,7 @@ class _Backend(Protocol):
     def get_sequence(self, run_id: str, name: str, *, context: str | None,
                      step_from: int | None, step_to: int | None,
 ) -> list[dict[str, Any]]: ...
+    def scalar_series(self, run_ids: list[str], names: list[str] | None) -> list[dict[str, Any]]: ...
     def list_artifacts(self, run_id: str) -> dict[str, Any]: ...
     def get_artifact_bytes(self, digest: str) -> bytes: ...
     def get_artifact_path(self, digest: str) -> Path | None: ...
@@ -957,6 +1034,11 @@ class _LocalBackend:
         )
         # Simple downsampling if requested.
         return rows
+
+    def scalar_series(self, run_ids: list[str], names: list[str] | None) -> list[dict[str, Any]]:
+        from ..server.routes.compare import scalar_series
+
+        return scalar_series(self._db, run_ids, names)
 
     def list_artifacts(self, run_id: str) -> dict[str, Any]:
         named = self._db.read_columns(
@@ -1154,6 +1236,11 @@ class _HttpBackend:
         if step_to is not None:
             params["step_to"] = step_to
         return self._get(f"/api/runs/{run_id}/sequences/{name}", params=params)["points"]
+
+    def scalar_series(self, run_ids: list[str], names: list[str] | None) -> list[dict[str, Any]]:
+        resp = self._client.post("/api/compare", json={"run_ids": run_ids, "metrics": names})
+        resp.raise_for_status()
+        return resp.json()["series"]
 
     def list_artifacts(self, run_id: str) -> dict[str, Any]:
         return self._get(f"/api/runs/{run_id}/artifacts")
