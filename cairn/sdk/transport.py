@@ -233,6 +233,26 @@ class Transport:
     def heartbeat(self, run_id: str) -> None:
         self.post_json(f"/api/runs/{run_id}/heartbeat", {})
 
+    def resume_run(self, run_id: str) -> dict[str, Any]:
+        return self.post_json(f"/api/runs/{run_id}/resume", {}).json()
+
+    def rewind_run(self, run_id: str, step: int) -> dict[str, Any]:
+        return self.post_json(f"/api/runs/{run_id}/rewind", {"step": step}).json()
+
+    def fork_run(
+        self, parent_id: str, new_id: str, step: int, body: dict[str, Any],
+    ) -> dict[str, Any]:
+        """``body`` is the child's create body (the ``create_run`` shape)."""
+        fields = {k: v for k, v in body.items() if k not in ("project", "run_id", "created_at",
+                                                            "parent_run_id", "fork_step")}
+        return self.post_json(
+            f"/api/runs/{parent_id}/fork", {**fields, "new_id": new_id, "step": step},
+        ).json()
+
+    def sequence_steps(self, run_id: str) -> list[dict[str, Any]]:
+        """Each of the run's series as ``{name, context, max_step}``."""
+        return self.get(f"/api/runs/{run_id}/sequences").json()["sequences"]
+
     def attach_artifact(
         self, run_id: str, name: str, digest: str, step: int | None = None
     ) -> None:

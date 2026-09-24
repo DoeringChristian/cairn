@@ -327,6 +327,128 @@ def heartbeat(db: Database, run_id: str) -> None:
     )
 
 
+# ---- resume / fork / rewind --------------------------------------------------
+
+#: The rows of a run's history that survive a fork or rewind at step ``k``.
+#: Training series keep ``step <= k``. ``system.*`` steps are the sampler's own
+#: counters, not training steps, so those rows are kept by time instead: up to
+#: the latest wall_time among the kept training rows (the second parameter).
+_HISTORY_KEEP = (
+    "((substr(name, 1, 7) != 'system.' AND step <= ?)"
+    " OR (substr(name, 1, 7) = 'system.' AND wall_time <= ?))"
+)
+
+_SEQUENCE_COLUMNS = (
+    "name, step, wall_time, context, context_hash, object_type, "
+    "scalar_value, artifact_hash, metadata"
+)
+
+
+def _history_params(db: Database, run_id: str, step: int) -> list[Any]:
+    """The two parameters of ``_HISTORY_KEEP`` for ``run_id`` at ``step``."""
+    (cutoff,) = db.read_one(
+        "SELECT MAX(wall_time) FROM sequences WHERE run_id = ? "
+        "AND substr(name, 1, 7) != 'system.' AND step <= ?",
+        [run_id, step],
+    ) or (None,)
+    return [step, cutoff]
+
+
+def resume_run(db: Database, run_id: str) -> dict[str, Any]:
+    """Reopen a run: running again, no end, no exit code, no pending stop."""
+    row = _require_run(db, run_id)
+    db.write(
+        """UPDATE runs SET status = 'running', ended_at = NULL, exit_code = NULL,
+                  stop_requested = NULL, last_heartbeat = ?
+            WHERE id = ?""",
+        [utc_now().isoformat(), run_id],
+    )
+    return {
+        "run_id": run_id,
+        "project_id": row["project_id"],
+        "url": f"/p/{row['project_id']}/r/{run_id}",
+        "tags": json.loads(row["tags"]) if row.get("tags") else [],
+    }
+
+
+def rewind_run(db: Database, run_id: str, step: int) -> dict[str, Any]:
+    """Drop everything after ``step`` from a run's history, then resume it.
+
+    ``data_epoch`` is bumped because the deleted rowids get reused (sequences
+    has no AUTOINCREMENT): a live client's rowid cursor is stale afterwards.
+    """
+    _require_run(db, run_id)
+    keep = _history_params(db, run_id, step)
+    with db.transaction() as con:
+        con.execute(
+            f"DELETE FROM sequences WHERE run_id = ? AND NOT {_HISTORY_KEEP}",
+            [run_id, *keep],
+        )
+        con.execute(
+            "DELETE FROM run_artifacts WHERE run_id = ? AND step > ?", [run_id, step],
+        )
+        con.execute(
+            "UPDATE runs SET data_epoch = COALESCE(data_epoch, 0) + 1 WHERE id = ?",
+            [run_id],
+        )
+    return resume_run(db, run_id)
+
+
+def fork_run(
+    db: Database, *, parent_id: str, step: int, run_id: str | None = None,
+    **fields: Any,
+) -> dict[str, Any]:
+    """Create a run from ``parent_id``'s history up to ``step``.
+
+    The child is independent: it gets a COPY of the parent's history <= step
+    (see ``_HISTORY_KEEP``; run artifacts with step <= step, run-level ones
+    included), its params, summary and metric definitions. ``fields`` are the
+    other ``create_run`` fields (name, tags, env, ...).
+
+    Idempotent for WAL replay: an existing child is not re-created, and the
+    copies are INSERT OR IGNORE, so rows the child wrote itself win.
+    """
+    parent = _require_run(db, parent_id)
+    exists = run_id is not None and db.read_columns(
+        "SELECT id FROM runs WHERE id = ?", [run_id],
+    )
+    if not exists:
+        (project,) = db.read_one(
+            "SELECT name FROM projects WHERE id = ?", [parent["project_id"]],
+        ) or (parent["project_id"],)
+        fields = {k: fields.get(k) for k in CREATE_RUN_FIELDS if k != "run_id"}
+        fields.update(parent_run_id=parent_id, fork_step=step)
+        run_id = create_run(db, project=project, run_id=run_id, **fields)["run_id"]
+    assert run_id is not None
+    keep = _history_params(db, parent_id, step)
+    with db.transaction() as con:
+        con.execute(
+            f"""INSERT OR IGNORE INTO sequences (run_id, {_SEQUENCE_COLUMNS})
+                SELECT ?, {_SEQUENCE_COLUMNS} FROM sequences
+                 WHERE run_id = ? AND {_HISTORY_KEEP}""",
+            [run_id, parent_id, *keep],
+        )
+        for table in ("params", "summary"):
+            con.execute(
+                f"""INSERT OR IGNORE INTO {table} (run_id, key, value, value_type)
+                    SELECT ?, key, value, value_type FROM {table} WHERE run_id = ?""",
+                [run_id, parent_id],
+            )
+        con.execute(
+            """INSERT OR IGNORE INTO metric_defs (run_id, name, step_metric, summary)
+               SELECT ?, name, step_metric, summary FROM metric_defs WHERE run_id = ?""",
+            [run_id, parent_id],
+        )
+        con.execute(
+            """INSERT OR IGNORE INTO run_artifacts (run_id, name, hash, step, created_at)
+               SELECT ?, name, hash, step, created_at FROM run_artifacts
+                WHERE run_id = ? AND step <= ?""",
+            [run_id, parent_id, step],
+        )
+    project_id = parent["project_id"]
+    return {"run_id": run_id, "project_id": project_id, "url": f"/p/{project_id}/r/{run_id}"}
+
+
 def delete_run(db: Database, data_dir: DataDir, run_id: str) -> None:
     _require_run(db, run_id)
     # FK enforcement inside an explicit transaction doesn't recognize deleted

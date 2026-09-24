@@ -85,7 +85,23 @@ def _context_key(context: Any) -> tuple:
 
 
 class Run:
-    """A single experiment execution."""
+    """A single experiment execution.
+
+    Three ways to start one:
+
+    * a new run (the default);
+    * ``resume="<id>"`` continues an existing run under its own id: it is
+      running again and keeps its history, name, tags and other creation
+      metadata (the creation kwargs are ignored). ``rewind_to=k`` first drops
+      everything the run recorded after step ``k``;
+    * ``fork_from=("<id>", k)`` starts a NEW run holding a copy of that run's
+      history up to step ``k`` (plus its config, summary and metric
+      definitions), linked to it as its parent.
+
+    For fork and rewind, "history up to step k" is every point with
+    ``step <= k``, except ``system.*`` series (whose steps are sampler
+    counters), which are cut at the time of the last kept point instead.
+    """
 
     def __init__(
         self,
@@ -100,6 +116,9 @@ class Run:
         parent_run_id: str | None = None,
         fork_step: int | None = None,
         created_at: str | datetime | None = None,
+        resume: str | None = None,
+        rewind_to: int | None = None,
+        fork_from: tuple[str, int] | None = None,
         repo: str | Path | None = None,
         local_wal: bool = False,
         capture_source: bool = True,
@@ -116,6 +135,12 @@ class Run:
         registry: HandlerRegistry | None = None,
         transport: Transport | LocalTransport | None = None,
     ):
+        if rewind_to is not None and resume is None:
+            raise ValueError("rewind_to needs resume=<run id>")
+        if resume is not None and fork_from is not None:
+            raise ValueError("pass resume or fork_from, not both")
+        if fork_from is not None and (parent_run_id is not None or fork_step is not None):
+            raise ValueError("fork_from sets parent_run_id and fork_step itself")
         self._registry = registry or default_registry
         self._wal: WriteAheadLog | None = None
         if transport is not None:
@@ -176,7 +201,21 @@ class Run:
                 created_at.isoformat() if isinstance(created_at, datetime) else created_at
             ),
         }
-        resp = self._transport.create_run(create_body)
+        if resume is not None:
+            resp = (
+                self._transport.rewind_run(resume, int(rewind_to))
+                if rewind_to is not None
+                else self._transport.resume_run(resume)
+            )
+            self._tags = list(resp.get("tags") or [])
+            self._seed_step_counters(resume)
+        elif fork_from is not None:
+            parent_id, step = fork_from
+            resp = self._transport.fork_run(parent_id, client_run_id, int(step), create_body)
+            # The copied system.* rows carry the parent's sampler counters.
+            self._seed_step_counters(parent_id)
+        else:
+            resp = self._transport.create_run(create_body)
         self._run_id: str = resp["run_id"]
         self._project_id: str = resp["project_id"]
         self._url_path: str = resp.get("url", f"/p/{self._project_id}/r/{self._run_id}")
@@ -753,6 +792,20 @@ class Run:
             self.finish("failed", exit_code=1)
 
     # ---- internals --------------------------------------------------------
+
+    def _seed_step_counters(self, run_id: str) -> None:
+        """Continue the per-series counters past ``run_id``'s recorded steps.
+
+        Only timer-sampled ``system.*`` points use the counters; without the
+        seed a resumed or forked run's samples would restart at step 0 and be
+        dropped as duplicates of the ones already stored.
+        """
+        for s in self._transport.sequence_steps(run_id):
+            ctx = s.get("context")
+            if isinstance(ctx, str):
+                ctx = json.loads(ctx)
+            key = (s["name"], _context_key(ctx))
+            self._step_counters[key] = max(self._step_counters.get(key, 0), s["max_step"] + 1)
 
     def _next_step(self, name: str, context: Any, explicit: int | None) -> int:
         key = (name, _context_key(context))

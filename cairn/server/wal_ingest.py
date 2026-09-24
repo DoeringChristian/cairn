@@ -95,6 +95,18 @@ def _apply_op(
         _ensure_run_exists(db, payload)
         return payload["run_id"]
 
+    if op == "fork_run":
+        # A forked run's WAL opens with this instead of ``create_run``.
+        try:
+            ingest_ops.fork_run(
+                db, parent_id=payload["parent_id"], step=payload["step"],
+                run_id=payload["new_id"],
+                **{k: payload.get(k) for k in ingest_ops.CREATE_RUN_FIELDS if k != "run_id"},
+            )
+        except ingest_ops.RunNotFound:
+            log.warning("WAL fork of unknown run %s — skipping", payload["parent_id"])
+        return payload["new_id"]
+
     if op == "artifact_meta":
         _ensure_artifact_row(db, payload)
         return run_id
@@ -168,6 +180,13 @@ def _apply_op(
                 (src_dir / "manifest.json").write_text(json.dumps(manifest))
         elif op == "heartbeat":
             ingest_ops.heartbeat(db, rid)
+        elif op == "resume_run":
+            ingest_ops.resume_run(db, rid)
+        elif op == "rewind_run":
+            # Not idempotent on its own, but a full re-drain replays it between
+            # the same batches as the first drain, so the rows converge (the
+            # epoch just bumps once more).
+            ingest_ops.rewind_run(db, rid, payload["step"])
         else:
             log.debug("unknown WAL op %r — skipping", op)
     except ingest_ops.RunNotFound:

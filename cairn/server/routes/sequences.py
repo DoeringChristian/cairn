@@ -22,8 +22,11 @@ UPDATES_LIMIT = 5000
 
 # ``sequences`` has an implicit SQLite rowid (its PK is not WITHOUT ROWID),
 # and rows are only ever INSERT OR IGNOREd — never replaced — so the rowid is
-# a stable, monotonic append cursor. That is what /updates pages through and
-# what a sequence read hands back as its starting point.
+# a monotonic append cursor. That is what /updates pages through and what a
+# sequence read hands back as its starting point. The one exception is a
+# rewind, which deletes rows (their rowids get reused, there's no
+# AUTOINCREMENT) and bumps the run's ``data_epoch``: both endpoints return
+# it, and a client holding a cursor from another epoch starts over.
 _POINT_COLUMNS = """s.rowid AS _rowid,
                s.step, s.wall_time, s.scalar_value, s.artifact_hash,
                s.context, s.object_type, s.metadata,
@@ -74,12 +77,13 @@ def get_updates(
     # terminal status, so that answer must never race ahead of the run's last
     # points. Reading it second means "completed" implies the rows above
     # already cover everything written before the run finished.
-    status = db.read_columns("SELECT status FROM runs WHERE id = ?", [run_id])[0][
-        "status"
-    ]
+    run = db.read_columns(
+        "SELECT status, data_epoch FROM runs WHERE id = ?", [run_id],
+    )[0]
     return {
         "run_id": run_id,
-        "status": status,
+        "status": run["status"],
+        "data_epoch": run["data_epoch"] or 0,
         "cursor": cursor,
         "points": rows,
         "more": len(rows) >= UPDATES_LIMIT,
@@ -115,7 +119,7 @@ def get_sequence(
     step_to: int | None = Query(default=None),
 ) -> dict[str, Any]:
     db = get_db(request)
-    require_run(db, run_id)
+    run = require_run(db, run_id)
 
     clauses = ["run_id = ?", "name = ?"]
     params: list[Any] = [run_id, name]
@@ -172,4 +176,7 @@ def get_sequence(
     # ``cursor`` seeds the client's live-updates poller: everything in this
     # response is already cached there, so /updates resumes past it.
     cursor = _take_cursor(rows)
-    return {"run_id": run_id, "name": name, "points": rows, "cursor": cursor}
+    return {
+        "run_id": run_id, "name": name, "points": rows, "cursor": cursor,
+        "data_epoch": run["data_epoch"] or 0,
+    }
