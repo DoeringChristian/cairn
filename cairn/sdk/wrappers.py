@@ -49,6 +49,13 @@ class Image(_TypeWrapper):
     ``linear=True`` for scene-linear data (e.g. renders) to apply the sRGB
     transfer for display.
 
+    ``colormap`` bakes a colormap into a single-channel image (stored as an RGB
+    PNG): ``"turbo"`` / ``"magma"`` span [0, 1], ``"red-blue"`` / ``"red-green"``
+    span [-1, 1] with white at zero. The range is fixed — the same for every
+    image and step — unless ``vmin``/``vmax`` override it; values outside clip::
+
+        run.track(cairn.Image(err, colormap="red-blue", vmin=-0.05, vmax=0.05), name="error", step=step)
+
     ``encoding`` picks the storage (float/int arrays only — PIL images, figures
     and uint8 arrays are display values and always PNG):
 

@@ -45,6 +45,7 @@ from PIL import Image as PILImage
 
 from ..wrappers import _TypeWrapper
 from ._optional import try_import
+from .colormaps import apply_colormap
 from .image_encoding import DEFAULT_ENCODING, EXR_MAGIC, decode_exr, encode_exr, image_encoding_for, to_display_uint8
 
 MAX_BOXES = 500
@@ -188,10 +189,28 @@ class ImageHandler:
             arr = np.transpose(arr, (1, 2, 0))
         return np.ascontiguousarray(arr)
 
-    def mime_type_for(self, obj: Any, encoding: str = DEFAULT_ENCODING, **kwargs: Any) -> str:
+    def mime_type_for(
+        self, obj: Any, encoding: str = DEFAULT_ENCODING, colormap: str | None = None, **kwargs: Any
+    ) -> str:
         """Announce the container `serialize` will write for this same encoding."""
+        if colormap is not None:
+            return self.mime_type
         enc = image_encoding_for(self._array_for_storage(obj), encoding)
         return self._MIME_BY_CONTAINER[enc.container]
+
+    @classmethod
+    def _colormapped(
+        cls, obj: Any, colormap: str, vmin: float | None, vmax: float | None, encoding: str, linear: bool
+    ) -> np.ndarray:
+        """Bake `colormap` into a single-channel array; the result is an RGB PNG."""
+        if encoding != DEFAULT_ENCODING:
+            raise ValueError(f"colormap={colormap!r} bakes colors into a PNG; encoding={encoding!r} is not allowed")
+        if linear:
+            raise ValueError("linear=True applies to color images; a colormap already defines the colors")
+        arr = cls._array_for_storage(obj)
+        if arr is None:
+            raise TypeError(f"colormap needs an array, got {type(obj)!r}")
+        return apply_colormap(arr, colormap, vmin=vmin, vmax=vmax)
 
     @classmethod
     def _to_pil(cls, obj: Any, *, linear: bool = False) -> PILImage.Image:
@@ -245,8 +264,16 @@ class ImageHandler:
         class_labels: Any = None,
         encoding: str = DEFAULT_ENCODING,
         linear: bool = False,
+        colormap: str | None = None,
+        vmin: float | None = None,
+        vmax: float | None = None,
         **kwargs: Any,
     ) -> tuple[bytes, dict[str, Any]]:
+        source = self._array_for_storage(obj)
+        if colormap is not None:
+            obj = self._colormapped(obj, colormap, vmin, vmax, encoding, linear)
+        elif vmin is not None or vmax is not None:
+            raise ValueError("vmin/vmax set the colormap range; pass colormap= too")
         arr = self._array_for_storage(obj)
         enc = image_encoding_for(arr, encoding)
         img = self._to_pil(obj, linear=linear)
@@ -281,6 +308,9 @@ class ImageHandler:
         }
         if linear:
             meta["linear"] = True
+        if colormap is not None:
+            meta["colormap"] = {"name": colormap, "vmin": vmin, "vmax": vmax}
+            arr = source
 
         if arr is not None and arr.dtype != np.uint8:
             meta["hdr"] = {

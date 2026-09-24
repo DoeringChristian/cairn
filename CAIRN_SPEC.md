@@ -253,7 +253,7 @@ class TypeHandler(Protocol):
 |---|---|---|---|
 | `scalar` | `int`, `float`, `bool` | inline in DB | value itself |
 | `text` | `str` (when tracked as sequence) | inline or blob if >1KB | truncated |
-| `image` | `PIL.Image`, `np.ndarray` (HWC/HW), `torch.Tensor` | PNG blob by default (values read by dtype: float [0, 1], uint8 [0, 255], clipped; `linear=True` applies sRGB); a list of `cairn.Image` is one gallery point; `encoding="exr[:<compression>[:<precision>]]"` keeps HDR values as OpenEXR, `encoding="npy"` stores exact bytes. The viewer shows PNG and offers other encodings as a download | 128px thumbnail as data URI |
+| `image` | `PIL.Image`, `np.ndarray` (HWC/HW), `torch.Tensor` | PNG blob by default (values read by dtype: float [0, 1], uint8 [0, 255], clipped; `linear=True` applies sRGB; `colormap=` turbo/magma [0, 1] or red-blue/red-green [-1, 1], fixed unless `vmin`/`vmax`, is baked into an RGB PNG); a list of `cairn.Image` is one gallery point; `encoding="exr[:<compression>[:<precision>]]"` keeps HDR values as OpenEXR, `encoding="npy"` stores exact bytes. The viewer shows PNG and offers other encodings as a download | 128px thumbnail as data URI |
 | `audio` | `np.ndarray` + sample_rate kwarg, `torch.Tensor` | WAV or FLAC blob | duration + waveform peaks array |
 | `video` | `np.ndarray` (TxHxWxC), path to video file | MP4 blob (use imageio-ffmpeg) | first frame thumbnail + duration |
 | `figure` | `matplotlib.Figure`, Plotly `Figure` | dual: PNG + source (pickle for mpl, JSON for plotly) | PNG thumbnail |
