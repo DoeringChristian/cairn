@@ -10,8 +10,10 @@ Usage::
         callbacks=[CairnCallback(project="ft")],
     )
 
-Evaluation metrics (``eval_<metric>`` in the Trainer) are tracked as
-``eval.<metric>`` at ``step=global_step``.
+Evaluation metrics (``eval_<metric>`` in the Trainer) are tracked once, as
+``eval.<metric>`` at ``step=global_step``, from ``on_evaluate``. The Trainer
+also passes them to ``on_log``, which therefore skips them; training metrics
+keep their Trainer names.
 """
 
 from __future__ import annotations
@@ -79,7 +81,8 @@ class CairnCallback(TrainerCallback):
             return
         step = int(logs.get("step", state.global_step))
         for k, v in logs.items():
-            if k == "step":
+            # Evaluation metrics are tracked by on_evaluate, as eval.<m>.
+            if k == "step" or k.startswith("eval_"):
                 continue
             try:
                 self._run.track(float(v), name=k, step=step)
@@ -98,6 +101,9 @@ class CairnCallback(TrainerCallback):
             return
         step = int(state.global_step)
         for k, v in metrics.items():
+            # The Trainer adds the epoch to the metrics it logs; on_log has it.
+            if k == "epoch":
+                continue
             try:
                 name = k[len("eval_"):] if k.startswith("eval_") else k
                 self._run.track(float(v), name=f"eval.{name}", step=step)

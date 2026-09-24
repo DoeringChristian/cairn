@@ -52,6 +52,24 @@ def test_on_evaluate_prefixes_eval():
         assert "context" not in call.kwargs
 
 
+def test_eval_metrics_are_tracked_once():
+    """Trainer.evaluate() hands the same eval_* metrics to on_log and then to
+    on_evaluate; they land once, as eval.<m>."""
+    from cairn.integrations.huggingface import CairnCallback
+
+    mock_run = MagicMock()
+    cb = CairnCallback(run=mock_run)
+    args, control = MagicMock(), MagicMock()
+    state = MagicMock()
+    state.global_step = 500
+
+    metrics = {"eval_loss": 0.2, "eval_accuracy": 0.9, "epoch": 1.0}
+    cb.on_log(args, state, control, logs=dict(metrics, step=500))
+    cb.on_evaluate(args, state, control, metrics=metrics)
+    names = sorted(call.kwargs.get("name") for call in mock_run.track.call_args_list)
+    assert names == ["epoch", "eval.accuracy", "eval.loss"]
+
+
 def test_on_train_end_finishes_owned_run():
     from cairn.integrations.huggingface import CairnCallback
 
