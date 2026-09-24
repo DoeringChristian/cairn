@@ -208,7 +208,7 @@ def main() -> None:
         name="baseline",
         tags=["baseline"],
     )
-    baseline["distortion"] = {"type": "none"}
+    baseline.config({"distortion": {"type": "none"}})
 
     for step in range(NUM_STEPS):
         img = make_scene(step)
