@@ -36,6 +36,7 @@ from ..sdk.handlers.registry import HandlerRegistry, default_registry, resolve_m
 from ..sdk.handlers.image import GALLERY_MIME
 from ..sdk.handlers.table import MAX_ROWS as _TABLE_MAX_ROWS
 from ..sdk.wrappers import Audio, Image, Video, _TypeWrapper
+from .artifact_dir import MANIFEST_MIME, ArtifactDir, is_multi_file, upload_manifest
 from .buffer import MetricBuffer
 from .connect import open_transport
 from .local import LocalTransport
@@ -514,8 +515,20 @@ class Run:
         With ``artifact_type``: register a version in the artifact registry
         (family + versions) and return the :class:`ArtifactVersion`.
 
+        A directory path, a :class:`~cairn.sdk.artifact_dir.Reference` or a
+        list of them is a multi-file artifact: each file is uploaded
+        content-addressed (references are only recorded), and a manifest
+        naming them is versioned — in the ``artifact_type`` family, or
+        ``"artifact"`` when none is given. ``use_artifact`` returns it as an
+        :class:`~cairn.sdk.artifact_dir.ArtifactDir`.
+
         Sequence points go through :meth:`track`, not here.
         """
+        if is_multi_file(value):
+            digest, size, meta = upload_manifest(self._transport, value)
+            return self._create_version(
+                name, artifact_type or "artifact", digest, size, {**meta, **(metadata or {})}, aliases,
+            )
         if artifact_type is not None:
             return self._log_versioned_artifact(value, name, artifact_type, metadata, aliases)
 
@@ -582,27 +595,44 @@ class Run:
 
         # Upload blob (reuse existing upload_artifact)
         digest = self._transport.upload_artifact(blob, mime_type, merged_meta)
+        return self._create_version(name, family_type, digest, len(blob), merged_meta, aliases)
 
-        # Create version via transport
+    def _create_version(
+        self,
+        name: str,
+        family_type: str,
+        digest: str,
+        size_bytes: int,
+        metadata: dict[str, Any],
+        aliases: list[str] | None,
+    ) -> ArtifactVersion | None:
         result = self._transport.create_artifact_version(
             project_id=self._project_id,
             family_name=name,
             family_type=family_type,
             digest=digest,
-            size_bytes=len(blob),
-            metadata=merged_meta,
+            size_bytes=size_bytes,
+            metadata=metadata,
             created_by_run=self._run_id,
             aliases=aliases,
         )
         return ArtifactVersion.from_row(result) if result else None
 
     def use_artifact(self, ref: str, *, role: str = "input") -> Any:
-        """Consume an artifact. ``ref`` is ``"name:alias"`` or ``"name:vN"``."""
+        """Consume an artifact. ``ref`` is ``"name:alias"`` or ``"name:vN"``.
+
+        A multi-file artifact comes back as an
+        :class:`~cairn.sdk.artifact_dir.ArtifactDir` (``.files``,
+        ``.open(path)``, ``.download(root)``); anything else as its
+        deserialized value, or bytes.
+        """
         version_info = self._transport.resolve_artifact(self._project_id, ref)
         # Record consumption
         self._transport.record_artifact_input(self._run_id, version_info["id"], role)
         # Download bytes (uses existing cache)
         data = self._transport.download_artifact_bytes(version_info["hash"])
+        if version_info.get("mime_type") == MANIFEST_MIME:
+            return ArtifactDir.from_bytes(data, self._transport.download_artifact_bytes)
         # Deserialize if possible
         object_type = version_info.get("object_type")
         if object_type:

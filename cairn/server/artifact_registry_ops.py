@@ -367,8 +367,13 @@ def create_artifact_version(
 
 
 def list_versions(db: Database, family_id: str) -> list[dict[str, Any]]:
+    """The family's versions, newest first, each with its blob's ``mime_type``."""
     return db.read_columns(
-        "SELECT * FROM artifact_versions WHERE family_id = ? ORDER BY version DESC",
+        """
+        SELECT av.*, a.mime_type FROM artifact_versions av
+        LEFT JOIN artifacts a ON a.hash = av.hash
+        WHERE av.family_id = ? ORDER BY av.version DESC
+        """,
         [family_id],
     )
 
@@ -425,7 +430,8 @@ def delete_alias(db: Database, family_id: str, alias: str) -> None:
 def resolve_ref(
     db: Database, project_id: str, ref_str: str
 ) -> dict[str, Any]:
-    """Parse ``name:alias`` or ``name:vN`` and return the version row + family info."""
+    """Parse ``name:alias`` or ``name:vN`` and return the version row + family
+    info, plus the blob's ``mime_type`` and ``object_type``."""
     if ":" not in ref_str:
         raise ValueError(
             f"Invalid ref '{ref_str}': expected 'name:alias' or 'name:vN'"
@@ -460,6 +466,8 @@ def resolve_ref(
         ver = rows[0]
 
     ver["family"] = family
+    art = db.read_columns("SELECT mime_type, object_type FROM artifacts WHERE hash = ?", [ver["hash"]])
+    ver.update(art[0] if art else {"mime_type": None, "object_type": None})
     return ver
 
 

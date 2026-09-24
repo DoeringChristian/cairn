@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator, Protocol, runtime_checkable
 
 from .. import config as _config
+from .artifact_dir import MANIFEST_MIME, ArtifactDir
 from .handlers.image import GALLERY_MIME
 
 
@@ -1419,6 +1420,8 @@ class Reader:
         """Resolve an artifact ref and download+deserialize the content."""
         info = self._backend.resolve_artifact_ref(project_id, ref)
         data = self._backend.get_artifact_bytes(info["hash"])
+        if info.get("mime_type") == MANIFEST_MIME:
+            return ArtifactDir.from_bytes(data, self._backend.get_artifact_bytes)
         object_type = info.get("object_type")
         if object_type:
             from .handlers.registry import default_registry
