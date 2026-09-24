@@ -61,7 +61,7 @@ plot = [
 ]
 ui = [
     "cairn-track[plot]",
-    "cairn-ui @ git+https://github.com/DoeringChristian/cairn-ui@eaed0e68ea963e55108fc0b1b25c38343f8c4ab0",
+    "cairn-ui @ git+https://github.com/DoeringChristian/cairn-ui@1bd31c0640853502c30a720a66bfa1e29a3f9300",
 ]
 media = [
     "matplotlib>=3.7",
