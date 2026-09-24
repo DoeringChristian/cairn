@@ -2,8 +2,9 @@
 
 The server side OWNS the grammar — it is the endpoint that decodes and evaluates
 queries. Clients carry small MIRRORS of this vocabulary (cairn-track's
-``cairn.sdk.reader._OPERATORS``; cairn-ui's TS grammar), pinned by the shared
-conformance vectors (``schema/query-vectors.json``) — change all of them
+``cairn.sdk.reader._OPERATORS``; cairn-ui's ``src/lib/run-filter.ts``), pinned by the shared
+conformance vectors (``schema/query-vectors.json``; cairn-ui's evaluation cases in
+``docs/schemas/filter-vectors.json``) — change all of them
 together.
 """
 

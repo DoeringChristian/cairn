@@ -1,7 +1,8 @@
 """Authoritative operator comparators (see query_grammar.py's module doc).
 
-MIRRORED by ``cairn.sdk.reader._OPERATORS`` — pinned by
-``schema/query-vectors.json``; change all mirrors together.
+MIRRORED by ``cairn.sdk.reader._OPERATORS`` (pinned by
+``schema/query-vectors.json``) and by cairn-ui ``src/lib/run-filter.ts`` (pinned by
+cairn-ui ``docs/schemas/filter-vectors.json``); change all mirrors together.
 """
 from typing import Any, Callable
 
