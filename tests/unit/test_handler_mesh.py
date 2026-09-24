@@ -29,7 +29,6 @@ def test_roundtrip_positions_faces():
     assert meta["n_faces"] == 2
     assert meta["has_colors"] is False
     assert meta["has_normals"] is False
-    assert "value_range" not in meta
     back = _load(data)
     assert back["positions"].dtype == np.float32
     assert back["positions"].shape == (4, 3)
@@ -58,7 +57,6 @@ def test_values_recorded_in_metadata_and_blob():
     vertices, faces = _triangle()
     values = np.array([0.0, 1.0, 2.0, 3.0])
     data, meta = h.serialize({"vertices": vertices, "faces": faces, "values": values})
-    assert meta["value_range"] == {"min": 0.0, "max": 3.0, "mean": 1.5}
     assert meta["properties"] == [{"name": "value", "min": 0.0, "max": 3.0, "mean": 1.5}]
     back = _load(data)
     np.testing.assert_allclose(back["values_value"], values.astype(np.float32))
@@ -76,8 +74,6 @@ def test_named_properties_dict_recorded_and_roundtrip():
             "values": {"curvature": curvature, "loss": loss},
         }
     )
-    # value_range mirrors the FIRST property (insertion order) for backward compat.
-    assert meta["value_range"] == {"min": 0.0, "max": 3.0, "mean": 1.5}
     assert meta["properties"] == [
         {"name": "curvature", "min": 0.0, "max": 3.0, "mean": 1.5},
         {"name": "loss", "min": 10.0, "max": 40.0, "mean": 25.0},
@@ -105,7 +101,6 @@ def test_empty_values_dict_is_no_properties():
     h = MeshHandler()
     vertices, faces = _triangle()
     data, meta = h.serialize({"vertices": vertices, "faces": faces, "values": {}})
-    assert "value_range" not in meta
     assert "properties" not in meta
     back = _load(data)
     assert not any(k.startswith("values") for k in back)

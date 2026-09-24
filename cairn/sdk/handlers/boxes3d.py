@@ -14,8 +14,7 @@ npz arrays: ``mins`` f4 (N,3), ``maxs`` f4 (N,3), ``depth`` u2 (N,), optional
 elementwise. Box sets larger than ``MAX_BOXES`` raise (no silent truncation —
 matches Tensor's ``MAX_BYTES`` behavior). Metadata records ``n_boxes``,
 ``max_depth``, ``kind``, overall ``bounds``, an optional ``properties``
-list (``{name, min, max, mean}`` per property) plus ``value_range`` mirroring
-the first property for backward compat, and ``size_bytes`` so the UI can
+list (``{name, min, max, mean}`` per property), and ``size_bytes`` so the UI can
 render a header without loading the blob.
 """
 
@@ -32,7 +31,6 @@ from ._properties import (
     normalize_properties,
     properties_arrays,
     properties_metadata,
-    value_range_from,
 )
 
 MAX_BOXES = 200_000
@@ -132,9 +130,6 @@ class Boxes3DHandler:
             "size_bytes": size_bytes,
         }
         properties_meta = properties_metadata(properties)
-        value_range = value_range_from(properties_meta)
-        if value_range is not None:
-            meta["value_range"] = value_range
         if properties_meta is not None:
             meta["properties"] = properties_meta
         return data, meta

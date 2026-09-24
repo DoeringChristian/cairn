@@ -18,9 +18,8 @@ scalars, downsampled with the same index set as the cloud itself. When
 present, the blob switches from a bare ``.npy`` array to an ``.npz`` archive
 with a ``points`` member (the same ``(N, C)`` array as the plain-array
 format) plus one ``values_<name>`` member per property, and metadata gains a
-``properties: [{name, min, max, mean}]`` list (``value_range`` mirrors the
-first property for backward compat). With no ``values=``, the blob is
-byte-for-byte the same plain ``.npy`` format as before this feature existed.
+``properties: [{name, min, max, mean}]`` list. With no ``values=``, the blob
+is a plain ``.npy``.
 """
 
 from __future__ import annotations
@@ -36,7 +35,6 @@ from ._properties import (
     normalize_properties,
     properties_arrays,
     properties_metadata,
-    value_range_from,
 )
 
 MAX_POINTS = 300_000
@@ -125,9 +123,6 @@ class PointCloudHandler:
             "downsampled": bool(original_count > MAX_POINTS),
         }
         properties_meta = properties_metadata(properties)
-        value_range = value_range_from(properties_meta)
-        if value_range is not None:
-            meta["value_range"] = value_range
         if properties_meta is not None:
             meta["properties"] = properties_meta
         return data, meta

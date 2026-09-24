@@ -542,7 +542,6 @@ class Run:
         artifact_type: str | None = None,
         metadata: dict | None = None,
         aliases: list[str] | None = None,
-        type: str | None = None,  # deprecated alias for artifact_type (R0)
     ) -> "ArtifactVersion | str":
         """Attach an artifact to the run.
 
@@ -551,20 +550,8 @@ class Run:
         With ``artifact_type``: register a version in the artifact registry
         (family + versions) and return the :class:`ArtifactVersion`.
 
-        R0 API notes: the parameter is ``artifact_type`` (the old ``type=``
-        shadowed the builtin and crashed one branch; it remains as a
-        deprecated alias for one release). The old "no-type = track() sugar"
-        behavior is gone — use :meth:`track` for sequence points.
+        Sequence points go through :meth:`track`, not here.
         """
-        if artifact_type is None and type is not None:
-            import warnings
-
-            warnings.warn(
-                "log_artifact(type=...) is deprecated; use artifact_type=...",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            artifact_type = type
         if artifact_type is not None:
             return self._log_versioned_artifact(value, name, artifact_type, metadata, aliases)
 

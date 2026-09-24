@@ -29,7 +29,6 @@ def test_roundtrip_minimal():
     assert meta["n_boxes"] == 20
     assert meta["kind"] == "boxes"
     assert meta["max_depth"] == 0
-    assert "value_range" not in meta
 
     back = _load(data)
     np.testing.assert_allclose(back["mins"], mins)
@@ -50,10 +49,6 @@ def test_roundtrip_depth_and_values():
     )
     assert meta["kind"] == "octree"
     assert meta["max_depth"] == int(depth.max())
-    assert "value_range" in meta
-    assert meta["value_range"]["min"] == pytest.approx(float(values.min()))
-    assert meta["value_range"]["max"] == pytest.approx(float(values.max()))
-    assert meta["value_range"]["mean"] == pytest.approx(float(values.mean()))
     assert meta["properties"] == [
         {
             "name": "value",
@@ -75,7 +70,6 @@ def test_named_properties_dict_recorded_and_roundtrip():
     cost = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], dtype=np.float32)
     iou = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6], dtype=np.float32)
     data, meta = h.serialize({"mins": mins, "maxs": maxs, "values": {"cost": cost, "iou": iou}})
-    assert meta["value_range"] == {"min": 1.0, "max": 6.0, "mean": pytest.approx(3.5)}
     assert [p["name"] for p in meta["properties"]] == ["cost", "iou"]
     back = _load(data)
     np.testing.assert_allclose(back["values_cost"], cost)

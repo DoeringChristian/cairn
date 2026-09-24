@@ -8,11 +8,6 @@ handlers so this canonicalization, the npz ``values_<name>`` array layout,
 and the ``properties: [{name, min, max, mean}]`` metadata list are
 implemented exactly once (spec-visual-compare.md quality bar #3: one shared
 module, not a per-handler re-implementation).
-
-``value_range`` (the pre-existing single-property metadata field) is kept
-for backward compatibility: it always mirrors the *first* property, so old
-UI code (or any external consumer) that only knows about a single named
-range keeps working unchanged.
 """
 
 from __future__ import annotations
@@ -47,8 +42,7 @@ def normalize_properties(
       array behavior, unchanged from the caller's point of view).
     - A ``dict[str, array-like]`` -> validated per-entry (every property
       must have length ``n``), keys stringified, values cast to float32.
-      Insertion order is preserved (drives ``properties_metadata`` order and
-      therefore which property ``value_range`` mirrors).
+      Insertion order is preserved (drives ``properties_metadata`` order).
     - An empty dict -> ``None`` (nothing to record).
     """
     if values is None:
@@ -88,13 +82,3 @@ def properties_metadata(
             }
         )
     return out or None
-
-
-def value_range_from(
-    properties_meta: "list[dict[str, Any]] | None",
-) -> "dict[str, float] | None":
-    """First property's ``{min, max, mean}`` — backward-compat ``value_range``."""
-    if not properties_meta:
-        return None
-    first = properties_meta[0]
-    return {"min": first["min"], "max": first["max"], "mean": first["mean"]}

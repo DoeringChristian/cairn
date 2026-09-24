@@ -18,8 +18,7 @@ context). Subsequent lines:
 
 ACK DISCIPLINE (R3 — fixes the silent-loss bug): the checkpoint is a
 CONTIGUOUS low-water mark plus the set of individually-acked seqs above it
-(JSON {"low": N, "acked": [...]}; a bare integer is read as {"low": N} for
-backward compatibility). ``ack(seq)`` records a successful send; the low
+(JSON {"low": N, "acked": [...]}). ``ack(seq)`` records a successful send; the low
 water only advances over contiguous acks, so a FAILED op can never be
 shadowed by a later success — it stays pending and replays.
 
@@ -165,8 +164,6 @@ class WriteAheadLog:
             obj = json.loads(raw)
         except json.JSONDecodeError:
             return 0, set()
-        if isinstance(obj, int):  # legacy bare-int checkpoint
-            return obj, set()
         return int(obj.get("low", 0)), set(obj.get("acked", []))
 
     def _write_ack_state(self, low: int, acked: set[int]) -> None:
@@ -193,10 +190,6 @@ class WriteAheadLog:
             low += 1
             acked.discard(low)
         self._write_ack_state(low, acked)
-
-    def checkpoint(self, seq: int) -> None:
-        """DEPRECATED alias of :meth:`ack` (kept for one release)."""
-        self.ack(seq)
 
     def pending(self) -> Iterator[WALEntry]:
         """Yield all UNACKED entries (above the low water, minus the acked

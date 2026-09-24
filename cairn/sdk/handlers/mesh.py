@@ -13,8 +13,7 @@ npz arrays:
   bare ``values=`` array is canonicalized to a single ``values_value``
   property (see ``handlers/_properties.py``); a ``values={"name": arr, ...}``
   dict logs one array per name. Metadata's ``properties`` list carries
-  ``{name, min, max, mean}`` per property; ``value_range`` mirrors the first
-  property for backward compat.
+  ``{name, min, max, mean}`` per property.
 - ``colors`` f4 ``(N, 3)`` — optional per-vertex RGB; accepts either ``0-255``
   or ``0-1`` and auto-normalizes to ``0-1`` (same convention as
   ``PointCloud``'s ``xyzrgb``).
@@ -63,7 +62,6 @@ from ._properties import (
     normalize_properties,
     properties_arrays,
     properties_metadata,
-    value_range_from,
 )
 
 MAX_BYTES = 64 * 1024 * 1024  # 64MB, pre-compression total array bytes
@@ -309,7 +307,6 @@ class MeshHandler:
         for arr in property_arrays.values():
             total_bytes += arr.nbytes
         properties_meta = properties_metadata(properties)
-        value_range = value_range_from(properties_meta)
 
         has_colors = colors is not None
         if has_colors:
@@ -373,8 +370,6 @@ class MeshHandler:
         else:
             # Non-manifold input: winding untouched (see _normalize_winding).
             meta["winding"] = "unnormalized"
-        if value_range is not None:
-            meta["value_range"] = value_range
         if properties_meta is not None:
             meta["properties"] = properties_meta
         return data, meta

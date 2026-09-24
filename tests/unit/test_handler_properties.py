@@ -11,7 +11,6 @@ from cairn.sdk.handlers._properties import (
     normalize_properties,
     properties_arrays,
     properties_metadata,
-    value_range_from,
 )
 
 
@@ -69,16 +68,3 @@ def test_properties_metadata_order_and_stats():
 def test_properties_metadata_none_for_falsy():
     assert properties_metadata(None) is None
     assert properties_metadata({}) is None
-
-
-def test_value_range_from_mirrors_first_property():
-    meta = [
-        {"name": "a", "min": 1.0, "max": 3.0, "mean": 2.0},
-        {"name": "b", "min": 10.0, "max": 20.0, "mean": 15.0},
-    ]
-    assert value_range_from(meta) == {"min": 1.0, "max": 3.0, "mean": 2.0}
-
-
-def test_value_range_from_none_for_falsy():
-    assert value_range_from(None) is None
-    assert value_range_from([]) is None

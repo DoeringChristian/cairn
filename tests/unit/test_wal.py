@@ -27,14 +27,14 @@ class TestWALBasics:
         wal.append("batch", {"points": []})
         wal.append("batch", {"points": []})
         assert wal.read_checkpoint() == 0
-        wal.checkpoint(1)
+        wal.ack(1)
         assert wal.read_checkpoint() == 1
 
     def test_pending_returns_entries_after_checkpoint(self, wal):
         wal.append("batch", {"data": "a"})
         wal.append("params", {"data": "b"})
         wal.append("logs", {"data": "c"})
-        wal.checkpoint(1)
+        wal.ack(1)
         pending = list(wal.pending())
         assert len(pending) == 2
         assert pending[0].seq == 2
@@ -44,14 +44,14 @@ class TestWALBasics:
 
     def test_pending_empty_when_fully_checkpointed(self, wal):
         wal.append("batch", {"data": "a"})
-        wal.checkpoint(1)
+        wal.ack(1)
         assert list(wal.pending()) == []
 
     def test_has_pending(self, wal):
         assert not wal.has_pending
         wal.append("batch", {})
         assert wal.has_pending
-        wal.checkpoint(1)
+        wal.ack(1)
         assert not wal.has_pending
 
 
@@ -86,7 +86,7 @@ class TestWALCleanup:
     def test_cleanup_removes_files(self, tmp_path):
         w = WriteAheadLog("cleanup-run", wal_dir=tmp_path / "wal")
         w.append("batch", {})
-        w.checkpoint(1)
+        w.ack(1)
         wal_path = tmp_path / "wal" / "cleanup-run.wal.jsonl"
         cp_path = tmp_path / "wal" / "cleanup-run.checkpoint"
         assert wal_path.exists()
@@ -100,7 +100,7 @@ class TestWALResume:
         """Simulate crash+restart: close WAL, reopen, continue appending."""
         w1 = WriteAheadLog("resume-run", wal_dir=tmp_path / "wal")
         w1.append("batch", {"data": "first"})
-        w1.checkpoint(1)
+        w1.ack(1)
         w1.append("batch", {"data": "second"})
         w1.close()
 
@@ -158,14 +158,3 @@ def test_header_carries_epoch_and_target(tmp_path):
     assert wal2.target == "http://srv:4300"
     # header record never surfaces as a pending op
     assert all(e.op != "header" for e in wal2.pending())
-
-
-def test_legacy_bare_int_checkpoint_still_reads(tmp_path):
-    from cairn.sdk.wal import WriteAheadLog
-
-    wal = WriteAheadLog("runz", tmp_path)
-    for i in range(3):
-        wal.append("batch", {"n": i})
-    (tmp_path / "runz.checkpoint").write_text("2")  # legacy format
-    assert wal.read_checkpoint() == 2
-    assert [e.seq for e in wal.pending()] == [3]

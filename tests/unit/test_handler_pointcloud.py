@@ -100,7 +100,6 @@ def test_no_values_stays_plain_npy_format():
     data, meta = h.serialize(pts)
     assert data[:2] != b"PK"
     assert "properties" not in meta
-    assert "value_range" not in meta
     back = h.deserialize(data)
     assert isinstance(back, np.ndarray)
 
@@ -112,7 +111,6 @@ def test_single_values_array_canonicalized_to_value_property():
     data, meta = h.serialize(pts, values=values)
     assert data[:2] == b"PK"
     assert meta["properties"] == [{"name": "value", "min": 0.0, "max": 4.0, "mean": 2.0}]
-    assert meta["value_range"] == {"min": 0.0, "max": 4.0, "mean": 2.0}
     back = h.deserialize(data)
     assert isinstance(back, dict)
     np.testing.assert_allclose(back["points"][:, :3], pts.astype(np.float32))
@@ -126,8 +124,6 @@ def test_named_properties_dict():
     curvature = np.array([-1.0, 0.0, 1.0, 2.0])
     data, meta = h.serialize(pts, values={"loss": loss, "curvature": curvature})
     assert [p["name"] for p in meta["properties"]] == ["loss", "curvature"]
-    # value_range mirrors the FIRST property (insertion order).
-    assert meta["value_range"] == {"min": 1.0, "max": 4.0, "mean": 2.5}
     back = h.deserialize(data)
     np.testing.assert_allclose(back["values_loss"], loss.astype(np.float32))
     np.testing.assert_allclose(back["values_curvature"], curvature.astype(np.float32))
