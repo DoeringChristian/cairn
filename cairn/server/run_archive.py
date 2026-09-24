@@ -340,6 +340,8 @@ def restore_archive(
                 id=alert["id"] if keep_ids else secrets.token_hex(16),
                 run_id=new_id,
                 project_id=project_id,
+                # Imported alerts are history: never (re)deliver them.
+                delivered_at=alert.get("delivered_at") or utc_now().isoformat(),
             ))
 
         for sub, target in (("logs/", data_dir.logs_dir), ("source/", data_dir.sources_dir)):

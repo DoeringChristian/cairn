@@ -236,8 +236,13 @@ class Transport:
     def delete_keys(self, run_id: str, table: str, keys: list[str]) -> None:
         self._request("DELETE", f"/api/runs/{run_id}/{table}", json={"keys": keys})
 
-    def heartbeat(self, run_id: str) -> None:
-        self.post_json(f"/api/runs/{run_id}/heartbeat", {})
+    def alert(self, run_id: str, alert: dict[str, Any]) -> None:
+        """``alert``: alert_id, title, text, level, created_at."""
+        self.post_json(f"/api/runs/{run_id}/alerts", alert)
+
+    def heartbeat(self, run_id: str) -> str | None:
+        """Returns the run's ``stop_requested`` timestamp, if any."""
+        return self.post_json(f"/api/runs/{run_id}/heartbeat", {}).json().get("stop_requested")
 
     def attach_artifact(
         self, run_id: str, name: str, digest: str, step: int | None = None

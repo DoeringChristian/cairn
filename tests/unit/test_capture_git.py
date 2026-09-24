@@ -51,3 +51,53 @@ def test_non_repo_returns_none(tmp_path):
     non = tmp_path / "nogit"
     non.mkdir()
     assert capture_git(non) is None
+
+
+def test_remote_is_captured_without_credentials(repo):
+    subprocess.run(
+        ["git", "remote", "add", "origin", "https://user:tok@github.com/o/r.git"],
+        cwd=repo, check=True,
+    )
+    assert capture_git(repo)["remote"] == "https://github.com/o/r.git"
+
+
+def test_no_remote_is_none(repo):
+    assert capture_git(repo)["remote"] is None
+
+
+def test_diff_text_lists_untracked_files(repo):
+    from cairn.sdk.capture.git import diff_text
+
+    (repo / "a.txt").write_text("two\n")
+    (repo / "new.py").write_text("x = 1\n")
+    info = capture_git(repo)
+    assert info["untracked"] == ["new.py"]
+    text = diff_text(info)
+    assert "+two" in text
+    assert text.endswith("# Untracked files:\n#   new.py\n")
+    assert len(diff_text(info, max_bytes=10).encode()) <= 10
+
+
+def test_run_uploads_diff_and_remote(repo, monkeypatch):
+    import cairn
+
+    subprocess.run(
+        ["git", "remote", "add", "origin", "git@github.com:o/r.git"], cwd=repo, check=True,
+    )
+    (repo / "a.txt").write_text("two\n")
+    monkeypatch.chdir(repo)
+    store = repo.parent / "store"
+    with cairn.Run(
+        repo=store, project="p", capture_stdout=False,
+        capture_env=False, capture_system_metrics=False,
+    ) as run:
+        rid = run.id
+
+    reader = cairn.Reader(repo=store)
+    try:
+        r = reader.run(rid)
+        assert r.git.remote == "git@github.com:o/r.git"
+        assert r.git.dirty is True
+        assert "+two" in r.artifact("git.diff")
+    finally:
+        reader.close()

@@ -46,6 +46,7 @@ class GitInfo:
     sha: str | None
     branch: str | None
     dirty: bool | None
+    remote: str | None = None
 
 
 @dataclass(frozen=True)
@@ -343,6 +344,7 @@ class Run:
             sha=sha,
             branch=self._raw.get("git_branch"),
             dirty=bool(self._raw.get("git_dirty")),
+            remote=self._raw.get("git_remote"),
         )
 
     @property
