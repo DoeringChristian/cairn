@@ -63,3 +63,46 @@ def test_float_frames_are_unit_range_not_black():
     _, meta = VideoHandler().serialize(frames, fps=4)
     preview = PILImage.open(io.BytesIO(base64.b64decode(meta["preview"].split(",", 1)[1])))
     assert abs(int(np.asarray(preview).mean()) - 128) <= 2
+
+
+@pytest.mark.media
+@pytest.mark.parametrize(
+    "frames",
+    [
+        np.full((4, 3, 16, 24), 128, np.uint8),        # T×C×H×W (torch layout)
+        np.full((4, 16, 24), 128, np.uint8),           # T×H×W grayscale
+        np.full((4, 16, 24, 4), 128, np.uint8),        # RGBA: alpha dropped
+        [np.full((3, 16, 24), 128, np.uint8)] * 4,     # list of CHW frames
+    ],
+)
+def test_frame_layouts_become_hwc_rgb(frames):
+    pytest.importorskip("imageio_ffmpeg")
+    _, meta = VideoHandler().serialize(frames, fps=4)
+    assert (meta["width"], meta["height"], meta["channels"]) == (24, 16, 3)
+
+
+@pytest.mark.media
+def test_torch_tchw_tensor():
+    torch = pytest.importorskip("torch")
+    pytest.importorskip("imageio_ffmpeg")
+    _, meta = VideoHandler().serialize(torch.full((4, 3, 16, 24), 0.5), fps=4)
+    assert (meta["width"], meta["height"]) == (24, 16)
+
+
+@pytest.mark.media
+def test_existing_file_is_stored_as_is(tmp_path):
+    pytest.importorskip("imageio_ffmpeg")
+    h = VideoHandler()
+    data, _ = h.serialize(np.full((6, 16, 32, 3), 90, np.uint8), fps=6)
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(data)
+    stored, meta = h.serialize(clip)
+    assert stored == data
+    assert h.mime_type_for(str(clip)) == "video/mp4"
+    assert meta["filename"] == "clip.mp4" and meta["width"] == 32 and meta["preview"].startswith("data:image/png")
+    assert h.deserialize(stored, meta).shape[1:] == (16, 32, 3)
+
+
+def test_missing_file_raises(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        VideoHandler().serialize(tmp_path / "nope.mp4")

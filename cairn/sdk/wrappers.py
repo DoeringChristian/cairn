@@ -99,6 +99,19 @@ class Audio(_TypeWrapper):
 
 
 class Video(_TypeWrapper):
+    """Video from frames or an existing file.
+
+    Frames: ``T×H×W×C`` or ``T×C×H×W`` arrays/tensors, ``T×H×W`` grayscale,
+    or a list of frames; values map like images (float [0, 1], uint8
+    [0, 255]). Encoded as H.264 MP4 at ``fps`` (default 30)::
+
+        run.track(cairn.Video(frames, fps=15), name="rollout", step=step)
+
+    A path to an existing file (mp4, webm, …) is stored unchanged::
+
+        run.track(cairn.Video("render.mp4"), name="render", step=step)
+    """
+
     object_type = "video"
 
 
