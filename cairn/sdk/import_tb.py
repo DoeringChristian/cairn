@@ -20,6 +20,7 @@ import numpy as np
 from PIL import Image as PILImage
 
 from .connect import open_transport
+from .handlers.histogram import HistogramHandler
 from .handlers.registry import default_registry, resolve_mime_type
 
 _BATCH = 1000
@@ -83,7 +84,7 @@ def _import_run(transport: Any, acc: Any, project: str, name: str) -> str | None
         add(tag, step, wall, object_type="image", artifact_hash=blob("image", img))
 
     def histogram(tag: str, step: int, wall: float, counts: np.ndarray, edges: np.ndarray) -> None:
-        data, meta = _histogram_npz(counts, edges)
+        data, meta = HistogramHandler().serialize(None, counts=counts, edges=edges)
         digest = transport.upload_artifact(data, "application/octet-stream", meta, object_type="histogram")
         add(tag, step, wall, object_type="histogram", artifact_hash=digest)
 
@@ -157,23 +158,3 @@ def _tensor_values(plugin: str, proto: Any) -> Iterator[tuple[str, Any]]:
     elif plugin == "histograms" and arr.ndim == 2 and arr.shape[0] and arr.shape[1] == 3:
         edges = np.concatenate([arr[:, 0], arr[-1:, 1]]).astype(np.float64)
         yield "histogram", (arr[:, 2].astype(np.float64), edges)
-
-
-def _histogram_npz(counts: np.ndarray, edges: np.ndarray) -> tuple[bytes, dict[str, Any]]:
-    """The histogram handler's npz + metadata for already-binned data.
-
-    TODO(merge): once ``cairn.Histogram(counts=, edges=)`` lands, replace this
-    with ``HistogramHandler().serialize(None, counts=counts, edges=edges)``.
-    """
-    buf = io.BytesIO()
-    np.savez_compressed(buf, counts=counts, edges=edges)
-    total = float(counts.sum())
-    mids = (edges[:-1] + edges[1:]) / 2
-    meta = {
-        "num_bins": int(len(counts)),
-        "min": float(edges[0]),
-        "max": float(edges[-1]),
-        "count": int(round(total)),
-        "mean": float((mids * counts).sum() / total) if total > 0 else 0.0,
-    }
-    return buf.getvalue(), meta
