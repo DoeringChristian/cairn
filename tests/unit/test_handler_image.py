@@ -50,20 +50,61 @@ def test_numpy_float_defaults_to_png(handler):
     assert handler.mime_type_for(arr) == "image/png"
     data, meta = handler.serialize(arr)
     assert data.startswith(b"\x89PNG")
-    assert meta["encoding"] == "png"
-    assert meta["hdr"] == {
-        "source_dtype": "float32", "shape": [6, 8, 3], "clamped": False, "tonemap": {"min": 0.0, "max": 1.0},
-    }
+    assert meta["encoding"] == "png" and "linear" not in meta
+    assert meta["hdr"] == {"source_dtype": "float32", "shape": [6, 8, 3], "clamped": False}
     back = np.asarray(handler.deserialize(data))
     np.testing.assert_allclose(back / 255.0, arr, atol=1 / 255)
 
 
-def test_png_tonemap_stretches_out_of_range_values(handler):
-    arr = np.linspace(2.0, 30.0, 48, dtype=np.float32).reshape(4, 4, 3)
-    data, meta = handler.serialize(arr)
-    assert data.startswith(b"\x89PNG")
-    # The window the tone-map actually applied, not a nominal [0, 1].
-    assert meta["hdr"]["tonemap"] == {"min": 2.0, "max": 30.0}
+def _png_values(handler, arr, **kwargs):
+    data, meta = handler.serialize(arr, **kwargs)
+    return np.asarray(handler.deserialize(data)), meta
+
+
+def test_float_is_read_as_unit_range_and_outliers_clip(handler):
+    # A render whose content lives below 0.4 plus one specular glint at 7.79: the
+    # glint must saturate, not rescale the whole image into the bottom codes.
+    arr = np.full((4, 4, 3), 0.374, np.float32)
+    arr[0, 0] = 7.79
+    arr[3, 3] = -0.2
+    back, _ = _png_values(handler, arr)
+    assert back[1, 1, 0] == 95  # round(0.374 * 255)
+    assert back[0, 0, 0] == 255 and back[3, 3, 0] == 0
+
+
+def test_integer_dtypes_span_their_range(handler):
+    u16 = np.full((2, 2), 32768, np.uint16)
+    assert _png_values(handler, u16)[0][0, 0] == 128
+    signed = np.array([[-5, 0], [2**31 - 1, 2**30]], np.int32)
+    assert _png_values(handler, signed)[0].tolist() == [[0, 0], [255, 128]]
+    flags = np.array([[True, False]], bool)
+    assert _png_values(handler, flags)[0].tolist() == [[255, 0]]
+
+
+def test_nan_is_black(handler):
+    arr = np.array([[np.nan, 1.0]], np.float32)
+    assert _png_values(handler, arr)[0].tolist() == [[0, 255]]
+
+
+def test_linear_applies_the_srgb_transfer(handler):
+    arr = np.array([[0.0, 0.0031308, 0.18, 0.374, 1.0]], np.float32)
+    back, meta = _png_values(handler, arr, linear=True)
+    assert back.tolist() == [[0, 10, 118, 165, 255]]
+    assert meta["linear"] is True
+    # uint8 input is display values unless marked linear.
+    u8 = np.array([[46]], np.uint8)  # 0.18 * 255
+    assert _png_values(handler, u8)[0][0, 0] == 46
+    assert _png_values(handler, u8, linear=True)[0][0, 0] == 118
+
+
+def test_linear_exr_keeps_values_and_srgb_preview(handler):
+    arr = np.full((4, 4, 3), 0.18, np.float32)
+    data, meta = handler.serialize(arr, encoding="exr", linear=True)
+    np.testing.assert_allclose(handler.deserialize(data).astype(np.float32), arr, rtol=2 ** -11)
+    import base64
+    import io as _io
+    preview = PILImage.open(_io.BytesIO(base64.b64decode(meta["preview"].split(",", 1)[1])))
+    assert np.asarray(preview)[0, 0, 0] == 118
 
 
 def test_exr_on_request_keeps_hdr_values(handler):

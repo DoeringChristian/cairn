@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import io
+
 import numpy as np
 import pytest
+from PIL import Image as PILImage
 
 from cairn.sdk.handlers.video import VideoHandler
 
@@ -49,3 +52,14 @@ def test_can_handle_4d():
     pytest.importorskip("imageio_ffmpeg")
     h = VideoHandler()
     assert h.can_handle(np.zeros((2, 4, 4, 3), dtype=np.uint8))
+
+
+@pytest.mark.media
+def test_float_frames_are_unit_range_not_black():
+    import base64
+
+    pytest.importorskip("imageio_ffmpeg")
+    frames = np.full((4, 16, 16, 3), 0.5, np.float32)
+    _, meta = VideoHandler().serialize(frames, fps=4)
+    preview = PILImage.open(io.BytesIO(base64.b64decode(meta["preview"].split(",", 1)[1])))
+    assert abs(int(np.asarray(preview).mean()) - 128) <= 2

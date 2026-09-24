@@ -4,9 +4,10 @@ The storage choice travels with the value (``cairn.Image(arr, encoding=...)`` or
 ``run.track(..., encoding=...)``) and is read by both ``mime_type_for`` and
 ``serialize`` so the recorded mime type always matches the bytes:
 
-* ``"png"`` (default) — 8-bit PNG. Non-u8 arrays are tone-mapped: values
-  already in [0, 1] scale to [0, 255], anything else is min–max stretched; the
-  window used is recorded as ``hdr.tonemap``.
+* ``"png"`` (default) — 8-bit PNG. Values map by dtype, never by content:
+  float is [0, 1], uint8 is [0, 255], other integers span their dtype, and
+  anything outside clips. ``linear=True`` marks scene-linear data (renders) and
+  applies the sRGB transfer.
 * ``"exr[:<compression>[:<precision>]]"`` — OpenEXR keeping scene-linear
   values; compression ``piz`` (default), ``zip``, ``zips``, ``none`` or the
   lossy ``dwaa``/``dwab``; precision ``auto`` (half unless the values don't fit),
@@ -17,8 +18,8 @@ PIL images, figures and uint8 arrays are display values and are always PNG.
 PNG and EXR need 1, 3 or 4 channels; anything else must ask for ``"npy"``.
 
 Every image records ``encoding`` (canonical, e.g. ``"exr:dwab:half"``) in its
-metadata; non-u8 arrays also record an ``hdr`` block (source dtype, shape,
-clamped, plus the ``tonemap`` window when stored as PNG).
+metadata, and ``linear`` when set; non-u8 arrays also record an ``hdr`` block
+(source dtype, shape, clamped).
 
 Optionally carries **overlay annotations** (bounding boxes + segmentation
 masks) supplied via ``cairn.Image(img, boxes=..., masks=..., class_labels=...)``.
@@ -44,7 +45,7 @@ from PIL import Image as PILImage
 
 from ..wrappers import _TypeWrapper
 from ._optional import try_import
-from .image_encoding import DEFAULT_ENCODING, EXR_MAGIC, decode_exr, encode_exr, image_encoding_for
+from .image_encoding import DEFAULT_ENCODING, EXR_MAGIC, decode_exr, encode_exr, image_encoding_for, to_display_uint8
 
 MAX_BOXES = 500
 MAX_MASK_B64_BYTES = 2 * 1024 * 1024
@@ -144,6 +145,11 @@ def _build_masks(
     return out
 
 
+#: A gallery point's artifact: a JSON manifest ``{"images": [{hash, mime_type,
+#: metadata}, ...]}`` naming each image's own content-addressed artifact.
+GALLERY_MIME = "application/vnd.cairn.image-gallery+json"
+
+
 class ImageHandler:
     object_type = "image"
     mime_type = "image/png"
@@ -187,24 +193,8 @@ class ImageHandler:
         enc = image_encoding_for(self._array_for_storage(obj), encoding)
         return self._MIME_BY_CONTAINER[enc.container]
 
-    @staticmethod
-    def _tonemap_window(arr: np.ndarray) -> tuple[float, float]:
-        """The value window the preview tone-map stretches onto [0, 255]."""
-        finite = arr[np.isfinite(arr)]
-        a_min = float(finite.min()) if finite.size else 0.0
-        a_max = float(finite.max()) if finite.size else 1.0
-        if a_max <= 1.0 and a_min >= 0.0:
-            return 0.0, 1.0
-        return (a_min, a_max) if a_max > a_min else (a_min, a_min + 1.0)
-
     @classmethod
-    def _tonemap_range(cls, arr: np.ndarray) -> dict[str, float]:
-        """`_tonemap_window` as metadata, so preview and `hdr` cannot drift."""
-        lo, hi = cls._tonemap_window(arr)
-        return {"min": lo, "max": hi}
-
-    @classmethod
-    def _to_pil(cls, obj: Any) -> PILImage.Image:
+    def _to_pil(cls, obj: Any, *, linear: bool = False) -> PILImage.Image:
         """Render `obj` as an 8-bit PIL image (the PNG artifact, or the preview of one)."""
         if isinstance(obj, PILImage.Image):
             return obj
@@ -233,13 +223,7 @@ class ImageHandler:
         if arr is None:
             raise TypeError(f"Cannot coerce {type(obj)!r} to an image")
 
-        if arr.dtype != np.uint8:
-            lo, hi = cls._tonemap_window(arr)
-            # A constant array too large for `lo + 1.0` to move (>= 2**53) leaves a
-            # zero-width window; render it flat rather than dividing by zero.
-            rng = (hi - lo) or 1.0
-            safe = np.nan_to_num(arr, nan=lo, posinf=hi, neginf=lo)
-            arr = ((safe - lo) / rng * 255.0).clip(0, 255).astype(np.uint8)
+        arr = to_display_uint8(arr, linear=linear)
 
         if arr.ndim == 2:
             return PILImage.fromarray(arr, mode="L")
@@ -260,11 +244,12 @@ class ImageHandler:
         masks: Any = None,
         class_labels: Any = None,
         encoding: str = DEFAULT_ENCODING,
+        linear: bool = False,
         **kwargs: Any,
     ) -> tuple[bytes, dict[str, Any]]:
         arr = self._array_for_storage(obj)
         enc = image_encoding_for(arr, encoding)
-        img = self._to_pil(obj)
+        img = self._to_pil(obj, linear=linear)
         if enc.container == "exr":
             data = encode_exr(arr, enc)
         else:
@@ -275,7 +260,7 @@ class ImageHandler:
                 img.save(buf, format="PNG")
             data = buf.getvalue()
 
-        # 128-px tone-mapped thumbnail preview remains browser-native.
+        # 128-px display-mapped thumbnail, browser-native whatever the encoding.
         thumb = img.copy()
         thumb.thumbnail((128, 128))
         tbuf = io.BytesIO()
@@ -294,6 +279,8 @@ class ImageHandler:
             "preview": preview,
             "encoding": enc.name,
         }
+        if linear:
+            meta["linear"] = True
 
         if arr is not None and arr.dtype != np.uint8:
             meta["hdr"] = {
@@ -301,8 +288,6 @@ class ImageHandler:
                 "shape": list(arr.shape),
                 "clamped": enc.clamped,
             }
-            if enc.container == "png":
-                meta["hdr"]["tonemap"] = self._tonemap_range(arr)
 
         # Optional overlay annotations — stored inline in metadata (the sidecar),
         # since one artifact per point is a hard ingest constraint.

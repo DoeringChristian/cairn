@@ -195,3 +195,24 @@ def decode_exr(data: bytes) -> np.ndarray:
         if name in channels:
             return np.asarray(channels[name].pixels)
     raise ValueError(f"unsupported EXR channel set {sorted(channels)}; expected Y, RGB or RGBA")
+
+
+def to_display_uint8(arr: np.ndarray, *, linear: bool = False) -> np.ndarray:
+    """Map pixel values to 8-bit display values by dtype, never by content.
+
+    float → [0, 1], uint8 → [0, 255], other integers → [0, dtype max],
+    bool → {0, 1}. Values outside the range clip; NaN is 0. ``linear=True``
+    marks scene-linear data and applies the sRGB transfer before quantizing.
+    """
+    if arr.dtype == np.uint8 and not linear:
+        return arr
+    if arr.dtype == np.bool_:
+        unit = arr.astype(np.float32)
+    elif arr.dtype.kind in "iu":
+        unit = arr.astype(np.float64) / float(np.iinfo(arr.dtype).max)
+    else:
+        unit = np.nan_to_num(arr.astype(np.float32, copy=False), nan=0.0, posinf=1.0, neginf=0.0)
+    unit = np.clip(unit, 0.0, 1.0)
+    if linear:
+        unit = np.where(unit <= 0.0031308, unit * 12.92, 1.055 * np.power(unit, 1 / 2.4) - 0.055)
+    return np.round(unit * 255.0).astype(np.uint8)

@@ -44,11 +44,15 @@ class Image(_TypeWrapper):
             class_labels={0: "background", 1: "cat", 2: "dog"},
         ), name="detections", step=step)
 
+    Pixel values are read by dtype: float is [0, 1], uint8 is [0, 255], other
+    integers span their dtype's range; values outside clip. Pass
+    ``linear=True`` for scene-linear data (e.g. renders) to apply the sRGB
+    transfer for display.
+
     ``encoding`` picks the storage (float/int arrays only — PIL images, figures
     and uint8 arrays are display values and always PNG):
 
-    * ``"png"`` (default) — 8-bit; non-u8 values in [0, 1] scale to [0, 255],
-      anything else is min–max stretched.
+    * ``"png"`` (default) — 8-bit display values, as above.
     * ``"exr[:<compression>[:<precision>]]"`` — OpenEXR keeping scene-linear
       values. Compression ``piz`` (default), ``zip``, ``zips``, ``none`` or the
       **lossy** ``dwaa``/``dwab``; precision ``auto`` (default: half unless the
@@ -57,12 +61,26 @@ class Image(_TypeWrapper):
 
     ::
 
-        run.track(cairn.Image(hdr_array, encoding="exr:dwab"), name="radiance", step=step)
+        run.track(cairn.Image(render, linear=True), name="render", step=step)
+        run.track(cairn.Image(hdr_array, linear=True, encoding="exr:dwab"), name="radiance", step=step)
 
     The viewer displays PNG; other encodings show a thumbnail and a download.
+
+    A list of images logged under one name and step is a gallery, shown
+    together in one card (as in wandb)::
+
+        run.track([cairn.Image(a), cairn.Image(b)], name="samples", step=step)
     """
 
     object_type = "image"
+
+    def __init__(self, obj: Any, **kwargs: Any):
+        if isinstance(obj, (list, tuple)):
+            raise TypeError(
+                "cairn.Image takes one image. For several images under one name and step, "
+                "track a list: run.track([cairn.Image(a), cairn.Image(b)], name=..., step=...)"
+            )
+        super().__init__(obj, **kwargs)
 
 
 class Figure(_TypeWrapper):

@@ -11,6 +11,7 @@ from PIL import Image as PILImage
 
 from ..wrappers import _TypeWrapper
 from ._optional import try_import
+from .image_encoding import to_display_uint8
 
 
 class VideoHandler:
@@ -69,16 +70,15 @@ class VideoHandler:
         return np.asarray(obj)
 
     def serialize(
-        self, obj: Any, fps: int = 30, **kwargs: Any
+        self, obj: Any, fps: int = 30, linear: bool = False, **kwargs: Any
     ) -> tuple[bytes, dict[str, Any]]:
         imageio = try_import("imageio")
         if imageio is None:
             raise ImportError(
                 "video tracking requires `cairn-track[media]` (imageio + imageio-ffmpeg)"
             )
-        arr = self._to_frames(obj)
-        if arr.dtype != np.uint8:
-            arr = arr.clip(0, 255).astype(np.uint8)
+        # Same value rules as images: float [0, 1], uint8 [0, 255].
+        arr = to_display_uint8(self._to_frames(obj), linear=linear)
 
         # imageio expects frames as a sequence; write to an in-memory buffer.
         # Use mpeg4 codec + libx264 via imageio-ffmpeg plugin.
