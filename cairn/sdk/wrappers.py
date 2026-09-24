@@ -77,6 +77,10 @@ class Image(_TypeWrapper):
     together in one card (as in wandb)::
 
         run.track([cairn.Image(a), cairn.Image(b)], name="samples", step=step)
+
+    ``caption`` labels the logged point (each gallery image keeps its own)::
+
+        run.track(cairn.Image(img, caption=f"epoch {epoch}"), name="sample", step=step)
     """
 
     object_type = "image"
@@ -95,6 +99,8 @@ class Figure(_TypeWrapper):
 
 
 class Audio(_TypeWrapper):
+    """Audio samples (``sample_rate=``); ``caption=`` labels the point."""
+
     object_type = "audio"
 
 
@@ -110,6 +116,8 @@ class Video(_TypeWrapper):
     A path to an existing file (mp4, webm, …) is stored unchanged::
 
         run.track(cairn.Video("render.mp4"), name="render", step=step)
+
+    ``caption=`` labels the point.
     """
 
     object_type = "video"

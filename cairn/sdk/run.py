@@ -405,7 +405,9 @@ class Run:
 
         effective_step = self._next_step(name, context, step)
         merged_kwargs = {**wrapper_kwargs, **kwargs}
-
+        # A caption belongs to the point, not the artifact: identical bytes
+        # logged twice share one artifact row but keep their own captions.
+        caption = merged_kwargs.pop("caption", None)
 
         point: dict[str, Any] = {
             "name": name,
@@ -414,6 +416,8 @@ class Run:
             "context": context,
             "object_type": object_type,
         }
+        if caption is not None:
+            point["metadata"] = {"caption": str(caption)}
 
         if object_type == "scalar":
             # Fast path — scalar handler has a cheap to_scalar method.
@@ -446,24 +450,33 @@ class Run:
         and the point's artifact is a manifest listing them (``GALLERY_MIME``)."""
         handler = self._registry.find_by_type("image")
         assert handler is not None
+        kwargs = dict(kwargs)
+        caption = kwargs.pop("caption", None)
         items: list[dict[str, Any]] = []
         for image in images:
             merged = {**image.kwargs, **kwargs}
+            item_caption = merged.pop("caption", None)
             blob, meta = handler.serialize(image.obj, **merged)
             mime = resolve_mime_type(handler, image.obj, merged)
             digest = self._transport.upload_artifact(blob, mime, meta, object_type="image")
-            items.append({"hash": digest, "mime_type": mime, "metadata": meta})
+            item: dict[str, Any] = {"hash": digest, "mime_type": mime, "metadata": meta}
+            if item_caption is not None:
+                item["caption"] = str(item_caption)
+            items.append(item)
         manifest = json.dumps({"images": items}).encode()
         meta = {"gallery": len(items), "preview": items[0]["metadata"].get("preview"), "encoding": "gallery"}
         digest = self._transport.upload_artifact(manifest, GALLERY_MIME, meta, object_type="image")
-        self._metric_buffer.append({
+        point: dict[str, Any] = {
             "name": name,
             "step": self._next_step(name, context, step),
             "wall_time": _now_iso(),
             "context": context,
             "object_type": "image",
             "artifact_hash": digest,
-        })
+        }
+        if caption is not None:
+            point["metadata"] = {"caption": str(caption)}
+        self._metric_buffer.append(point)
 
     def log_artifact(
         self,
