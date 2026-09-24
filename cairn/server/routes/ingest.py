@@ -373,6 +373,75 @@ def stop_run(run_id: str, request: Request) -> dict[str, Any]:
     return {"run_id": run_id, "stop_requested": stop_requested}
 
 
+class MetricDefRequest(BaseModel):
+    name: str
+    step_metric: str | None = None
+    summary: str | None = None
+
+
+@router.post("/runs/{run_id}/metric-defs")
+def define_metric(run_id: str, body: MetricDefRequest, request: Request) -> dict[str, Any]:
+    try:
+        ingest_ops.define_metric(
+            get_db(request), run_id, body.name, body.step_metric, body.summary,
+        )
+    except ingest_ops.RunNotFound as exc:
+        raise _run_not_found(exc) from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    return {"run_id": run_id, **body.model_dump()}
+
+
+class RewindRequest(BaseModel):
+    step: int
+
+
+class ForkRequest(BaseModel):
+    """The fork step, the child's id, and the child's own create fields."""
+
+    step: int
+    new_id: str | None = None
+    name: str | None = None
+    tags: list[str] | None = None
+    notes: str | None = None
+    env: dict[str, Any] | None = None
+    git: GitInfo | None = None
+    cli_args: list[str] | None = None
+    hostname: str | None = None
+    user: str | None = None
+    group: str | None = None
+    job_type: str | None = None
+    sweep_id: str | None = None
+
+
+@router.post("/runs/{run_id}/resume")
+def resume_run(run_id: str, request: Request) -> dict[str, Any]:
+    try:
+        return ingest_ops.resume_run(get_db(request), run_id)
+    except ingest_ops.RunNotFound as exc:
+        raise _run_not_found(exc) from None
+
+
+@router.post("/runs/{run_id}/rewind")
+def rewind_run(run_id: str, body: RewindRequest, request: Request) -> dict[str, Any]:
+    try:
+        return ingest_ops.rewind_run(get_db(request), run_id, body.step)
+    except ingest_ops.RunNotFound as exc:
+        raise _run_not_found(exc) from None
+
+
+@router.post("/runs/{run_id}/fork")
+def fork_run(run_id: str, body: ForkRequest, request: Request) -> dict[str, Any]:
+    fields = body.model_dump(exclude={"step", "new_id"})
+    try:
+        return ingest_ops.fork_run(
+            get_db(request), parent_id=run_id, step=body.step, run_id=body.new_id,
+            **fields,
+        )
+    except ingest_ops.RunNotFound as exc:
+        raise _run_not_found(exc) from None
+
+
 @router.post("/runs/{run_id}/archive")
 def archive_run(run_id: str, request: Request) -> dict[str, Any]:
     db = get_db(request)

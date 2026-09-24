@@ -31,6 +31,7 @@ from typing import Any, Iterable, Literal, Mapping
 from .query_grammar import OPERATOR_NAMES
 from ._operators import OPERATORS as _OPERATORS
 from .storage.db import Database
+from .summary_rules import resolve_summary_rules
 
 
 class QueryError(ValueError):
@@ -302,6 +303,11 @@ def _param_value(db: Database, run_id: str, key: str, table: str = "params") -> 
 
 
 def _final_metric(db: Database, run_id: str, name: str) -> Any:
+    """The metric's resolved value: its define_metric summary rule, else the
+    last point."""
+    ruled = resolve_summary_rules(db, [run_id]).get(run_id, {})
+    if name in ruled:
+        return ruled[name]
     rows = db.read_columns(
         "SELECT scalar_value FROM sequences WHERE run_id = ? AND name = ? "
         "ORDER BY step DESC LIMIT 1",

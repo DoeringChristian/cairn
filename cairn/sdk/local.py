@@ -164,10 +164,7 @@ class LocalTransport:
         run_id = body["run_id"]
         project = body["project"]
         project_id = ingest_ops.slugify(project)
-        self._wal_path = self._wal_dir / f"{run_id}.wal.jsonl"
-        self._lock_path = self._wal_dir / f"{run_id}.lock"
-        self._lock_path.write_text(str(os.getpid()))
-        self._wal_fh = open(self._wal_path, "a")  # noqa: SIM115
+        self._open_run_wal(run_id)
         self._wal_write("create_run", {
             **fields,
             "project": project,
@@ -175,6 +172,74 @@ class LocalTransport:
             "created_at": fields["created_at"] or datetime.now(timezone.utc).isoformat(),
         })
         return {"run_id": run_id, "project_id": project_id, "url": f"/p/{project_id}/r/{run_id}"}
+
+    def _open_run_wal(self, run_id: str) -> None:
+        """Start (or, for a resumed run, continue) the run's WAL file."""
+        self._wal_path = self._wal_dir / f"{run_id}.wal.jsonl"
+        self._lock_path = self._wal_dir / f"{run_id}.lock"
+        self._lock_path.write_text(str(os.getpid()))
+        self._wal_fh = open(self._wal_path, "a")  # noqa: SIM115
+
+    def _require_ingested(self, run_id: str) -> dict[str, Any]:
+        """WAL mode: the run as the ingester has drained it so far."""
+        rows = self.read_columns("SELECT * FROM runs WHERE id = ?", [run_id])
+        if not rows:
+            raise ingest_ops.RunNotFound(
+                f"run {run_id} not found (in WAL mode a run must be ingested "
+                "before it can be resumed or forked)"
+            )
+        return rows[0]
+
+    def resume_run(self, run_id: str) -> dict[str, Any]:
+        if not self._use_wal:
+            return ingest_ops.resume_run(self.db, run_id)
+        row = self._require_ingested(run_id)
+        self._open_run_wal(run_id)
+        self._wal_write("resume_run", {"run_id": run_id})
+        return self._reopened(row)
+
+    def rewind_run(self, run_id: str, step: int) -> dict[str, Any]:
+        if not self._use_wal:
+            return ingest_ops.rewind_run(self.db, run_id, step)
+        row = self._require_ingested(run_id)
+        self._open_run_wal(run_id)
+        self._wal_write("rewind_run", {"run_id": run_id, "step": step})
+        return self._reopened(row)
+
+    @staticmethod
+    def _reopened(row: dict[str, Any]) -> dict[str, Any]:
+        pid, rid = row["project_id"], row["id"]
+        return {
+            "run_id": rid, "project_id": pid, "url": f"/p/{pid}/r/{rid}",
+            "tags": json.loads(row["tags"]) if row.get("tags") else [],
+        }
+
+    def fork_run(
+        self, parent_id: str, new_id: str, step: int, body: dict[str, Any],
+    ) -> dict[str, Any]:
+        """``body`` is the child's create body (the ``create_run`` shape)."""
+        fields = {
+            k: body.get(k) for k in ingest_ops.CREATE_RUN_FIELDS
+            if k not in ("run_id", "parent_run_id", "fork_step")
+        }
+        if not self._use_wal:
+            return ingest_ops.fork_run(
+                self.db, parent_id=parent_id, step=step, run_id=new_id, **fields,
+            )
+        pid = self._require_ingested(parent_id)["project_id"]
+        self._open_run_wal(new_id)
+        self._wal_write("fork_run", {
+            **fields, "parent_id": parent_id, "new_id": new_id, "step": step,
+        })
+        return {"run_id": new_id, "project_id": pid, "url": f"/p/{pid}/r/{new_id}"}
+
+    def sequence_steps(self, run_id: str) -> list[dict[str, Any]]:
+        """Each of the run's series as ``{name, context, max_step}``."""
+        return self.read_columns(
+            "SELECT name, context, MAX(step) AS max_step FROM sequences "
+            "WHERE run_id = ? GROUP BY name, context_hash",
+            [run_id],
+        )
 
     def post_batch(self, run_id: str, points: list[dict[str, Any]]) -> bool:
         try:
@@ -254,6 +319,16 @@ class LocalTransport:
                 alert.get("level", "info"),
                 alert_id=alert["alert_id"], created_at=alert.get("created_at"),
             )
+
+    def define_metric(
+        self, run_id: str, name: str, step_metric: str | None, summary: str | None,
+    ) -> None:
+        if self._use_wal:
+            self._wal_write("define_metric", {
+                "run_id": run_id, "name": name, "step_metric": step_metric, "summary": summary,
+            })
+        else:
+            ingest_ops.define_metric(self.db, run_id, name, step_metric, summary)
 
     def attach_artifact(self, run_id: str, name: str, digest: str, step: int | None = None) -> None:
         if self._use_wal:

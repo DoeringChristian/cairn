@@ -527,7 +527,8 @@ def get_lineage_graph(
     Returns ``{"nodes": [...], "edges": [...]}``.
     Nodes have ``type`` = "artifact_version" or "run"; run nodes carry
     ``label`` (the display name) and ``metadata.status``.
-    Edges have ``source``, ``target``, ``relation`` ("produced" or "consumed").
+    Edges have ``source``, ``target``, ``relation`` ("produced", "consumed",
+    or "forked" for a run forked from another).
     """
     # Gather all versions in the project (optionally filtered by family)
     if family_id:
@@ -594,6 +595,22 @@ def get_lineage_graph(
                 "source": inp["artifact_version_id"],
                 "target": inp["run_id"],
                 "relation": "consumed",
+            })
+
+    # Run -> run fork edges, for the whole-project graph only (a family's
+    # graph is about that family's versions).
+    if not family_id:
+        for fork in db.read_columns(
+            "SELECT id, parent_run_id FROM runs "
+            "WHERE project_id = ? AND parent_run_id IS NOT NULL ORDER BY created_at",
+            [project_id],
+        ):
+            seen_runs.setdefault(fork["parent_run_id"])
+            seen_runs.setdefault(fork["id"])
+            edges.append({
+                "source": fork["parent_run_id"],
+                "target": fork["id"],
+                "relation": "forked",
             })
 
     nodes.extend(_run_nodes(db, list(seen_runs)))

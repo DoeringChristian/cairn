@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import APIRouter, Query, Request
 
 from ..storage.db import Database
+from ..summary_rules import resolve_summary_rules
 from ._common import api_run_row, get_db, require_run
 
 router = APIRouter(prefix="/api", tags=["runs"])
@@ -120,6 +121,11 @@ def _resolved_values(
     ):
         out[r["run_id"]][r["name"]] = r["value"]
 
+    # define_metric(summary=...) rules replace the last point...
+    for rid, values in resolve_summary_rules(db, run_ids).items():
+        out[rid].update(values)
+
+    # ...and an explicit summary key replaces both.
     for r in db.read_columns(
         f"SELECT run_id, key, value FROM summary WHERE run_id IN ({holes})",
         list(run_ids),
@@ -140,4 +146,9 @@ def get_run(run_id: str, request: Request) -> dict[str, Any]:
         "SELECT key, value, value_type FROM summary WHERE run_id = ? ORDER BY key",
         [run_id],
     )
-    return {"run": run, "params": params, "summary": summary}
+    metric_defs = db.read_columns(
+        "SELECT name, step_metric, summary FROM metric_defs WHERE run_id = ? ORDER BY name",
+        [run_id],
+    )
+    run["values"] = _resolved_values(db, [run_id])[run_id]
+    return {"run": run, "params": params, "summary": summary, "metric_defs": metric_defs}
