@@ -327,6 +327,32 @@ def heartbeat(db: Database, run_id: str) -> None:
     )
 
 
+def define_metric(
+    db: Database,
+    run_id: str,
+    name: str,
+    step_metric: str | None = None,
+    summary: str | None = None,
+) -> None:
+    """Record how a metric (or an fnmatch glob of metrics) is read: the
+    series to plot it against, and its summary rule (see ``summary_rules``).
+    A later definition of the same name replaces the earlier one."""
+    from .summary_rules import SUMMARY_KINDS
+
+    _require_run(db, run_id)
+    if summary is not None and summary not in SUMMARY_KINDS:
+        raise ValueError(f"summary must be one of {SUMMARY_KINDS}, got {summary!r}")
+    db.write(
+        """
+        INSERT INTO metric_defs (run_id, name, step_metric, summary)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT (run_id, name) DO UPDATE
+          SET step_metric = EXCLUDED.step_metric, summary = EXCLUDED.summary
+        """,
+        [run_id, name, step_metric, summary],
+    )
+
+
 # ---- resume / fork / rewind --------------------------------------------------
 
 #: The rows of a run's history that survive a fork or rewind at step ``k``.

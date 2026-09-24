@@ -666,6 +666,26 @@ class Run:
         if merged:
             self._transport.post_summary(self._run_id, merged)
 
+    def define_metric(
+        self,
+        name: str,
+        step_metric: str | None = None,
+        summary: str | None = None,
+    ) -> None:
+        """Say how the metric ``name`` (or every metric an fnmatch glob such as
+        ``"val/*"`` matches) should be read.
+
+        ``step_metric`` names another scalar series to use as its x-axis
+        (``run.define_metric("val/*", step_metric="epoch")``): cards showing
+        the metric start on that axis, joining the two series on step.
+        ``summary`` picks the value the run table shows for it: ``"min"``,
+        ``"max"``, ``"mean"`` or ``"last"`` (the default). An explicit
+        :meth:`summary` key of the same name still wins.
+        """
+        if summary is not None and summary not in ("min", "max", "mean", "last"):
+            raise ValueError(f"summary must be 'min', 'max', 'mean' or 'last', got {summary!r}")
+        self._transport.define_metric(self._run_id, name, step_metric, summary)
+
     def set_tag(self, tag: str) -> None:
         """Add one tag, keeping the ones the run already has."""
         if tag not in self._tags:

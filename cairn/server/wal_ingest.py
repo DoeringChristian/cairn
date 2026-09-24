@@ -180,6 +180,11 @@ def _apply_op(
                 (src_dir / "manifest.json").write_text(json.dumps(manifest))
         elif op == "heartbeat":
             ingest_ops.heartbeat(db, rid)
+        elif op == "define_metric":
+            ingest_ops.define_metric(
+                db, rid, payload["name"],
+                step_metric=payload.get("step_metric"), summary=payload.get("summary"),
+            )
         elif op == "resume_run":
             ingest_ops.resume_run(db, rid)
         elif op == "rewind_run":

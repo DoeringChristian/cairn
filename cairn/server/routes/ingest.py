@@ -296,6 +296,25 @@ def run_heartbeat(run_id: str, request: Request) -> dict[str, Any]:
     return {"run_id": run_id}
 
 
+class MetricDefRequest(BaseModel):
+    name: str
+    step_metric: str | None = None
+    summary: str | None = None
+
+
+@router.post("/runs/{run_id}/metric-defs")
+def define_metric(run_id: str, body: MetricDefRequest, request: Request) -> dict[str, Any]:
+    try:
+        ingest_ops.define_metric(
+            get_db(request), run_id, body.name, body.step_metric, body.summary,
+        )
+    except ingest_ops.RunNotFound as exc:
+        raise _run_not_found(exc) from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    return {"run_id": run_id, **body.model_dump()}
+
+
 class RewindRequest(BaseModel):
     step: int
 

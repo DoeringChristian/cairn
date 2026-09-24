@@ -65,6 +65,7 @@ _MODEL_DEFS = [
     (cs.CardSpec, "CardSpec"),
     (cs.SeriesRef, "ComparisonSeriesRef"),
     (cs.CardSettingsSpec, "CardSettingsSpec"),
+    (cs.XMetricRef, "XMetricRef"),
     (cs.StaticRunSelector, "StaticRunSelector"),
     (cs.QueryRunSelector, "QueryRunSelector"),
     (cs.RunsSpec, "RunsSpec"),
@@ -107,6 +108,18 @@ def test_query_run_selector_mode_matches_schema(defs):
     schema_modes = defs["QueryRunSelector"]["properties"]["mode"]["enum"]
     field = cs.QueryRunSelector.model_fields["mode"]
     assert list(_literal_values(field.annotation)) == schema_modes
+
+
+def test_x_axis_sources_match_schema(defs):
+    field = cs.CardSettingsSpec.model_fields["xAxis"]
+    (literal, _none) = field.annotation.__args__  # Optional[Literal[...]]
+    assert list(_literal_values(literal)) == defs["AxisSource"]["enum"]
+    settings = cs.CardSettingsSpec(
+        xAxis="metric", xMetric=cs.XMetricRef(name="epoch", context_hash=""),
+    )
+    assert settings.model_dump(exclude_none=True) == {
+        "xAxis": "metric", "xMetric": {"name": "epoch", "context_hash": ""},
+    }
 
 
 def test_sample_spec_round_trips_and_is_schema_shaped(defs):

@@ -233,6 +233,14 @@ class Transport:
     def heartbeat(self, run_id: str) -> None:
         self.post_json(f"/api/runs/{run_id}/heartbeat", {})
 
+    def define_metric(
+        self, run_id: str, name: str, step_metric: str | None, summary: str | None,
+    ) -> None:
+        self.post_json(
+            f"/api/runs/{run_id}/metric-defs",
+            {"name": name, "step_metric": step_metric, "summary": summary},
+        )
+
     def resume_run(self, run_id: str) -> dict[str, Any]:
         return self.post_json(f"/api/runs/{run_id}/resume", {}).json()
 

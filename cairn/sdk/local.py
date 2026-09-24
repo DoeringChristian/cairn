@@ -297,6 +297,16 @@ class LocalTransport:
         else:
             ingest_ops.set_notes(self.db, run_id, notes)
 
+    def define_metric(
+        self, run_id: str, name: str, step_metric: str | None, summary: str | None,
+    ) -> None:
+        if self._use_wal:
+            self._wal_write("define_metric", {
+                "run_id": run_id, "name": name, "step_metric": step_metric, "summary": summary,
+            })
+        else:
+            ingest_ops.define_metric(self.db, run_id, name, step_metric, summary)
+
     def attach_artifact(self, run_id: str, name: str, digest: str, step: int | None = None) -> None:
         if self._use_wal:
             self._wal_write("attach_artifact", {"run_id": run_id, "name": name, "hash": digest, "step": step})
