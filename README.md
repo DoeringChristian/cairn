@@ -145,6 +145,23 @@ no threads. Set it with `cairn.Run(mode="disabled")`, `cairn.configure(mode="dis
 `CAIRN_MODE=disabled`, or `mode = "disabled"` in the config file (in that
 priority order). The default is `"enabled"`.
 
+## Final metric values
+
+Each metric has one final value per run — what the runs table, the run
+overview, the comparison table and `final_metric` filters show. It is, in
+order: an explicit `run.summary(name=...)` key; else a
+`run.define_metric(name, summary="min"|"max"|"mean"|"last")` rule (`name` may
+be a glob like `"val/*"`; an exact name beats a glob); else the last logged
+point. Rules are applied when values are read, so they never change logged
+data. A `"min"` rule also makes the comparison table colour lower as better.
+
+```python
+run.define_metric("val/*", step_metric="epoch", summary="min")  # plot vs epoch, report best
+run.define_metric("val/acc", summary="max")
+```
+
+See `examples/demo_define_metric.py`.
+
 ## Run IDs
 
 Run IDs are 128-bit hex strings (32 characters), generated client-side. The UI shows the first 6 characters (git-style short hash) with click-to-copy for the full ID. Existing shorter IDs from earlier versions remain valid.
