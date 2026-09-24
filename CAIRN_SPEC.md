@@ -149,7 +149,7 @@ CREATE TABLE run_artifacts (
 );
 
 -- How a scalar metric is read, set by run.track(..., summary=, x=).
--- Exact names only; the latest rule for a name replaces the earlier one.
+-- Exact names only; a later rule for a name replaces the fields it sets.
 CREATE TABLE metric_defs (
     run_id        VARCHAR NOT NULL REFERENCES runs(id),
     name          VARCHAR NOT NULL,       -- the metric's full name, e.g. "val.loss"

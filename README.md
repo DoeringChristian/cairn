@@ -166,8 +166,8 @@ run.track(val_acc, "val.acc", step, summary="max", x="epoch")
 Both keywords are for scalar metrics only and match that exact name (inside a
 component's `__cairn_track__`, `scope.track(v, "loss", summary="min")` rules
 the prefixed name, e.g. `model.loss`). A rule is sent only when it changes, so
-passing it on every call is free; a different rule replaces it, and a call
-without the keywords leaves it as is. See `examples/demo_metric_rules.py`.
+passing it on every call is free; a keyword you pass replaces that part of
+the rule, and one you leave out keeps its earlier value. See `examples/demo_metric_rules.py`.
 
 ## Run IDs
 

@@ -448,8 +448,8 @@ class Run:
 
         ``run.track(acc, "val.acc", step, summary="max", x="epoch")``. The rule
         is sent only when it changes, so passing it on every call is free; a
-        different rule replaces the earlier one, and a call without the
-        keywords leaves it alone.
+        keyword you pass replaces that part of the rule, and one you leave
+        out keeps its earlier value.
 
         ``step`` is REQUIRED. It used to default to a per-name
         auto-increment, which is coherent for one sequence and silently wrong
@@ -570,8 +570,11 @@ class Run:
         self._metric_buffer.append(point)
 
     def _set_metric_rule(self, name: str, summary: str | None, x: str | None) -> None:
-        """Send ``name``'s rule unless it is the one already sent."""
-        rule = (summary, x)
+        """Send ``name``'s rule unless nothing in it changed. A keyword left
+        out keeps its earlier value (here and on the server), so
+        ``summary="min"`` then ``x="epoch"`` gives both."""
+        old_summary, old_x = self._metric_rules.get(name, (None, None))
+        rule = (summary if summary is not None else old_summary, x if x is not None else old_x)
         if self._metric_rules.get(name) == rule:
             return
         self._transport.set_metric_rule(self._run_id, name, x, summary)

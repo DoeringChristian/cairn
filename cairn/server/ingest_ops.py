@@ -418,8 +418,8 @@ def set_metric_rule(
     summary: str | None = None,
 ) -> None:
     """Record how the metric ``name`` is read: the series ``x`` to plot it
-    against, and its summary rule (see ``summary_rules``). A later rule for
-    the same name replaces the earlier one."""
+    against, and its summary rule (see ``summary_rules``). Fields merge: a
+    later call replaces the fields it sets and keeps the ones it leaves None."""
     from .summary_rules import SUMMARY_KINDS
 
     _require_run(db, run_id)
@@ -430,7 +430,8 @@ def set_metric_rule(
         INSERT INTO metric_defs (run_id, name, x, summary)
         VALUES (?, ?, ?, ?)
         ON CONFLICT (run_id, name) DO UPDATE
-          SET x = EXCLUDED.x, summary = EXCLUDED.summary
+          SET x = COALESCE(EXCLUDED.x, x),
+              summary = COALESCE(EXCLUDED.summary, summary)
         """,
         [run_id, name, x, summary],
     )

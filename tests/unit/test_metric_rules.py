@@ -83,6 +83,8 @@ def _scenario(run):
     run.track(0.3, "val.f1", 0, summary="mean")
     run.track(0.5, "val.f1", 1, summary="max")
     run.track(0.1, "val.f1", 2)
+    # Fields merge: adding x keeps the summary set earlier.
+    run.track(0.2, "val.f1", 3, x="epoch")
     return sent
 
 
@@ -91,11 +93,12 @@ SENT = [
     ("model.acc", "epoch", "max"),
     ("val.f1", None, "mean"),
     ("val.f1", None, "max"),
+    ("val.f1", "epoch", None),
 ]
 EXPECTED = [
     {"name": "loss", "x": "epoch", "summary": "min"},
     {"name": "model.acc", "x": "epoch", "summary": "max"},
-    {"name": "val.f1", "x": None, "summary": "max"},
+    {"name": "val.f1", "x": "epoch", "summary": "max"},
 ]
 
 
