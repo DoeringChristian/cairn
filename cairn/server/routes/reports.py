@@ -26,14 +26,20 @@ router = APIRouter(prefix="/api", tags=["reports"])
 _write = Depends(auth.require_role("write"))
 
 
+class ReportPayload(BaseModel):
+    """A report as markdown: prose plus ```cairn card fences."""
+
+    source: str
+
+
 class ReportCreate(BaseModel):
     name: str
-    payload: dict[str, Any]
+    payload: ReportPayload
 
 
 class ReportUpdate(BaseModel):
     name: str | None = None
-    payload: dict[str, Any] | None = None
+    payload: ReportPayload | None = None
 
 
 def _parse_payload(raw: str) -> dict[str, Any]:
@@ -47,9 +53,7 @@ _FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})[ \t]*(.*)$")
 
 
 def _count_source_segments(source: str) -> int:
-    """B11 fix: count top-level blocks directly from `source` for a
-    source-only report (a client that ships only `{source}`, with no
-    `blocks[]` cache — see AR1 §6) instead of misreporting "0 blocks".
+    """Count a report's top-level blocks from its markdown `source`.
 
     Approximates `lib/reports/markdown-source.ts`'s `splitFences`: a run of
     prose lines is one block, and every ```cairn fence is its own block; any
@@ -96,9 +100,6 @@ def _count_source_segments(source: str) -> int:
 
 
 def _block_count(payload: dict[str, Any]) -> int:
-    blocks = payload.get("blocks")
-    if blocks:
-        return len(blocks)
     source = payload.get("source")
     if isinstance(source, str) and source.strip():
         return _count_source_segments(source)
@@ -162,7 +163,7 @@ def create_report(project_id: str, body: ReportCreate, request: Request) -> dict
     db.write(
         """INSERT INTO reports (id, project_id, name, created_at, updated_at, payload)
            VALUES (?, ?, ?, ?, ?, ?)""",
-        [rid, project_id, body.name, now, now, json.dumps(body.payload)],
+        [rid, project_id, body.name, now, now, body.payload.model_dump_json()],
     )
     return {"id": rid, "name": body.name, "created_at": now}
 
@@ -188,7 +189,7 @@ def update_report(
     if body.payload is not None:
         db.write(
             "UPDATE reports SET payload = ?, updated_at = ? WHERE id = ?",
-            [json.dumps(body.payload), now, report_id],
+            [body.payload.model_dump_json(), now, report_id],
         )
     return {"id": report_id, "updated_at": now}
 
