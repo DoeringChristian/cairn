@@ -320,15 +320,15 @@ class LocalTransport:
                 alert_id=alert["alert_id"], created_at=alert.get("created_at"),
             )
 
-    def define_metric(
-        self, run_id: str, name: str, step_metric: str | None, summary: str | None,
+    def set_metric_rule(
+        self, run_id: str, name: str, x: str | None, summary: str | None,
     ) -> None:
         if self._use_wal:
-            self._wal_write("define_metric", {
-                "run_id": run_id, "name": name, "step_metric": step_metric, "summary": summary,
+            self._wal_write("set_metric_rule", {
+                "run_id": run_id, "name": name, "x": x, "summary": summary,
             })
         else:
-            ingest_ops.define_metric(self.db, run_id, name, step_metric, summary)
+            ingest_ops.set_metric_rule(self.db, run_id, name, x, summary)
 
     def attach_artifact(self, run_id: str, name: str, digest: str, step: int | None = None) -> None:
         if self._use_wal:

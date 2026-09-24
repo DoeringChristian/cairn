@@ -190,10 +190,10 @@ def _apply_op(
                 payload.get("level", "info"),
                 alert_id=payload["alert_id"], created_at=payload.get("created_at"),
             )
-        elif op == "define_metric":
-            ingest_ops.define_metric(
+        elif op == "set_metric_rule":
+            ingest_ops.set_metric_rule(
                 db, rid, payload["name"],
-                step_metric=payload.get("step_metric"), summary=payload.get("summary"),
+                x=payload.get("x"), summary=payload.get("summary"),
             )
         elif op == "resume_run":
             ingest_ops.resume_run(db, rid)

@@ -120,7 +120,7 @@ def _resolved_values(
     ):
         out[r["run_id"]][r["name"]] = r["value"]
 
-    # define_metric(summary=...) rules replace the last point...
+    # run.track(..., summary=...) rules replace the last point...
     for rid, values in resolve_summary_rules(db, run_ids).items():
         out[rid].update(values)
 
@@ -146,7 +146,7 @@ def get_run(run_id: str, request: Request) -> dict[str, Any]:
         [run_id],
     )
     metric_defs = db.read_columns(
-        "SELECT name, step_metric, summary FROM metric_defs WHERE run_id = ? ORDER BY name",
+        "SELECT name, x, summary FROM metric_defs WHERE run_id = ? ORDER BY name",
         [run_id],
     )
     run["values"] = _resolved_values(db, [run_id])[run_id]

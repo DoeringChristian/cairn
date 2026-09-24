@@ -372,17 +372,17 @@ def stop_run(run_id: str, request: Request) -> dict[str, Any]:
     return {"run_id": run_id, "stop_requested": stop_requested}
 
 
-class MetricDefRequest(BaseModel):
+class MetricRuleRequest(BaseModel):
     name: str
-    step_metric: str | None = None
+    x: str | None = None
     summary: str | None = None
 
 
-@router.post("/runs/{run_id}/metric-defs")
-def define_metric(run_id: str, body: MetricDefRequest, request: Request) -> dict[str, Any]:
+@router.post("/runs/{run_id}/metric-rules")
+def set_metric_rule(run_id: str, body: MetricRuleRequest, request: Request) -> dict[str, Any]:
     try:
-        ingest_ops.define_metric(
-            get_db(request), run_id, body.name, body.step_metric, body.summary,
+        ingest_ops.set_metric_rule(
+            get_db(request), run_id, body.name, body.x, body.summary,
         )
     except ingest_ops.RunNotFound as exc:
         raise _run_not_found(exc) from None

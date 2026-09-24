@@ -244,12 +244,12 @@ class Transport:
         """Returns the run's ``stop_requested`` timestamp, if any."""
         return self.post_json(f"/api/runs/{run_id}/heartbeat", {}).json().get("stop_requested")
 
-    def define_metric(
-        self, run_id: str, name: str, step_metric: str | None, summary: str | None,
+    def set_metric_rule(
+        self, run_id: str, name: str, x: str | None, summary: str | None,
     ) -> None:
         self.post_json(
-            f"/api/runs/{run_id}/metric-defs",
-            {"name": name, "step_metric": step_metric, "summary": summary},
+            f"/api/runs/{run_id}/metric-rules",
+            {"name": name, "x": x, "summary": summary},
         )
 
     def resume_run(self, run_id: str) -> dict[str, Any]:

@@ -235,9 +235,10 @@ SCHEMA_SQL: list[str] = [
     """
     CREATE TABLE IF NOT EXISTS metric_defs (
         run_id        TEXT NOT NULL REFERENCES runs(id),
-        -- A metric name or an fnmatch glob.
+        -- The metric's full name (exact; no globs).
         name          TEXT NOT NULL,
-        step_metric   TEXT,
+        -- The full name of another scalar series to plot this one against.
+        x             TEXT,
         summary       TEXT,
         PRIMARY KEY (run_id, name)
     )

@@ -149,18 +149,25 @@ priority order). The default is `"enabled"`.
 
 Each metric has one final value per run — what the runs table, the run
 overview, the comparison table and `final_metric` filters show. It is, in
-order: an explicit `run.summary(name=...)` key; else a
-`run.define_metric(name, summary="min"|"max"|"mean"|"last")` rule (`name` may
-be a glob like `"val.*"`; an exact name beats a glob); else the last logged
-point. Rules are applied when values are read, so they never change logged
-data. A `"min"` rule also makes the comparison table colour lower as better.
+order: an explicit `run.summary(name=...)` key; else the metric's rule, set
+with `run.track(value, name, step, summary="min"|"max"|"mean"|"last")`; else
+the last logged point. Rules are applied when values are read, so they never
+change logged data. A `"min"` rule also makes the comparison table colour
+lower as better.
+
+`x=` names another scalar series (its full name, never scope-prefixed) that
+charts of the metric start on as their x-axis, joined on step:
 
 ```python
-run.define_metric("val.*", step_metric="epoch", summary="min")  # plot vs epoch, report best
-run.define_metric("val.acc", summary="max")
+run.track(val_loss, "val.loss", step, summary="min", x="epoch")  # report best, plot vs epoch
+run.track(val_acc, "val.acc", step, summary="max", x="epoch")
 ```
 
-See `examples/demo_define_metric.py`.
+Both keywords are for scalar metrics only and match that exact name (inside a
+component's `__cairn_track__`, `scope.track(v, "loss", summary="min")` rules
+the prefixed name, e.g. `model.loss`). A rule is sent only when it changes, so
+passing it on every call is free; a different rule replaces it, and a call
+without the keywords leaves it as is. See `examples/demo_metric_rules.py`.
 
 ## Run IDs
 

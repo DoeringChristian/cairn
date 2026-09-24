@@ -88,7 +88,7 @@ def _seed_lineage(client) -> dict[str, str]:
         [child],
     )
     db.write(
-        "INSERT INTO metric_defs (run_id, name, step_metric, summary) VALUES (?, 'val/*', 'epoch', 'max')",
+        "INSERT INTO metric_defs (run_id, name, x, summary) VALUES (?, 'val.loss', 'epoch', 'max')",
         [child],
     )
     return {"parent": parent, "child": child}
@@ -127,8 +127,8 @@ def test_roundtrip_carries_new_columns_and_tables_with_id_remap(client):
     assert (alert["level"], alert["title"], alert["text"]) == ("warn", "slow", "loss plateau")
     assert alert["id"] != "al1" and alert["project_id"] == "p"
     assert db.read_columns(
-        "SELECT name, step_metric, summary FROM metric_defs WHERE run_id = ?", [new_child]
-    ) == [{"name": "val/*", "step_metric": "epoch", "summary": "max"}]
+        "SELECT name, x, summary FROM metric_defs WHERE run_id = ?", [new_child]
+    ) == [{"name": "val.loss", "x": "epoch", "summary": "max"}]
     (point,) = db.read_columns("SELECT metadata FROM sequences WHERE run_id = ?", [new_child])
     assert json.loads(point["metadata"]) == {"caption": "a cat"}
 

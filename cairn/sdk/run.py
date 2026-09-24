@@ -182,6 +182,9 @@ class Run:
         # Bookkeeping
         self._finished = False
         self._step_counters: dict[str, int] = {}
+        # name -> (summary, x): the rule last sent per metric, so a rule
+        # passed to every track() call reaches the server once.
+        self._metric_rules: dict[str, tuple[str | None, str | None]] = {}
         self._step_lock = threading.Lock()
         self._line_counter = 0
         self._line_lock = threading.Lock()
@@ -424,9 +427,29 @@ class Run:
         value: Any,
         name: str,
         step: int,
+        *,
+        summary: str | None = None,
+        x: str | None = None,
         **kwargs: Any,
     ) -> None:
         """Record ``value`` in the named sequence at ``step``.
+
+        Two keywords say how a SCALAR metric is read (a ``ValueError`` for any
+        other value):
+
+        - ``summary`` — ``"min"``, ``"max"``, ``"mean"`` or ``"last"`` (the
+          default): the metric's final value in the runs table, overviews,
+          comparison colours and ``final_metric`` filters. ``"min"`` also
+          means lower is better when comparing runs. An explicit
+          :meth:`summary` key of the same name still wins.
+        - ``x`` — the FULL name of another scalar series (``x="epoch"``,
+          never prefixed by a scope): charts of this metric start on that
+          x-axis, joining the two series on step.
+
+        ``run.track(acc, "val.acc", step, summary="max", x="epoch")``. The rule
+        is sent only when it changes, so passing it on every call is free; a
+        different rule replaces the earlier one, and a call without the
+        keywords leaves it alone.
 
         ``step`` is REQUIRED. It used to default to a per-name
         auto-increment, which is coherent for one sequence and silently wrong
@@ -444,9 +467,9 @@ class Run:
         if value is None:
             return
         if hasattr(value, "__cairn_track__"):
-            Scope(self, "", step=step).track(value, name, **kwargs)
+            Scope(self, "", step=step).track(value, name, summary=summary, x=x, **kwargs)
             return
-        self._track_leaf(value, name, step=step, **kwargs)
+        self._track_leaf(value, name, step=step, summary=summary, x=x, **kwargs)
 
     def _track_sample(self, name: str, value: Any) -> None:
         """Record a TIMER-SAMPLED point, numbering it with the per-name counter.
@@ -464,14 +487,25 @@ class Run:
         name: str,
         *,
         step: int | None,
+        summary: str | None = None,
+        x: str | None = None,
         **kwargs: Any,
     ) -> None:
         """Record ONE point — no protocol dispatch. ``step=None`` auto-increments
-        (see :meth:`_track_sample`; never reachable from the public API)."""
+        (see :meth:`_track_sample`; never reachable from the public API).
+        ``summary`` / ``x`` set the metric's rule (see :meth:`track`)."""
         if self._finished:
             raise RuntimeError("Run has already been finished")
+        has_rule = summary is not None or x is not None
+        if summary is not None and summary not in SUMMARY_KINDS:
+            raise ValueError(
+                f"summary must be one of {', '.join(map(repr, SUMMARY_KINDS))}, "
+                f"got {summary!r}"
+            )
 
         if isinstance(value, (list, tuple)) and value and all(isinstance(v, Image) for v in value):
+            if has_rule:
+                raise ValueError(_rule_on_non_scalar(name, "image gallery"))
             self._track_gallery(list(value), name, step=step, **kwargs)
             return
 
@@ -492,6 +526,10 @@ class Run:
                 f"No handler for value of type {type(value).__name__}; "
                 "wrap with cairn.Image/Figure/Tensor/... to force a handler."
             )
+        if has_rule:
+            if object_type != "scalar":
+                raise ValueError(_rule_on_non_scalar(name, object_type))
+            self._set_metric_rule(name, summary, x)
 
         effective_step = self._next_step(name, step)
         if step is not None:
@@ -530,6 +568,14 @@ class Run:
             point["artifact_hash"] = digest
 
         self._metric_buffer.append(point)
+
+    def _set_metric_rule(self, name: str, summary: str | None, x: str | None) -> None:
+        """Send ``name``'s rule unless it is the one already sent."""
+        rule = (summary, x)
+        if self._metric_rules.get(name) == rule:
+            return
+        self._transport.set_metric_rule(self._run_id, name, x, summary)
+        self._metric_rules[name] = rule
 
     def _track_gallery(
         self,
@@ -792,26 +838,6 @@ class Run:
         if merged:
             self._transport.post_summary(self._run_id, merged)
 
-    def define_metric(
-        self,
-        name: str,
-        step_metric: str | None = None,
-        summary: str | None = None,
-    ) -> None:
-        """Say how the metric ``name`` (or every metric an fnmatch glob such as
-        ``"val/*"`` matches) should be read.
-
-        ``step_metric`` names another scalar series to use as its x-axis
-        (``run.define_metric("val/*", step_metric="epoch")``): cards showing
-        the metric start on that axis, joining the two series on step.
-        ``summary`` picks the value the run table shows for it: ``"min"``,
-        ``"max"``, ``"mean"`` or ``"last"`` (the default). An explicit
-        :meth:`summary` key of the same name still wins.
-        """
-        if summary is not None and summary not in ("min", "max", "mean", "last"):
-            raise ValueError(f"summary must be 'min', 'max', 'mean' or 'last', got {summary!r}")
-        self._transport.define_metric(self._run_id, name, step_metric, summary)
-
     def set_tag(self, tag: str) -> None:
         """Add one tag, keeping the ones the run already has."""
         if tag not in self._tags:
@@ -1069,6 +1095,16 @@ class Run:
             log.warning("source capture failed", exc_info=True)
 
 
+SUMMARY_KINDS = ("min", "max", "mean", "last")
+
+
+def _rule_on_non_scalar(name: str, kind: str | None) -> str:
+    return (
+        f"cairn: summary= and x= apply to scalar metrics only; {name!r} is "
+        f"a {kind} value"
+    )
+
+
 class _DisabledRun(Run):
     """What ``cairn.Run`` returns in disabled mode: every method is a no-op.
 
@@ -1134,9 +1170,6 @@ class _DisabledRun(Run):
 
     def on_stop(self, fn: Callable[["Run"], Any]) -> Callable[["Run"], Any]:
         return fn
-
-    def define_metric(self, *args: Any, **kwargs: Any) -> None:
-        pass
 
     def finish(self, *args: Any, **kwargs: Any) -> None:
         self._finished = True

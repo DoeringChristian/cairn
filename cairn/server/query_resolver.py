@@ -303,7 +303,7 @@ def _param_value(db: Database, run_id: str, key: str, table: str = "params") -> 
 
 
 def _final_metric(db: Database, run_id: str, name: str) -> Any:
-    """The metric's resolved value: its define_metric summary rule, else the
+    """The metric's resolved value: its summary rule (``run.track(..., summary=)``), else the
     last point."""
     ruled = resolve_summary_rules(db, [run_id]).get(run_id, {})
     if name in ruled:

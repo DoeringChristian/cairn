@@ -148,6 +148,16 @@ CREATE TABLE run_artifacts (
     PRIMARY KEY (run_id, name, step)
 );
 
+-- How a scalar metric is read, set by run.track(..., summary=, x=).
+-- Exact names only; the latest rule for a name replaces the earlier one.
+CREATE TABLE metric_defs (
+    run_id        VARCHAR NOT NULL REFERENCES runs(id),
+    name          VARCHAR NOT NULL,       -- the metric's full name, e.g. "val.loss"
+    x             VARCHAR,                -- full name of the series to plot it against
+    summary       VARCHAR,                -- 'min'|'max'|'mean'|'last': its final value
+    PRIMARY KEY (run_id, name)
+);
+
 CREATE TABLE log_lines (
     run_id        VARCHAR NOT NULL REFERENCES runs(id),
     stream        VARCHAR NOT NULL,       -- 'stdout' | 'stderr'
@@ -585,7 +595,9 @@ Many clients may push to the server concurrently. The server uses a single DuckD
 ```python
 cairn.Run(project, task, name=None, tags=None, notes=None, repo=None,
           capture_source=True, capture_stdout=True, capture_env=True, ...)
-run.track(value, name, step=None, **kwargs)  # step auto-increments if None
+run.track(value, name, step, *, summary=None, x=None, **kwargs)
+    # summary="min"|"max"|"mean"|"last": a scalar metric's final value
+    # x="epoch": the full name of the series its charts are plotted against
 run["key"] = value          # param setter (dict-like)
 run.log_artifact(obj, name, step=None)  # one-off artifact (not a sequence)
 run.set_tag(tag)
@@ -619,6 +631,9 @@ POST /api/runs/{run_id}/params                      -> set/update params
 
 POST /api/runs/{run_id}/batch                       -> batch of sequence points
      body: { points: [{name, step, wall_time, scalar_value? | artifact_hash?, object_type}, ...] }
+
+POST /api/runs/{run_id}/metric-rules                -> set (upsert) one metric's rule
+     body: { name, x?, summary? }   -- sent by run.track only when the rule changes
 
 POST /api/runs/{run_id}/logs                        -> batch of stdout/stderr lines
      body: { lines: [{stream, wall_time, line_no, content}, ...] }

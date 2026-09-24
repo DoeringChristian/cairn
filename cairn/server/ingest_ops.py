@@ -410,16 +410,16 @@ def request_stop(db: Database, run_id: str) -> str | None:
     return row[0] if row else None
 
 
-def define_metric(
+def set_metric_rule(
     db: Database,
     run_id: str,
     name: str,
-    step_metric: str | None = None,
+    x: str | None = None,
     summary: str | None = None,
 ) -> None:
-    """Record how a metric (or an fnmatch glob of metrics) is read: the
-    series to plot it against, and its summary rule (see ``summary_rules``).
-    A later definition of the same name replaces the earlier one."""
+    """Record how the metric ``name`` is read: the series ``x`` to plot it
+    against, and its summary rule (see ``summary_rules``). A later rule for
+    the same name replaces the earlier one."""
     from .summary_rules import SUMMARY_KINDS
 
     _require_run(db, run_id)
@@ -427,12 +427,12 @@ def define_metric(
         raise ValueError(f"summary must be one of {SUMMARY_KINDS}, got {summary!r}")
     db.write(
         """
-        INSERT INTO metric_defs (run_id, name, step_metric, summary)
+        INSERT INTO metric_defs (run_id, name, x, summary)
         VALUES (?, ?, ?, ?)
         ON CONFLICT (run_id, name) DO UPDATE
-          SET step_metric = EXCLUDED.step_metric, summary = EXCLUDED.summary
+          SET x = EXCLUDED.x, summary = EXCLUDED.summary
         """,
-        [run_id, name, step_metric, summary],
+        [run_id, name, x, summary],
     )
 
 
@@ -544,8 +544,8 @@ def fork_run(
                 [run_id, parent_id],
             )
         con.execute(
-            """INSERT OR IGNORE INTO metric_defs (run_id, name, step_metric, summary)
-               SELECT ?, name, step_metric, summary FROM metric_defs WHERE run_id = ?""",
+            """INSERT OR IGNORE INTO metric_defs (run_id, name, x, summary)
+               SELECT ?, name, x, summary FROM metric_defs WHERE run_id = ?""",
             [run_id, parent_id],
         )
         con.execute(

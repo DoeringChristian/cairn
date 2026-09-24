@@ -1,31 +1,17 @@
-"""Read-time summary rules from ``define_metric`` (the ``metric_defs`` table).
+"""Read-time summary rules (the ``metric_defs`` table).
 
-A run's metric normally resolves to its LAST point. A metric definition with
-``summary`` set ("min", "max", "mean", "last") overrides that per name, and a
-definition's name may be an fnmatch glob (``val/*``). Rules apply at read time
-and never write the ``summary`` table, so an explicit ``run.summary()`` key of
-the same name still wins over them.
+A run's metric normally resolves to its LAST point. A rule set with
+``run.track(value, name, step, summary="min"|"max"|"mean"|"last")`` overrides
+that for exactly that name. Rules apply at read time and never write the
+``summary`` table, so an explicit ``run.summary()`` key of the same name still
+wins over them.
 """
 
 from __future__ import annotations
 
-from fnmatch import fnmatchcase
-
 from .storage.db import Database
 
 SUMMARY_KINDS = ("min", "max", "mean", "last")
-
-
-def rule_for(name: str, defs: dict[str, str]) -> str | None:
-    """The summary kind ``defs`` (``{name_or_glob: kind}``) assigns to ``name``.
-
-    An exact name beats a glob; among globs the longest pattern wins, as the
-    most specific one.
-    """
-    if name in defs:
-        return defs[name]
-    matches = [p for p in defs if fnmatchcase(name, p)]
-    return defs[max(matches, key=len)] if matches else None
 
 
 def resolve_summary_rules(
@@ -61,11 +47,13 @@ def resolve_summary_rules(
                        AND l.scalar_value IS NOT NULL
                      ORDER BY l.step DESC LIMIT 1) AS last
               FROM sequences s
+              JOIN metric_defs d
+                ON d.run_id = s.run_id AND d.name = s.name AND d.summary IS NOT NULL
              WHERE s.run_id IN ({holes}) AND s.scalar_value IS NOT NULL
              GROUP BY s.run_id, s.name""",
         ruled,
     ):
-        kind = rule_for(r["name"], defs[r["run_id"]])
+        kind = defs[r["run_id"]].get(r["name"])
         if kind is not None:
             out.setdefault(r["run_id"], {})[r["name"]] = r[kind]
     return out

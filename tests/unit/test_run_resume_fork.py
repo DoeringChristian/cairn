@@ -54,7 +54,7 @@ def _seed_parent(db, blobs) -> str:
     ingest_ops.set_params(db, rid, {"lr": 0.1})
     ingest_ops.set_summary(db, rid, {"best": 1.0})
     db.write(
-        "INSERT INTO metric_defs (run_id, name, step_metric, summary) VALUES (?, ?, ?, ?)",
+        "INSERT INTO metric_defs (run_id, name, x, summary) VALUES (?, ?, ?, ?)",
         [rid, "loss", "epoch", "min"],
     )
     ingest_ops.finish_run(db, rid, "killed", exit_code=137)
@@ -87,8 +87,8 @@ def test_fork_copies_history_up_to_the_step(fresh_db, blob_store):
     assert db.read_one("SELECT value FROM params WHERE run_id = ?", [child["run_id"]]) == ("0.1",)
     assert db.read_one("SELECT value FROM summary WHERE run_id = ?", [child["run_id"]]) == ("1.0",)
     assert db.read_columns(
-        "SELECT name, step_metric, summary FROM metric_defs WHERE run_id = ?", [child["run_id"]],
-    ) == [{"name": "loss", "step_metric": "epoch", "summary": "min"}]
+        "SELECT name, x, summary FROM metric_defs WHERE run_id = ?", [child["run_id"]],
+    ) == [{"name": "loss", "x": "epoch", "summary": "min"}]
     # The parent is untouched.
     assert _steps(db, parent, "loss") == list(range(10))
 

@@ -9,6 +9,7 @@ caller never re-lists another object's internals:
     class Model:
         def __cairn_track__(self, scope):
             scope.track(self.rms(), "rms")
+            scope.track(self.loss, "loss", summary="min")  # lower is better
             scope.track(self.encoding, "encoding")   # recurses
             scope.track(self.render(), "pred")
 
@@ -119,12 +120,26 @@ class Scope:
             depth=self._depth,
         )
 
-    def track(self, value: Any, name: str = "", **kwargs: Any) -> None:
+    def track(
+        self,
+        value: Any,
+        name: str = "",
+        *,
+        summary: str | None = None,
+        x: str | None = None,
+        **kwargs: Any,
+    ) -> None:
         """Record ``value`` under ``name``, walking it if it is a component.
 
         ``None`` is a silent skip, so an optional member needs no guard at the
         call site. Because the step is bound, skipping does NOT slide the
         surviving points onto the wrong iterations.
+
+        ``summary`` and ``x`` set a scalar leaf's rule, as in :meth:`Run.track`.
+        The rule applies to the leaf's FULL (prefixed) name, but ``x`` is taken
+        as a full name itself — it is never prefixed — so a component can
+        say ``scope.track(loss, "loss", summary="min", x="epoch")`` and plot
+        against the run's own ``epoch`` series wherever it is mounted.
         """
         if value is None:
             return
@@ -133,6 +148,11 @@ class Scope:
 
         tracker = getattr(value, "__cairn_track__", None)
         if tracker is not None:
+            if summary is not None or x is not None:
+                raise ValueError(
+                    f"cairn: summary= and x= apply to scalar metrics only; "
+                    f"{full!r} is a component (set them on its scalar leaves)"
+                )
             ident = id(value)
             # A back-reference (a child holding its parent) would otherwise
             # recurse forever. Only objects on the CURRENT path are skipped, so
@@ -156,7 +176,7 @@ class Scope:
             tracker(child)
             return
 
-        self._run._track_leaf(value, full, step=self._step, **kwargs)
+        self._run._track_leaf(value, full, step=self._step, summary=summary, x=x, **kwargs)
 
     def config(self, *args: Any, **kwargs: Any) -> None:
         """Record INPUTS of this component, under the scope's name.
