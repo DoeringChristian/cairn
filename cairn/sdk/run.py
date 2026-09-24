@@ -4,9 +4,10 @@ Ties transport + buffer + handlers + capture modules together. One ``Run``
 instance per experimental execution; lifecycle:
 
     with cairn.Run(project="...") as run:
-        run["hparams"] = {"lr": 3e-4}
+        run.config(hparams={"lr": 3e-4})          # inputs
         for step, loss in ...:
-            run.track(loss, name="loss", step=step)
+            run.track(loss, name="loss", step=step)   # the series
+        run.summary(best_loss=best)               # results you are claiming
 """
 
 from __future__ import annotations
@@ -624,38 +625,51 @@ class Run:
 
     # ---- params / metadata ------------------------------------------------
 
+    def _merge_mapping(self, who: str, args: tuple, kwargs: dict) -> dict[str, Any]:
+        """Mappings and/or kwargs into one dict, later keys winning."""
+        merged: dict[str, Any] = {}
+        for a in args:
+            if not isinstance(a, dict):
+                raise TypeError(f"{who}() positional args must be mappings")
+            merged.update(a)
+        merged.update(kwargs)
+        return merged
+
     def config(self, *args: Any, **kwargs: Any) -> None:
-        """Attach configuration to the run (R0 API: replaces run[k] = v).
+        """Record the run's INPUTS — what was decided before the work ran.
 
         Accepts a mapping and/or kwargs; nested dicts flatten to dotted keys
         server-side (``run.config(hparams={"lr": 1e-3})`` → ``hparams.lr``).
 
             run.config(lr=1e-3, sched={"warmup": 100})
             run.config(vars(args))
+
+        The counterpart is :meth:`summary`, for results.
         """
         if self._finished:
             raise RuntimeError("Run has already been finished")
-        merged: dict[str, Any] = {}
-        for a in args:
-            if not isinstance(a, dict):
-                raise TypeError("run.config() positional args must be mappings")
-            merged.update(a)
-        merged.update(kwargs)
+        merged = self._merge_mapping("run.config", args, kwargs)
         if merged:
             self._transport.post_params(self._run_id, merged)
 
-    def __setitem__(self, key: str, value: Any) -> None:
-        """DEPRECATED (R0): use :meth:`config` — ``run.config(**{key: value})``."""
-        import warnings
+    def summary(self, *args: Any, **kwargs: Any) -> None:
+        """Record the run's RESULTS — the numbers you are claiming.
 
-        warnings.warn(
-            "run[key] = value is deprecated; use run.config(key=value)",
-            DeprecationWarning,
-            stacklevel=2,
-        )
+            run.summary(best_val_acc=0.91, epochs_run=30)
+            run.summary({"test": {"psnr": 31.4}})      # -> test.psnr
+
+        Same shape as :meth:`config`, opposite meaning: config is what went in,
+        summary is what came out. Nothing writes here implicitly — a metric's
+        last value is NOT a summary entry. The run table shows the last point of
+        each series and lets an explicit summary key of the same name override
+        it, so a number appears here only because you said so, and "who claimed
+        this" stays answerable.
+        """
         if self._finished:
             raise RuntimeError("Run has already been finished")
-        self._transport.post_params(self._run_id, {key: value})
+        merged = self._merge_mapping("run.summary", args, kwargs)
+        if merged:
+            self._transport.post_summary(self._run_id, merged)
 
     def set_tag(self, tag: str) -> None:
         self._transport.set_tags(self._run_id, [tag])

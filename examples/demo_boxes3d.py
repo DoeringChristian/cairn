@@ -166,7 +166,7 @@ def grid_box_values(mins: np.ndarray, maxs: np.ndarray, center: np.ndarray) -> n
 def log_run(name: str, seed: int, orbit_radius: float) -> None:
     rng = np.random.default_rng(seed)
     run = cairn.Run(project=PROJECT, name=name, tags=["boxes3d"])
-    run["orbit_radius"] = orbit_radius
+    run.config({"orbit_radius": orbit_radius})
 
     root_min = np.array([-2.0, -2.0, -2.0], dtype=np.float32)
     root_max = np.array([2.0, 2.0, 2.0], dtype=np.float32)

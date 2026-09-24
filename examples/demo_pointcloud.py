@@ -92,7 +92,7 @@ def grid_scan(n_side: int, theta: float) -> tuple[np.ndarray, np.ndarray]:
 def log_run(name: str, seed: int, spin: float) -> None:
     rng = np.random.default_rng(seed)
     run = cairn.Run(project=PROJECT, name=name, tags=["pointcloud"])
-    run["shape_seed"] = seed
+    run.config({"shape_seed": seed})
 
     for step in range(NUM_STEPS):
         theta = spin * step * (2 * math.pi / NUM_STEPS)

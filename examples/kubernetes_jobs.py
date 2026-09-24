@@ -74,7 +74,7 @@ TRAIN_SCRIPT = textwrap.dedent('''\
         capture_env=True,
         capture_system_metrics=False,
     )
-    run["hparams"] = {"lr": lr, "decay": decay, "steps": steps}
+    run.config({"hparams": {"lr": lr, "decay": decay, "steps": steps}})
 
     for step in range(steps):
         loss = lr * math.exp(-step * decay)
@@ -160,7 +160,7 @@ def simulate_locally() -> None:
             capture_env=False,
             capture_system_metrics=False,
         )
-        run["hparams"] = {"lr": cfg["lr"], "decay": cfg["decay"], "steps": cfg["steps"]}
+        run.config({"hparams": {"lr": cfg["lr"], "decay": cfg["decay"], "steps": cfg["steps"]}})
 
         lr = cfg["lr"]
         decay = cfg["decay"]

@@ -94,15 +94,23 @@ def create_run(
     }
 
 
-def set_params(db: Database, run_id: str, params: dict[str, Any]) -> int:
+def _upsert_flat_values(
+    db: Database, table: str, run_id: str, values: dict[str, Any]
+) -> int:
+    """Flatten a mapping to dotted keys and upsert it into a key/value table.
+
+    ``params`` and ``summary`` are the same shape carrying different meanings —
+    inputs versus declared results — so the write is implemented once. ``table``
+    is never caller-supplied; both call sites pass a literal.
+    """
     _require_run(db, run_id)
-    flat = flatten(params)
+    flat = flatten(values)
     rows = [(run_id, k, json.dumps(v), value_type(v)) for k, v in flat.items()]
     with db.transaction() as con:
         for row in rows:
             con.execute(
-                """
-                INSERT INTO params (run_id, key, value, value_type)
+                f"""
+                INSERT INTO {table} (run_id, key, value, value_type)
                 VALUES (?, ?, ?, ?)
                 ON CONFLICT (run_id, key) DO UPDATE
                   SET value = EXCLUDED.value, value_type = EXCLUDED.value_type
@@ -110,6 +118,22 @@ def set_params(db: Database, run_id: str, params: dict[str, Any]) -> int:
                 list(row),
             )
     return len(rows)
+
+
+def set_params(db: Database, run_id: str, params: dict[str, Any]) -> int:
+    """Run inputs: hyperparameters, argv, anything decided before the work."""
+    return _upsert_flat_values(db, "params", run_id, params)
+
+
+def set_summary(db: Database, run_id: str, summary: dict[str, Any]) -> int:
+    """Run results the author DECLARED.
+
+    Nothing writes here implicitly. A metric's last value is not a summary
+    entry; the run table resolves that at read time, preferring an explicit
+    summary key over the last point of the series with the same name. Keeping
+    the write explicit is what makes "who claimed this number" answerable.
+    """
+    return _upsert_flat_values(db, "summary", run_id, summary)
 
 
 def insert_batch(

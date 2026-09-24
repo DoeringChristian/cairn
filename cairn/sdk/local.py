@@ -165,6 +165,12 @@ class LocalTransport:
         else:
             ingest_ops.set_params(self.db, run_id, params)
 
+    def post_summary(self, run_id: str, summary: dict[str, Any]) -> None:
+        if self._use_wal:
+            self._wal_write("summary", {"run_id": run_id, "summary": summary})
+        else:
+            ingest_ops.set_summary(self.db, run_id, summary)
+
     def post_logs(self, run_id: str, lines: list[dict[str, Any]]) -> bool:
         try:
             if self._use_wal:

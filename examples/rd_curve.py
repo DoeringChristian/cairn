@@ -68,12 +68,15 @@ def main() -> None:
                 tags=[codec_name, f"q{quality}"],
             )
 
-            run["codec"] = codec_name
-            run["quality"] = quality
-            run["bpp"] = rd["bpp"]
-            run["psnr_db"] = rd["psnr_db"]
-            run["bpp.positions"] = rd["bpp.positions"]
-            run["bpp.normals"] = rd["bpp.normals"]
+            # What this run WAS: the codec and the quality knob.
+            run.config(codec=codec_name, quality=quality)
+            # What it ACHIEVED: the rate-distortion point the curve is made of.
+            run.summary(
+                bpp=rd["bpp"],
+                psnr_db=rd["psnr_db"],
+                **{"bpp.positions": rd["bpp.positions"],
+                   "bpp.normals": rd["bpp.normals"]},
+            )
 
             run.finish()
             print(f"{codec_name} q{quality}: {rd['bpp']:.3f} bpp, {rd['psnr_db']:.1f} dB")

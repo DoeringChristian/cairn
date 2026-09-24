@@ -166,7 +166,7 @@ VARIANTS = [
 def log_run(name: str, tags: list[str], params: dict, transform_fn) -> None:
     """Log a single run with transformed images + a quality metric."""
     run = cairn.Run(project=PROJECT, name=name, tags=tags)
-    run["distortion"] = params
+    run.config({"distortion": params})
 
     for step in range(NUM_STEPS):
         base = make_scene(step)

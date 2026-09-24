@@ -60,7 +60,7 @@ def hollow_shell(shape: tuple[int, int, int]) -> np.ndarray:
 def log_run(name: str, seed: int, direction: np.ndarray) -> None:
     rng = np.random.default_rng(seed)
     run = cairn.Run(project=PROJECT, name=name, tags=["volume"])
-    run["grid_n"] = N
+    run.config({"grid_n": N})
 
     start = np.array([N * 0.3, N * 0.3, N * 0.3], dtype=np.float32)
     for step in range(NUM_STEPS):

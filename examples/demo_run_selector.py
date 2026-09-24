@@ -48,7 +48,7 @@ def main() -> None:
     tag = os.environ.get("CAIRN_RUN_SELECTOR_TAG", "run-selector-demo")
 
     run = cairn.Run(project=project, name=name, tags=[tag])
-    run["hparams"] = {"lr": round(random.uniform(1e-4, 1e-2), 5), "seed": random.randint(0, 9999)}
+    run.config({"hparams": {"lr": round(random.uniform(1e-4, 1e-2), 5), "seed": random.randint(0, 9999)}})
 
     for step in range(10):
         loss = 2.0 * math.exp(-step / 4.0) + random.uniform(0, 0.05)

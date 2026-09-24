@@ -62,12 +62,12 @@ def main() -> None:
 
         # Params — lr + optimizer differ across runs; batch_size is shared so
         # the "only show differences" toggle has something to hide.
-        run["hparams"] = {
+        run.config({"hparams": {
             "lr": lr,
             "optimizer": optimizer,
             "batch_size": 32,
             "epochs": NUM_STEPS,
-        }
+        }})
 
         # Scalar curves that smoothly approach each run's distinct final value.
         for step in range(NUM_STEPS):

@@ -193,6 +193,15 @@ class Transport:
         except (httpx.HTTPError, OSError) as exc:
             log.warning("params POST failed for %s (WAL seq %s): %s", run_id, seq, exc)
 
+    def post_summary(self, run_id: str, summary: dict[str, Any]) -> None:
+        seq = self._wal.append("summary", {"run_id": run_id, "summary": summary}) if self._wal else None
+        try:
+            self.post_json(f"/api/runs/{run_id}/summary", {"summary": summary})
+            if seq is not None and self._wal:
+                self._wal.ack(seq)
+        except (httpx.HTTPError, OSError) as exc:
+            log.warning("summary POST failed for %s (WAL seq %s): %s", run_id, seq, exc)
+
     def post_logs(self, run_id: str, lines: list[dict[str, Any]]) -> bool:
         seq = self._wal.append("logs", {"run_id": run_id, "lines": lines}) if self._wal else None
         try:
@@ -342,6 +351,8 @@ class Transport:
             self.post_json(f"/api/runs/{p['run_id']}/batch", {"points": p["points"]})
         elif e.op == "params":
             self.post_json(f"/api/runs/{p['run_id']}/params", {"params": p["params"]})
+        elif e.op == "summary":
+            self.post_json(f"/api/runs/{p['run_id']}/summary", {"summary": p["summary"]})
         elif e.op == "logs":
             self.post_json(f"/api/runs/{p['run_id']}/logs", {"lines": p["lines"]})
         elif e.op == "artifact":

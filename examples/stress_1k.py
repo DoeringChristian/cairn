@@ -27,10 +27,10 @@ run = cairn.Run(
     capture_env=False,
     capture_system_metrics=False,
 )
-run["lr"] = lr
-run["batch_size"] = bs
-run["optimizer"] = optimizer
-run["seed"] = i
+run.config({"lr": lr})
+run.config({"batch_size": bs})
+run.config({"optimizer": optimizer})
+run.config({"seed": i})
 for step in range(10):
     loss = 2.0 * math.exp(-step / (3 + lr * 1000)) + r.gauss(0, 0.05)
     acc = min(0.99, 0.5 + step * 0.05 + r.gauss(0, 0.02))

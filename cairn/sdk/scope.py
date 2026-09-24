@@ -12,6 +12,10 @@ caller never re-lists another object's internals:
             scope.track(self.encoding, "encoding")   # recurses
             scope.track(self.render(), "pred")
 
+    class Dataset:
+        def __cairn_track__(self, scope):
+            scope.config(n_samples=len(self))        # a property, not a metric
+
     run.track(model, "model", step=it)               # walks the whole tree
 
 A ``Scope`` is precisely :meth:`Run.track` with ``step``/``context`` pre-bound
@@ -164,6 +168,41 @@ class Scope:
         self._run._track_leaf(
             value, full, step=self._step, context=self._context, **kwargs
         )
+
+    def config(self, *args: Any, **kwargs: Any) -> None:
+        """Record INPUTS of this component, under the scope's name.
+
+            class Dataset:
+                def __cairn_track__(self, scope):
+                    scope.config(n_samples=len(self), augment=self.augment)
+
+        With the scope named ``data`` that is ``data.n_samples`` /
+        ``data.augment`` on the run, beside every other component's.
+
+        This exists because a property is not a metric. Routed through
+        :meth:`track` it would become a one-point sequence, get a step it never
+        had, and render as a plot of a single dot — which is how a dataset ends
+        up looking like a training curve.
+        """
+        self._run.config(self._prefixed("scope.config", args, kwargs))
+
+    def summary(self, *args: Any, **kwargs: Any) -> None:
+        """Record RESULTS of this component, under the scope's name.
+
+        The counterpart to :meth:`config`, with :meth:`Run.summary`'s meaning:
+        a number the component is claiming, not a series it is emitting.
+        """
+        self._run.summary(self._prefixed("scope.summary", args, kwargs))
+
+    def _prefixed(self, who: str, args: tuple, kwargs: dict) -> dict[str, Any]:
+        """Merge the mapping and put this scope's name in front of every key.
+
+        Nested values are left alone — the server flattens them onto the
+        prefixed key, so ``scope.config(opt={"lr": 1e-3})`` under ``model``
+        lands as ``model.opt.lr``.
+        """
+        merged = self._run._merge_mapping(who, args, kwargs)
+        return {join_names(self._prefix, k): v for k, v in merged.items()}
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"Scope(name={self._prefix!r}, step={self._step!r})"

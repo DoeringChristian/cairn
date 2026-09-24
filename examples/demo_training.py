@@ -122,13 +122,13 @@ def main() -> None:
     )
 
     # Params (nested dicts get flattened into dotted keys)
-    run["hparams"] = {
+    run.config({"hparams": {
         "lr": 3e-4,
         "batch_size": 32,
         "optimizer": "adamw",
         "scheduler": {"type": "cosine", "warmup_steps": 100},
-    }
-    run["dataset"] = {"name": "cifar10", "num_classes": 10}
+    }})
+    run.config({"dataset": {"name": "cifar10", "num_classes": 10}})
 
     num_steps = 50
     random.seed(0)

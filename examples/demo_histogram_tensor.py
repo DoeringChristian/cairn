@@ -50,7 +50,7 @@ def attention_map(step: int, n: int, rng: np.random.Generator) -> np.ndarray:
 def log_run(name: str, seed: int) -> None:
     rng = np.random.default_rng(seed)
     run = cairn.Run(project=PROJECT, name=name, tags=["workstream-a", "demo"])
-    run["config"] = {"num_steps": NUM_STEPS, "seed": seed}
+    run.config({"config": {"num_steps": NUM_STEPS, "seed": seed}})
 
     for step in range(NUM_STEPS):
         # --- Histogram: gaussian whose mean shifts and whose spread shrinks ---

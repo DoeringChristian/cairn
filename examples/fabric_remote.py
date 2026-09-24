@@ -58,7 +58,7 @@ def train(repo_path_str: str, config: dict) -> str:
         capture_env=False,
         capture_system_metrics=False,
     )
-    run["hparams"] = config
+    run.config({"hparams": config})
 
     lr = config["lr"]
     for step in range(config["steps"]):

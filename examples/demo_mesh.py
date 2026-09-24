@@ -202,7 +202,7 @@ def faceted_cube() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
 def log_run(name: str, seed: int, phase: float) -> None:
     run = cairn.Run(project=PROJECT, name=name, tags=["mesh"])
-    run["shape_seed"] = seed
+    run.config({"shape_seed": seed})
 
     base_sphere, sphere_faces = uv_sphere(24, 36)
     torus_v, torus_f = torus(28, 14)

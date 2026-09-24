@@ -40,11 +40,11 @@ def train(repo_path_str: str, config: dict) -> str:
         capture_env=False,
         capture_system_metrics=False,
     )
-    run["hparams"] = {
+    run.config({"hparams": {
         "lr": config["lr"],
         "decay": config["decay"],
         "steps": config["steps"],
-    }
+    }})
 
     lr = config["lr"]
     decay = config["decay"]

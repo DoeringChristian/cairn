@@ -97,4 +97,8 @@ def get_run(run_id: str, request: Request) -> dict[str, Any]:
         "SELECT key, value, value_type FROM params WHERE run_id = ? ORDER BY key",
         [run_id],
     )
-    return {"run": run, "params": params}
+    summary = db.read_columns(
+        "SELECT key, value, value_type FROM summary WHERE run_id = ? ORDER BY key",
+        [run_id],
+    )
+    return {"run": run, "params": params, "summary": summary}

@@ -62,6 +62,15 @@ SCHEMA_SQL: list[str] = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS summary (
+        run_id        TEXT NOT NULL REFERENCES runs(id),
+        key           TEXT NOT NULL,
+        value         TEXT NOT NULL,
+        value_type    TEXT NOT NULL,
+        PRIMARY KEY (run_id, key)
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS sequences (
         run_id        TEXT NOT NULL REFERENCES runs(id),
         name          TEXT NOT NULL,

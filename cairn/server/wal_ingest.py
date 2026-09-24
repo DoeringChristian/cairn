@@ -113,6 +113,14 @@ def ingest_wal(db: Database, data_dir: DataDir, blobs: BlobStore, wal_path: Path
                     except ingest_ops.RunNotFound:
                         log.warning("WAL params for unknown run %s — skipping", rid)
 
+            elif op == "summary":
+                rid = payload.get("run_id", run_id)
+                if rid:
+                    try:
+                        ingest_ops.set_summary(db, rid, payload["summary"])
+                    except ingest_ops.RunNotFound:
+                        log.warning("WAL summary for unknown run %s — skipping", rid)
+
             elif op == "logs":
                 rid = payload.get("run_id", run_id)
                 if rid:
@@ -235,6 +243,13 @@ def _ingest_wal_incremental(
                     if rid:
                         try:
                             ingest_ops.set_params(db, rid, payload["params"])
+                        except ingest_ops.RunNotFound:
+                            pass
+                elif op == "summary":
+                    rid = payload.get("run_id", run_id)
+                    if rid:
+                        try:
+                            ingest_ops.set_summary(db, rid, payload["summary"])
                         except ingest_ops.RunNotFound:
                             pass
                 elif op == "logs":

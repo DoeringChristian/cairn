@@ -119,7 +119,7 @@ def make_boxes(step: int) -> list[dict]:
 
 def log_run(name: str, jitter: int) -> None:
     run = cairn.Run(project=PROJECT, name=name, tags=["overlays"])
-    run["config"] = {"jitter": jitter}
+    run.config({"config": {"jitter": jitter}})
     for step in range(NUM_STEPS):
         scene = make_scene(step)
 

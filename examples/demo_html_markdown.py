@@ -207,7 +207,7 @@ def run_one(run_name: str, seed: int) -> None:
         tags=["demo", "html-markdown"],
         notes="Workstream D demo: HTML report + Markdown notes cards.",
     )
-    run["hparams"] = {"lr": 3e-4, "optimizer": "adamw", "seed": seed}
+    run.config({"hparams": {"lr": 3e-4, "optimizer": "adamw", "seed": seed}})
 
     rng = random.Random(seed)
     losses: list[float] = []

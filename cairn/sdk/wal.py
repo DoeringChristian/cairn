@@ -14,7 +14,7 @@ minted per WAL file so sequence numbers can never alias across file
 recreations (the (run_id, epoch, seq) idempotency key), and ``target``
 records where this log replays (the ``cairn sync`` scanner needs no other
 context). Subsequent lines:
-    {"seq": N, "op": "batch"|"artifact"|"params"|"logs"|..., "payload": {...}}
+    {"seq": N, "op": "batch"|"artifact"|"params"|"summary"|"logs"|..., "payload": {...}}
 
 ACK DISCIPLINE (R3 — fixes the silent-loss bug): the checkpoint is a
 CONTIGUOUS low-water mark plus the set of individually-acked seqs above it

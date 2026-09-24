@@ -49,6 +49,10 @@ class ParamsRequest(BaseModel):
     params: dict[str, Any]
 
 
+class SummaryRequest(BaseModel):
+    summary: dict[str, Any]
+
+
 class SequencePoint(BaseModel):
     name: str
     step: int
@@ -130,6 +134,16 @@ def set_params(run_id: str, body: ParamsRequest, request: Request) -> dict[str, 
     db = get_db(request)
     try:
         updated = ingest_ops.set_params(db, run_id, body.params)
+    except ingest_ops.RunNotFound as exc:
+        raise _run_not_found(exc) from None
+    return {"updated": updated}
+
+
+@router.post("/runs/{run_id}/summary")
+def set_summary(run_id: str, body: SummaryRequest, request: Request) -> dict[str, Any]:
+    db = get_db(request)
+    try:
+        updated = ingest_ops.set_summary(db, run_id, body.summary)
     except ingest_ops.RunNotFound as exc:
         raise _run_not_found(exc) from None
     return {"updated": updated}

@@ -69,7 +69,7 @@ def make_summary_table(accuracy: float, loss: float) -> cairn.Table:
 
 def log_run(name: str, seed: int) -> None:
     run = cairn.Run(project=PROJECT, name=name, tags=["table-demo"])
-    run["config"] = {"seed": seed, "n_rows": N_ROWS}
+    run.config({"config": {"seed": seed, "n_rows": N_ROWS}})
 
     final_acc = 0.0
     for step in range(NUM_STEPS):

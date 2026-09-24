@@ -62,9 +62,9 @@ def main() -> None:
     # ── Step 1: Create and version a dataset ─────────────────────────────
     print("Step 1: Creating dataset v0...")
     with cairn.Run(project=PROJECT, name="data-prep-v0", tags=["data-prep"]) as run:
-        run["task"] = "prepare training data"
-        run["seed"] = 42
-        run["n_samples"] = 1000
+        run.config({"task": "prepare training data"})
+        run.config({"seed": 42})
+        run.config({"n_samples": 1000})
 
         dataset = make_dataset(seed=42, n_samples=1000)
         data_bytes = json.dumps(dataset).encode("utf-8")
@@ -85,9 +85,9 @@ def main() -> None:
     # ── Step 2: Train a model using the dataset ──────────────────────────
     print("\nStep 2: Training model using training-data:latest...")
     with cairn.Run(project=PROJECT, name="train-v0", tags=["training"]) as run:
-        run["model"] = "linear_regression"
-        run["lr"] = 0.01
-        run["epochs"] = 100
+        run.config({"model": "linear_regression"})
+        run.config({"lr": 0.01})
+        run.config({"epochs": 100})
 
         # Consume the dataset
         data_raw = run.use_artifact("training-data:latest", role="train")
@@ -123,7 +123,7 @@ def main() -> None:
     # ── Step 3: Evaluate the model ───────────────────────────────────────
     print("\nStep 3: Evaluating model...")
     with cairn.Run(project=PROJECT, name="eval-v0", tags=["evaluation"]) as run:
-        run["task"] = "evaluate on test set"
+        run.config({"task": "evaluate on test set"})
 
         # Consume both the model and the dataset
         model_data = run.use_artifact("linear-model:latest", role="model")
@@ -153,9 +153,9 @@ def main() -> None:
     # ── Step 4: Create a new version of the dataset and retrain ──────────
     print("\nStep 4: Creating improved dataset v1...")
     with cairn.Run(project=PROJECT, name="data-prep-v1", tags=["data-prep"]) as run:
-        run["task"] = "prepare improved training data"
-        run["seed"] = 123
-        run["n_samples"] = 2000
+        run.config({"task": "prepare improved training data"})
+        run.config({"seed": 123})
+        run.config({"n_samples": 2000})
 
         dataset_v1 = make_dataset(seed=123, n_samples=2000)
         data_bytes_v1 = json.dumps(dataset_v1).encode("utf-8")
@@ -175,9 +175,9 @@ def main() -> None:
 
     print("\nStep 5: Retraining on improved dataset...")
     with cairn.Run(project=PROJECT, name="train-v1", tags=["training"]) as run:
-        run["model"] = "linear_regression"
-        run["lr"] = 0.005
-        run["epochs"] = 200
+        run.config({"model": "linear_regression"})
+        run.config({"lr": 0.005})
+        run.config({"epochs": 200})
 
         # Consume the LATEST dataset (v1 now)
         data_raw = run.use_artifact("training-data:latest", role="train")
