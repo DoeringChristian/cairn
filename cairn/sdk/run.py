@@ -670,6 +670,21 @@ class Run:
     def add_note(self, text: str) -> None:
         self._transport.set_notes(self._run_id, text)
 
+    def alert(self, title: str, text: str = "", level: str = "info") -> None:
+        """Raise an alert: shown in the UI (project bell, run-page banner) and
+        posted to the server's webhook (``cairn server --alert-webhook``).
+
+        ``level`` is ``"info"``, ``"warn"`` or ``"error"``."""
+        if level not in ("info", "warn", "error"):
+            raise ValueError(f"alert level must be 'info', 'warn' or 'error', not {level!r}")
+        self._transport.alert(self._run_id, {
+            "alert_id": secrets.token_hex(16),
+            "title": title,
+            "text": text,
+            "level": level,
+            "created_at": _now_iso(),
+        })
+
     # ---- finish -----------------------------------------------------------
 
     def finish(self, status: str = "completed", exit_code: int | None = None) -> None:

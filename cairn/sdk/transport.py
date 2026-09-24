@@ -230,6 +230,10 @@ class Transport:
     def set_notes(self, run_id: str, notes: str) -> None:
         self.post_json(f"/api/runs/{run_id}/notes", {"notes": notes})
 
+    def alert(self, run_id: str, alert: dict[str, Any]) -> None:
+        """``alert``: alert_id, title, text, level, created_at."""
+        self.post_json(f"/api/runs/{run_id}/alerts", alert)
+
     def heartbeat(self, run_id: str) -> str | None:
         """Returns the run's ``stop_requested`` timestamp, if any."""
         return self.post_json(f"/api/runs/{run_id}/heartbeat", {}).json().get("stop_requested")

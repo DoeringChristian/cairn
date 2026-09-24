@@ -22,9 +22,11 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from . import alerts as alerts_core
 from . import auth as auth_core
 from .embed_specs import EmbedSpecStore
 from .routes import (
+    alerts,
     artifact_registry,
     artifacts,
     auth as auth_routes,
@@ -62,6 +64,7 @@ def create_app(
     mount_ui: bool = False,
     auth_enabled: bool = False,
     background_tasks: bool = True,
+    alert_webhook: str | None = None,
 ) -> FastAPI:
     """Build a FastAPI app.
 
@@ -90,6 +93,9 @@ def create_app(
             ingestion, and any other periodic repo maintenance). Exactly one
             app per repo may run them: ``cairn server --ui`` builds a second
             app on the same DB and passes False for it.
+        alert_webhook: URL the background task posts alerts to (ntfy, Slack,
+            Discord, or any JSON webhook; see ``cairn/server/alerts.py``).
+            None keeps alerts in the UI only.
     """
     owns_db = db is None
     if (db is None) != (blobs is None) or (db is None) != (data_dir_obj is None):
@@ -133,9 +139,25 @@ def create_app(
                 except asyncio.TimeoutError:
                     pass  # normal — loop again
 
+        # Stale-run reaping + alert delivery — every 5s.
+        async def _maintenance_loop():
+            while not _stop.is_set():
+                try:
+                    await asyncio.to_thread(
+                        alerts_core.maintenance_cycle, _db, dd, alert_webhook,
+                    )
+                except Exception:  # noqa: BLE001
+                    _log.exception("maintenance cycle failed")
+                try:
+                    await asyncio.wait_for(_stop.wait(), timeout=5.0)
+                    break
+                except asyncio.TimeoutError:
+                    pass
+
         tasks: list[asyncio.Task] = []
         if background_tasks:
             tasks.append(asyncio.create_task(_wal_ingestion_loop()))
+            tasks.append(asyncio.create_task(_maintenance_loop()))
 
         try:
             yield
@@ -155,6 +177,7 @@ def create_app(
     # Read by the auth dependency family (auth_core.require_role) and the
     # before any router registration so it's never accessed unset.
     app.state.auth_enabled = auth_enabled
+    app.state.alert_webhook = alert_webhook
     # Short-lived, in-memory store for /embed/card specs (WS-EMBED). Created
     # per-app so it shares the app's lifetime; specs are throwaway render
     # inputs, not persisted domain data. See cairn/server/embed_specs.py.
@@ -209,6 +232,7 @@ def create_app(
         report_templates.router,
         artifact_registry.router,
         embed.router,
+        alerts.router,
     ):
         app.include_router(router, dependencies=[Depends(require("read"))])
 

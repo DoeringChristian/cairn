@@ -103,6 +103,15 @@ class NotesRequest(BaseModel):
     notes: str
 
 
+class AlertRequest(BaseModel):
+    title: str
+    text: str = ""
+    level: str = "info"
+    #: Client-generated (idempotent WAL replay). Default: a fresh id.
+    alert_id: str | None = None
+    created_at: str | None = None
+
+
 class RunArtifactRequest(BaseModel):
     name: str
     hash: str
@@ -293,6 +302,22 @@ def set_notes(run_id: str, body: NotesRequest, request: Request) -> dict[str, An
 def run_heartbeat(run_id: str, request: Request) -> dict[str, Any]:
     db = get_db(request)
     return {"run_id": run_id, "stop_requested": ingest_ops.heartbeat(db, run_id)}
+
+
+@router.post("/runs/{run_id}/alerts")
+def create_alert(run_id: str, body: AlertRequest, request: Request) -> dict[str, Any]:
+    """Record an alert; the server's background task delivers it."""
+    db = get_db(request)
+    try:
+        alert_id = ingest_ops.insert_alert(
+            db, run_id, body.title, body.text, body.level,
+            alert_id=body.alert_id, created_at=body.created_at,
+        )
+    except ingest_ops.RunNotFound as exc:
+        raise _run_not_found(exc) from None
+    except ValueError as exc:  # bad level / timestamp
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    return {"id": alert_id, "run_id": run_id}
 
 
 @router.post("/runs/{run_id}/stop")

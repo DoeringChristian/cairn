@@ -168,6 +168,12 @@ def _apply_op(
                 (src_dir / "manifest.json").write_text(json.dumps(manifest))
         elif op == "heartbeat":
             ingest_ops.heartbeat(db, rid)
+        elif op == "alert":
+            ingest_ops.insert_alert(
+                db, rid, payload["title"], payload.get("text", ""),
+                payload.get("level", "info"),
+                alert_id=payload["alert_id"], created_at=payload.get("created_at"),
+            )
         else:
             log.debug("unknown WAL op %r — skipping", op)
     except ingest_ops.RunNotFound:

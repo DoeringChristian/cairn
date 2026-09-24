@@ -302,11 +302,56 @@ def finish_run(
 ) -> None:
     """End a run. ``ended_at`` defaults to now (imports and WAL replay pass
     the time the run actually ended)."""
-    _require_run(db, run_id)
+    run = _require_run(db, run_id)
     db.write(
         "UPDATE runs SET status = ?, ended_at = ?, exit_code = ? WHERE id = ?",
         [status, parse_timestamp(ended_at) or utc_now(), exit_code, run_id],
     )
+    # Alert only on a real transition, so a WAL replayed a second time (or a
+    # repeated finish) doesn't alert twice.
+    if run["status"] == "running" and status in _ALERT_ON_STATUS:
+        name = run.get("display_name") or run_id[:8]
+        insert_alert(
+            db, run_id,
+            title=f"Run {name} {status}",
+            text=f"exit code {exit_code}" if exit_code is not None else "",
+            level=_ALERT_ON_STATUS[status],
+        )
+
+
+#: Final statuses that raise an automatic alert, with the alert's level.
+_ALERT_ON_STATUS = {"failed": "error", "killed": "warn"}
+
+ALERT_LEVELS = ("info", "warn", "error")
+
+
+def insert_alert(
+    db: Database,
+    run_id: str,
+    title: str,
+    text: str = "",
+    level: str = "info",
+    *,
+    alert_id: str | None = None,
+    created_at: str | datetime | None = None,
+) -> str:
+    """Write an alert row (delivery is the server's background task).
+
+    ``alert_id`` is client-generated on the SDK paths so replaying a WAL is
+    idempotent (``INSERT OR IGNORE``)."""
+    if level not in ALERT_LEVELS:
+        raise ValueError(f"alert level must be one of {ALERT_LEVELS}, not {level!r}")
+    run = _require_run(db, run_id)
+    alert_id = alert_id or secrets.token_hex(16)
+    ts = parse_timestamp(created_at) or utc_now()
+    db.write(
+        """
+        INSERT OR IGNORE INTO alerts (id, run_id, project_id, level, title, text, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        [alert_id, run_id, run["project_id"], level, title, text or "", ts.isoformat()],
+    )
+    return alert_id
 
 
 def set_tags(db: Database, run_id: str, tags: list[str]) -> None:

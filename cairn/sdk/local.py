@@ -232,6 +232,17 @@ class LocalTransport:
         else:
             ingest_ops.set_notes(self.db, run_id, notes)
 
+    def alert(self, run_id: str, alert: dict[str, Any]) -> None:
+        """``alert``: alert_id, title, text, level, created_at."""
+        if self._use_wal:
+            self._wal_write("alert", {"run_id": run_id, **alert})
+        else:
+            ingest_ops.insert_alert(
+                self.db, run_id, alert["title"], alert.get("text", ""),
+                alert.get("level", "info"),
+                alert_id=alert["alert_id"], created_at=alert.get("created_at"),
+            )
+
     def attach_artifact(self, run_id: str, name: str, digest: str, step: int | None = None) -> None:
         if self._use_wal:
             self._wal_write("attach_artifact", {"run_id": run_id, "name": name, "hash": digest, "step": step})

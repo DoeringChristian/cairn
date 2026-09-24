@@ -231,6 +231,13 @@ def _uvicorn_logging(verbose: bool) -> dict[str, object]:
     is_flag=True,
     help="Show the HTTP server's info and access logs (default: warnings only).",
 )
+@click.option(
+    "--alert-webhook",
+    envvar="CAIRN_ALERT_WEBHOOK",
+    default=None,
+    help="Post alerts (run.alert(), failed/killed runs) to this URL: an ntfy topic, "
+         "a Slack or Discord webhook, or any JSON webhook. Env: CAIRN_ALERT_WEBHOOK.",
+)
 def server_cmd(
     host: str,
     port: int,
@@ -241,6 +248,7 @@ def server_cmd(
     advertise: bool,
     no_auth: bool,
     verbose: bool,
+    alert_webhook: str | None,
 ) -> None:
     """Start the Cairn tracking server (ingest-only unless ``--ui``)."""
     import uvicorn
@@ -291,6 +299,7 @@ def server_cmd(
     # Ingest-only app (no SPA mount).
     ingest_app = create_app(
         db=db, blobs=blobs, data_dir_obj=dd, mount_ui=False, auth_enabled=auth_enabled,
+        alert_webhook=alert_webhook,
     )
     # UI app (ingest + read + SPA). Only built if UI is enabled. It shares
     # the ingest app's DB, so the ingest app alone runs the background loops.
@@ -422,6 +431,13 @@ def server_cmd(
     is_flag=True,
     help="Show the HTTP server's info and access logs (default: warnings only).",
 )
+@click.option(
+    "--alert-webhook",
+    envvar="CAIRN_ALERT_WEBHOOK",
+    default=None,
+    help="Post alerts (run.alert(), failed/killed runs) to this URL: an ntfy topic, "
+         "a Slack or Discord webhook, or any JSON webhook. Local repos only. Env: CAIRN_ALERT_WEBHOOK.",
+)
 def ui_cmd(
     host: str,
     port: int,
@@ -429,6 +445,7 @@ def ui_cmd(
     open_browser: bool,
     no_auth: bool,
     verbose: bool,
+    alert_webhook: str | None,
 ) -> None:
     """Serve the Cairn viewer over a local repo or remote Cairn server.
 
@@ -527,6 +544,7 @@ def ui_cmd(
         data_dir_obj=dd,
         mount_ui=True,
         auth_enabled=auth_enabled,
+        alert_webhook=alert_webhook,
     )
     local_token = None
     if auth_enabled:
