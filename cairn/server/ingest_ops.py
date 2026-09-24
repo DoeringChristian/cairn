@@ -319,6 +319,30 @@ def set_notes(db: Database, run_id: str, notes: str) -> None:
     db.write("UPDATE runs SET notes = ? WHERE id = ?", [notes, run_id])
 
 
+def rename_run(db: Database, run_id: str, display_name: str) -> None:
+    _require_run(db, run_id)
+    db.write("UPDATE runs SET display_name = ? WHERE id = ?", [display_name, run_id])
+
+
+KEY_TABLES = ("params", "summary")
+
+
+def delete_keys(db: Database, run_id: str, table: str, keys: list[str]) -> None:
+    """Delete config (``params``) or summary keys. Keys are the flattened
+    dotted keys, and a key also removes the keys nested under it
+    (``hparams`` takes ``hparams.lr`` with it), since a nested mapping was
+    written as exactly those keys."""
+    if table not in KEY_TABLES:
+        raise ValueError(f"table must be one of {KEY_TABLES}, got {table!r}")
+    _require_run(db, run_id)
+    with db.transaction() as con:
+        for key in keys:
+            con.execute(
+                f"DELETE FROM {table} WHERE run_id = ? AND (key = ? OR substr(key, 1, ?) = ?)",
+                [run_id, key, len(key) + 1, key + "."],
+            )
+
+
 def heartbeat(db: Database, run_id: str) -> None:
     """Update the heartbeat timestamp for a running run."""
     db.write(

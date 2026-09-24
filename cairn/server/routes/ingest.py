@@ -103,6 +103,15 @@ class NotesRequest(BaseModel):
     notes: str
 
 
+class RunPatchRequest(BaseModel):
+    display_name: str | None = None
+    notes: str | None = None
+
+
+class DeleteKeysRequest(BaseModel):
+    keys: list[str]
+
+
 class RunArtifactRequest(BaseModel):
     name: str
     hash: str
@@ -287,6 +296,38 @@ def set_notes(run_id: str, body: NotesRequest, request: Request) -> dict[str, An
     except ingest_ops.RunNotFound as exc:
         raise _run_not_found(exc) from None
     return {"run_id": run_id, "notes": body.notes}
+
+
+@router.patch("/runs/{run_id}")
+def patch_run(run_id: str, body: RunPatchRequest, request: Request) -> dict[str, Any]:
+    """Edit a run's name and/or notes; omitted fields stay as they are."""
+    db = get_db(request)
+    try:
+        if body.display_name is not None:
+            ingest_ops.rename_run(db, run_id, body.display_name)
+        if body.notes is not None:
+            ingest_ops.set_notes(db, run_id, body.notes)
+    except ingest_ops.RunNotFound as exc:
+        raise _run_not_found(exc) from None
+    return {"run_id": run_id, **body.model_dump(exclude_none=True)}
+
+
+@router.delete("/runs/{run_id}/params")
+def delete_params(run_id: str, body: DeleteKeysRequest, request: Request) -> dict[str, Any]:
+    return _delete_keys(request, run_id, "params", body.keys)
+
+
+@router.delete("/runs/{run_id}/summary")
+def delete_summary(run_id: str, body: DeleteKeysRequest, request: Request) -> dict[str, Any]:
+    return _delete_keys(request, run_id, "summary", body.keys)
+
+
+def _delete_keys(request: Request, run_id: str, table: str, keys: list[str]) -> dict[str, Any]:
+    try:
+        ingest_ops.delete_keys(get_db(request), run_id, table, keys)
+    except ingest_ops.RunNotFound as exc:
+        raise _run_not_found(exc) from None
+    return {"run_id": run_id, "deleted": keys}
 
 
 @router.post("/runs/{run_id}/heartbeat")

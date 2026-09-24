@@ -548,6 +548,18 @@ class Run:
         """Return versioned artifacts produced by this run."""
         return self._backend.get_run_outputs(self.id)
 
+    def edit(self) -> RunEditor:
+        """An editing handle for this run (config, summary, tags, name,
+        notes). Use it as a context manager, or ``close()`` it::
+
+            with reader.run(run_id).edit() as e:
+                e.set_summary(test_acc=0.93)
+                e.add_tag("best")
+
+        Raises ``ValueError`` for a Reader over an exported ``.zip``.
+        """
+        return RunEditor(self, self._backend.edit_target)
+
     def __repr__(self) -> str:
         name = self.name or self.id
         return f"Run({name!r}, status={self.status!r}, project={self.project!r})"
@@ -564,6 +576,85 @@ class Run:
         if not isinstance(tag, str):
             raise TypeError(f"Run.__getitem__ expects a string tag, got {type(tag)}")
         return DataRef(self, tag)
+
+
+class RunEditor:
+    """Write access to one existing run, from :meth:`Run.edit`.
+
+    Writes go through the same transport resolution as ``cairn.Run``: the
+    repo DB directly, or the server that holds the repo (or the ``cairn://``
+    server the Reader reads). The :class:`Run` it came from sees the edits.
+    """
+
+    def __init__(self, run: Run, target: str) -> None:
+        from .connect import open_transport
+
+        self._run = run
+        self._transport, _ = open_transport(target)
+
+    def set_config(self, *args: Any, **kwargs: Any) -> None:
+        """Merge keys into the run's config (like ``cairn.Run.config``)."""
+        values = _merge_mappings("set_config", args, kwargs)
+        if values:
+            self._transport.post_params(self._run.id, values)
+            self._run._params = None
+
+    def set_summary(self, *args: Any, **kwargs: Any) -> None:
+        """Merge keys into the run's summary (like ``cairn.Run.summary``)."""
+        values = _merge_mappings("set_summary", args, kwargs)
+        if values:
+            self._transport.post_summary(self._run.id, values)
+            self._run._summary = None
+
+    def delete_keys(self, which: str, keys: list[str]) -> None:
+        """Delete ``keys`` from ``"config"`` or ``"summary"``. Keys are the
+        dotted keys; a key also removes the keys nested under it."""
+        tables = {"config": "params", "summary": "summary"}
+        if which not in tables:
+            raise ValueError(f"which must be 'config' or 'summary', got {which!r}")
+        self._transport.delete_keys(self._run.id, tables[which], list(keys))
+        self._run._params = None
+        self._run._summary = None
+
+    def set_tags(self, tags: list[str]) -> None:
+        """Replace the run's tags."""
+        self._transport.set_tags(self._run.id, list(tags))
+        self._run._raw["tags"] = json.dumps(list(tags))
+
+    def add_tag(self, tag: str) -> None:
+        tags = self._run.tags
+        if tag not in tags:
+            self.set_tags([*tags, tag])
+
+    def remove_tag(self, tag: str) -> None:
+        self.set_tags([t for t in self._run.tags if t != tag])
+
+    def rename(self, name: str) -> None:
+        self._transport.rename_run(self._run.id, name)
+        self._run._raw["display_name"] = name
+
+    def set_notes(self, notes: str) -> None:
+        self._transport.set_notes(self._run.id, notes)
+        self._run._raw["notes"] = notes
+
+    def close(self) -> None:
+        self._transport.close()
+
+    def __enter__(self) -> RunEditor:
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        self.close()
+
+
+def _merge_mappings(who: str, args: tuple, kwargs: dict) -> dict[str, Any]:
+    merged: dict[str, Any] = {}
+    for a in args:
+        if not isinstance(a, dict):
+            raise TypeError(f"{who}() positional args must be mappings")
+        merged.update(a)
+    merged.update(kwargs)
+    return merged
 
 
 # ---------------------------------------------------------------------------
@@ -921,7 +1012,7 @@ def _api_run_row(row: dict[str, Any]) -> dict[str, Any]:
 
 
 class _LocalBackend:
-    def __init__(self, repo: str | Path) -> None:
+    def __init__(self, repo: str | Path, *, zip_source: str | None = None) -> None:
         from ..server.storage.blobs import BlobStore
         from ..server.storage.datadir import DataDir
         from ..server.storage.db import Database
@@ -931,6 +1022,15 @@ class _LocalBackend:
         self._db = Database.open(self._dd.db_path)
         self._blobs = BlobStore(self._dd.artifacts_dir)
         self._ingest_all = _ingest_all
+        self._zip_source = zip_source
+
+    @property
+    def edit_target(self) -> str:
+        """Where edits go: the repo dir, through ``open_transport`` (which
+        reaches a server holding the repo over HTTP)."""
+        if self._zip_source is not None:
+            raise ValueError(f"runs read from an exported archive ({self._zip_source}) can't be edited")
+        return str(self._dd.root)
 
     @property
     def repo_path(self) -> str:
@@ -1197,6 +1297,10 @@ class _HttpBackend:
         `cairn.configure`/`CAIRN_REPO`/`server=`."""
         return self._base
 
+    @property
+    def edit_target(self) -> str:
+        return self._base
+
     def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         resp = self._client.get(path, params=params)
         resp.raise_for_status()
@@ -1396,7 +1500,7 @@ class Reader:
         # into a tempdir and read from there.
         if repo is not None and str(repo).endswith(".zip"):
             self._tempdir, repo_path = _load_zip_to_tempdir(Path(repo))
-            self._backend: _LocalBackend | _HttpBackend = _LocalBackend(repo_path)
+            self._backend: _LocalBackend | _HttpBackend = _LocalBackend(repo_path, zip_source=str(repo))
             self._zip_source: str | None = str(repo)
             return
         self._tempdir = None

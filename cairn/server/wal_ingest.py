@@ -141,6 +141,10 @@ def _apply_op(
             ingest_ops.set_tags(db, rid, payload["tags"])
         elif op == "set_notes":
             ingest_ops.set_notes(db, rid, payload["notes"])
+        elif op == "rename_run":
+            ingest_ops.rename_run(db, rid, payload["name"])
+        elif op == "delete_keys":
+            ingest_ops.delete_keys(db, rid, payload["table"], payload["keys"])
         elif op == "attach_artifact":
             ingest_ops.attach_artifact(
                 db, blobs, rid,
