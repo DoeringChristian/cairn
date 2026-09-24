@@ -41,6 +41,7 @@ from .local import LocalTransport
 from .scope import Scope
 from .transport import Transport
 from .wal import WriteAheadLog
+from .watch import Watcher
 
 log = logging.getLogger(__name__)
 
@@ -140,6 +141,9 @@ class Run:
         self._step_lock = threading.Lock()
         self._line_counter = 0
         self._line_lock = threading.Lock()
+        # The highest explicit step tracked so far; run.watch histograms use it.
+        self._last_step: int | None = None
+        self._watchers: list[Watcher] = []
 
         # Env + git captured synchronously so we can send them on create.
         env_snapshot: dict[str, Any] | None = _capture_env() if capture_env else None
@@ -404,6 +408,8 @@ class Run:
             )
 
         effective_step = self._next_step(name, context, step)
+        if step is not None:
+            self._last_step = step if self._last_step is None else max(self._last_step, step)
         merged_kwargs = {**wrapper_kwargs, **kwargs}
 
 
@@ -646,12 +652,43 @@ class Run:
     def add_note(self, text: str) -> None:
         self._transport.set_notes(self._run_id, text)
 
+    # ---- model watching ---------------------------------------------------
+
+    def watch(self, model: Any, log: str = "gradients", every: int = 100, bins: int = 64) -> None:
+        """Record histograms of a torch module's gradients and/or parameters.
+
+        Every ``every``-th forward pass of ``model`` records ``gradients/<param>``
+        (from that pass's backward), ``parameters/<param>``, or both
+        (``log="gradients"|"parameters"|"all"``), at the last step you tracked::
+
+            run.watch(model, log="all", every=100)
+
+        :meth:`unwatch` (or :meth:`finish`) removes the hooks.
+        """
+        if self._finished:
+            raise RuntimeError("Run has already been finished")
+        self._watchers.append(Watcher(self, model, log=log, every=every, bins=bins))
+
+    def unwatch(self, model: Any | None = None) -> None:
+        """Stop watching ``model`` (every watched model when None), recording
+        the histograms already taken."""
+        keep = []
+        for w in self._watchers:
+            if model is None or w.model is model:
+                w.close()
+            else:
+                keep.append(w)
+        self._watchers = keep
+
     # ---- finish -----------------------------------------------------------
 
     def finish(self, status: str = "completed", exit_code: int | None = None) -> None:
         if self._finished:
             return
         try:
+            # Watch histograms go through _track_leaf, which refuses once
+            # finished: drain them before the metric buffer stops.
+            self.unwatch()
             if self._sys_collector is not None:
                 self._sys_collector.stop()
                 self._sys_collector.join(timeout=5)
