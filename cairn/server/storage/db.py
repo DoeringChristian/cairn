@@ -65,10 +65,15 @@ class Database:
             self._conn.commit()
 
     @contextmanager
-    def transaction(self) -> Iterator[sqlite3.Connection]:
-        """Yield the connection inside a BEGIN/COMMIT (rollback on error)."""
+    def transaction(self, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:
+        """Yield the connection inside a BEGIN/COMMIT (rollback on error).
+
+        ``immediate`` takes the write lock up front: a transaction that reads
+        and then writes must, or another process's writer makes its lock
+        upgrade fail at once with "database is locked" (no busy wait).
+        """
         with self._lock:
-            self._conn.execute("BEGIN")
+            self._conn.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
             try:
                 yield self._conn
             except Exception:

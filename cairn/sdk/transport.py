@@ -368,6 +368,44 @@ class Transport:
         resp.raise_for_status()
         return resp.content
 
+    # ---- sweeps (not WAL ops: they need an answer now) ---------------------
+
+    def _sweep_request(self, method: str, path: str, **kwargs: Any) -> Any:
+        """A sweep call; a 4xx becomes ValueError/LookupError with the server's detail."""
+        try:
+            return self._request(method, path, **kwargs).json()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code >= 500:
+                raise
+            try:
+                detail = exc.response.json().get("detail", exc.response.text)
+            except ValueError:
+                detail = exc.response.text
+            raise (LookupError if exc.response.status_code == 404 else ValueError)(detail) from None
+
+    def create_sweep(self, body: dict[str, Any]) -> dict[str, Any]:
+        return self._sweep_request("POST", "/api/sweeps", json=body)
+
+    def list_sweeps(self, project: str | None = None) -> list[dict[str, Any]]:
+        params = {"project": project} if project else {}
+        return self._sweep_request("GET", "/api/sweeps", params=params)["sweeps"]
+
+    def get_sweep(self, sweep_id: str) -> dict[str, Any]:
+        return self._sweep_request("GET", f"/api/sweeps/{sweep_id}")
+
+    def sweep_action(self, sweep_id: str, action: str) -> dict[str, Any]:
+        """``pause`` / ``resume`` / ``cancel``."""
+        return self._sweep_request("POST", f"/api/sweeps/{sweep_id}/{action}")
+
+    def next_trial(self, sweep_id: str) -> dict[str, Any]:
+        return self._sweep_request("POST", f"/api/sweeps/{sweep_id}/next")
+
+    def report_trial(self, sweep_id: str, trial_id: str, **body: Any) -> dict[str, Any]:
+        """``run_id`` / ``value`` / ``status``; returns the trial."""
+        return self._sweep_request(
+            "POST", f"/api/sweeps/{sweep_id}/trials/{trial_id}/report", json=body,
+        )
+
     def drain_wal(self) -> int:
         """Replay pending WAL entries. Return count replayed."""
         if not self._wal or not self._wal.has_pending:

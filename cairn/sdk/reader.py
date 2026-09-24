@@ -72,6 +72,12 @@ class SequencePoint:
     artifact_hash: str | None = None
     artifact_metadata: str | None = None
     object_type: str = "scalar"
+    #: Per-point metadata (e.g. ``{"caption": ...}``), decoded; None when none.
+    metadata: dict | None = None
+
+    @property
+    def caption(self) -> str | None:
+        return (self.metadata or {}).get("caption")
 
 
 @dataclass(frozen=True)
@@ -440,6 +446,7 @@ class Run:
             artifact_hash=r.get("artifact_hash"),
             artifact_metadata=r.get("artifact_metadata"),
             object_type=r.get("object_type", "scalar"),
+            metadata=json.loads(r["metadata"]) if r.get("metadata") else None,
         ) for r in rows])
 
     # ---- Artifacts ----
@@ -1166,7 +1173,7 @@ class _LocalBackend:
         where = " AND ".join(clauses)
         rows = self._db.read_columns(
             f"""SELECT s.step, s.wall_time, s.scalar_value, s.artifact_hash,
-                       s.context, s.object_type,
+                       s.context, s.object_type, s.metadata,
                        a.mime_type AS artifact_mime, a.size_bytes AS artifact_size,
                        a.metadata AS artifact_metadata
                 FROM sequences s

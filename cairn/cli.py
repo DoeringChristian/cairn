@@ -1240,3 +1240,175 @@ def login_cmd(use_ssh: bool, server: str | None, key_path: Path | None, name: st
         f"Logged in as {result['name']!r} (role={result['role']}). "
         f"Token saved to {_config.config_file_path()}."
     )
+
+
+# ---------------------------------------------------------------------------
+# Sweeps
+# ---------------------------------------------------------------------------
+
+_REPO_HELP = (
+    "Path to a .cairn/ directory or cairn://host:port URL. "
+    "Default: ./.cairn if it exists, else env/config."
+)
+
+
+def _sweep_transport(repo: str | None) -> Any:
+    from .sdk.connect import open_transport
+
+    transport, _ = open_transport(repo)
+    return transport
+
+
+def _sweep_call(repo: str | None, method: str, *args: Any, **kwargs: Any) -> Any:
+    t = _sweep_transport(repo)
+    try:
+        return getattr(t, method)(*args, **kwargs)
+    except (LookupError, ValueError, RuntimeError) as exc:
+        raise click.ClickException(str(exc).strip("'\"")) from None
+    finally:
+        t.close()
+
+
+@main.group("sweep")
+def sweep_group() -> None:
+    """Hyperparameter sweeps: create one from a YAML file, then run
+    ``cairn agent <sweep_id>`` (on as many machines as you like)."""
+
+
+@sweep_group.command("create")
+@click.argument("config_file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--project", default=None, help="Overrides the file's `project`.")
+@click.option("--repo", default=None, help=_REPO_HELP)
+def sweep_create(config_file: Path, project: str | None, repo: str | None) -> None:
+    """Create a sweep from CONFIG_FILE, a wandb-style sweep.yaml:
+
+    \b
+        project: mnist
+        method: bayes            # grid | random | bayes
+        metric: {name: val_loss, goal: minimize}
+        command: python train.py
+        parameters:
+          lr: {min: 0.0001, max: 0.1, distribution: log_uniform}
+          layers: {values: [2, 4, 8]}
+    """
+    import yaml
+
+    cfg = yaml.safe_load(config_file.read_text()) or {}
+    if not isinstance(cfg, dict):
+        raise click.ClickException(f"{config_file}: expected a mapping")
+    project = project or cfg.get("project")
+    if not project:
+        raise click.ClickException("no project: set `project:` in the file or pass --project")
+    metric = cfg.get("metric")
+    goal = cfg.get("goal")
+    if isinstance(metric, dict):
+        goal = metric.get("goal", goal)
+        metric = metric.get("name")
+    info = _sweep_call(repo, "create_sweep", {
+        "project": project, "parameters": cfg.get("parameters"), "method": cfg.get("method", "random"),
+        "metric": metric, "goal": goal, "command": cfg.get("command"), "name": cfg.get("name"),
+    })
+    click.echo(f"created sweep {info['id']} ({info['method']}, project {info['project_id']})")
+    click.echo(f"run it with:  cairn agent {info['id']}" + (f" --repo {repo}" if repo else ""))
+
+
+@sweep_group.command("ls")
+@click.option("--project", default=None)
+@click.option("--repo", default=None, help=_REPO_HELP)
+def sweep_ls(project: str | None, repo: str | None) -> None:
+    """List sweeps, newest first."""
+    sweeps = _sweep_call(repo, "list_sweeps", project)
+    if not sweeps:
+        click.echo("(no sweeps)")
+        return
+    click.echo(f"{'SWEEP_ID':<18} {'STATUS':<10} {'METHOD':<7} {'TRIALS':>6} {'BEST':>12}  NAME")
+    for s in sweeps:
+        best = s["best"]["value"] if s.get("best") else None
+        click.echo(
+            f"{s['id']:<18} {s['status']:<10} {s['method']:<7} {s['trial_count']:>6} "
+            f"{'' if best is None else f'{best:.6g}':>12}  {s.get('name') or ''}"
+        )
+
+
+def _sweep_action_cmd(action: str) -> None:
+    @sweep_group.command(action, help=f"{action.capitalize()} a sweep.")
+    @click.argument("sweep_id")
+    @click.option("--repo", default=None, help=_REPO_HELP)
+    def cmd(sweep_id: str, repo: str | None) -> None:
+        info = _sweep_call(repo, "sweep_action", sweep_id, action)
+        click.echo(f"sweep {sweep_id}: {info['status']}")
+
+
+for _action in ("pause", "resume", "cancel"):
+    _sweep_action_cmd(_action)
+
+
+def _cli_value(value: Any) -> str:
+    """A param as a command-line value: scalars as Python prints them, the rest as JSON."""
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return str(value)
+    return json.dumps(value)
+
+
+@main.command("agent")
+@click.argument("sweep_id")
+@click.option("--count", default=None, type=int, help="Stop after this many trials.")
+@click.option("--repo", default=None, help=_REPO_HELP)
+@click.option("--poll", default=5.0, type=float, show_default=True,
+              help="Seconds between checks while the sweep is paused.")
+def agent_cmd(sweep_id: str, count: int | None, repo: str | None, poll: float) -> None:
+    """Run a sweep's trials: claim one, run the sweep's command with the
+    params as ``--key=value`` args (and CAIRN_SWEEP_ID / CAIRN_TRIAL_ID set, so
+    ``cairn.Run()`` joins the trial), report the outcome, repeat."""
+    import shlex
+    import time
+
+    t = _sweep_transport(repo)
+    try:
+        try:
+            info = t.get_sweep(sweep_id)
+        except (LookupError, ValueError, RuntimeError) as exc:
+            raise click.ClickException(str(exc).strip("'\"")) from None
+        if not info.get("command"):
+            raise click.ClickException(
+                f"sweep {sweep_id} has no command; run it from Python with "
+                "cairn.Sweep(id).run(fn) instead"
+            )
+        base = shlex.split(info["command"])
+        env = dict(os.environ)
+        if repo:
+            # The command's cairn.Run() must write where this agent reads.
+            env["CAIRN_REPO"] = repo if "://" in repo else str(Path(repo).resolve())
+        done = 0
+        while count is None or done < count:
+            claim = t.next_trial(sweep_id)
+            trial = claim["trial"]
+            if trial is None:
+                if claim["status"] == "paused":
+                    time.sleep(poll)
+                    continue
+                click.echo(f"sweep {sweep_id} is {claim['status']}; stopping")
+                break
+            argv = base + [f"--{k}={_cli_value(v)}" for k, v in trial["params"].items()]
+            click.echo(f"[trial {trial['id']}] {shlex.join(argv)}")
+            trial_env = {**env, "CAIRN_SWEEP_ID": sweep_id, "CAIRN_TRIAL_ID": trial["id"]}
+            try:
+                code = subprocess.run(argv, env=trial_env).returncode
+            except KeyboardInterrupt:
+                t.report_trial(sweep_id, trial["id"], status="killed")
+                click.echo(f"[trial {trial['id']}] interrupted", err=True)
+                sys.exit(130)
+            except OSError as exc:
+                t.report_trial(sweep_id, trial["id"], status="failed")
+                raise click.ClickException(f"cannot run {argv[0]!r}: {exc}") from None
+            status = "completed" if code == 0 else "failed"
+            reported = t.report_trial(sweep_id, trial["id"], status=status)
+            value = reported.get("value")
+            click.echo(
+                f"[trial {trial['id']}] {status}"
+                + (f" (exit {code})" if code else "")
+                + ("" if value is None else f", {info.get('metric')}={value:.6g}")
+            )
+            done += 1
+    finally:
+        t.close()
