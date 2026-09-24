@@ -53,7 +53,7 @@ dependencies = [
 # enforces that they agree. Swap both back to version ranges the day the
 # packages are published.
 plot = [
-    "cairn-plot @ git+https://github.com/doeringchristian/cairn-plot@fadd844f890c674966d9f0af8d4e46bf96e42725",
+    "cairn-plot @ git+https://github.com/doeringchristian/cairn-plot@1f37f37b7a747f77f17f02a9d328b2c23d830845",
 ]
 ui = [
     "cairn-ui @ git+https://github.com/DoeringChristian/cairn-ui@e7a57fe60be8ae5bbfa5b2af50c807e384c77b48",
