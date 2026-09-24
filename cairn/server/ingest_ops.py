@@ -319,12 +319,31 @@ def set_notes(db: Database, run_id: str, notes: str) -> None:
     db.write("UPDATE runs SET notes = ? WHERE id = ?", [notes, run_id])
 
 
-def heartbeat(db: Database, run_id: str) -> None:
-    """Update the heartbeat timestamp for a running run."""
-    db.write(
-        "UPDATE runs SET last_heartbeat = ? WHERE id = ? AND status = 'running'",
-        [utc_now().isoformat(), run_id],
-    )
+def heartbeat(db: Database, run_id: str) -> str | None:
+    """Update the heartbeat timestamp for a running run; return its
+    ``stop_requested`` timestamp (None unless someone asked it to stop)."""
+    with db.transaction() as con:
+        row = con.execute(
+            "UPDATE runs SET last_heartbeat = ? WHERE id = ? AND status = 'running' "
+            "RETURNING stop_requested",
+            [utc_now().isoformat(), run_id],
+        ).fetchone()
+    return row[0] if row else None
+
+
+def request_stop(db: Database, run_id: str) -> str | None:
+    """Ask a running run to stop; the SDK sees it on its next heartbeat.
+
+    Returns the request timestamp (the first one, if asked twice), or None
+    when the run is not running."""
+    _require_run(db, run_id)
+    with db.transaction() as con:
+        row = con.execute(
+            "UPDATE runs SET stop_requested = COALESCE(stop_requested, ?) "
+            "WHERE id = ? AND status = 'running' RETURNING stop_requested",
+            [utc_now().isoformat(), run_id],
+        ).fetchone()
+    return row[0] if row else None
 
 
 def delete_run(db: Database, data_dir: DataDir, run_id: str) -> None:

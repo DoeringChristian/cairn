@@ -292,8 +292,20 @@ def set_notes(run_id: str, body: NotesRequest, request: Request) -> dict[str, An
 @router.post("/runs/{run_id}/heartbeat")
 def run_heartbeat(run_id: str, request: Request) -> dict[str, Any]:
     db = get_db(request)
-    ingest_ops.heartbeat(db, run_id)
-    return {"run_id": run_id}
+    return {"run_id": run_id, "stop_requested": ingest_ops.heartbeat(db, run_id)}
+
+
+@router.post("/runs/{run_id}/stop")
+def stop_run(run_id: str, request: Request) -> dict[str, Any]:
+    """Ask a running run to stop (the SDK polls this on its heartbeat)."""
+    db = get_db(request)
+    try:
+        stop_requested = ingest_ops.request_stop(db, run_id)
+    except ingest_ops.RunNotFound as exc:
+        raise _run_not_found(exc) from None
+    if stop_requested is None:
+        raise HTTPException(status_code=409, detail="run is not running")
+    return {"run_id": run_id, "stop_requested": stop_requested}
 
 
 @router.post("/runs/{run_id}/archive")

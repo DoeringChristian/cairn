@@ -20,6 +20,7 @@ import secrets
 import signal
 import sys
 import threading
+import _thread
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -115,8 +116,16 @@ class Run:
         timeout: float = 10.0,
         registry: HandlerRegistry | None = None,
         transport: Transport | LocalTransport | None = None,
+        on_stop: Callable[["Run"], Any] | None = None,
+        stop_mode: str = "interrupt",
     ):
+        if stop_mode not in ("interrupt", "flag"):
+            raise ValueError(f"stop_mode must be 'interrupt' or 'flag', not {stop_mode!r}")
         self._registry = registry or default_registry
+        # Stop requests (from the UI) arrive on the heartbeat.
+        self._stop_requested = False
+        self._stop_mode = stop_mode
+        self._on_stop: list[Callable[["Run"], Any]] = [on_stop] if on_stop else []
         self._wal: WriteAheadLog | None = None
         if transport is not None:
             self._transport = transport
@@ -265,7 +274,7 @@ class Run:
         def _on_signal(signum: int, frame: Any) -> None:
             if not self._finished:
                 try:
-                    self.finish(status="killed")
+                    self.finish(status="stopped" if self._stop_requested else "killed")
                 except Exception:  # noqa: BLE001
                     pass
             # Re-raise to previous handler.
@@ -312,6 +321,19 @@ class Run:
     @property
     def url(self) -> str:
         return f"{self._server.rstrip('/')}{self._url_path}"
+
+    @property
+    def should_stop(self) -> bool:
+        """True once someone asked this run to stop (e.g. the UI's Stop button)."""
+        return self._stop_requested
+
+    def on_stop(self, fn: Callable[["Run"], Any]) -> Callable[["Run"], Any]:
+        """Register ``fn(run)`` to be called when a stop is requested.
+
+        Usable as a decorator. Callbacks run on the heartbeat thread, before
+        the main thread is interrupted (unless ``stop_mode="flag"``)."""
+        self._on_stop.append(fn)
+        return fn
 
     # ---- tracking ---------------------------------------------------------
 
@@ -710,15 +732,32 @@ class Run:
             except Exception:  # noqa: BLE001 - defensive; unregister is cheap
                 pass
 
+    #: Seconds between heartbeats (also how quickly a stop request is seen).
+    _HEARTBEAT_INTERVAL = 10.0
+
     def _heartbeat_loop(self) -> None:
         """Periodically send heartbeat to the server/DB."""
-        while not self._heartbeat_stop.wait(30):
+        while not self._heartbeat_stop.wait(self._HEARTBEAT_INTERVAL):
             if self._finished:
                 return
             try:
-                self._transport.heartbeat(self._run_id)
+                stop_requested = self._transport.heartbeat(self._run_id)
             except Exception:  # noqa: BLE001
-                pass  # Best effort — don't crash the heartbeat thread.
+                continue  # Best effort — don't crash the heartbeat thread.
+            if stop_requested and not self._stop_requested:
+                self._handle_stop_request()
+
+    def _handle_stop_request(self) -> None:
+        self._stop_requested = True
+        for fn in list(self._on_stop):
+            try:
+                fn(self)
+            except Exception:  # noqa: BLE001
+                log.warning("on_stop callback failed", exc_info=True)
+        if self._stop_mode == "interrupt" and not self._finished:
+            # Raises KeyboardInterrupt in the main thread (through our SIGINT
+            # handler when installed); every exit path maps it to "stopped".
+            _thread.interrupt_main()
 
     def _atexit_finish(self) -> None:
         """Fallback cleanup if ``finish()`` was never called explicitly.
@@ -736,7 +775,9 @@ class Run:
             return
         status = "completed"
         exc_type = self._unhandled_exception_type
-        if exc_type is not None and not issubclass(exc_type, KeyboardInterrupt):
+        if self._stop_requested:
+            status = "stopped"
+        elif exc_type is not None and not issubclass(exc_type, KeyboardInterrupt):
             status = "failed"
         try:
             self.finish(status=status)
@@ -749,7 +790,9 @@ class Run:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
-        if exc_type is None:
+        if self._stop_requested:
+            self.finish("stopped")
+        elif exc_type is None:
             self.finish("completed")
         else:
             self.finish("failed", exit_code=1)
