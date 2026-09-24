@@ -871,6 +871,32 @@ def diff_cmd(run_id: str, repo: str | None, summary: bool) -> None:
         reader.close()
 
 
+@main.command("import-tb")
+@click.argument("logdir", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option("--project", default=None, help="Project to import into. Default: LOGDIR's name.")
+@click.option(
+    "--repo",
+    default=None,
+    help="Path to a .cairn/ directory or cairn://host:port URL. "
+         "Default: env/config, else ./.cairn.",
+)
+def import_tb_cmd(logdir: Path, project: str | None, repo: str | None) -> None:
+    """Import TensorBoard event files: one run per event directory.
+
+    Scalars, images and histograms keep their step and wall time. Needs the
+    [tb] extra.
+    """
+    from .sdk.import_tb import import_tensorboard
+
+    try:
+        run_ids = import_tensorboard(logdir, project=project, repo=repo)
+    except ImportError as exc:
+        raise click.ClickException(str(exc)) from exc
+    for run_id in run_ids:
+        click.echo(run_id)
+    click.echo(f"imported {len(run_ids)} run(s)", err=True)
+
+
 @main.command("sync")
 def sync_cmd() -> None:
     """Replay orphaned run logs (and legacy spill) to their servers.
