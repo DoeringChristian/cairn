@@ -5,6 +5,9 @@ Layout::
 
     manifest.json                  {cairn_export_version, exported_at, run_ids}
     sweeps.json                    [{sweep: row, trials: [row]}] for the runs' sweeps
+    artifact_registry.json         {families, versions, aliases, inputs}: the versions
+                                   the runs produced or consumed, their families and
+                                   aliases, and the runs' input records
     artifacts/{hash}{ext}          blob bytes
     artifacts/{hash}.meta.json     the artifacts row
     {run_id}/run.json              {run, params, summary}
@@ -22,6 +25,11 @@ archive's ids (``keep_ids``, the Reader's fresh temp repo) or mints new ones
 (an import into a live repo), and in the latter case every run→run and
 run→sweep reference is remapped through the id map, kept when the target
 already exists in the repo, and set to NULL otherwise.
+
+Registry rows merge into the target by name: a family matching an existing
+``(project, name)`` is that family, and a version whose blob that family
+already has is that version; otherwise it is appended (keeping its number
+when free). Existing aliases are never moved.
 """
 
 from __future__ import annotations
@@ -30,7 +38,7 @@ import json
 import mimetypes
 import secrets
 import zipfile
-from typing import Any
+from typing import Any, Callable
 
 from .routes._common import utc_now
 from .storage.blobs import BlobStore
@@ -44,9 +52,14 @@ EXPORT_VERSION = 1
 #: not import the SDK; a unit test pins the two together).
 GALLERY_MIME = "application/vnd.cairn.image-gallery+json"
 
+#: A multi-file artifact's manifest — it names its files by hash
+#: (``cairn.sdk.artifact_dir.MANIFEST_MIME``; pinned together by a unit test).
+MANIFEST_MIME = "application/vnd.cairn.artifact-manifest+json"
+
 
 def _referenced_hashes(blobs: BlobStore, h: str, row: dict[str, Any] | None) -> list[str]:
-    """Hashes of other artifacts this one names: a figure's ``source_hash``, a gallery's images."""
+    """Hashes of other artifacts this one names: a figure's ``source_hash``, a
+    gallery's images, a table's media cells (``media_hashes``), a manifest's files."""
     if row is None:
         return []
     meta = row.get("metadata")
@@ -56,9 +69,14 @@ def _referenced_hashes(blobs: BlobStore, h: str, row: dict[str, Any] | None) -> 
         except json.JSONDecodeError:
             meta = None
     refs = [meta["source_hash"]] if isinstance(meta, dict) and meta.get("source_hash") else []
+    if isinstance(meta, dict):
+        refs += list(meta.get("media_hashes") or [])
     if row.get("mime_type") == GALLERY_MIME:
         data, _ = blobs.get(h)
         refs += [item["hash"] for item in json.loads(data)["images"]]
+    if row.get("mime_type") == MANIFEST_MIME:
+        data, _ = blobs.get(h)
+        refs += [f["hash"] for f in json.loads(data)["files"] if f.get("hash")]
     return refs
 
 
@@ -89,6 +107,28 @@ def write_archive(
 
     seen_artifacts: set[str] = set()
     sweep_ids: set[str] = set()
+
+    def write_blobs(pending: list[str]) -> None:
+        """Artifact blobs (deduped across runs). An artifact can name others —
+        a figure its source, a gallery its images, a manifest its files — so
+        the queue grows as referenced blobs are discovered."""
+        while pending:
+            h = pending.pop()
+            if h in seen_artifacts:
+                continue
+            seen_artifacts.add(h)
+            if not blobs.exists(h):
+                continue
+            meta_rows = db.read_columns(
+                "SELECT mime_type, metadata, object_type FROM artifacts WHERE hash = ?", [h],
+            )
+            pending.extend(_referenced_hashes(blobs, h, meta_rows[0] if meta_rows else None))
+            mime = meta_rows[0]["mime_type"] if meta_rows else "application/octet-stream"
+            ext = mimetypes.guess_extension(mime) or ""
+            data, _ = blobs.get(h)
+            zf.writestr(f"artifacts/{h}{ext}", data)
+            if meta_rows:
+                zf.writestr(f"artifacts/{h}.meta.json", json.dumps(meta_rows[0], default=str))
 
     for run_id in run_ids:
         rows = db.read_columns("SELECT * FROM runs WHERE id = ?", [run_id])
@@ -129,28 +169,8 @@ def write_archive(
         alerts = db.read_columns("SELECT * FROM alerts WHERE run_id = ?", [run_id])
         zf.writestr(prefix + "alerts.json", json.dumps(alerts, default=str))
 
-        # Artifact blobs (deduped across runs). An artifact can name others —
-        # a figure its source, a gallery its images — so the queue grows as
-        # referenced blobs are discovered.
-        pending = [r["artifact_hash"] for r in seq_rows if r.get("artifact_hash")]
-        pending += [r["hash"] for r in named_arts]
-        while pending:
-            h = pending.pop()
-            if h in seen_artifacts:
-                continue
-            seen_artifacts.add(h)
-            if not blobs.exists(h):
-                continue
-            meta_rows = db.read_columns(
-                "SELECT mime_type, metadata, object_type FROM artifacts WHERE hash = ?", [h],
-            )
-            pending.extend(_referenced_hashes(blobs, h, meta_rows[0] if meta_rows else None))
-            mime = meta_rows[0]["mime_type"] if meta_rows else "application/octet-stream"
-            ext = mimetypes.guess_extension(mime) or ""
-            data, _ = blobs.get(h)
-            zf.writestr(f"artifacts/{h}{ext}", data)
-            if meta_rows:
-                zf.writestr(f"artifacts/{h}.meta.json", json.dumps(meta_rows[0], default=str))
+        write_blobs([r["artifact_hash"] for r in seq_rows if r.get("artifact_hash")]
+                    + [r["hash"] for r in named_arts])
 
         log_dir = data_dir.logs_dir / run_id
         if log_dir.is_dir():
@@ -173,6 +193,37 @@ def write_archive(
             )
             sweeps.append({"sweep": rows[0], "trials": trials})
     zf.writestr("sweeps.json", json.dumps(sweeps, default=str))
+
+    registry = _registry_rows(db, run_ids)
+    write_blobs([v["hash"] for v in registry["versions"]])
+    zf.writestr("artifact_registry.json", json.dumps(registry, default=str))
+
+
+def _registry_rows(db: Database, run_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+    """The registry rows an archive of ``run_ids`` carries: every version the
+    runs produced or consumed, those versions' families, the families' aliases
+    that point at a carried version, and the runs' input records."""
+    if not run_ids:
+        return {"families": [], "versions": [], "aliases": [], "inputs": []}
+    holes = ", ".join("?" * len(run_ids))
+    inputs = db.read_columns(f"SELECT * FROM run_inputs WHERE run_id IN ({holes})", run_ids)
+    versions = db.read_columns(
+        f"""SELECT * FROM artifact_versions
+            WHERE created_by_run IN ({holes})
+               OR id IN (SELECT artifact_version_id FROM run_inputs WHERE run_id IN ({holes}))
+            ORDER BY family_id, version""",
+        run_ids + run_ids,
+    )
+    family_ids = sorted({v["family_id"] for v in versions})
+    version_ids = {v["id"] for v in versions}
+    families, aliases = [], []
+    for fid in family_ids:
+        families += db.read_columns("SELECT * FROM artifact_families WHERE id = ?", [fid])
+        aliases += [
+            a for a in db.read_columns("SELECT * FROM artifact_aliases WHERE family_id = ?", [fid])
+            if a["version_id"] in version_ids
+        ]
+    return {"families": families, "versions": versions, "aliases": aliases, "inputs": inputs}
 
 
 # ---------------------------------------------------------------------------
@@ -358,6 +409,11 @@ def restore_archive(
             "name": run["display_name"],
         })
 
+    _restore_registry(
+        db, _read_json(zf, "artifact_registry.json", {}), keep_ids=keep_ids,
+        remap_run=lambda ref: remap("runs", run_map, ref),
+    )
+
     # Trials last: their run references resolve against the restored runs.
     trial_cols = _columns(db, "sweep_trials")
     for s in sweeps:
@@ -370,3 +426,71 @@ def restore_archive(
             ))
 
     return imported
+
+
+def _restore_registry(
+    db: Database,
+    registry: dict[str, list[dict[str, Any]]],
+    *,
+    keep_ids: bool,
+    remap_run: Callable[[str | None], str | None],
+) -> None:
+    """Merge an archive's registry rows into ``db`` (see the module docstring)."""
+    fam_cols = _columns(db, "artifact_families")
+    fam_map: dict[str, str] = {}
+    for fam in registry.get("families", []):
+        _ensure_project(db, fam["project_id"])
+        existing = db.read_columns(
+            "SELECT id FROM artifact_families WHERE project_id = ? AND name = ?",
+            [fam["project_id"], fam["name"]],
+        )
+        if existing:
+            fam_map[fam["id"]] = existing[0]["id"]
+            continue
+        new_id = fam["id"] if keep_ids and not _exists(db, "artifact_families", fam["id"]) else secrets.token_hex(8)
+        _insert(db, "artifact_families", fam_cols, dict(fam, id=new_id))
+        fam_map[fam["id"]] = new_id
+
+    ver_cols = _columns(db, "artifact_versions")
+    ver_map: dict[str, str] = {}
+    for v in registry.get("versions", []):
+        family_id = fam_map.get(v["family_id"])
+        if family_id is None or not db.read_columns("SELECT 1 FROM artifacts WHERE hash = ?", [v["hash"]]):
+            continue
+        same = db.read_columns(
+            "SELECT id FROM artifact_versions WHERE family_id = ? AND hash = ? ORDER BY version LIMIT 1",
+            [family_id, v["hash"]],
+        )
+        if same:
+            ver_map[v["id"]] = same[0]["id"]
+            continue
+        taken = db.read_columns(
+            "SELECT 1 FROM artifact_versions WHERE family_id = ? AND version = ?", [family_id, v["version"]],
+        )
+        number = v["version"]
+        if taken:
+            number = db.read_one(
+                "SELECT COALESCE(MAX(version), 0) + 1 FROM artifact_versions WHERE family_id = ?", [family_id],
+            )[0]
+        new_id = v["id"] if keep_ids and not _exists(db, "artifact_versions", v["id"]) else secrets.token_hex(8)
+        _insert(db, "artifact_versions", ver_cols, dict(
+            v, id=new_id, family_id=family_id, version=number,
+            created_by_run=remap_run(v.get("created_by_run")),
+        ))
+        ver_map[v["id"]] = new_id
+
+    alias_cols = _columns(db, "artifact_aliases")
+    for a in registry.get("aliases", []):
+        if a["family_id"] in fam_map and a["version_id"] in ver_map:
+            _insert(db, "artifact_aliases", alias_cols, dict(
+                a, family_id=fam_map[a["family_id"]], version_id=ver_map[a["version_id"]],
+            ))
+
+    input_cols = _columns(db, "run_inputs")
+    for i in registry.get("inputs", []):
+        run_id = remap_run(i["run_id"])
+        if run_id is not None and i["artifact_version_id"] in ver_map:
+            _insert(db, "run_inputs", input_cols, dict(
+                i, run_id=run_id, artifact_version_id=ver_map[i["artifact_version_id"]],
+                created_at=i.get("created_at") or utc_now(),
+            ))

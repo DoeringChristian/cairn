@@ -33,12 +33,16 @@ _LAZY_ATTRS: dict[str, str] = {
     "Scope": ".sdk.scope",
     "ArtifactVersion": ".sdk.run",
     "Reader": ".sdk.reader",
+    "Reference": ".sdk.artifact_dir",
+    "ArtifactDir": ".sdk.artifact_dir",
+    "MediaRef": ".sdk.reader",
     "query_url": ".sdk.query_urls",
     "register_handler": ".sdk.handlers.registry",
     "Artifact": ".sdk.wrappers",
     "Audio": ".sdk.wrappers",
     "Boxes3D": ".sdk.wrappers",
     "BVH": ".sdk.wrappers",
+    "ConfusionMatrix": ".sdk.wrappers",
     "Figure": ".sdk.wrappers",
     "Histogram": ".sdk.wrappers",
     "Html": ".sdk.wrappers",
@@ -47,6 +51,8 @@ _LAZY_ATTRS: dict[str, str] = {
     "Mesh": ".sdk.wrappers",
     "Octree": ".sdk.wrappers",
     "PointCloud": ".sdk.wrappers",
+    "PRCurve": ".sdk.wrappers",
+    "ROCCurve": ".sdk.wrappers",
     "Table": ".sdk.wrappers",
     "Tensor": ".sdk.wrappers",
     "Text": ".sdk.wrappers",
@@ -57,8 +63,9 @@ _LAZY_ATTRS: dict[str, str] = {
 if TYPE_CHECKING:  # static-analysis only — never executed, never eager at runtime.
     from . import plot as plot
     from . import ui as ui
+    from .sdk.artifact_dir import ArtifactDir, Reference
     from .sdk.query_urls import query_url
-    from .sdk.reader import Reader
+    from .sdk.reader import MediaRef, Reader
     from .sdk.run import ArtifactVersion, Run
     from .sdk.handlers.registry import register_handler
     from .sdk.wrappers import (
@@ -66,6 +73,7 @@ if TYPE_CHECKING:  # static-analysis only — never executed, never eager at run
         Audio,
         Boxes3D,
         BVH,
+        ConfusionMatrix,
         Figure,
         Histogram,
         Html,
@@ -74,6 +82,8 @@ if TYPE_CHECKING:  # static-analysis only — never executed, never eager at run
         Mesh,
         Octree,
         PointCloud,
+        PRCurve,
+        ROCCurve,
         Table,
         Tensor,
         Text,
@@ -153,6 +163,9 @@ __all__ = [
     "configure",
     "register_handler",
     "Reader",
+    "MediaRef",
+    "Reference",
+    "ArtifactDir",
     "query_url",
     "ArtifactVersion",
     "plot",
@@ -174,6 +187,9 @@ __all__ = [
     "Text",
     "Html",
     "Markdown",
+    "ConfusionMatrix",
+    "PRCurve",
+    "ROCCurve",
     "log_artifact",
     "load_artifact",
     "list_artifacts",
@@ -190,7 +206,11 @@ def log_artifact(
     metadata: dict | None = None,
     aliases: list[str] | None = None,
 ) -> "ArtifactVersion | None":
-    """Upload an artifact version outside a run context."""
+    """Upload an artifact version outside a run context.
+
+    ``data`` may be a directory or :class:`Reference` (list), as for
+    ``Run.log_artifact``: a multi-file artifact.
+    """
     from .config import resolve_target
     # Import the handlers PACKAGE (not just the registry) so the built-in type
     # handlers are registered — the no-Run path can't rely on `cairn.sdk.run`
@@ -210,25 +230,29 @@ def log_artifact(
     try:
         # Serialize
         from pathlib import Path as _Path
+        from .sdk.artifact_dir import is_multi_file, upload_manifest
         handler_meta: dict = {}
         mime_type = "application/octet-stream"
-
-        if isinstance(data, (str, _Path)):
-            path = _Path(data)
-            with open(path, "rb") as f:
-                blob = f.read()
-        elif isinstance(data, (bytes, bytearray)):
-            blob = bytes(data)
+        if is_multi_file(data):
+            digest, size, handler_meta = upload_manifest(transport, data)
+            merged_meta = {**handler_meta, **(metadata or {})}
         else:
-            handler = default_registry.find_handler(data)
-            if handler is not None:
-                blob, handler_meta = handler.serialize(data)
-                mime_type = resolve_mime_type(handler, data)
+            if isinstance(data, (str, _Path)):
+                path = _Path(data)
+                with open(path, "rb") as f:
+                    blob = f.read()
+            elif isinstance(data, (bytes, bytearray)):
+                blob = bytes(data)
             else:
-                raise TypeError(f"No handler for type {type(data).__name__}")
-
-        merged_meta = {**handler_meta, **(metadata or {})}
-        digest = transport.upload_artifact(blob, mime_type, merged_meta)
+                handler = default_registry.find_handler(data)
+                if handler is not None:
+                    blob, handler_meta = handler.serialize(data)
+                    mime_type = resolve_mime_type(handler, data)
+                else:
+                    raise TypeError(f"No handler for type {type(data).__name__}")
+            merged_meta = {**handler_meta, **(metadata or {})}
+            digest = transport.upload_artifact(blob, mime_type, merged_meta)
+            size = len(blob)
 
         # Resolve project_id
         project_id = project.lower().replace(" ", "-")
@@ -238,7 +262,7 @@ def log_artifact(
             family_name=name,
             family_type=type,
             digest=digest,
-            size_bytes=len(blob),
+            size_bytes=size,
             metadata=merged_meta,
             created_by_run="",
             aliases=aliases,

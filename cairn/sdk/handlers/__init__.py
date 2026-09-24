@@ -14,6 +14,7 @@ from .image import ImageHandler
 from .markdown import MarkdownHandler
 from .mesh import MeshHandler
 from .pointcloud import PointCloudHandler
+from .preset import PresetHandler
 from .registry import (
     HandlerRegistry,
     TypeHandler,
@@ -57,6 +58,7 @@ if not _already_registered:
     # matter since dispatch never falls through can_handle for these.
     default_registry.register(HtmlHandler())
     default_registry.register(MarkdownHandler())
+    default_registry.register(PresetHandler())
     _already_registered = True
 
 
@@ -81,4 +83,5 @@ __all__ = [
     "ArtifactHandler",
     "HtmlHandler",
     "MarkdownHandler",
+    "PresetHandler",
 ]

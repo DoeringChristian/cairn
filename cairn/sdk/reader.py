@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator, Protocol, runtime_checkable
 
 from .. import config as _config
+from .artifact_dir import MANIFEST_MIME, ArtifactDir
 from .handlers.image import GALLERY_MIME
 
 
@@ -82,6 +83,42 @@ class ArtifactInfo:
     size_bytes: int
     metadata: str | None = None
     object_type: str | None = None
+
+
+@dataclass(frozen=True)
+class MediaRef:
+    """A media cell of a logged table: an image/audio/video stored as its own artifact.
+
+    Nothing is downloaded until :meth:`load` (decoded like ``Run.artifact``)
+    or :meth:`bytes` (raw) is called.
+    """
+
+    hash: str
+    mime_type: str
+    object_type: str | None = None
+    _backend: Any = field(default=None, repr=False, compare=False)
+
+    def bytes(self) -> bytes:
+        return self._backend.get_artifact_bytes(self.hash)
+
+    def load(self) -> Any:
+        from .handlers.registry import default_registry
+
+        data = self.bytes()
+        handler = default_registry.find_by_type(self.object_type) if self.object_type else None
+        if handler is None or not hasattr(handler, "deserialize"):
+            return data
+        return handler.deserialize(data, {})
+
+
+def _table_media_refs(table: dict[str, Any], backend: Any) -> dict[str, Any]:
+    """Replace a table's ``{"$media": ...}`` cells with :class:`MediaRef`."""
+    for row in table.get("data", []):
+        for c, cell in enumerate(row):
+            if isinstance(cell, dict) and isinstance(cell.get("$media"), dict):
+                m = cell["$media"]
+                row[c] = MediaRef(m["hash"], m.get("mime_type", ""), m.get("object_type"), backend)
+    return table
 
 
 @dataclass(frozen=True)
@@ -469,6 +506,7 @@ class Run:
         - ``video``     → np.ndarray (T, H, W, C)
         - ``tensor``    → np.ndarray
         - ``text``      → str
+        - ``table``     → ``{"columns", "data"}``; media cells are :class:`MediaRef`
         - ``histogram`` → ``(counts: np.ndarray, edges: np.ndarray)``
         - ``figure``    → PIL.Image (rasterized; use ``artifact_bytes`` for source)
 
@@ -499,6 +537,8 @@ class Run:
                 handler.deserialize(self._backend.get_artifact_bytes(item["hash"]), item.get("metadata") or {})
                 for item in json.loads(data)["images"]
             ]
+        if object_type == "table":
+            return _table_media_refs(handler.deserialize(data, meta or {}), self._backend)
         return handler.deserialize(data, meta or {})
 
     def artifact_path(self, name: str, step: int | None = None) -> Path | None:
@@ -1573,6 +1613,8 @@ class Reader:
         """Resolve an artifact ref and download+deserialize the content."""
         info = self._backend.resolve_artifact_ref(project_id, ref)
         data = self._backend.get_artifact_bytes(info["hash"])
+        if info.get("mime_type") == MANIFEST_MIME:
+            return ArtifactDir.from_bytes(data, self._backend.get_artifact_bytes)
         object_type = info.get("object_type")
         if object_type:
             from .handlers.registry import default_registry

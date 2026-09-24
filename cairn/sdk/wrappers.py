@@ -412,3 +412,51 @@ class Artifact(_TypeWrapper):
         run.log_artifact(cairn.Artifact(my_dataclass), name="final_state")
     """
     object_type = "artifact"
+
+
+class ConfusionMatrix(_TypeWrapper):
+    """Confusion matrix of integer class labels, drawn by the UI as a heatmap.
+
+    Stores the counts (true label per row, predicted per column), not a
+    picture, so runs can be compared side by side::
+
+        run.track(cairn.ConfusionMatrix(y_true, y_pred, class_names=["cat", "dog"]),
+                  name="val/confusion", step=epoch)
+    """
+
+    object_type = "preset"
+
+    def __init__(self, y_true: Any, y_pred: Any, class_names: Any = None, **kwargs: Any):
+        self.obj = {"kind": "confusion_matrix", "y_true": y_true, "y_pred": y_pred,
+                    "class_names": class_names}
+        self.kwargs = kwargs
+
+
+class PRCurve(_TypeWrapper):
+    """Precision-recall curve per class (one-vs-rest), with average precision.
+
+    ``y_score`` is ``(n_samples, n_classes)`` (e.g. softmax output), or 1-D for
+    a binary problem (the positive-class score). Curves keep at most 500
+    points per class; the AP is computed on the full curve::
+
+        run.track(cairn.PRCurve(y_true, probs, labels=["cat", "dog"]), name="val/pr", step=epoch)
+    """
+
+    object_type = "preset"
+
+    def __init__(self, y_true: Any, y_score: Any, labels: Any = None, **kwargs: Any):
+        self.obj = {"kind": "pr_curve", "y_true": y_true, "y_score": y_score, "labels": labels}
+        self.kwargs = kwargs
+
+
+class ROCCurve(_TypeWrapper):
+    """ROC curve per class (one-vs-rest), with the AUC. Inputs as :class:`PRCurve`::
+
+        run.track(cairn.ROCCurve(y_true, probs), name="val/roc", step=epoch)
+    """
+
+    object_type = "preset"
+
+    def __init__(self, y_true: Any, y_score: Any, labels: Any = None, **kwargs: Any):
+        self.obj = {"kind": "roc_curve", "y_true": y_true, "y_score": y_score, "labels": labels}
+        self.kwargs = kwargs
