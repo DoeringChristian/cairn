@@ -41,6 +41,8 @@ from .routes import (
     project_docs,
     projects,
     query,
+    report_assets,
+    report_comments,
     report_templates,
     reports,
     runs,
@@ -211,13 +213,14 @@ def create_app(
     # write-role overrides on their mutating routes (POST/PUT/PATCH/DELETE)
     # declared directly on the route decorator in the route module itself
     # (projects, project_docs, comparisons, comparison_templates, reports,
-    # report_templates, artifact_registry) — role hierarchy (admin > write > read) means a
-    # write/admin token still satisfies the router-level read dependency, so
-    # stacking both dependencies on the same route correctly requires
-    # write-or-above. ``report_templates`` landed on main (feature/reports-extras)
-    # after this branch's cut point and gets its write-role overrides added
-    # here at merge time (see report_templates.py), mirroring
-    # comparison_templates.py exactly.
+    # report_assets, report_comments, report_templates, artifact_registry) —
+    # role hierarchy (admin > write > read) means a write/admin token still
+    # satisfies the router-level read dependency, so stacking both
+    # dependencies on the same route correctly requires write-or-above.
+    # ``report_templates`` landed on main (feature/reports-extras) after this
+    # branch's cut point and gets its write-role overrides added here at merge
+    # time (see report_templates.py), mirroring comparison_templates.py
+    # exactly.
     for router in (
         health.router,
         projects.router,
@@ -232,6 +235,8 @@ def create_app(
         comparisons.router,
         comparison_templates.router,
         reports.router,
+        report_assets.router,
+        report_comments.router,
         report_templates.router,
         artifact_registry.router,
         embed.router,

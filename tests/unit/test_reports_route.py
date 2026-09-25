@@ -179,3 +179,53 @@ def test_reports_scoped_to_project(client):
     # Not visible from another project.
     assert client.get(f"/api/projects/{project_b}/reports/{report_id}").status_code == 404
     assert client.get(f"/api/projects/{project_b}/reports").json()["reports"] == []
+
+
+def test_update_with_expected_updated_at(client):
+    project_id = _make_project(client)
+    rid = client.post(f"/api/projects/{project_id}/reports",
+                      json={"name": "R", "payload": {"source": "a"}}).json()["id"]
+    seen = client.get(f"/api/projects/{project_id}/reports/{rid}").json()["updated_at"]
+
+    ok = client.put(f"/api/projects/{project_id}/reports/{rid}",
+                    json={"payload": {"source": "b"}, "expected_updated_at": seen})
+    assert ok.status_code == 200
+    assert ok.json()["updated_at"] != seen
+
+    # A second writer still holding the old timestamp is refused, and gets
+    # the current report back.
+    stale = client.put(f"/api/projects/{project_id}/reports/{rid}",
+                       json={"payload": {"source": "c"}, "expected_updated_at": seen})
+    assert stale.status_code == 409
+    body = stale.json()
+    assert body["payload"] == {"source": "b"}
+    assert body["updated_at"] == ok.json()["updated_at"]
+    assert body["name"] == "R"
+    got = client.get(f"/api/projects/{project_id}/reports/{rid}").json()
+    assert got["payload"] == {"source": "b"}
+
+    # Without the field the write is unconditional.
+    assert client.put(f"/api/projects/{project_id}/reports/{rid}",
+                      json={"name": "R2"}).status_code == 200
+
+
+def test_update_with_no_fields_keeps_updated_at(client):
+    project_id = _make_project(client)
+    rid = client.post(f"/api/projects/{project_id}/reports",
+                      json={"name": "R", "payload": {"source": "a"}}).json()["id"]
+    seen = client.get(f"/api/projects/{project_id}/reports/{rid}").json()["updated_at"]
+    r = client.put(f"/api/projects/{project_id}/reports/{rid}", json={})
+    assert r.json()["updated_at"] == seen
+
+
+def test_delete_report_deletes_share_rows(app, client):
+    project_id = _make_project(client)
+    rid = client.post(f"/api/projects/{project_id}/reports",
+                      json={"name": "R", "payload": {"source": ""}}).json()["id"]
+    app.state.db.write(
+        """INSERT INTO report_shares (id, report_id, secret_hash, created_at, expires_at)
+           VALUES ('s1', ?, 'h', '2026-01-01', '2026-02-01')""",
+        [rid],
+    )
+    assert client.delete(f"/api/projects/{project_id}/reports/{rid}").status_code == 200
+    assert app.state.db.read("SELECT * FROM report_shares") == []

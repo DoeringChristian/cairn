@@ -17,6 +17,7 @@ import secrets
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from .. import auth
@@ -40,6 +41,9 @@ class ReportCreate(BaseModel):
 class ReportUpdate(BaseModel):
     name: str | None = None
     payload: ReportPayload | None = None
+    # The ``updated_at`` the client last saw. When given and the report has
+    # changed since, the update is refused with 409 and the current report.
+    expected_updated_at: str | None = None
 
 
 def _parse_payload(raw: str) -> dict[str, Any]:
@@ -168,30 +172,44 @@ def create_report(project_id: str, body: ReportCreate, request: Request) -> dict
     return {"id": rid, "name": body.name, "created_at": now}
 
 
-@router.put("/projects/{project_id}/reports/{report_id}", dependencies=[_write])
+@router.put(
+    "/projects/{project_id}/reports/{report_id}", dependencies=[_write], response_model=None,
+)
 def update_report(
     project_id: str, report_id: str, body: ReportUpdate, request: Request,
-) -> dict[str, Any]:
+) -> dict[str, Any] | JSONResponse:
     db = get_db(request)
-    rows = db.read_columns(
-        "SELECT id FROM reports WHERE id = ? AND project_id = ?",
-        [report_id, project_id],
-    )
-    if not rows:
-        raise HTTPException(status_code=404, detail="report not found")
-
     now = utc_now().isoformat()
-    if body.name is not None:
-        db.write(
-            "UPDATE reports SET name = ?, updated_at = ? WHERE id = ?",
-            [body.name, now, report_id],
-        )
-    if body.payload is not None:
-        db.write(
-            "UPDATE reports SET payload = ?, updated_at = ? WHERE id = ?",
-            [body.payload.model_dump_json(), now, report_id],
-        )
-    return {"id": report_id, "updated_at": now}
+    with db.transaction(immediate=True) as con:
+        row = con.execute(
+            "SELECT name, updated_at, payload FROM reports WHERE id = ? AND project_id = ?",
+            [report_id, project_id],
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="report not found")
+        name, updated_at, payload = row
+        if body.expected_updated_at is not None and body.expected_updated_at != updated_at:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "detail": "report changed since expected_updated_at",
+                    "id": report_id,
+                    "name": name,
+                    "updated_at": updated_at,
+                    "payload": _parse_payload(payload),
+                },
+            )
+        if body.name is not None or body.payload is not None:
+            con.execute(
+                "UPDATE reports SET name = ?, payload = ?, updated_at = ? WHERE id = ?",
+                [
+                    body.name if body.name is not None else name,
+                    body.payload.model_dump_json() if body.payload is not None else payload,
+                    now, report_id,
+                ],
+            )
+            updated_at = now
+    return {"id": report_id, "updated_at": updated_at}
 
 
 @router.delete("/projects/{project_id}/reports/{report_id}", dependencies=[_write])
@@ -203,6 +221,10 @@ def delete_report(project_id: str, report_id: str, request: Request) -> dict[str
     )
     if not rows:
         raise HTTPException(status_code=404, detail="report not found")
+    # Children first, each its own statement (foreign keys are enforced).
+    # Asset blobs stay: the store is content-addressed and not ref-counted.
+    for table in ("comments", "report_assets", "report_shares"):
+        db.write(f"DELETE FROM {table} WHERE report_id = ?", [report_id])
     db.write(
         "DELETE FROM reports WHERE id = ? AND project_id = ?",
         [report_id, project_id],

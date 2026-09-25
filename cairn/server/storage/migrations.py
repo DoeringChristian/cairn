@@ -167,6 +167,55 @@ SCHEMA_SQL: list[str] = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_report_templates_project ON report_templates(project_id)",
+    # ── Report extras: uploaded images, comments, share links ─────────
+    # All three hang off a report and are deleted with it (routes/reports.py).
+    # An asset's bytes live in the content-addressed blob store; the row only
+    # grants the report access to that hash.
+    """
+    CREATE TABLE IF NOT EXISTS report_assets (
+        report_id     TEXT NOT NULL REFERENCES reports(id),
+        hash          TEXT NOT NULL,
+        mime_type     TEXT NOT NULL,
+        size_bytes    INTEGER NOT NULL,
+        created_at    TEXT NOT NULL,
+        PRIMARY KEY (report_id, hash)
+    )
+    """,
+    # ``author_id`` is the root token id of the writer (a browser token's
+    # parent), so edits from another browser of the same user still count as
+    # the author's; NULL in no-auth mode.
+    """
+    CREATE TABLE IF NOT EXISTS comments (
+        id            TEXT PRIMARY KEY,
+        report_id     TEXT NOT NULL REFERENCES reports(id),
+        -- A reply's thread root; NULL for a thread's first comment.
+        parent_id     TEXT,
+        anchor_kind   TEXT NOT NULL CHECK(anchor_kind IN ('report','block','card','quote')),
+        anchor_id     TEXT,
+        quote         TEXT,
+        body          TEXT NOT NULL,
+        author_id     TEXT,
+        author        TEXT NOT NULL,
+        created_at    TEXT NOT NULL,
+        updated_at    TEXT NOT NULL,
+        resolved_at   TEXT,
+        resolved_by   TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_comments_report ON comments(report_id, created_at)",
+    # A share link's secret is 256 random bits, stored only as its sha256.
+    """
+    CREATE TABLE IF NOT EXISTS report_shares (
+        id            TEXT PRIMARY KEY,
+        report_id     TEXT NOT NULL REFERENCES reports(id),
+        secret_hash   TEXT NOT NULL UNIQUE,
+        created_by    TEXT,
+        created_at    TEXT NOT NULL,
+        expires_at    TEXT NOT NULL,
+        revoked_at    TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_report_shares_report ON report_shares(report_id)",
     # A project's shared UI documents: its one workspace (run page and runs
     # table layout) and any number of saved views. ``rev`` counts writes so a
     # client can PUT against the revision it last saw and be told when
