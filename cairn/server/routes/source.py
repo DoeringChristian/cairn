@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import io
 import json
 import posixpath
-import tarfile
 from typing import Any
 
-import zstandard as zstd
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from ..source_cache import SOURCE_CACHE
 from ._common import get_data_dir, get_db, require_run
 
 router = APIRouter(prefix="/api", tags=["source"])
@@ -54,22 +52,12 @@ def get_source_file(
     if not archive_path.exists():
         raise HTTPException(status_code=404, detail="no source archive for run")
 
-    dctx = zstd.ZstdDecompressor()
-    with archive_path.open("rb") as fh:
-        decompressed = dctx.stream_reader(fh)
-        # tarfile needs seek; buffer into BytesIO.
-        buf = io.BytesIO(decompressed.read())
-    with tarfile.open(fileobj=buf, mode="r") as tf:
-        try:
-            member = tf.getmember(normalized)
-        except KeyError:
-            raise HTTPException(status_code=404, detail="file not in archive") from None
-        if not member.isfile():
+    tree = SOURCE_CACHE.get(archive_path)
+    data = tree.files.get(normalized)
+    if data is None:
+        if normalized in tree.others:
             raise HTTPException(status_code=400, detail="not a regular file")
-        extracted = tf.extractfile(member)
-        if extracted is None:
-            raise HTTPException(status_code=500, detail="could not extract")
-        data = extracted.read()
+        raise HTTPException(status_code=404, detail="file not in archive")
     # Try UTF-8 decode; if binary, return base64.
     try:
         text = data.decode("utf-8")
