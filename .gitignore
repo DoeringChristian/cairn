@@ -50,3 +50,4 @@ packages/cairn-ui/src/**/__tests__/harness-style.css
 
 # marimo notebook run cache
 __marimo__/
+site/

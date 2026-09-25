@@ -98,11 +98,17 @@ xgboost = [
 sweep = [
     "optuna>=3.5",
 ]
+# The documentation site (`mkdocs serve`, `mkdocs build`).
+docs = [
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.26",
+    "mkdocs-click>=0.8",
+]
 dev = [
     # Both optional halves (and the export deps), so a dev checkout can
     # exercise everything they unlock. Via the extras, so the git pins live in exactly one place;
     # [tool.uv.sources] below redirects both to the local checkouts anyway.
-    "cairn-track[ui,plot,export]",
+    "cairn-track[ui,plot,export,docs]",
     "pytest>=8.0",
     "pytest-cov>=4.1",
     "pytest-asyncio>=0.23",
