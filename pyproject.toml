@@ -169,7 +169,6 @@ include = [
     "README.md",
     "LICENSE",
     "pyproject.toml",
-    "CAIRN_SPEC.md",
 ]
 
 [tool.pytest.ini_options]

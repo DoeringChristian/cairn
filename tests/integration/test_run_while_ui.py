@@ -119,7 +119,7 @@ def test_run_joins_via_http_when_ui_is_serving(ui_subprocess):
 
     # The UI must see the run we just logged via its API. Reads authenticate
     # with the same-user local-trust token the serving process leaves in the
-    # data dir (refactor spec §7) — the same one the SDK upgrade path used.
+    # data dir — the same one the SDK upgrade path used.
     local_token = (repo / "auth" / "local.token").read_text().strip()
     with httpx.Client(
         base_url=f"http://127.0.0.1:{port}",

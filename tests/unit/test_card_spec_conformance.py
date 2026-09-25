@@ -1,4 +1,4 @@
-"""WS-SCHEMA conformance: the hand-written pydantic mirror in
+"""Card-spec schema conformance: the hand-written pydantic mirror in
 ``vendor/cairn-ui/cairn_ui/cards/spec.py`` must match the committed JSON Schema
 ``vendor/cairn-ui/docs/schemas/cairn-card-spec.schema.json`` (which is itself generated from
 the authoritative TS in ``vendor/cairn-ui/src/lib/cards/card-spec.ts``).

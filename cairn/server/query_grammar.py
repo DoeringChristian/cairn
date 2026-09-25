@@ -1,4 +1,4 @@
-"""The query grammar's AUTHORITATIVE vocabulary (refactor spec §1b/§5).
+"""The query grammar's AUTHORITATIVE vocabulary.
 
 The server side OWNS the grammar — it is the endpoint that decodes and evaluates
 queries. Clients carry small MIRRORS of this vocabulary (cairn-track's

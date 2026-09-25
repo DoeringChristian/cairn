@@ -143,7 +143,7 @@ def list_versions(family_id: str, request: Request) -> dict[str, Any]:
 
 
 class CreateVersionBody(BaseModel):
-    """R0 contract fix: a version REFERENCES an already-uploaded blob by
+    """A version REFERENCES an already-uploaded blob by
     digest (content-addressed, single upload) — the shape the SDK always
     sent. The old multipart re-upload form is gone."""
 

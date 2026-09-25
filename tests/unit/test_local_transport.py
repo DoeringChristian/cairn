@@ -176,7 +176,7 @@ def test_raises_served_by_server_holder(tmp_path):
 
 def test_ui_holder_redirects_sdk_to_http(tmp_path):
     """A live UI holder makes LocalTransport raise _RepoServedByOtherError —
-    Run catches it and UPGRADES to the UI's HTTP endpoint (R0 contract; the
+    Run catches it and UPGRADES to the UI's HTTP endpoint (the
     old direct-DB-beside-a-live-UI mode is retired: one writer, one path)."""
     import json
     import os

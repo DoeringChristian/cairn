@@ -54,7 +54,7 @@ def open_transport(
         if url is None:
             raise
         _verify_reachable(url, Path(target.location))
-        # Same-user local trust (spec §7): the serving process leaves
+        # Same-user local trust: the serving process leaves
         # auth/local.token in the data dir for exactly this upgrade path.
         local_tok = Path(target.location) / "auth" / "local.token"
         tok = local_tok.read_text().strip() if local_tok.exists() else None

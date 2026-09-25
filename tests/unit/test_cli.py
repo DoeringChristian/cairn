@@ -190,7 +190,7 @@ def test_export_without_run_id_is_a_usage_error(tmp_path):
 
 def test_sync_nothing_to_do(tmp_path, monkeypatch):
     runner = CliRunner()
-    # Empty WAL dir + empty spill (R3: sync scans the WAL dir).
+    # Empty WAL dir + empty spill (sync scans the WAL dir).
     from cairn.sdk import transport as t_mod
 
     monkeypatch.setenv("CAIRN_WAL_DIR", str(tmp_path / "wal"))
@@ -261,7 +261,7 @@ def test_diff_against_local_snapshot(tmp_path, monkeypatch):
 
 
 def test_sync_scans_and_replays_orphaned_wals(live_server, monkeypatch, tmp_path):
-    """R3: `cairn sync` reconstructs orphaned per-run logs from the WAL dir
+    """`cairn sync` reconstructs orphaned per-run logs from the WAL dir
     and drains them to each log's recorded target (the old command scanned a
     different directory and could not replay the WAL at all)."""
     import json as _json

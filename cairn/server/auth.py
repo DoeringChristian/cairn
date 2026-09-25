@@ -1,7 +1,6 @@
 """Authentication core: tokens, one-time login, SSH nonces.
 
-Design (see ``.superpowers/sdd/spec-auth.md`` and
-``docs/superpowers/specs/2026-09-09-token-only-auth-design.md``):
+Design:
 
 * Tokens are the foundation, and the *only* credential. Roles are coarse and
   hierarchical: ``read`` < ``write`` < ``admin``. Plaintext tokens are shown
@@ -583,7 +582,7 @@ def bootstrap_if_needed(db: Database) -> tuple[str, str, str] | None:
 
 
 def ensure_local_token(db: "Database", data_dir_root) -> str:
-    """Ensure the SAME-USER local-trust token exists (refactor spec §7).
+    """Ensure the SAME-USER local-trust token exists.
 
     A serving process (``cairn ui``/``cairn server``/the ephemeral server)
     writes the plaintext to ``<data_dir>/auth/local.token`` (dir 0700, file

@@ -1,6 +1,6 @@
 """Content-addressable blob store.
 
-On-disk layout matches CAIRN_SPEC §"Server-side storage layout"::
+On-disk layout::
 
     artifacts/
       ab/

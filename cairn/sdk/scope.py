@@ -30,8 +30,6 @@ to guess whether a given ``track`` means *this* protocol, which is the signature
 sniffing this design exists to delete. ``__cairn_track__`` cannot collide, so the
 test is one ``hasattr``. Same shape as ``__array__``, ``__rich__`` and cairn's own
 ``_repr_html_``.
-
-Full design: docs/superpowers/specs/2026-09-14-scope-track-protocol-design.md
 """
 
 from __future__ import annotations

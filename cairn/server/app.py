@@ -206,7 +206,7 @@ def create_app(
     # before any router registration so it's never accessed unset.
     app.state.auth_enabled = auth_enabled
     app.state.alert_webhook = alert_webhook
-    # Short-lived, in-memory store for /embed/card specs (WS-EMBED). Created
+    # Short-lived, in-memory store for /embed/card specs. Created
     # per-app so it shares the app's lifetime; specs are throwaway render
     # inputs, not persisted domain data. See cairn/server/embed_specs.py.
     app.state.embed_specs = EmbedSpecStore()

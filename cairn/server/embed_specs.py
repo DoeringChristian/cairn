@@ -1,4 +1,4 @@
-"""In-memory, short-lived store for embed card specs (WS-EMBED).
+"""In-memory, short-lived store for embed card specs.
 
 An *embed spec* is a small JSON card descriptor (a viewer ``ComparisonCard``:
 ``{type, series:[{runId, name}]}``) that the ``/embed/card``

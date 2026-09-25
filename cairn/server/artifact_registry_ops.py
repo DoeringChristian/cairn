@@ -181,9 +181,9 @@ def create_version_from_digest(
     created_by_run: str | None = None,
     aliases: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Register a version referencing an ALREADY-UPLOADED blob (R0 contract
-    fix: the client uploads content-addressed blobs once via the artifact
-    endpoint and versions reference the digest — no double upload)."""
+    """Register a version referencing an ALREADY-UPLOADED blob (the client
+    uploads content-addressed blobs once via the artifact endpoint and
+    versions reference the digest — no double upload)."""
     get_family(db, family_id)  # ensure exists
     row = db.read_one(
         "SELECT hash, size_bytes FROM artifacts WHERE hash = ?", [digest]
