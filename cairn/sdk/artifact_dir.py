@@ -30,10 +30,16 @@ class Reference:
         run.log_artifact(cairn.Reference("s3://bucket/raw.tar"), name="raw", artifact_type="dataset")
         run.log_artifact([cairn.Reference(u, path=f"shard{i}.tar") for i, u in enumerate(urls)], name="shards")
 
-    ``path`` is the entry's name inside the artifact (default: the URI's last
-    segment); ``size`` and ``etag`` are recorded when given. Downloading it
-    back (``ArtifactDir.download``) needs ``fsspec`` and whatever filesystem
-    the URI names.
+    Downloading it back (``ArtifactDir.read``/``download``) needs ``fsspec``
+    and whatever filesystem the URI names.
+
+    Args:
+        uri: Where the file lives (``s3://``, ``gs://``, ``https://``, a
+            local path, ...).
+        path: The entry's name inside the artifact. Default: the URI's last
+            segment.
+        size: Size in bytes, recorded when given.
+        etag: The storage's ETag or checksum, recorded when given.
     """
 
     def __init__(self, uri: str, path: str | None = None, *, size: int | None = None, etag: str | None = None):
@@ -43,6 +49,7 @@ class Reference:
         self.etag = etag
 
     def entry(self) -> dict[str, Any]:
+        """The manifest entry: ``{"path", "uri"}`` plus ``size``/``etag`` when set."""
         out: dict[str, Any] = {"path": self.path, "uri": self.uri}
         if self.size is not None:
             out["size"] = self.size
@@ -114,7 +121,12 @@ def _fsspec() -> Any:
 
 
 class ArtifactDir:
-    """A multi-file artifact version: its manifest entries, fetched on demand."""
+    """A multi-file artifact version: its manifest entries, fetched on demand.
+
+    Returned by ``Run.use_artifact`` and ``cairn.load_artifact`` for an
+    artifact logged from a directory or ``Reference`` list; not constructed
+    by hand.
+    """
 
     def __init__(self, manifest: dict[str, Any], fetch: Callable[[str], bytes]):
         self._files: list[dict[str, Any]] = list(manifest.get("files", []))
@@ -122,6 +134,7 @@ class ArtifactDir:
 
     @classmethod
     def from_bytes(cls, data: bytes, fetch: Callable[[str], bytes]) -> "ArtifactDir":
+        """Build from manifest JSON bytes and a ``fetch(hash) -> bytes`` function."""
         return cls(json.loads(data), fetch)
 
     @property

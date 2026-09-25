@@ -62,9 +62,35 @@ default_registry = HandlerRegistry()
 
 
 def register_handler(cls_or_instance: Any) -> Any:
-    """Decorator/function: register a handler with the default registry.
+    """Register a type handler with the default registry, teaching ``Run.track``
+    a new kind of value.
 
-    Accepts either a class (instantiated with no args) or an instance.
+    A handler has an ``object_type`` and ``mime_type`` string, a
+    ``can_handle(obj) -> bool`` test and ``serialize(obj, **kwargs) ->
+    (bytes, metadata)``; an optional ``deserialize(data, metadata)`` lets
+    readers decode it back. The most recently registered handler whose
+    ``can_handle`` accepts a value wins, so a handler can override a built-in.
+
+    Example:
+        ```python
+        @cairn.register_handler
+        class GraphHandler:
+            object_type = "text"
+            mime_type = "text/plain"
+
+            def can_handle(self, obj):
+                return isinstance(obj, nx.Graph)
+
+            def serialize(self, obj, **kwargs):
+                return "\n".join(nx.generate_edgelist(obj)).encode(), {}
+        ```
+
+    Args:
+        cls_or_instance: A handler class (instantiated with no arguments) or
+            a handler instance.
+
+    Returns:
+        ``cls_or_instance`` unchanged, so it works as a class decorator.
     """
     instance = cls_or_instance() if isinstance(cls_or_instance, type) else cls_or_instance
     default_registry.register(instance)

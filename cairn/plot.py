@@ -1,21 +1,20 @@
-"""cairn.plot — the cairn-facing plotting surface (P2-M2 packaging shim).
+"""cairn.plot — the cairn-facing plotting surface.
 
 The pure plotting library now lives in the standalone ``cairn_plot``
 distribution (``import cairn_plot as cp``). This module re-exports its entire
 public surface unchanged — the composable components (``cp.Line``/``cp.Image``/
 ``cp.Grid``/``cp.Compare``/…), the lowercase builders (``cp.scalar``/``cp.image``
 /…), ``cp.Report``/``cp.report``, and the pure-numpy Plotly recipes
-(``cp.confusion_matrix``/``cp.roc_curve``/``cp.bar``/…) — so every existing
-``import cairn.plot as cp`` keeps working identically.
+(``cp.confusion_matrix``/``cp.roc_curve``/``cp.bar``/…) — so
+``import cairn.plot as cp`` gives the whole library.
 
-On top of that pure surface it layers cairn's run-integration extras, which
-``cairn_plot`` itself must not couple to (packaging spec §3–§4):
+On top of that pure surface it layers cairn's run integration, which
+``cairn_plot`` itself must not couple to: it registers the reader's
+``DataRef`` type so a ``run[tag]`` handle is recognized by the pure components
+(``cp.Line(run["loss"])``), and the tracking-handler serializers so raw
+tabular / 3D-array data (``cp.Table(df)`` / ``cp.PointCloud(arr)``) is shaped
+by the same ``handlers/*`` code the tracking path uses.
 
-* it registers the reader's ``DataRef`` type so a ``run[tag]`` handle is
-  recognized by the pure components (``cp.Line(run["loss"])``), and the
-  tracking-handler serializers so raw tabular / 3D-array data
-  (``cp.Table(df)`` / ``cp.PointCloud(arr)``) shapes through the exact same
-  ``handlers/*`` code the tracking path uses;
 The comparison card helpers live in :mod:`cairn.ui` (``cairn.ui.media_compare``
 and friends): they build a card spec for the browser's viewer rather than
 rendering anything.
@@ -37,7 +36,7 @@ from .sdk.reader import ArtifactInfo, DataRef  # noqa: F401 - ArtifactInfo kept 
 
 
 # ---------------------------------------------------------------------------
-# Wire the DataRef seam (packaging spec §4): teach the pure plot components to
+# Wire the DataRef seam: teach the pure plot components to
 # recognize a cairn ``run[tag]`` handle without importing cairn.sdk.reader
 # themselves.
 # ---------------------------------------------------------------------------

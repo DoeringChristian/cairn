@@ -1,9 +1,9 @@
 """Volume handler — dense ``(D, H, W)`` scalar grid → float32 .npz blob.
 
-Rendered by the UI as a WebGL2 raymarched volume (MIP / isosurface). Stats
-(``vmin``/``vmax``/``mean``) and physical placement (``spacing``/``origin``/
-``bounds``) are computed at log time so the UI never needs to load the blob
-to render a header or fit a camera.
+The viewer does not render volumes; its card shows the metadata and offers
+the blob for download. Stats (``vmin``/``vmax``/``mean``) and physical
+placement (``spacing``/``origin``/``bounds``) are computed at log time so a
+reader never needs to load the blob to describe the volume.
 
 ``bounds`` is the physical axis-aligned box the grid occupies: ``min ==
 origin`` and ``max == origin + shape * spacing`` (elementwise, in ``[D, H,

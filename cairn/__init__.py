@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import importlib
+from importlib.metadata import PackageNotFoundError as _PackageNotFoundError
+from importlib.metadata import version as _dist_version
 from typing import TYPE_CHECKING
 
-__version__ = "0.1.0"
+try:
+    __version__ = _dist_version("cairn-track")
+except _PackageNotFoundError:  # running from a source tree that was never installed
+    __version__ = "0.0.0+unknown"
 
 # `configure` is light (only ``cairn.config`` — stdlib + platformdirs/tomli_w)
 # and part of the very first line of most scripts, so it stays eager.
@@ -18,10 +23,10 @@ from .config import configure  # noqa: E402
 # classes, ``cairn.plot`` — is loaded on first attribute access rather than at
 # ``import cairn``. This keeps ``import cairn`` (and therefore importing any
 # ``cairn.sdk.*`` submodule, which runs THIS package initializer) from eagerly
-# pulling the server/run/transport/handler graph — the P2 cairn-plot packaging
-# requirement that the pure ``cairn.plot`` modules stay app-decoupled (proven
-# by ``tests/unit/test_plot_import_purity.py``). The public behaviour is
-# unchanged: ``cairn.Run``, ``cairn.plot``, ``cairn.Image`` … all still resolve.
+# pulling the server/run/transport/handler graph, so the pure ``cairn.plot``
+# modules stay decoupled from the app (proven by
+# ``tests/unit/test_plot_import_purity.py``). ``cairn.Run``, ``cairn.plot``,
+# ``cairn.Image`` … all still resolve as plain attributes.
 #
 # Handler registration is a side effect of importing ``cairn.sdk.run`` (which
 # imports the handlers package) — so any tracking path still registers the
@@ -211,10 +216,34 @@ def log_artifact(
     metadata: dict | None = None,
     aliases: list[str] | None = None,
 ) -> "ArtifactVersion | None":
-    """Upload an artifact version outside a run context.
+    """Register a new artifact version without a run.
 
-    ``data`` may be a directory or :class:`Reference` (list), as for
-    ``Run.log_artifact``: a multi-file artifact.
+    Like ``Run.log_artifact(..., artifact_type=...)``, but the version is not
+    linked to any run.
+
+    Example:
+        ```python
+        cairn.log_artifact("data/", name="mnist", type="dataset", project="mnist")
+        cairn.log_artifact("ckpt.pt", name="resnet", type="model",
+                           project="mnist", aliases=["best"])
+        ```
+
+    Args:
+        data: What to store: a file path or bytes (stored as is), a directory,
+            a ``cairn.Reference`` or a list of them (a multi-file artifact),
+            or a value a registered handler detects (e.g. a PIL image).
+        name: The artifact's name; each call adds a version to it.
+        type: The artifact family's type (``"dataset"``, ``"model"``, ...).
+        project: Project the artifact belongs to.
+        repo: Where to write, resolved like ``cairn.Run(repo=...)``.
+        metadata: Extra metadata, merged over the handler's.
+        aliases: Aliases to point at the new version. Default: ``["latest"]``.
+
+    Returns:
+        The new version, or None if the server returned nothing.
+
+    Raises:
+        TypeError: If no handler can serialize ``data``.
     """
     from .config import resolve_target
     # Import the handlers PACKAGE (not just the registry) so the built-in type
@@ -278,7 +307,25 @@ def log_artifact(
 
 
 def load_artifact(ref: str, *, project: str, repo=None, cache: bool = True):
-    """Download and return artifact bytes/deserialized object."""
+    """Download an artifact version.
+
+    Example:
+        ```python
+        raw = cairn.load_artifact("resnet:best", project="mnist")
+        cairn.load_artifact("mnist:v2", project="mnist").download("data/")
+        ```
+
+    Args:
+        ref: ``"name:alias"`` (e.g. ``"resnet:latest"``) or ``"name:vN"``.
+        project: Project the artifact belongs to.
+        repo: Where to read from, resolved like ``cairn.Reader(repo=...)``.
+        cache: For a server, cache downloaded bytes on disk by hash.
+
+    Returns:
+        An ``ArtifactDir`` for a multi-file artifact; otherwise the value
+        decoded by its handler when the stored blob records its type, else
+        the raw bytes.
+    """
     from .sdk.reader import Reader
 
     reader = Reader(repo=repo, cache=cache)
@@ -290,7 +337,17 @@ def load_artifact(ref: str, *, project: str, repo=None, cache: bool = True):
 
 
 def list_artifacts(*, project: str, type: str | None = None, repo=None) -> list[dict]:
-    """List artifact families in a project."""
+    """List the artifacts (families of versions) in a project.
+
+    Args:
+        project: The project.
+        type: Only artifacts of this type (``"dataset"``, ``"model"``, ...).
+        repo: Where to read from, resolved like ``cairn.Reader(repo=...)``.
+
+    Returns:
+        One dict per artifact with its name, type, version count, latest
+        version and aliases.
+    """
     from .sdk.reader import Reader
 
     reader = Reader(repo=repo)

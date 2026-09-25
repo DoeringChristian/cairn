@@ -1,8 +1,14 @@
-"""Explicit type wrappers that force a specific handler (Aim-style).
+"""Explicit type wrappers that pick how a value is stored and shown.
 
-Useful for disambiguating polymorphic inputs — e.g. a matplotlib ``Figure``
-could reasonably be tracked as an ``image`` (flat PNG) or a ``figure``
-(interactive Plotly). Wrappers let the user make the choice at the call site.
+Pass a wrapper to :meth:`cairn.Run.track`. Some values are detected without
+one (a ``float`` is a scalar, a ``str`` is text, a matplotlib or Plotly figure
+is a figure, a PIL image is an image), but a wrapper settles ambiguous inputs:
+a numpy array could be an image, audio, a tensor or a point cloud, and a
+matplotlib figure could be kept as a flat PNG (:class:`Image`) or as an
+interactive figure (:class:`Figure`).
+
+Every wrapper also accepts ``caption=``, which labels the logged point (not
+the stored bytes).
 """
 
 from __future__ import annotations
@@ -95,11 +101,45 @@ class Image(_TypeWrapper):
 
 
 class Figure(_TypeWrapper):
+    """A matplotlib or Plotly figure, kept interactive where possible.
+
+    Stored as a PNG plus, when available, the Plotly JSON source, which the
+    viewer draws as an interactive chart. A Plotly figure keeps its own JSON;
+    a matplotlib figure is converted with ``plotly.tools.mpl_to_plotly`` when
+    Plotly is installed, and stays a PNG when the conversion fails. Rendering
+    a Plotly figure to PNG needs ``kaleido``; without it the PNG is a blank
+    placeholder and only the interactive source is useful. Needs the
+    ``[media]`` extra.
+
+    Tracking a bare matplotlib/Plotly figure does the same; the wrapper only
+    makes the choice explicit (``cairn.Image(fig)`` stores a flat PNG instead)::
+
+        run.track(cairn.Figure(fig), name="attention", step=step)
+
+    Args:
+        obj: A ``matplotlib.figure.Figure`` or ``plotly.graph_objects.Figure``.
+        **kwargs: ``caption=`` labels the logged point.
+    """
+
     object_type = "figure"
 
 
 class Audio(_TypeWrapper):
-    """Audio samples (``sample_rate=``); ``caption=`` labels the point."""
+    """Audio samples, stored as 16-bit PCM WAV.
+
+    ::
+
+        run.track(cairn.Audio(waveform, sample_rate=22050), name="sample", step=step)
+
+    Args:
+        obj: A 1-D (mono) or 2-D numpy array or torch tensor; 2-D is read as
+            ``(channels, frames)`` or ``(frames, channels)``, whichever
+            axis is longer being frames. Float samples are expected in
+            ``[-1, 1]`` (rescaled by the peak when they exceed it); integer
+            samples are cast to int16.
+        **kwargs: ``sample_rate`` (Hz, default 16000); ``caption=`` labels
+            the logged point.
+    """
 
     object_type = "audio"
 
@@ -161,10 +201,37 @@ class Histogram(_TypeWrapper):
 
 
 class Tensor(_TypeWrapper):
+    """A raw numpy array or torch tensor, stored as a ``.npy`` file.
+
+    Arrays are only stored as tensors through this wrapper (a bare array is
+    ambiguous). The metadata records shape, dtype, min, max and mean; the
+    viewer shows a value histogram or a heatmap of a 2-D slice::
+
+        run.track(cairn.Tensor(model.fc.weight), name="fc.weight", step=step)
+
+    Args:
+        obj: Anything ``np.asarray`` accepts, or a torch tensor (detached and
+            moved to the CPU). At most 10 MB; larger arrays raise
+            ``ValueError``. Object arrays are rejected (no pickling).
+        **kwargs: ``caption=`` labels the logged point.
+    """
+
     object_type = "tensor"
 
 
 class Text(_TypeWrapper):
+    """Plain text, stored as UTF-8.
+
+    Tracking a bare ``str`` does the same; use the wrapper to store any other
+    object as its ``str()``::
+
+        run.track(cairn.Text(generated), name="samples.text", step=step)
+
+    Args:
+        obj: A string, or any object (stored as ``str(obj)``).
+        **kwargs: ``caption=`` labels the logged point.
+    """
+
     object_type = "text"
 
 
@@ -186,10 +253,22 @@ class Table(_TypeWrapper):
 
         run.track(cairn.Table(dataframe=df), name="predictions", step=0)
 
-    Column types (``number``/``string``/``bool``/``other``) are inferred at log
-    time. Rows are capped at 10,000 — larger tables are truncated (the original
-    row count is recorded in metadata). Values that are not JSON-native are
-    stringified. See ``handlers/table.py``.
+    Cells may hold ``cairn.Image``, ``cairn.Audio`` or ``cairn.Video``: each is
+    uploaded as its own artifact and shown inline in the table::
+
+        run.track(cairn.Table(columns=["input", "label"],
+                              data=[[cairn.Image(x), "cat"]]), name="samples", step=0)
+
+    Column types (``number``/``string``/``bool``/``media``/``other``) are
+    inferred at log time. Rows are capped at 10,000 — larger tables are
+    truncated (the original row count is recorded in metadata). Values that
+    are not JSON-native are stringified.
+
+    Args:
+        columns: Column names, used with ``data``.
+        data: Rows, each a list with one value per column.
+        dataframe: A pandas ``DataFrame``, instead of ``columns`` + ``data``.
+        **kwargs: ``caption=`` labels the logged point.
     """
 
     object_type = "table"
@@ -384,12 +463,13 @@ class BVH(Boxes3D):
 class Volume(_TypeWrapper):
     """Dense scalar 3D volume from a ``(D, H, W)`` numpy/torch array.
 
-    Rendered in the UI via WebGL2 raymarching (maximum-intensity-projection
-    or isosurface modes, with a colormap transfer function and per-axis box
-    clipping for slicing). Optional ``spacing``/``origin`` (each length-3,
-    matching the ``[D, H, W]`` axis order) place the grid in physical space;
-    both default to ``[1, 1, 1]`` / ``[0, 0, 0]`` (a unit-per-voxel grid at
-    the origin) when omitted.
+    Stored as a compressed float32 ``.npz`` with its shape, value range and
+    physical bounds in the metadata. The viewer does not render volumes: the
+    card shows the shape and range and offers the ``.npz`` for download.
+    Optional ``spacing``/``origin`` (each length-3, matching the ``[D, H, W]``
+    axis order) place the grid in physical space; both default to
+    ``[1, 1, 1]`` / ``[0, 0, 0]`` (a unit-per-voxel grid at the origin) when
+    omitted.
 
     Capped at 128MB pre-compression (as float32) — larger volumes raise
     ``ValueError`` at log time rather than being silently truncated.
