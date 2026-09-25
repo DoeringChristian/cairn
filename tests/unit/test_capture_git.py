@@ -98,6 +98,6 @@ def test_run_uploads_diff_and_remote(repo, monkeypatch):
         r = reader.run(rid)
         assert r.git.remote == "git@github.com:o/r.git"
         assert r.git.dirty is True
-        assert "+two" in r.artifact("git.diff")
+        assert "+two" in r.artifact("_cairn/git.diff")
     finally:
         reader.close()

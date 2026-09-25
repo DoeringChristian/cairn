@@ -672,6 +672,10 @@ class Run:
         :class:`~cairn.sdk.artifact_dir.ArtifactDir`.
 
         Sequence points go through :meth:`track`, not here.
+
+        Names starting with ``_cairn/`` are reserved for cairn's internal
+        attachments (e.g. ``_cairn/git.diff``); the UI keeps them out of
+        card grids. Don't use that prefix for your own artifacts.
         """
         if is_multi_file(value):
             digest, size, meta = upload_manifest(self._transport, value)
@@ -1075,7 +1079,7 @@ class Run:
     ) -> None:
         if diff:
             try:
-                self.log_artifact(Text(diff), name="git.diff")
+                self.log_artifact(Text(diff), name="_cairn/git.diff")
             except Exception:  # noqa: BLE001
                 log.warning("git diff upload failed", exc_info=True)
         try:
