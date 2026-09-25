@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator, Protocol, runtime_checkable
 
 from .. import config as _config
+from .. import expr as _expr
 from .artifact_dir import MANIFEST_MIME, ArtifactDir
 from .handlers.image import GALLERY_MIME
 
@@ -427,6 +428,24 @@ class Run:
             metadata=json.loads(r["metadata"]) if r.get("metadata") else None,
         ) for r in rows])
 
+    def eval(self, expr: str, *, domain: Any = None) -> Any:
+        """Evaluate a cairn expression (``cairn.expr``) on this run.
+
+        Returns the scalar value, or a :class:`cairn.expr.Series` (``steps``,
+        ``values``) for a series expression. An as-of join between series
+        with different steps emits a :class:`cairn.expr.ExprWarning`.
+        Raises :class:`cairn.expr.ExprError` on parse/type errors::
+
+            run.eval("last(val.loss) - min(val.loss)")
+            run.eval("ema(loss, 0.9)")
+        """
+        import warnings
+
+        r = _expr.evaluate(expr, _RunExprContext(self), domain=domain)
+        for w in r.warnings:
+            warnings.warn(w, stacklevel=2)
+        return r.value
+
     # ---- Artifacts ----
 
     def artifacts(self) -> list[ArtifactInfo]:
@@ -799,6 +818,38 @@ def _history_frame(backend: _Backend, runs: list[Run], keys: list[str] | None) -
     return df
 
 
+class _RunExprContext:
+    """A :mod:`cairn.expr` context over one :class:`Run`; series are fetched
+    once per context."""
+
+    def __init__(self, run: Run) -> None:
+        self._run = run
+        self._series: dict[str, dict[str, list] | None] = {}
+
+    def series(self, name: str) -> dict[str, list] | None:
+        if name not in self._series:
+            points = self._run.sequence(name).points
+            self._series[name] = {
+                "steps": [p.step for p in points],
+                "values": [p.scalar_value for p in points],
+                "wall": [_expr.parse_time(p.wall_time) for p in points],
+            } if points else None
+        return self._series[name]
+
+    def config(self, key: str) -> Any:
+        return self._run.params.get(key)
+
+    def summary(self, key: str) -> Any:
+        return self._run.summary.get(key)
+
+    def run(self, field: str) -> Any:
+        r = self._run
+        if field == "created_at":
+            return r._raw.get("created_at")
+        return {"name": r.name, "id": r.id, "status": r.status, "tags": r.tags,
+                "group": r.group, "job_type": r.job_type}.get(field)
+
+
 class RunQuery:
     """Lazy query builder for runs. Executes on .list()/.first()/.last()/iteration.
 
@@ -823,6 +874,11 @@ class RunQuery:
     (explicit param lookup), ``summary`` (a ``run.summary`` value), ``tags``
     (list membership). Any other root
     is treated as a param key.
+
+    ``where(expr)`` adds a :mod:`cairn.expr` expression filter; a run matches
+    when the (scalar) expression is truthy and not None::
+
+        reader.runs("x").where("last(val.acc) > 0.9 and config.opt == 'adam'")
     """
 
     def __init__(
@@ -833,6 +889,7 @@ class RunQuery:
         sort_col: str = "created_at",
         sort_desc: bool = True,
         limit_n: int | None = None,
+        wheres: list[tuple[str, _expr.Node]] | None = None,
     ) -> None:
         self._backend = backend
         self._project = project
@@ -843,6 +900,8 @@ class RunQuery:
         self._sort_col = sort_col
         self._sort_desc = sort_desc
         self._limit_n = limit_n
+        # Expression filters: (source, parsed node), applied after the filters.
+        self._wheres = wheres or []
 
     def _clone(self, **overrides: Any) -> RunQuery:
         kw: dict[str, Any] = {
@@ -853,6 +912,7 @@ class RunQuery:
             "sort_col": self._sort_col,
             "sort_desc": self._sort_desc,
             "limit_n": self._limit_n,
+            "wheres": list(self._wheres),
         }
         kw.update(overrides)
         return RunQuery(**kw)
@@ -873,6 +933,19 @@ class RunQuery:
             new_filters.append((field, op, sub_field, value))
         return self._clone(status=new_status, filters=new_filters)
 
+    def where(self, expr: str) -> RunQuery:
+        """Keep runs for which the :mod:`cairn.expr` expression is truthy
+        (None, e.g. a missing value, does not match). The expression must be
+        a scalar; it is parsed and type-checked here, so a bad one raises
+        :class:`cairn.expr.ExprError` right away."""
+        node = _expr.parse(expr)
+        if _expr.check(node).shape == "series":
+            raise _expr.ExprError(
+                "where() needs a scalar expression; reduce the series, e.g. last(loss) < 0.1",
+                node.span,
+            )
+        return self._clone(wheres=[*self._wheres, (expr, node)])
+
     def sort(self, column: str, *, desc: bool = True) -> RunQuery:
         return self._clone(sort_col=column, sort_desc=desc)
 
@@ -886,7 +959,9 @@ class RunQuery:
         page of runs is fetched first and the limit applies after filtering.
         """
         runs: list[dict[str, Any]] = []
-        pushdown = self._limit_n if self._limit_n and not self._filters else None
+        pushdown = (
+            self._limit_n if self._limit_n and not self._filters and not self._wheres else None
+        )
         while True:
             page = _PAGE if pushdown is None else min(_PAGE, pushdown - len(runs))
             rows, total = self._backend.list_runs(
@@ -915,10 +990,22 @@ class RunQuery:
                     pass
             result = kept
 
+        for _src, node in self._wheres:
+            result = [run for run in result if self._where_matches(node, run)]
+
         if self._limit_n and len(result) > self._limit_n:
             result = result[:self._limit_n]
 
         return result
+
+    @staticmethod
+    def _where_matches(node: _expr.Node, run: Run) -> bool:
+        import warnings
+
+        r = _expr.evaluate(node, _RunExprContext(run))
+        for w in r.warnings:
+            warnings.warn(w, stacklevel=4)
+        return _expr.matches(r)
 
     def history(self, keys: list[str] | None = None) -> Any:
         """Scalar history of every matching run as a long pandas DataFrame.
@@ -949,6 +1036,8 @@ class RunQuery:
         local-only backend. ``live=False`` resolves once and returns the baked
         immutable digest URL.
         """
+        if self._wheres:
+            raise ValueError("latest_url() cannot express where() filters; use filter(...)")
         base = getattr(self._backend, "server_url", None)
         if base is None:
             from .query_urls import _LOCAL_ONLY_MSG
@@ -985,6 +1074,8 @@ class RunQuery:
             if op != "exact":
                 key = f"{key}__{op}"
             parts.append(f"{key}={value!r}")
+        for src, _node in self._wheres:
+            parts.append(f"where({src!r})")
         return f"RunQuery({', '.join(parts)})"
 
 
