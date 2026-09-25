@@ -152,3 +152,19 @@ def test_invalid_card_type_rejected():
 def test_extra_field_rejected_on_strict_model():
     with pytest.raises(ValidationError):
         cs.CardSpec(id="c", type="scalar", series=[], bogus=1)
+
+
+@pytest.mark.parametrize("card_type", ["run-compare", "code-diff"])
+def test_multi_run_comparison_cards_are_card_types(card_type, defs):
+    assert card_type in defs["CardType"]["enum"]
+    assert card_type in cs.CARD_TYPES
+    # A multi-run card spans the block's runs: no series, settings pass through.
+    card = cs.CardSpec(
+        id="c",
+        type=card_type,
+        series=[],
+        settings=cs.CardSettingsSpec(version=1, onlyDiffs=True, layout="split"),
+    )
+    dumped = card.model_dump(exclude_none=True)
+    assert dumped["type"] == card_type
+    assert cs.CardSpec.model_validate(dumped) == card
