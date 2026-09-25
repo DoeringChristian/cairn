@@ -12,9 +12,9 @@ HTTP-free module so they can be unit-tested directly against a ``Database``:
   the two can never drift;
 * ``_find_artifact``'s highest-step ("latest checkpoint") logic (``reader.py``).
 
-The public entry point is :func:`resolve`, which turns a parsed
-:class:`QuerySpec` (see :func:`parse_query_params`) into a
-:class:`ResolvedArtifact` (run id + content digest + object metadata). The
+The public entry point is ``resolve``, which turns a parsed
+``QuerySpec`` (see ``parse_query_params``) into a
+``ResolvedArtifact`` (run id + content digest + object metadata). The
 route layer (``routes/query.py``) is a thin wrapper: parse → resolve → 302 or
 JSON envelope.
 """
@@ -31,7 +31,7 @@ from typing import Any, Iterable, Literal, Mapping
 from .query_grammar import OPERATOR_NAMES
 from ._operators import OPERATORS as _OPERATORS
 from .storage.db import Database
-from .summary_rules import resolve_summary_rules
+from .summary_rules import resolved_values
 
 
 class QueryError(ValueError):
@@ -155,7 +155,7 @@ def _parse_run(value: str) -> RunSelection:
 
 
 def _parse_predicate(key: str, value: str) -> Predicate:
-    """Parse ``field[.sub][__op]=value`` into a :class:`Predicate`.
+    """Parse ``field[.sub][__op]=value`` into a ``Predicate``.
 
     Nesting uses ``.`` (``metrics.loss``); the operator is a trailing
     ``__<op>`` suffix. ``status__in=a,b`` splits the value on commas.
@@ -186,9 +186,9 @@ def _normalize_at(value: str) -> str:
 
 def parse_query_params(params: Mapping[str, str] | Iterable[tuple[str, str]]) -> QuerySpec:
     """Parse raw query params (a mapping or an iterable of pairs) into a
-    :class:`QuerySpec`. Repeated predicate keys accumulate (all-of).
+    ``QuerySpec``. Repeated predicate keys accumulate (all-of).
 
-    Raises :class:`QueryError` on malformed / unsupported input.
+    Raises ``QueryError`` on malformed / unsupported input.
     """
     items = list(params.items()) if isinstance(params, Mapping) else list(params)
 
@@ -303,17 +303,10 @@ def _param_value(db: Database, run_id: str, key: str, table: str = "params") -> 
 
 
 def _final_metric(db: Database, run_id: str, name: str) -> Any:
-    """The metric's resolved value: its summary rule (``run.track(..., summary=)``), else the
-    last point."""
-    ruled = resolve_summary_rules(db, [run_id]).get(run_id, {})
-    if name in ruled:
-        return ruled[name]
-    rows = db.read_columns(
-        "SELECT scalar_value FROM sequences WHERE run_id = ? AND name = ? "
-        "ORDER BY step DESC LIMIT 1",
-        [run_id, name],
-    )
-    return rows[0]["scalar_value"] if rows else None
+    """The metric's resolved final value, as the runs table shows it: the last
+    point, replaced by a ``run.track(..., summary=)`` rule, replaced by an
+    explicit summary key (``resolved_values``)."""
+    return resolved_values(db, [run_id])[run_id].get(name)
 
 
 def _field_value(db: Database, run_row: dict[str, Any], pred: Predicate) -> Any:
@@ -444,9 +437,9 @@ def _resolve_artifact(
 # ---------------------------------------------------------------------------
 
 def resolve(db: Database, spec: QuerySpec) -> ResolvedArtifact:
-    """Resolve a :class:`QuerySpec` to a concrete content-addressed artifact.
+    """Resolve a ``QuerySpec`` to a concrete content-addressed artifact.
 
-    Raises :class:`QueryNotFound` when no run or no matching artifact exists.
+    Raises ``QueryNotFound`` when no run or no matching artifact exists.
     """
     candidates = _load_candidates(db, spec)
     run = _select_run(candidates, spec.run)

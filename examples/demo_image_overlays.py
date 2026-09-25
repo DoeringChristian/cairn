@@ -7,10 +7,11 @@ image carries:
   ("dog", pixel domain), each with a per-step confidence score.
 * ``masks`` — a per-pixel class-id segmentation that evolves over steps.
 
-It also logs a plain ``reference`` image (no overlays) so you can exercise
-split/blend compare modes (overlay renders on the FOREGROUND only), and a
-``plain`` sequence with no overlay at all to confirm plain images are
-byte-identical to before.
+It also logs a plain ``reference`` image (no overlays): set it as the
+``detections`` card's Reference tag to get an A/B split slider (the overlay
+renders on the card's own image only, never on the reference). A ``plain``
+sequence with no overlay at all confirms plain images render without
+overlay controls.
 
 Usage::
 
@@ -135,7 +136,7 @@ def log_run(name: str, jitter: int) -> None:
             step=step,
         )
 
-        # reference: plain image (used as split/blend baseline)
+        # reference: plain image (the A/B split's Reference tag)
         run.track(scene, name="reference", step=step)
 
         # plain: a totally overlay-free sequence (regression guard). Distinct
@@ -155,10 +156,10 @@ def main() -> None:
         log_run(name, jitter)
     print(
         "\nDone. Open the 'detections' image card: boxes (cat/dog) + mask overlay.\n"
-        "Try the Overlays settings section (toggles, score threshold, mask opacity,\n"
-        "per-class visibility). Drag the 'reference' chip as a baseline and switch to\n"
-        "split/blend to confirm the overlay stays on the foreground only.\n"
-        "The 'plain' card must look exactly as before (no overlay controls)."
+        "Try the Overlays settings section (toggles, min box score, mask opacity,\n"
+        "per-class visibility). Set the card's Reference tag to 'reference' for an\n"
+        "A/B split and confirm the overlay stays on the card's own image only.\n"
+        "The 'plain' card shows no overlay controls."
     )
 
 

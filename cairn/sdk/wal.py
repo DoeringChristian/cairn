@@ -8,7 +8,7 @@ in order.
 WAL file per run: ``{wal_dir}/{run_id}.wal.jsonl``
 Checkpoint file:  ``{wal_dir}/{run_id}.checkpoint``
 
-Line 1 is a HEADER record (R3): {"seq": 0, "op": "header", "payload":
+Line 1 is a HEADER record: {"seq": 0, "op": "header", "payload":
 {"epoch": <hex>, "target": <server-url>, "created": <iso>}} — ``epoch`` is
 minted per WAL file so sequence numbers can never alias across file
 recreations (the (run_id, epoch, seq) idempotency key), and ``target``
@@ -16,7 +16,7 @@ records where this log replays (the ``cairn sync`` scanner needs no other
 context). Subsequent lines:
     {"seq": N, "op": "batch"|"artifact"|"params"|"summary"|"logs"|..., "payload": {...}}
 
-ACK DISCIPLINE (R3 — fixes the silent-loss bug): the checkpoint is a
+ACK DISCIPLINE (fixes a silent-loss bug): the checkpoint is a
 CONTIGUOUS low-water mark plus the set of individually-acked seqs above it
 (JSON {"low": N, "acked": [...]}). ``ack(seq)`` records a successful send; the low
 water only advances over contiguous acks, so a FAILED op can never be
@@ -74,7 +74,7 @@ class WriteAheadLog:
         self.epoch, self.target = self._read_or_write_header(target)
 
     def _read_or_write_header(self, target: str | None) -> tuple[str, str | None]:
-        """Read the header record, writing one first on a fresh file (R3)."""
+        """Read the header record, writing one first on a fresh file."""
         import secrets
         from datetime import datetime, timezone
 
@@ -177,7 +177,7 @@ class WriteAheadLog:
         return low
 
     def ack(self, seq: int) -> None:
-        """Record a successful send of ``seq`` (R3 ack discipline).
+        """Record a successful send of ``seq``.
 
         The low water advances only over CONTIGUOUS acks — a failed earlier
         op keeps everything behind it pending, so it can never be shadowed.

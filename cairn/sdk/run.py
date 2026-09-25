@@ -52,7 +52,25 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class ArtifactVersion:
-    """A single version of a versioned artifact."""
+    """One version of an artifact in the registry.
+
+    Returned by ``Run.log_artifact(..., artifact_type=...)`` and
+    ``cairn.log_artifact``.
+
+    Attributes:
+        id: The version's id.
+        family_id: Id of the artifact family (all versions of one name).
+        family_name: The artifact's name.
+        version: Version number within the family, from 1 (``"name:v3"``).
+        hash: SHA-256 of the stored bytes (for a multi-file artifact, of its
+            manifest).
+        size_bytes: Stored size (for a multi-file artifact, of all files).
+        metadata: Handler metadata merged with the caller's ``metadata``.
+        created_at: Creation time, ISO 8601.
+        created_by_run: Id of the run that logged it, if any.
+        aliases: Aliases set on this version (default ``["latest"]``), when
+            the backend reports them.
+    """
     id: str
     family_id: str
     family_name: str
@@ -67,7 +85,7 @@ class ArtifactVersion:
     @classmethod
     def from_row(cls, row: dict) -> "ArtifactVersion":
         """Build from a server row, tolerating extra/missing envelope keys
-        (forward-compatible ingest — R0 conformance fix)."""
+        (forward-compatible ingest)."""
         import dataclasses
 
         names = {f.name for f in dataclasses.fields(cls)}
@@ -102,6 +120,89 @@ class Run:
     ``mode="disabled"`` (or ``cairn.configure(mode=...)``, ``CAIRN_MODE``, the
     config file's ``mode`` key) returns a run whose every method is a no-op:
     no repo, no server, no threads. It is still a ``cairn.Run``.
+
+    A run finishes when the ``with`` block exits (``completed``, ``failed`` on
+    an exception, ``stopped`` after a stop request), when ``finish()`` is
+    called, or at interpreter exit. SIGTERM/SIGINT finish it as ``killed``.
+
+    Example:
+        ```python
+        with cairn.Run("mnist", name="baseline", tags=["cnn"]) as run:
+            run.config(lr=1e-3, epochs=10)
+            for step in range(1000):
+                run.track(loss, "train.loss", step)
+        ```
+
+    Args:
+        project: Project name. Normalised to an id (lowercase, spaces become
+            dashes); created on first use.
+        name: Display name. Default: none (the UI shows the id); a run
+            launched by ``cairn agent`` takes its trial's name.
+        tags: Initial tags. Edit later with ``set_tag``/``remove_tag``/``set_tags``.
+        notes: Free-text notes shown on the run page.
+        group: Group label for related runs (e.g. the workers of one
+            distributed job); filterable and groupable in the runs table.
+        job_type: Kind of job (e.g. ``"train"``, ``"eval"``); filterable and
+            groupable like ``group``.
+        sweep_id: Attach the run to this sweep. Set automatically, together
+            with the trial, when the process runs under ``cairn agent``.
+        parent_run_id: Record another run as this run's parent (lineage only;
+            nothing is copied). ``fork_from`` sets it itself.
+        fork_step: The parent step this run branched at (lineage only).
+        created_at: Creation time to record instead of now (a ``datetime``
+            or an ISO 8601 string), for importing past runs.
+        resume: Id of an existing run to continue (see above).
+        rewind_to: With ``resume``: drop everything recorded after this step
+            first.
+        fork_from: ``(run_id, step)``: start a new run holding a copy of
+            that run's history up to ``step`` (see above).
+        repo: Where to write: a ``.cairn/`` directory or a
+            ``cairn://host:port`` server. Default: ``cairn.configure``,
+            then ``CAIRN_REPO``, ``CAIRN_SERVER``, the config file, then
+            ``./.cairn``. A local repo held by a running ``cairn server`` or
+            ``cairn ui`` is written over HTTP to that server.
+        local_wal: With a local repo: append to a per-run log file
+            (``.cairn/wals/<run_id>.wal.jsonl``) instead of writing the
+            database; a server or ``cairn.Reader`` on that repo ingests it.
+            Use it for many concurrent writers on shared storage (NFS,
+            Slurm, Ray).
+        capture_source: Upload a snapshot of the project's source files
+            (and, in a git checkout, the ``git diff HEAD`` as the text
+            artifact ``_cairn/git.diff``).
+        capture_stdout: Record stdout/stderr lines as the run's logs.
+        capture_env: Record the environment: Python version, packages,
+            hostname, user, command line, git commit/branch/remote.
+        capture_system_metrics: Sample CPU, memory, disk and GPU usage as
+            ``system.*`` series.
+        system_metrics_interval: Seconds between system samples.
+        system_metrics_include_per_core: Also record every CPU core.
+        source_root: Root of the source snapshot. Default: the nearest
+            ancestor of the working directory holding a project marker
+            (``.git``, ``pyproject.toml``, ``pixi.toml``, ...).
+        source_include: Glob patterns of files to snapshot, replacing the
+            defaults (``*.py``, ``*.yaml``, ``*.toml``, ``*.json``, ...).
+        source_exclude: Glob patterns to skip, replacing the defaults
+            (``.git``, ``__pycache__``, ``.venv``, ``node_modules``, ...).
+            ``.gitignore`` is always honoured.
+        source_max_file_size_mb: Skip source files larger than this.
+        timeout: HTTP request timeout in seconds, also the time ``finish()``
+            waits for each buffer to drain.
+        registry: Handler registry deciding how values are stored. Default:
+            the global one (see ``cairn.register_handler``).
+        transport: A ready transport to write through instead of resolving
+            ``repo`` (mainly for tests); the caller keeps ownership.
+        mode: ``"disabled"`` makes every method a no-op (see above).
+        on_stop: Callback ``fn(run)`` run when a stop is requested; more can
+            be added with ``on_stop``.
+        stop_mode: What a stop request (the UI's Stop button) does after the
+            callbacks: ``"interrupt"`` (default) raises ``KeyboardInterrupt``
+            in the main thread and the run finishes as ``stopped``;
+            ``"flag"`` only sets ``should_stop`` for the training loop to poll.
+
+    Raises:
+        ValueError: For an unknown ``stop_mode``, ``rewind_to`` without
+            ``resume``, both ``resume`` and ``fork_from``, or ``fork_from``
+            together with ``parent_run_id``/``fork_step``.
     """
 
     def __new__(cls, *args: Any, mode: str | None = None, **kwargs: Any) -> Run:
@@ -391,10 +492,13 @@ class Run:
 
     @property
     def id(self) -> str:
+        """The run's id: 32 hex characters, generated client-side."""
         return self._run_id
 
     @property
     def url(self) -> str:
+        """The run's page: the server URL (``file://<repo>`` for a local
+        repo) followed by ``/p/<project>/r/<id>``."""
         return f"{self._server.rstrip('/')}{self._url_path}"
 
     @property
@@ -413,14 +517,16 @@ class Run:
     # ---- tracking ---------------------------------------------------------
 
     def scope(self, *, step: int) -> "Scope":
-        """A :class:`~cairn.sdk.scope.Scope` with ``step`` bound.
+        """A ``Scope`` with ``step`` bound.
 
         The SECONDARY entry point. `Run` is already the root scope, so
         ``run.track(model, "model", step=it)`` walks a component tree on its own;
         this exists for the case recursion cannot reach — handing a pre-bound
-        logger to a plain function that is not a component::
+        logger to a plain function that is not a component:
 
-            evaluate(model, run.scope(step=it))
+        ```python
+        evaluate(model, run.scope(step=it))
+        ```
         """
         if self._finished:
             raise RuntimeError("Run has already been finished")
@@ -443,9 +549,11 @@ class Run:
 
         - ``summary`` — ``"min"``, ``"max"``, ``"mean"`` or ``"last"`` (the
           default): the metric's final value in the runs table, overviews,
-          comparison colours and ``final_metric`` filters. ``"min"`` also
+          comparison colours, ``Reader.Run.final`` and the ``metrics``
+          filters (``metrics__<name>`` in ``RunQuery.filter``,
+          ``metrics.<name>`` in query URLs). ``"min"`` also
           means lower is better when comparing runs. An explicit
-          :meth:`summary` key of the same name still wins.
+          ``summary`` key of the same name still wins.
         - ``x`` — the FULL name of another scalar series (``x="epoch"``,
           never prefixed by a scope): charts of this metric start on that
           x-axis, joining the two series on step.
@@ -496,8 +604,8 @@ class Run:
         **kwargs: Any,
     ) -> None:
         """Record ONE point — no protocol dispatch. ``step=None`` auto-increments
-        (see :meth:`_track_sample`; never reachable from the public API).
-        ``summary`` / ``x`` set the metric's rule (see :meth:`track`)."""
+        (see ``_track_sample``; never reachable from the public API).
+        ``summary`` / ``x`` set the metric's rule (see ``track``)."""
         if self._finished:
             raise RuntimeError("Run has already been finished")
         has_rule = summary is not None or x is not None
@@ -666,16 +774,16 @@ class Run:
         Without ``artifact_type``: serialize + upload + attach as a NAMED run
         artifact (the ``run_artifacts`` pool) and return its content digest.
         With ``artifact_type``: register a version in the artifact registry
-        (family + versions) and return the :class:`ArtifactVersion`.
+        (family + versions) and return the ``ArtifactVersion``.
 
-        A directory path, a :class:`~cairn.sdk.artifact_dir.Reference` or a
+        A directory path, a ``Reference`` or a
         list of them is a multi-file artifact: each file is uploaded
         content-addressed (references are only recorded), and a manifest
         naming them is versioned — in the ``artifact_type`` family, or
         ``"artifact"`` when none is given. ``use_artifact`` returns it as an
-        :class:`~cairn.sdk.artifact_dir.ArtifactDir`.
+        ``ArtifactDir``.
 
-        Sequence points go through :meth:`track`, not here.
+        Sequence points go through ``track``, not here.
 
         Names starting with ``_cairn/`` are reserved for cairn's internal
         attachments (e.g. ``_cairn/git.diff``); the UI keeps them out of
@@ -779,7 +887,7 @@ class Run:
         """Consume an artifact. ``ref`` is ``"name:alias"`` or ``"name:vN"``.
 
         A multi-file artifact comes back as an
-        :class:`~cairn.sdk.artifact_dir.ArtifactDir` (``.files``,
+        ``ArtifactDir`` (``.files``,
         ``.open(path)``, ``.download(root)``); anything else as its
         deserialized value, or bytes.
         """
@@ -822,7 +930,7 @@ class Run:
             run.config(lr=1e-3, sched={"warmup": 100})
             run.config(vars(args))
 
-        The counterpart is :meth:`summary`, for results.
+        The counterpart is ``summary``, for results.
         """
         if self._finished:
             raise RuntimeError("Run has already been finished")
@@ -836,12 +944,13 @@ class Run:
             run.summary(best_val_acc=0.91, epochs_run=30)
             run.summary({"test": {"psnr": 31.4}})      # -> test.psnr
 
-        Same shape as :meth:`config`, opposite meaning: config is what went in,
+        Same shape as ``config``, opposite meaning: config is what went in,
         summary is what came out. Nothing writes here implicitly — a metric's
-        last value is NOT a summary entry. The run table shows the last point of
-        each series and lets an explicit summary key of the same name override
-        it, so a number appears here only because you said so, and "who claimed
-        this" stays answerable.
+        last value is NOT a summary entry. A metric's final value (the runs
+        table, ``Reader.Run.final``) is its last point, replaced by its
+        ``track(..., summary=)`` rule, replaced by an explicit summary key of
+        the same name — so a number appears here only because you said so,
+        and "who claimed this" stays answerable.
         """
         if self._finished:
             raise RuntimeError("Run has already been finished")
@@ -866,6 +975,11 @@ class Run:
         self._transport.set_tags(self._run_id, list(self._tags))
 
     def add_note(self, text: str) -> None:
+        """Set the run's notes, replacing any notes it already has.
+
+        Args:
+            text: The new notes (plain text; shown on the run page).
+        """
         self._transport.set_notes(self._run_id, text)
 
     # ---- model watching ---------------------------------------------------
@@ -875,11 +989,13 @@ class Run:
 
         Every ``every``-th forward pass of ``model`` records ``gradients/<param>``
         (from that pass's backward), ``parameters/<param>``, or both
-        (``log="gradients"|"parameters"|"all"``), at the last step you tracked::
+        (``log="gradients"|"parameters"|"all"``), at the last step you tracked:
 
-            run.watch(model, log="all", every=100)
+        ```python
+        run.watch(model, log="all", every=100)
+        ```
 
-        :meth:`unwatch` (or :meth:`finish`) removes the hooks.
+        ``unwatch`` (or ``finish``) removes the hooks.
         """
         if self._finished:
             raise RuntimeError("Run has already been finished")
@@ -914,6 +1030,21 @@ class Run:
     # ---- finish -----------------------------------------------------------
 
     def finish(self, status: str = "completed", exit_code: int | None = None) -> None:
+        """End the run: flush everything it buffered and record its status.
+
+        Stops model watching, system-metric sampling and stdout capture,
+        drains the metric and log buffers, waits (up to two minutes) for the
+        source snapshot upload, then marks the run finished. Calling it again
+        does nothing, and no method that records data works afterwards.
+
+        Usually not called directly: leaving a ``with cairn.Run(...)`` block
+        or the interpreter exiting finishes the run.
+
+        Args:
+            status: Final status: ``"completed"``, ``"failed"``,
+                ``"killed"`` or ``"stopped"``.
+            exit_code: Optional process exit code to record.
+        """
         if self._finished:
             return
         try:
@@ -1119,7 +1250,7 @@ def _rule_on_non_scalar(name: str, kind: str | None) -> str:
 class _DisabledRun(Run):
     """What ``cairn.Run`` returns in disabled mode: every method is a no-op.
 
-    ``scope()`` still hands out a real :class:`Scope`, which walks components
+    ``scope()`` still hands out a real ``Scope``, which walks components
     into these no-ops.
     """
 

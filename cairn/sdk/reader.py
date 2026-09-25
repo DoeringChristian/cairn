@@ -1,15 +1,18 @@
-"""Read-only Python API for querying Cairn data.
+"""Python API for reading Cairn data, plus ``Run.edit`` for editing runs.
 
 Dual-mode: opens the local ``.cairn/`` database directly, or connects to
 a running Cairn server via HTTP. Auto-detects from config resolution.
+An exported ``.zip`` archive can be read too.
 
-Usage::
+Usage:
 
-    import cairn
+```python
+import cairn
 
-    r = cairn.Reader()  # auto-detect
-    run = r.runs(project="demo").filter(status="completed").last()
-    print(run.params, run.sequence("loss").values[-1])
+r = cairn.Reader()  # auto-detect
+run = r.runs(project="demo").filter(status="completed").last()
+print(run.params, run.sequence("loss").values[-1])
+```
 """
 
 from __future__ import annotations
@@ -32,6 +35,19 @@ from .handlers.image import GALLERY_MIME
 
 @dataclass(frozen=True)
 class Project:
+    """A project, as listed by ``Reader.projects``.
+
+    Attributes:
+        id: Project id (the normalised name: lowercase, spaces become dashes).
+        name: Display name.
+        created_at: Creation time as an ISO 8601 string.
+        run_count: Number of runs in the project.
+        active_run_count: Number of runs with status ``"running"``.
+        last_run_at: The latest end (or, for unfinished runs, creation) time
+            over the project's runs, as an ISO 8601 string; None when the
+            project has no runs.
+    """
+
     id: str
     name: str
     created_at: str
@@ -45,6 +61,16 @@ class Project:
 
 @dataclass(frozen=True)
 class GitInfo:
+    """Git state recorded when a run started (see ``Run.git``).
+
+    Attributes:
+        sha: Commit SHA.
+        branch: Branch name, or None if not recorded.
+        dirty: Whether the working tree had uncommitted changes (False when
+            not recorded).
+        remote: Remote URL, or None if not recorded.
+    """
+
     sha: str | None
     branch: str | None
     dirty: bool | None
@@ -53,6 +79,17 @@ class GitInfo:
 
 @dataclass(frozen=True)
 class SequenceInfo:
+    """Summary of one sequence of a run, from ``Run.sequences``.
+
+    Attributes:
+        name: Sequence name (e.g. ``"train.loss"``).
+        object_type: What the points hold: ``"scalar"``, or a media kind
+            such as ``"image"``.
+        min_step: Lowest step logged.
+        max_step: Highest step logged.
+        count: Number of points.
+    """
+
     name: str
     object_type: str
     min_step: int
@@ -65,22 +102,50 @@ class SequenceInfo:
 
 @dataclass(frozen=True)
 class SequencePoint:
+    """One point of a ``Sequence``.
+
+    Attributes:
+        step: The step it was logged at.
+        wall_time: When it was logged, as an ISO 8601 string.
+        scalar_value: The value of a scalar point; None for media points.
+        artifact_hash: Content hash of a media point's artifact (download it
+            with ``Run.artifact``); None for scalar points.
+        artifact_metadata: The artifact's metadata as a JSON string, or None.
+        object_type: ``"scalar"``, or the media kind (``"image"``, ...).
+        metadata: Per-point metadata (e.g. ``{"caption": ...}``), decoded;
+            None when there is none.
+    """
+
     step: int
     wall_time: str
     scalar_value: float | None = None
     artifact_hash: str | None = None
     artifact_metadata: str | None = None
     object_type: str = "scalar"
-    #: Per-point metadata (e.g. ``{"caption": ...}``), decoded; None when none.
     metadata: dict | None = None
 
     @property
     def caption(self) -> str | None:
+        """The point's caption from ``metadata``, or None."""
         return (self.metadata or {}).get("caption")
 
 
 @dataclass(frozen=True)
 class ArtifactInfo:
+    """One artifact of a run, from ``Run.artifacts``.
+
+    Attributes:
+        name: The artifact's name, or the sequence name for a media point.
+        hash: Content hash (SHA-256) of the stored bytes.
+        step: The step it was logged at; None for an artifact logged
+            without a step.
+        mime_type: MIME type of the stored bytes.
+        size_bytes: Size of the stored bytes.
+        metadata: The artifact's metadata as a JSON string, or None.
+        object_type: The handler kind (``"image"``, ``"table"``, ...) that
+            ``Run.artifact`` uses to decode it; None if unknown.
+    """
+
     name: str
     hash: str
     step: int | None
@@ -94,8 +159,13 @@ class ArtifactInfo:
 class MediaRef:
     """A media cell of a logged table: an image/audio/video stored as its own artifact.
 
-    Nothing is downloaded until :meth:`load` (decoded like ``Run.artifact``)
-    or :meth:`bytes` (raw) is called.
+    Nothing is downloaded until ``load`` (decoded like ``Run.artifact``)
+    or ``bytes`` (raw) is called.
+
+    Attributes:
+        hash: Content hash of the cell's artifact.
+        mime_type: MIME type of the stored bytes.
+        object_type: The handler kind (``"image"``, ``"audio"``, ...), or None.
     """
 
     hash: str
@@ -104,9 +174,22 @@ class MediaRef:
     _backend: Any = field(default=None, repr=False, compare=False)
 
     def bytes(self) -> bytes:
+        """Download the cell's raw bytes.
+
+        Returns:
+            The stored bytes, undecoded.
+        """
         return self._backend.get_artifact_bytes(self.hash)
 
     def load(self) -> Any:
+        """Download the cell and decode it by its ``object_type``.
+
+        Returns:
+            The decoded value, like ``Run.artifact`` returns for the same
+            kind (e.g. a ``PIL.Image`` for a PNG image, ``(samples,
+            sample_rate)`` for audio); the raw bytes when the kind has no
+            decoder.
+        """
         from .handlers.registry import default_registry
 
         data = self.bytes()
@@ -117,7 +200,7 @@ class MediaRef:
 
 
 def _table_media_refs(table: dict[str, Any], backend: Any) -> dict[str, Any]:
-    """Replace a table's ``{"$media": ...}`` cells with :class:`MediaRef`."""
+    """Replace a table's ``{"$media": ...}`` cells with ``MediaRef``."""
     for row in table.get("data", []):
         for c, cell in enumerate(row):
             if isinstance(cell, dict) and isinstance(cell.get("$media"), dict):
@@ -128,6 +211,15 @@ def _table_media_refs(table: dict[str, Any], backend: Any) -> dict[str, Any]:
 
 @dataclass(frozen=True)
 class LogLine:
+    """One captured line of a run's output, from ``Run.logs``.
+
+    Attributes:
+        stream: The stream it was written to (``"stdout"`` or ``"stderr"``).
+        wall_time: When it was written, as an ISO 8601 string.
+        line_no: Line number.
+        content: The line's text.
+    """
+
     stream: str
     wall_time: str
     line_no: int
@@ -139,6 +231,14 @@ class LogLine:
 
 @dataclass(frozen=True)
 class SourceFile:
+    """One file of a run's source snapshot, from ``Run.source_tree``.
+
+    Attributes:
+        path: Path relative to the snapshot root.
+        size: Size in bytes.
+        sha256: SHA-256 of the contents, or None if not recorded.
+    """
+
     path: str
     size: int
     sha256: str | None = None
@@ -167,29 +267,57 @@ def _parse_dt(s: str | None) -> datetime | None:
 # ---------------------------------------------------------------------------
 
 class Sequence:
-    """A named sequence of tracked values (scalars, artifacts, etc.)."""
+    """A named sequence of tracked values (scalars, artifacts, etc.), from
+    ``Run.sequence``.
+
+    Iterating yields ``SequencePoint`` objects in step order, and
+    ``len()`` is the number of points. Indexing is by **step**, not
+    position: ``seq[100]`` is the point logged at step 100 (``KeyError`` if
+    there is none), and ``seq[100:200]`` is a new ``Sequence`` of the
+    points with ``100 <= step < 200``.
+
+    Args:
+        points: The points, in step order.
+
+    Example:
+        ```python
+        seq = run.sequence("train.loss")
+        seq.values[-1]      # the last value
+        seq[1000].scalar_value
+        seq[:500].steps     # steps below 500
+        ```
+    """
 
     def __init__(self, points: list[SequencePoint]) -> None:
         self._points = points
 
     @property
     def points(self) -> list[SequencePoint]:
+        """All points, in step order."""
         return self._points
 
     @property
     def steps(self) -> list[int]:
+        """The step of each point."""
         return [p.step for p in self._points]
 
     @property
     def values(self) -> list[float | None]:
+        """The scalar value of each point (None for media points)."""
         return [p.scalar_value for p in self._points]
 
     @property
     def timestamps(self) -> list[datetime | None]:
+        """The wall time of each point as a UTC datetime (None if unparseable)."""
         return [_parse_dt(p.wall_time) for p in self._points]
 
     def dataframe(self) -> Any:
-        """Return a pandas DataFrame (requires pandas)."""
+        """The points as a pandas DataFrame (requires pandas).
+
+        Returns:
+            A DataFrame with one row per point and the columns ``step``,
+            ``value``, ``wall_time`` (ISO 8601 string) and ``artifact_hash``.
+        """
         import pandas as pd
         return pd.DataFrame([
             {"step": p.step, "value": p.scalar_value, "wall_time": p.wall_time,
@@ -228,7 +356,7 @@ class Sequence:
 
 @dataclass(frozen=True)
 class DataRef:
-    """A lazy reference to the data behind ``run[tag]`` (WS-PYAPI).
+    """A lazy reference to the data behind ``run[tag]``.
 
     Wraps ``(run, tag[, step])`` only — it does **not** fetch anything at
     construction time. Resolution happens only when something actually
@@ -238,8 +366,13 @@ class DataRef:
     a server-anchored ``SeriesRef`` (no bytes ever move for that path — the
     card renders by reference through ``/embed/card``).
 
-    ``run[tag][step]`` (via :meth:`__getitem__`) narrows to one step,
+    ``run[tag][step]`` (via ``__getitem__``) narrows to one step,
     mapping to the existing ``step=`` args on ``Run.sequence``/``Run.artifact``.
+
+    Attributes:
+        run: The run the tag belongs to.
+        tag: The sequence or artifact name.
+        step: The step narrowed to, or None for all steps (latest artifact).
     """
 
     run: "Run"
@@ -253,14 +386,24 @@ class DataRef:
 
     @property
     def run_id(self) -> str:
+        """The id of ``run``."""
         return self.run.id
 
     def resolve(self) -> Any:
         """Eagerly fetch the underlying data.
 
         Tries a named/sequence artifact first (images, meshes, tensors,
-        ...); falls back to the raw scalar :class:`Sequence` when the tag
+        ...); falls back to the raw scalar ``Sequence`` when the tag
         isn't an artifact (e.g. a plain scalar metric).
+
+        Returns:
+            The decoded artifact (as ``Run.artifact`` returns it; the
+            highest-step one unless a step was given); else the
+            ``Sequence``, or its ``SequencePoint`` at the given step.
+
+        Raises:
+            KeyError: A step was given and neither an artifact nor a
+                sequence point exists at it.
         """
         try:
             return self.run.artifact(self.tag, step=self.step)
@@ -277,6 +420,9 @@ class DataRef:
         Only meaningful against a server target (the URL is fetched over HTTP);
         raises on a local-only backend. Narrowed steps (``run[tag][step]``)
         carry through as ``step=<N>``.
+
+        Raises:
+            ValueError: The Reader reads a local repo or archive, not a server.
         """
         base = getattr(self.run._backend, "server_url", None)
         if base is None:
@@ -296,7 +442,21 @@ class DataRef:
 # ---------------------------------------------------------------------------
 
 class Run:
-    """A single tracked run with lazy-loaded data."""
+    """A single tracked run with lazy-loaded data.
+
+    Get one from ``Reader.run`` or a ``RunQuery``. Metadata
+    properties come from the row the run was loaded with; config, summary,
+    sequences, artifacts, logs and source are fetched when first asked for.
+    ``run[tag]`` returns a lazy ``DataRef``.
+
+    Example:
+        ```python
+        run = reader.run("a1b2c3")
+        run.params["lr"], run.final["val.acc"]
+        run.sequence("train.loss").values
+        img = run.artifact("samples", step=1000)
+        ```
+    """
 
     def __init__(self, raw: dict[str, Any], backend: _Backend) -> None:
         self._raw = raw
@@ -306,30 +466,39 @@ class Run:
 
     @property
     def id(self) -> str:
+        """The run id."""
         return self._raw["id"]
 
     @property
     def name(self) -> str | None:
+        """The display name, or None if the run has none."""
         return self._raw.get("display_name")
 
     @property
     def project(self) -> str:
+        """The id of the run's project."""
         return self._raw.get("project_id", "")
 
     @property
     def status(self) -> str:
+        """The run status, e.g. ``"running"``, ``"completed"``, ``"failed"``,
+        ``"killed"``, ``"stopped"`` or ``"archived"``."""
         return self._raw.get("status", "")
 
     @property
     def created_at(self) -> datetime | None:
+        """When the run started (UTC), or None if unknown."""
         return _parse_dt(self._raw.get("created_at"))
 
     @property
     def ended_at(self) -> datetime | None:
+        """When the run finished (UTC), or None while it is running."""
         return _parse_dt(self._raw.get("ended_at"))
 
     @property
     def duration(self) -> timedelta | None:
+        """Time from ``created_at`` to ``ended_at``, or to now while
+        ``ended_at`` is unset; None if the start time is unknown."""
         start = self.created_at
         end = self.ended_at or datetime.now(timezone.utc)
         if start is None:
@@ -338,6 +507,7 @@ class Run:
 
     @property
     def tags(self) -> list[str]:
+        """The run's tags."""
         return _parse_json(self._raw.get("tags")) or []
 
     def _key_values(self, table: str) -> dict[str, Any]:
@@ -349,6 +519,9 @@ class Run:
 
     @property
     def params(self) -> dict[str, Any]:
+        """The run's config (values recorded with ``run.config(...)``), keyed
+        by flattened dotted keys (e.g. ``"optim.lr"``). Fetched on first
+        access, then cached."""
         if self._params is None:
             self._params = self._key_values("params")
         return self._params
@@ -364,18 +537,19 @@ class Run:
     def final(self) -> dict[str, Any]:
         """Each metric's final value, exactly as the UI's runs table shows it:
         the last scalar point, replaced by a ``track(..., summary=)`` rule,
-        replaced by an explicit :attr:`summary` key."""
+        replaced by an explicit ``summary`` key."""
         if "values" not in self._raw:
             self._raw["values"] = self._backend.get_run(self.id)["run"]["values"]
         return dict(self._raw["values"])
 
     @property
     def config(self) -> dict[str, Any]:
-        """Alias of :attr:`params` (R0: the write side is ``run.config(...)``)."""
+        """Alias of ``params`` (the write side is ``run.config(...)``)."""
         return self.params
 
     @property
     def git(self) -> GitInfo | None:
+        """The git commit the run started from, or None if not captured."""
         sha = self._raw.get("git_sha")
         if not sha:
             return None
@@ -388,27 +562,39 @@ class Run:
 
     @property
     def hostname(self) -> str | None:
+        """The host the run ran on, or None if not captured."""
         return self._raw.get("hostname")
 
     @property
     def group(self) -> str | None:
+        """The run's group label, or None."""
         return self._raw.get("group")
 
     @property
     def job_type(self) -> str | None:
+        """The run's job type (e.g. ``"train"``), or None."""
         return self._raw.get("job_type")
 
     @property
     def notes(self) -> str | None:
+        """The run's free-text notes, or None."""
         return self._raw.get("notes")
 
     # ---- Sequences ----
 
     def history(self, keys: list[str] | None = None) -> Any:
-        """Scalar history as a wide pandas DataFrame: one row per step, one
-        column per sequence name (None: all scalar sequences).
+        """Scalar history as a wide pandas DataFrame.
 
         Needs the ``[export]`` extra.
+
+        Args:
+            keys: Sequence names to include (None: all scalar sequences).
+
+        Returns:
+            A DataFrame indexed by ``step`` with one column per sequence name.
+
+        Raises:
+            ImportError: pandas is not installed.
         """
         long = _history_frame(self._backend, [self], keys)
         wide = long.pivot(index="step", columns="name", values="value")
@@ -416,6 +602,11 @@ class Run:
         return wide
 
     def sequences(self) -> list[SequenceInfo]:
+        """List the run's sequences.
+
+        Returns:
+            One ``SequenceInfo`` per sequence name, sorted by name.
+        """
         rows = self._backend.list_sequences(self.id)
         return [SequenceInfo(**r) for r in rows]
 
@@ -423,6 +614,23 @@ class Run:
         self, name: str, *,
         step_from: int | None = None, step_to: int | None = None,
     ) -> Sequence:
+        """Fetch the points of one sequence.
+
+        Args:
+            name: Sequence name (e.g. ``"train.loss"``).
+            step_from: Only points with ``step >= step_from``.
+            step_to: Only points with ``step <= step_to`` (inclusive).
+
+        Returns:
+            The points in step order; an empty ``Sequence`` when the
+            run has no sequence of that name.
+
+        Example:
+            ```python
+            loss = run.sequence("train.loss", step_from=1000)
+            print(loss.steps[0], loss.values[-1])
+            ```
+        """
         rows = self._backend.get_sequence(
             self.id, name,
             step_from=step_from, step_to=step_to,
@@ -440,13 +648,15 @@ class Run:
     def eval(self, expr: str, *, domain: Any = None) -> Any:
         """Evaluate a cairn expression (``cairn.expr``) on this run.
 
-        Returns the scalar value, or a :class:`cairn.expr.Series` (``steps``,
+        Returns the scalar value, or a ``cairn.expr.Series`` (``steps``,
         ``values``) for a series expression. An as-of join between series
-        with different steps emits a :class:`cairn.expr.ExprWarning`.
-        Raises :class:`cairn.expr.ExprError` on parse/type errors::
+        with different steps emits a ``cairn.expr.ExprWarning``.
+        Raises ``cairn.expr.ExprError`` on parse/type errors:
 
-            run.eval("last(val.loss) - min(val.loss)")
-            run.eval("ema(loss, 0.9)")
+        ```python
+        run.eval("last(val.loss) - min(val.loss)")
+        run.eval("ema(loss, 0.9)")
+        ```
         """
         import warnings
 
@@ -458,6 +668,12 @@ class Run:
     # ---- Artifacts ----
 
     def artifacts(self) -> list[ArtifactInfo]:
+        """List the run's artifacts: named artifacts (newest first), then
+        the media points of its sequences (by name, then step).
+
+        Returns:
+            One ``ArtifactInfo`` per stored artifact and step.
+        """
         data = self._backend.list_artifacts(self.id)
         result = []
         for r in data.get("named", []):
@@ -502,7 +718,18 @@ class Run:
         return max(matches, key=lambda a: a.get("step") if a.get("step") is not None else -1)
 
     def artifact_bytes(self, name: str, step: int | None = None) -> bytes:
-        """Download an artifact's raw bytes (no deserialization)."""
+        """Download an artifact's raw bytes (no deserialization).
+
+        Args:
+            name: Artifact or sequence name.
+            step: The step to fetch (None: the highest step).
+
+        Returns:
+            The stored bytes.
+
+        Raises:
+            KeyError: The run has no artifact of that name (at that step).
+        """
         a = self._find_artifact(name, step)
         return self._backend.get_artifact_bytes(a["hash"])
 
@@ -519,12 +746,22 @@ class Run:
         - ``video``     → np.ndarray (T, H, W, C)
         - ``tensor``    → np.ndarray
         - ``text``      → str
-        - ``table``     → ``{"columns", "data"}``; media cells are :class:`MediaRef`
+        - ``table``     → ``{"columns", "data"}``; media cells are ``MediaRef``
         - ``histogram`` → ``(counts: np.ndarray, edges: np.ndarray)``
         - ``figure``    → PIL.Image (rasterized; use ``artifact_bytes`` for source)
 
         For unknown types, falls back to raw bytes. Use ``artifact_bytes()``
         explicitly when you want raw bytes regardless of type.
+
+        Args:
+            name: Artifact or sequence name.
+            step: The step to fetch (None: the highest step).
+
+        Returns:
+            The decoded artifact.
+
+        Raises:
+            KeyError: The run has no artifact of that name (at that step).
         """
         from .handlers.registry import default_registry
 
@@ -555,7 +792,17 @@ class Run:
         return handler.deserialize(data, meta or {})
 
     def artifact_path(self, name: str, step: int | None = None) -> Path | None:
-        """Return the local file path for an artifact (local backend only)."""
+        """The local file holding an artifact's bytes (local repo only).
+
+        Args:
+            name: Artifact or sequence name.
+            step: The step to look up (None: the first entry of that name
+                found, not necessarily the highest step).
+
+        Returns:
+            The blob's path, or None when there is no such artifact or the
+            Reader is connected to a server.
+        """
         arts = self._backend.list_artifacts(self.id)
         for pool in (arts.get("named", []), arts.get("from_sequences", [])):
             for a in pool:
@@ -564,7 +811,19 @@ class Run:
         return None
 
     def save_artifact(self, name: str, dest: str | Path, step: int | None = None) -> Path:
-        """Download an artifact and save to a file."""
+        """Download an artifact and save to a file.
+
+        Args:
+            name: Artifact or sequence name.
+            dest: The file to write.
+            step: The step to fetch (None: the highest step).
+
+        Returns:
+            ``dest`` as a ``Path``.
+
+        Raises:
+            KeyError: The run has no artifact of that name (at that step).
+        """
         data = self.artifact(name, step=step)
         path = Path(dest)
         path.write_bytes(data)
@@ -576,6 +835,17 @@ class Run:
         self, *, stream: str | None = None, search: str | None = None,
         limit: int = 10_000,
     ) -> list[LogLine]:
+        """Fetch the run's captured stdout/stderr lines, oldest first.
+
+        Args:
+            stream: Only lines of this stream (``"stdout"`` or ``"stderr"``).
+            search: Only lines containing this text.
+            limit: At most this many lines (the first ones). A server
+                accepts at most 10,000.
+
+        Returns:
+            The matching lines.
+        """
         rows, _ = self._backend.get_logs(
             self.id, stream=stream, search=search, limit=limit, offset=0,
         )
@@ -584,6 +854,11 @@ class Run:
     # ---- Source ----
 
     def source_tree(self) -> list[SourceFile] | None:
+        """List the files of the run's source snapshot.
+
+        Returns:
+            The snapshot's files, or None if the run has no snapshot.
+        """
         data = self._backend.get_source_tree(self.id)
         if data is None:
             return None
@@ -591,6 +866,16 @@ class Run:
         return [SourceFile(path=f["path"], size=f["size"], sha256=f.get("sha256")) for f in files]
 
     def source_file(self, path: str) -> str | None:
+        """Read one file of the run's source snapshot.
+
+        Args:
+            path: The file's path, as ``source_tree`` lists it.
+
+        Returns:
+            The file's text, or None if the run has no snapshot or the file
+            is not in it. Locally, a non-UTF-8 file is decoded with
+            replacement characters; a server returns it base64-encoded.
+        """
         return self._backend.get_source_file(self.id, path)
 
     # ---- Versioned Artifact Inputs/Outputs ----
@@ -605,13 +890,19 @@ class Run:
 
     def edit(self) -> RunEditor:
         """An editing handle for this run (config, summary, tags, name,
-        notes). Use it as a context manager, or ``close()`` it::
+        notes). Use it as a context manager, or ``close()`` it:
 
-            with reader.run(run_id).edit() as e:
-                e.set_summary(test_acc=0.93)
-                e.add_tag("best")
+        ```python
+        with reader.run(run_id).edit() as e:
+            e.set_summary(test_acc=0.93)
+            e.add_tag("best")
+        ```
 
-        Raises ``ValueError`` for a Reader over an exported ``.zip``.
+        Returns:
+            A ``RunEditor`` for this run.
+
+        Raises:
+            ValueError: The Reader reads an exported ``.zip`` archive.
         """
         return RunEditor(self, self._backend.edit_target)
 
@@ -619,10 +910,10 @@ class Run:
         name = self.name or self.id
         return f"Run({name!r}, status={self.status!r}, project={self.project!r})"
 
-    # ---- Lazy data handles (WS-PYAPI) ----
+    # ---- Lazy data handles ----
 
     def __getitem__(self, tag: str) -> DataRef:
-        """``run[tag]`` — a lazy :class:`DataRef` over a sequence/artifact tag.
+        """``run[tag]`` — a lazy ``DataRef`` over a sequence/artifact tag.
 
         Does not fetch anything; resolves only when the handle is rendered
         (``cairn.plot`` element builders) or explicitly ``.resolve()``d.
@@ -634,11 +925,17 @@ class Run:
 
 
 class RunEditor:
-    """Write access to one existing run, from :meth:`Run.edit`.
+    """Write access to one existing run, from ``Run.edit``.
 
     Writes go through the same transport resolution as ``cairn.Run``: the
     repo DB directly, or the server that holds the repo (or the ``cairn://``
-    server the Reader reads). The :class:`Run` it came from sees the edits.
+    server the Reader reads). Each call writes immediately. The ``Run``
+    it came from sees the edits. Use it as a context manager, or call
+    ``close`` when done.
+
+    Args:
+        run: The run to edit.
+        target: Where to write: a ``.cairn/`` directory or a server URL.
     """
 
     def __init__(self, run: Run, target: str) -> None:
@@ -648,14 +945,30 @@ class RunEditor:
         self._transport, _ = open_transport(target)
 
     def set_config(self, *args: Any, **kwargs: Any) -> None:
-        """Merge keys into the run's config (like ``cairn.Run.config``)."""
+        """Merge keys into the run's config (like ``cairn.Run.config``).
+
+        Args:
+            *args: Mappings of keys to values, merged in order.
+            **kwargs: More keys, applied last.
+
+        Raises:
+            TypeError: A positional argument is not a mapping.
+        """
         values = _merge_mappings("set_config", args, kwargs)
         if values:
             self._transport.post_params(self._run.id, values)
             self._run._params = None
 
     def set_summary(self, *args: Any, **kwargs: Any) -> None:
-        """Merge keys into the run's summary (like ``cairn.Run.summary``)."""
+        """Merge keys into the run's summary (like ``cairn.Run.summary``).
+
+        Args:
+            *args: Mappings of keys to values, merged in order.
+            **kwargs: More keys, applied last.
+
+        Raises:
+            TypeError: A positional argument is not a mapping.
+        """
         values = _merge_mappings("set_summary", args, kwargs)
         if values:
             self._transport.post_summary(self._run.id, values)
@@ -663,8 +976,16 @@ class RunEditor:
             self._run._raw.pop("values", None)
 
     def delete_keys(self, which: str, keys: list[str]) -> None:
-        """Delete ``keys`` from ``"config"`` or ``"summary"``. Keys are the
-        dotted keys; a key also removes the keys nested under it."""
+        """Delete keys from the run's config or summary.
+
+        Args:
+            which: ``"config"`` or ``"summary"``.
+            keys: Dotted keys to delete; a key also removes the keys nested
+                under it.
+
+        Raises:
+            ValueError: ``which`` is neither ``"config"`` nor ``"summary"``.
+        """
         tables = {"config": "params", "summary": "summary"}
         if which not in tables:
             raise ValueError(f"which must be 'config' or 'summary', got {which!r}")
@@ -674,27 +995,52 @@ class RunEditor:
         self._run._raw.pop("values", None)
 
     def set_tags(self, tags: list[str]) -> None:
-        """Replace the run's tags."""
+        """Replace the run's tags.
+
+        Args:
+            tags: The new tags.
+        """
         self._transport.set_tags(self._run.id, list(tags))
         self._run._raw["tags"] = json.dumps(list(tags))
 
     def add_tag(self, tag: str) -> None:
+        """Add a tag, unless the run already has it.
+
+        Args:
+            tag: The tag to add.
+        """
         tags = self._run.tags
         if tag not in tags:
             self.set_tags([*tags, tag])
 
     def remove_tag(self, tag: str) -> None:
+        """Remove a tag (a no-op if the run does not have it).
+
+        Args:
+            tag: The tag to remove.
+        """
         self.set_tags([t for t in self._run.tags if t != tag])
 
     def rename(self, name: str) -> None:
+        """Set the run's display name.
+
+        Args:
+            name: The new name.
+        """
         self._transport.rename_run(self._run.id, name)
         self._run._raw["display_name"] = name
 
     def set_notes(self, notes: str) -> None:
+        """Replace the run's notes.
+
+        Args:
+            notes: The new notes.
+        """
         self._transport.set_notes(self._run.id, notes)
         self._run._raw["notes"] = notes
 
     def close(self) -> None:
+        """Close the connection used for writing (edits are already saved)."""
         self._transport.close()
 
     def __enter__(self) -> RunEditor:
@@ -783,10 +1129,13 @@ def _get_field_value(run: "Run", field: str, sub_field: str | None) -> Any:
     if field == "metrics":
         if sub_field is None:
             return None
-        seq = run.sequence(sub_field)
-        if seq is None or not seq.values:
-            return None
-        return seq.values[-1]  # final value
+        # The resolved final value (``Run.final``): the value the runs table
+        # shows, not merely the last point. Python keywords cannot contain
+        # dots, so ``metrics__val__acc`` also finds the metric ``val.acc``.
+        final = run.final
+        if sub_field in final:
+            return final[sub_field]
+        return final.get(sub_field.replace("__", "."))
     if field == "params":
         # params__lr or just lr (param fallback handled at parse time)
         return run.params.get(sub_field) if sub_field else None
@@ -805,7 +1154,7 @@ _HISTORY_COLUMNS = ["run_id", "run_name", "name", "step", "wall_time", "value"]
 
 
 def _history_frame(backend: _Backend, runs: list[Run], keys: list[str] | None) -> Any:
-    """Long-format scalar history of ``runs`` (see :meth:`RunQuery.history`)."""
+    """Long-format scalar history of ``runs`` (see ``RunQuery.history``)."""
     try:
         import pandas as pd
     except ImportError as exc:
@@ -830,7 +1179,7 @@ def _history_frame(backend: _Backend, runs: list[Run], keys: list[str] | None) -
 
 
 class _RunExprContext:
-    """A :mod:`cairn.expr` context over one :class:`Run`; series are fetched
+    """A ``cairn.expr`` context over one ``Run``; series are fetched
     once per context."""
 
     def __init__(self, run: Run) -> None:
@@ -862,34 +1211,55 @@ class _RunExprContext:
 
 
 class RunQuery:
-    """Lazy query builder for runs. Executes on .list()/.first()/.last()/iteration.
+    """Lazy query builder for runs, from ``Reader.runs``.
 
-    Filters use Django-style ``field__operator=value`` suffixes::
+    Builder methods (``filter``, ``where``, ``sort``,
+    ``limit``) return a new query and leave this one unchanged. The
+    query runs on ``list``, ``first``, ``last``,
+    ``history``, iteration and ``len()``; each of these runs it anew.
 
-        reader.runs(project="x").filter(
-            status="completed",                    # exact match (default op)
-            name__contains="my-run",               # substring
-            tags__contains="best",                 # list membership
-            lr__gt=1e-4,                           # > on a param
-            lr__lt=1e-2,
-            status__in=["completed", "killed"],    # set membership
-            metrics__loss__lt=0.1,                 # final scalar value
-            hostname__startswith="gpu",
-        )
+    Filters use Django-style ``field__operator=value`` suffixes:
+
+    ```python
+    reader.runs(project="x").filter(
+        status="completed",                    # exact match (default op)
+        name__contains="my-run",               # substring
+        tags__contains="best",                 # list membership
+        lr__gt=1e-4,                           # > on a param
+        lr__lt=1e-2,
+        status__in=["completed", "killed"],    # set membership
+        metrics__loss__lt=0.1,                 # final value (Run.final)
+        hostname__startswith="gpu",
+    )
+    ```
 
     Supported operators: ``exact``, ``iexact``, ``gt``, ``gte``, ``lt``,
     ``lte``, ``in``, ``contains``, ``icontains``, ``startswith``,
     ``endswith``, ``isnull``.
 
-    Special field roots: ``metrics`` (final scalar value), ``params``
-    (explicit param lookup), ``summary`` (a ``run.summary`` value), ``tags``
-    (list membership). Any other root
-    is treated as a param key.
+    Special field roots: ``metrics`` (the metric's final value as
+    ``Run.final`` resolves it: the last point, replaced by a
+    ``track(..., summary=)`` rule, replaced by an explicit summary key; write
+    ``metrics__val__acc`` for the metric ``val.acc``), ``params`` (explicit
+    param lookup), ``summary`` (a ``run.summary`` value), ``tags`` (list
+    membership). Any other root is treated as a param key.
 
-    ``where(expr)`` adds a :mod:`cairn.expr` expression filter; a run matches
-    when the (scalar) expression is truthy and not None::
+    ``where(expr)`` adds a ``cairn.expr`` expression filter; a run matches
+    when the (scalar) expression is truthy and not None:
 
-        reader.runs("x").where("last(val.acc) > 0.9 and config.opt == 'adam'")
+    ```python
+    reader.runs("x").where("last(val.acc) > 0.9 and config.opt == 'adam'")
+    ```
+
+    Args:
+        backend: The Reader's storage backend.
+        project: Only runs of this project id.
+        status: Only runs with this status.
+        filters: ``(field, operator, sub_field, value)`` filters.
+        sort_col: The column to order by.
+        sort_desc: Order descending.
+        limit_n: At most this many runs.
+        wheres: ``(source, parsed expression)`` filters.
     """
 
     def __init__(
@@ -931,7 +1301,15 @@ class RunQuery:
     def filter(self, **kwargs: Any) -> RunQuery:
         """Add filters using Django-style ``field__operator=value`` syntax.
 
-        See class docstring for the full operator list and examples.
+        See the class docstring for the full operator list and examples.
+        All filters must match. A run whose value cannot be compared (e.g. a
+        missing param under ``gt``) does not match.
+
+        Args:
+            **kwargs: ``field__operator=value`` filters.
+
+        Returns:
+            A new query with the filters added.
         """
         new_filters = list(self._filters)
         new_status = self._status
@@ -945,10 +1323,20 @@ class RunQuery:
         return self._clone(status=new_status, filters=new_filters)
 
     def where(self, expr: str) -> RunQuery:
-        """Keep runs for which the :mod:`cairn.expr` expression is truthy
-        (None, e.g. a missing value, does not match). The expression must be
-        a scalar; it is parsed and type-checked here, so a bad one raises
-        :class:`cairn.expr.ExprError` right away."""
+        """Keep runs for which the ``cairn.expr`` expression is truthy
+        (None, e.g. a missing value, does not match).
+
+        Args:
+            expr: A scalar expression, e.g. ``"last(val.acc) > 0.9"``.
+
+        Returns:
+            A new query with the expression filter added.
+
+        Raises:
+            cairn.expr.ExprError: The expression does not parse or
+                type-check, or is a series rather than a scalar. It is
+                checked here, before the query runs.
+        """
         node = _expr.parse(expr)
         if _expr.check(node).shape == "series":
             raise _expr.ExprError(
@@ -958,9 +1346,32 @@ class RunQuery:
         return self._clone(wheres=[*self._wheres, (expr, node)])
 
     def sort(self, column: str, *, desc: bool = True) -> RunQuery:
+        """Order the runs by a column (the default is ``created_at``,
+        newest first).
+
+        Note:
+            Only a local repo or archive applies the order; a server
+            returns runs newest first regardless.
+
+        Args:
+            column: ``"created_at"``, ``"ended_at"``, ``"display_name"`` or
+                ``"status"``; any other column orders by ``created_at``.
+            desc: Descending order.
+
+        Returns:
+            A new query with this order.
+        """
         return self._clone(sort_col=column, sort_desc=desc)
 
     def limit(self, n: int) -> RunQuery:
+        """Return at most ``n`` runs (counted after filtering).
+
+        Args:
+            n: The maximum number of runs.
+
+        Returns:
+            A new query with this limit.
+        """
         return self._clone(limit_n=n)
 
     def list(self) -> list[Run]:
@@ -968,6 +1379,9 @@ class RunQuery:
 
         Filters other than ``status`` run client-side, so with filters every
         page of runs is fetched first and the limit applies after filtering.
+
+        Returns:
+            The matching runs, in the query's order.
         """
         runs: list[dict[str, Any]] = []
         pushdown = (
@@ -1021,17 +1435,48 @@ class RunQuery:
     def history(self, keys: list[str] | None = None) -> Any:
         """Scalar history of every matching run as a long pandas DataFrame.
 
-        Columns: ``run_id, run_name, name, step, wall_time, value``.
-        ``keys`` selects sequence names (None: all scalar sequences).
         Needs the ``[export]`` extra.
+
+        Args:
+            keys: Sequence names to include (None: all scalar sequences).
+
+        Returns:
+            A DataFrame with one row per point and the columns ``run_id``,
+            ``run_name``, ``name``, ``step``, ``wall_time`` (UTC datetime)
+            and ``value``.
+
+        Raises:
+            ImportError: pandas is not installed.
         """
         return _history_frame(self._backend, self.list(), keys)
 
     def first(self) -> Run | None:
+        """The first matching run in ascending order of the sort column
+        (by default the oldest), whatever ``desc`` ``sort`` set.
+
+        Note:
+            A server returns runs newest first whatever the order asked
+            for, so against a server this is the newest run, like
+            ``last``.
+
+        Returns:
+            The run, or None if no run matches.
+        """
         runs = self._clone(sort_desc=False, limit_n=self._limit_n or 1000).list()
         return runs[0] if runs else None
 
     def last(self) -> Run | None:
+        """The first matching run in descending order of the sort column
+        (by default the newest), whatever ``desc`` ``sort`` set.
+
+        Returns:
+            The run, or None if no run matches.
+
+        Example:
+            ```python
+            run = reader.runs("demo").filter(status="completed").last()
+            ```
+        """
         runs = self._clone(sort_desc=True, limit_n=self._limit_n or 1000).list()
         return runs[0] if runs else None
 
@@ -1044,8 +1489,20 @@ class RunQuery:
         ``.../api/query?run=latest&tag=render&project=demo&lr__gt=0.0001``.
 
         Requires a server target (the URL is fetched over HTTP); raises on a
-        local-only backend. ``live=False`` resolves once and returns the baked
-        immutable digest URL.
+        local-only backend.
+
+        Args:
+            tag: The sequence or artifact name.
+            live: True for a URL that resolves on every fetch; False to
+                resolve once now and return the immutable digest URL.
+            step: ``"latest"`` or a step number.
+
+        Returns:
+            The URL.
+
+        Raises:
+            ValueError: The query has ``where`` filters, or the Reader
+                is not connected to a server.
         """
         if self._wheres:
             raise ValueError("latest_url() cannot express where() filters; use filter(...)")
@@ -1601,17 +2058,35 @@ def _load_zip_to_tempdir(zip_path: Path) -> tuple[Path, Path]:
 # ---------------------------------------------------------------------------
 
 class Reader:
-    """Read-only interface to a Cairn repo, server, or exported ZIP.
+    """Read access to a Cairn repo, server, or exported ZIP.
+
+    Reading never changes the data; to edit a run (config, summary, tags,
+    name, notes), use ``Run.edit``. Use the Reader as a context manager,
+    or call ``close`` when done.
 
     Args:
-        repo: Path to a ``.cairn/`` directory, ``cairn://host:port`` for an
-            HTTP server, or a path to an exported ``.zip`` archive.
-        cache: For HTTP repos, cache downloaded artifact bytes by SHA256
+        repo: Path to a ``.cairn/`` directory, ``cairn://host:port`` (or an
+            ``http(s)://`` URL) for a server, or a path to an exported
+            ``.zip`` archive. If not specified, auto-detects from
+            ``cairn.configure``, env and config file (same logic as
+            ``cairn.Run``), falling back to ``./.cairn``.
+        cache: For a server, cache downloaded artifact bytes by SHA-256
             so repeated reads don't re-download. Default True.
         cache_dir: Override cache location. By default uses
             ``<nearest .cairn>/cache/`` if found, else the user cache dir.
 
-    If not specified, auto-detects from env/config (same logic as ``cairn.Run``).
+    Raises:
+        FileNotFoundError: ``repo`` is a ``.zip`` path that does not exist.
+        ValueError: ``repo`` is a ``.zip`` that is not a Cairn export.
+
+    Example:
+        ```python
+        import cairn
+
+        with cairn.Reader("cairn://localhost:8000") as r:
+            for run in r.runs("demo").filter(status="completed"):
+                print(run.name, run.final.get("val.acc"))
+        ```
     """
 
     def __init__(
@@ -1641,7 +2116,11 @@ class Reader:
             )
 
     def projects(self) -> list[Project]:
-        """List all projects."""
+        """List all projects.
+
+        Returns:
+            The projects, most recently active first.
+        """
         rows = self._backend.list_projects()
         return [Project(
             id=r["id"], name=r.get("name", r["id"]),
@@ -1652,23 +2131,61 @@ class Reader:
         ) for r in rows]
 
     def runs(self, project: str | None = None) -> RunQuery:
-        """Start a lazy run query, optionally filtered by project."""
+        """Start a lazy run query, optionally filtered by project.
+
+        Args:
+            project: Only runs of this project id (None: all projects).
+
+        Returns:
+            A ``RunQuery`` over the runs, newest first.
+        """
         return RunQuery(self._backend, project=project)
 
     def run(self, run_id: str) -> Run:
-        """Get a specific run by ID."""
+        """Get a specific run by ID.
+
+        Args:
+            run_id: The run id.
+
+        Returns:
+            The run.
+
+        Raises:
+            KeyError: No such run in a local repo or archive. (Against a
+                server, the HTTP error is raised instead.)
+        """
         data = self._backend.get_run(run_id)
         return Run(data["run"], self._backend)
 
     # ---- Versioned Artifact Registry ----
 
     def artifact_families(self, project: str, *, type: str | None = None) -> list[dict[str, Any]]:
-        """List artifact families in a project, optionally filtered by type."""
+        """List the versioned artifact families of a project.
+
+        Args:
+            project: Project name or id (normalised to an id: lowercase,
+                spaces become dashes).
+            type: Only families of this artifact type.
+
+        Returns:
+            One dict per family.
+        """
         project_id = project.lower().replace(" ", "-")
         return self._backend.list_artifact_families(project_id, type_filter=type)
 
     def artifact_versions(self, family_name: str, *, project: str) -> list[dict[str, Any]]:
-        """List all versions of an artifact family."""
+        """List all versions of a versioned artifact family.
+
+        Args:
+            family_name: The family's name.
+            project: Project name or id (normalised to an id).
+
+        Returns:
+            One dict per version.
+
+        Raises:
+            KeyError: The project has no family of that name.
+        """
         project_id = project.lower().replace(" ", "-")
         # Resolve family name to id first
         ref = f"{family_name}:latest"
@@ -1688,12 +2205,33 @@ class Reader:
         return self._backend.list_artifact_versions(family_id)
 
     def lineage(self, project: str, **kwargs: Any) -> dict[str, Any]:
-        """Get artifact lineage graph for a project."""
+        """Get the artifact lineage graph of a project.
+
+        Args:
+            project: Project name or id (normalised to an id).
+            **kwargs: ``family_id`` (only that family's versions) and
+                ``depth``.
+
+        Returns:
+            ``{"nodes": [...], "edges": [...]}``: artifact-version and run
+            nodes, and ``produced``/``consumed``/``forked`` edges.
+        """
         project_id = project.lower().replace(" ", "-")
         return self._backend.get_lineage(project_id, **kwargs)
 
     def resolve_and_download_artifact(self, project_id: str, ref: str) -> Any:
-        """Resolve an artifact ref and download+deserialize the content."""
+        """Resolve a versioned artifact ref, then download and decode it.
+
+        Args:
+            project_id: The project id (not normalised).
+            ref: ``"name:alias"`` or ``"name:vN"``, e.g. ``"model:latest"``
+                or ``"model:v3"``.
+
+        Returns:
+            A ``cairn.ArtifactDir`` for a multi-file
+            artifact; else the value decoded by its type's handler, or the
+            raw bytes when it has none.
+        """
         info = self._backend.resolve_artifact_ref(project_id, ref)
         data = self._backend.get_artifact_bytes(info["hash"])
         if info.get("mime_type") == MANIFEST_MIME:

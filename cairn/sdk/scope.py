@@ -4,24 +4,24 @@ A component knows best what is worth recording about itself, so it implements
 ``__cairn_track__(self, scope)`` and calls ``scope.track(value, name)``. The
 caller never re-lists another object's internals:
 
-.. code-block:: python
+```python
+class Model:
+    def __cairn_track__(self, scope):
+        scope.track(self.rms(), "rms")
+        scope.track(self.loss, "loss", summary="min")  # lower is better
+        scope.track(self.encoding, "encoding")   # recurses
+        scope.track(self.render(), "pred")
 
-    class Model:
-        def __cairn_track__(self, scope):
-            scope.track(self.rms(), "rms")
-            scope.track(self.loss, "loss", summary="min")  # lower is better
-            scope.track(self.encoding, "encoding")   # recurses
-            scope.track(self.render(), "pred")
+class Dataset:
+    def __cairn_track__(self, scope):
+        scope.config(n_samples=len(self))        # a property, not a metric
 
-    class Dataset:
-        def __cairn_track__(self, scope):
-            scope.config(n_samples=len(self))        # a property, not a metric
+run.track(model, "model", step=it)               # walks the whole tree
+```
 
-    run.track(model, "model", step=it)               # walks the whole tree
-
-A ``Scope`` is precisely :meth:`Run.track` with ``step`` pre-bound
+A ``Scope`` is precisely ``Run.track`` with ``step`` pre-bound
 plus a name prefix — nothing more. ``Run`` itself is the root scope, which is why
-``run.track`` can walk a component with no extra API; :meth:`Run.scope` exists for
+``run.track`` can walk a component with no extra API; ``Run.scope`` exists for
 the case recursion cannot reach, namely handing a bound logger to a plain
 function that is not a component.
 
@@ -30,8 +30,6 @@ to guess whether a given ``track`` means *this* protocol, which is the signature
 sniffing this design exists to delete. ``__cairn_track__`` cannot collide, so the
 test is one ``hasattr``. Same shape as ``__array__``, ``__rich__`` and cairn's own
 ``_repr_html_``.
-
-Full design: docs/superpowers/specs/2026-09-14-scope-track-protocol-design.md
 """
 
 from __future__ import annotations
@@ -66,7 +64,7 @@ def join_names(prefix: str, name: str) -> str:
 class Scope:
     """A bound logging position: run + name prefix + step.
 
-    Never constructed directly — obtain one from :meth:`Run.scope`, or receive one
+    Never constructed directly — obtain one from ``Run.scope``, or receive one
     in ``__cairn_track__``.
     """
 
@@ -135,7 +133,7 @@ class Scope:
         call site. Because the step is bound, skipping does NOT slide the
         surviving points onto the wrong iterations.
 
-        ``summary`` and ``x`` set a scalar leaf's rule, as in :meth:`Run.track`.
+        ``summary`` and ``x`` set a scalar leaf's rule, as in ``Run.track``.
         The rule applies to the leaf's FULL (prefixed) name, but ``x`` is taken
         as a full name itself — it is never prefixed — so a component can
         say ``scope.track(loss, "loss", summary="min", x="epoch")`` and plot
@@ -189,7 +187,7 @@ class Scope:
         ``data.augment`` on the run, beside every other component's.
 
         This exists because a property is not a metric. Routed through
-        :meth:`track` it would become a one-point sequence, get a step it never
+        ``track`` it would become a one-point sequence, get a step it never
         had, and render as a plot of a single dot — which is how a dataset ends
         up looking like a training curve.
         """
@@ -198,7 +196,7 @@ class Scope:
     def summary(self, *args: Any, **kwargs: Any) -> None:
         """Record RESULTS of this component, under the scope's name.
 
-        The counterpart to :meth:`config`, with :meth:`Run.summary`'s meaning:
+        The counterpart to ``config``, with ``Run.summary``'s meaning:
         a number the component is claiming, not a series it is emitting.
         """
         self._run.summary(self._prefixed("scope.summary", args, kwargs))

@@ -1,8 +1,8 @@
 """Mount the cairn-ui viewer onto a FastAPI app.
 
 FastAPI wiring only: every path and layout question is answered by
-:mod:`cairn.viewer`. Both ``create_app(mount_ui=True)`` and the remote proxy go
-through :func:`mount_viewer`, so ``proxy.py`` no longer reaches into ``app.py``
+``cairn.viewer``. Both ``create_app(mount_ui=True)`` and the remote proxy go
+through ``mount_viewer``, so ``proxy.py`` no longer reaches into ``app.py``
 for a private helper.
 
 Nothing here builds a path from a string literal — that is what keeps the

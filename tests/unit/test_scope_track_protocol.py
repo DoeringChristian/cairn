@@ -1,7 +1,5 @@
 """`cairn.Scope` + the `__cairn_track__` protocol.
 
-Spec: docs/superpowers/specs/2026-09-14-scope-track-protocol-design.md
-
 A component records what is worth recording about ITSELF; the caller no longer
 re-lists another object's internals. `run.track` walks any value implementing
 `__cairn_track__`, threading the name prefix and the step down the tree.

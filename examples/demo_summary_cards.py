@@ -1,4 +1,4 @@
-"""Demo for Workstream E — summary cards (bar chart, scalar tile, comparer).
+"""Demo: summary cards (bar chart, scalar tile, comparison overview).
 
 Seeds four runs with distinct final scalar metrics + differing params so the
 BarChartCard, ScalarTileCard, and the Comparison Overview metrics/diff table
@@ -12,9 +12,10 @@ all have deterministic, self-explanatory data to render.
 
     # browse http://localhost:4315/
     # Open a project → Compare → create a comparison, add all four runs, then:
-    #   - Add card → Bar Chart → settings: metric = final.accuracy → bars sorted
-    #     descending, one per run, click a bar to select the run.
-    #   - Add card → Scalar Tile → metric = final.accuracy, Across runs = Best.
+    #   - Add card → Bar Chart → settings: Value = last(final.accuracy) (a
+    #     scalar expression, one number per run) → one bar per run, sorted by
+    #     value, descending.
+    #   - Add card → Scalar Tile → Value = last(final.accuracy), Across runs = Best.
     #   - Overview tab → Metrics table + "Only show differences" toggle.
 
 Each run trains for 40 steps; the four runs deliberately converge to different

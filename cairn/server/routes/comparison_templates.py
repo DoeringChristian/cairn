@@ -1,6 +1,6 @@
 """Server-side comparison-template persistence — CRUD, mirrors comparisons.py.
 
-Deviates from comparisons.py in one way (WS-TPL fix set item 2): DELETE 404s
+Deviates from comparisons.py in one way: DELETE 404s
 when the template doesn't exist, instead of silently no-oping.
 """
 

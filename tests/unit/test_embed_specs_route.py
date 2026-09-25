@@ -1,4 +1,4 @@
-"""Route-layer tests for the WS-EMBED spec store (/api/embed/specs).
+"""Route-layer tests for the embed card-spec store (/api/embed/specs).
 
 POST stores a card spec and returns a short content-hash `sid`; GET fetches
 it back. The store is in-memory and TTL'd (see cairn/server/embed_specs.py);

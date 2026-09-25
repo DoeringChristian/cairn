@@ -1,4 +1,4 @@
-"""Embed spec routes (WS-EMBED) — POST/GET a short-lived card spec by ``sid``.
+"""Embed spec routes — POST/GET a short-lived card spec by ``sid``.
 
 The ``/embed/card`` HTML entry (served by ``app.py``) renders ONE viewer card
 standalone in an iframe; it looks its card descriptor up here by ``?sid=``.

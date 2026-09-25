@@ -6,9 +6,9 @@ the UI resolves it), each card's explicit ``series[].runId``, the cell's run
 view, and run ids in card settings (a code-diff card's ``leftRunId``/
 ``rightRunId``). Source files are in scope only for the runs a code-diff card
 can show. Scope is live: it is recomputed from the report's current source,
-cached for :data:`SCOPE_TTL_S` per share.
+cached for ``SCOPE_TTL_S`` per share.
 
-:func:`resolve_run_selector_from_runs` is a port of cairn-ui's
+``resolve_run_selector_from_runs`` is a port of cairn-ui's
 ``resolveRunSelectorFromRuns`` (``src/lib/run-selector.ts``); both run the
 vectors in cairn-ui ``docs/schemas/run-selector-vectors.json``.
 
@@ -293,7 +293,7 @@ def compute_scope(db: Database, report: dict[str, Any]) -> ShareScope:
 
 
 class ScopeCache:
-    """Per-share scopes, each recomputed after :data:`SCOPE_TTL_S`."""
+    """Per-share scopes, each recomputed after ``SCOPE_TTL_S``."""
 
     def __init__(self, ttl_s: float = SCOPE_TTL_S) -> None:
         self._ttl = ttl_s

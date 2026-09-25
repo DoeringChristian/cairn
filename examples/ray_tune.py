@@ -14,11 +14,12 @@ works out of the box.
 
   - Without shared filesystem: use Cairn's HTTP transport instead::
 
-        # On the head node:
-        cairn server --port 4301
+        # On the head node (ingest on :4300, UI on :4301):
+        cairn server --ui
 
-        # In the trainable:
-        cairn.configure(repo="cairn://head-node:4301")
+        # In the trainable (auth is on by default, so also set
+        # CAIRN_TOKEN to the token the server prints):
+        cairn.configure(repo="cairn://head-node:4300")
         run = cairn.Run(project="ray-tune", name="...")
 
 Install Ray first::

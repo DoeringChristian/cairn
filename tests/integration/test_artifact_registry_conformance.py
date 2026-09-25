@@ -1,4 +1,4 @@
-"""Client ↔ server ARTIFACT-REGISTRY conformance (R0, refactor spec §6.4).
+"""Client ↔ server ARTIFACT-REGISTRY conformance.
 
 This suite exists because the registry client and server shipped with SIX
 route/op-name mismatches and zero coverage: every client method below hits a

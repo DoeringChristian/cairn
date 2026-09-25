@@ -292,7 +292,7 @@ def server_cmd(
     auth_enabled = not no_auth
     local_token = None
     if auth_enabled:
-        # Same-user local trust (refactor spec §7): see ui_cmd. The same
+        # Same-user local trust: see ui_cmd. The same
         # reusable token is printed below for UI/API copy-paste login.
         local_token = _auth.ensure_local_token(db, dd.root)
 
@@ -548,7 +548,7 @@ def ui_cmd(
     )
     local_token = None
     if auth_enabled:
-        # Same-user local trust (refactor spec §7): a token file in the data
+        # Same-user local trust: a token file in the data
         # dir lets same-account SDK runs upgrade to this server without
         # manual provisioning. Filesystem perms are the boundary.
         local_token = _auth.ensure_local_token(db, dd.root)
@@ -972,13 +972,12 @@ def import_tb_cmd(logdir: Path, project: str | None, repo: str | None) -> None:
 
 @main.command("sync")
 def sync_cmd() -> None:
-    """Replay orphaned run logs (and legacy spill) to their servers.
+    """Replay run logs that never reached their server.
 
-    R3 rebuild: the old command drained only the legacy spill dir and could
-    NOT replay the client WAL at all (it built a transport with no WAL and
-    scanned a different directory). This scans the WAL dir, reconstructs
-    each orphaned per-run log, resolves its recorded target (the WAL header;
-    falling back to the configured server), and drains it in order.
+    Scans the client write-ahead-log directory and sends each orphaned run
+    log, in order, to the server recorded in it (falling back to the
+    configured server). Then drains the spill directory of requests that
+    failed to send.
     """
     from .sdk.wal import WriteAheadLog, default_wal_dir
 
@@ -1005,7 +1004,7 @@ def sync_cmd() -> None:
         finally:
             t.close()
 
-    # Legacy spill dir (pre-R3 fallback payloads).
+    # Spill dir: requests the transport gave up on and wrote to disk.
     spill = default_spill_dir()
     if spill.exists():
         t = _client()
@@ -1023,7 +1022,7 @@ def sync_cmd() -> None:
 @main.command("configure")
 @click.option("--server", default=None, help="Server URL.")
 def configure_cmd(server: str | None) -> None:
-    """Write the config file with defaults."""
+    """Save the default server URL to the config file (prompts when ``--server`` is omitted)."""
     existing = _config.load_config_file()
     if server is None:
         server = click.prompt(
@@ -1070,7 +1069,7 @@ def token_group() -> None:
     """Manage auth tokens — operates directly on the local data dir's DB.
 
     Run this on the machine hosting the repo (there is no remote token-admin
-    API in v1); pair with ``--repo`` when it isn't ``./.cairn``.
+    API); pair with ``--repo`` when it isn't ``./.cairn``.
     """
 
 
@@ -1142,7 +1141,7 @@ def token_list_cmd(repo: Path | None) -> None:
     help="Path to the .cairn/ directory. Default: ./.cairn.",
 )
 def token_revoke_cmd(ident: str, repo: Path | None) -> None:
-    """Revoke a token by name or id (also drops any live sessions from it)."""
+    """Revoke a token by name or id, and every token derived from it (the per-browser tokens its login URL minted)."""
     _dd, db = _token_db(repo)
     try:
         if not _auth.revoke_token(db, ident):
@@ -1244,7 +1243,7 @@ def login_cmd(use_ssh: bool, server: str | None, key_path: Path | None, name: st
 
 _REPO_HELP = (
     "Path to a .cairn/ directory or cairn://host:port URL. "
-    "Default: ./.cairn if it exists, else env/config."
+    "Default: CAIRN_REPO / CAIRN_SERVER / the config file, else ./.cairn."
 )
 
 

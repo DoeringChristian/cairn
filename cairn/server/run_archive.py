@@ -1,21 +1,23 @@
 """Run archives: the ZIP that ``POST /api/export`` writes and both
 ``POST /api/import`` and ``cairn.Reader("runs.zip")`` read.
 
-Layout::
+Layout:
 
-    manifest.json                  {cairn_export_version, exported_at, run_ids}
-    sweeps.json                    [{sweep: row, trials: [row]}] for the runs' sweeps
-    artifact_registry.json         {families, versions, aliases, inputs}: the versions
-                                   the runs produced or consumed, their families and
-                                   aliases, and the runs' input records
-    artifacts/{hash}{ext}          blob bytes
-    artifacts/{hash}.meta.json     the artifacts row
-    {run_id}/run.json              {run, params, summary}
-    {run_id}/sequences.json        sequences rows (without run_id)
-    {run_id}/run_artifacts.json    run_artifacts rows (without run_id)
-    {run_id}/metric_defs.json      metric_defs rows (without run_id)
-    {run_id}/alerts.json           alerts rows
-    {run_id}/logs/*, {run_id}/source/*
+```text
+manifest.json                  {cairn_export_version, exported_at, run_ids}
+sweeps.json                    [{sweep: row, trials: [row]}] for the runs' sweeps
+artifact_registry.json         {families, versions, aliases, inputs}: the versions
+                               the runs produced or consumed, their families and
+                               aliases, and the runs' input records
+artifacts/{hash}{ext}          blob bytes
+artifacts/{hash}.meta.json     the artifacts row
+{run_id}/run.json              {run, params, summary}
+{run_id}/sequences.json        sequences rows (without run_id)
+{run_id}/run_artifacts.json    run_artifacts rows (without run_id)
+{run_id}/metric_defs.json      metric_defs rows (without run_id)
+{run_id}/alerts.json           alerts rows
+{run_id}/logs/*, {run_id}/source/*
+```
 
 Table rows are written whole (``SELECT *``) and restored by column name,
 keeping only the columns the target table has — a column added to ``runs``

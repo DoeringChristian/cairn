@@ -1,7 +1,8 @@
 """Live query URLs — a report that shows the freshest run every time it opens.
 
-Where ``report_cairn_plot.py`` *bakes* its image bytes inline (fully offline),
-THIS example references images by a **live query URL**: a stable
+Where a baked report embeds its image bytes inline (fully offline, e.g.
+``cp.Image(array)`` or ``cp.Image(run["train/render"])``), THIS example
+references images by a **live query URL**: a stable
 ``/api/query?...`` link that the cairn server re-resolves on every fetch to
 "the ``<tag>`` artifact of the latest matching run". Open the report tomorrow,
 after another training run has landed, and the panes show the NEW render — the
@@ -10,16 +11,20 @@ HTML never changed, only what the URL resolves to did.
 The URL is produced by ``cairn.query_url(...)`` (or, equivalently,
 ``reader.runs(...).latest_url(tag)`` / ``run[tag].url``). It needs a *server*
 target — a live query URL is only meaningful against a running cairn server
-(``cairn ui`` / ``cairn server``); baked/offline reports use the inline path in
-``report_cairn_plot.py`` instead.
+(``cairn ui`` / ``cairn server``); baked/offline reports use the inline path
+instead.
 
 Run (builds the HTML; no server needed just to emit it)::
 
     uv run --extra media python examples/report_query_url.py --server cairn://localhost:4300
     # → writes /tmp/cairn-query-url-report.html and prints the live URLs it embeds
 
-Then serve it same-origin from the cairn server so the browser attaches the
-session cookie to both the query and the redirected digest fetch.
+The server requires auth by default. Log in to the cairn UI in the browser,
+then serve the HTML from the same site (e.g. ``python -m http.server
+--directory /tmp 8000`` and open ``http://localhost:8000/cairn-query-url-report.html``)
+so the browser sends the ``cairn_token`` cookie (``SameSite=Lax``, so a
+``file://`` page won't) with both the query and the redirected digest fetch.
+For a local demo you can instead start the server with ``--no-auth``.
 """
 
 from __future__ import annotations

@@ -2,11 +2,10 @@
 
 Shows the cairn read API (``cairn.Reader``) and the pure-numpy Plotly
 helpers in ``cairn.plot`` (confusion_matrix, roc_curve, pr_curve, bar,
-line_series — see ``cairn/plot.py``) rendering directly inside marimo
-cells, plus the WS-PYAPI Python element/report API — ``run[tag]`` lazy
-handles, ``cairn.ui.media_compare``/friends, and ``cairn.plot.Report`` (see
-``docs/superpowers/specs/2026-07-07-notebook-python-and-embed.md``, the
-WS-PYAPI section + §11).
+line_series — ``cairn/plot.py`` re-exports them from ``cairn_plot``)
+rendering directly inside marimo cells, plus the Python card/report API:
+``run[tag]`` lazy handles, ``cairn.ui.media_compare``/friends (viewer cards
+rendered by the cairn-ui viewer at ``/embed/card``), and ``cairn.plot.Report``.
 
 Usage::
 
@@ -17,20 +16,19 @@ Usage::
     uv run cairn init /tmp/cairn-marimo-demo
     CAIRN_REPO=/tmp/cairn-marimo-demo/.cairn \\
         uv run --extra media python examples/demo_plot_helpers.py  # populate runs
-    # optional, to also demo the WS-PYAPI `media_compare` cell (section 4)
+    # optional, to also demo the `media_compare` cell (section 4)
     # with real image data instead of its scalar/figure fallback:
     CAIRN_REPO=/tmp/cairn-marimo-demo/.cairn \\
         uv run --extra examples --extra media python examples/demo_image_comparison.py
 
-    # optional, for a LIVE `/embed/card` iframe instead of the WS-PYAPI
-    # cells' text fallback: start `cairn ui` on the SAME repo. As of the
-    # server auto-discovery fix, no port wiring is needed — the element
-    # finds whichever port `cairn ui` actually bound (it auto-increments
-    # past 4301 when taken) via that repo's `.cairn/servers.json`:
-    #   cairn ui --repo /tmp/cairn-marimo-demo --no-auth &
-    # To pin an explicit server instead (bypassing auto-discovery), use the
-    # `cairn://host:port` scheme — NOT `http://`, which `cairn.Reader`/
-    # `cairn.configure` read as a *local filesystem path*, not a server URL:
+    # optional, for a LIVE `/embed/card` iframe instead of the section-4
+    # cell's text fallback: start `cairn ui` on the SAME repo. No port
+    # wiring is needed — the element finds whichever port `cairn ui`
+    # actually bound (it auto-increments past 4301 when taken) via that
+    # repo's `.cairn/servers.json`:
+    #   cairn ui --repo /tmp/cairn-marimo-demo/.cairn --no-auth &
+    # To pin an explicit server instead (bypassing auto-discovery), point
+    # CAIRN_REPO at it (`cairn://host:port` or `http://host:port`):
     #   CAIRN_REPO=cairn://localhost:4301 uv run ...
 
     # interactive edit:
@@ -55,8 +53,7 @@ def _(mo):
 
         This notebook shows **cairn** cards/plots rendered inline in a
         [marimo](https://marimo.io) notebook, using cairn's existing
-        read API today, and previews the target Python "card" API that
-        lands with the notebook/Python-API workstream.
+        read API and its Python card/report API.
 
         marimo and plotly are *optional* dependencies of cairn, installed
         via the `examples` + `media` extras. Neither is required to use
@@ -87,31 +84,31 @@ def _(mo):
 
         `cairn.Reader` opens a local `.cairn/` directory directly (or
         talks to a running `cairn server` over HTTP, or reads an
-        exported `.zip`). With no argument it auto-detects the repo the
-        same way `cairn.Run()` does: an explicit path, then the
-        `CAIRN_REPO` env var, then the nearest `.cairn/` walking up from
-        the current directory (see `cairn/config.py`).
+        exported `.zip`). With no argument it resolves the repo the same
+        way `cairn.Run()` does: an explicit path, then `cairn.configure`,
+        then the `CAIRN_REPO` / `CAIRN_SERVER` env vars, then the config
+        file, then `./.cairn` in the current directory (see
+        `resolve_target` in `cairn/config.py`).
 
         Point this at your own project's `.cairn` by exporting
         `CAIRN_REPO=/path/to/project/.cairn` before launching marimo, or
         by editing `repo_path` below.
 
-        **Server discovery for the WS-PYAPI cells (section 4):** those
-        cells' `CardElement`s render a live `/embed/card` iframe when a
+        **Server discovery for the card cell (section 4):** its
+        `CardElement` renders a live `/embed/card` iframe when a
         `cairn ui` is reachable. With a *local* `.cairn` repo (the default
         above), the element auto-discovers a `cairn ui` running on that
         same repo — no matter which port it actually bound (it
         auto-increments past its 4301 default when taken) — by reading
         that repo's `.cairn/servers.json`, which `cairn ui` writes on
-        startup. Just start it: `cairn ui --repo <path> --no-auth`, no
-        port bookkeeping required.
+        startup. Just start it: `cairn ui --repo <path>/.cairn --no-auth`,
+        no port bookkeeping required.
 
         To point at a specific server explicitly instead (skipping
-        auto-discovery), use the `cairn://host:port` scheme — e.g.
+        auto-discovery), use a server URL — e.g.
         `CAIRN_REPO=cairn://localhost:4301` or
-        `cairn.configure(repo="cairn://localhost:4301")`. A plain
-        `http://...` URL here is read as a *local filesystem path*, not a
-        server address, and silently resolves to zero runs.
+        `cairn.configure(repo="cairn://localhost:4301")` (`http://host:port`
+        works too).
         """
     )
     return
@@ -123,8 +120,8 @@ def _():
 
     import cairn
 
-    # Default: auto-detect (CAIRN_REPO env var, or nearest .cairn/ walking
-    # up from the cwd marimo was launched in). Override explicitly here if
+    # Default: auto-detect (CAIRN_REPO env var, else ./.cairn in the cwd
+    # marimo was launched in — see cairn.config.resolve_target). Override explicitly here if
     # you want this notebook to always point at a specific repo, e.g.:
     #   repo_path = "/tmp/cairn-marimo-demo/.cairn"
     repo_path = os.environ.get("CAIRN_REPO")
@@ -205,10 +202,10 @@ def _(mo):
         natively, so the exact object you'd otherwise `run.track(...)`
         also just displays in a cell.
 
-        If the queried run above has a logged `eval.confusion_matrix`
-        artifact we fetch and display it directly; otherwise we build
-        one from synthetic predictions with `cairn.plot.confusion_matrix`
-        so this cell always renders something.
+        If the queried run above has a logged `eval.roc_curve` figure we
+        fetch and display it directly; otherwise we build one from
+        synthetic predictions with `cairn.plot.roc_curve` so this cell
+        always renders something.
         """
     )
     return
@@ -245,25 +242,23 @@ def _(cairn, latest_run):
 def _(mo):
     mo.md(
         r"""
-        ## 4. Viewer cards + `cairn.plot.Report` (WS-PYAPI)
+        ## 4. Viewer cards + `cairn.plot.Report`
 
-        A Python **element**/report API lets you build individual
-        cairn-plot elements — and assemble a lightweight report from them —
-        entirely in code; see
-        `docs/superpowers/specs/2026-07-07-notebook-python-and-embed.md`
-        (the WS-PYAPI section, especially §11) for the design.
+        The Python card/report API lets you build viewer cards and
+        self-contained plots — and assemble a lightweight report from
+        them — entirely in code.
 
         `run[tag]` (added to `cairn.sdk.reader.Run`) is a **lazy** handle
         over a tracked sequence/artifact — it resolves only when an element
         actually renders, never at `run[tag]` construction time.
         `cairn.ui.media_compare(a, b)` / `cairn.ui.image_compare(a, b)` take
-        such handles and build one schema-validated viewer card spec (the
-        `cairn.plot` builders — `scalar`/`image`/`figure`/… — draw
-        self-contained plots instead). The returned `CardElement`
+        such handles and build one schema-validated viewer card spec that
+        the cairn-ui viewer renders (the `cairn.plot` builders —
+        `scalar`/`image`/`figure`/… — draw self-contained plots instead). The returned `CardElement`
         implements `_repr_html_`/`_repr_mimebundle_`, so it renders as a
         live `/embed/card` iframe right here in the cell **when a cairn
         server is reachable** (start one with `cairn ui --repo
-        /tmp/cairn-marimo-demo --no-auth` — with the local repo above it's
+        /tmp/cairn-marimo-demo/.cairn --no-auth` — with the local repo above it's
         auto-discovered, no port needed), and falls back to an inline
         notice — no exception — when one isn't.
 
@@ -282,9 +277,9 @@ def _(mo):
             examples/demo_image_comparison.py
         ```
 
-        Without that, this cell falls back to a `cairn.plot.figure` element
-        built from section 2/3's run instead — still a real, working
-        server-backed element, just not a comparison.
+        Without that, this cell falls back to a `cairn.plot.figure` plot
+        built from section 2/3's run instead — a self-contained plot with
+        its data baked in, which needs no server, just not a comparison.
         """
     )
     return
@@ -309,16 +304,16 @@ def _(cairn, latest_run, mo, reader):
     elif latest_run is not None and "eval.roc_curve" in [
         s.name for s in latest_run.sequences()
     ]:
-        # No `image-comparison-demo` data — still demo a WORKING
-        # server-backed element (never a dead cell) from whatever real data
-        # section 2/3's query above already found.
+        # No `image-comparison-demo` data — still demo a WORKING element
+        # (never a dead cell): a self-contained cairn.plot figure from
+        # whatever real data section 2/3's query above already found.
         el = cairn.plot.figure(latest_run["eval.roc_curve"])
         report = cairn.plot.Report(title="ROC curve")
         report.md(
             "No `image-comparison-demo` runs found (2+ needed to demo "
             "`media_compare`) — generate them with `uv run --extra examples "
             "--extra media python examples/demo_image_comparison.py`. "
-            "Showing a working server-backed `cairn.plot.figure` element "
+            "Showing a self-contained `cairn.plot.figure` plot "
             f"instead, from `{latest_run.name}` (queried in section 2)."
         )
         report.add(el)

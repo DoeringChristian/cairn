@@ -1,28 +1,28 @@
-"""Demo: 3D mesh cards (Workstream M).
+"""Demo: 3D mesh cards.
 
 Logs deforming/colored/faceted meshes as ``cairn.Mesh`` sequences across
-steps, exercising every card feature:
+steps, exercising the mesh card:
 
 - a deforming "blob" sphere with TWO named per-vertex properties
-  (``bump``/``curvature``, via ``values={...}``) — the Property selector,
-  colormap + Colorbar over the selected property's real range, and (since
-  ``run-a``/``run-b`` share the same base sphere topology every step, only
-  ``phase`` differs) the mesh card's ``diff-property``/``diff-geometry``
-  native comparison modes on genuinely differing same-topology data
-- a rotating torus with explicit per-vertex ``colors`` (color mode
-  "vertex-colors")
+  (``bump``/``curvature``, via ``values={...}``) — pick either in the card's
+  "Color by" setting. The runs share the same base sphere topology every
+  step and only ``phase`` differs, so their panes (cameras synced) show the
+  same mesh deforming differently.
+- a rotating torus with explicit per-vertex ``colors`` ("Vertex colors"
+  colour mode)
 - a faceted cube with explicit per-vertex ``normals`` (flat shading via the
-  provided normals; no ``computeVertexNormals`` needed)
+  provided normals; the viewer computes normals only when none are logged)
 - a sphere with a random half of its faces flipped to the wrong winding —
-  a permanent regression case for the server-side winding normalization in
+  a regression case for the winding normalization in
   ``cairn/sdk/handlers/mesh.py`` (``serialize()`` must repair it to render
   hole-free and solid)
 
 ``uv_sphere``/``torus`` are constructed genuinely CCW-from-outside at the
 source below (not relying on winding normalization to mask a wrong
-generator) — see the task-#32 mesh-render-fix investigation.
+generator).
 
-Two runs are logged so the merge agent can build a 2-run comparison (panes).
+Three runs are logged so you can build a multi-run comparison (one pane per
+run).
 
 Usage::
 
@@ -65,7 +65,7 @@ def uv_sphere(n_lat: int, n_lon: int) -> tuple[np.ndarray, np.ndarray]:
             d = (i + 1) * n_lon + (j + 1) % n_lon
             # (a, c, b) / (b, c, d): verified CCW-from-outside numerically
             # (cross(v1-v0, v2-v0) . (face_centroid - origin) > 0 for every
-            # non-degenerate face) — see task-#32 investigation.
+            # non-degenerate face).
             faces.append((a, c, b))
             faces.append((b, c, d))
     return vertices, np.array(faces, dtype=np.int64)
@@ -92,12 +92,10 @@ def blob_sphere(base: np.ndarray, theta: float, freq: float) -> tuple[np.ndarray
     """Radially deform a unit sphere by a per-vertex sine bump.
 
     Returns ``(deformed vertices, per-vertex bump value, per-vertex |lat|
-    "curvature" proxy)`` — two NAMED properties on the same mesh (spec-3dx
-    §B named-multi-property demo requirement). ``run-a``/``run-b`` share the
-    base ``uv_sphere`` topology (same ``sphere_faces``, logged with the same
-    step count) but ``phase`` differs per run, so ``bump`` differs at every
-    step — real data for the mesh's ``diff-property``/``diff-geometry``
-    native modes.
+    "curvature" proxy)`` — two NAMED properties on the same mesh. The runs
+    share the base ``uv_sphere`` topology (same ``sphere_faces``, logged with
+    the same step count) but ``phase`` differs per run, so ``bump`` differs
+    at every step.
     """
     lat = np.arccos(np.clip(base[:, 2], -1.0, 1.0))
     lon = np.arctan2(base[:, 1], base[:, 0])
@@ -110,7 +108,7 @@ def blob_sphere(base: np.ndarray, theta: float, freq: float) -> tuple[np.ndarray
 def torus(n_u: int, n_v: int, big_r: float = 1.0, tube_r: float = 0.35) -> tuple[np.ndarray, np.ndarray]:
     """CCW-from-outside torus.
 
-    Deliberately correct at the source (see task-#32 investigation) so the
+    Deliberately correct at the source so the
     demo doesn't rely on the SDK's winding normalization to mask a wrong
     generator — though that normalization handles a torus exactly anyway
     (closed manifold → signed-volume orientation; see

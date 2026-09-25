@@ -1,10 +1,12 @@
 """Keras 3 integration.
 
-Usage::
+Usage:
 
-    from cairn.integrations.keras import CairnCallback
+```python
+from cairn.integrations.keras import CairnCallback
 
-    model.fit(x, y, validation_split=0.1, callbacks=[CairnCallback(project="cls")])
+model.fit(x, y, validation_split=0.1, callbacks=[CairnCallback(project="cls")])
+```
 
 Epoch metrics are tracked at ``step=epoch``; Keras' ``val_<name>`` keys become
 ``val.<name>``. ``log_every_n_batches=N`` additionally tracks the
@@ -30,6 +32,14 @@ class CairnCallback(keras.callbacks.Callback):
 
     Creates the run at ``on_train_begin`` from ``run_kwargs`` (or uses the
     given ``run``) and finishes it at ``on_train_end`` only if it created it.
+
+    Args:
+        run: An existing run to write into; it is left open. Default: a new
+            run created from ``run_kwargs`` and finished when training ends.
+        log_every_n_batches: Also track the running batch metrics as
+            ``batch/<name>`` every N batches, at the global batch index.
+        **run_kwargs: Passed to ``cairn.Run`` for the new run (``project``
+            defaults to ``"keras"``).
     """
 
     def __init__(
@@ -48,6 +58,7 @@ class CairnCallback(keras.callbacks.Callback):
 
     @property
     def run(self) -> Run | None:
+        """The run being written to; None before training starts."""
         return self._run
 
     def on_train_begin(self, logs: dict[str, Any] | None = None) -> None:

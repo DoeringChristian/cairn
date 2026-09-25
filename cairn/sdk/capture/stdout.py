@@ -23,7 +23,7 @@ def strip_ansi(s: str) -> str:
     return _ANSI_RE.sub("", s)
 
 
-#: Reserved global to enforce the "no nested runs" rule (spec §"Nested runs").
+#: Reserved global to enforce the "no nested runs" rule.
 _active_run_id: str | None = None
 _active_lock = threading.Lock()
 

@@ -1,4 +1,4 @@
-"""Image artifact encoding policy and the OpenEXR codec (spec §3.1–3.4).
+"""Image artifact encoding policy and the OpenEXR codec.
 
 Pure: decides container/precision/channels from the array and the call
 options, and encodes/decodes OpenEXR through the official binding. The

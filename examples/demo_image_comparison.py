@@ -1,14 +1,17 @@
 """Demo: image comparison across runs.
 
 Creates a baseline run with reference images and several variant runs that
-introduce controlled distortions. Open the Compare page, select all runs,
-and try the different diff modes (signed, absolute, squared, etc.) and
-compare modes (side-by-side, split slider, blend).
+introduce controlled distortions. Every run logs its distorted ``output`` and
+the clean ``reference`` at each step. Create a comparison of all runs and, on
+the ``output`` image card, try the panel modes (gallery: one pane per run;
+grid: runs × steps; compare: 2–4 slots side by side) and set ``reference``
+as the card's Reference tag to get an A/B split slider in each pane.
 
 Usage::
 
-    # terminal 1 — start the server
-    uv run cairn server --repo /tmp/cairn-imgcmp/.cairn
+    # terminal 1 — start the server (ingest :4300, UI :4301; --no-auth for a
+    # local demo, or keep auth and export the CAIRN_TOKEN it prints)
+    uv run cairn server --repo /tmp/cairn-imgcmp/.cairn --ui --no-auth
 
     # terminal 2 — run this script
     CAIRN_SERVER=http://localhost:4300 uv run python examples/demo_image_comparison.py
@@ -227,7 +230,7 @@ def main() -> None:
         time.sleep(0.05)
 
     print(f"\nAll done! Open the UI and create a comparison with these {1 + len(VARIANTS)} runs.")
-    print("Try: diff modes (signed, absolute, squared), compare modes (side-by-side, split, blend)")
+    print("Try: panel modes (gallery, grid, compare) and Reference tag = 'reference' for the A/B split")
 
 
 if __name__ == "__main__":

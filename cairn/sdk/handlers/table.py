@@ -2,11 +2,13 @@
 
 Dispatches only via the ``cairn.Table`` wrapper (a bare ``list``/``dict`` is
 ambiguous and already claimed by other handlers, so ``can_handle`` is always
-False). The blob is::
+False). The blob is:
 
-    {"columns": [{"name": str, "type": "number"|"string"|"bool"|"media"|"other"}],
-     "data": [[...], ...],
-     "truncated": bool}   # only present when the row cap was hit
+```json
+{"columns": [{"name": str, "type": "number"|"string"|"bool"|"media"|"other"}],
+ "data": [[...], ...],
+ "truncated": bool}   # only present when the row cap was hit
+```
 
 Values are coerced to JSON-native types; anything else is ``str()``-ed. Rows are
 capped at ``MAX_ROWS`` at log time (the original count lands in metadata). The

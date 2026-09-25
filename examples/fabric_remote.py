@@ -10,11 +10,12 @@ Requirements:
 
 If you don't have a shared filesystem, use Cairn's HTTP transport instead::
 
-    # On the local machine:
-    cairn server --port 4301
+    # On the local machine (ingest on :4300, UI on :4301):
+    cairn server --ui
 
-    # In the training script on remote hosts:
-    cairn.configure(repo="cairn://local-machine:4301")
+    # In the training script on remote hosts (auth is on by default, so
+    # also set CAIRN_TOKEN to the token the server prints):
+    cairn.configure(repo="cairn://local-machine:4300")
 
 Install Fabric first::
 

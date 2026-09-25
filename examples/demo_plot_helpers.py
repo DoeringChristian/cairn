@@ -1,14 +1,14 @@
-"""Demo script for ``cairn.plot`` — SDK plot helpers (Workstream G).
+"""Demo script for ``cairn.plot`` — SDK plot helpers.
 
 Exercises every helper (confusion_matrix, pr_curve, roc_curve, bar,
 line_series) against two fake 3-class classifier runs whose predictions
 improve over a handful of training steps (at different rates per run), so
 the same card can be scrubbed through the step slider in the viewer *and*
-compared across runs — e.g. the figure-comparison "overlay" mode added in
-Workstream PF, which merges two runs' ``eval.roc_curve``/``eval.pr_curve``
-Plotly figures into one plot.
+compared across runs — e.g. the figure card's "Overlay" compare mode, which
+merges two runs' ``eval.roc_curve``/``eval.pr_curve`` Plotly figures into one
+plot.
 
-Zero UI changes to the SDK/handler surface: every figure returned by
+Every figure returned by
 ``cairn.plot.*`` is a plain ``plotly.graph_objects.Figure`` that flows
 through the existing ``figure`` card/handler pipeline (see
 ``cairn/sdk/handlers/figure.py``).

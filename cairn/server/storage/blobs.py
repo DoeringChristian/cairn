@@ -1,12 +1,14 @@
 """Content-addressable blob store.
 
-On-disk layout matches CAIRN_SPEC §"Server-side storage layout"::
+On-disk layout:
 
-    artifacts/
-      ab/
-        abcd1234…ef/
-          blob          # raw bytes
-          meta.json     # mime_type, size, original metadata
+```text
+artifacts/
+  ab/
+    abcd1234…ef/
+      blob          # raw bytes
+      meta.json     # mime_type, size, original metadata
+```
 """
 
 from __future__ import annotations

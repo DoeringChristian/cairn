@@ -1,4 +1,4 @@
-"""WS-PYAPI deliverable 1: ``Run.__getitem__`` / ``DataRef`` (reader.py).
+"""``Run.__getitem__`` / ``DataRef`` (reader.py).
 
 ``run[tag]`` must return a lazy handle immediately — no sequence/artifact
 fetch at construction time — and resolve only when asked to (``.resolve()``,

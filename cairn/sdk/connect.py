@@ -54,7 +54,7 @@ def open_transport(
         if url is None:
             raise
         _verify_reachable(url, Path(target.location))
-        # Same-user local trust (spec §7): the serving process leaves
+        # Same-user local trust: the serving process leaves
         # auth/local.token in the data dir for exactly this upgrade path.
         local_tok = Path(target.location) / "auth" / "local.token"
         tok = local_tok.read_text().strip() if local_tok.exists() else None
@@ -100,7 +100,7 @@ def _probe_server(url: str) -> None:
 def _verify_reachable(url: str, repo: Path) -> None:
     """Probe ``<url>/api/health`` so the SDK fails fast if the holder is hung.
 
-    Raises :class:`RepoLockedError` with an actionable message if the
+    Raises ``RepoLockedError`` with an actionable message if the
     holder's declared endpoint doesn't respond with 200.
     """
     import httpx

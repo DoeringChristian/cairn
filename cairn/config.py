@@ -100,13 +100,23 @@ def write_config_file(data: dict[str, Any], path: Path | None = None) -> None:
 
 
 def configure(**kwargs: Any) -> None:
-    """Set module-level defaults consulted by subsequent ``resolve_*`` calls.
+    """Set process-wide defaults for runs, readers and CLI calls made afterwards.
 
-    Example::
+    A value set here beats the environment and the config file, but an
+    explicit argument (``cairn.Run(repo=...)``) beats it. ``None`` values are
+    ignored.
 
+    Example:
+        ```python
         cairn.configure(repo="cairn://gpubox.local:4300")
-        # or
         cairn.configure(repo="./.cairn")
+        cairn.configure(mode="disabled")  # every cairn.Run becomes a no-op
+        ```
+
+    Args:
+        **kwargs: ``repo`` (a ``.cairn/`` path or ``cairn://host:port``),
+            ``server`` (a server URL; ``repo`` wins when both are set) and
+            ``mode`` (``"disabled"`` turns tracking off).
     """
     _configured.update({k: v for k, v in kwargs.items() if v is not None})
 
@@ -144,9 +154,8 @@ def resolve_server(explicit: str | None = None) -> str:
 
     Kept for callers (CLI `ping`/`list`/...) that only speak HTTP.
 
-    Priority (R0 drift fix — the ``server`` family was persisted by the CLI
-    and set by tests but never READ; now it is, ahead of the ``repo``
-    family): explicit > configured server > configured repo(server-mode) >
+    Priority (the ``server`` family ahead of the ``repo`` family):
+    explicit > configured server > configured repo(server-mode) >
     $CAIRN_SERVER > $CAIRN_REPO(server-mode) > file server > file
     repo(server-mode) > default.
     """
@@ -222,7 +231,7 @@ def resolve_target(
 ) -> RunTarget:
     """Resolve where a ``Run`` should send its data.
 
-    Returns a :class:`RunTarget` tagged ``local`` (with a filesystem path) or
+    Returns a ``RunTarget`` tagged ``local`` (with a filesystem path) or
     ``server`` (with a URL).
 
     Accepts ``cairn://host:port`` for HTTP server mode.

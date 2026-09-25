@@ -119,11 +119,11 @@ class TestWALResume:
 
 
 # ---------------------------------------------------------------------------
-# R3: ack discipline + epoch header + the sync scanner contract
+# ack discipline + epoch header + the sync scanner contract
 # ---------------------------------------------------------------------------
 
 def test_failed_send_is_never_shadowed_by_a_later_success(tmp_path):
-    """THE data-loss bug (refactor spec R3): op 5 fails, op 6 succeeds — the
+    """THE data-loss bug : op 5 fails, op 6 succeeds — the
     old integer checkpoint jumped to 6 and op 5 was silently lost. With the
     contiguous low-water + acked-set, op 5 stays pending."""
     from cairn.sdk.wal import WriteAheadLog

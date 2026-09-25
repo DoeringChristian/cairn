@@ -1,4 +1,4 @@
-"""The query grammar's mirrors may never drift (refactor spec §1b).
+"""The query grammar's mirrors may never drift.
 
 The server owns the grammar (cairn.server.query_grammar / _operators);
 cairn-track's reader carries a marked mirror. Both are pinned to the shared

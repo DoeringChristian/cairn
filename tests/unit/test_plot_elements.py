@@ -1,4 +1,4 @@
-"""WS-PYAPI deliverables 2+3: `cairn.plot` element builders + the display
+"""`cairn.ui` card element builders + the display
 protocol (`vendor/cairn-ui/cairn_ui/cards/elements.py`).
 
 Covers:
@@ -7,7 +7,7 @@ Covers:
 * `media_compare`/`*_compare` set `settings.mode` + two series ("compare"
   sugar).
 * Raw (non-`DataRef`) data on media builders (`image`/`mesh`/...) raises a
-  clear `NotImplementedError` pointing at WS-INLINE.
+  clear `NotImplementedError` (raw data has no card-spec representation).
 * `scalar`/`figure`/`table` accept raw data too, falling back to a
   self-contained `HtmlElement` (no server needed).
 * `CardElement._repr_html_` returns a live `<iframe .../embed/card?sid=...>`
@@ -131,7 +131,7 @@ def two_runs_http_reader(tmp_path):
 
 
 def _validate_card_spec(spec_dict: dict) -> CardSpec:
-    """Round-trip through the WS-SCHEMA pydantic mirror — raises on any
+    """Round-trip through the pydantic card-spec mirror — raises on any
     schema violation (this IS the "validated against card_spec.py" gate)."""
     return CardSpec.model_validate(spec_dict)
 
@@ -255,7 +255,7 @@ def test_pointcloud_raw_emits_self_contained_plotelement():
 def test_media_compare_raw_data_raises_notimplemented():
     raw_a = np.zeros((4, 4, 3), dtype=np.uint8)
     raw_b = np.ones((4, 4, 3), dtype=np.uint8)
-    with pytest.raises(NotImplementedError, match="WS-INLINE"):
+    with pytest.raises(NotImplementedError, match="card-spec representation"):
         cui.media_compare(raw_a, raw_b)
 
 
@@ -423,7 +423,7 @@ def test_card_element_repr_html_live_server_returns_iframe_with_resolving_sid(li
 def test_resolve_server_prefers_advertised_servers_json_over_default(
     live_server, tmp_path, monkeypatch
 ):
-    """WS-SRVDISC: a `cairn ui` that landed on a non-default port (because
+    """A `cairn ui` that landed on a non-default port (because
     4300/4301 were taken — the reported bug) is still auto-discovered via
     its repo's `servers.json`, without needing `server=`/`CAIRN_REPO`."""
     from urllib.parse import urlsplit

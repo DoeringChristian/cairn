@@ -2,8 +2,7 @@
 
 Mirrors the comparisons CRUD (routes/comparisons.py) but the DELETE here is
 expected to 404 for an unknown id — comparisons.py's DELETE silently
-no-ops, which is a known nit this table intentionally doesn't repeat
-(see WS-TPL fix set item 2).
+no-ops, which is a known nit this table intentionally doesn't repeat.
 """
 
 from __future__ import annotations

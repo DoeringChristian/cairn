@@ -1,5 +1,4 @@
-"""WS-PLOT Phase C gate: the `PlotElement` self-contained emit (design spec
-§5–§7 + acceptance criteria M1/M2).
+"""The `PlotElement` self-contained emit.
 
 Headless display smoke — builds a PlotElement for each supported renderer
 (scalar-from-arrays, figure, table, image-from-bytes) and asserts the emitted

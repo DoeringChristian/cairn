@@ -130,7 +130,7 @@ dev = [
 cairn = "cairn.cli:main"
 
 [project.urls]
-Repository = "https://github.com/anthropics/cairn"
+Repository = "https://github.com/DoeringChristian/cairn"
 
 # cairn-plot lives in a standalone repository
 # (github.com/doeringchristian/cairn-plot), consumed here as a git submodule at
@@ -169,7 +169,6 @@ include = [
     "README.md",
     "LICENSE",
     "pyproject.toml",
-    "CAIRN_SPEC.md",
 ]
 
 [tool.pytest.ini_options]

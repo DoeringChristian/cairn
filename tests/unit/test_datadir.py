@@ -163,7 +163,7 @@ def test_backcompat_pid_lock_aliases(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Live-server advertisement (WS-SRVDISC: notebook auto-discovery of `cairn
+# Live-server advertisement (notebook auto-discovery of `cairn
 # ui` regardless of which port it landed on).
 # ---------------------------------------------------------------------------
 

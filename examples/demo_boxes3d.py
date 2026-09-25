@@ -1,23 +1,20 @@
-"""Demo: 3D box-hierarchy cards (Workstream B — octree/BVH).
+"""Demo: 3D box-hierarchy cards (octree / BVH / plain boxes).
 
-Logs two ``boxes3d`` sequences per run, exercising every Boxes / BVH card
-feature:
+Logs three ``boxes3d`` sequences per run, exercising the boxes card:
 
 - ``octree``   — ``cairn.Octree``, adaptively refined (deeper near a moving
-  point cluster) each step → depth-range filter + "depth" color mode +
-  step-slider-driven refinement animation.
+  point cluster) each step → "Depth" colour mode + a step-slider-driven
+  refinement animation.
 - ``bvh``      — ``cairn.BVH`` built top-down over a random triangle set,
   each node's ``value`` = the number of triangles it contains (a cost
-  proxy) → "value" color mode + Colorbar with a real min/max range.
+  proxy) → colour by the ``value`` property.
 - ``grid_boxes`` — a DETERMINISTIC uniform box grid (same ``n_boxes``/depth
   every step and across ``run-a``/``run-b``; only the per-box "cost" value
-  differs) → the boxes3d card's ``diff-property`` native comparison mode on
-  genuinely matched-topology data (``octree``/``bvh`` above are rng-driven
-  and so do NOT share topology across runs — they exercise the "mismatched
-  topology, mode disabled with reason" path instead).
+  differs) → the same layout side by side in both runs' panes (cameras
+  synced), coloured by ``value``, so the differing values are easy to spot.
 
 A plain scalar metric is logged too (``loss``), and two runs (`run-a`/
-`run-b`) are written so the merge agent can build a 2-run comparison.
+`run-b`) are written so you can build a 2-run comparison.
 
 Usage::
 
@@ -138,10 +135,9 @@ def fixed_grid_boxes(
     """A deterministic uniform ``n_side**3`` box grid (mins, maxs, depth=1).
 
     Unlike ``build_octree``/``build_bvh`` above (which are rng-driven and so
-    produce a DIFFERENT ``n_boxes``/topology per run — no matched-topology
-    pair to diff), this grid has an identical box layout every call: a
-    genuine same-``n_boxes``-and-``depth`` pair across ``run-a``/``run-b``
-    for the boxes3d card's ``diff-property`` native comparison mode.
+    produce a DIFFERENT ``n_boxes``/topology per run), this grid has an
+    identical box layout every call: a same-``n_boxes``-and-``depth`` pair
+    across ``run-a``/``run-b`` whose only difference is the per-box value.
     """
     edges = np.linspace(-half, half, n_side + 1, dtype=np.float32)
     mins = []
@@ -181,8 +177,7 @@ def log_run(name: str, seed: int, orbit_radius: float) -> None:
         run.track(cairn.Octree(mins, maxs, depth=depth), name="octree", step=step)
 
         # Deterministic same-topology grid (see fixed_grid_boxes docstring) —
-        # only the per-box "cost" value differs, real data for
-        # boxes3d's diff-property native comparison mode across run-a/run-b.
+        # only the per-box "cost" value differs across run-a/run-b.
         grid_values = grid_box_values(grid_mins, grid_maxs, center)
         run.track(
             cairn.Boxes3D(grid_mins, grid_maxs, depth=grid_depth, values=grid_values),
