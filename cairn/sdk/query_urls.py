@@ -14,7 +14,7 @@ Two emission modes:
 
 Both require a **server** target: a live URL is only meaningful against a
 running server, and baked resolution needs one to query. Against a local-only
-(``.cairn/``) target, :func:`query_url` raises a clear error pointing at server
+(``.cairn/``) target, ``query_url`` raises a clear error pointing at server
 mode or baked reports.
 """
 
@@ -75,7 +75,7 @@ def build_query_url(
 ) -> str:
     """Assemble a ``{base}/api/query?...`` URL from a base and selector parts.
 
-    Pure string builder (no I/O) — the shared core of :func:`query_url`,
+    Pure string builder (no I/O) — the shared core of ``query_url``,
     ``RunQuery.latest_url`` and ``DataRef.url``.
     """
     params = _build_params(

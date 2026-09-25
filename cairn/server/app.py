@@ -22,6 +22,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from .. import __version__
 from . import alerts as alerts_core
 from . import auth as auth_core
 from .embed_specs import EmbedSpecStore
@@ -199,7 +200,7 @@ def create_app(
     app = FastAPI(
         title="Cairn",
         description="Open-source ML experiment tracker.",
-        version="0.1.0",
+        version=__version__,
         lifespan=lifespan,
     )
     # Read by the auth dependency family (auth_core.require_role) and the

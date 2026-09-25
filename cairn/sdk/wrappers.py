@@ -1,11 +1,11 @@
 """Explicit type wrappers that pick how a value is stored and shown.
 
-Pass a wrapper to :meth:`cairn.Run.track`. Some values are detected without
+Pass a wrapper to ``cairn.Run.track``. Some values are detected without
 one (a ``float`` is a scalar, a ``str`` is text, a matplotlib or Plotly figure
 is a figure, a PIL image is an image), but a wrapper settles ambiguous inputs:
 a numpy array could be an image, audio, a tensor or a point cloud, and a
-matplotlib figure could be kept as a flat PNG (:class:`Image`) or as an
-interactive figure (:class:`Figure`).
+matplotlib figure could be kept as a flat PNG (``Image``) or as an
+interactive figure (``Figure``).
 
 Every wrapper also accepts ``caption=``, which labels the logged point (not
 the stored bytes).
@@ -35,20 +35,22 @@ class Image(_TypeWrapper):
 
     Overlays are stored inline in the artifact metadata (no second blob).
 
-    Usage::
+    Usage:
 
-        run.track(cairn.Image(
-            img,
-            boxes=[{
-                "position": {"minX": 0.1, "minY": 0.2, "maxX": 0.5, "maxY": 0.6},
-                "domain": "fraction",   # or "pixel"
-                "class_id": 1,
-                "label": "cat",
-                "score": 0.92,
-            }],
-            masks={"seg": class_id_array_2d},   # uint8 class ids, 0 = background
-            class_labels={0: "background", 1: "cat", 2: "dog"},
-        ), name="detections", step=step)
+    ```python
+    run.track(cairn.Image(
+        img,
+        boxes=[{
+            "position": {"minX": 0.1, "minY": 0.2, "maxX": 0.5, "maxY": 0.6},
+            "domain": "fraction",   # or "pixel"
+            "class_id": 1,
+            "label": "cat",
+            "score": 0.92,
+        }],
+        masks={"seg": class_id_array_2d},   # uint8 class ids, 0 = background
+        class_labels={0: "background", 1: "cat", 2: "dog"},
+    ), name="detections", step=step)
+    ```
 
     Pixel values are read by dtype: float is [0, 1], uint8 is [0, 255], other
     integers span their dtype's range; values outside clip. Pass
@@ -58,9 +60,11 @@ class Image(_TypeWrapper):
     ``colormap`` bakes a colormap into a single-channel image (stored as an RGB
     PNG): ``"turbo"`` / ``"magma"`` span [0, 1], ``"red-blue"`` / ``"red-green"``
     span [-1, 1] with white at zero. The range is fixed — the same for every
-    image and step — unless ``vmin``/``vmax`` override it; values outside clip::
+    image and step — unless ``vmin``/``vmax`` override it; values outside clip:
 
-        run.track(cairn.Image(err, colormap="red-blue", vmin=-0.05, vmax=0.05), name="error", step=step)
+    ```python
+    run.track(cairn.Image(err, colormap="red-blue", vmin=-0.05, vmax=0.05), name="error", step=step)
+    ```
 
     ``encoding`` picks the storage (float/int arrays only — PIL images, figures
     and uint8 arrays are display values and always PNG):
@@ -72,21 +76,25 @@ class Image(_TypeWrapper):
       values don't fit), ``half`` or ``float``.
     * ``"npy"`` — exact array bytes, any channel count.
 
-    ::
-
-        run.track(cairn.Image(render, linear=True), name="render", step=step)
-        run.track(cairn.Image(hdr_array, linear=True, encoding="exr:dwab"), name="radiance", step=step)
+    ```python
+    run.track(cairn.Image(render, linear=True), name="render", step=step)
+    run.track(cairn.Image(hdr_array, linear=True, encoding="exr:dwab"), name="radiance", step=step)
+    ```
 
     The viewer displays PNG; other encodings show a thumbnail and a download.
 
     A list of images logged under one name and step is a gallery, shown
-    together in one card (as in wandb)::
+    together in one card (as in wandb):
 
-        run.track([cairn.Image(a), cairn.Image(b)], name="samples", step=step)
+    ```python
+    run.track([cairn.Image(a), cairn.Image(b)], name="samples", step=step)
+    ```
 
-    ``caption`` labels the logged point (each gallery image keeps its own)::
+    ``caption`` labels the logged point (each gallery image keeps its own):
 
-        run.track(cairn.Image(img, caption=f"epoch {epoch}"), name="sample", step=step)
+    ```python
+    run.track(cairn.Image(img, caption=f"epoch {epoch}"), name="sample", step=step)
+    ```
     """
 
     object_type = "image"
@@ -112,9 +120,11 @@ class Figure(_TypeWrapper):
     ``[media]`` extra.
 
     Tracking a bare matplotlib/Plotly figure does the same; the wrapper only
-    makes the choice explicit (``cairn.Image(fig)`` stores a flat PNG instead)::
+    makes the choice explicit (``cairn.Image(fig)`` stores a flat PNG instead):
 
-        run.track(cairn.Figure(fig), name="attention", step=step)
+    ```python
+    run.track(cairn.Figure(fig), name="attention", step=step)
+    ```
 
     Args:
         obj: A ``matplotlib.figure.Figure`` or ``plotly.graph_objects.Figure``.
@@ -127,9 +137,9 @@ class Figure(_TypeWrapper):
 class Audio(_TypeWrapper):
     """Audio samples, stored as 16-bit PCM WAV.
 
-    ::
-
-        run.track(cairn.Audio(waveform, sample_rate=22050), name="sample", step=step)
+    ```python
+    run.track(cairn.Audio(waveform, sample_rate=22050), name="sample", step=step)
+    ```
 
     Args:
         obj: A 1-D (mono) or 2-D numpy array or torch tensor; 2-D is read as
@@ -149,13 +159,17 @@ class Video(_TypeWrapper):
 
     Frames: ``T×H×W×C`` or ``T×C×H×W`` arrays/tensors, ``T×H×W`` grayscale,
     or a list of frames; values map like images (float [0, 1], uint8
-    [0, 255]). Encoded as H.264 MP4 at ``fps`` (default 30)::
+    [0, 255]). Encoded as H.264 MP4 at ``fps`` (default 30):
 
-        run.track(cairn.Video(frames, fps=15), name="rollout", step=step)
+    ```python
+    run.track(cairn.Video(frames, fps=15), name="rollout", step=step)
+    ```
 
-    A path to an existing file (mp4, webm, …) is stored unchanged::
+    A path to an existing file (mp4, webm, …) is stored unchanged:
 
-        run.track(cairn.Video("render.mp4"), name="render", step=step)
+    ```python
+    run.track(cairn.Video("render.mp4"), name="render", step=step)
+    ```
 
     ``caption=`` labels the point.
     """
@@ -166,14 +180,18 @@ class Video(_TypeWrapper):
 class Histogram(_TypeWrapper):
     """A histogram, from raw values or already-binned counts.
 
-    From values (binned at log time into ``bins`` equal-width bins)::
+    From values (binned at log time into ``bins`` equal-width bins):
 
-        run.track(cairn.Histogram(weights, bins=64), name="weights", step=step)
+    ```python
+    run.track(cairn.Histogram(weights, bins=64), name="weights", step=step)
+    ```
 
     Precomputed, when the binning happened elsewhere (``torch.histc``,
-    TensorBoard, ...). ``edges`` has one more entry than ``counts``::
+    TensorBoard, ...). ``edges`` has one more entry than ``counts``:
 
-        run.track(cairn.Histogram(counts=counts, edges=edges), name="grads", step=step)
+    ```python
+    run.track(cairn.Histogram(counts=counts, edges=edges), name="grads", step=step)
+    ```
 
     Pass exactly one of ``values`` or ``counts`` + ``edges``.
     """
@@ -205,9 +223,11 @@ class Tensor(_TypeWrapper):
 
     Arrays are only stored as tensors through this wrapper (a bare array is
     ambiguous). The metadata records shape, dtype, min, max and mean; the
-    viewer shows a value histogram or a heatmap of a 2-D slice::
+    viewer shows a value histogram or a heatmap of a 2-D slice:
 
-        run.track(cairn.Tensor(model.fc.weight), name="fc.weight", step=step)
+    ```python
+    run.track(cairn.Tensor(model.fc.weight), name="fc.weight", step=step)
+    ```
 
     Args:
         obj: Anything ``np.asarray`` accepts, or a torch tensor (detached and
@@ -223,9 +243,11 @@ class Text(_TypeWrapper):
     """Plain text, stored as UTF-8.
 
     Tracking a bare ``str`` does the same; use the wrapper to store any other
-    object as its ``str()``::
+    object as its ``str()``:
 
-        run.track(cairn.Text(generated), name="samples.text", step=step)
+    ```python
+    run.track(cairn.Text(generated), name="samples.text", step=step)
+    ```
 
     Args:
         obj: A string, or any object (stored as ``str(obj)``).
@@ -238,26 +260,32 @@ class Text(_TypeWrapper):
 class Table(_TypeWrapper):
     """Tabular data (columns + rows), stored as a compact JSON blob.
 
-    Construct either from explicit ``columns`` + ``data``::
+    Construct either from explicit ``columns`` + ``data``:
 
-        run.track(
-            cairn.Table(
-                columns=["epoch", "loss", "correct"],
-                data=[[0, 1.2, False], [1, 0.7, True]],
-            ),
-            name="predictions",
-            step=0,
-        )
+    ```python
+    run.track(
+        cairn.Table(
+            columns=["epoch", "loss", "correct"],
+            data=[[0, 1.2, False], [1, 0.7, True]],
+        ),
+        name="predictions",
+        step=0,
+    )
+    ```
 
-    or from a pandas ``DataFrame``::
+    or from a pandas ``DataFrame``:
 
-        run.track(cairn.Table(dataframe=df), name="predictions", step=0)
+    ```python
+    run.track(cairn.Table(dataframe=df), name="predictions", step=0)
+    ```
 
     Cells may hold ``cairn.Image``, ``cairn.Audio`` or ``cairn.Video``: each is
-    uploaded as its own artifact and shown inline in the table::
+    uploaded as its own artifact and shown inline in the table:
 
-        run.track(cairn.Table(columns=["input", "label"],
-                              data=[[cairn.Image(x), "cat"]]), name="samples", step=0)
+    ```python
+    run.track(cairn.Table(columns=["input", "label"],
+                          data=[[cairn.Image(x), "cat"]]), name="samples", step=0)
+    ```
 
     Column types (``number``/``string``/``bool``/``media``/``other``) are
     inferred at log time. Rows are capped at 10,000 — larger tables are
@@ -292,9 +320,11 @@ class Html(_TypeWrapper):
     Rendered only inside a ``sandbox="allow-scripts"`` ``srcdoc`` iframe by
     the UI — never inline in the host document.
 
-    Usage::
+    Usage:
 
-        run.track(cairn.Html("<h1>Report</h1><p>...</p>"), name="report", step=0)
+    ```python
+    run.track(cairn.Html("<h1>Report</h1><p>...</p>"), name="report", step=0)
+    ```
     """
     object_type = "html"
 
@@ -302,9 +332,11 @@ class Html(_TypeWrapper):
 class Markdown(_TypeWrapper):
     """Markdown text, rendered with GitHub-flavored-markdown support.
 
-    Usage::
+    Usage:
 
-        run.track(cairn.Markdown("# Notes\\n\\n- [x] done\\n- [ ] todo"), name="notes", step=0)
+    ```python
+    run.track(cairn.Markdown("# Notes\\n\\n- [x] done\\n- [ ] todo"), name="notes", step=0)
+    ```
     """
     object_type = "markdown"
 
@@ -328,13 +360,15 @@ class PointCloud(_TypeWrapper):
     together with the cloud. Feeds a "Property" selector + colormap/Colorbar
     in the UI, same mechanism as ``Mesh``/``Boxes3D``.
 
-    Usage::
+    Usage:
 
-        run.track(cairn.PointCloud(xyz), name="cloud", step=0)          # (N, 3)
-        run.track(cairn.PointCloud(xyz_rgb), name="scan", step=0)        # (N, 6)
-        run.track(cairn.PointCloud(xyz_cat), name="segments", step=0)    # (N, 4)
-        run.track(cairn.PointCloud(xyz, values=per_point_loss), name="cloud", step=0)
-        run.track(cairn.PointCloud(xyz, values={"loss": l, "curvature": c}), name="cloud", step=0)
+    ```python
+    run.track(cairn.PointCloud(xyz), name="cloud", step=0)          # (N, 3)
+    run.track(cairn.PointCloud(xyz_rgb), name="scan", step=0)        # (N, 6)
+    run.track(cairn.PointCloud(xyz_cat), name="segments", step=0)    # (N, 4)
+    run.track(cairn.PointCloud(xyz, values=per_point_loss), name="cloud", step=0)
+    run.track(cairn.PointCloud(xyz, values={"loss": l, "curvature": c}), name="cloud", step=0)
+    ```
     """
 
     object_type = "pointcloud"
@@ -376,12 +410,14 @@ class Mesh(_TypeWrapper):
       faces). Supplied normals are per-vertex and are never modified by
       winding normalization, which only reorders each face's own indices.
 
-    Usage::
+    Usage:
 
-        run.track(cairn.Mesh(vertices, faces), name="mesh", step=0)
-        run.track(cairn.Mesh(vertices, faces, values=curvature), name="mesh", step=0)
-        run.track(cairn.Mesh(vertices, faces, values={"curvature": c, "loss": l}), name="mesh", step=0)
-        run.track(cairn.Mesh(vertices, faces, colors=vertex_rgb), name="mesh", step=0)
+    ```python
+    run.track(cairn.Mesh(vertices, faces), name="mesh", step=0)
+    run.track(cairn.Mesh(vertices, faces, values=curvature), name="mesh", step=0)
+    run.track(cairn.Mesh(vertices, faces, values={"curvature": c, "loss": l}), name="mesh", step=0)
+    run.track(cairn.Mesh(vertices, faces, colors=vertex_rgb), name="mesh", step=0)
+    ```
     """
 
     object_type = "mesh"
@@ -425,12 +461,14 @@ class Boxes3D(_TypeWrapper):
 
     Box sets larger than 200,000 rows raise (no silent truncation).
 
-    Usage::
+    Usage:
 
-        run.track(cairn.Boxes3D(mins, maxs), name="boxes", step=0)
-        run.track(cairn.Octree(mins, maxs, depth=depth), name="octree", step=0)
-        run.track(cairn.BVH(mins, maxs, values=node_cost), name="bvh", step=0)
-        run.track(cairn.BVH(mins, maxs, values={"cost": c, "iou": iou}), name="bvh", step=0)
+    ```python
+    run.track(cairn.Boxes3D(mins, maxs), name="boxes", step=0)
+    run.track(cairn.Octree(mins, maxs, depth=depth), name="octree", step=0)
+    run.track(cairn.BVH(mins, maxs, values=node_cost), name="bvh", step=0)
+    run.track(cairn.BVH(mins, maxs, values={"cost": c, "iou": iou}), name="bvh", step=0)
+    ```
     """
 
     object_type = "boxes3d"
@@ -474,10 +512,12 @@ class Volume(_TypeWrapper):
     Capped at 128MB pre-compression (as float32) — larger volumes raise
     ``ValueError`` at log time rather than being silently truncated.
 
-    Usage::
+    Usage:
 
-        run.track(cairn.Volume(density), name="blob", step=0)
-        run.track(cairn.Volume(density, spacing=[2.0, 1.0, 1.0]), name="scan", step=0)
+    ```python
+    run.track(cairn.Volume(density), name="blob", step=0)
+    run.track(cairn.Volume(density, spacing=[2.0, 1.0, 1.0]), name="scan", step=0)
+    ```
     """
 
     object_type = "volume"
@@ -493,11 +533,13 @@ class Artifact(_TypeWrapper):
     Download via the UI yields a ``.pkl`` file that can be loaded with
     ``pickle.load(open("file.pkl", "rb"))``.
 
-    Usage::
+    Usage:
 
-        run.track(cairn.Artifact({"lr": 1e-3, "model": "cnn"}), name="config", step=0)
-        run.track(cairn.Artifact(model.state_dict()), name="checkpoint", step=100)
-        run.log_artifact(cairn.Artifact(my_dataclass), name="final_state")
+    ```python
+    run.track(cairn.Artifact({"lr": 1e-3, "model": "cnn"}), name="config", step=0)
+    run.track(cairn.Artifact(model.state_dict()), name="checkpoint", step=100)
+    run.log_artifact(cairn.Artifact(my_dataclass), name="final_state")
+    ```
     """
     object_type = "artifact"
 
@@ -506,10 +548,12 @@ class ConfusionMatrix(_TypeWrapper):
     """Confusion matrix of integer class labels, drawn by the UI as a heatmap.
 
     Stores the counts (true label per row, predicted per column), not a
-    picture, so runs can be compared side by side::
+    picture, so runs can be compared side by side:
 
-        run.track(cairn.ConfusionMatrix(y_true, y_pred, class_names=["cat", "dog"]),
-                  name="val/confusion", step=epoch)
+    ```python
+    run.track(cairn.ConfusionMatrix(y_true, y_pred, class_names=["cat", "dog"]),
+              name="val/confusion", step=epoch)
+    ```
     """
 
     object_type = "preset"
@@ -525,9 +569,11 @@ class PRCurve(_TypeWrapper):
 
     ``y_score`` is ``(n_samples, n_classes)`` (e.g. softmax output), or 1-D for
     a binary problem (the positive-class score). Curves keep at most 500
-    points per class; the AP is computed on the full curve::
+    points per class; the AP is computed on the full curve:
 
-        run.track(cairn.PRCurve(y_true, probs, labels=["cat", "dog"]), name="val/pr", step=epoch)
+    ```python
+    run.track(cairn.PRCurve(y_true, probs, labels=["cat", "dog"]), name="val/pr", step=epoch)
+    ```
     """
 
     object_type = "preset"
@@ -538,9 +584,11 @@ class PRCurve(_TypeWrapper):
 
 
 class ROCCurve(_TypeWrapper):
-    """ROC curve per class (one-vs-rest), with the AUC. Inputs as :class:`PRCurve`::
+    """ROC curve per class (one-vs-rest), with the AUC. Inputs as ``PRCurve``:
 
-        run.track(cairn.ROCCurve(y_true, probs), name="val/roc", step=epoch)
+    ```python
+    run.track(cairn.ROCCurve(y_true, probs), name="val/roc", step=epoch)
+    ```
     """
 
     object_type = "preset"

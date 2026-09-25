@@ -1,16 +1,18 @@
-"""Python API for reading Cairn data, plus :meth:`Run.edit` for editing runs.
+"""Python API for reading Cairn data, plus ``Run.edit`` for editing runs.
 
 Dual-mode: opens the local ``.cairn/`` database directly, or connects to
 a running Cairn server via HTTP. Auto-detects from config resolution.
 An exported ``.zip`` archive can be read too.
 
-Usage::
+Usage:
 
-    import cairn
+```python
+import cairn
 
-    r = cairn.Reader()  # auto-detect
-    run = r.runs(project="demo").filter(status="completed").last()
-    print(run.params, run.sequence("loss").values[-1])
+r = cairn.Reader()  # auto-detect
+run = r.runs(project="demo").filter(status="completed").last()
+print(run.params, run.sequence("loss").values[-1])
+```
 """
 
 from __future__ import annotations
@@ -33,7 +35,7 @@ from .handlers.image import GALLERY_MIME
 
 @dataclass(frozen=True)
 class Project:
-    """A project, as listed by :meth:`Reader.projects`.
+    """A project, as listed by ``Reader.projects``.
 
     Attributes:
         id: Project id (the normalised name: lowercase, spaces become dashes).
@@ -59,7 +61,7 @@ class Project:
 
 @dataclass(frozen=True)
 class GitInfo:
-    """Git state recorded when a run started (see :attr:`Run.git`).
+    """Git state recorded when a run started (see ``Run.git``).
 
     Attributes:
         sha: Commit SHA.
@@ -77,7 +79,7 @@ class GitInfo:
 
 @dataclass(frozen=True)
 class SequenceInfo:
-    """Summary of one sequence of a run, from :meth:`Run.sequences`.
+    """Summary of one sequence of a run, from ``Run.sequences``.
 
     Attributes:
         name: Sequence name (e.g. ``"train.loss"``).
@@ -100,14 +102,14 @@ class SequenceInfo:
 
 @dataclass(frozen=True)
 class SequencePoint:
-    """One point of a :class:`Sequence`.
+    """One point of a ``Sequence``.
 
     Attributes:
         step: The step it was logged at.
         wall_time: When it was logged, as an ISO 8601 string.
         scalar_value: The value of a scalar point; None for media points.
         artifact_hash: Content hash of a media point's artifact (download it
-            with :meth:`Run.artifact`); None for scalar points.
+            with ``Run.artifact``); None for scalar points.
         artifact_metadata: The artifact's metadata as a JSON string, or None.
         object_type: ``"scalar"``, or the media kind (``"image"``, ...).
         metadata: Per-point metadata (e.g. ``{"caption": ...}``), decoded;
@@ -124,13 +126,13 @@ class SequencePoint:
 
     @property
     def caption(self) -> str | None:
-        """The point's caption from :attr:`metadata`, or None."""
+        """The point's caption from ``metadata``, or None."""
         return (self.metadata or {}).get("caption")
 
 
 @dataclass(frozen=True)
 class ArtifactInfo:
-    """One artifact of a run, from :meth:`Run.artifacts`.
+    """One artifact of a run, from ``Run.artifacts``.
 
     Attributes:
         name: The artifact's name, or the sequence name for a media point.
@@ -141,7 +143,7 @@ class ArtifactInfo:
         size_bytes: Size of the stored bytes.
         metadata: The artifact's metadata as a JSON string, or None.
         object_type: The handler kind (``"image"``, ``"table"``, ...) that
-            :meth:`Run.artifact` uses to decode it; None if unknown.
+            ``Run.artifact`` uses to decode it; None if unknown.
     """
 
     name: str
@@ -157,8 +159,8 @@ class ArtifactInfo:
 class MediaRef:
     """A media cell of a logged table: an image/audio/video stored as its own artifact.
 
-    Nothing is downloaded until :meth:`load` (decoded like ``Run.artifact``)
-    or :meth:`bytes` (raw) is called.
+    Nothing is downloaded until ``load`` (decoded like ``Run.artifact``)
+    or ``bytes`` (raw) is called.
 
     Attributes:
         hash: Content hash of the cell's artifact.
@@ -180,10 +182,10 @@ class MediaRef:
         return self._backend.get_artifact_bytes(self.hash)
 
     def load(self) -> Any:
-        """Download the cell and decode it by its :attr:`object_type`.
+        """Download the cell and decode it by its ``object_type``.
 
         Returns:
-            The decoded value, like :meth:`Run.artifact` returns for the same
+            The decoded value, like ``Run.artifact`` returns for the same
             kind (e.g. a ``PIL.Image`` for a PNG image, ``(samples,
             sample_rate)`` for audio); the raw bytes when the kind has no
             decoder.
@@ -198,7 +200,7 @@ class MediaRef:
 
 
 def _table_media_refs(table: dict[str, Any], backend: Any) -> dict[str, Any]:
-    """Replace a table's ``{"$media": ...}`` cells with :class:`MediaRef`."""
+    """Replace a table's ``{"$media": ...}`` cells with ``MediaRef``."""
     for row in table.get("data", []):
         for c, cell in enumerate(row):
             if isinstance(cell, dict) and isinstance(cell.get("$media"), dict):
@@ -209,7 +211,7 @@ def _table_media_refs(table: dict[str, Any], backend: Any) -> dict[str, Any]:
 
 @dataclass(frozen=True)
 class LogLine:
-    """One captured line of a run's output, from :meth:`Run.logs`.
+    """One captured line of a run's output, from ``Run.logs``.
 
     Attributes:
         stream: The stream it was written to (``"stdout"`` or ``"stderr"``).
@@ -229,7 +231,7 @@ class LogLine:
 
 @dataclass(frozen=True)
 class SourceFile:
-    """One file of a run's source snapshot, from :meth:`Run.source_tree`.
+    """One file of a run's source snapshot, from ``Run.source_tree``.
 
     Attributes:
         path: Path relative to the snapshot root.
@@ -266,12 +268,12 @@ def _parse_dt(s: str | None) -> datetime | None:
 
 class Sequence:
     """A named sequence of tracked values (scalars, artifacts, etc.), from
-    :meth:`Run.sequence`.
+    ``Run.sequence``.
 
-    Iterating yields :class:`SequencePoint` objects in step order, and
+    Iterating yields ``SequencePoint`` objects in step order, and
     ``len()`` is the number of points. Indexing is by **step**, not
     position: ``seq[100]`` is the point logged at step 100 (``KeyError`` if
-    there is none), and ``seq[100:200]`` is a new :class:`Sequence` of the
+    there is none), and ``seq[100:200]`` is a new ``Sequence`` of the
     points with ``100 <= step < 200``.
 
     Args:
@@ -364,7 +366,7 @@ class DataRef:
     a server-anchored ``SeriesRef`` (no bytes ever move for that path — the
     card renders by reference through ``/embed/card``).
 
-    ``run[tag][step]`` (via :meth:`__getitem__`) narrows to one step,
+    ``run[tag][step]`` (via ``__getitem__``) narrows to one step,
     mapping to the existing ``step=`` args on ``Run.sequence``/``Run.artifact``.
 
     Attributes:
@@ -384,20 +386,20 @@ class DataRef:
 
     @property
     def run_id(self) -> str:
-        """The id of :attr:`run`."""
+        """The id of ``run``."""
         return self.run.id
 
     def resolve(self) -> Any:
         """Eagerly fetch the underlying data.
 
         Tries a named/sequence artifact first (images, meshes, tensors,
-        ...); falls back to the raw scalar :class:`Sequence` when the tag
+        ...); falls back to the raw scalar ``Sequence`` when the tag
         isn't an artifact (e.g. a plain scalar metric).
 
         Returns:
-            The decoded artifact (as :meth:`Run.artifact` returns it; the
+            The decoded artifact (as ``Run.artifact`` returns it; the
             highest-step one unless a step was given); else the
-            :class:`Sequence`, or its :class:`SequencePoint` at the given step.
+            ``Sequence``, or its ``SequencePoint`` at the given step.
 
         Raises:
             KeyError: A step was given and neither an artifact nor a
@@ -442,10 +444,10 @@ class DataRef:
 class Run:
     """A single tracked run with lazy-loaded data.
 
-    Get one from :meth:`Reader.run` or a :class:`RunQuery`. Metadata
+    Get one from ``Reader.run`` or a ``RunQuery``. Metadata
     properties come from the row the run was loaded with; config, summary,
     sequences, artifacts, logs and source are fetched when first asked for.
-    ``run[tag]`` returns a lazy :class:`DataRef`.
+    ``run[tag]`` returns a lazy ``DataRef``.
 
     Example:
         ```python
@@ -495,8 +497,8 @@ class Run:
 
     @property
     def duration(self) -> timedelta | None:
-        """Time from :attr:`created_at` to :attr:`ended_at`, or to now while
-        :attr:`ended_at` is unset; None if the start time is unknown."""
+        """Time from ``created_at`` to ``ended_at``, or to now while
+        ``ended_at`` is unset; None if the start time is unknown."""
         start = self.created_at
         end = self.ended_at or datetime.now(timezone.utc)
         if start is None:
@@ -535,14 +537,14 @@ class Run:
     def final(self) -> dict[str, Any]:
         """Each metric's final value, exactly as the UI's runs table shows it:
         the last scalar point, replaced by a ``track(..., summary=)`` rule,
-        replaced by an explicit :attr:`summary` key."""
+        replaced by an explicit ``summary`` key."""
         if "values" not in self._raw:
             self._raw["values"] = self._backend.get_run(self.id)["run"]["values"]
         return dict(self._raw["values"])
 
     @property
     def config(self) -> dict[str, Any]:
-        """Alias of :attr:`params` (the write side is ``run.config(...)``)."""
+        """Alias of ``params`` (the write side is ``run.config(...)``)."""
         return self.params
 
     @property
@@ -603,7 +605,7 @@ class Run:
         """List the run's sequences.
 
         Returns:
-            One :class:`SequenceInfo` per sequence name, sorted by name.
+            One ``SequenceInfo`` per sequence name, sorted by name.
         """
         rows = self._backend.list_sequences(self.id)
         return [SequenceInfo(**r) for r in rows]
@@ -620,7 +622,7 @@ class Run:
             step_to: Only points with ``step <= step_to`` (inclusive).
 
         Returns:
-            The points in step order; an empty :class:`Sequence` when the
+            The points in step order; an empty ``Sequence`` when the
             run has no sequence of that name.
 
         Example:
@@ -646,13 +648,15 @@ class Run:
     def eval(self, expr: str, *, domain: Any = None) -> Any:
         """Evaluate a cairn expression (``cairn.expr``) on this run.
 
-        Returns the scalar value, or a :class:`cairn.expr.Series` (``steps``,
+        Returns the scalar value, or a ``cairn.expr.Series`` (``steps``,
         ``values``) for a series expression. An as-of join between series
-        with different steps emits a :class:`cairn.expr.ExprWarning`.
-        Raises :class:`cairn.expr.ExprError` on parse/type errors::
+        with different steps emits a ``cairn.expr.ExprWarning``.
+        Raises ``cairn.expr.ExprError`` on parse/type errors:
 
-            run.eval("last(val.loss) - min(val.loss)")
-            run.eval("ema(loss, 0.9)")
+        ```python
+        run.eval("last(val.loss) - min(val.loss)")
+        run.eval("ema(loss, 0.9)")
+        ```
         """
         import warnings
 
@@ -668,7 +672,7 @@ class Run:
         the media points of its sequences (by name, then step).
 
         Returns:
-            One :class:`ArtifactInfo` per stored artifact and step.
+            One ``ArtifactInfo`` per stored artifact and step.
         """
         data = self._backend.list_artifacts(self.id)
         result = []
@@ -742,7 +746,7 @@ class Run:
         - ``video``     → np.ndarray (T, H, W, C)
         - ``tensor``    → np.ndarray
         - ``text``      → str
-        - ``table``     → ``{"columns", "data"}``; media cells are :class:`MediaRef`
+        - ``table``     → ``{"columns", "data"}``; media cells are ``MediaRef``
         - ``histogram`` → ``(counts: np.ndarray, edges: np.ndarray)``
         - ``figure``    → PIL.Image (rasterized; use ``artifact_bytes`` for source)
 
@@ -815,7 +819,7 @@ class Run:
             step: The step to fetch (None: the highest step).
 
         Returns:
-            ``dest`` as a :class:`~pathlib.Path`.
+            ``dest`` as a ``Path``.
 
         Raises:
             KeyError: The run has no artifact of that name (at that step).
@@ -865,7 +869,7 @@ class Run:
         """Read one file of the run's source snapshot.
 
         Args:
-            path: The file's path, as :meth:`source_tree` lists it.
+            path: The file's path, as ``source_tree`` lists it.
 
         Returns:
             The file's text, or None if the run has no snapshot or the file
@@ -886,14 +890,16 @@ class Run:
 
     def edit(self) -> RunEditor:
         """An editing handle for this run (config, summary, tags, name,
-        notes). Use it as a context manager, or ``close()`` it::
+        notes). Use it as a context manager, or ``close()`` it:
 
-            with reader.run(run_id).edit() as e:
-                e.set_summary(test_acc=0.93)
-                e.add_tag("best")
+        ```python
+        with reader.run(run_id).edit() as e:
+            e.set_summary(test_acc=0.93)
+            e.add_tag("best")
+        ```
 
         Returns:
-            A :class:`RunEditor` for this run.
+            A ``RunEditor`` for this run.
 
         Raises:
             ValueError: The Reader reads an exported ``.zip`` archive.
@@ -907,7 +913,7 @@ class Run:
     # ---- Lazy data handles ----
 
     def __getitem__(self, tag: str) -> DataRef:
-        """``run[tag]`` — a lazy :class:`DataRef` over a sequence/artifact tag.
+        """``run[tag]`` — a lazy ``DataRef`` over a sequence/artifact tag.
 
         Does not fetch anything; resolves only when the handle is rendered
         (``cairn.plot`` element builders) or explicitly ``.resolve()``d.
@@ -919,13 +925,13 @@ class Run:
 
 
 class RunEditor:
-    """Write access to one existing run, from :meth:`Run.edit`.
+    """Write access to one existing run, from ``Run.edit``.
 
     Writes go through the same transport resolution as ``cairn.Run``: the
     repo DB directly, or the server that holds the repo (or the ``cairn://``
-    server the Reader reads). Each call writes immediately. The :class:`Run`
+    server the Reader reads). Each call writes immediately. The ``Run``
     it came from sees the edits. Use it as a context manager, or call
-    :meth:`close` when done.
+    ``close`` when done.
 
     Args:
         run: The run to edit.
@@ -1148,7 +1154,7 @@ _HISTORY_COLUMNS = ["run_id", "run_name", "name", "step", "wall_time", "value"]
 
 
 def _history_frame(backend: _Backend, runs: list[Run], keys: list[str] | None) -> Any:
-    """Long-format scalar history of ``runs`` (see :meth:`RunQuery.history`)."""
+    """Long-format scalar history of ``runs`` (see ``RunQuery.history``)."""
     try:
         import pandas as pd
     except ImportError as exc:
@@ -1173,7 +1179,7 @@ def _history_frame(backend: _Backend, runs: list[Run], keys: list[str] | None) -
 
 
 class _RunExprContext:
-    """A :mod:`cairn.expr` context over one :class:`Run`; series are fetched
+    """A ``cairn.expr`` context over one ``Run``; series are fetched
     once per context."""
 
     def __init__(self, run: Run) -> None:
@@ -1205,41 +1211,45 @@ class _RunExprContext:
 
 
 class RunQuery:
-    """Lazy query builder for runs, from :meth:`Reader.runs`.
+    """Lazy query builder for runs, from ``Reader.runs``.
 
-    Builder methods (:meth:`filter`, :meth:`where`, :meth:`sort`,
-    :meth:`limit`) return a new query and leave this one unchanged. The
-    query runs on :meth:`list`, :meth:`first`, :meth:`last`,
-    :meth:`history`, iteration and ``len()``; each of these runs it anew.
+    Builder methods (``filter``, ``where``, ``sort``,
+    ``limit``) return a new query and leave this one unchanged. The
+    query runs on ``list``, ``first``, ``last``,
+    ``history``, iteration and ``len()``; each of these runs it anew.
 
-    Filters use Django-style ``field__operator=value`` suffixes::
+    Filters use Django-style ``field__operator=value`` suffixes:
 
-        reader.runs(project="x").filter(
-            status="completed",                    # exact match (default op)
-            name__contains="my-run",               # substring
-            tags__contains="best",                 # list membership
-            lr__gt=1e-4,                           # > on a param
-            lr__lt=1e-2,
-            status__in=["completed", "killed"],    # set membership
-            metrics__loss__lt=0.1,                 # final value (Run.final)
-            hostname__startswith="gpu",
-        )
+    ```python
+    reader.runs(project="x").filter(
+        status="completed",                    # exact match (default op)
+        name__contains="my-run",               # substring
+        tags__contains="best",                 # list membership
+        lr__gt=1e-4,                           # > on a param
+        lr__lt=1e-2,
+        status__in=["completed", "killed"],    # set membership
+        metrics__loss__lt=0.1,                 # final value (Run.final)
+        hostname__startswith="gpu",
+    )
+    ```
 
     Supported operators: ``exact``, ``iexact``, ``gt``, ``gte``, ``lt``,
     ``lte``, ``in``, ``contains``, ``icontains``, ``startswith``,
     ``endswith``, ``isnull``.
 
     Special field roots: ``metrics`` (the metric's final value as
-    :attr:`Run.final` resolves it: the last point, replaced by a
+    ``Run.final`` resolves it: the last point, replaced by a
     ``track(..., summary=)`` rule, replaced by an explicit summary key; write
     ``metrics__val__acc`` for the metric ``val.acc``), ``params`` (explicit
     param lookup), ``summary`` (a ``run.summary`` value), ``tags`` (list
     membership). Any other root is treated as a param key.
 
-    ``where(expr)`` adds a :mod:`cairn.expr` expression filter; a run matches
-    when the (scalar) expression is truthy and not None::
+    ``where(expr)`` adds a ``cairn.expr`` expression filter; a run matches
+    when the (scalar) expression is truthy and not None:
 
-        reader.runs("x").where("last(val.acc) > 0.9 and config.opt == 'adam'")
+    ```python
+    reader.runs("x").where("last(val.acc) > 0.9 and config.opt == 'adam'")
+    ```
 
     Args:
         backend: The Reader's storage backend.
@@ -1313,7 +1323,7 @@ class RunQuery:
         return self._clone(status=new_status, filters=new_filters)
 
     def where(self, expr: str) -> RunQuery:
-        """Keep runs for which the :mod:`cairn.expr` expression is truthy
+        """Keep runs for which the ``cairn.expr`` expression is truthy
         (None, e.g. a missing value, does not match).
 
         Args:
@@ -1442,12 +1452,12 @@ class RunQuery:
 
     def first(self) -> Run | None:
         """The first matching run in ascending order of the sort column
-        (by default the oldest), whatever ``desc`` :meth:`sort` set.
+        (by default the oldest), whatever ``desc`` ``sort`` set.
 
         Note:
             A server returns runs newest first whatever the order asked
             for, so against a server this is the newest run, like
-            :meth:`last`.
+            ``last``.
 
         Returns:
             The run, or None if no run matches.
@@ -1457,7 +1467,7 @@ class RunQuery:
 
     def last(self) -> Run | None:
         """The first matching run in descending order of the sort column
-        (by default the newest), whatever ``desc`` :meth:`sort` set.
+        (by default the newest), whatever ``desc`` ``sort`` set.
 
         Returns:
             The run, or None if no run matches.
@@ -1491,7 +1501,7 @@ class RunQuery:
             The URL.
 
         Raises:
-            ValueError: The query has :meth:`where` filters, or the Reader
+            ValueError: The query has ``where`` filters, or the Reader
                 is not connected to a server.
         """
         if self._wheres:
@@ -2051,8 +2061,8 @@ class Reader:
     """Read access to a Cairn repo, server, or exported ZIP.
 
     Reading never changes the data; to edit a run (config, summary, tags,
-    name, notes), use :meth:`Run.edit`. Use the Reader as a context manager,
-    or call :meth:`close` when done.
+    name, notes), use ``Run.edit``. Use the Reader as a context manager,
+    or call ``close`` when done.
 
     Args:
         repo: Path to a ``.cairn/`` directory, ``cairn://host:port`` (or an
@@ -2127,7 +2137,7 @@ class Reader:
             project: Only runs of this project id (None: all projects).
 
         Returns:
-            A :class:`RunQuery` over the runs, newest first.
+            A ``RunQuery`` over the runs, newest first.
         """
         return RunQuery(self._backend, project=project)
 
@@ -2218,7 +2228,7 @@ class Reader:
                 or ``"model:v3"``.
 
         Returns:
-            A :class:`cairn.ArtifactDir` for a multi-file
+            A ``cairn.ArtifactDir`` for a multi-file
             artifact; else the value decoded by its type's handler, or the
             raw bytes when it has none.
         """

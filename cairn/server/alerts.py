@@ -2,7 +2,7 @@
 
 ``ingest_ops`` only WRITES alert rows (``run.alert()``, a run finishing
 ``failed``/``killed``, a reaped run), because runs also finish with no server
-up. The server's lifespan task (``app.py``) calls :func:`maintenance_cycle`
+up. The server's lifespan task (``app.py``) calls ``maintenance_cycle``
 every few seconds: it reaps runs whose heartbeat stopped, then claims the
 undelivered alerts and posts them to the configured webhook. Alerts written
 while no server was up are delivered at the next server start.

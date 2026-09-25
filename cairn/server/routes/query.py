@@ -9,7 +9,7 @@ The endpoint re-resolves on every request and is marked ``Cache-Control:
 no-store`` so a ``run=latest`` URL is always current on report open; the digest
 it points at is immutable and cached forever (see ``routes/artifacts.py``).
 
-Grammar and semantics live in :mod:`cairn.server.query_resolver` (pure,
+Grammar and semantics live in ``cairn.server.query_resolver`` (pure,
 HTTP-free, unit-tested directly).
 """
 

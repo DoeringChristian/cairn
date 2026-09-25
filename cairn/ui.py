@@ -3,7 +3,7 @@
 A binding, not an implementation: the code lives in ``cairn_ui.cards``, shipped
 by the ``cairn-ui`` distribution alongside the browser bundle it drives. This
 module exists so the import reads ``cairn.ui`` rather than ``cairn_ui.cards``,
-exactly as :mod:`cairn.plot` binds onto ``cairn_plot``.
+exactly as ``cairn.plot`` binds onto ``cairn_plot``.
 
 Needs ``pip install 'cairn-track[ui]'``; ``cairn.__getattr__`` turns a missing
 distribution into that hint.

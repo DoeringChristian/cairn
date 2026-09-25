@@ -8,7 +8,7 @@ Design:
 * One credential, two carriers, one read: a request presents the token either
   as ``Authorization: Bearer <token>`` (SDK/CLI) or as the HttpOnly cookie
   ``cairn_token=<token>`` (browser). The header wins when both are sent. Both
-  carriers resolve through :func:`verify_token`. There are no sessions.
+  carriers resolve through ``verify_token``. There are no sessions.
 * **Resolving a request never writes.** Authentication is a pure read: hash,
   look up, ``compare_digest``, check ``disabled``/``expires_at``. Nothing is
   touched on the request path — no sliding session expiry, no ``last_used_at``
@@ -24,8 +24,8 @@ Design:
   and against subtle timing side-channels.
 * A report share link is a third, much narrower credential: the HttpOnly
   ``cairn_share`` cookie holds the link's secret and resolves to a
-  :class:`ShareGrant`. It is default-deny — :func:`require_role` lets it
-  through only on the GET routes in :data:`SHARE_ALLOWED` whose checker passes
+  ``ShareGrant``. It is default-deny — ``require_role`` lets it
+  through only on the GET routes in ``SHARE_ALLOWED`` whose checker passes
   against the report's live scope (``report_scope.py``).
 * OTPs and SSH login nonces are single-use: consumption happens by
   deleting the row *inside* the same locked transaction that reads it
@@ -223,7 +223,7 @@ def verify_token(db: Database, plaintext: str) -> Principal | None:
 
 def verify_share(db: Database, secret: str) -> ShareGrant | None:
     """Resolve a share link's secret to its grant, or ``None`` when unknown,
-    revoked or expired. Pure read, like :func:`verify_token`."""
+    revoked or expired. Pure read, like ``verify_token``."""
     if not secret:
         return None
     h = hash_secret(secret)
@@ -542,7 +542,7 @@ def require_role(min_role: str) -> Callable[[Request], Principal | None]:
     stays unaffected.
 
     A share principal passes only a read-role check, only on a GET/HEAD
-    route in :data:`SHARE_ALLOWED` whose checker admits the request."""
+    route in ``SHARE_ALLOWED`` whose checker admits the request."""
     if min_role not in ROLE_RANK:
         raise ValueError(f"invalid role {min_role!r}; must be one of {ROLES}")
     min_rank = ROLE_RANK[min_role]

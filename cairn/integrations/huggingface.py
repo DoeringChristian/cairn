@@ -1,14 +1,16 @@
 """HuggingFace Trainer integration.
 
-Usage::
+Usage:
 
-    from cairn.integrations.huggingface import CairnCallback
-    from transformers import Trainer
+```python
+from cairn.integrations.huggingface import CairnCallback
+from transformers import Trainer
 
-    trainer = Trainer(
-        ...,
-        callbacks=[CairnCallback(project="ft")],
-    )
+trainer = Trainer(
+    ...,
+    callbacks=[CairnCallback(project="ft")],
+)
+```
 
 Evaluation metrics (``eval_<metric>`` in the Trainer) are tracked once, as
 ``eval.<metric>`` at ``step=global_step``, from ``on_evaluate``. The Trainer
@@ -39,7 +41,13 @@ class CairnCallback(TrainerCallback):
     """HuggingFace ``TrainerCallback`` that mirrors training output into a Cairn run.
 
     Creates the run lazily at ``on_train_begin`` (or uses an explicitly
-    provided one) and calls ``finish`` at ``on_train_end``.
+    provided one) and calls ``finish`` at ``on_train_end`` if it created it.
+
+    Args:
+        run: An existing run to write into; it is left open. Default: a new
+            run created from ``run_kwargs`` and finished when training ends.
+        **run_kwargs: Passed to ``cairn.Run`` for the new run (``project``
+            defaults to the last component of ``TrainingArguments.output_dir``, else ``"hf"``).
     """
 
     def __init__(self, run: Run | None = None, **run_kwargs: Any):
@@ -49,6 +57,7 @@ class CairnCallback(TrainerCallback):
 
     @property
     def run(self) -> Run | None:
+        """The run being written to; None before training starts."""
         return self._run
 
     def on_train_begin(

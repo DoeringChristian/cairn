@@ -1,11 +1,13 @@
 """XGBoost integration.
 
-Usage::
+Usage:
 
-    from cairn.integrations.xgboost import CairnCallback
+```python
+from cairn.integrations.xgboost import CairnCallback
 
-    xgb.train(params, dtrain, evals=[(dtrain, "train"), (dval, "val")],
-              callbacks=[CairnCallback(project="gbm")])
+xgb.train(params, dtrain, evals=[(dtrain, "train"), (dval, "val")],
+          callbacks=[CairnCallback(project="gbm")])
+```
 
 Each boosting round tracks the latest value of every eval metric as
 ``<eval name>.<metric>`` at ``step=<round>`` (``train.rmse``, ``val.rmse``).
@@ -30,6 +32,12 @@ class CairnCallback(TrainingCallback):
 
     Creates the run at ``before_training`` from ``run_kwargs`` (or uses the
     given ``run``) and finishes it at ``after_training`` only if it created it.
+
+    Args:
+        run: An existing run to write into; it is left open. Default: a new
+            run created from ``run_kwargs`` and finished when training ends.
+        **run_kwargs: Passed to ``cairn.Run`` for the new run (``project``
+            defaults to ``"xgboost"``).
     """
 
     def __init__(self, run: Run | None = None, **run_kwargs: Any):
@@ -40,6 +48,7 @@ class CairnCallback(TrainingCallback):
 
     @property
     def run(self) -> Run | None:
+        """The run being written to; None before training starts."""
         return self._run
 
     def before_training(self, model: Any) -> Any:

@@ -1243,7 +1243,7 @@ def login_cmd(use_ssh: bool, server: str | None, key_path: Path | None, name: st
 
 _REPO_HELP = (
     "Path to a .cairn/ directory or cairn://host:port URL. "
-    "Default: ./.cairn if it exists, else env/config."
+    "Default: CAIRN_REPO / CAIRN_SERVER / the config file, else ./.cairn."
 )
 
 

@@ -10,19 +10,21 @@ names with backtick quoting; reserved roots ``config.``, ``summary.``,
 ``run.{name,id,status,tags,group,job_type,created_at}``, ``step``,
 ``wall_time``, ``relative_time``. Values are ``scalar | series``; scalars
 broadcast; series with different steps are as-of joined, with an
-:class:`ExprWarning`. Functions: reducers ``min max mean first last``,
+``ExprWarning``. Functions: reducers ``min max mean first last``,
 pointwise ``min|max(a, b) log exp abs clip``, series ``cummin cummax diff
 ema``, joins ``exact resample``. ``${…}`` templates render scalars.
 
-Usage::
+Usage:
 
-    from cairn.expr import evaluate
-    r = evaluate("last(loss) < 0.1 and config.opt == 'adam'", ctx)
-    r.value, r.type, r.warnings
+```python
+from cairn.expr import evaluate
+r = evaluate("last(loss) < 0.1 and config.opt == 'adam'", ctx)
+r.value, r.type, r.warnings
+```
 
 ``ctx`` is any object with ``series(name)``, ``config(key)``,
 ``summary(key)``, ``run(field)`` and optionally ``stat(name, reducer)``
-(return :data:`MISSING` when unknown). ``series`` returns ``None`` or a
+(return ``MISSING`` when unknown). ``series`` returns ``None`` or a
 mapping/object with ``steps``, ``values`` and optional ``wall`` (epoch ms).
 
 Offsets in spans are code points (the UI's are UTF-16 units; they differ
@@ -465,7 +467,7 @@ def _parse_range(src: str, start: int, end: int) -> Node:
 
 
 def parse(src: str) -> Node:
-    """Parse an expression; raises :class:`ExprError` with the offending span."""
+    """Parse an expression; raises ``ExprError`` with the offending span."""
     return _parse_range(src, 0, len(src))
 
 
@@ -568,7 +570,7 @@ def _arity(node: Node, n: int, sig: str) -> None:
 
 
 def check(node: Node) -> ExprType:
-    """The expression's type; raises :class:`ExprError` on the first type error."""
+    """The expression's type; raises ``ExprError`` on the first type error."""
     t = node.type
     if t == "num":
         return _S("number")
@@ -1150,7 +1152,7 @@ class _Evaluator:
 
 
 def evaluate(expr: str | Node, ctx: Any, *, domain: Any = None) -> EvalResult:
-    """Evaluate ``expr`` for one run. Raises :class:`ExprError` on parse/type
+    """Evaluate ``expr`` for one run. Raises ``ExprError`` on parse/type
     errors (and an axis root without a domain); data problems yield None."""
     node = parse(expr) if isinstance(expr, str) else expr
     typ = check(node)
@@ -1195,7 +1197,7 @@ def format_g(x: float, p: int = 6) -> str:
 
 def format_value(v: Any) -> str:
     """Default template text: None → "", bools true/false, numbers
-    :func:`format_g`, lists joined by ", ", dicts compact JSON."""
+    ``format_g``, lists joined by ", ", dicts compact JSON."""
     if v is None:
         return ""
     if isinstance(v, bool):

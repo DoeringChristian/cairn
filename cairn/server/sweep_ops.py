@@ -5,15 +5,17 @@ User errors raise ``ValueError`` (bad space / body) or ``LookupError``
 (unknown sweep / trial); callers map them to status codes.
 
 A sweep is a search ``space`` (wandb's ``parameters`` block), a ``method``
-and an optional ``metric`` + ``goal``. Workers ask :func:`next_trial` for
-params, run them, and :func:`report_trial` the outcome. The space::
+and an optional ``metric`` + ``goal``. Workers ask ``next_trial`` for
+params, run them, and ``report_trial`` the outcome. The space:
 
-    lr:     {values: [0.1, 0.01]}                           # categorical
-    wd:     {min: 0.0, max: 0.1}                            # uniform float
-    lr2:    {min: 1e-5, max: 1e-1, distribution: log_uniform}
-    layers: {min: 1, max: 4}                                # ints → int_uniform
-    bs:     {value: 32}                                     # constant
-    seed:   7                                               # constant (shorthand)
+```yaml
+lr:     {values: [0.1, 0.01]}                           # categorical
+wd:     {min: 0.0, max: 0.1}                            # uniform float
+lr2:    {min: 1e-5, max: 1e-1, distribution: log_uniform}
+layers: {min: 1, max: 4}                                # ints → int_uniform
+bs:     {value: 32}                                     # constant
+seed:   7                                               # constant (shorthand)
+```
 
 * ``grid`` walks the product of every ``values`` list (ranges are an error)
   and finishes the sweep when exhausted.
@@ -271,7 +273,7 @@ def list_sweeps(db: Database, project_id: str | None = None) -> list[dict[str, A
 
 
 def get_sweep(db: Database, sweep_id: str) -> dict[str, Any]:
-    """The sweep (as :func:`list_sweeps` shows it) plus its ``trials``, oldest first."""
+    """The sweep (as ``list_sweeps`` shows it) plus its ``trials``, oldest first."""
     sweep = _require_sweep(db, sweep_id)
     trials = _numbered(sweep, db.read_columns(
         "SELECT * FROM sweep_trials WHERE sweep_id = ? ORDER BY rowid", [sweep_id],

@@ -1,23 +1,23 @@
 """Hyperparameter sweeps from Python — the in-process twin of ``cairn agent``.
 
-::
+```python
+def train(config, run):
+    for step in range(100):
+        run.track(loss(config["lr"], step), name="loss", step=step)
+    return final_loss            # optional: else the run's "loss" is read
 
-    def train(config, run):
-        for step in range(100):
-            run.track(loss(config["lr"], step), name="loss", step=step)
-        return final_loss            # optional: else the run's "loss" is read
-
-    sw = cairn.sweep(
-        {"lr": {"min": 1e-4, "max": 1e-1, "distribution": "log_uniform"},
-         "layers": {"values": [2, 4, 8]}},
-        project="mnist", metric="loss", goal="minimize", method="bayes",
-    )
-    sw.run(train, count=20)
-    sw.best    # {"params": ..., "value": ..., "run_id": ...}
+sw = cairn.sweep(
+    {"lr": {"min": 1e-4, "max": 1e-1, "distribution": "log_uniform"},
+     "layers": {"values": [2, 4, 8]}},
+    project="mnist", metric="loss", goal="minimize", method="bayes",
+)
+sw.run(train, count=20)
+sw.best    # {"params": ..., "value": ..., "run_id": ...}
+```
 
 Both drive the same sweep routes (``sweep_ops``): claim a trial, open a run
 in the sweep with the trial's params as config, report the outcome. The space
-format is documented in :mod:`cairn.server.sweep_ops`.
+format is documented in ``cairn.server.sweep_ops``.
 """
 
 from __future__ import annotations
@@ -108,6 +108,9 @@ class Sweep:
         sweep_id: The sweep's id (``cairn sweep ls`` lists them).
         project: The sweep's project. Looked up from the sweep when omitted.
         repo: Where the sweep lives, resolved like ``cairn.Run(repo=...)``.
+
+    Attributes:
+        id: The sweep's id.
     """
 
     def __init__(self, sweep_id: str, *, project: str | None = None, repo: str | Path | None = None):

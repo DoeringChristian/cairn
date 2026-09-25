@@ -1,14 +1,16 @@
 """Multi-file artifacts: a directory, or files that live elsewhere.
 
 ``run.log_artifact("data/", name="dataset")`` uploads every file under the
-directory content-addressed, then uploads and versions a MANIFEST naming them::
+directory content-addressed, then uploads and versions a MANIFEST naming them:
 
-    {"files": [{"path": "train/0.png", "hash": "...", "size": 123, "mime": "image/png"},
-               {"path": "raw.tar", "uri": "s3://bucket/raw.tar", "size": 9, "etag": "..."}]}
+```json
+{"files": [{"path": "train/0.png", "hash": "...", "size": 123, "mime": "image/png"},
+           {"path": "raw.tar", "uri": "s3://bucket/raw.tar", "size": 9, "etag": "..."}]}
+```
 
-A :class:`Reference` records an external URI without uploading it (the second
+A ``Reference`` records an external URI without uploading it (the second
 entry above). ``use_artifact`` on a manifest version returns an
-:class:`ArtifactDir` handle instead of bytes.
+``ArtifactDir`` handle instead of bytes.
 """
 
 from __future__ import annotations
@@ -25,10 +27,12 @@ MANIFEST_MIME = "application/vnd.cairn.artifact-manifest+json"
 
 
 class Reference:
-    """An external file recorded by URI, never uploaded::
+    """An external file recorded by URI, never uploaded:
 
-        run.log_artifact(cairn.Reference("s3://bucket/raw.tar"), name="raw", artifact_type="dataset")
-        run.log_artifact([cairn.Reference(u, path=f"shard{i}.tar") for i, u in enumerate(urls)], name="shards")
+    ```python
+    run.log_artifact(cairn.Reference("s3://bucket/raw.tar"), name="raw", artifact_type="dataset")
+    run.log_artifact([cairn.Reference(u, path=f"shard{i}.tar") for i, u in enumerate(urls)], name="shards")
+    ```
 
     Downloading it back (``ArtifactDir.read``/``download``) needs ``fsspec``
     and whatever filesystem the URI names.
@@ -40,6 +44,12 @@ class Reference:
             segment.
         size: Size in bytes, recorded when given.
         etag: The storage's ETag or checksum, recorded when given.
+
+    Attributes:
+        uri: The external location.
+        path: The entry's name inside the artifact.
+        size: Size in bytes, or None.
+        etag: ETag or checksum, or None.
     """
 
     def __init__(self, uri: str, path: str | None = None, *, size: int | None = None, etag: str | None = None):
@@ -62,7 +72,7 @@ class Reference:
 
 
 def is_multi_file(value: Any) -> bool:
-    """A directory path, a :class:`Reference`, or a non-empty list of them."""
+    """A directory path, a ``Reference``, or a non-empty list of them."""
     if isinstance(value, Reference):
         return True
     if isinstance(value, (list, tuple)) and value and all(isinstance(v, Reference) for v in value):

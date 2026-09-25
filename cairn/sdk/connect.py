@@ -100,7 +100,7 @@ def _probe_server(url: str) -> None:
 def _verify_reachable(url: str, repo: Path) -> None:
     """Probe ``<url>/api/health`` so the SDK fails fast if the holder is hung.
 
-    Raises :class:`RepoLockedError` with an actionable message if the
+    Raises ``RepoLockedError`` with an actionable message if the
     holder's declared endpoint doesn't respond with 200.
     """
     import httpx

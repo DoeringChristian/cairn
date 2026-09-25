@@ -231,7 +231,7 @@ def resolve_target(
 ) -> RunTarget:
     """Resolve where a ``Run`` should send its data.
 
-    Returns a :class:`RunTarget` tagged ``local`` (with a filesystem path) or
+    Returns a ``RunTarget`` tagged ``local`` (with a filesystem path) or
     ``server`` (with a URL).
 
     Accepts ``cairn://host:port`` for HTTP server mode.

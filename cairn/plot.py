@@ -15,7 +15,7 @@ On top of that pure surface it layers cairn's run integration, which
 tabular / 3D-array data (``cp.Table(df)`` / ``cp.PointCloud(arr)``) is shaped
 by the same ``handlers/*`` code the tracking path uses.
 
-The comparison card helpers live in :mod:`cairn.ui` (``cairn.ui.media_compare``
+The comparison card helpers live in ``cairn.ui`` (``cairn.ui.media_compare``
 and friends): they build a card spec for the browser's viewer rather than
 rendering anything.
 """

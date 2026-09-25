@@ -517,14 +517,16 @@ class Run:
     # ---- tracking ---------------------------------------------------------
 
     def scope(self, *, step: int) -> "Scope":
-        """A :class:`~cairn.sdk.scope.Scope` with ``step`` bound.
+        """A ``Scope`` with ``step`` bound.
 
         The SECONDARY entry point. `Run` is already the root scope, so
         ``run.track(model, "model", step=it)`` walks a component tree on its own;
         this exists for the case recursion cannot reach — handing a pre-bound
-        logger to a plain function that is not a component::
+        logger to a plain function that is not a component:
 
-            evaluate(model, run.scope(step=it))
+        ```python
+        evaluate(model, run.scope(step=it))
+        ```
         """
         if self._finished:
             raise RuntimeError("Run has already been finished")
@@ -551,7 +553,7 @@ class Run:
           filters (``metrics__<name>`` in ``RunQuery.filter``,
           ``metrics.<name>`` in query URLs). ``"min"`` also
           means lower is better when comparing runs. An explicit
-          :meth:`summary` key of the same name still wins.
+          ``summary`` key of the same name still wins.
         - ``x`` — the FULL name of another scalar series (``x="epoch"``,
           never prefixed by a scope): charts of this metric start on that
           x-axis, joining the two series on step.
@@ -602,8 +604,8 @@ class Run:
         **kwargs: Any,
     ) -> None:
         """Record ONE point — no protocol dispatch. ``step=None`` auto-increments
-        (see :meth:`_track_sample`; never reachable from the public API).
-        ``summary`` / ``x`` set the metric's rule (see :meth:`track`)."""
+        (see ``_track_sample``; never reachable from the public API).
+        ``summary`` / ``x`` set the metric's rule (see ``track``)."""
         if self._finished:
             raise RuntimeError("Run has already been finished")
         has_rule = summary is not None or x is not None
@@ -772,16 +774,16 @@ class Run:
         Without ``artifact_type``: serialize + upload + attach as a NAMED run
         artifact (the ``run_artifacts`` pool) and return its content digest.
         With ``artifact_type``: register a version in the artifact registry
-        (family + versions) and return the :class:`ArtifactVersion`.
+        (family + versions) and return the ``ArtifactVersion``.
 
-        A directory path, a :class:`~cairn.sdk.artifact_dir.Reference` or a
+        A directory path, a ``Reference`` or a
         list of them is a multi-file artifact: each file is uploaded
         content-addressed (references are only recorded), and a manifest
         naming them is versioned — in the ``artifact_type`` family, or
         ``"artifact"`` when none is given. ``use_artifact`` returns it as an
-        :class:`~cairn.sdk.artifact_dir.ArtifactDir`.
+        ``ArtifactDir``.
 
-        Sequence points go through :meth:`track`, not here.
+        Sequence points go through ``track``, not here.
 
         Names starting with ``_cairn/`` are reserved for cairn's internal
         attachments (e.g. ``_cairn/git.diff``); the UI keeps them out of
@@ -885,7 +887,7 @@ class Run:
         """Consume an artifact. ``ref`` is ``"name:alias"`` or ``"name:vN"``.
 
         A multi-file artifact comes back as an
-        :class:`~cairn.sdk.artifact_dir.ArtifactDir` (``.files``,
+        ``ArtifactDir`` (``.files``,
         ``.open(path)``, ``.download(root)``); anything else as its
         deserialized value, or bytes.
         """
@@ -928,7 +930,7 @@ class Run:
             run.config(lr=1e-3, sched={"warmup": 100})
             run.config(vars(args))
 
-        The counterpart is :meth:`summary`, for results.
+        The counterpart is ``summary``, for results.
         """
         if self._finished:
             raise RuntimeError("Run has already been finished")
@@ -942,7 +944,7 @@ class Run:
             run.summary(best_val_acc=0.91, epochs_run=30)
             run.summary({"test": {"psnr": 31.4}})      # -> test.psnr
 
-        Same shape as :meth:`config`, opposite meaning: config is what went in,
+        Same shape as ``config``, opposite meaning: config is what went in,
         summary is what came out. Nothing writes here implicitly — a metric's
         last value is NOT a summary entry. A metric's final value (the runs
         table, ``Reader.Run.final``) is its last point, replaced by its
@@ -987,11 +989,13 @@ class Run:
 
         Every ``every``-th forward pass of ``model`` records ``gradients/<param>``
         (from that pass's backward), ``parameters/<param>``, or both
-        (``log="gradients"|"parameters"|"all"``), at the last step you tracked::
+        (``log="gradients"|"parameters"|"all"``), at the last step you tracked:
 
-            run.watch(model, log="all", every=100)
+        ```python
+        run.watch(model, log="all", every=100)
+        ```
 
-        :meth:`unwatch` (or :meth:`finish`) removes the hooks.
+        ``unwatch`` (or ``finish``) removes the hooks.
         """
         if self._finished:
             raise RuntimeError("Run has already been finished")
@@ -1246,7 +1250,7 @@ def _rule_on_non_scalar(name: str, kind: str | None) -> str:
 class _DisabledRun(Run):
     """What ``cairn.Run`` returns in disabled mode: every method is a no-op.
 
-    ``scope()`` still hands out a real :class:`Scope`, which walks components
+    ``scope()`` still hands out a real ``Scope``, which walks components
     into these no-ops.
     """
 
