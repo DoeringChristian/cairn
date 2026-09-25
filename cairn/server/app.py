@@ -38,6 +38,7 @@ from .routes import (
     import_export,
     ingest,
     logs,
+    project_docs,
     projects,
     query,
     report_templates,
@@ -209,8 +210,8 @@ def create_app(
     # Read-role routers. A handful of these also carry individual
     # write-role overrides on their mutating routes (POST/PUT/PATCH/DELETE)
     # declared directly on the route decorator in the route module itself
-    # (projects, comparisons, comparison_templates, reports, report_templates,
-    # artifact_registry) — role hierarchy (admin > write > read) means a
+    # (projects, project_docs, comparisons, comparison_templates, reports,
+    # report_templates, artifact_registry) — role hierarchy (admin > write > read) means a
     # write/admin token still satisfies the router-level read dependency, so
     # stacking both dependencies on the same route correctly requires
     # write-or-above. ``report_templates`` landed on main (feature/reports-extras)
@@ -220,6 +221,7 @@ def create_app(
     for router in (
         health.router,
         projects.router,
+        project_docs.router,
         runs.router,
         sequences.router,
         artifacts.router,

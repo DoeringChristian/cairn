@@ -167,6 +167,25 @@ SCHEMA_SQL: list[str] = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_report_templates_project ON report_templates(project_id)",
+    # A project's shared UI documents: its one workspace (run page and runs
+    # table layout) and any number of saved views. ``rev`` counts writes so a
+    # client can PUT against the revision it last saw and be told when
+    # another tab or user wrote in between.
+    """
+    CREATE TABLE IF NOT EXISTS project_docs (
+        id            TEXT PRIMARY KEY,
+        project_id    TEXT NOT NULL REFERENCES projects(id),
+        kind          TEXT NOT NULL CHECK(kind IN ('workspace','view')),
+        name          TEXT NOT NULL DEFAULT '',
+        rev           INTEGER NOT NULL,
+        created_at    TEXT NOT NULL,
+        updated_at    TEXT NOT NULL,
+        payload       TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_project_docs_project ON project_docs(project_id, kind)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_project_docs_workspace "
+    "ON project_docs(project_id) WHERE kind = 'workspace'",
     # ── Artifact registry tables ──────────────────────────────────────
     """
     CREATE TABLE IF NOT EXISTS artifact_families (
