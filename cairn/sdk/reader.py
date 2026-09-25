@@ -361,6 +361,15 @@ class Run:
         return self._summary
 
     @property
+    def final(self) -> dict[str, Any]:
+        """Each metric's final value, exactly as the UI's runs table shows it:
+        the last scalar point, replaced by a ``track(..., summary=)`` rule,
+        replaced by an explicit :attr:`summary` key."""
+        if "values" not in self._raw:
+            self._raw["values"] = self._backend.get_run(self.id)["run"]["values"]
+        return dict(self._raw["values"])
+
+    @property
     def config(self) -> dict[str, Any]:
         """Alias of :attr:`params` (R0: the write side is ``run.config(...)``)."""
         return self.params
@@ -651,6 +660,7 @@ class RunEditor:
         if values:
             self._transport.post_summary(self._run.id, values)
             self._run._summary = None
+            self._run._raw.pop("values", None)
 
     def delete_keys(self, which: str, keys: list[str]) -> None:
         """Delete ``keys`` from ``"config"`` or ``"summary"``. Keys are the
@@ -661,6 +671,7 @@ class RunEditor:
         self._transport.delete_keys(self._run.id, tables[which], list(keys))
         self._run._params = None
         self._run._summary = None
+        self._run._raw.pop("values", None)
 
     def set_tags(self, tags: list[str]) -> None:
         """Replace the run's tags."""
@@ -1188,11 +1199,22 @@ class _LocalBackend:
             [*params, limit, offset],
         )
         (total,) = self._db.read_one(f"SELECT COUNT(*) FROM runs {where}", params) or (0,)
-        return [_api_run_row(r) for r in rows], total
+        return self._with_values([_api_run_row(r) for r in rows]), total
+
+    def _with_values(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Each row with ``values``, from the server function the runs routes use."""
+        from ..server.summary_rules import resolved_values
+
+        values = resolved_values(self._db, [r["id"] for r in rows])
+        for r in rows:
+            r["values"] = values.get(r["id"], {})
+        return rows
 
     def get_run(self, run_id: str) -> dict[str, Any]:
         self._drain_wals()
-        rows = [_api_run_row(r) for r in self._db.read_columns("SELECT * FROM runs WHERE id = ?", [run_id])]
+        rows = self._with_values([
+            _api_run_row(r) for r in self._db.read_columns("SELECT * FROM runs WHERE id = ?", [run_id])
+        ])
         if not rows:
             raise KeyError(f"Run {run_id!r} not found")
         params = self._db.read_columns(

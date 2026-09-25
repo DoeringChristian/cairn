@@ -27,10 +27,11 @@ from pydantic import BaseModel, Field
 
 from .. import auth
 from ..storage.db import Database
+from ..summary_rules import resolved_values
 from ._common import api_run_row, get_db, utc_now
 from .report_assets import require_report
 from .reports import _parse_payload
-from .runs import RUN_LIST_COLUMNS, _resolved_values
+from .runs import RUN_LIST_COLUMNS
 
 router = APIRouter(prefix="/api", tags=["shares"])
 #: Registered without the require_role dependency: redeeming is how a share
@@ -207,7 +208,7 @@ def _scope_runs(db: Database, run_ids: list[str]) -> list[dict[str, Any]]:
         f"SELECT {RUN_LIST_COLUMNS} FROM runs WHERE id IN ({holes}) ORDER BY created_at DESC",
         run_ids,
     )
-    values = _resolved_values(db, [r["id"] for r in rows])
+    values = resolved_values(db, [r["id"] for r in rows])
     for row in rows:
         api_run_row(row)
         row["values"] = values.get(row["id"], {})

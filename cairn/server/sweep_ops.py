@@ -342,9 +342,9 @@ def next_trial(db: Database, sweep_id: str) -> dict[str, Any]:
 
 def run_metric_value(db: Database, run_id: str, metric: str) -> float | None:
     """What the runs table shows for ``metric``: its summary, else its last point."""
-    from .routes.runs import _resolved_values
+    from .summary_rules import resolved_values
 
-    value = _resolved_values(db, [run_id]).get(run_id, {}).get(metric)
+    value = resolved_values(db, [run_id]).get(run_id, {}).get(metric)
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return float(value)

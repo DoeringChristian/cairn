@@ -9,7 +9,7 @@ from fastapi import APIRouter, Query, Request
 
 from .. import auth
 from ..storage.db import Database
-from ..summary_rules import resolve_summary_rules
+from ..summary_rules import resolved_values
 from ._common import api_run_row, get_db, require_run
 
 router = APIRouter(prefix="/api", tags=["runs"])
@@ -62,7 +62,7 @@ def list_runs(
     )
     (total,) = db.read_one(f"SELECT COUNT(*) FROM runs {where}", params) or (0,)
     run_ids = [r["id"] for r in rows]
-    resolved = _resolved_values(db, run_ids)
+    resolved = resolved_values(db, run_ids)
     extras = {part.strip() for part in (include or "").split(",") if part.strip()}
     run_params = _params_by_run(db, run_ids) if "params" in extras else None
     run_stats = _metric_stats(db, run_ids) if "stats" in extras else None
@@ -84,56 +84,6 @@ def _params_by_run(db: Database, run_ids: list[str]) -> dict[str, dict[str, Any]
     out: dict[str, dict[str, Any]] = {rid: {} for rid in run_ids}
     for r in db.read_columns(
         f"SELECT run_id, key, value FROM params WHERE run_id IN ({holes})",
-        list(run_ids),
-    ):
-        out[r["run_id"]][r["key"]] = json.loads(r["value"])
-    return out
-
-
-def _resolved_values(
-    db: Database, run_ids: list[str]
-) -> dict[str, dict[str, Any]]:
-    """What the run table shows per run: last metric, summary wins.
-
-    Two sources, one column set. A scalar sequence contributes its LAST point,
-    which is what "acc" usually means in a table; an explicit ``summary`` key of
-    the same name replaces it, because the author saying "this is the number"
-    outranks whatever the series happened to end on (early stopping, a final
-    eval batch, a crash mid-epoch).
-
-    The merge lives here rather than at ingest so summary stays a record of what
-    was DECLARED. Auto-filling it on every track() would make this preference
-    unobservable and leave no way to tell a claim from a leftover.
-
-    Two queries for the whole page, not two per run: a run table is the one
-    place where an N+1 is guaranteed to be N=limit.
-    """
-    if not run_ids:
-        return {}
-    holes = ",".join("?" * len(run_ids))
-    out: dict[str, dict[str, Any]] = {rid: {} for rid in run_ids}
-
-    # Last scalar point per (run, name).
-    for r in db.read_columns(
-        f"""SELECT s.run_id AS run_id, s.name AS name, s.scalar_value AS value
-              FROM sequences s
-              JOIN (SELECT run_id, name, MAX(step) AS step
-                      FROM sequences
-                     WHERE run_id IN ({holes}) AND scalar_value IS NOT NULL
-                     GROUP BY run_id, name) m
-                ON s.run_id = m.run_id AND s.name = m.name AND s.step = m.step
-             WHERE s.scalar_value IS NOT NULL""",
-        list(run_ids),
-    ):
-        out[r["run_id"]][r["name"]] = r["value"]
-
-    # run.track(..., summary=...) rules replace the last point...
-    for rid, values in resolve_summary_rules(db, run_ids).items():
-        out[rid].update(values)
-
-    # ...and an explicit summary key replaces both.
-    for r in db.read_columns(
-        f"SELECT run_id, key, value FROM summary WHERE run_id IN ({holes})",
         list(run_ids),
     ):
         out[r["run_id"]][r["key"]] = json.loads(r["value"])
@@ -201,6 +151,6 @@ def get_run(run_id: str, request: Request) -> dict[str, Any]:
         "SELECT name, x, summary FROM metric_defs WHERE run_id = ? ORDER BY name",
         [run_id],
     )
-    run["values"] = _resolved_values(db, [run_id])[run_id]
+    run["values"] = resolved_values(db, [run_id])[run_id]
     run["stats"] = _metric_stats(db, [run_id])[run_id]
     return {"run": run, "params": params, "summary": summary, "metric_defs": metric_defs}
