@@ -94,6 +94,9 @@ def test_agent_runs_the_command_per_trial(repo, tmp_path):
         for r in runs:
             assert r._raw["sweep_id"] == sweep_id
             assert r.params["tag"] == "hello world"
+        # Unnamed runs take their trial's name: <sweep name>-<n>.
+        names = {r.id: r.name for r in runs}
+        assert [names[t["run_id"]] for t in trials] == [f"toy grid-{i}" for i in (1, 2, 3, 4)]
     finally:
         reader.close()
 

@@ -170,8 +170,23 @@ def _sweep_row(row: dict[str, Any]) -> dict[str, Any]:
     return {**row, "space": json.loads(row["space"])}
 
 
-def _trial_row(row: dict[str, Any]) -> dict[str, Any]:
-    return {**row, "params": json.loads(row["params"])}
+def trial_name(sweep: dict[str, Any], index: int) -> str:
+    """A trial's run name: ``<sweep name or id[:6]>-<index>``."""
+    return f"{sweep['name'] or sweep['id'][:6]}-{index}"
+
+
+def _trial_row(row: dict[str, Any], sweep: dict[str, Any], index: int) -> dict[str, Any]:
+    """A trial with its ``index`` (1-based, in creation order within the
+    sweep) and ``name`` (the name its run gets unless the script sets one)."""
+    return {
+        **row, "params": json.loads(row["params"]),
+        "index": index, "name": trial_name(sweep, index),
+    }
+
+
+def _numbered(sweep: dict[str, Any], rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """``rows`` (one sweep's trials, oldest first) as trial rows."""
+    return [_trial_row(r, sweep, i) for i, r in enumerate(rows, 1)]
 
 
 def _require_sweep(db: Database, sweep_id: str) -> dict[str, Any]:
@@ -248,20 +263,19 @@ def list_sweeps(db: Database, project_id: str | None = None) -> list[dict[str, A
     holes = ",".join("?" * len(sweeps))
     by_sweep: dict[str, list[dict[str, Any]]] = {s["id"]: [] for s in sweeps}
     for t in db.read_columns(
-        f"SELECT * FROM sweep_trials WHERE sweep_id IN ({holes})", [s["id"] for s in sweeps],
+        f"SELECT * FROM sweep_trials WHERE sweep_id IN ({holes}) ORDER BY rowid",
+        [s["id"] for s in sweeps],
     ):
-        by_sweep[t["sweep_id"]].append(_trial_row(t))
-    return [_summarize(s, by_sweep[s["id"]]) for s in sweeps]
+        by_sweep[t["sweep_id"]].append(t)
+    return [_summarize(s, _numbered(s, by_sweep[s["id"]])) for s in sweeps]
 
 
 def get_sweep(db: Database, sweep_id: str) -> dict[str, Any]:
     """The sweep (as :func:`list_sweeps` shows it) plus its ``trials``, oldest first."""
     sweep = _require_sweep(db, sweep_id)
-    trials = [
-        _trial_row(t) for t in db.read_columns(
-            "SELECT * FROM sweep_trials WHERE sweep_id = ? ORDER BY created_at, rowid", [sweep_id],
-        )
-    ]
+    trials = _numbered(sweep, db.read_columns(
+        "SELECT * FROM sweep_trials WHERE sweep_id = ? ORDER BY rowid", [sweep_id],
+    ))
     return {**_summarize(sweep, trials), "trials": trials}
 
 
@@ -292,10 +306,10 @@ def next_trial(db: Database, sweep_id: str) -> dict[str, Any]:
                 return {"status": sweep["status"], "trial": None}
             space = normalize_space(json.loads(sweep["space"]))
             method = sweep["method"]
+            (claimed,) = con.execute(
+                "SELECT COUNT(*) FROM sweep_trials WHERE sweep_id = ?", [sweep_id],
+            ).fetchone()
             if method == "grid":
-                (claimed,) = con.execute(
-                    "SELECT COUNT(*) FROM sweep_trials WHERE sweep_id = ?", [sweep_id],
-                ).fetchone()
                 grid = _grid(space)
                 if claimed >= len(grid):
                     con.execute("UPDATE sweeps SET status = 'finished' WHERE id = ?", [sweep_id])
@@ -314,6 +328,7 @@ def next_trial(db: Database, sweep_id: str) -> dict[str, Any]:
             trial = {
                 "id": secrets.token_hex(8), "sweep_id": sweep_id, "run_id": None,
                 "params": params, "status": "running", "value": None, "created_at": _now(),
+                "index": claimed + 1, "name": trial_name(sweep, claimed + 1),
             }
             con.execute(
                 """INSERT INTO sweep_trials (id, sweep_id, run_id, params, status, value, created_at)
@@ -367,4 +382,9 @@ def report_trial(
            WHERE id = ?""",
         [run_id, status, value, trial_id],
     )
-    return _trial_row(db.read_columns("SELECT * FROM sweep_trials WHERE id = ?", [trial_id])[0])
+    row = db.read_columns("SELECT * FROM sweep_trials WHERE id = ?", [trial_id])[0]
+    (index,) = db.read_columns(
+        "SELECT COUNT(*) AS n FROM sweep_trials WHERE sweep_id = ? "
+        "AND rowid <= (SELECT rowid FROM sweep_trials WHERE id = ?)", [sweep_id, trial_id],
+    )
+    return _trial_row(row, sweep, index["n"])

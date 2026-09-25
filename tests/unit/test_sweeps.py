@@ -62,6 +62,24 @@ def test_grid_walks_the_product_then_finishes(db):
     assert sweep_ops.get_sweep(db, sw["id"])["status"] == "finished"
 
 
+def test_trials_are_numbered_and_named_in_creation_order(db):
+    sw = sweep_ops.create_sweep(db, project="p", space={"a": {"min": 0.0, "max": 1.0}}, name="lr scan")
+    claimed = [sweep_ops.next_trial(db, sw["id"])["trial"] for _ in range(3)]
+    assert [(t["index"], t["name"]) for t in claimed] == [
+        (1, "lr scan-1"), (2, "lr scan-2"), (3, "lr scan-3"),
+    ]
+    reported = sweep_ops.report_trial(db, sw["id"], claimed[1]["id"], status="completed", value=0.5)
+    assert (reported["index"], reported["name"]) == (2, "lr scan-2")
+    info = sweep_ops.get_sweep(db, sw["id"])
+    assert [t["index"] for t in info["trials"]] == [1, 2, 3]
+    assert info["best"]["name"] == "lr scan-2"
+    assert sweep_ops.list_sweeps(db)[0]["best"]["index"] == 2
+
+    # No sweep name: the first six characters of its id.
+    anon = sweep_ops.create_sweep(db, project="p", space={"a": {"values": [1]}})
+    assert sweep_ops.next_trial(db, anon["id"])["trial"]["name"] == f"{anon['id'][:6]}-1"
+
+
 def test_random_samples_inside_the_space(db):
     sw = sweep_ops.create_sweep(db, project="p", space={
         "lr": {"min": 1e-4, "max": 1e-1, "distribution": "log_uniform"},
@@ -201,12 +219,27 @@ def test_run_joins_the_trial_from_env(tmp_path, monkeypatch):
     monkeypatch.setenv("CAIRN_TRIAL_ID", trial["id"])
     with cairn.Run(project="p", repo=repo, **QUIET) as run:
         run.track(0.1, name="loss", step=0)
+    # A later trial gets its own number; an explicit name wins over the trial's.
+    t = LocalTransport(repo)
+    sw_r = t.create_sweep({"project": "p", "parameters": {"lr": {"min": 0.1, "max": 0.2}}})
+    t.next_trial(sw_r["id"])
+    trial3 = t.next_trial(sw_r["id"])["trial"]
+    t.close()
+    monkeypatch.setenv("CAIRN_SWEEP_ID", sw_r["id"])
+    monkeypatch.setenv("CAIRN_TRIAL_ID", trial3["id"])
+    with cairn.Run(project="p", repo=repo, **QUIET) as unnamed:
+        pass
+    with cairn.Run(project="p", repo=repo, name="mine", **QUIET) as named:
+        pass
 
     reader = cairn.Reader(repo=repo)
     try:
         r = reader.run(run.id)
         assert r._raw["sweep_id"] == sw["id"]
         assert r.params["lr"] == 0.5
+        assert r.name == f"{sw['id'][:6]}-1"
+        assert reader.run(unnamed.id).name == f"{sw_r['id'][:6]}-2"
+        assert reader.run(named.id).name == "mine"
     finally:
         reader.close()
     t = LocalTransport(repo)
@@ -232,6 +265,11 @@ def test_python_sweep_runs_trials_in_process(tmp_path):
 
     trials = sw.run(train, count=2, **QUIET)
     assert [t["params"]["x"] for t in trials] == [0, 1]
+    reader = cairn.Reader(repo=repo)
+    try:
+        assert [reader.run(r).name for r in seen_runs] == [f"{sw.id[:6]}-1", f"{sw.id[:6]}-2"]
+    finally:
+        reader.close()
     # No return value: the value is the run's last "loss".
     assert [t["value"] for t in trials] == [3.0, 2.0]
     assert [t["run_id"] for t in trials] == seen_runs
@@ -247,6 +285,15 @@ def test_python_sweep_runs_trials_in_process(tmp_path):
     sw2 = cairn.sweep({"x": {"min": 0.0, "max": 1.0}}, project="p", repo=repo)
     (t,) = sw2.run(lambda c: c["x"] * 10, count=1, **QUIET)
     assert math.isclose(t["value"], t["params"]["x"] * 10)
+
+    named = cairn.sweep({"x": {"values": [0, 1]}}, project="p", method="grid", name="scan", repo=repo)
+    a, b = named.run(lambda c: None, count=1, **QUIET) + named.run(lambda c: None, name="own", **QUIET)
+    reader = cairn.Reader(repo=repo)
+    try:
+        assert reader.run(a["run_id"]).name == "scan-1"
+        assert reader.run(b["run_id"]).name == "own"
+    finally:
+        reader.close()
 
 
 def test_python_sweep_with_worker_processes(tmp_path):

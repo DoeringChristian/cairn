@@ -111,7 +111,9 @@ class Sweep:
         the trial's params (also recorded as the run's config). A number it
         returns is the trial's value; otherwise the value is the run's
         ``metric`` (its summary, else its last point). An exception fails the
-        trial and the sweep moves on. ``run_kwargs`` go to ``cairn.Run``.
+        trial and the sweep moves on. ``run_kwargs`` go to ``cairn.Run``;
+        each run is named after its trial (``<sweep>-<n>``) unless they give
+        a ``name``.
 
         ``workers > 1`` runs trials in that many processes (a process can
         hold only one active run), so ``fn`` must be picklable (module-level).
@@ -164,7 +166,9 @@ def _work(
             if trial is None:
                 break
             params = trial["params"]
-            run = Run(project, sweep_id=sweep_id, transport=transport, **run_kwargs)
+            run = Run(project, sweep_id=sweep_id, transport=transport, **{
+                **run_kwargs, "name": run_kwargs.get("name") or trial["name"],
+            })
             transport.report_trial(sweep_id, trial["id"], run_id=run.id, status="running")
             run.config(params)
             value = None

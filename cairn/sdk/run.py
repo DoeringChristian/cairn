@@ -372,11 +372,15 @@ class Run:
             self._join_trial(sweep_id, trial_id)
 
     def _join_trial(self, sweep_id: str, trial_id: str) -> None:
-        """Link this run to its sweep trial and record the trial's params as config."""
+        """Link this run to its sweep trial and record the trial's params as
+        config. An unnamed run takes the trial's name (``<sweep>-<n>``)."""
         try:
             trial = self._transport.report_trial(
                 sweep_id, trial_id, run_id=self._run_id, status="running",
             )
+            if self._name is None and trial.get("name"):
+                self._transport.rename_run(self._run_id, trial["name"])
+                self._name = trial["name"]
         except Exception:
             self.finish(status="failed")
             raise
