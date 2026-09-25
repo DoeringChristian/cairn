@@ -108,12 +108,47 @@ encodings it shows a thumbnail and offers the file for download.
 run.track(cairn.Image(img, caption=f"epoch {epoch}"), "sample", step)
 ```
 
-A **list** of images logged under one name and step is a gallery, shown together in one card.
-Each image keeps its own caption, and a `caption=` passed to `run.track` labels the whole point:
+A **list** of media of one kind logged under one name and step is a **gallery**: one point
+whose items the kind's card shows side by side, stepping together with the slider. It works for
+every media kind: images, figures, audio, video, text, HTML, Markdown, histograms, tensors,
+point clouds, meshes, boxes and volumes. Each item keeps its own caption, and a `caption=` passed
+to `run.track` labels the whole point:
 
 ```python
 run.track([cairn.Image(a, caption="input"), cairn.Image(b, caption="output")], "pair", step)
+run.track([cairn.Figure(fig, caption=f"head {i}") for i, fig in enumerate(figs)], "attention", step)
+run.track([cairn.Video(clip, fps=8) for clip in clips], "rollouts", step, caption="3 seeds")
+run.track([cairn.Text(log) for log in worker_logs], "workers", step)
 ```
+
+The items are either wrappers of one type, or raw values that would each be detected as the same
+type on their own (a list of Plotly or matplotlib figures is a figure gallery). Keywords passed
+to `run.track` apply to every item. Some lists are not galleries:
+
+- Items of different kinds raise `ValueError`: log each kind under its own name.
+- A list of raw numbers or strings (or dicts, or nested lists) raises `TypeError`, as before.
+  Wrap strings in `cairn.Text` for a text gallery.
+- A list of raw frames (PIL images, `H×W×C` arrays) is one **video**, as in the table above.
+  Wrap them in `cairn.Image` for an image gallery.
+- Tables, presets and `cairn.Artifact` have no gallery (`TypeError`).
+- `summary=` and `x=` are for scalars only, so they raise `ValueError` on a gallery.
+
+How each card shows a gallery:
+
+- Image, figure, histogram and tensor cards: a near-square grid of the items filling the pane.
+  Figures share one zoom, as panes do.
+- Audio, video, HTML, Markdown, text and volume cards: the items one under another, or in a
+  grid. A gallery's videos play together on the card's transport bar (with **Sync playback** on)
+  or on the section's.
+- 3D cards (point cloud, mesh, boxes): one viewer per run with a tab per item, since browsers
+  limit how many 3D viewers a page can hold.
+
+In every card a step change swaps the whole gallery at once, when all its items have loaded, and
+runs compared side by side switch together.
+
+Each item is stored as an artifact of its own, and the point's artifact is a small JSON manifest
+naming them. `Run.artifact(name, step)` returns the list of decoded items, and `Run.media(name,
+step)` the list of `MediaRef`s with their captions (see [Reading runs](reading.md)).
 
 ### Boxes and masks
 

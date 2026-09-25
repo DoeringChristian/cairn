@@ -26,7 +26,7 @@ from typing import Any, Callable, Iterator, Protocol, runtime_checkable
 from .. import config as _config
 from .. import expr as _expr
 from .artifact_dir import MANIFEST_MIME, ArtifactDir
-from .handlers.image import GALLERY_MIME
+from .gallery import GALLERY_MIME
 
 
 # ---------------------------------------------------------------------------
@@ -157,24 +157,31 @@ class ArtifactInfo:
 
 @dataclass(frozen=True)
 class MediaRef:
-    """A media cell of a logged table: an image/audio/video stored as its own artifact.
+    """One stored media value, downloaded only on demand: a media cell of a
+    logged table, or one point (or gallery item) from ``Run.media``.
 
     Nothing is downloaded until ``load`` (decoded like ``Run.artifact``)
     or ``bytes`` (raw) is called.
 
     Attributes:
-        hash: Content hash of the cell's artifact.
+        hash: Content hash of the value's artifact.
         mime_type: MIME type of the stored bytes.
         object_type: The handler kind (``"image"``, ``"audio"``, ...), or None.
+        caption: A gallery item's own caption; None for other values (a
+            point's caption is ``SequencePoint.caption``).
+        metadata: The artifact's metadata (a figure's ``source_hash``, an
+            image's ``encoding``, ...); None when unknown.
     """
 
     hash: str
     mime_type: str
     object_type: str | None = None
     _backend: Any = field(default=None, repr=False, compare=False)
+    caption: str | None = None
+    metadata: dict[str, Any] | None = None
 
     def bytes(self) -> bytes:
-        """Download the cell's raw bytes.
+        """Download the raw bytes.
 
         Returns:
             The stored bytes, undecoded.
@@ -182,7 +189,7 @@ class MediaRef:
         return self._backend.get_artifact_bytes(self.hash)
 
     def load(self) -> Any:
-        """Download the cell and decode it by its ``object_type``.
+        """Download the value and decode it by its ``object_type``.
 
         Returns:
             The decoded value, like ``Run.artifact`` returns for the same
@@ -196,7 +203,16 @@ class MediaRef:
         handler = default_registry.find_by_type(self.object_type) if self.object_type else None
         if handler is None or not hasattr(handler, "deserialize"):
             return data
-        return handler.deserialize(data, {})
+        return handler.deserialize(data, self.metadata or {})
+
+
+def _gallery_refs(manifest: bytes, object_type: str | None, backend: Any) -> list[MediaRef]:
+    """A gallery manifest's items (see ``cairn.sdk.gallery``) as ``MediaRef``s."""
+    return [
+        MediaRef(item["hash"], item.get("mime_type", ""), object_type, backend,
+                 caption=item.get("caption"), metadata=item.get("metadata") or {})
+        for item in json.loads(manifest)["items"]
+    ]
 
 
 def _table_media_refs(table: dict[str, Any], backend: Any) -> dict[str, Any]:
@@ -741,7 +757,6 @@ class Run:
 
         - ``artifact``  → unpickled Python object (any picklable type)
         - ``image``     → PIL.Image (PNG), ndarray (``exr``/``npy`` encodings);
-          a gallery (a tracked list of images) → a list of those
         - ``audio``     → ``(samples: np.ndarray, sample_rate: int)``
         - ``video``     → np.ndarray (T, H, W, C)
         - ``tensor``    → np.ndarray
@@ -749,6 +764,10 @@ class Run:
         - ``table``     → ``{"columns", "data"}``; media cells are ``MediaRef``
         - ``histogram`` → ``(counts: np.ndarray, edges: np.ndarray)``
         - ``figure``    → PIL.Image (rasterized; use ``artifact_bytes`` for source)
+
+        A gallery (a tracked list of media of one kind) decodes to a list of
+        its items, each as above; ``media`` gives them undecoded, with their
+        captions.
 
         For unknown types, falls back to raw bytes. Use ``artifact_bytes()``
         explicitly when you want raw bytes regardless of type.
@@ -783,13 +802,43 @@ class Run:
             except _json.JSONDecodeError:
                 meta = {}
         if a.get("mime_type") == GALLERY_MIME:
-            return [
-                handler.deserialize(self._backend.get_artifact_bytes(item["hash"]), item.get("metadata") or {})
-                for item in json.loads(data)["images"]
-            ]
+            return [ref.load() for ref in _gallery_refs(data, object_type, self._backend)]
         if object_type == "table":
             return _table_media_refs(handler.deserialize(data, meta or {}), self._backend)
         return handler.deserialize(data, meta or {})
+
+    def media(self, name: str, step: int | None = None) -> "MediaRef | list[MediaRef]":
+        """A media point, not yet downloaded: its ``MediaRef``, or for a
+        gallery the list of its items' ``MediaRef``s (each with its own
+        ``caption``; the point's caption is ``SequencePoint.caption``).
+
+        ```python
+        for item in run.media("samples", step=100):
+            print(item.caption, item.load())
+        ```
+
+        Args:
+            name: Sequence (or named artifact) name.
+            step: The step to fetch (None: the highest step).
+
+        Returns:
+            One ``MediaRef``, or a list of them for a gallery point.
+
+        Raises:
+            KeyError: The run has no artifact of that name (at that step).
+        """
+        a = self._find_artifact(name, step)
+        object_type = a.get("object_type")
+        if a.get("mime_type") == GALLERY_MIME:
+            return _gallery_refs(self._backend.get_artifact_bytes(a["hash"]), object_type, self._backend)
+        meta = a.get("metadata")
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except json.JSONDecodeError:
+                meta = None
+        return MediaRef(a["hash"], a.get("mime_type", ""), object_type, self._backend,
+                        metadata=meta if isinstance(meta, dict) else None)
 
     def artifact_path(self, name: str, step: int | None = None) -> Path | None:
         """The local file holding an artifact's bytes (local repo only).

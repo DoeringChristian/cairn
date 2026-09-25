@@ -220,7 +220,7 @@ def test_scope_is_live(env):
 
 def test_artifact_reachability(env):
     """Only blobs the in-scope runs reach, transitively (a table's media cells,
-    a gallery's images, a manifest's files)."""
+    a gallery's items, a manifest's files)."""
     from cairn.server import artifact_refs
 
     owner = env["owner"]
@@ -230,7 +230,7 @@ def test_artifact_reachability(env):
                           data={"mime_type": mime, "metadata": json.dumps(meta or {})}).json()["hash"]
 
     img = blob(b"gallery image")
-    gallery = blob(json.dumps({"images": [{"hash": img}]}).encode(), artifact_refs.GALLERY_MIME)
+    gallery = blob(json.dumps({"items": [{"hash": img}]}).encode(), artifact_refs.GALLERY_MIME)
     leaf = blob(b"a file in a dir")
     manifest = blob(json.dumps({"files": [{"path": "x", "hash": leaf}]}).encode(),
                     artifact_refs.MANIFEST_MIME)

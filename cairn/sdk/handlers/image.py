@@ -146,11 +146,6 @@ def _build_masks(
     return out
 
 
-#: A gallery point's artifact: a JSON manifest ``{"images": [{hash, mime_type,
-#: metadata}, ...]}`` naming each image's own content-addressed artifact.
-GALLERY_MIME = "application/vnd.cairn.image-gallery+json"
-
-
 class ImageHandler:
     object_type = "image"
     mime_type = "image/png"

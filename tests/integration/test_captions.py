@@ -59,7 +59,7 @@ def test_captions_round_trip(backend):
         (gal,) = list(r.sequence("gal"))
         assert gal.caption == "the gallery"
         manifest = json.loads(reader._backend.get_artifact_bytes(gal.artifact_hash))
-        assert [i.get("caption") for i in manifest["images"]] == ["a", None]
+        assert [i.get("caption") for i in manifest["items"]] == ["a", None]
         # The caption never reaches the handler (it would reject the kwarg) or
         # the artifact metadata.
         assert "caption" not in json.loads(pts[0].artifact_metadata or "{}")

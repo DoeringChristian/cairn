@@ -207,7 +207,7 @@ raw = run.artifact_bytes("samples", step=10)
 
 | Logged as | Returned as |
 |---|---|
-| `cairn.Image` | `PIL.Image` (PNG), or `numpy.ndarray` for `exr` and `npy` encodings. A gallery (a list of images) returns a list. |
+| `cairn.Image` | `PIL.Image` (PNG), or `numpy.ndarray` for `exr` and `npy` encodings. |
 | `cairn.Audio` | `(samples: ndarray, sample_rate: int)` |
 | `cairn.Video` | `ndarray` of shape `(T, H, W, C)` |
 | `cairn.Tensor` | `ndarray` |
@@ -218,8 +218,19 @@ raw = run.artifact_bytes("samples", step=10)
 | `cairn.Artifact` | The unpickled object |
 | anything else | `bytes` |
 
-A `MediaRef` (an image, audio or video cell of a table) downloads nothing until
-you call `.load()` (decoded, as above) or `.bytes()` (raw).
+A [gallery](media.md#captions-and-galleries) (a list of media of one kind logged at one step)
+returns a list with each item decoded as above.
+
+A `MediaRef` (an image, audio or video cell of a table, or a point from `run.media`) downloads
+nothing until you call `.load()` (decoded, as above) or `.bytes()` (raw). `run.media(name,
+step)` gives a media point without downloading it: one `MediaRef`, or for a gallery a list of
+them, each with the item's `caption` and `metadata`:
+
+```python
+for item in run.media("samples", step=10):
+    print(item.caption, item.mime_type)
+    img = item.load()
+```
 
 `run[tag]` is a lazy handle, a `DataRef`, that fetches nothing until you ask:
 

@@ -84,7 +84,8 @@ class Image(_TypeWrapper):
     The viewer displays PNG; other encodings show a thumbnail and a download.
 
     A list of images logged under one name and step is a gallery, shown
-    together in one card (as in wandb):
+    together in one card (as in wandb; any media wrapper works the same way,
+    see ``Run.track``):
 
     ```python
     run.track([cairn.Image(a), cairn.Image(b)], name="samples", step=step)
@@ -193,7 +194,8 @@ class Histogram(_TypeWrapper):
     run.track(cairn.Histogram(counts=counts, edges=edges), name="grads", step=step)
     ```
 
-    Pass exactly one of ``values`` or ``counts`` + ``edges``.
+    Pass exactly one of ``values`` or ``counts`` + ``edges``; ``caption=``
+    labels the logged point.
     """
 
     object_type = "histogram"
@@ -205,17 +207,20 @@ class Histogram(_TypeWrapper):
         *,
         counts: Any = None,
         edges: Any = None,
+        caption: str | None = None,
     ):
         if values is not None:
             if counts is not None or edges is not None:
                 raise ValueError("cairn.Histogram takes values OR counts + edges, not both")
             self.obj = values
-            self.kwargs = {"bins": bins}
+            self.kwargs: dict[str, Any] = {"bins": bins}
         else:
             if counts is None or edges is None:
                 raise ValueError("cairn.Histogram needs values, or both counts and edges")
             self.obj = None
             self.kwargs = {"counts": counts, "edges": edges}
+        if caption is not None:
+            self.kwargs["caption"] = caption
 
 
 class Tensor(_TypeWrapper):

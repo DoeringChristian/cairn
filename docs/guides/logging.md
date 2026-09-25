@@ -63,7 +63,7 @@ Strings are stored as text points. Images, audio, tables and other rich types ar
 
 ```python
 run.track(cairn.Image(img), "sample", step, caption=f"epoch {epoch}")   # caption this point
-run.track([cairn.Image(a), cairn.Image(b)], "grid", step)    # a list of images is a gallery
+run.track([cairn.Image(a), cairn.Image(b)], "grid", step)    # a list of media of one kind is a gallery
 ```
 
 ### Tracking components

@@ -50,7 +50,7 @@ def test_run_artifacts_survive_import(client):
 
 
 def test_archive_gallery_mime_matches_the_sdk():
-    from cairn.sdk.handlers.image import GALLERY_MIME
+    from cairn.sdk.gallery import GALLERY_MIME
     from cairn.server import artifact_refs
 
     assert artifact_refs.GALLERY_MIME == GALLERY_MIME

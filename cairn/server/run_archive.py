@@ -81,7 +81,7 @@ def write_archive(
 
     def write_blobs(pending: list[str]) -> None:
         """Artifact blobs (deduped across runs). An artifact can name others —
-        a figure its source, a gallery its images, a manifest its files — so
+        a figure its source, a gallery its items, a manifest its files — so
         the queue grows as referenced blobs are discovered."""
         while pending:
             h = pending.pop()

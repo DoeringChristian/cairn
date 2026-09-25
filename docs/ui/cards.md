@@ -11,7 +11,7 @@ Series cards show one logged name (plus any extra series you add), and the Pytho
 | Type | Card | Shows | Logged with |
 |---|---|---|---|
 | `scalar` | Line plot | Metric curves | `run.track(value, name=…)` |
-| `image` | Image | Images, galleries, boxes and masks | `cairn.Image` |
+| `image` | Image | Images, boxes and masks | `cairn.Image` |
 | `figure` | Figure | Plotly / matplotlib figures | `cairn.Figure` |
 | `audio` | Audio | Players with a waveform | `cairn.Audio` |
 | `video` | Video | Video players | `cairn.Video` |
@@ -32,6 +32,8 @@ Series cards show one logged name (plus any extra series you add), and the Pytho
 | `importance` | Parameter importance | Which params explain a target | multi-run |
 | `run-compare` | Run comparer | Metrics, params and environment side by side | multi-run |
 | `code-diff` | Code diff | Two runs' source snapshots diffed | multi-run |
+
+A list of media logged under one name at one step is a **gallery**. Every media card above (image, figure, audio, video, histogram, tensor, text, HTML, Markdown, 3D, volume) shows it: see [Galleries](#galleries).
 
 See [Media and rich types](../guides/media.md) for the logging side. When a series has an unknown type, its card shows the type, the point count and a download button.
 
@@ -111,6 +113,16 @@ Image, audio, video, HTML and Markdown cards have a **Mode** *(default)*:
 | **Compare** | 2–4 **Slots**. Each slot picks its own run. While the slots are linked to the slider they share its value; unlink them to pick a value per slot. |
 
 **Max runs** *(default)* shows only the first N runs; 0 shows them all. Figure, preset (confusion matrix), 3D and volume cards have **Columns** and **Max runs** but no modes.
+
+### Galleries
+
+A [gallery](../guides/media.md#captions-and-galleries) point holds several items of the card's kind. The card shows its caption above the items and each item's caption above that item:
+
+- **Image, figure, histogram, tensor**: a near-square grid that fills the pane. When the pane is too small the grid scrolls instead of shrinking charts. Figures share the card's zoom.
+- **Audio, video, HTML, Markdown, text, volume**: the items in a grid at their natural height. With **Sync playback** on, a gallery's videos (and every run's) play together on the card's transport bar, or on the section's when the card follows the section slider.
+- **Point cloud, mesh, boxes**: one viewer per run, with a tab per item. The chosen tab applies to every run's pane. Browsers limit a page to about 16 live 3D viewers, so a card does not open one per item.
+
+A step change swaps the whole gallery once all its items have loaded; until then the previous step stays on screen. Runs side by side (the Gallery mode's panes, grid cells, compare slots) switch steps together. The histogram card's heatmap needs one histogram per step, so it is unavailable for a gallery series.
 
 ### Image
 

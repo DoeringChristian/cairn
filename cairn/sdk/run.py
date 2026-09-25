@@ -35,12 +35,12 @@ from ..sdk.capture.git import capture_git, diff_text
 from ..sdk.capture.source import build_source_archive, find_project_root
 from ..sdk.capture.system import SystemMetricsCollector
 from ..sdk.handlers.registry import HandlerRegistry, default_registry, resolve_mime_type
-from ..sdk.handlers.image import GALLERY_MIME
 from ..sdk.handlers.table import MAX_ROWS as _TABLE_MAX_ROWS
 from ..sdk.wrappers import Audio, Image, Text, Video, _TypeWrapper
 from .artifact_dir import MANIFEST_MIME, ArtifactDir, is_multi_file, upload_manifest
 from .buffer import MetricBuffer
 from .connect import open_transport
+from .gallery import GALLERY_MIME, GalleryItem, resolve_gallery
 from .local import LocalTransport
 from .scope import Scope
 from .transport import Transport
@@ -570,6 +570,21 @@ class Run:
         not theirs. The iteration is now named exactly once, here — and every
         ``__cairn_track__`` below inherits it.
 
+        A list (or tuple) of media of one kind is a GALLERY: one point whose
+        items the kind's card shows side by side. The items are wrappers of
+        one type or raw values each detected as that type (Plotly/matplotlib
+        figures); each is stored as its own artifact, keywords apply to every
+        item, and ``caption=`` labels the point while each wrapper keeps its
+        own caption::
+
+            run.track([cairn.Figure(f, caption=f"head {i}") for i, f in enumerate(figs)],
+                      "attention", step, caption="all heads")
+
+        Items of different kinds raise ``ValueError``; a list of raw numbers
+        or strings stays unsupported (``TypeError``; wrap strings in
+        ``cairn.Text``), and a list of raw frames is one video. See
+        ``cairn.sdk.gallery`` for the stored manifest.
+
         If ``value`` implements ``__cairn_track__`` this walks the component tree
         instead of recording a leaf, threading this ``name`` down as the prefix.
         ``None`` is a silent skip.
@@ -615,10 +630,12 @@ class Run:
                 f"got {summary!r}"
             )
 
-        if isinstance(value, (list, tuple)) and value and all(isinstance(v, Image) for v in value):
+        gallery = resolve_gallery(self._registry, value)
+        if gallery is not None:
+            object_type, items = gallery
             if has_rule:
-                raise ValueError(_rule_on_non_scalar(name, "image gallery"))
-            self._track_gallery(list(value), name, step=step, **kwargs)
+                raise ValueError(_rule_on_non_scalar(name, f"{object_type} gallery"))
+            self._track_gallery(object_type, items, name, step=step, **kwargs)
             return
 
         # Unwrap explicit type wrappers.
@@ -664,19 +681,7 @@ class Run:
             # Fast path — scalar handler has a cheap to_scalar method.
             point["scalar_value"] = handler.to_scalar(payload)  # type: ignore[attr-defined]
         else:
-            payload, media_hashes = self._upload_table_media(handler, payload)
-            blob, meta = handler.serialize(payload, **merged_kwargs)
-            if media_hashes:
-                meta["media_hashes"] = media_hashes
-            # Figure handler dual-storage: upload source as a second artifact.
-            source_blob = meta.pop("_source_blob", None)
-            source_mime = meta.pop("_source_mime", None)
-            if source_blob is not None and source_mime is not None:
-                src_hash = self._transport.upload_artifact(source_blob, source_mime, {})
-                meta["source_hash"] = src_hash
-            digest = self._transport.upload_artifact(
-                blob, resolve_mime_type(handler, payload, merged_kwargs), meta, object_type=handler.object_type,
-            )
+            digest, _mime, _meta = self._upload_value(handler, payload, merged_kwargs)
             point["artifact_hash"] = digest
 
         self._metric_buffer.append(point)
@@ -692,39 +697,61 @@ class Run:
         self._transport.set_metric_rule(self._run_id, name, x, summary)
         self._metric_rules[name] = rule
 
+    def _upload_value(self, handler: Any, payload: Any, kwargs: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
+        """Serialize one media value and upload it (a figure's source and a
+        table's media cells as artifacts of their own). Returns its
+        ``(hash, mime_type, metadata)``."""
+        payload, media_hashes = self._upload_table_media(handler, payload)
+        blob, meta = handler.serialize(payload, **kwargs)
+        if media_hashes:
+            meta["media_hashes"] = media_hashes
+        # Figure handler dual-storage: upload source as a second artifact.
+        source_blob = meta.pop("_source_blob", None)
+        source_mime = meta.pop("_source_mime", None)
+        if source_blob is not None and source_mime is not None:
+            src_hash = self._transport.upload_artifact(source_blob, source_mime, {})
+            meta["source_hash"] = src_hash
+        mime = resolve_mime_type(handler, payload, kwargs)
+        digest = self._transport.upload_artifact(blob, mime, meta, object_type=handler.object_type)
+        return digest, mime, meta
+
     def _track_gallery(
         self,
-        images: list[Image],
+        object_type: str,
+        items: list[GalleryItem],
         name: str,
         *,
         step: int | None,
         **kwargs: Any,
     ) -> None:
-        """Record several images as ONE point: each image is its own artifact,
-        and the point's artifact is a manifest listing them (``GALLERY_MIME``)."""
-        handler = self._registry.find_by_type("image")
-        assert handler is not None
+        """Record several media values of one kind as ONE point: each is its
+        own artifact, and the point's artifact is a manifest listing them
+        (``GALLERY_MIME``, see ``cairn.sdk.gallery``). Keywords apply to every
+        item under the item's own; ``caption`` labels the point."""
         kwargs = dict(kwargs)
         caption = kwargs.pop("caption", None)
-        items: list[dict[str, Any]] = []
-        for image in images:
-            merged = {**image.kwargs, **kwargs}
+        entries: list[dict[str, Any]] = []
+        for item in items:
+            merged = {**item.kwargs, **kwargs}
             item_caption = merged.pop("caption", None)
-            blob, meta = handler.serialize(image.obj, **merged)
-            mime = resolve_mime_type(handler, image.obj, merged)
-            digest = self._transport.upload_artifact(blob, mime, meta, object_type="image")
-            item: dict[str, Any] = {"hash": digest, "mime_type": mime, "metadata": meta}
+            digest, mime, meta = self._upload_value(item.handler, item.payload, merged)
+            entry: dict[str, Any] = {"hash": digest, "mime_type": mime, "metadata": meta}
             if item_caption is not None:
-                item["caption"] = str(item_caption)
-            items.append(item)
-        manifest = json.dumps({"images": items}).encode()
-        meta = {"gallery": len(items), "preview": items[0]["metadata"].get("preview"), "encoding": "gallery"}
-        digest = self._transport.upload_artifact(manifest, GALLERY_MIME, meta, object_type="image")
+                entry["caption"] = str(item_caption)
+            entries.append(entry)
+        manifest = json.dumps({"items": entries}).encode()
+        meta: dict[str, Any] = {"gallery": len(entries)}
+        preview = entries[0]["metadata"].get("preview")
+        if preview is not None:
+            meta["preview"] = preview
+        digest = self._transport.upload_artifact(manifest, GALLERY_MIME, meta, object_type=object_type)
+        if step is not None:
+            self._last_step = step if self._last_step is None else max(self._last_step, step)
         point: dict[str, Any] = {
             "name": name,
             "step": self._next_step(name, step),
             "wall_time": _now_iso(),
-            "object_type": "image",
+            "object_type": object_type,
             "artifact_hash": digest,
         }
         if caption is not None:

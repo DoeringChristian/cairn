@@ -1,4 +1,4 @@
-"""A tracked list of cairn.Image is one gallery point, as in wandb."""
+"""A tracked list of media of one kind is one gallery point, over HTTP and export."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 import cairn
-from cairn.sdk.handlers.image import GALLERY_MIME
+from cairn.sdk.gallery import GALLERY_MIME
 from cairn.sdk.transport import Transport
 
 
@@ -55,8 +55,8 @@ def test_list_of_images_is_one_gallery_point(transport, http, live_server):
     assert point["artifact_mime"] == GALLERY_MIME
     assert json.loads(point["artifact_metadata"])["gallery"] == 3
     manifest = http.get(f"/api/artifacts/{point['artifact_hash']}").json()
-    assert [i["mime_type"] for i in manifest["images"]] == ["image/png", "image/png", "image/x-exr"]
-    for item in manifest["images"]:
+    assert [i["mime_type"] for i in manifest["items"]] == ["image/png", "image/png", "image/x-exr"]
+    for item in manifest["items"]:
         assert http.get(f"/api/artifacts/{item['hash']}").status_code == 200
 
     back = cairn.Reader(repo=live_server.replace("http://", "cairn://")).run(run.id)
@@ -77,7 +77,26 @@ def test_export_carries_the_gallery_images(transport, http):
     exported = http.post("/api/export", json={"run_ids": [run.id]})
     assert exported.status_code == 200
     names = zipfile.ZipFile(io.BytesIO(exported.content)).namelist()
-    for h in [manifest_hash, *(i["hash"] for i in manifest["images"])]:
+    for h in [manifest_hash, *(i["hash"] for i in manifest["items"])]:
+        assert any(n.startswith(f"artifacts/{h}") for n in names), h
+
+
+@pytest.mark.media
+def test_export_carries_figure_gallery_sources(transport, http):
+    go = pytest.importorskip("plotly.graph_objects")
+    run = _run(transport)
+    try:
+        run.track([cairn.Figure(go.Figure(go.Scatter(y=[i, 1, 2]))) for i in range(2)], name="figs", step=0)
+    finally:
+        run.finish()
+    point = http.get(f"/api/runs/{run.id}/sequences/figs").json()["points"][0]
+    assert point["artifact_mime"] == GALLERY_MIME
+    manifest = http.get(f"/api/artifacts/{point['artifact_hash']}").json()
+    wanted = [point["artifact_hash"]]
+    for item in manifest["items"]:
+        wanted += [item["hash"], item["metadata"]["source_hash"]]
+    names = zipfile.ZipFile(io.BytesIO(http.post("/api/export", json={"run_ids": [run.id]}).content)).namelist()
+    for h in wanted:
         assert any(n.startswith(f"artifacts/{h}") for n in names), h
 
 

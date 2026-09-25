@@ -1,6 +1,6 @@
 """Which artifact blobs a set of runs can reach.
 
-An artifact can name others: a figure its source, a gallery its images, a
+An artifact can name others: a figure its source, a gallery its items, a
 table its media cells, a multi-file manifest its files. Two consumers walk
 those references: the run archive (it exports every blob its runs reach) and
 share links (a share may fetch only the blobs its in-scope runs reach).
@@ -14,10 +14,10 @@ from typing import Any, Iterable
 from .storage.blobs import BlobStore
 from .storage.db import Database
 
-#: An image gallery's manifest blob — it names its images by hash. The same
-#: wire constant as ``cairn.sdk.handlers.image.GALLERY_MIME`` (the server may
-#: not import the SDK; a unit test pins the two together).
-GALLERY_MIME = "application/vnd.cairn.image-gallery+json"
+#: A gallery's manifest blob — it names its items by hash. The same wire
+#: constant as ``cairn.sdk.gallery.GALLERY_MIME`` (the server may not import
+#: the SDK; a unit test pins the two together).
+GALLERY_MIME = "application/vnd.cairn.gallery+json"
 
 #: A multi-file artifact's manifest — it names its files by hash
 #: (``cairn.sdk.artifact_dir.MANIFEST_MIME``; pinned together by a unit test).
@@ -26,7 +26,7 @@ MANIFEST_MIME = "application/vnd.cairn.artifact-manifest+json"
 
 def referenced_hashes(blobs: BlobStore, h: str, row: dict[str, Any] | None) -> list[str]:
     """Hashes of other artifacts this one names: a figure's ``source_hash``, a
-    gallery's images, a table's media cells (``media_hashes``), a manifest's files."""
+    gallery's items, a table's media cells (``media_hashes``), a manifest's files."""
     if row is None:
         return []
     meta = row.get("metadata")
@@ -40,7 +40,7 @@ def referenced_hashes(blobs: BlobStore, h: str, row: dict[str, Any] | None) -> l
         refs += list(meta.get("media_hashes") or [])
     if row.get("mime_type") == GALLERY_MIME:
         data, _ = blobs.get(h)
-        refs += [item["hash"] for item in json.loads(data)["images"]]
+        refs += [item["hash"] for item in json.loads(data)["items"]]
     if row.get("mime_type") == MANIFEST_MIME:
         data, _ = blobs.get(h)
         refs += [f["hash"] for f in json.loads(data)["files"] if f.get("hash")]
