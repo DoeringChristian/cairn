@@ -5,13 +5,15 @@ you can click around the UI and confirm each card renders correctly.
 
 **Server mode** (two terminals)::
 
-    # terminal 1
-    uv run cairn server --repo /tmp/cairn-demo/.cairn
+    # terminal 1 — ingest on :4300, UI on :4301. Auth is on by default; for a
+    # local demo pass --no-auth (or keep auth and export the CAIRN_TOKEN the
+    # server prints in terminal 2).
+    uv run cairn server --repo /tmp/cairn-demo/.cairn --ui --no-auth
 
     # terminal 2
     CAIRN_SERVER=http://localhost:4300 uv run python examples/demo_training.py
 
-    # browse http://localhost:4301/  (server spawns the UI automatically)
+    # browse http://localhost:4301/
 
 **Local mode** (no tracking server)::
 
@@ -54,7 +56,7 @@ def make_sample_image(step: int) -> Image.Image:
         (150 + step * 5) % 256,
     )
     draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=color)
-    # Add some gradient noise for diff testing
+    # Add a stripe of per-step noise so it differs from the reference
     for i in range(0, sz, 64):
         v = (i + step * 10) % 256
         draw.rectangle((i, 0, i + 32, 32), fill=(v, v // 2, 0))
@@ -64,7 +66,8 @@ def make_sample_image(step: int) -> Image.Image:
 def make_reference_image(step: int) -> Image.Image:
     """A 1024×1024 RGB ground-truth image — similar to prediction but no noise.
 
-    Use this as a diff reference to test the image comparison features.
+    Set ``predictions.reference`` as the ``predictions.sample`` card's
+    Reference tag to compare the two with the A/B split slider.
     The circle follows the same path but with a fixed size and color.
     """
     step += 1
@@ -97,7 +100,8 @@ def make_audio_clip(step: int, sample_rate: int = 16000) -> np.ndarray:
 
 
 def main() -> None:
-    # Destination is auto-resolved: CAIRN_REPO > CAIRN_SERVER > ./.cairn > default.
+    # Destination is auto-resolved: repo=/server= kwarg > cairn.configure() >
+    # CAIRN_REPO > CAIRN_SERVER > config file > ./.cairn.
     from cairn.config import resolve_target
 
     target = resolve_target()
@@ -112,8 +116,8 @@ def main() -> None:
         name="full-demo",
         tags=["demo", "smoke"],
         notes="Exercises every built-in handler for manual UI testing.",
-        # Keep source + system metrics on so the Source / Environment / System
-        # tabs also have content to show.
+        # Keep source + env + system metrics on so the Source / Environment
+        # tabs and the "system" metrics section also have content to show.
         capture_source=True,
         capture_stdout=True,
         capture_env=True,

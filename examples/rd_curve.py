@@ -2,10 +2,11 @@
 
 Simulates several codecs, each evaluated at multiple quality levels.
 Every (codec, quality) pair is a separate Cairn run so the results can
-be compared on a scatter plot (X = bits per point, Y = PSNR, Color = codec).
+be compared on a scatter plot (X = bits per point, Y = PSNR, colour = codec).
 
-The memory breakdown between positions and normals is logged as separate
-params so it can be inspected per-run or used as a scatter-plot axis.
+The codec and quality are logged as config; the rate-distortion point, with
+the bit budget split between positions and normals, as summary values, so
+each can be inspected per run or used as a scatter-plot axis.
 
 Usage::
 
@@ -13,14 +14,18 @@ Usage::
     CAIRN_REPO=/tmp/cairn-demo/.cairn uv run python examples/rd_curve.py
     uv run cairn ui --repo /tmp/cairn-demo/.cairn
 
-Then open the project page, add a **Scatter Plot** card, and set:
+Then open the ``rd-curve`` project, create a comparison of all its runs, add
+a **Scatter Plot** card, and set its axes (each takes an expression):
 
-- X axis → ``bpp`` (param)
-- Y axis → ``psnr_db`` (param)
-- Color  → ``codec`` (param)
+- X axis → ``summary.bpp``
+- Y axis → ``summary.psnr_db``
 
-A second scatter card with X = ``bpp.positions``, Y = ``bpp.normals``
-shows the per-attribute breakdown.
+To colour the points by codec, set the comparison toolbar's **Colour by** to
+``config.codec`` (the scatter card's own Colour setting is a numeric colour
+scale, so leave it empty).
+
+A second scatter card with X = ``summary.bpp.positions``, Y =
+``summary.bpp.normals`` shows the per-attribute breakdown.
 """
 
 from __future__ import annotations

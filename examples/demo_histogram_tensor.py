@@ -1,6 +1,6 @@
-"""Demo: histogram chart + tensor card (Workstream A).
+"""Demo: histogram chart + tensor card.
 
-Logs everything the two new cards need to exercise every feature:
+Logs everything the histogram and tensor cards need to exercise every feature:
 
 * Histograms of a **shifting gaussian** over many steps (drives the per-step
   bar chart, the log-Y toggle, and — because there are > 3 steps — the

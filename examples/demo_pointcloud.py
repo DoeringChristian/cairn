@@ -1,18 +1,20 @@
-"""Demo: 3D point-cloud cards (Workstream F).
+"""Demo: 3D point-cloud cards.
 
 Logs rotating synthetic shapes as ``cairn.PointCloud`` sequences across steps,
-exercising every card feature:
+exercising the point-cloud card's "Color by" modes:
 
-- ``xyzrgb`` clouds (a rotating RGB sphere)   → color mode "rgb"
-- ``xyzc``  clouds (a categorical torus scan) → color mode "category"
-- ``xyz``   clouds (height-only helix)        → color mode "height" (viridis)
-- a >300k cloud                               → log-time downsample + note
+- ``xyzrgb`` clouds (a rotating RGB sphere)   → color mode "RGB"
+- ``xyzc``  clouds (a categorical torus scan) → color mode "Category"
+- ``xyz``   clouds (a helix, no colour data)  → color mode "Height (y)" (turbo)
+- a >300k cloud                               → log-time downsample; the card
+  caption reads "N of M points (downsampled)"
 - a deterministic ``grid_scan`` cloud with a named per-point ``values=``
   "signal" property (same index/count across steps and across runs — only
-  ``theta`` differs) → Property selector + the card's ``diff-property``/
-  ``diff-position`` native comparison modes on genuinely same-topology data
+  ``theta`` differs) → colour by the ``signal`` property, side by side
+  across runs with synced cameras
 
-Two runs are logged so the merge agent can build a 2-run comparison (panes).
+Three runs are logged so you can build a multi-run comparison (one pane per
+run).
 
 Usage::
 
@@ -63,7 +65,7 @@ def torus_category(n: int, theta: float, rng: np.random.Generator) -> np.ndarray
 
 
 def helix_xyz(n: int, theta: float) -> np.ndarray:
-    """(N,3) helix that grows along z; colored by height in the UI (viridis)."""
+    """(N,3) helix that grows along z; the UI's default "Height (y)" mode colours it by y (turbo)."""
     t = np.linspace(0.0, 6 * math.pi, n)
     x = np.cos(t + theta)
     y = np.sin(t + theta)
@@ -77,10 +79,8 @@ def grid_scan(n_side: int, theta: float) -> tuple[np.ndarray, np.ndarray]:
     Unlike the rng-driven clouds above, point *index i* denotes the SAME
     physical grid cell across every call (no resampling) — a genuine
     same-topology, same-count series across steps AND across ``run-a``/
-    ``run-b`` (only ``theta`` differs), so the point-cloud card's
-    ``diff-property`` (this ``signal``) and ``diff-position`` (points are
-    static here, so that mode reads as all-zero — still exercises the code
-    path) native comparison modes have real, index-corresponding data.
+    ``run-b`` (only ``theta`` differs), so the runs' panes show the same
+    points coloured by a differing ``signal``.
     """
     lin = np.linspace(-1.0, 1.0, n_side, dtype=np.float32)
     xx, yy, zz = np.meshgrid(lin, lin, lin, indexing="ij")

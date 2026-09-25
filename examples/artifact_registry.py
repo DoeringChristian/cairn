@@ -8,8 +8,11 @@ building a lineage graph that the UI displays.
     # Local mode
     uv run cairn init /tmp/cairn-registry
     CAIRN_REPO=/tmp/cairn-registry/.cairn uv run python examples/artifact_registry.py
+    uv run cairn ui --repo /tmp/cairn-registry/.cairn
 
-    # Server mode
+    # Server mode (ingest :4300, UI :4301; --no-auth for a local demo, or keep
+    # auth and export the CAIRN_TOKEN the server prints)
+    uv run cairn server --repo /tmp/cairn-registry/.cairn --ui --no-auth
     CAIRN_SERVER=http://localhost:4300 uv run python examples/artifact_registry.py
 
     # Browse: http://localhost:4301/p/artifact-demo/artifacts

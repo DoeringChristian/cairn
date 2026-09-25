@@ -1,26 +1,28 @@
-"""Demo script for dynamic run selectors (WS-RX, `cairn/ui/src/lib/run-selector.ts`).
+"""Demo script for dynamic run selectors (`vendor/cairn-ui/src/lib/run-selector.ts`).
 
 Logs ONE short, fast run (a handful of scalar steps, no sleep) under a
 *fixed* run name so it's easy to simulate "a new run just landed" for a
 report's cards block or a comparison bound to a `RunSelector` — e.g. a
-"newest-per-name" or "latest N" selector watching for runs named
+"Newest per name" or "Latest N" selector watching for runs named
 ``training-run``.
 
-Run it once to seed a run, build a report/comparison with an "auto (query)"
-cards block/run set (name pattern ``training-run``, mode "newest-per-name"
-or "latest-n"), then run this script again — the newly logged run should
+Run it once to seed a run, build a report/comparison whose run set uses
+"Use auto (query)" (name pattern ``training-run``, mode "Newest per name"
+or "Latest N"), then run this script again — the newly logged run should
 appear after clicking "refresh" (or a page reload, since the resolution
 query also refetches on window focus).
 
 Usage::
 
-    uv run cairn server --repo /tmp/cairn-demo/.cairn
+    # ingest :4300, UI :4301; --no-auth for a local demo (or keep auth and
+    # export the CAIRN_TOKEN the server prints)
+    uv run cairn server --repo /tmp/cairn-demo/.cairn --ui --no-auth
     CAIRN_SERVER=http://localhost:4300 uv run python examples/demo_run_selector.py
     # ...run it again to simulate a new run appearing...
     CAIRN_SERVER=http://localhost:4300 uv run python examples/demo_run_selector.py
 
     # browse http://localhost:4301/ — open a report/comparison with an
-    # "auto (query)" run selector on project "run-selector-demo" and click
+    # auto (query) run set on project "run-selector-demo" and click
     # "refresh" after each invocation.
 
 Override the project/run name/tag via env vars if you want several

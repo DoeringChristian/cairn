@@ -1,16 +1,18 @@
-"""Demo: 3D volume cards (Workstream V).
+"""Demo: 3D volume cards.
 
-Logs dense scalar grids as ``cairn.Volume`` sequences across steps, exercising
-the raymarch viewer's main features:
+Logs dense scalar grids as ``cairn.Volume`` sequences across steps:
 
 - an animated 3D gaussian blob (isotropic spacing) that translates and
-  sharpens over steps — good for both MIP (glowing core) and ISO (a shrinking
-  sphere-ish surface as it sharpens) modes.
+  sharpens over steps.
 - a static anisotropic-spacing volume (a hollow shell / SDF-ish field) with
-  non-uniform ``spacing`` — exercises the physical-bounds / non-cubic-voxel
-  path (the box mesh should render as a stretched box, not a cube).
+  non-uniform ``spacing`` and an ``origin``.
 
-Two runs are logged so the merge agent can build a 2-run comparison (panes).
+The viewer does not render volumes in the browser: the Volume card shows one
+placeholder pane per run with the grid's shape, dtype and value range, a step
+slider, and a download link for that step's ``.npz``. Open the downloaded
+file with NumPy (or your own volume renderer) to inspect it.
+
+Two runs are logged so you can build a 2-run comparison (one pane per run).
 
 Usage::
 
@@ -92,7 +94,7 @@ def main() -> None:
     log_run("run-a", seed=0, direction=np.array([1.0, 0.5, -0.6], dtype=np.float32))
     log_run("run-b", seed=7, direction=np.array([-0.8, 1.0, 0.4], dtype=np.float32))
     print(
-        "\nAll done. Open the UI, add a Volume card (blob / shell_anisotropic), "
+        "\nAll done. Open the UI, add a Volumes card (blob / shell_anisotropic), "
         "and build a 2-run comparison."
     )
 

@@ -10,9 +10,11 @@ Demonstrates two deployment modes:
    nodes. Workers write WAL files to the shared .cairn/ directory.
 
    If you don't have a shared filesystem, use Cairn's HTTP transport
-   instead::
+   instead — run ``cairn server --ui`` on the head node and point workers at
+   its ingest port (default 4300; auth is on by default, so also set
+   ``CAIRN_TOKEN`` to the token the server prints)::
 
-       cairn.configure(repo="cairn://head-node:4301")
+       cairn.configure(repo="cairn://head-node:4300")
 
 Install Dask first::
 

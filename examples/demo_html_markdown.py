@@ -1,4 +1,4 @@
-"""Demo script for the HTML + Markdown cards (workstream D).
+"""Demo script for the HTML + Markdown cards.
 
 Logs, for two runs:
 - an HTML mini-report every step: inline SVG sparkline of the running loss +
@@ -205,7 +205,7 @@ def run_one(run_name: str, seed: int) -> None:
         project="demo",
         name=run_name,
         tags=["demo", "html-markdown"],
-        notes="Workstream D demo: HTML report + Markdown notes cards.",
+        notes="Demo: HTML report + Markdown notes cards.",
     )
     run.config({"hparams": {"lr": 3e-4, "optimizer": "adamw", "seed": seed}})
 

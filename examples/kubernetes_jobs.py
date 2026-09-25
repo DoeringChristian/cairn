@@ -11,12 +11,13 @@ Both are printed to stdout so you can pipe them into files::
 
 **With shared PVC (recommended)**: All Jobs mount the same PersistentVolumeClaim
 at ``/mnt/cairn``. Workers write WAL files to the shared ``.cairn/`` directory.
-Run ``cairn server --repo /mnt/cairn/.cairn`` on a node with PVC access to
-ingest and serve the UI.
+Run ``cairn server --repo /mnt/cairn/.cairn --ui`` on a node with PVC access
+to ingest and serve the UI (ingest on :4300, UI on :4301).
 
 **Without shared storage**: Use Cairn's HTTP transport instead. Run
-``cairn server`` and set ``CAIRN_REPO=cairn://cairn-service:4301`` as an
-environment variable in the Job spec.
+``cairn server`` and set ``CAIRN_REPO=cairn://cairn-service:4300`` (the
+ingest port) plus ``CAIRN_TOKEN`` (auth is on by default; use the token the
+server prints) as environment variables in the Job spec.
 
 Prerequisites for actually running the generated Jobs:
   - A Kubernetes cluster with kubectl configured
