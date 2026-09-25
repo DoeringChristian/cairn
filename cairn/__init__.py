@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib
 from importlib.metadata import PackageNotFoundError as _PackageNotFoundError
 from importlib.metadata import version as _dist_version
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 try:
     __version__ = _dist_version("cairn-track")
@@ -68,6 +68,7 @@ _LAZY_ATTRS: dict[str, str] = {
 }
 
 if TYPE_CHECKING:  # static-analysis only — never executed, never eager at runtime.
+    from pathlib import Path
     from . import plot as plot
     from . import ui as ui
     from .sdk.artifact_dir import ArtifactDir, Reference
@@ -207,12 +208,12 @@ __all__ = [
 
 
 def log_artifact(
-    data,
+    data: Any,
     *,
     name: str,
     type: str = "artifact",
     project: str,
-    repo=None,
+    repo: str | Path | None = None,
     metadata: dict | None = None,
     aliases: list[str] | None = None,
 ) -> "ArtifactVersion | None":
@@ -306,7 +307,7 @@ def log_artifact(
         transport.close()
 
 
-def load_artifact(ref: str, *, project: str, repo=None, cache: bool = True):
+def load_artifact(ref: str, *, project: str, repo: str | Path | None = None, cache: bool = True) -> Any:
     """Download an artifact version.
 
     Example:
@@ -336,7 +337,7 @@ def load_artifact(ref: str, *, project: str, repo=None, cache: bool = True):
         reader.close()
 
 
-def list_artifacts(*, project: str, type: str | None = None, repo=None) -> list[dict]:
+def list_artifacts(*, project: str, type: str | None = None, repo: str | Path | None = None) -> list[dict]:
     """List the artifacts (families of versions) in a project.
 
     Args:
