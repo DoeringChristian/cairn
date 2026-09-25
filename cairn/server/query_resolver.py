@@ -31,7 +31,7 @@ from typing import Any, Iterable, Literal, Mapping
 from .query_grammar import OPERATOR_NAMES
 from ._operators import OPERATORS as _OPERATORS
 from .storage.db import Database
-from .summary_rules import resolve_summary_rules
+from .summary_rules import resolved_values
 
 
 class QueryError(ValueError):
@@ -303,17 +303,10 @@ def _param_value(db: Database, run_id: str, key: str, table: str = "params") -> 
 
 
 def _final_metric(db: Database, run_id: str, name: str) -> Any:
-    """The metric's resolved value: its summary rule (``run.track(..., summary=)``), else the
-    last point."""
-    ruled = resolve_summary_rules(db, [run_id]).get(run_id, {})
-    if name in ruled:
-        return ruled[name]
-    rows = db.read_columns(
-        "SELECT scalar_value FROM sequences WHERE run_id = ? AND name = ? "
-        "ORDER BY step DESC LIMIT 1",
-        [run_id, name],
-    )
-    return rows[0]["scalar_value"] if rows else None
+    """The metric's resolved final value, as the runs table shows it: the last
+    point, replaced by a ``run.track(..., summary=)`` rule, replaced by an
+    explicit summary key (:func:`resolved_values`)."""
+    return resolved_values(db, [run_id])[run_id].get(name)
 
 
 def _field_value(db: Database, run_row: dict[str, Any], pred: Predicate) -> Any:

@@ -783,10 +783,13 @@ def _get_field_value(run: "Run", field: str, sub_field: str | None) -> Any:
     if field == "metrics":
         if sub_field is None:
             return None
-        seq = run.sequence(sub_field)
-        if seq is None or not seq.values:
-            return None
-        return seq.values[-1]  # final value
+        # The resolved final value (``Run.final``): the value the runs table
+        # shows, not merely the last point. Python keywords cannot contain
+        # dots, so ``metrics__val__acc`` also finds the metric ``val.acc``.
+        final = run.final
+        if sub_field in final:
+            return final[sub_field]
+        return final.get(sub_field.replace("__", "."))
     if field == "params":
         # params__lr or just lr (param fallback handled at parse time)
         return run.params.get(sub_field) if sub_field else None
@@ -873,7 +876,7 @@ class RunQuery:
             lr__gt=1e-4,                           # > on a param
             lr__lt=1e-2,
             status__in=["completed", "killed"],    # set membership
-            metrics__loss__lt=0.1,                 # final scalar value
+            metrics__loss__lt=0.1,                 # final value (Run.final)
             hostname__startswith="gpu",
         )
 
@@ -881,10 +884,12 @@ class RunQuery:
     ``lte``, ``in``, ``contains``, ``icontains``, ``startswith``,
     ``endswith``, ``isnull``.
 
-    Special field roots: ``metrics`` (final scalar value), ``params``
-    (explicit param lookup), ``summary`` (a ``run.summary`` value), ``tags``
-    (list membership). Any other root
-    is treated as a param key.
+    Special field roots: ``metrics`` (the metric's final value as
+    :attr:`Run.final` resolves it: the last point, replaced by a
+    ``track(..., summary=)`` rule, replaced by an explicit summary key; write
+    ``metrics__val__acc`` for the metric ``val.acc``), ``params`` (explicit
+    param lookup), ``summary`` (a ``run.summary`` value), ``tags`` (list
+    membership). Any other root is treated as a param key.
 
     ``where(expr)`` adds a :mod:`cairn.expr` expression filter; a run matches
     when the (scalar) expression is truthy and not None::

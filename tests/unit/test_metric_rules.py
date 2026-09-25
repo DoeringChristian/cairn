@@ -224,3 +224,35 @@ def test_fork_copies_rules(fresh_db):
     ingest_ops.set_metric_rule(db, rid, "val.loss", x="epoch")
     kid = ingest_ops.fork_run(db, parent_id=rid, step=0)["run_id"]
     assert _rules(db, kid) == [{"name": "val.loss", "x": "epoch", "summary": None}]
+
+
+def test_filters_use_the_resolved_final_value(tmp_path):
+    """``metrics__<name>`` (Reader) and ``metrics.<name>`` (query URLs) filter on
+    the value the runs table shows, not on the last point."""
+    from cairn.sdk.reader import Reader
+
+    repo = tmp_path / ".cairn"
+    with cairn.Run(project="p", name="ruled", repo=repo, **QUIET) as run:
+        for step, v in enumerate([3.0, 1.0, 2.0]):
+            run.track(v, "loss", step, summary="min")  # final 1.0, last point 2.0
+            run.track(v, "val.acc", step)  # final 2.0
+        run.summary({"val.acc": 0.5})  # an explicit key beats the last point
+    with cairn.Run(project="p", name="plain", repo=repo, **QUIET) as run:
+        for step, v in enumerate([3.0, 1.5]):
+            run.track(v, "loss", step)
+
+    q = Reader(repo=str(repo)).runs("p")
+    assert {r.name for r in q.filter(metrics__loss__lt=1.2)} == {"ruled"}
+    assert {r.name for r in q.filter(metrics__loss=1.5)} == {"plain"}
+    assert {r.name for r in q.filter(metrics__val__acc=0.5)} == {"ruled"}
+    assert {r.name for r in q.filter(metrics__val__acc__gt=1.0)} == set()
+
+    dd = DataDir(repo)
+    db = Database.open(dd.db_path)
+    try:
+        ingest_all(dd, db, BlobStore(dd.artifacts_dir))
+        rid = next(r.id for r in q if r.name == "ruled")
+        assert _final_metric(db, rid, "loss") == 1.0
+        assert _final_metric(db, rid, "val.acc") == 0.5
+    finally:
+        db.close()
