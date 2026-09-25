@@ -51,9 +51,9 @@ def test_run_artifacts_survive_import(client):
 
 def test_archive_gallery_mime_matches_the_sdk():
     from cairn.sdk.handlers.image import GALLERY_MIME
-    from cairn.server import run_archive
+    from cairn.server import artifact_refs
 
-    assert run_archive.GALLERY_MIME == GALLERY_MIME
+    assert artifact_refs.GALLERY_MIME == GALLERY_MIME
 
 
 def _seed_lineage(client) -> dict[str, str]:
