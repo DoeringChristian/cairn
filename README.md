@@ -10,6 +10,12 @@ An open-source ML experiment tracker. Three ways to use it:
 
 All modes share the same on-disk format — a repo created locally can later be served without any migration.
 
+**Documentation:** the full guide lives in [`docs/`](docs/index.md) — start with
+[Getting started](docs/getting-started.md), then the [guides](docs/guides/index.md),
+the [web UI](docs/ui/index.md) and the [reference](docs/reference/index.md) (Python
+API, CLI, expression language). It is a MkDocs site, published to GitHub Pages;
+preview it locally with `uv run --extra docs mkdocs serve`.
+
 ## Install
 
 ```bash
@@ -23,11 +29,16 @@ point on a compute node that will only ever log metrics. `cairn ui` and
 
 Optional extras:
 
-- `cairn-track[ui]` — the browser viewer (`cairn ui`, `cairn server --ui`)
+- `cairn-track[ui]` — the browser viewer (`cairn ui`, `cairn server --ui`) and `cairn.ui` notebook card embeds
 - `cairn-track[plot]` — `cairn.plot`, for notebooks and standalone HTML reports
-- `cairn-track[media]` — matplotlib, plotly, imageio, soundfile for richer media handlers
-- `cairn-track[hf]` — HuggingFace Trainer integration
+- `cairn-track[media]` — matplotlib, plotly, kaleido, imageio, soundfile for richer media handlers
+- `cairn-track[export]` — pandas + pyarrow for `cairn export --project`, Parquet and `RunQuery.history()`
+- `cairn-track[sweep]` — Optuna, for `method: bayes` sweeps (grid and random need nothing)
+- `cairn-track[hf]` / `[lightning]` / `[keras]` / `[xgboost]` — framework callbacks in `cairn.integrations`
+- `cairn-track[tb]` — `cairn import-tb` for TensorBoard event files
 - `cairn-track[discovery]` — zeroconf/mDNS server discovery on the LAN
+- `cairn-track[examples]` — marimo, for the notebook example
+- `cairn-track[docs]` — MkDocs, to build the documentation site
 
 ## Quick start — local mode
 
@@ -54,6 +65,11 @@ Browse results:
 cairn ui                      # serves and opens http://localhost:4301/
 cairn ui --no-open-browser    # serve without opening a browser tab
 ```
+
+Authentication is on by default: at startup `cairn ui` prints the repo's
+reusable access token and a one-time browser login link (`cairn ui` opens it
+for you). `cairn token create|list|revoke` manages further tokens; `--no-auth`
+turns authentication off for local debugging.
 
 ## WAL mode — concurrent / distributed training
 
@@ -129,14 +145,18 @@ python train.py
 The SDK picks a destination in this order:
 
 1. Explicit `repo=` kwarg
-2. `cairn.configure(repo=...)`
-3. `CAIRN_REPO` env var
-4. TOML config file (`~/.config/cairn/config.toml`)
+2. `cairn.configure(repo=...)`, then `cairn.configure(server=...)`
+3. `CAIRN_REPO`, then `CAIRN_SERVER` env var
+4. The TOML config file's `repo`, then `server` key (in the platform config
+   dir, e.g. `~/.config/cairn/config.toml` on Linux; `cairn configure` writes it)
 5. `./.cairn/` in the current working directory
 
 The `repo=` parameter accepts:
 - A filesystem path: `/path/to/.cairn` or `./.cairn` → local mode
 - A URL: `cairn://host:port` → HTTP server mode
+
+A local repo that a running `cairn server` or `cairn ui` holds is written through
+that server automatically (authenticated by the repo's `auth/local.token`).
 
 ## Disabled mode
 
@@ -148,8 +168,9 @@ priority order). The default is `"enabled"`.
 ## Final metric values
 
 Each metric has one final value per run — what the runs table, the run
-overview, the comparison table and `final_metric` filters show. It is, in
-order: an explicit `run.summary(name=...)` key; else the metric's rule, set
+overview, the comparison table, `Reader` runs' `.final`, and the metric filters
+(`metrics__<name>` in `RunQuery.filter`, `metrics.<name>` in query URLs) show.
+It is, in order: an explicit `run.summary(name=...)` key; else the metric's rule, set
 with `run.track(value, name, step, summary="min"|"max"|"mean"|"last")`; else
 the last logged point. Rules are applied when values are read, so they never
 change logged data. A `"min"` rule also makes the comparison table colour
@@ -181,10 +202,26 @@ import cairn
 reader = cairn.Reader(repo="./.cairn")
 # or: cairn.Reader(repo="cairn://localhost:4300")
 
-for run in reader.runs(project="sweep").list():
-    loss = run.sequence("loss")
-    print(f"{run.name}: final_loss={loss.values[-1]:.4f}")
+for run in reader.runs(project="sweep").filter(status="completed", metrics__loss__lt=0.1):
+    print(run.name, run.final["loss"], run.config["hparams.lr"])
+
+reader.runs("sweep").where("last(val.acc) > 0.9 and config.opt == 'adam'").list()
 ```
+
+`RunQuery.history()` returns every scalar point as a pandas DataFrame, and
+`run.edit()` changes a finished run's config, summary, tags, name or notes.
+
+## More
+
+- **Sweeps** — `cairn sweep create sweep.yaml` + `cairn agent <id>` on any number
+  of machines, or `cairn.sweep(space, ...).run(train)` in process.
+- **Artifacts** — `run.log_artifact(path_or_value, name, artifact_type="model")`
+  versions it with aliases; `run.use_artifact("model:latest")` records lineage.
+- **Integrations** — `cairn.integrations.{huggingface,lightning,keras,xgboost}`.
+- **Import/export** — `cairn import-tb LOGDIR`, `cairn export RUN_ID` or
+  `cairn export --project P --format csv|parquet`.
+- **Run lifecycle** — `resume=`, `fork_from=(id, step)`, stop from the UI
+  (`run.should_stop`), `run.alert(...)` with `cairn server --alert-webhook`.
 
 ## Live query URLs
 
@@ -232,6 +269,10 @@ fetched; offline reports keep using baked, self-contained HTML.
 See `examples/report_query_url.py`.
 
 ## Examples
+
+`examples/` holds about 30 runnable scripts: every media type
+(`demo_image_*`, `demo_mesh.py`, `demo_table.py`, ...), metric rules, sweeps,
+reports, and the distributed setups below. See [docs/examples.md](docs/examples.md).
 
 | Example | Framework | Multi-machine? |
 |---------|-----------|---------------|
@@ -290,11 +331,13 @@ For UI development with HMR:
 
 ```bash
 # terminal 1
-uv run cairn server --repo ./.cairn
+uv run cairn ui --repo ./.cairn --no-auth --no-open-browser
 
 # terminal 2
-cd vendor/cairn-ui && npm run dev   # http://localhost:5173, proxies /api to :4300
+cd vendor/cairn-ui && npm run dev   # http://localhost:5173, proxies /api to :4301
 ```
+
+Docs: `uv sync --extra docs && uv run mkdocs serve` (http://localhost:8000).
 
 ## License
 
