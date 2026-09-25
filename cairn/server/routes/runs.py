@@ -7,11 +7,20 @@ from typing import Any
 
 from fastapi import APIRouter, Query, Request
 
+from .. import auth
 from ..storage.db import Database
 from ..summary_rules import resolve_summary_rules
 from ._common import api_run_row, get_db, require_run
 
 router = APIRouter(prefix="/api", tags=["runs"])
+
+#: A run row as run lists return it: every column but ``env_snapshot``, which
+#: is large and only shown on the run page.
+RUN_LIST_COLUMNS = """id, project_id, display_name, created_at, ended_at, status,
+                   exit_code, git_sha, git_dirty, git_branch, git_remote, cli_args,
+                   hostname, "user", tags, notes, last_heartbeat,
+                   parent_run_id, fork_step, data_epoch, run_group, job_type,
+                   sweep_id, stop_requested"""
 
 
 @router.get("/runs")
@@ -46,14 +55,8 @@ def list_runs(
             clauses.append(f"{column} = ?")
             params.append(value)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    # Exclude env_snapshot from list responses — it's large and only needed
-    # on the run detail page.  SELECT * would include it for every row.
     rows = db.read_columns(
-        f"""SELECT id, project_id, display_name, created_at, ended_at, status,
-                   exit_code, git_sha, git_dirty, git_branch, git_remote, cli_args,
-                   hostname, "user", tags, notes, last_heartbeat,
-                   parent_run_id, fork_step, data_epoch, run_group, job_type,
-                   sweep_id, stop_requested
+        f"""SELECT {RUN_LIST_COLUMNS}
             FROM runs {where} ORDER BY created_at DESC LIMIT ? OFFSET ?""",
         [*params, limit, offset],
     )
@@ -183,6 +186,9 @@ def _metric_stats(
 def get_run(run_id: str, request: Request) -> dict[str, Any]:
     db = get_db(request)
     run = require_run(db, run_id)
+    if auth.request_share(request) is not None:
+        # A share link never reveals a run's environment.
+        run.pop("env_snapshot", None)
     params = db.read_columns(
         "SELECT key, value, value_type FROM params WHERE run_id = ? ORDER BY key",
         [run_id],

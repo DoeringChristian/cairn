@@ -25,6 +25,7 @@ from fastapi.responses import JSONResponse
 from . import alerts as alerts_core
 from . import auth as auth_core
 from .embed_specs import EmbedSpecStore
+from .report_scope import ScopeCache
 from .routes import (
     alerts,
     artifact_registry,
@@ -47,6 +48,7 @@ from .routes import (
     reports,
     runs,
     sequences,
+    shares,
     source,
     sweeps,
 )
@@ -57,6 +59,28 @@ from .storage.db import Database
 from .wal_ingest import ingest_all
 
 _log = logging.getLogger(__name__)
+
+
+class _NoReferrer:
+    """ASGI middleware: ``Referrer-Policy: no-referrer`` on every HTTP response."""
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def _send(message) -> None:
+            if message["type"] == "http.response.start":
+                message.setdefault("headers", [])
+                message["headers"] = [
+                    (k, v) for k, v in message["headers"] if k.lower() != b"referrer-policy"
+                ] + [(b"referrer-policy", b"no-referrer")]
+            await send(message)
+
+        await self.app(scope, receive, _send)
 
 
 def create_app(
@@ -186,6 +210,14 @@ def create_app(
     # per-app so it shares the app's lifetime; specs are throwaway render
     # inputs, not persisted domain data. See cairn/server/embed_specs.py.
     app.state.embed_specs = EmbedSpecStore()
+    # Share links: each share's live report scope (cached 30 s) and the
+    # per-client limit on redeem attempts. See routes/shares.py.
+    app.state.share_scopes = ScopeCache()
+    app.state.share_redeem_limiter = shares.RateLimiter()
+
+    # No page or API response may leak its URL (a share link's secret sits in
+    # one) to another origin through the Referer header.
+    app.add_middleware(_NoReferrer)
 
     app.add_middleware(
         CORSMiddleware,
@@ -208,6 +240,8 @@ def create_app(
     # /api/auth/* is how you obtain credentials in the first place.
     app.include_router(health.public_router)
     app.include_router(auth_routes.router)
+    # Redeeming a share link is how a share principal comes to exist.
+    app.include_router(shares.public_router)
 
     # Read-role routers. A handful of these also carry individual
     # write-role overrides on their mutating routes (POST/PUT/PATCH/DELETE)
@@ -238,6 +272,7 @@ def create_app(
         report_assets.router,
         report_comments.router,
         report_templates.router,
+        shares.router,
         artifact_registry.router,
         embed.router,
         alerts.router,

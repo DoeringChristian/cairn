@@ -23,6 +23,11 @@ Design (see ``.superpowers/sdd/spec-auth.md`` and
   ``secrets.compare_digest`` before trusting the row — defense in depth
   against any future change to the lookup query (e.g. a collation quirk)
   and against subtle timing side-channels.
+* A report share link is a third, much narrower credential: the HttpOnly
+  ``cairn_share`` cookie holds the link's secret and resolves to a
+  :class:`ShareGrant`. It is default-deny — :func:`require_role` lets it
+  through only on the GET routes in :data:`SHARE_ALLOWED` whose checker passes
+  against the report's live scope (``report_scope.py``).
 * OTPs and SSH login nonces are single-use: consumption happens by
   deleting the row *inside* the same locked transaction that reads it
   (``Database.transaction()`` serializes via the DB's internal RLock), so
@@ -40,6 +45,7 @@ from typing import Any, Callable
 
 from fastapi import HTTPException, Request
 
+from .report_scope import ShareScope
 from .storage.datadir import DataDir
 from .storage.db import Database
 
@@ -52,6 +58,11 @@ ROLES = tuple(ROLE_RANK)
 
 # The browser carries the token itself in this HttpOnly cookie.
 AUTH_COOKIE = "cairn_token"
+# A redeemed share link: the link's secret, in its own HttpOnly cookie.
+SHARE_COOKIE = "cairn_share"
+# The pseudo-role of a share principal. Deliberately not in ROLE_RANK: nothing
+# may rank it, so only the share branch of ``require_role`` ever admits it.
+SHARE_ROLE = "share"
 # Fallback cookie lifetime for a token with no ``expires_at`` (~13 months;
 # the practical ceiling browsers apply to a cookie's Max-Age).
 DEFAULT_COOKIE_MAX_AGE = 400 * 86400
@@ -60,13 +71,24 @@ NONCE_TTL_MINUTES = 5
 
 
 @dataclass(frozen=True)
+class ShareGrant:
+    """What a redeemed share link grants: read access to one report."""
+
+    share_id: str
+    report_id: str
+    project_id: str
+    expires_at: str
+
+
+@dataclass(frozen=True)
 class Principal:
-    """The authenticated identity behind a request (its token, from either
-    carrier)."""
+    """The authenticated identity behind a request: a token (from either
+    carrier), or a share link (``share`` set, ``role`` is ``SHARE_ROLE``)."""
 
     token_id: str
     name: str
     role: str
+    share: ShareGrant | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +220,42 @@ def verify_token(db: Database, plaintext: str) -> Principal | None:
     if expires_at and expires_at <= _now_iso():
         return None
     return Principal(token_id=token_id, name=name, role=role)
+
+
+def verify_share(db: Database, secret: str) -> ShareGrant | None:
+    """Resolve a share link's secret to its grant, or ``None`` when unknown,
+    revoked or expired. Pure read, like :func:`verify_token`."""
+    if not secret:
+        return None
+    h = hash_secret(secret)
+    row = db.read_one(
+        """SELECT s.id, s.report_id, s.secret_hash, s.expires_at, s.revoked_at, r.project_id
+             FROM report_shares s JOIN reports r ON r.id = s.report_id
+            WHERE s.secret_hash = ?""",
+        [h],
+    )
+    if row is None:
+        return None
+    share_id, report_id, secret_hash, expires_at, revoked_at, project_id = row
+    if not secrets_equal(secret_hash, h):
+        return None
+    if revoked_at or expires_at <= _now_iso():
+        return None
+    return ShareGrant(
+        share_id=share_id, report_id=report_id, project_id=project_id, expires_at=expires_at,
+    )
+
+
+def share_principal(grant: ShareGrant) -> Principal:
+    return Principal(token_id="", name=f"share:{grant.share_id}", role=SHARE_ROLE, share=grant)
+
+
+def seconds_until(expires_at: str) -> int:
+    """Seconds from now to ``expires_at`` (an ISO timestamp), at least 1."""
+    expires = datetime.fromisoformat(expires_at)
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    return max(1, int((expires - _now()).total_seconds()))
 
 
 #: Historical name, kept for the CLI access banner and the login route.
@@ -387,17 +445,94 @@ def find_authorized_key(dd: DataDir, keytype: str, keyblob: str) -> dict[str, st
 
 
 def principal_from_request(request: Request) -> Principal | None:
-    """Resolve the caller's identity from ``Authorization: Bearer`` (SDK/CLI)
-    or the ``cairn_token`` cookie (browser). Both carry the same credential;
-    the header wins when both are present. Never writes."""
+    """Resolve the caller's identity: ``Authorization: Bearer`` (SDK/CLI),
+    then the ``cairn_token`` cookie (browser), then the ``cairn_share``
+    cookie (a redeemed share link). A bearer header is authoritative when
+    sent. Never writes."""
     db: Database = request.app.state.db
     authz = request.headers.get("authorization")
     if authz and authz.lower().startswith("bearer "):
         return verify_token(db, authz[7:].strip())
     cookie_token = request.cookies.get(AUTH_COOKIE)
     if cookie_token:
-        return verify_token(db, cookie_token)
+        principal = verify_token(db, cookie_token)
+        if principal is not None:
+            return principal
+    share_secret = request.cookies.get(SHARE_COOKIE)
+    if share_secret:
+        grant = verify_share(db, share_secret)
+        if grant is not None:
+            return share_principal(grant)
     return None
+
+
+# ---------------------------------------------------------------------------
+# Share links: a default-deny route allowlist
+# ---------------------------------------------------------------------------
+
+#: A checker decides whether one request of a share principal may proceed,
+#: given the report's live scope (``report_scope.ShareScope``).
+ShareChecker = Callable[[Request, ShareScope], bool]
+
+
+def _run_in_scope(request: Request, scope: ShareScope) -> bool:
+    return request.path_params.get("run_id") in scope.run_ids
+
+
+def _source_in_scope(request: Request, scope: ShareScope) -> bool:
+    return request.path_params.get("run_id") in scope.source_run_ids
+
+
+def _artifact_in_scope(request: Request, scope: ShareScope) -> bool:
+    digest = request.path_params.get("digest")
+    return digest in scope.artifacts(request.app.state.db, request.app.state.blobs)
+
+
+def _the_report(request: Request, scope: ShareScope) -> bool:
+    return (
+        request.path_params.get("report_id") == scope.report_id
+        and request.path_params.get("project_id", scope.project_id) == scope.project_id
+    )
+
+
+#: The ONLY routes a share principal may call (GET/HEAD only), keyed by the
+#: route's path template. Anything not listed is 403 — a guard test walks every
+#: route of the app to hold this line.
+SHARE_ALLOWED: dict[str, ShareChecker] = {
+    "/api/share/context": lambda request, scope: True,
+    "/api/projects/{project_id}/reports/{report_id}": _the_report,
+    "/api/reports/{report_id}/assets/{digest}": _the_report,
+    "/api/runs/{run_id}": _run_in_scope,
+    "/api/runs/{run_id}/sequences": _run_in_scope,
+    "/api/runs/{run_id}/sequences/{name:path}": _run_in_scope,
+    "/api/runs/{run_id}/updates": _run_in_scope,
+    "/api/runs/{run_id}/artifacts": _run_in_scope,
+    "/api/artifacts/{digest}": _artifact_in_scope,
+    "/api/runs/{run_id}/source/tree": _source_in_scope,
+    "/api/runs/{run_id}/source/file": _source_in_scope,
+}
+
+
+def share_scope(request: Request, grant: ShareGrant) -> ShareScope:
+    """The live scope of ``grant``'s report (cached per share)."""
+    return request.app.state.share_scopes.get(
+        request.app.state.db, grant.share_id, grant.report_id,
+    )
+
+
+def share_allows(request: Request, grant: ShareGrant) -> bool:
+    if request.method not in ("GET", "HEAD"):
+        return False
+    route = request.scope.get("route")
+    checker = SHARE_ALLOWED.get(getattr(route, "path", None) or "")
+    if checker is None:
+        return False
+    return bool(checker(request, share_scope(request, grant)))
+
+
+def request_share(request: Request) -> ShareGrant | None:
+    """The share grant the request was admitted under, if any."""
+    return getattr(request.state, "share", None)
 
 
 def require_role(min_role: str) -> Callable[[Request], Principal | None]:
@@ -405,7 +540,10 @@ def require_role(min_role: str) -> Callable[[Request], Principal | None]:
     authenticated principal's role is below ``min_role``. A no-op (always
     passes, returns None) when ``request.app.state.auth_enabled`` is falsy —
     this is how ``create_app()``'s auth-off default (existing test fixtures)
-    stays unaffected."""
+    stays unaffected.
+
+    A share principal passes only a read-role check, only on a GET/HEAD
+    route in :data:`SHARE_ALLOWED` whose checker admits the request."""
     if min_role not in ROLE_RANK:
         raise ValueError(f"invalid role {min_role!r}; must be one of {ROLES}")
     min_rank = ROLE_RANK[min_role]
@@ -416,6 +554,11 @@ def require_role(min_role: str) -> Callable[[Request], Principal | None]:
         principal = principal_from_request(request)
         if principal is None:
             raise HTTPException(status_code=401, detail="authentication required")
+        if principal.share is not None:
+            if min_rank > ROLE_RANK["read"] or not share_allows(request, principal.share):
+                raise HTTPException(status_code=403, detail="not available through a share link")
+            request.state.share = principal.share
+            return principal
         if ROLE_RANK[principal.role] < min_rank:
             raise HTTPException(
                 status_code=403,

@@ -153,7 +153,8 @@ def session_info(request: Request) -> dict[str, Any]:
     if not getattr(request.app.state, "auth_enabled", False):
         return {"authenticated": True, "auth_enabled": False, "name": None, "role": "admin"}
     principal = auth.principal_from_request(request)
-    if principal is not None:
+    # A share link is not a session: its viewer sees one report, not the app.
+    if principal is not None and principal.share is None:
         return {
             "authenticated": True,
             "auth_enabled": True,

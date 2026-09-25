@@ -206,9 +206,9 @@ def test_import_merges_registry_into_a_live_repo(tree, tmp_path, client):
 
 
 def test_manifest_mime_matches_the_server():
-    from cairn.server import run_archive
+    from cairn.server import artifact_refs
 
-    assert run_archive.MANIFEST_MIME == MANIFEST_MIME
+    assert artifact_refs.MANIFEST_MIME == MANIFEST_MIME
 
 
 def test_unsafe_manifest_paths_are_refused(tmp_path):

@@ -40,44 +40,13 @@ import secrets
 import zipfile
 from typing import Any, Callable
 
+from .artifact_refs import referenced_hashes
 from .routes._common import utc_now
 from .storage.blobs import BlobStore
 from .storage.datadir import DataDir
 from .storage.db import Database
 
 EXPORT_VERSION = 1
-
-#: An image gallery's manifest blob — it names its images by hash. The same
-#: wire constant as ``cairn.sdk.handlers.image.GALLERY_MIME`` (the server may
-#: not import the SDK; a unit test pins the two together).
-GALLERY_MIME = "application/vnd.cairn.image-gallery+json"
-
-#: A multi-file artifact's manifest — it names its files by hash
-#: (``cairn.sdk.artifact_dir.MANIFEST_MIME``; pinned together by a unit test).
-MANIFEST_MIME = "application/vnd.cairn.artifact-manifest+json"
-
-
-def _referenced_hashes(blobs: BlobStore, h: str, row: dict[str, Any] | None) -> list[str]:
-    """Hashes of other artifacts this one names: a figure's ``source_hash``, a
-    gallery's images, a table's media cells (``media_hashes``), a manifest's files."""
-    if row is None:
-        return []
-    meta = row.get("metadata")
-    if isinstance(meta, str):
-        try:
-            meta = json.loads(meta)
-        except json.JSONDecodeError:
-            meta = None
-    refs = [meta["source_hash"]] if isinstance(meta, dict) and meta.get("source_hash") else []
-    if isinstance(meta, dict):
-        refs += list(meta.get("media_hashes") or [])
-    if row.get("mime_type") == GALLERY_MIME:
-        data, _ = blobs.get(h)
-        refs += [item["hash"] for item in json.loads(data)["images"]]
-    if row.get("mime_type") == MANIFEST_MIME:
-        data, _ = blobs.get(h)
-        refs += [f["hash"] for f in json.loads(data)["files"] if f.get("hash")]
-    return refs
 
 
 def _without(rows: list[dict[str, Any]], key: str) -> list[dict[str, Any]]:
@@ -122,7 +91,7 @@ def write_archive(
             meta_rows = db.read_columns(
                 "SELECT mime_type, metadata, object_type FROM artifacts WHERE hash = ?", [h],
             )
-            pending.extend(_referenced_hashes(blobs, h, meta_rows[0] if meta_rows else None))
+            pending.extend(referenced_hashes(blobs, h, meta_rows[0] if meta_rows else None))
             mime = meta_rows[0]["mime_type"] if meta_rows else "application/octet-stream"
             ext = mimetypes.guess_extension(mime) or ""
             data, _ = blobs.get(h)
