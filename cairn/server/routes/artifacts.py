@@ -16,8 +16,24 @@ _RANGE_RE = re.compile(r"^bytes=(\d*)-(\d*)$")
 
 # Content is addressed by SHA256 digest, so a given URL's bytes never change —
 # safe to cache forever. This is the immutable half of the query-URL freshness
-# contract (the /api/query resolver is Cache-Control: no-store).
+# contract (the /api/query resolver is Cache-Control: no-store). The viewer
+# relies on it: stepping through media requests the same URL for the same
+# bytes in every card, so after the first load each image comes from the
+# browser cache. The digest doubles as a strong ETag, so a revalidation (a
+# hard reload, or a cache that ignores `immutable`) is a bodiless 304.
 _IMMUTABLE = "public, max-age=31536000, immutable"
+
+
+def _etag(digest: str) -> str:
+    return f'"{digest}"'
+
+
+def _etag_matches(if_none_match: str | None, digest: str) -> bool:
+    """RFC 9110 weak comparison of an If-None-Match list against the digest's ETag."""
+    if not if_none_match:
+        return False
+    tags = [t.strip() for t in if_none_match.split(",")]
+    return any(t == "*" or t.removeprefix("W/") == _etag(digest) for t in tags)
 
 
 @router.get("/runs/{run_id}/artifacts")
@@ -58,6 +74,7 @@ def get_artifact(
     digest: str,
     request: Request,
     range_header: str | None = Header(default=None, alias="range"),
+    if_none_match: str | None = Header(default=None, alias="if-none-match"),
 ) -> Response:
     db = get_db(request)
     blobs = get_blobs(request)
@@ -68,6 +85,11 @@ def get_artifact(
         raise HTTPException(status_code=404, detail="artifact not found")
     mime_type = rows[0]["mime_type"]
     total_size = rows[0]["size_bytes"]
+    cache_headers = {"Cache-Control": _IMMUTABLE, "ETag": _etag(digest)}
+
+    # A validator the client already holds names these exact bytes.
+    if _etag_matches(if_none_match, digest):
+        return Response(status_code=304, headers=cache_headers)
 
     if range_header:
         m = _RANGE_RE.match(range_header)
@@ -97,7 +119,7 @@ def get_artifact(
             "Content-Range": f"bytes {start}-{end}/{total_size}",
             "Content-Length": str(length),
             "Accept-Ranges": "bytes",
-            "Cache-Control": _IMMUTABLE,
+            **cache_headers,
         }
         return StreamingResponse(
             iterator(), status_code=206, headers=headers, media_type=mime_type
@@ -108,6 +130,6 @@ def get_artifact(
     headers = {
         "Accept-Ranges": "bytes",
         "Content-Length": str(len(data)),
-        "Cache-Control": _IMMUTABLE,
+        **cache_headers,
     }
     return Response(content=data, media_type=mime_type, headers=headers)
