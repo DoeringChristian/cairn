@@ -117,6 +117,24 @@ SCHEMA_SQL: list[str] = [
         content       TEXT NOT NULL
     )
     """,
+    # A derived index over sequences' scalar points (count, sum, min, max,
+    # first and last by step), maintained with every point write and rebuilt
+    # when history is deleted or copied. See storage/metric_stats.py.
+    """
+    CREATE TABLE IF NOT EXISTS metric_stats (
+        run_id        TEXT NOT NULL REFERENCES runs(id),
+        name          TEXT NOT NULL,
+        count         INTEGER NOT NULL,
+        sum           REAL,
+        min           REAL NOT NULL,
+        max           REAL NOT NULL,
+        first_step    INTEGER NOT NULL,
+        first_value   REAL NOT NULL,
+        last_step     INTEGER NOT NULL,
+        last_value    REAL NOT NULL,
+        PRIMARY KEY (run_id, name)
+    )
+    """,
     "CREATE INDEX IF NOT EXISTS idx_sequences_run_name ON sequences(run_id, name)",
     "CREATE INDEX IF NOT EXISTS idx_sequences_step ON sequences(step)",
     "CREATE INDEX IF NOT EXISTS idx_log_lines_run ON log_lines(run_id, line_no)",

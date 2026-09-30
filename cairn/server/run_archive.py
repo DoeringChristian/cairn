@@ -47,6 +47,7 @@ from .routes._common import utc_now
 from .storage.blobs import BlobStore
 from .storage.datadir import DataDir
 from .storage.db import Database
+from .storage.metric_stats import rebuild_metric_stats
 
 EXPORT_VERSION = 1
 
@@ -343,6 +344,8 @@ def restore_archive(
             row.setdefault("object_type", "scalar")
             row.setdefault("wall_time", "")
             _insert(db, "sequences", seq_cols, dict(row, run_id=new_id))
+        with db.transaction() as con:
+            rebuild_metric_stats(con, [new_id])
 
         for ra in _read_json(zf, prefix + "run_artifacts.json", []):
             _insert(db, "run_artifacts", ra_cols, dict(

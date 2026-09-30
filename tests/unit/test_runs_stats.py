@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from cairn.server import ingest_ops
+
 WALL = "2024-01-01T00:00:00+00:00"
 
 
@@ -12,11 +14,13 @@ def _run(client, project="p") -> str:
 
 
 def _points(app, rid, name, pts, object_type="scalar"):
-    app.state.db.executemany(
-        """INSERT INTO sequences (run_id, name, step, wall_time, object_type, scalar_value)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        [(rid, name, step, WALL, object_type, v) for step, v in pts],
-    )
+    # Through the ingest path: it maintains the metric_stats index the stats
+    # are read from.
+    ingest_ops.insert_batch(app.state.db, rid, [
+        {"name": name, "step": step, "wall_time": WALL,
+         "object_type": object_type, "scalar_value": v}
+        for step, v in pts
+    ])
 
 
 def _rule(app, rid, name, summary):
@@ -81,3 +85,19 @@ def test_run_without_metrics_has_empty_stats(client):
     assert client.get(f"/api/runs/{rid}").json()["run"]["stats"] == {}
     runs = client.get("/api/runs", params={"include": "stats"}).json()["runs"]
     assert runs[0]["stats"] == {}
+
+
+def test_ids_filter(app, client):
+    """The UI polls just its running runs: ``ids=`` narrows the list (and
+    ``total``) to those runs, within the other filters."""
+    a, b, c = _run(client), _run(client), _run(client, project="q")
+    _points(app, a, "loss", [(0, 1.0)])
+    body = client.get(
+        "/api/runs", params={"project": "p", "ids": f"{a},{c}", "include": "stats"},
+    ).json()
+    assert [r["id"] for r in body["runs"]] == [a]
+    assert body["total"] == 1
+    assert body["runs"][0]["stats"]["loss"]["last"] == 1.0
+    assert client.get("/api/runs", params={"ids": ""}).json()["total"] == 0
+    both = client.get("/api/runs", params={"ids": f"{a}, {b}"}).json()
+    assert {r["id"] for r in both["runs"]} == {a, b}

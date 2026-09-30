@@ -2,9 +2,9 @@
 
 A run's metric normally resolves to its LAST point. A rule set with
 ``run.track(value, name, step, summary="min"|"max"|"mean"|"last")`` overrides
-that for exactly that name. Rules apply at read time and never write the
-``summary`` table, so an explicit ``run.summary()`` key of the same name still
-wins over them.
+that for exactly that name. Rules apply at read time (from the
+``metric_stats`` aggregates) and never write the ``summary`` table, so an
+explicit ``run.summary()`` key of the same name still wins over them.
 """
 
 from __future__ import annotations
@@ -28,37 +28,17 @@ def resolve_summary_rules(
     if not run_ids:
         return {}
     holes = ",".join("?" * len(run_ids))
-    defs: dict[str, dict[str, str]] = {}
-    for r in db.read_columns(
-        f"SELECT run_id, name, summary FROM metric_defs "
-        f"WHERE run_id IN ({holes}) AND summary IS NOT NULL",
-        list(run_ids),
-    ):
-        defs.setdefault(r["run_id"], {})[r["name"]] = r["summary"]
-    if not defs:
-        return {}
-
-    ruled = list(defs)
-    holes = ",".join("?" * len(ruled))
     out: dict[str, dict[str, float | None]] = {}
     for r in db.read_columns(
-        f"""SELECT s.run_id AS run_id, s.name AS name,
-                   MIN(s.scalar_value) AS min, MAX(s.scalar_value) AS max,
-                   AVG(s.scalar_value) AS mean,
-                   (SELECT l.scalar_value FROM sequences l
-                     WHERE l.run_id = s.run_id AND l.name = s.name
-                       AND l.scalar_value IS NOT NULL
-                     ORDER BY l.step DESC LIMIT 1) AS last
-              FROM sequences s
-              JOIN metric_defs d
-                ON d.run_id = s.run_id AND d.name = s.name AND d.summary IS NOT NULL
-             WHERE s.run_id IN ({holes}) AND s.scalar_value IS NOT NULL
-             GROUP BY s.run_id, s.name""",
-        ruled,
+        f"""SELECT s.run_id AS run_id, s.name AS name, d.summary AS kind,
+                   s.min AS min, s.max AS max, s.sum / s.count AS mean,
+                   s.last_value AS last
+              FROM metric_defs d
+              JOIN metric_stats s ON s.run_id = d.run_id AND s.name = d.name
+             WHERE d.run_id IN ({holes}) AND d.summary IS NOT NULL""",
+        list(run_ids),
     ):
-        kind = defs[r["run_id"]].get(r["name"])
-        if kind is not None:
-            out.setdefault(r["run_id"], {})[r["name"]] = r[kind]
+        out.setdefault(r["run_id"], {})[r["name"]] = r[r["kind"]]
     return out
 
 
@@ -78,8 +58,10 @@ def resolved_values(
     was DECLARED. Auto-filling it on every track() would make this preference
     unobservable and leave no way to tell a claim from a leftover.
 
-    Two queries for the whole page, not two per run: a run table is the one
-    place where an N+1 is guaranteed to be N=limit.
+    A few queries for the whole page, not a few per run: a run table is the
+    one place where an N+1 is guaranteed to be N=limit. The metric side reads
+    ``metric_stats`` (maintained at ingest), so the cost is per metric, not
+    per point.
     """
     if not run_ids:
         return {}
@@ -88,17 +70,10 @@ def resolved_values(
 
     # Last scalar point per (run, name).
     for r in db.read_columns(
-        f"""SELECT s.run_id AS run_id, s.name AS name, s.scalar_value AS value
-              FROM sequences s
-              JOIN (SELECT run_id, name, MAX(step) AS step
-                      FROM sequences
-                     WHERE run_id IN ({holes}) AND scalar_value IS NOT NULL
-                     GROUP BY run_id, name) m
-                ON s.run_id = m.run_id AND s.name = m.name AND s.step = m.step
-             WHERE s.scalar_value IS NOT NULL""",
+        f"SELECT run_id, name, last_value FROM metric_stats WHERE run_id IN ({holes})",
         list(run_ids),
     ):
-        out[r["run_id"]][r["name"]] = r["value"]
+        out[r["run_id"]][r["name"]] = r["last_value"]
 
     # run.track(..., summary=...) rules replace the last point...
     for rid, values in resolve_summary_rules(db, run_ids).items():

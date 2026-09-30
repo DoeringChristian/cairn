@@ -31,6 +31,11 @@ def list_runs(
     group: str | None = Query(default=None),
     job_type: str | None = Query(default=None),
     sweep_id: str | None = Query(default=None),
+    ids: str | None = Query(
+        default=None,
+        description="Comma-separated run ids: only these runs (the UI's poll "
+                    "of its running runs).",
+    ),
     include: str | None = Query(
         default=None,
         description="Comma-separated extras per run: 'params' adds a "
@@ -54,6 +59,10 @@ def list_runs(
         if value:
             clauses.append(f"{column} = ?")
             params.append(value)
+    if ids is not None:
+        id_list = [i for i in (part.strip() for part in ids.split(",")) if i]
+        clauses.append(f"id IN ({','.join('?' * len(id_list))})" if id_list else "0")
+        params.extend(id_list)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     rows = db.read_columns(
         f"""SELECT {RUN_LIST_COLUMNS}
@@ -96,35 +105,27 @@ def _metric_stats(
     """Per run, per scalar metric: ``{count, first, last, min, max, mean,
     first_step, last_step, rule}``.
 
-    One grouped query for the whole page. ``first``/``last`` are the values at
-    the lowest/highest step (primary-key lookups on the aggregate's steps);
-    ``rule`` is the run's ``metric_defs.summary`` for the name (min|max|mean|
-    last, or None). Points without a scalar value (media, NaN) are ignored,
-    so non-scalar sequences never appear.
+    One query for the whole page, over ``metric_stats`` (maintained at
+    ingest; see ``storage/metric_stats.py``). ``first``/``last`` are the
+    values at the lowest/highest step; ``rule`` is the run's
+    ``metric_defs.summary`` for the name (min|max|mean|last, or None). Points
+    without a scalar value (media, NaN) are ignored, so non-scalar sequences
+    never appear.
     """
     if not run_ids:
         return {}
     holes = ",".join("?" * len(run_ids))
     out: dict[str, dict[str, dict[str, Any]]] = {rid: {} for rid in run_ids}
     for r in db.read_columns(
-        f"""SELECT g.run_id AS run_id, g.name AS name, g.count AS count,
-                   f.scalar_value AS first, l.scalar_value AS last,
-                   g.min AS min, g.max AS max, g.mean AS mean,
-                   g.first_step AS first_step, g.last_step AS last_step,
+        f"""SELECT s.run_id AS run_id, s.name AS name, s.count AS count,
+                   s.first_value AS first, s.last_value AS last,
+                   s.min AS min, s.max AS max, s.sum / s.count AS mean,
+                   s.first_step AS first_step, s.last_step AS last_step,
                    d.summary AS rule
-              FROM (SELECT run_id, name, COUNT(*) AS count,
-                           MIN(scalar_value) AS min, MAX(scalar_value) AS max,
-                           AVG(scalar_value) AS mean,
-                           MIN(step) AS first_step, MAX(step) AS last_step
-                      FROM sequences
-                     WHERE run_id IN ({holes}) AND scalar_value IS NOT NULL
-                     GROUP BY run_id, name) g
-              JOIN sequences f
-                ON f.run_id = g.run_id AND f.name = g.name AND f.step = g.first_step
-              JOIN sequences l
-                ON l.run_id = g.run_id AND l.name = g.name AND l.step = g.last_step
+              FROM metric_stats s
               LEFT JOIN metric_defs d
-                ON d.run_id = g.run_id AND d.name = g.name""",
+                ON d.run_id = s.run_id AND d.name = s.name
+             WHERE s.run_id IN ({holes})""",
         list(run_ids),
     ):
         rid, name = r.pop("run_id"), r.pop("name")

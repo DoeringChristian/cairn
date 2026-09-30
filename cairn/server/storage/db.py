@@ -18,6 +18,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Sequence
 
+from .metric_stats import backfill_metric_stats
 from .migrations import apply_migrations
 
 
@@ -44,6 +45,7 @@ class Database:
         db = cls(path)
         with db._lock:
             apply_migrations(db._conn)
+            backfill_metric_stats(db._conn)
         return db
 
     def close(self) -> None:

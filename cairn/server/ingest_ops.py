@@ -18,6 +18,7 @@ from .routes._common import flatten, parse_timestamp, slugify, utc_now, value_ty
 from .storage.blobs import BlobStore
 from .storage.datadir import DataDir
 from .storage.db import Database
+from .storage.metric_stats import insert_points, rebuild_metric_stats
 
 
 class RunNotFound(LookupError):
@@ -169,30 +170,25 @@ def set_summary(db: Database, run_id: str, summary: dict[str, Any]) -> int:
 def insert_batch(
     db: Database, run_id: str, points: list[dict[str, Any]]
 ) -> int:
+    """Insert points (a point already stored at its step is kept) and fold
+    the inserted ones into ``metric_stats``, in one transaction."""
     _require_run(db, run_id)
-    rows = []
-    for p in points:
-        rows.append(
-            (
-                run_id,
-                p["name"],
-                p["step"],
-                p["wall_time"],
-                p["object_type"],
-                p.get("scalar_value"),
-                p.get("artifact_hash"),
-                json.dumps(p["metadata"]) if p.get("metadata") is not None else None,
-            )
+    rows = [
+        (
+            p["name"],
+            p["step"],
+            p["wall_time"],
+            p["object_type"],
+            p.get("scalar_value"),
+            p.get("artifact_hash"),
+            json.dumps(p["metadata"]) if p.get("metadata") is not None else None,
         )
-    db.executemany(
-        """
-        INSERT OR IGNORE INTO sequences (
-            run_id, name, step, wall_time,
-            object_type, scalar_value, artifact_hash, metadata
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        rows,
-    )
+        for p in points
+    ]
+    # IMMEDIATE: insert_points reads the top rowid before writing, and a
+    # deferred read lock cannot be upgraded while another process writes.
+    with db.transaction(immediate=True) as con:
+        insert_points(con, run_id, rows)
     return len(rows)
 
 
@@ -494,6 +490,7 @@ def rewind_run(db: Database, run_id: str, step: int) -> dict[str, Any]:
             f"DELETE FROM sequences WHERE run_id = ? AND NOT {_HISTORY_KEEP}",
             [run_id, *keep],
         )
+        rebuild_metric_stats(con, [run_id])
         con.execute(
             "DELETE FROM run_artifacts WHERE run_id = ? AND step > ?", [run_id, step],
         )
@@ -538,6 +535,7 @@ def fork_run(
                  WHERE run_id = ? AND {_HISTORY_KEEP}""",
             [run_id, parent_id, *keep],
         )
+        rebuild_metric_stats(con, [run_id])
         for table in ("params", "summary"):
             con.execute(
                 f"""INSERT OR IGNORE INTO {table} (run_id, key, value, value_type)
@@ -564,6 +562,7 @@ def delete_run(db: Database, data_dir: DataDir, run_id: str) -> None:
     # FK enforcement inside an explicit transaction doesn't recognize deleted
     # child rows; run each DELETE as its own auto-committed stmt.
     db.write("DELETE FROM sequences WHERE run_id = ?", [run_id])
+    db.write("DELETE FROM metric_stats WHERE run_id = ?", [run_id])
     db.write("DELETE FROM params WHERE run_id = ?", [run_id])
     db.write("DELETE FROM summary WHERE run_id = ?", [run_id])
     db.write("DELETE FROM run_inputs WHERE run_id = ?", [run_id])

@@ -95,6 +95,13 @@ While running, the server:
   seconds (the SDK sends one every 10 seconds), and raises an alert for it;
 - delivers alerts to the webhook, if one is set.
 
+The runs table reads each metric's count, min, max, mean and first/last
+value from a per-metric index that ingest keeps up to date, so a page of runs
+costs the same however long their histories are. A repo written by a cairn
+version without that index gets it built once, the first time it is opened
+(about a second per million points); the log line
+`built the metric_stats index ...` reports the time.
+
 Pass `--verbose` to see uvicorn's info and access logs. By default only
 warnings are shown, so the startup banner with the URLs and token stays
 visible.

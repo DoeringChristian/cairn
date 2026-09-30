@@ -13,7 +13,8 @@ first match wins:
 3. The **last logged point**, meaning the one with the highest step.
 
 Rules are applied when the data is read. They never change the logged points, so you can always
-see the full series.
+see the full series. The min, max, mean and last value of every metric are kept up to date as points
+are written, so resolving a rule costs the same for a series of ten points or ten million.
 
 ## `summary=`: how a metric is summarized
 
