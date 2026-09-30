@@ -164,3 +164,51 @@ def test_reads_need_read_and_writes_need_write(auth_env):
                   headers=tokens["read"]).status_code == 403
     assert c.put(f"/api/projects/{pid}/workspace", json=body,
                  headers=tokens["write"]).status_code == 200
+
+
+# ── Comparisons ────────────────────────────────────────────────────────────
+
+
+def test_comparison_crud_and_rev(client):
+    pid = _make_project(client)
+    payload = {"sections": [], "runs": {"ids": ["r1", "r2"]}}
+    r = client.post(f"/api/projects/{pid}/comparisons", json={"name": "c", "payload": payload})
+    assert r.status_code == 200
+    cid = r.json()["id"]
+    assert r.json()["rev"] == 1
+
+    listed = client.get(f"/api/projects/{pid}/comparisons").json()["comparisons"]
+    assert [(c["id"], c["name"], c["run_count"], c["rev"]) for c in listed] == [(cid, "c", 2, 1)]
+
+    got = client.get(f"/api/projects/{pid}/comparisons/{cid}").json()
+    assert got["rev"] == 1 and got["payload"] == payload
+
+    r = client.put(f"/api/projects/{pid}/comparisons/{cid}",
+                   json={"base_rev": 1, "payload": {"runs": {"ids": ["r1"]}}})
+    assert r.status_code == 200 and r.json()["rev"] == 2
+
+    r = client.patch(f"/api/projects/{pid}/comparisons/{cid}", json={"name": "renamed"})
+    assert r.status_code == 200
+    got = client.get(f"/api/projects/{pid}/comparisons/{cid}").json()
+    assert got["name"] == "renamed" and got["rev"] == 2
+
+    assert client.delete(f"/api/projects/{pid}/comparisons/{cid}").json() == {"deleted": cid}
+    assert client.get(f"/api/projects/{pid}/comparisons/{cid}").status_code == 404
+    assert client.delete(f"/api/projects/{pid}/comparisons/{cid}").status_code == 404
+
+
+def test_comparison_stale_rev_409_carries_server_doc(client):
+    pid = _make_project(client)
+    cid = client.post(f"/api/projects/{pid}/comparisons", json={"name": "c", "payload": {"a": 1}}).json()["id"]
+    client.put(f"/api/projects/{pid}/comparisons/{cid}", json={"base_rev": 1, "payload": {"a": 2}})
+    r = client.put(f"/api/projects/{pid}/comparisons/{cid}", json={"base_rev": 1, "payload": {"a": 3}})
+    assert r.status_code == 409
+    assert r.json()["rev"] == 2 and r.json()["payload"] == {"a": 2}
+
+
+def test_comparisons_are_not_the_workspace_or_views(client):
+    pid = _make_project(client)
+    client.post(f"/api/projects/{pid}/comparisons", json={"name": "c", "payload": {}})
+    assert client.get(f"/api/projects/{pid}/workspace").json()["rev"] == 0
+    assert client.get(f"/api/projects/{pid}/views").json()["views"] == []
+    assert client.put(f"/api/projects/{pid}/comparisons/nope", json={"base_rev": 1, "payload": {}}).status_code == 404

@@ -11,7 +11,7 @@ In this page, ++cmd++ means ++cmd++ on macOS and ++ctrl++ everywhere else. Press
 | ++cmd+shift+z++ | Redo | Same rule as undo. |
 | ++escape++ | Close the innermost dialog, popover or full-screen card | With a popover open inside a dialog, only the popover closes. |
 
-Each project has its own undo stack. It starts empty when you open or switch projects. The stack covers workspace edits (cards, sections, layout, card settings, defaults), comparison edits and report cell edits. Runs table settings and the hide/pin/baseline toggles are not on the stack.
+Each project has its own undo stack. It starts empty when you open or switch projects. The stack covers workspace edits on the run page and in comparisons (panels, sections, card settings, defaults, a comparison's runs and its hide/pin/baseline toggles) and report cell edits. Runs table settings and the runs table's hide/pin/baseline toggles are not on the stack.
 
 ## Workspace (run page and comparisons)
 
@@ -81,6 +81,7 @@ These rules hold across settings panels, card titles, rename boxes and query bar
 | Scroll wheel, drag, double-click | Image panes | Zoom around the cursor, pan, reset to the fitted view. |
 | Double-click | 3D views | Return to the standard framing. |
 | Double-click a card title | Cards | Rename the card. |
+| Double-click a section name | Run page, comparisons | Rename the section. |
 | Double-click a comparison name | Comparison list | Rename the comparison. |
 
 For touch gestures, see [Phones and tablets](index.md#phones-and-tablets).

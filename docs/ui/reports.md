@@ -116,8 +116,7 @@ Every cell edit, insert, move and delete is an undo step. Undo and redo work as 
 ## Adding cards from elsewhere
 
 - **Add to report** on any card header lists the project's reports and offers to create a new one. It appends a new cards cell to the end of the report, containing a copy of the card with its settings inlined. Existing text is never rewritten. If the report changes during the append, the button reads it again and retries once, then reports an error.
-- **Send section to a new report** in a section header (run page or comparison) creates a new report with a heading, a short intro and one cards cell holding the section's cards.
-- **Create report** on a comparison copies all its cards and settings into a new report in the same way. See [Comparisons](comparisons.md).
+- **Send section to a new report** in a section header (run page or comparison) creates a new report with a heading, a short intro and one cards cell holding the section's panels as cards, for the runs the workspace is bound to, with their settings.
 
 In each case the source cards are left unchanged.
 

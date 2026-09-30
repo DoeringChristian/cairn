@@ -1,12 +1,10 @@
 """Server-side report persistence — CRUD for wandb-style report documents.
 
-Mirrors routes/comparisons.py conventions (plain-dict responses, Pydantic
-request bodies only, secrets.token_hex(8) ids) with two deliberate
-improvements over that module:
+Plain-dict responses, Pydantic request bodies only, secrets.token_hex(8)
+ids.
 
-* GET list is paginated (limit/offset bounded, like runs.py) instead of
-  returning the whole project's reports unbounded.
-* DELETE 404s when the report doesn't exist instead of silently no-oping.
+* GET list is paginated (limit/offset bounded, like runs.py).
+* DELETE 404s when the report doesn't exist.
 """
 
 from __future__ import annotations

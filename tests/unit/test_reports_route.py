@@ -1,8 +1,7 @@
 """Route-layer tests for /api/projects/{project_id}/reports CRUD.
 
-Mirrors the comparisons route's shape (list/get/create/update/delete) with
-the two deliberate improvements this route makes over comparisons: a
-paginated list endpoint and a 404 on DELETE for a missing report.
+list/get/create/update/delete, a paginated list endpoint and a 404 on
+DELETE for a missing report.
 """
 
 from __future__ import annotations
@@ -160,7 +159,6 @@ def test_delete_report(client):
 
 
 def test_delete_report_404(client):
-    """Deliberate improvement over comparisons' DELETE, which never 404s."""
     project_id = _make_project(client)
     r = client.delete(f"/api/projects/{project_id}/reports/does-not-exist")
     assert r.status_code == 404

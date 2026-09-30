@@ -42,13 +42,30 @@ def test_fresh_schema_creates_all_tables(conn):
     assert expected.issubset(_tables(conn))
 
 
-def test_comparison_templates_table_created(conn):
+def test_old_comparison_tables_dropped_and_project_docs_rebuilt(conn):
+    """Comparisons became project_docs rows: old tables go, old docs stay."""
+    conn.execute("CREATE TABLE comparisons (id TEXT PRIMARY KEY, payload TEXT)")
+    conn.execute("CREATE TABLE comparison_templates (id TEXT PRIMARY KEY, payload TEXT)")
+    conn.execute("CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL, description TEXT, tags TEXT)")
+    conn.execute(
+        """CREATE TABLE project_docs (
+            id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+            kind TEXT NOT NULL CHECK(kind IN ('workspace','view')),
+            name TEXT NOT NULL DEFAULT '', rev INTEGER NOT NULL,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL, payload TEXT NOT NULL)"""
+    )
+    conn.execute("INSERT INTO projects VALUES ('p', 'p', 't', NULL, NULL)")
+    conn.execute("INSERT INTO project_docs VALUES ('v1', 'p', 'view', 'mine', 3, 't', 't', '{}')")
     apply_migrations(conn)
-    assert "comparison_templates" in _tables(conn)
-    rows = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'"
-    ).fetchall()
-    assert "idx_comparison_templates_project" in {r[0] for r in rows}
+    tables = _tables(conn)
+    assert "comparisons" not in tables
+    assert "comparison_templates" not in tables
+    assert conn.execute("SELECT id, kind, name, rev FROM project_docs").fetchall() == [("v1", "view", "mine", 3)]
+    conn.execute(
+        "INSERT INTO project_docs VALUES ('c1', 'p', 'comparison', 'c', 1, 't', 't', '{}')"
+    )
+    apply_migrations(conn)  # idempotent
+    assert len(conn.execute("SELECT * FROM project_docs").fetchall()) == 2
 
 
 def test_report_templates_table_created(conn):

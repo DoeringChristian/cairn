@@ -63,7 +63,7 @@ Card changes last only for that session and are never saved.
 
 Viewers **cannot**:
 
-- edit, comment, or add cards to comparisons or reports,
+- edit, comment, or add cards to workspaces, comparisons or reports,
 - open any page other than the report,
 - read runs outside the report's scope.
 

@@ -142,28 +142,6 @@ SCHEMA_SQL: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_runs_project_created ON runs(project_id, created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status)",
     """
-    CREATE TABLE IF NOT EXISTS comparisons (
-        id            TEXT PRIMARY KEY,
-        project_id    TEXT NOT NULL REFERENCES projects(id),
-        name          TEXT NOT NULL,
-        created_at    TEXT NOT NULL,
-        updated_at    TEXT NOT NULL,
-        payload       TEXT NOT NULL
-    )
-    """,
-    "CREATE INDEX IF NOT EXISTS idx_comparisons_project ON comparisons(project_id)",
-    """
-    CREATE TABLE IF NOT EXISTS comparison_templates (
-        id            TEXT PRIMARY KEY,
-        project_id    TEXT NOT NULL REFERENCES projects(id),
-        name          TEXT NOT NULL,
-        created_at    TEXT NOT NULL,
-        updated_at    TEXT NOT NULL,
-        payload       TEXT NOT NULL
-    )
-    """,
-    "CREATE INDEX IF NOT EXISTS idx_comparison_templates_project ON comparison_templates(project_id)",
-    """
     CREATE TABLE IF NOT EXISTS reports (
         id            TEXT PRIMARY KEY,
         project_id    TEXT NOT NULL REFERENCES projects(id),
@@ -234,15 +212,16 @@ SCHEMA_SQL: list[str] = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_report_shares_report ON report_shares(report_id)",
-    # A project's shared UI documents: its one workspace (run page and runs
-    # table layout) and any number of saved views. ``rev`` counts writes so a
-    # client can PUT against the revision it last saw and be told when
-    # another tab or user wrote in between.
+    # A project's shared UI documents: its one workspace (the run page's
+    # layout), its comparisons (each a workspace document with a run set;
+    # ``name`` is the comparison's name) and any number of saved views.
+    # ``rev`` counts writes so a client can PUT against the revision it last
+    # saw and be told when another tab or user wrote in between.
     """
     CREATE TABLE IF NOT EXISTS project_docs (
         id            TEXT PRIMARY KEY,
         project_id    TEXT NOT NULL REFERENCES projects(id),
-        kind          TEXT NOT NULL CHECK(kind IN ('workspace','view')),
+        kind          TEXT NOT NULL CHECK(kind IN ('workspace','comparison','view')),
         name          TEXT NOT NULL DEFAULT '',
         rev           INTEGER NOT NULL,
         created_at    TEXT NOT NULL,
@@ -426,6 +405,38 @@ def _add_column_if_missing(
         con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
 
 
+def _migrate_workspaces(con: sqlite3.Connection) -> None:
+    """Comparisons became workspace documents (``project_docs`` kind 'comparison').
+
+    Destructive by design (a user ruling, no conversion): the old
+    ``comparisons`` / ``comparison_templates`` tables held card lists that no
+    longer exist in the UI, so they are dropped. A ``project_docs`` table
+    whose CHECK predates the 'comparison' kind is rebuilt with its rows (the
+    project workspaces and saved views) kept; their payloads are coerced by
+    the UI, which treats an old-shaped workspace as an empty layout.
+    """
+    con.execute("DROP INDEX IF EXISTS idx_comparisons_project")
+    con.execute("DROP TABLE IF EXISTS comparisons")
+    con.execute("DROP INDEX IF EXISTS idx_comparison_templates_project")
+    con.execute("DROP TABLE IF EXISTS comparison_templates")
+    row = con.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='project_docs'"
+    ).fetchone()
+    if row is None or "'comparison'" in (row[0] or ""):
+        return
+    con.execute("ALTER TABLE project_docs RENAME TO project_docs_old")
+    con.execute("DROP INDEX IF EXISTS idx_project_docs_project")
+    con.execute("DROP INDEX IF EXISTS idx_project_docs_workspace")
+    for stmt in SCHEMA_SQL:
+        if "project_docs" in stmt:
+            con.execute(stmt)
+    con.execute(
+        "INSERT INTO project_docs (id, project_id, kind, name, rev, created_at, updated_at, payload) "
+        "SELECT id, project_id, kind, name, rev, created_at, updated_at, payload FROM project_docs_old"
+    )
+    con.execute("DROP TABLE project_docs_old")
+
+
 def apply_migrations(con: sqlite3.Connection) -> int:
     """Run schema DDL idempotently; return current schema version."""
     for stmt in SCHEMA_SQL:
@@ -443,7 +454,7 @@ def apply_migrations(con: sqlite3.Connection) -> int:
     for stmt in _ADDED_COLUMN_INDEXES:
         con.execute(stmt)
 
-    # The one destructive statement in this file. Auth is token-only: the
+    # Destructive statement (the other: _migrate_workspaces). Auth is token-only: the
     # browser carries the token itself in the ``cairn_token`` cookie, so
     # sessions no longer exist. Dropping the table is safe because its rows
     # were ephemeral by construction (every one carried an expiry) and
@@ -452,6 +463,8 @@ def apply_migrations(con: sqlite3.Connection) -> int:
     # holding a cookie from the old session model must log in again.
     con.execute("DROP INDEX IF EXISTS idx_sessions_token")
     con.execute("DROP TABLE IF EXISTS sessions")
+
+    _migrate_workspaces(con)
 
     existing = con.execute("SELECT version FROM schema_version").fetchall()
     if not existing:

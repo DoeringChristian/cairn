@@ -1,12 +1,9 @@
-"""Server-side report-template persistence — CRUD, mirrors comparison_templates.py.
+"""Server-side report-template persistence — CRUD.
 
-Report templates carry the same "unbound cards" payload shape as comparison
-templates (multi-run cards keyed by type, series cards by metricName +
-settings) — see lib/reports/templates.ts on the client, which reuses the
-`ComparisonTemplateCard` shape and matching helpers from
-lib/comparisons/apply-template.ts rather than duplicating them. DELETE 404s
-when the template doesn't exist, matching comparison_templates.py's fix over
-comparisons.py's silent no-op.
+A report template is a list of unbound cards (multi-run cards keyed by type,
+series cards by metric name + settings); see lib/reports/templates.ts and
+lib/comparisons/template-cards.ts on the client. DELETE 404s when the
+template doesn't exist.
 """
 
 from __future__ import annotations

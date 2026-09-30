@@ -57,7 +57,7 @@ Every project page has a left navigation bar (a bottom bar on phones):
 | Page | Path | What it is |
 |---|---|---|
 | Runs | `/p/<project>` | The [runs table](runs-table.md). |
-| Compare | `/p/<project>/compare` | [Comparisons](comparisons.md): card dashboards over a set of runs. |
+| Compare | `/p/<project>/compare` | [Comparisons](comparisons.md): workspaces bound to a set of runs. |
 | Sweeps | `/p/<project>/sweeps` | Sweeps and their trials ([Sweeps](../guides/sweeps.md)). |
 | Artifacts | `/p/<project>/artifacts` | The artifact registry, filterable by type ([Artifacts and lineage](../guides/artifacts.md)). |
 | Lineage | `/p/<project>/lineage` | The graph of runs and the artifacts they produce and consume. |
@@ -88,7 +88,7 @@ While a run is running, the UI polls the server for its new points and appends t
 
 | Setting | Stored |
 |---|---|
-| Card workspace: sections, layouts, defaults, colour-by, saved views | Server-side, per project ([Run page and workspace](workspace.md)). |
+| Workspaces (the run page's and each comparison's): sections, panels, card settings, defaults, colour-by; saved views | Server-side, per project ([Run page and workspace](workspace.md)). |
 | Runs table view: filter, sort, group-by, columns, computed columns | Your browser (`localStorage`), per project. |
 | Project run view: hidden, pinned and baseline runs | Your browser (`localStorage`), per project. |
 

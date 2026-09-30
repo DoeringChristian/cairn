@@ -1,7 +1,6 @@
 """Route-layer tests for /api/projects/{project_id}/report-templates.
 
-Mirrors test_comparison_templates_route.py — same CRUD shape, same
-deliberate DELETE-404 fix over comparisons.py.
+CRUD shape, DELETE 404s on a missing template.
 """
 
 from __future__ import annotations

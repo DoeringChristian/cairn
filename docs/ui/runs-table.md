@@ -17,7 +17,7 @@ Runs load 100 at a time as you scroll. While a filter or a group-by is active, t
 | Sort summary | With more than one sort key, lists them; × removes one. |
 | Run view summary | With runs hidden or pinned, or a baseline set, shows e.g. `2 hidden · 1 pinned · baseline <name>`; **reset** clears all three. |
 | **Archive old** / **Delete old** | For each run name with several runs, archive or delete all but the newest (archived runs are left out). Both ask first. |
-| **New comparison** | Create an empty comparison and open it. |
+| **New comparison** | Create a comparison with no runs (and a copy of the project workspace's layout) and open it. |
 | **Import** | Upload a `.zip` export ([Import and export](../guides/import-export.md)). |
 
 When several runs share a name, the newest of them gets an accent bar on its left edge.
@@ -125,13 +125,11 @@ Tick a row's checkbox to select it; ++shift++-click another checkbox to select t
 |---|---|
 | **Clear** | Deselect all. |
 | **Tag** | The bulk tag editor: add a tag to every selected run, or remove a tag from all runs that have it. |
-| **Compare** | Create a comparison of the selected runs with one card per sequence (metric or media) that any of them logged, leaving out `system.*` and internal names, and open it. |
-| **Empty comparison** | Create a comparison of the selected runs with no cards. |
+| **Compare** | Create a comparison of the selected runs, starting from a copy of the project workspace's layout, and open it. See [Comparisons](comparisons.md). |
 | **Export** | Download the selected runs as `cairn_export_<date>.zip`. |
 | **Stop** | Ask the selected *running* runs to stop (asks first). See [Run lifecycle](../guides/runs.md). |
 | **Archive** / **Unarchive** | Archive or restore the selected runs. |
 | **Delete** | Delete the selected runs permanently (asks first). |
-| **From template** | Shown when the project has comparison templates: apply one to the selected runs. If no template card matches the runs, nothing is created and a message says so. |
 
 ### Tags on a row
 
