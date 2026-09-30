@@ -161,10 +161,18 @@ Plotly figures, one pane per run and metric.
 
 Audio panes play the clip and show a waveform. Audio setting: **Autoplay** *(default)*.
 
+Video panes zoom, pan and compare exactly like [image](#image) panes:
+
+- Scroll to zoom around the cursor, drag to pan, double-click to reset. Every pane of the card zooms and pans together; the header's home button resets them all.
+- **Rendering** *(default)*, on the Display tab: `auto` switches to nearest-neighbour once a source pixel covers more than about 1.5 screen pixels, or force `smooth` or `pixelated`.
+- **Compare → Reference tag** (Data tab) picks another video tag. Each pane then splits its video against that tag *from its own run*: the **reference on the left**, the video on the right, with a draggable divider shared by every pane *(default)*, and ++arrow-left++ / ++arrow-right++ to show all of the video or all of the reference. **Pin reference step** freezes the reference at one step. In a gallery, a reference gallery pairs item by item; a single reference video serves every item.
+
+Playback runs on a transport bar under the panes, not on each player's own controls, so zooming never covers them. The video and its reference always play on the same clock: they play, pause and seek together and show the same frame. When the slider changes step, the new videos load out of sight and every pane of the card switches once all of them show the clock's current frame. The previous step stays on screen until then, so stepping never blanks a pane or shows a poster frame.
+
 Video settings, under **Playback** *(default)*:
 
-- **Synced playback:** the card's panes play, pause and seek together on one transport bar. While the card follows its section, it uses the section's clock, so every synced video in the section stays in step.
-- **Autoplay**, **Loop**, **Muted**
+- **Synced playback:** the card's panes play, pause and seek together on one transport bar. While the card follows its section, it uses the section's clock, so every synced video in the section stays in step. Turned off, each of several panes gets its own transport bar.
+- **Autoplay**, **Loop**, **Muted** (a reference is always muted)
 - **Preload:** metadata, auto or none
 
 ### HTML and Markdown
