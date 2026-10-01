@@ -212,6 +212,15 @@ card is interactive. A Plotly figure keeps its own JSON. A matplotlib figure is 
 Plotly's converter when Plotly is installed. Rendering Plotly figures to PNG needs `kaleido`
 (part of the `media` extra). Use `cairn.Image(fig)` if you only want a flat image.
 
+!!! tip "Large and 3D Plotly figures"
+    Build large scatter plots with WebGL: `go.Scattergl` instead of `go.Scatter`, or
+    `px.scatter(..., render_mode="webgl")`. The figure card also switches `scatter` traces to WebGL
+    when it draws a figure with 1000 points or more (its **WebGL** setting; the stored figure is not
+    changed). 3D traces (`scatter3d`, `surface`, `mesh3d`, `volume`, …) always draw with WebGL.
+    The UI caps how many WebGL plots are live on a page. Plots beyond the cap show a picture of
+    themselves until you scroll back to them or hover them. See
+    [Cards › Figure](../ui/cards.md#figure).
+
 ## Text, HTML and Markdown
 
 ```python

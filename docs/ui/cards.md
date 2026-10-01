@@ -155,7 +155,17 @@ On a card, only the controls for what the images actually carry are shown.
 Plotly figures, one pane per run and metric.
 
 - **Runs:** with several runs, `Panes` puts figures side by side. `Overlay` merges every run's traces into one plot, when the figures can be merged.
-- **Appearance** *(default)*: **Show modebar**, **Scroll to zoom**, **Hover mode** (closest, x/y unified, none), **Drag mode** (zoom, pan, select, lasso, none), **Show legend**.
+- **Appearance** *(default)*: **Show modebar**, **Scroll to zoom**, **Hover mode** (closest, x/y unified, none), **Drag mode** (zoom, pan, select, lasso, none), **Show legend**, **WebGL**.
+- **WebGL** (`auto` *(default)*, `on`, `off`; a workspace or section default can set it): draws `scatter` traces as `scattergl` when the figure is drawn. The stored figure is not changed. `auto` switches once the figure's scatter traces hold 1000 points or more together, the same cut-off as plotly.express's `render_mode="auto"`. `on` switches at any size, and `off` draws the figure as logged. All convertible traces of a figure switch together, so their drawing order stays the same. A trace stays SVG when it uses something `scattergl` can't draw: spline lines, stacking (`stackgroup`), fill patterns or gradients, marker gradients, and text shadows or case. Two traces joined by a `fill: "tonext*"` both switch or both stay SVG. 3D traces (`scatter3d`, `surface`, `mesh3d`, `cone`, `streamtube`, `isosurface`, `volume`), `splom` and `parcoords` always use WebGL.
+- **3D camera:** stepping a 3D figure series keeps the camera you set. Zoom ranges of 2D figures still reset when the figure changes. **Reset view** restores the figure's own camera.
+
+#### Many WebGL plots on one page
+
+A browser keeps only about 16 live WebGL contexts per page, and Chrome silently drops the oldest when a plot asks for another one. Each 3D scene uses one context, a plot's 2D WebGL layer uses two, and parcoords uses three. Every Plotly plot that uses WebGL shares one page budget of 10 contexts. This covers figure cards, galleries and overlays, and also the scatter and parallel-coordinates cards.
+
+- The plots you hover, then the ones on screen, then the ones within a screen of the viewport, get the budget first. Plots that have scrolled away keep their contexts until another plot needs room.
+- A plot outside the budget is released and shows a picture of itself instead: a snapshot of how it last looked (with your camera and zoom), else the figure's stored PNG (when one was rendered with kaleido), else a note. It draws again, with the same camera and zoom, when it scrolls back into view or when you hover or click it.
+- If the browser takes a context away anyway (other WebGL views on the page), the plot shows its picture instead of going blank. It draws again when you use it or scroll it back into view.
 
 ### Audio and video
 
