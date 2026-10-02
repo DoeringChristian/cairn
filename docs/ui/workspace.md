@@ -16,7 +16,7 @@ Click a run in the [runs table](runs-table.md) to open its run page at `/p/<proj
 
 The **Metrics & Media** tab shows the project's **workspace**: a layout of named sections holding panels, bound to the run you are viewing. The layout is written in metric names, never in runs, so it is the same on every run of the project. Switching runs changes only the data.
 
-Every [comparison](comparisons.md) is a workspace too, with its own layout bound to its own runs. The run page and comparisons render the same page: the same toolbar, sections, panels and dialogs.
+Every [comparison](comparisons.md) is a workspace too, with its own layout bound to its own runs. The run page and comparisons render the same page: the same toolbar, sections, panels and dialogs, including the [card builder](#card-builder).
 
 A panel has a card type (see [Cards](cards.md)), a metric selector and its settings (title, size, smoothing, axes and so on). The selector is either:
 
@@ -32,9 +32,17 @@ You don't have to build a layout. Every metric that no panel shows gets an **aut
 - Media go into **Media**: images, audio, video, figures, histograms, tensors, tables, 3D objects, volumes, HTML, Markdown and presets.
 - Automatic sections appear in this order after the layout's own sections: **Charts**, your prefix sections A–Z, **Media**, and **system** last. When a layout section has the same name, the automatic panels join it after its own panels.
 
-A panel whose selector names exactly one metric stands in for that metric's automatic panel. Panels over several metrics or a regex are extra views: the metrics they show keep their own panels.
+A panel whose selector names exactly one metric stands in for that metric's automatic panel. Panels over several metrics or a regex are extra views: the metrics they show keep their own panels. So are the multi-run cards (value, bar chart, scatter, …) the card builder makes from a series: they read it through an expression in their settings, and the series keeps its own panel. Any number of panels may show the same series.
 
-When you change an automatic panel in any way (a setting, its size, its type, its position), it becomes part of the layout. The panels before it in its section are written with it, so nothing on the page moves. From then on it is an ordinary panel.
+When you change an automatic panel in any way (a setting, its size, its type, its position, a duplicate), it becomes part of the layout. The panels before it in its section are written with it, so nothing on the page moves. From then on it is an ordinary panel.
+
+### Include unlisted metrics
+
+**Unlisted metrics: on / off** in the toolbar decides whether metrics no panel shows get automatic panels. It is a setting of each workspace: the run page and every comparison have their own (a new comparison copies the run page's along with the rest of the layout), and a saved [view](#views) stores it.
+
+- **On** (the default): every metric gets a panel, as described above.
+- **Off**: only the layout's own panels show. Turning it off first writes every automatic panel on screen into the layout, so nothing disappears; what changes is that metrics logged afterwards don't get a panel. **N series without a card · manage** above the sections counts them, and [Manage cards](#manage-cards) lists them, each with a **Show** button that adds its panel. Panels a hide pattern hides at that moment are not written, so they behave like a metric logged later.
+- Turning it back on brings automatic panels back for every metric no panel shows.
 
 ### Editing the layout
 
@@ -42,12 +50,14 @@ Every edit changes the workspace, so it applies to every run the workspace shows
 
 | Edit | How |
 |---|---|
-| Remove a panel | × in its header. An automatic panel stays removed; **N removed · manage** above the sections lists removed metrics so you can restore them. |
+| Remove a panel | × in its header. An automatic panel stays removed; [Manage cards](#manage-cards) lists removed panels so you can show them again. |
 | Change settings | The gear opens the card full screen with its settings (see below). The title, collapse chevron and resize handle edit the panel too. |
 | Resize | Drag the bottom-right handle. Height changes freely; width snaps to a 6-column grid. |
-| Change type, metrics or section | **Edit panel** (pencil on a box) in the header. |
+| Change data, type, settings or section | **Edit card** (pencil on a box) in the header opens the [card builder](#card-builder) on the card. |
+| Duplicate | **Duplicate card** (two squares) in the header copies the card — its data, type and settings — right after itself. Change the copy's type or settings afterwards to see the same data two ways. |
 | Reorder | Hover the header and drag the grip onto another panel, in the same section or another one. On touch screens, use **Move up** / **Move down** in the ⋯ menu. |
-| Add a panel | **+** in a section header. Pick a card type, then one metric, several metrics, or a regex (with a live preview of what it matches). The dialog can also put the panel in another or a new section. |
+| Add cards | **+** in a section header, or **Add cards** in the toolbar: the [card builder](#card-builder). |
+| Hide, show, move, delete | [Manage cards](#manage-cards). |
 | Add a section | **+ Section** in the toolbar. |
 
 A panel whose metrics the bound runs don't log shows an empty state ("This run does not log this metric") instead of disappearing, so the layout holds still while you switch runs. Multi-run panels (run comparer, code diff, scatter plot, parallel coordinates, parameter importance) need at least two runs: on the run page they say so, and they come alive in a comparison. Bar charts and scalar tiles work with one run.
@@ -58,7 +68,7 @@ Section header controls:
 |---|---|
 | ▼ (click the header) | Collapse or expand the section. |
 | Double-click the name | Rename the section. |
-| **+** | Add a panel to this section. |
+| **+** | Add cards to this section (the [card builder](#card-builder)). |
 | Gear | Edit [section defaults](#defaults-cascade). The gear is highlighted when the section has defaults. |
 | A–Z | Show the section's panels sorted by title. This overrides the manual order and disables dragging. |
 | ↑ / ↓ | Move the section up or down. |
@@ -67,14 +77,49 @@ Section header controls:
 
 A scalar series with a single point shows as a plain value card, not a one-dot chart. It becomes a line plot once a second point arrives.
 
+### Card builder
+
+The card builder adds cards to a workspace, edits one, and manages them all. Open it with **+** on a section, **Add cards** or **Manage cards** in the toolbar, or **Edit card** on a card. The goal is to look at one piece of data through several cards: the same `loss` as a line chart, a value and a bar chart side by side, or two image cards of `samples` with different settings.
+
+Adding takes four steps. The step bar at the top goes back to any step you have reached.
+
+1. **Data.** Every series the bound runs log, grouped like the automatic sections (Charts, prefixes, Media, system), each with its kind (`scalar`, `image`, …), how many runs log it, and how many cards already show it (hover for their names). Pick:
+    - **Series**: tick one or several; they show as chips above the list. The search box filters by name (a case-insensitive regex).
+    - **Regex**: a regular expression over the whole name, with the live list of what it matches. The card follows the pattern, so a matching series logged later joins it.
+    - **Whole runs**: no series, for cards that compare runs (run comparer, code diff) or that you set up in their settings.
+2. **Card type.** Only the types that can show the data are listed:
+    - a series of a kind gets that kind's card (image → image card, histogram → histogram card, …);
+    - scalars also offer **Value** (one number: the last value, reduced across runs), **Bar chart**, **Scatter** (one or two series), **Parallel coordinates** and **Parameter importance**, which read the last value of each run (`last(loss)`); edit the expression in their settings for `min(loss)` and the like;
+    - cards that need more runs than the workspace binds stay listed with **needs 2+ runs**: on the run page that is scatter, parallel coordinates, importance, run comparer and code diff. Add them in a [comparison](comparisons.md).
+
+    Tick one or more types. The type under the pointer shows a live preview on the bound runs.
+3. **Configure.** One tab per new card: its live preview beside its own settings panel (the same panel its gear opens) and its title. The two-squares button on a tab adds another card of that type with its own settings; × drops one.
+4. **Place.** The section, an existing one or a new one, and every card's title. **Add N cards** writes them.
+
+Editing a card opens the builder on **Configure** with the card's data, type and settings. Change its data or its type in the earlier steps (a type change keeps the title and size), then **Save card**. Nothing is written until you add or save.
+
+### Manage cards
+
+**Manage cards** (in the toolbar, or the second tab of the card builder) lists every card of the workspace by section, with what it is:
+
+| Status | Meaning | Actions |
+|---|---|---|
+| shown | A panel of the layout. | Hide, edit, duplicate, move, delete. |
+| automatic | An automatic panel. | Hide (it becomes removed), edit, duplicate, move (these write it into the layout). |
+| hidden | A panel of the layout you hid: it keeps its place, settings and claim on its metric, but doesn't render. | Show, edit, duplicate, move, delete. |
+| removed | An automatic panel you removed. | Show. |
+| not shown | With unlisted metrics off, a series no panel shows. | Show (adds its panel). |
+
+A **pattern** mark means a toolbar hide pattern hides the card. Filter the list by name or status; the **Include unlisted metrics** box is the toolbar toggle. Editing a card from the list returns to the list when you save.
+
 !!! note "What is stored where"
-    **In the workspace** (on the server, shared by everyone who uses the project): sections and their order, collapsed and sorted state; panels with their type, metrics, settings and size; removed automatic panels; hide patterns; workspace and section defaults; prefs (sync zoom, colour by). A comparison's workspace also holds its runs and their hide / pin / baseline toggles.
+    **In the workspace** (on the server, shared by everyone who uses the project): sections and their order, collapsed and sorted state; panels with their type, metrics, settings, size and hidden flag; removed automatic panels; whether unlisted metrics get automatic panels; hide patterns; workspace and section defaults; prefs (sync zoom, colour by). A comparison's workspace also holds its runs and their hide / pin / baseline toggles.
 
     **In this browser only:** the run page's and runs table's hidden, pinned and baseline runs.
 
     Two tabs or users can edit a workspace at the same time. If one write loses the race, it is replayed on top of the other one's changes, so neither edit is lost.
 
-    A user with a read-only token sees the same page but cannot change the layout. Card settings they change (zoom, collapse, smoothing) last until they reload.
+    A user with a read-only token sees the same page but cannot change the layout: there is no card builder, **Manage cards**, **Edit card**, **Duplicate card** or unlisted-metrics toggle. Card settings they change (zoom, collapse, smoothing) last until they reload.
 
 ## Workspace toolbar
 
@@ -87,6 +132,14 @@ Press ++cmd+k++ (macOS) or ++ctrl+k++ to focus **Search panels**. The query is a
 ### Hide matching
 
 While a search is active, **Hide N matching** saves the query as a hide pattern in the workspace. Matching panels then disappear for every run the workspace shows. Each pattern shows as a `/pattern/` chip; click its × to show the panels again.
+
+### Add cards and Manage cards
+
+**Add cards** opens the [card builder](#card-builder); its new cards go to a **Custom panels** section unless you pick another. **Manage cards** opens the [list of every card](#manage-cards).
+
+### Unlisted metrics
+
+**Unlisted metrics: on / off** — see [Include unlisted metrics](#include-unlisted-metrics).
 
 ### Build panels
 
@@ -123,7 +176,7 @@ The link toggle makes charts that share an x-axis zoom together.
 
 ### Views
 
-**Views** saves the current layout under a name: sections, panels and their settings, removed panels, hide patterns, defaults and prefs. Views belong to the project and work in any workspace: applying one on the run page or in a comparison replaces that workspace's layout. A comparison keeps its runs. You can undo it with ++cmd+z++. The trash icon deletes a view.
+**Views** saves the current layout under a name: sections, panels and their settings, hidden and removed panels, hide patterns, defaults, prefs, and whether unlisted metrics get automatic panels. The **Include unlisted metrics** box in the save form starts at the workspace's setting; untick it to save a view of only listed cards (the automatic cards shown now are saved as cards, as when you turn the toggle off). The list marks each view **+ unlisted** or **listed only**, and applying a view applies its setting too. Views belong to the project and work in any workspace: applying one on the run page or in a comparison replaces that workspace's layout. A comparison keeps its runs. You can undo it with ++cmd+z++. The trash icon deletes a view.
 
 On read-only surfaces, such as report viewers and share links, the toolbar shows only the search box.
 
@@ -152,12 +205,13 @@ Each project has one undo stack. It records every workspace edit, on the run pag
 
 - card setting changes
 - resizes (one drag is one step)
-- panel moves, adds, removals and edits
+- card adds, duplicates, moves, hides, removals and edits
+- turning unlisted metrics on or off
 - section edits, hide patterns, defaults, colour by, views
 
 Undo with ++cmd+z++ / ++ctrl+z++ and redo with ++cmd+shift+z++ / ++ctrl+shift+z++. These shortcuts do nothing while a text field has focus, because the field keeps its own typing undo. The stack holds 200 steps.
 
-Undoing a workspace edit restores only the parts of the workspace that edit changed (its sections and panels, removed panels, hide patterns, defaults, prefs or runs), so changes another tab made to the other parts in the meantime survive. See also [Keyboard shortcuts](shortcuts.md).
+Undoing a workspace edit restores only the parts of the workspace that edit changed (its sections and panels, removed panels, the unlisted-metrics setting, hide patterns, defaults, prefs or runs), so changes another tab made to the other parts in the meantime survive. See also [Keyboard shortcuts](shortcuts.md).
 
 ## Full-screen card and settings
 
