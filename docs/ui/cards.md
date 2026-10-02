@@ -52,7 +52,7 @@ A card header has these actions (which ones appear depends on the card and the p
 - **Gear:** opens the card full screen with its settings (see [Full-screen card](workspace.md#full-screen-card-and-settings)).
 - **×:** remove the card.
 
-Cards that plot several series show them as chips. Click a chip's × to remove that series. You can drag a chip onto another card to add the series there.
+Cards that plot several series show them as chips. Click a chip's × to remove that series. You can drag a chip onto another card to add the series there. In a comparison, a card that shows one metric for every run has no chip strip: its title names the metric.
 
 ## Line plot (`scalar`)
 
@@ -87,7 +87,7 @@ If you logged a metric with `run.track(..., x="epoch")`, its card starts on that
 
 ## Media cards
 
-Image, figure, audio, video, HTML, Markdown, tensor, 3D, volume and preset cards all use the same step slider.
+Image, figure, audio, video, HTML, Markdown, tensor, 3D, volume and preset cards all use the same step slider. The slider shows the current step. On image, figure, audio, video, HTML, Markdown, text, 3D and volume cards the header repeats it only while the card is collapsed. With several runs, each pane is labelled by a chip with the run's colour and name in its top-left corner.
 
 ### Step slider and slider key
 
@@ -116,7 +116,7 @@ Image, audio, video, HTML and Markdown cards have a **Mode** *(default)*:
 
 ### Galleries
 
-A [gallery](../guides/media.md#captions-and-galleries) point holds several items of the card's kind. The card shows its caption above the items and each item's caption above that item:
+A [gallery](../guides/media.md#captions-and-galleries) point holds several items of the card's kind. The card shows its caption in one line above the items. With several runs, that line also carries the pane's run label. Each item's caption sits in the item's top-right corner for images, video and audio, and in one small line above the item for charts and text. Hover a cut-off caption to read all of it.
 
 - **Image, figure, histogram, tensor**: a near-square grid that fills the pane. When the pane is too small the grid scrolls instead of shrinking charts. Figures share the card's zoom.
 - **Audio, video, HTML, Markdown, text, volume**: the items in a grid at their natural height. With **Sync playback** on, a gallery's videos (and every run's) play together on the card's transport bar, or on the section's when the card follows the section slider.
@@ -157,7 +157,8 @@ Plotly figures, one pane per run and metric.
 - **Runs:** with several runs, `Panes` puts figures side by side. `Overlay` merges every run's traces into one plot, when the figures can be merged.
 - **Appearance** *(default)*: **Show modebar**, **Scroll to zoom**, **Hover mode** (closest, x/y unified, none), **Drag mode** (zoom, pan, select, lasso, none), **Show legend**, **WebGL**.
 - **WebGL** (`auto` *(default)*, `on`, `off`; a workspace or section default can set it): draws `scatter` traces as `scattergl` when the figure is drawn. The stored figure is not changed. `auto` switches once the figure's scatter traces hold 1000 points or more together, the same cut-off as plotly.express's `render_mode="auto"`. `on` switches at any size, and `off` draws the figure as logged. All convertible traces of a figure switch together, so their drawing order stays the same. A trace stays SVG when it uses something `scattergl` can't draw: spline lines, stacking (`stackgroup`), fill patterns or gradients, marker gradients, and text shadows or case. Two traces joined by a `fill: "tonext*"` both switch or both stay SVG. 3D traces (`scatter3d`, `surface`, `mesh3d`, `cone`, `streamtube`, `isosurface`, `volume`), `splom` and `parcoords` always use WebGL.
-- **3D camera:** stepping a 3D figure series keeps the camera you set. Zoom ranges of 2D figures still reset when the figure changes. **Reset view** restores the figure's own camera.
+- **3D scenes:** dragging rotates a 3D scene (Plotly's turntable) whatever the **Drag mode**, and the wheel zooms it (with **Scroll to zoom** on). **Drag mode** `none` keeps 3D scenes still too. A `dragmode` the figure sets on its scene wins. A figure with only 3D scenes and no margins of its own is drawn with thin margins, with its legend over the scene, so it fills small gallery cells.
+- **3D camera:** rotating or zooming one pane or gallery item moves every other pane and item of the card with it, live while you drag. Stepping a 3D figure series keeps the camera you set. Zoom ranges of 2D figures still reset when the figure changes, and they sync across panes when you release the drag. **Reset view** restores the figure's own camera.
 
 #### Many WebGL plots on one page
 
