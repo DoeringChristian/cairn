@@ -133,7 +133,8 @@ Zoom and pan:
 
 - Scroll to zoom around the cursor, and drag to pan.
 - Double-click to reset the view.
-- Every pane of the card zooms and pans together.
+- Every pane of the card zooms and pans together. Each pane shows the same point of its own image at its centre, at the same zoom relative to the fitted image, whatever the pane's size or the image's shape.
+- Resizing the card or the window, opening the card's settings view, and collapsing and expanding the card keep that point at the centre and keep the zoom.
 - **Rendering** *(default)* controls upscaling. `auto` switches to nearest-neighbour once a source pixel covers more than about 1.5 screen pixels. You can also force `smooth` or `pixelated`.
 
 **Split view against a reference.** Under **Compare → Reference tag**, pick another image tag. Each pane then splits its image against that tag *from its own run*:
@@ -175,7 +176,7 @@ Audio panes play the clip and show a waveform. Audio setting: **Autoplay** *(def
 
 Video panes zoom, pan and compare exactly like [image](#image) panes:
 
-- Scroll to zoom around the cursor, drag to pan, double-click to reset. Every pane of the card zooms and pans together; the header's home button resets them all.
+- Scroll to zoom around the cursor, drag to pan, double-click to reset. Every pane of the card zooms and pans together, and keeps its view through resizes and the settings view, as image panes do; the header's home button resets them all.
 - **Rendering** *(default)*, on the Display tab: `auto` switches to nearest-neighbour once a source pixel covers more than about 1.5 screen pixels, or force `smooth` or `pixelated`.
 - **Compare → Reference tag** (Data tab) picks another video tag. Each pane then splits its video against that tag *from its own run*: the **reference on the left**, the video on the right, with a draggable divider shared by every pane *(default)*, and ++arrow-left++ / ++arrow-right++ to show all of the video or all of the reference. **Pin reference step** freezes the reference at one step. In a gallery, a reference gallery pairs item by item; a single reference video serves every item.
 
