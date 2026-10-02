@@ -191,7 +191,7 @@ Video settings, under **Playback** *(default)*:
 ### HTML and Markdown
 
 - **HTML** runs in a sandboxed iframe with scripts enabled but no access to cairn. Settings: **Auto height** to fit the content, or a fixed height *(default)*.
-- **Markdown** renders GitHub-flavoured Markdown. Raw HTML in the source is shown as text. Setting: **Font size** *(default)*.
+- **Markdown** renders GitHub-flavoured Markdown plus Pandoc's extensions, math included (see [Logging media › Markdown](../guides/media.md#markdown)). Raw HTML in the source is shown as text. Setting: **Font size** *(default)*.
 
 ### Histogram and tensor
 

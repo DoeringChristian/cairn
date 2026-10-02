@@ -6,7 +6,7 @@ Click a run in the [runs table](runs-table.md) to open its run page at `/p/<proj
 
 | Tab | What it shows |
 |---|---|
-| **Overview** | Details (status, exit code, host, user), Git (remote, branch, commit, dirty flag, a link to the captured diff), tags and notes, params, CLI args, the environment snapshot, the final value of every metric (system metrics hidden behind a toggle), and artifacts. |
+| **Overview** | Details (status, exit code, host, user), Git (remote, branch, commit, dirty flag, a link to the captured diff), tags and notes (rendered as [Markdown](../guides/media.md#markdown); hover them and click **edit** to change them), params, CLI args, the environment snapshot, the final value of every metric (system metrics hidden behind a toggle), and artifacts. |
 | **Metrics & Media** | The project [workspace](#workspaces), bound to this run: sections of panels, one per logged series and named artifact unless you arrange them otherwise. |
 | **Logs** | Captured stdout/stderr. You can search and filter by stream. While the run is running, the view follows new lines. |
 | **Source** | The source snapshot, when the run captured one. |

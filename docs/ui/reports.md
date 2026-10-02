@@ -18,13 +18,16 @@ Every cell has a toolbar on its top border. It shows when you hover over or focu
 
 Click a rendered markdown cell to edit it. The whole cell turns into one text area. It renders again when you press ++shift+enter++, ++ctrl+enter++ / ++cmd+enter++ or ++escape++, or when you click elsewhere. A new, empty cell opens in edit mode.
 
-Cells render GitHub-flavoured markdown (tables, task lists, strikethrough, autolinks). They also support:
+Cells render the same Markdown as `cairn.Markdown` cards and run notes: GitHub-flavoured Markdown plus most of Pandoc's Markdown. The full support matrix is in [Logging media › Markdown](../guides/media.md#markdown). In short:
 
 Math
-:   KaTeX between double dollars: `$$E = mc^2$$` inside a line is inline math. `$$` on its own lines opens and closes display math. A single `$` stays a dollar sign.
+:   KaTeX, with Pandoc's rules. `$E = mc^2$` and `\(E = mc^2\)` are inline math; `$$…$$` and `\[…\]` are display math, also inside a line. A `$` that doesn't open valid math stays a dollar sign, so `$5 and $10` is text. `\begin{align}` … `\end{align}` blocks and `\newcommand` macro blocks work too.
+
+Pandoc extensions
+:   Footnotes (`[^1]`, inline `^[…]`), definition lists, fenced divs (`::: note` … `:::`), bracketed spans (`[text]{.smallcaps}`), header attributes (`# Title {#id}`), `^superscript^` and `~subscript~`, smart punctuation, implicit figures, line blocks (`| …`), fancy and example lists (`a.`, `(i)`, `(@)`), and citations (`[@key]`, shown as written).
 
 Callouts
-:   GitHub-style alerts. The kinds are `NOTE`, `TIP`, `IMPORTANT`, `WARNING` and `CAUTION`, in any case. Text after the marker becomes the title. Add `-` or `+` after the marker to make the callout collapsible, starting closed or open.
+:   GitHub-style alerts. The kinds are `NOTE`, `TIP`, `IMPORTANT`, `WARNING` and `CAUTION`, in any case. Text after the marker becomes the title. Add `-` or `+` after the marker to make the callout collapsible, starting closed or open. A Pandoc fenced div with one of these classes is a callout too, titled by its `title` attribute.
 
     ```markdown
     > [!TIP] Faster training
@@ -32,6 +35,10 @@ Callouts
 
     > [!WARNING]-
     > Folded until clicked.
+
+    ::: {.note title="Setup"}
+    All runs use 8 GPUs.
+    :::
     ```
 
 Raw HTML is never rendered. A `<script>` or any other tag shows as plain text.
@@ -96,7 +103,7 @@ A `metric:` card without `type:` gets its type from the metrics the cell's runs 
 
 Headings in markdown cells form the report's outline:
 
-- Each heading gets an anchor. A `#slug` link opens the report scrolled to that heading.
+- Each heading gets an anchor: a GitHub-style slug of its text, or the id from a header attribute (`## Results {#results}`). A `#slug` link opens the report scrolled to that heading, and a `[link](#slug)` in the text scrolls to it.
 - A table of contents lists the headings. On wide screens it is a sticky column beside the report. On phones it is a floating **Contents** button.
 - A heading whose section spans later cells gets a collapse chevron. Collapsing it hides the cells up to the next heading of the same or a higher level.
 
@@ -153,11 +160,30 @@ Export PDF
 Export LaTeX
 :   Draws every card with all sections expanded and folded callouts open, then downloads `<title>.zip` with:
 
-    - `report.tex`: prose converted from the same markdown pipeline the app uses, with math passed through as `\(…\)` / `\[…\]`, and one figure per card captioned with the card's title,
+    - `report.tex`: prose converted from the same markdown pipeline the app uses, and one figure per card captioned with the card's title,
     - `figures/card-<n>.png`: one PNG captured per card,
     - `assets/<hash>.<ext>`: the images uploaded into the report.
 
     Images from other URLs become links. A banner lists any card that had no chart to capture.
+
+    How the prose maps to LaTeX:
+
+    | Markdown | LaTeX |
+    |---|---|
+    | `$…$`, `\(…\)` | `\(…\)` |
+    | `$$…$$`, `\[…\]` | `\[…\]` |
+    | `\begin{align}` … and other raw TeX blocks, macro blocks | as written (`\DeclareMathOperator` becomes a `\newcommand`) |
+    | `# Title {#id}`, `## Aside {-}` | `\section{Title}\label{id}`, `\subsection*{Aside}` |
+    | `[text](#id)` | `\hyperref[id]{text}` |
+    | Footnotes, inline notes | `\footnote{…}` |
+    | Definition lists | `description` |
+    | Callouts (`> [!NOTE]`, `::: note`) | a `quote` headed by the title in bold |
+    | Other fenced divs, spans | their content; `.smallcaps` → `\textsc`, `.underline` → `\uline` |
+    | `^sup^`, `~sub~` | `\textsuperscript`, `\textsubscript` |
+    | Implicit figures | `figure` with `\caption` |
+    | Line blocks | lines joined by `\newline` |
+    | `a.`, `i.`, … lists | `enumerate` with matching labels |
+    | `[@key; @other]` | `\cite{key,other}` (add your own bibliography) |
 
 ## Templates
 
