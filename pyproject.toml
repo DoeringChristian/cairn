@@ -57,7 +57,7 @@ plot = [
     "cairn-plot @ git+https://github.com/doeringchristian/cairn-plot@1f37f37b7a747f77f17f02a9d328b2c23d830845",
 ]
 ui = [
-    "cairn-ui @ git+https://github.com/DoeringChristian/cairn-ui@5935d398500a7731c687fb0e6825910252becc1c",
+    "cairn-ui @ git+https://github.com/DoeringChristian/cairn-ui@5f53c7dad3827ba5754a61066cb6ad28492ad638",
 ]
 media = [
     "matplotlib>=3.7",
