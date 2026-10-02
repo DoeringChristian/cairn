@@ -335,12 +335,16 @@ class Html(_TypeWrapper):
 
 
 class Markdown(_TypeWrapper):
-    """Markdown text, rendered with GitHub-flavored-markdown support.
+    """Markdown text, rendered as GitHub-flavored Markdown plus Pandoc's
+    extensions: math (``$…$``, ``$$…$$``, ``\\(…\\)``, ``\\[…\\]``, KaTeX),
+    footnotes, definition lists, fenced divs, sub/superscript and more — the
+    renderer report cells and run notes use too (see the Markdown section of
+    the media guide). Raw HTML is shown as text.
 
     Usage:
 
     ```python
-    run.track(cairn.Markdown("# Notes\\n\\n- [x] done\\n- [ ] todo"), name="notes", step=0)
+    run.track(cairn.Markdown("# Notes\\n\\nLoss $L < 10^{-3}$\\n\\n- [x] done"), name="notes", step=0)
     ```
     """
     object_type = "markdown"

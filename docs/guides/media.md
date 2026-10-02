@@ -231,8 +231,88 @@ run.track(cairn.Markdown("# Notes\n\n- [x] done"), "notes", step)
 ```
 
 - HTML is rendered only inside a sandboxed iframe, never inline in the page.
-- Markdown is rendered as GitHub-flavoured Markdown with raw HTML escaped.
+- Markdown is rendered as GitHub-flavoured Markdown plus most of Pandoc's Markdown, math
+  included (see [Markdown](#markdown) below). Raw HTML is escaped.
 - HTML and Markdown are limited to 10 MB each.
+
+### Markdown
+
+One renderer draws every piece of Markdown in the UI: `cairn.Markdown` cards, report markdown
+cells and run notes. The report LaTeX export parses with the same pipeline. It is GitHub-flavoured
+Markdown plus Pandoc extensions:
+
+````python
+run.track(cairn.Markdown(r"""
+# Results {#results}
+
+The loss $\mathcal{L}(\theta) = \frac{1}{n}\sum_i \ell_i$ drops below $10^{-3}$[^ref].
+
+$$
+\begin{aligned}
+\nabla_\theta \mathcal{L} &= 0 \\
+\theta^\star &= \arg\min_\theta \mathcal{L}
+\end{aligned}
+$$
+
+::: warning
+Seeds 3 and 7 diverged.
+:::
+
+[^ref]: After 10k steps.
+"""), "notes", step)
+````
+
+Math is rendered with [KaTeX](https://katex.org/docs/supported), loaded only when a text
+contains math. Pandoc's rules decide what is math:
+
+- `$…$` is inline math. The opening `$` must be followed by a non-space. The next `$` closes it; it
+  must follow a non-space and must not be followed by a digit. Otherwise the opening `$` is an
+  ordinary dollar sign, so `$5 and $10` stays text. Write `\$` for a literal dollar inside math.
+- `$$…$$` is display math, on its own lines or inside a paragraph.
+- `\(…\)` is inline math and `\[…\]` display math. Without the closing `\)` / `\]`, `\(` and `\[`
+  are the usual Markdown escapes of `(` and `[`.
+- A block starting with `\begin{env}` is display math when KaTeX knows `env` (`equation`,
+  `align`, `alignat`, `gather`, `split`, `CD`, with or without `*`). Any other environment, such as
+  `tikzpicture`, is shown as LaTeX code and passed through verbatim by the LaTeX export.
+- A block of `\newcommand`, `\renewcommand`, `\def` or `\DeclareMathOperator` lines defines macros
+  for all math after it in the same text. A `\newcommand` inside a formula works the same way.
+
+Pandoc extensions and their support:
+
+| Pandoc extension | Support | Notes |
+|---|---|---|
+| `tex_math_dollars` | Yes | `$…$` inline, `$$…$$` display, with Pandoc's rules above. |
+| `tex_math_single_backslash` | Yes | `\(…\)` inline, `\[…\]` display. |
+| `raw_tex` | Partial | `\begin{…}…\end{…}` blocks: KaTeX environments render as math, the rest as LaTeX code. Inline TeX commands outside math stay text. |
+| `latex_macros` | Yes | Macro blocks and `\newcommand` in formulas apply to later math in the same text. |
+| `footnotes` | Yes | `[^1]` references and `[^1]: …` notes, listed at the end of the text. |
+| `inline_notes` | Yes | `^[…]`. |
+| `definition_lists` | Yes | `:` and `~` markers, compact and loose. |
+| `fenced_divs` | Yes | `::: {.class #id}` … `:::`, nestable. The classes `note`, `tip`, `important`, `warning` and `caution` (also `callout-note`, …) make a callout; `title="…"` sets its title. |
+| `bracketed_spans` | Yes | `[text]{.class}`. `.smallcaps`, `.underline` and `.mark` are styled. |
+| `header_attributes` | Yes | `# Title {#id .class}`; `{-}` or `.unnumbered` makes an unnumbered section in the LaTeX export. |
+| `auto_identifiers` | Partial | Headings get GitHub-style ids (Pandoc's `gfm_auto_identifiers`), the same ids a report's table of contents uses. |
+| `link_attributes` | Partial | `{#id .class title=…}` after links and images; `width` / `height` on images. |
+| `superscript`, `subscript` | Yes | `2^10^`, `H~2~O`. Plain text inside, no spaces. |
+| `strikeout` | Yes | `~~text~~`. A single `~` is subscript. |
+| `pipe_tables` | Yes | With column alignment. |
+| `simple_tables`, `multiline_tables`, `grid_tables`, `table_captions` | No | Use pipe tables. |
+| `task_lists` | Yes | `- [x] done`. |
+| `smart` | Yes | Curly quotes, `--` en dash, `---` em dash, `...` ellipsis. |
+| `implicit_figures` | Yes | An image with alt text alone in its paragraph becomes a figure captioned by the alt text. |
+| `line_blocks` | Yes | `| line`, keeping line breaks and leading spaces. |
+| `fancy_lists`, `startnum` | Partial | `a.`, `A)`, `(i)`, `IV.`, `(1)`, `#.` markers. Items are one paragraph each, without nested blocks. Upper-case letters followed by `.` need two spaces (`A.  Item`), so `B. Russell` stays a sentence. |
+| `example_lists` | Partial | `(@)` and `(@label)` items are numbered across the whole text, and `(@label)` in the text becomes the number. Same item limits as `fancy_lists`. |
+| `citations` | Partial | `[@key]`, `[see @key, p. 4; @other]` and `[-@key]` show as written, styled as a citation. There is no bibliography. The LaTeX export writes `\cite{key,other}`. |
+| `fenced_code_blocks`, `backtick_code_blocks` | Yes | The language after the fence is kept; other code attributes are ignored. |
+| `raw_html`, `native_divs`, `native_spans`, `markdown_in_html_blocks` | No | Raw HTML is always shown as text. |
+| `yaml_metadata_block`, `pandoc_title_block` | No | |
+
+Everything rendered stays inert. Raw HTML shows as text. `javascript:` and other unsafe URLs are
+dropped. Attribute blocks set only an id, classes (rendered with an `md-` prefix, so they cannot
+pick up the app's own styles), and `title`, `lang`, `dir`, `width`, `height`; anything else, such
+as `onclick=…` or `style=…`, is ignored. KaTeX runs with `trust` off, so `\href`, `\url`,
+`\includegraphics` and `\htmlClass` render as errors, never as links or markup.
 
 ## Tables
 
