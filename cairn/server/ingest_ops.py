@@ -171,7 +171,9 @@ def _merge_doc(db: Database, table: str, run_id: str, values: dict[str, Any]) ->
         ValueError: The merged document has two paths with one flat key.
     """
     update = config_doc.normalize(values)
-    with db.transaction() as con:
+    # Read-modify-write: take the write lock up front, or a concurrent writer
+    # (sweep workers, other processes) makes the lock upgrade fail at once.
+    with db.transaction(immediate=True) as con:
         doc = config_doc.merge(_read_doc(con, table, run_id), update)
         return write_doc(con, table, run_id, doc)
 
