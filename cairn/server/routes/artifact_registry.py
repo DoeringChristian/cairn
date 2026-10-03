@@ -14,10 +14,15 @@ Shapes are the ``artifact_registry_ops`` dicts:
 
 from __future__ import annotations
 
+import shutil
+import tempfile
+import zipfile
+from collections.abc import Iterator
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .. import artifact_registry_ops as ops
@@ -242,6 +247,47 @@ def version_file_content(
     return serve_blob(
         request, entry["digest"], mime_type=entry["mime"] or None,
         filename=path.rsplit("/", 1)[-1], range_header=range_header, if_none_match=if_none_match,
+    )
+
+
+@router.get("/artifact-versions/{version_id}/download")
+def version_download(version_id: str, request: Request) -> StreamingResponse:
+    """Every uploaded entry of the version as one zip, at its path, named
+    ``<name>-v<N>.zip`` (as ``ArtifactVersion.download()`` names its
+    directory). References are not included (their bytes live at their
+    URIs); ``X-Cairn-Skipped-References`` says how many were left out."""
+    db = get_db(request)
+    try:
+        ver = ops.get_version(db, version_id)
+        entries = ops.version_files(db, version_id)
+    except LookupError as exc:
+        raise _http(exc) from None
+    blobs = get_blobs(request)
+    spool = tempfile.SpooledTemporaryFile(max_size=64 * 1024 * 1024)
+    with zipfile.ZipFile(spool, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as zf:
+        for e in entries:
+            if e["digest"] is None:
+                continue
+            with blobs.open_stream(e["digest"]) as src, zf.open(e["path"], "w", force_zip64=True) as dst:
+                shutil.copyfileobj(src, dst, 1024 * 1024)
+    size = spool.tell()
+    spool.seek(0)
+
+    def chunks() -> Iterator[bytes]:
+        try:
+            while chunk := spool.read(1024 * 1024):
+                yield chunk
+        finally:
+            spool.close()
+
+    filename = f"{ver['name']}-v{ver['version']}.zip"
+    return StreamingResponse(
+        chunks(), media_type="application/zip",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}",
+            "Content-Length": str(size),
+            "X-Cairn-Skipped-References": str(sum(1 for e in entries if e["digest"] is None)),
+        },
     )
 
 

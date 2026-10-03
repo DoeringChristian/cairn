@@ -83,8 +83,9 @@ def serve_blob(
             raise HTTPException(status_code=416, detail="bad Range")
         start_s, end_s = m.groups()
         start = int(start_s) if start_s else 0
-        end = int(end_s) if end_s else total_size - 1
-        if start < 0 or end >= total_size or start > end:
+        # A last byte past the end means "to the end" (RFC 9110 14.1.2).
+        end = min(int(end_s), total_size - 1) if end_s else total_size - 1
+        if start < 0 or start >= total_size or start > end:
             raise HTTPException(status_code=416, detail="range not satisfiable")
         length = end - start + 1
         fh = blobs.open_stream(digest)

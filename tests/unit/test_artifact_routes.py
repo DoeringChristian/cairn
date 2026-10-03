@@ -109,3 +109,32 @@ def test_runs_query_route(client):
     assert client.post("/api/runs/query", json={"predicates": [["m", "nope", None, 1]]}).status_code == 400
     assert [r["display_name"] for r in client.get(
         "/api/runs", params={"sort": "config.m.d", "desc": "true"}).json()["runs"]] == ["b", "a"]
+
+
+def test_version_download_zips_uploaded_entries(client):
+    import io
+    import zipfile
+
+    rid = client.post("/api/runs", json={"project": "p", "name": "prod"}).json()["run_id"]
+    vid = _version(client, rid)["id"]
+    r = client.get(f"/api/artifact-versions/{vid}/download")
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"] == "application/zip"
+    assert "ds-v1.zip" in r.headers["content-disposition"]
+    assert r.headers["x-cairn-skipped-references"] == "1"
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        assert zf.namelist() == ["d/k.json"]
+        assert zf.read("d/k.json") == b'{"k": 1}'
+    assert client.get("/api/artifact-versions/nope/download").status_code == 404
+
+
+def test_entry_range_past_the_end_is_clamped(client):
+    rid = client.post("/api/runs", json={"project": "p", "name": "prod"}).json()["run_id"]
+    vid = _version(client, rid)["id"]
+    url = f"/api/artifact-versions/{vid}/file"
+    r = client.get(url, params={"path": "d/k.json"}, headers={"Range": "bytes=0-262143"})
+    assert r.status_code == 206
+    assert r.content == b'{"k": 1}'
+    assert r.headers["content-range"] == "bytes 0-7/8"
+    r = client.get(url, params={"path": "d/k.json"}, headers={"Range": "bytes=8-20"})
+    assert r.status_code == 416
