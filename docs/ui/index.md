@@ -59,8 +59,8 @@ Every project page has a left navigation bar (a bottom bar on phones):
 | Runs | `/p/<project>` | The [runs table](runs-table.md). |
 | Compare | `/p/<project>/compare` | [Comparisons](comparisons.md): workspaces bound to a set of runs. |
 | Sweeps | `/p/<project>/sweeps` | Sweeps and their trials ([Sweeps](../guides/sweeps.md)). |
-| Artifacts | `/p/<project>/artifacts` | The artifact registry, filterable by type ([Artifacts and lineage](../guides/artifacts.md)). |
-| Lineage | `/p/<project>/lineage` | The graph of runs and the artifacts they produce and consume. |
+| Artifacts | `/p/<project>/artifacts` | The [artifact explorer](artifacts.md): artifacts, versions, files, usage snippets. |
+| Lineage | `/p/<project>/lineage` | The [lineage graph](lineage.md) of runs and the artifact versions they produce and consume. |
 | Reports | `/p/<project>/reports` | Notebook-style [reports](reports.md). |
 | Defaults | `/p/<project>/defaults` | Card defaults for the workspace and per section ([Run page and workspace](workspace.md)). |
 
@@ -68,7 +68,7 @@ A breadcrumb (`Projects › <project> › <run>`) sits above the content; on a r
 
 ### Run page
 
-Click a run's name to open `/p/<project>/r/<run id>`. The run page has five tabs:
+Click a run's name to open `/p/<project>/r/<run id>`. The run page has six tabs:
 
 | Tab | Contents |
 |---|---|
@@ -77,6 +77,7 @@ Click a run's name to open `/p/<project>/r/<run id>`. The run page has five tabs
 | Logs | Captured console output, filterable by stream. |
 | Source | The captured source files. |
 | Environment | The captured environment, including `pip freeze`. |
+| Artifacts | The artifact versions the run logged and used, and its [lineage graph](lineage.md) ([A run's artifacts](artifacts.md#a-runs-artifacts)). |
 
 A running run shows a **Stop** button, which asks the run to stop ([Run lifecycle](../guides/runs.md)). A forked run links to its parent.
 
@@ -115,4 +116,5 @@ The UI adapts to narrow screens (below 768 px) and to touch input:
 
 - [Runs table](runs-table.md): filter, sort, group and compare runs.
 - [Run page and workspace](workspace.md): arrange cards and set defaults.
+- [Artifact explorer](artifacts.md) and [lineage graph](lineage.md).
 - [Keyboard shortcuts](shortcuts.md).

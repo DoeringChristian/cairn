@@ -106,8 +106,8 @@ for epoch in range(50):
 ```
 
 A **tag** describes a version and may be on any number of versions (`"candidate"`,
-`"reviewed"`). Aliases and tags can be changed later, from Python or on the artifact's page in
-the UI:
+`"reviewed"`). Aliases and tags can be changed later, from Python or in the UI's
+[artifact explorer](../ui/artifacts.md#editing):
 
 ```python
 v = cairn.Reader().artifact("base-ckpt:v12", project="denoise")
@@ -206,8 +206,9 @@ later with `cairn.Reader().artifact(...)`.
 ## Lineage
 
 Each version records the run that logged it, and each `use_artifact` records a consuming run.
-Together these form a graph of runs and versions, which the UI shows on the project's
-**Artifacts** and **Lineage** pages (forked runs are linked to their parent there too).
+Together these form a graph of runs and versions, which the UI shows in the
+[artifact explorer](../ui/artifacts.md) and the [lineage graph](../ui/lineage.md) (forked runs
+are linked to their parent there too).
 
 ```python
 r = cairn.Reader()
