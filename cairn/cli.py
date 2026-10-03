@@ -617,7 +617,8 @@ def list_cmd(
     """List recent runs on the configured server."""
     t = _client()
     try:
-        params: dict[str, Any] = {"limit": limit}
+        # Newest first: the most recent runs.
+        params: dict[str, Any] = {"limit": limit, "sort": "created_at", "desc": "true"}
         if project:
             params["project"] = project
         if status:
