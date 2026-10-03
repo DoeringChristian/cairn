@@ -43,14 +43,10 @@ def _reset_active_run():
 
 def _seed_parent(db, blobs) -> str:
     """loss at steps 0..9 (wall = step), system.cpu samples 0..19 (wall = i),
-    a per-step artifact at steps 2 and 8, a run-level one, params, summary,
-    metric defs."""
+    params, summary, metric defs."""
     rid = ingest_ops.create_run(db, project="p", name="parent")["run_id"]
     ingest_ops.insert_batch(db, rid, [_pt("loss", s, _wall(s)) for s in range(10)])
     ingest_ops.insert_batch(db, rid, [_pt("system.cpu", i, _wall(i)) for i in range(20)])
-    digest = ingest_ops.put_artifact(db, blobs, b"x", "application/octet-stream")["hash"]
-    for step in (None, 2, 8):
-        ingest_ops.attach_artifact(db, blobs, rid, "ckpt", digest, step)
     ingest_ops.set_params(db, rid, {"lr": 0.1})
     ingest_ops.set_summary(db, rid, {"best": 1.0})
     db.write(
@@ -82,8 +78,7 @@ def test_fork_copies_history_up_to_the_step(fresh_db, blob_store):
     assert _steps(db, child["run_id"], "loss") == [0, 1, 2, 3, 4]
     # system.* is cut by time: up to the wall time of the last kept loss point.
     assert _steps(db, child["run_id"], "system.cpu") == [0, 1, 2, 3, 4]
-    assert sorted(r["step"] for r in db.read_columns(
-        "SELECT step FROM run_artifacts WHERE run_id = ?", [child["run_id"]])) == [-1, 2]
+    assert ingest_ops.run_docs(db, child["run_id"]) == {"config": {"lr": 0.1}, "summary": {"best": 1.0}}
     assert db.read_one("SELECT value FROM params WHERE run_id = ?", [child["run_id"]]) == ("0.1",)
     assert db.read_one("SELECT value FROM summary WHERE run_id = ?", [child["run_id"]]) == ("1.0",)
     assert db.read_columns(
@@ -114,8 +109,6 @@ def test_rewind_drops_later_history_bumps_epoch_and_resumes(fresh_db, blob_store
     assert out["run_id"] == rid and out["project_id"] == "p"
     assert _steps(db, rid, "loss") == list(range(7))
     assert _steps(db, rid, "system.cpu") == list(range(7))
-    assert sorted(r["step"] for r in db.read_columns(
-        "SELECT step FROM run_artifacts WHERE run_id = ?", [rid])) == [-1, 2]
     row = db.read_columns("SELECT * FROM runs WHERE id = ?", [rid])[0]
     assert row["data_epoch"] == 1
     assert (row["status"], row["ended_at"], row["exit_code"], row["stop_requested"]) == (
@@ -141,11 +134,11 @@ def test_lineage_has_fork_edges_only_for_the_project_graph(fresh_db, blob_store)
     db = fresh_db
     parent = _seed_parent(db, blob_store)
     kid = ingest_ops.fork_run(db, parent_id=parent, step=4)["run_id"]
-    graph = artifact_registry_ops.get_lineage_graph(db, "p")
+    graph = artifact_registry_ops.project_lineage(db, "p")
     assert graph["edges"] == [{"source": parent, "target": kid, "relation": "forked"}]
     runs = {n["id"]: n for n in graph["nodes"]}
-    assert runs[parent]["label"] == "parent" and runs[kid]["type"] == "run"
-    fam = artifact_registry_ops.get_lineage_graph(db, "p", family_id="none")
+    assert runs[parent]["name"] == "parent" and runs[kid]["type"] == "run"
+    fam = artifact_registry_ops.project_lineage(db, "p", family_id="none")
     assert fam["edges"] == []
 
 

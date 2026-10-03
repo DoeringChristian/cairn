@@ -100,7 +100,7 @@ def test_run_tracks_a_precomputed_histogram(tmp_path):
         run.track(Histogram(counts=[2, 5], edges=[-1.0, 0.0, 1.0]), name="grads", step=3)
     reader = cairn.Reader(repo=repo)
     try:
-        counts, edges = reader.runs("h").list()[0].artifact("grads", step=3)
+        counts, edges = reader.runs("h").list()[0].media("grads", step=3).load()
     finally:
         reader.close()
     assert list(counts) == [2, 5] and list(edges) == [-1.0, 0.0, 1.0]

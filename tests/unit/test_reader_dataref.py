@@ -45,7 +45,6 @@ def test_getitem_returns_dataref_without_fetching(populated_repo, monkeypatch):
 
         monkeypatch.setattr(reader._backend, "get_sequence", _boom)
         monkeypatch.setattr(reader._backend, "list_sequences", _boom)
-        monkeypatch.setattr(reader._backend, "list_artifacts", _boom)
 
         ref = r["loss"]
         assert isinstance(ref, DataRef)

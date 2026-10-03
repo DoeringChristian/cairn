@@ -32,7 +32,7 @@ from cairn_plot import *  # noqa: F401,F403
 from cairn_plot import Boxes, Compare, Mesh, PointCloud, Volume  # noqa: F401
 from cairn_plot.components import register_data_ref_type, register_resolvers
 
-from .sdk.reader import ArtifactInfo, DataRef  # noqa: F401 - ArtifactInfo kept for callers
+from .sdk.reader import DataRef
 
 
 # ---------------------------------------------------------------------------

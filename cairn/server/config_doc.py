@@ -182,5 +182,14 @@ def loads(text: str | None) -> dict[str, Any]:
     return out if isinstance(out, dict) else {}
 
 
-def is_nan(v: Any) -> bool:
-    return isinstance(v, float) and math.isnan(v)
+def json_safe(doc: Any) -> Any:
+    """``doc`` for a strict-JSON response (the browser's ``JSON.parse``):
+    NaN / inf become the strings ``"NaN"`` / ``"Infinity"`` / ``"-Infinity"``.
+    Exact readers use the raw document instead (``/api/runs/{id}/documents``)."""
+    if isinstance(doc, float) and not math.isfinite(doc):
+        return "NaN" if math.isnan(doc) else ("Infinity" if doc > 0 else "-Infinity")
+    if isinstance(doc, dict):
+        return {k: json_safe(v) for k, v in doc.items()}
+    if isinstance(doc, list):
+        return [json_safe(v) for v in doc]
+    return doc

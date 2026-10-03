@@ -39,7 +39,7 @@ def _exercise(run: Run) -> None:
     run.remove_tag("b")
     run.add_note("hi")
     run.alert("title", "text")
-    assert run.log_artifact(b"bytes", name="blob") is None
+    assert run.log_artifact(b"bytes", "blob") is None
     assert run.use_artifact("model:latest") is None
     run.watch(object())
     run.unwatch()

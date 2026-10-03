@@ -72,17 +72,6 @@ def test_upload_artifact_is_idempotent(transport):
     assert count == 1
 
 
-def test_attach_artifact_to_run(transport):
-    rid = transport.create_run({"project": "p"})["run_id"]
-    digest = transport.upload_artifact(b"hello", "text/plain")
-    transport.attach_artifact(rid, "readme", digest)
-    rows = transport.db.read_columns(
-        "SELECT name, hash FROM run_artifacts WHERE run_id = ?", [rid]
-    )
-    assert rows[0]["name"] == "readme"
-    assert rows[0]["hash"] == digest
-
-
 def test_logs_inserted_and_written_to_disk(transport, tmp_path):
     rid = transport.create_run({"project": "p"})["run_id"]
     ok = transport.post_logs(

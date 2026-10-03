@@ -55,17 +55,3 @@ def test_slash_named_metric_sequence_roundtrip(client):
     body = r.json()
     assert body["name"] == "weights/layer1"
     assert [p["step"] for p in body["points"]] == [0, 1]
-
-
-def test_slash_named_artifact_family_lookup_by_name(client):
-    project_id = client.post("/api/runs", json={"project": "p"}).json()["project_id"]
-    client.post(
-        f"/api/projects/{project_id}/artifact-families",
-        json={"name": "checkpoints/epoch", "type": "artifact"},
-    )
-
-    r = client.get(
-        f"/api/projects/{project_id}/artifact-families/by-name/checkpoints%2Fepoch"
-    )
-    assert r.status_code == 200
-    assert r.json()["name"] == "checkpoints/epoch"

@@ -117,7 +117,10 @@ def test_query_url_baked_resolves_digest(live_server):
         rid = c.post("/api/runs", json={"project": "demo", "name": "exp"}).json()["run_id"]
         c.post("/api/artifacts", files={"file": ("x.png", io.BytesIO(payload), "image/png")},
                data={"mime_type": "image/png"})
-        c.post(f"/api/runs/{rid}/artifacts", json={"name": "render", "hash": digest})
+        c.post(f"/api/runs/{rid}/batch", json={"points": [{
+            "name": "render", "step": 0, "wall_time": "2026-01-01T00:00:00Z",
+            "object_type": "image", "artifact_hash": digest,
+        }]})
 
     url = query_url("render", project="demo", live=False, server=live_server)
     assert url == f"{live_server}/api/artifacts/{digest}"

@@ -19,7 +19,7 @@ def _post_run(client, name, summary, payload):
         files={"file": ("x.bin", io.BytesIO(payload), "application/octet-stream")},
         data={"mime_type": "application/octet-stream"},
     )
-    client.post(f"/api/runs/{rid}/artifacts", json={"name": "render", "hash": hashlib.sha256(payload).hexdigest()})
+    client.post(f"/api/runs/{rid}/batch", json={"points": [{"name": "render", "step": 0, "wall_time": "2026-01-01T00:00:00Z", "object_type": "image", "artifact_hash": hashlib.sha256(payload).hexdigest()}]})
     return rid
 
 
@@ -57,7 +57,7 @@ def test_reader_exposes_and_filters_summary(tmp_path):
     reader = cairn.Reader(repo=str(repo))
     runs = reader.runs(project="p").list()
     by_name = {r.name: r for r in runs}
-    assert by_name["good"].summary == {"acc": 0.95, "eval.loss": 1 - 0.95}
+    assert by_name["good"].summary == {"acc": 0.95, "eval": {"loss": 1 - 0.95}}
     picked = reader.runs(project="p").filter(summary__acc__gt=0.9).list()
     assert [r.name for r in picked] == ["good"]
 

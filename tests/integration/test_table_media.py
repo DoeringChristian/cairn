@@ -71,16 +71,18 @@ def test_media_cells_roundtrip_through_every_backend(backend):
     reader = cairn.Reader(repo=repo)
     try:
         r = reader.run(run.id)
-        table = r.artifact("preds")
+        table = r.media("preds").load()
         assert [c["type"] for c in table["columns"]] == ["number", "media"]
         ref = table["data"][0][1]
         assert isinstance(ref, cairn.MediaRef)
         assert (ref.mime_type, ref.object_type) == ("image/png", "image")
         assert ref.load().size == (6, 6)
         assert table["data"][2][1] is None
-        meta = json.loads(next(a.metadata for a in r.artifacts() if a.name == "preds"))
+        meta = r.media("preds").metadata
         assert meta["media_hashes"] == [table["data"][0][1].hash, table["data"][1][1].hash]
-        assert isinstance(r.artifact("named")["data"][0][0], cairn.MediaRef)
+        (named,) = r.logged_artifacts()
+        assert named.name == "named" and [e.path for e in named.files()] == ["named.json"]
+        assert isinstance(named.get()["data"][0][0], cairn.MediaRef)
     finally:
         reader.close()
 
@@ -93,7 +95,7 @@ def test_dataframe_media_cells(tmp_path):
     run.finish()
     reader = cairn.Reader(repo=tmp_path / ".cairn")
     try:
-        cell = reader.run(run.id).artifact("t")["data"][0][1]
+        cell = reader.run(run.id).media("t").load()["data"][0][1]
         assert isinstance(cell, cairn.MediaRef)
     finally:
         reader.close()
@@ -119,7 +121,7 @@ def test_export_carries_media_cells(live_server, tmp_path, monkeypatch):
     path = tmp_path / "runs.zip"
     path.write_bytes(exported.content)
     with cairn.Reader(repo=path) as reader:
-        assert reader.run(run.id).artifact("preds")["data"][1][1].load().size == (6, 6)
+        assert reader.run(run.id).media("preds").load()["data"][1][1].load().size == (6, 6)
 
 
 def test_handler_passes_media_cells_through():

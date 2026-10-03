@@ -98,7 +98,7 @@ def test_a_list_of_one_kind_is_one_gallery_point(repo, kind):
         refs = run.media("g")
         assert isinstance(refs, list) and len(refs) == len(value)
         assert all(isinstance(r, MediaRef) and r.object_type == kind for r in refs)
-        decoded = run.artifact("g")
+        decoded = [r.load() for r in run.media("g")]
         assert isinstance(decoded, list) and len(decoded) == len(value)
         assert [r.load() for r in refs][0] is not None
     finally:

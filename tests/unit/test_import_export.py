@@ -27,26 +27,37 @@ def _upload(client, data: bytes) -> str:
     return r.json()["hash"]
 
 
-def test_run_artifacts_survive_import(client):
-    rid = client.post("/api/runs", json={"project": "p"}).json()["run_id"]
-    digest = _upload(client, b"hello")
-    client.post(f"/api/runs/{rid}/artifacts", json={"name": "notes", "hash": digest})
-    client.post(f"/api/runs/{rid}/artifacts", json={"name": "ckpt", "hash": digest, "step": 3})
-    db = client.app.state.db
-    before = {
-        (r["name"], r["step"]): r["created_at"]
-        for r in db.read_columns("SELECT * FROM run_artifacts WHERE run_id = ?", [rid])
-    }
+def test_artifact_versions_and_config_docs_survive_export(client, tmp_path):
+    import cairn
 
-    new_id = _roundtrip(client, [rid])[rid]
+    rid = client.post("/api/runs", json={"project": "p", "name": "producer"}).json()["run_id"]
+    client.post(f"/api/runs/{rid}/params", json={"params": {"opt": {"lr": 0.1, "betas": [0.9, 0.99]},
+                                                           "a.b": 1, "empty": {}}})
+    file_hash = _upload(client, b"hello")
+    manifest = json.dumps({"files": [
+        {"path": "notes.txt", "hash": file_hash, "size": 5, "mime": "text/plain"},
+        {"path": "raw.tar", "uri": "s3://b/raw.tar", "size": 9},
+    ]}).encode()
+    m = client.post(
+        "/api/artifacts",
+        files={"file": ("blob", manifest, "application/vnd.cairn.artifact-manifest+json")},
+        data={"mime_type": "application/vnd.cairn.artifact-manifest+json", "metadata": "{}"},
+    ).json()["hash"]
+    v = client.post("/api/projects/p/artifact-versions", json={
+        "name": "notes", "digest": m, "created_by_run": rid, "step": 3, "aliases": ["best"],
+    })
+    assert v.status_code == 200, v.text
 
-    after = {
-        (r["name"], r["step"]): r["created_at"]
-        for r in db.read_columns("SELECT * FROM run_artifacts WHERE run_id = ?", [new_id])
-    }
-    assert after == before
-    names = {a["name"] for a in client.get(f"/api/runs/{new_id}/artifacts").json()["named"]}
-    assert names == {"notes", "ckpt"}
+    exported = client.post("/api/export", json={"run_ids": [rid]})
+    path = tmp_path / "runs.zip"
+    path.write_bytes(exported.content)
+    with cairn.Reader(repo=path) as reader:
+        run = reader.run(rid)
+        assert run.config == {"opt": {"lr": 0.1, "betas": [0.9, 0.99]}, "a.b": 1, "empty": {}}
+        (version,) = run.logged_artifacts()
+        assert (version.ref, version.step, version.aliases) == ("notes:v1", 3, ["latest", "best"])
+        assert [e.path for e in version.files()] == ["notes.txt", "raw.tar"]
+        assert version.get("notes.txt") == b"hello"
 
 
 def test_archive_gallery_mime_matches_the_sdk():

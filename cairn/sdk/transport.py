@@ -132,7 +132,12 @@ class Transport:
         return self._retry(call)
 
     def post_json(self, path: str, body: dict[str, Any]) -> httpx.Response:
-        return self._request("POST", path, json=body)
+        # Encoded here rather than by httpx: config values may be NaN/inf,
+        # which Python's JSON (the server's parser) round-trips.
+        return self._request(
+            "POST", path, content=json.dumps(body).encode(),
+            headers={"Content-Type": "application/json"},
+        )
 
     def post_multipart(
         self, path: str, files: dict[str, Any], data: dict[str, Any] | None = None

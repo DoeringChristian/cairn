@@ -236,7 +236,7 @@ def test_run_joins_the_trial_from_env(tmp_path, monkeypatch):
     try:
         r = reader.run(run.id)
         assert r._raw["sweep_id"] == sw["id"]
-        assert r.params["lr"] == 0.5
+        assert r.config["lr"] == 0.5
         assert r.name == f"{sw['id'][:6]}-1"
         assert reader.run(unnamed.id).name == f"{sw_r['id'][:6]}-2"
         assert reader.run(named.id).name == "mine"

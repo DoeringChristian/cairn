@@ -6,9 +6,10 @@ import json
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
-from .. import auth
+from .. import auth, config_doc
 from ..storage.db import Database
 from ..run_query import RUN_LIST_COLUMNS, RunQueryError, docs_by_run, select_runs
 from ..summary_rules import resolved_values
@@ -36,8 +37,8 @@ def _decorate(db: Database, rows: list[dict[str, Any]], extras: set[str]) -> Non
             row["stats"] = run_stats.get(row["id"], {})
         if docs is not None:
             d = docs.get(row["id"], {})
-            row["config_doc"] = d.get("config", {})
-            row["summary_doc"] = d.get("summary", {})
+            row["config_doc"] = config_doc.json_safe(d.get("config", {}))
+            row["summary_doc"] = config_doc.json_safe(d.get("summary", {}))
 
 
 def _archived_param(value: str) -> bool | None:
@@ -207,5 +208,19 @@ def get_run(run_id: str, request: Request) -> dict[str, Any]:
         "run": run, "params": params, "summary": summary, "metric_defs": metric_defs,
         # The nested documents as logged; ``params`` / ``summary`` are their
         # flat index.
-        "config_doc": docs.get("config", {}), "summary_doc": docs.get("summary", {}),
+        "config_doc": config_doc.json_safe(docs.get("config", {})),
+        "summary_doc": config_doc.json_safe(docs.get("summary", {})),
     }
+
+
+@router.get("/runs/{run_id}/documents")
+def get_run_documents(run_id: str, request: Request) -> Response:
+    """The run's config and summary documents exactly as stored:
+    ``{"config": {...}, "summary": {...}}``. Python's JSON dialect: a NaN or
+    infinite float is the bare token ``NaN`` / ``Infinity`` (the reader's
+    exact round trip); ``/api/runs/{id}`` carries browser-safe copies."""
+    db = get_db(request)
+    require_run(db, run_id)
+    row = db.read_one("SELECT config, summary FROM runs WHERE id = ?", [run_id])
+    body = '{"config":%s,"summary":%s}' % (row[0] or "{}", row[1] or "{}")
+    return Response(content=body, media_type="application/json")

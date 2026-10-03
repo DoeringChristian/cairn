@@ -32,7 +32,7 @@ def _drain(repo):
 def test_versioned_artifact_lineage_survives_wal(tmp_path):
     repo = tmp_path / ".cairn"
     with _quiet_run(repo, project="p", name="producer") as run:
-        run.log_artifact(cairn.Text("weights"), name="model", artifact_type="checkpoint")
+        run.log_artifact(cairn.Text("weights"), "model", type="checkpoint")
         producer = run.id
 
     reader = cairn.Reader(repo=repo)
@@ -41,14 +41,14 @@ def test_versioned_artifact_lineage_survives_wal(tmp_path):
     finally:
         reader.close()
     versions = [n for n in graph["nodes"] if n["type"] == "artifact_version"]
-    assert [(v["family_name"], v["version"]) for v in versions] == [("model", 1)]
+    assert [(v["name"], v["version"]) for v in versions] == [("model", 1)]
     assert {"source": producer, "target": versions[0]["id"], "relation": "produced"} in graph["edges"]
 
 
 def test_record_artifact_input_is_replayed(tmp_path):
     repo = tmp_path / ".cairn"
     with _quiet_run(repo, project="p") as run:
-        run.log_artifact(cairn.Text("weights"), name="model", artifact_type="checkpoint")
+        run.log_artifact(cairn.Text("weights"), "model", type="checkpoint")
     db = _drain(repo)
     try:
         version = artifact_registry_ops.resolve_ref(db, "p", "model:latest")
@@ -74,8 +74,12 @@ def test_incremental_then_full_drain_creates_one_version(tmp_path):
     repo = tmp_path / ".cairn"
     t = LocalTransport(repo, use_wal=True)
     rid = t.create_run({"project": "p", "run_id": "a" * 32})["run_id"]
-    digest = t.upload_artifact(b"w", "application/octet-stream")
-    t.create_artifact_version("p", "model", "artifact", digest, 1, {}, rid, None)
+    art = cairn.Artifact("model")
+    art.add(b"w", "w.bin")
+    digest, _ = art._build_manifest(t, None)
+    assert t.create_artifact_version("p", {
+        "name": "model", "digest": digest, "created_by_run": rid, "version_id": "f" * 16,
+    }) is None
 
     dd = DataDir(repo)
     db = Database.open(dd.db_path)

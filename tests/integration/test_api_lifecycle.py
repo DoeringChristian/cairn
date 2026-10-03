@@ -148,6 +148,7 @@ def test_full_lifecycle(client):
     assert run["run"]["status"] == "completed"
     assert len(run["params"]) == 2
     assert {p["key"] for p in run["params"]} == {"model.layers", "lr"}
+    assert run["config_doc"] == {"model": {"layers": 3}, "lr": 0.01}
 
     seqs = client.get(f"/api/runs/{rid}/sequences").json()["sequences"]
     names = {s["name"] for s in seqs}
@@ -156,8 +157,8 @@ def test_full_lifecycle(client):
     loss = client.get(f"/api/runs/{rid}/sequences/loss").json()
     assert len(loss["points"]) == 2
 
-    artifacts_list = client.get(f"/api/runs/{rid}/artifacts").json()
-    assert any(a["hash"] == digest for a in artifacts_list["from_sequences"])
+    preds = client.get(f"/api/runs/{rid}/sequences/predictions").json()["points"]
+    assert any(p["artifact_hash"] == digest for p in preds)
 
     logs = client.get(f"/api/runs/{rid}/logs").json()["lines"]
     assert len(logs) == 2
@@ -171,26 +172,6 @@ def test_create_run_with_bad_project_name(client):
 def test_params_for_unknown_run_404s(client):
     r = client.post("/api/runs/deadbeef/params", json={"params": {"x": 1}})
     assert r.status_code == 404
-
-
-def test_run_attach_artifact(client):
-    rid = client.post("/api/runs", json={"project": "p"}).json()["run_id"]
-    payload = b"archive-bytes"
-    digest = hashlib.sha256(payload).hexdigest()
-    # Upload first
-    client.post(
-        "/api/artifacts",
-        files={"file": ("f.bin", io.BytesIO(payload), "application/octet-stream")},
-        data={"mime_type": "application/octet-stream"},
-    )
-    r = client.post(
-        f"/api/runs/{rid}/artifacts",
-        json={"name": "checkpoint", "hash": digest},
-    )
-    assert r.status_code == 200
-    # List
-    listing = client.get(f"/api/runs/{rid}/artifacts").json()
-    assert listing["named"][0]["name"] == "checkpoint"
 
 
 def test_run_tags_and_notes(client):

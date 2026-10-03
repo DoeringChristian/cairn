@@ -51,8 +51,8 @@ def test_local_run_full_lifecycle(tmp_path):
         # Image
         img = PILImage.new("RGB", (4, 4), (255, 0, 0))
         run.track(img, name="preview", step=0)
-        # Named artifact via log_artifact
-        run.log_artifact(cairn.Text("a" * 2000), name="generation")
+        # A versioned artifact via log_artifact
+        run.log_artifact(cairn.Text("a" * 2000), "generation")
         run_id = run.id
         # url should be a file:// URL, not http://
         assert run.url.startswith("file://")
@@ -81,10 +81,9 @@ def test_local_run_full_lifecycle(tmp_path):
             [run_id],
         )
         assert imgcount == 1
-        # Named artifact
+        # The artifact version it produced
         (named_count,) = db.read_one(
-            "SELECT COUNT(*) FROM run_artifacts WHERE run_id = ? AND name = 'generation'",
-            [run_id],
+            "SELECT COUNT(*) FROM artifact_versions WHERE created_by_run = ?", [run_id],
         )
         assert named_count == 1
         # Blobs on disk

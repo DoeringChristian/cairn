@@ -16,7 +16,7 @@ def _run(repo, name):
 def test_delete_run_with_summary_and_inputs(tmp_path):
     repo = tmp_path / ".cairn"
     producer = _run(repo, "producer")
-    producer.log_artifact(b"weights-bytes", name="weights", artifact_type="model")
+    producer.log_artifact(b"weights-bytes", "weights", type="model")
     producer.finish()
 
     run = _run(repo, "consumer")

@@ -124,7 +124,7 @@ def test_full_flow(env):
     ok = [
         f"/api/projects/{env['pid']}/reports/{env['rid']}",
         f"/api/runs/{a}", f"/api/runs/{a}/sequences", f"/api/runs/{a}/sequences/loss",
-        f"/api/runs/{a}/updates", f"/api/runs/{a}/artifacts",
+        f"/api/runs/{a}/updates", f"/api/runs/{a}/outputs",
         f"/api/artifacts/{env['table']}", f"/api/artifacts/{env['cell']}",
     ]
     for path in ok:
@@ -232,13 +232,15 @@ def test_artifact_reachability(env):
     img = blob(b"gallery image")
     gallery = blob(json.dumps({"items": [{"hash": img}]}).encode(), artifact_refs.GALLERY_MIME)
     leaf = blob(b"a file in a dir")
-    manifest = blob(json.dumps({"files": [{"path": "x", "hash": leaf}]}).encode(),
+    manifest = blob(json.dumps({"files": [{"path": "x", "hash": leaf, "size": 15}]}).encode(),
                     artifact_refs.MANIFEST_MIME)
     owner.post(f"/api/runs/{env['a']}/batch", json={"points": [
         {"name": "gal", "step": 1, "wall_time": "2026-01-01T00:00:00Z",
          "object_type": "image", "artifact_hash": gallery},
     ]})
-    r = owner.post(f"/api/runs/{env['a']}/artifacts", json={"name": "dir", "hash": manifest})
+    r = owner.post(f"/api/projects/{env['pid']}/artifact-versions", json={
+        "name": "dir", "digest": manifest, "created_by_run": env["a"],
+    })
     assert r.status_code == 200, r.text
 
     viewer = _viewer(env, _create(env)["secret"])

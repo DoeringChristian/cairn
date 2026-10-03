@@ -12,6 +12,7 @@ import json
 
 import pytest
 
+from cairn.server import ingest_ops
 from cairn.server.query_resolver import (
     QueryError,
     QueryNotFound,
@@ -52,19 +53,13 @@ def _add_run(
         [run_id, project, name, created_at, status,
          json.dumps(tags) if tags is not None else None],
     )
-    for k, v in (params or {}).items():
-        db.write(
-            "INSERT INTO params (run_id, key, value, value_type) VALUES (?, ?, ?, ?)",
-            [run_id, k, json.dumps(v), type(v).__name__],
-        )
+    if params:
+        ingest_ops.set_params(db, run_id, params)
 
 
-def _attach_named_artifact(db, run_id, name, digest, step=-1):
-    db.write(
-        "INSERT OR IGNORE INTO run_artifacts (run_id, name, hash, step, created_at) "
-        "VALUES (?, ?, ?, ?, ?)",
-        [run_id, name, digest, step, "2026-01-01T00:00:00+00:00"],
-    )
+def _attach_named_artifact(db, run_id, name, digest, step=0):
+    """A one-point media sequence (run attachments are gone)."""
+    _add_seq_point(db, run_id, name, step, digest=digest, object_type="image")
 
 
 def _add_seq_point(db, run_id, name, step, *, scalar=None, digest=None, object_type="scalar"):

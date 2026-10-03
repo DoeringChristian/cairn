@@ -29,7 +29,7 @@ def _upload(client, payload: bytes, mime="image/png") -> str:
 def _make_run(client, project, name, payload, tag="render"):
     rid = client.post("/api/runs", json={"project": project, "name": name}).json()["run_id"]
     digest = _upload(client, payload)
-    client.post(f"/api/runs/{rid}/artifacts", json={"name": tag, "hash": digest})
+    client.post(f"/api/runs/{rid}/batch", json={"points": [{"name": tag, "step": 0, "wall_time": "2026-01-01T00:00:00Z", "object_type": "image", "artifact_hash": digest}]})
     return rid, digest
 
 

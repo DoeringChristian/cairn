@@ -8,12 +8,15 @@ import numpy as np
 import pytest
 
 import cairn
+
+
+def _final_metric(db, run_id, name):
+    return resolved_values(db, [run_id])[run_id].get(name)
 from cairn.server import ingest_ops
-from cairn.server.query_resolver import _final_metric
 from cairn.server.storage.blobs import BlobStore
 from cairn.server.storage.datadir import DataDir
 from cairn.server.storage.db import Database
-from cairn.server.summary_rules import resolve_summary_rules
+from cairn.server.summary_rules import resolve_summary_rules, resolved_values
 from cairn.server.wal_ingest import ingest_all
 from cairn.sdk.transport import Transport
 

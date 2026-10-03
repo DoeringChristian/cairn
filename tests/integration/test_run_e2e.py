@@ -80,8 +80,8 @@ def test_track_image_uploads_artifact(transport, reader):
         run.track(img, name="preview", step=0)
     finally:
         run.finish()
-    arts = reader.get(f"/api/runs/{run.id}/artifacts").json()
-    assert any(a["name"] == "preview" for a in arts["from_sequences"])
+    points = reader.get(f"/api/runs/{run.id}/sequences/preview").json()["points"]
+    assert points[0]["artifact_hash"] and points[0]["object_type"] == "image"
 
 
 def test_context_manager_records_failed_on_exception(transport, reader):
@@ -134,15 +134,12 @@ def test_log_artifact(transport, reader):
         transport=transport,
     )
     try:
-        digest = run.log_artifact(
-            cairn.Text("hello world" * 200),
-            name="readme",
-        )
-        assert len(digest) == 64
+        version = run.log_artifact(cairn.Text("hello world" * 200), "readme")
+        assert (version.ref, version.aliases) == ("readme:v1", ["latest"])
     finally:
         run.finish()
-    arts = reader.get(f"/api/runs/{run.id}/artifacts").json()
-    assert any(a["name"] == "readme" for a in arts["named"])
+    outputs = reader.get(f"/api/runs/{run.id}/outputs").json()["outputs"]
+    assert [o["name"] for o in outputs] == ["readme"]
 
 
 def test_tags_and_notes(transport, reader):

@@ -51,7 +51,7 @@ def test_watch_all_records_gradients_and_parameters(tmp_path):
         # Passes 0, 2, 4 log; each takes the last step tracked before it.
         assert run.sequence("gradients/0.weight").steps == [0, 1, 3]
         assert run.sequence("parameters/2.bias").steps == [0, 1, 3]
-        counts, edges = run.artifact("gradients/0.weight", step=3)
+        counts, edges = run.media("gradients/0.weight", step=3).load()
         assert len(edges) == len(counts) + 1 == 65
         assert counts.sum() == model[0].weight.numel()
     finally:
@@ -102,7 +102,7 @@ def test_non_finite_values_are_dropped_and_constant_tensors_bin(tmp_path):
     try:
         names = {s.name for s in run.sequences()}
         assert "parameters/weight" not in names  # nothing finite
-        counts, edges = run.artifact("parameters/bias", step=0)
+        counts, edges = run.media("parameters/bias", step=0).load()
         assert counts.sum() == 1 and edges[0] < 3.0 < edges[-1]
     finally:
         reader.close()

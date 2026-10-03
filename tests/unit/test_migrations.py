@@ -36,10 +36,29 @@ def test_fresh_schema_creates_all_tables(conn):
         "params",
         "sequences",
         "artifacts",
-        "run_artifacts",
+        "artifact_versions",
+        "artifact_entries",
         "log_lines",
     }
     assert expected.issubset(_tables(conn))
+    assert "run_artifacts" not in _tables(conn)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
+    assert {"config", "summary", "archived_at"} <= cols
+
+
+def test_old_registry_and_run_attachments_are_dropped(conn):
+    """No data migration (a user ruling): an old-shape registry and the run
+    attachments table are dropped and recreated empty."""
+    conn.execute("CREATE TABLE run_artifacts (run_id TEXT, name TEXT)")
+    conn.execute(
+        "CREATE TABLE artifact_versions (id TEXT PRIMARY KEY, family_id TEXT, version INT, "
+        "hash TEXT, size_bytes INT, metadata TEXT, created_at TEXT, created_by_run TEXT)"
+    )
+    conn.execute("INSERT INTO artifact_versions (id) VALUES ('old')")
+    apply_migrations(conn)
+    assert "run_artifacts" not in _tables(conn)
+    assert conn.execute("SELECT COUNT(*) FROM artifact_versions").fetchone() == (0,)
+    assert "file_count" in {r[1] for r in conn.execute("PRAGMA table_info(artifact_versions)")}
 
 
 def test_old_comparison_tables_dropped_and_project_docs_rebuilt(conn):

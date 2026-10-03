@@ -60,9 +60,9 @@ def test_list_of_images_is_one_gallery_point(transport, http, live_server):
         assert http.get(f"/api/artifacts/{item['hash']}").status_code == 200
 
     back = cairn.Reader(repo=live_server.replace("http://", "cairn://")).run(run.id)
-    decoded = back.artifact("samples")
+    decoded = [r.load() for r in back.media("samples")]
     assert len(decoded) == 3 and isinstance(decoded[2], np.ndarray)
-    assert len(back.artifact("sc.samples", step=1)) == 1
+    assert len(back.media("sc.samples", step=1)) == 1
 
 
 def test_export_carries_the_gallery_images(transport, http):

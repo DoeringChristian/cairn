@@ -519,9 +519,7 @@ class Run:
 
     def _doc(self, kind: str) -> dict[str, Any]:
         if self._docs is None:
-            data = self._backend.get_run(self.id)
-            self._docs = {"config": data.get("config_doc") or {},
-                          "summary": data.get("summary_doc") or {}}
+            self._docs = self._backend.get_docs(self.id)
         import copy
 
         return copy.deepcopy(self._docs[kind])
@@ -1424,6 +1422,7 @@ class _Backend(Protocol):
     def list_projects(self) -> list[dict[str, Any]]: ...
     def query_runs(self, spec: dict[str, Any]) -> tuple[list[dict[str, Any]], int]: ...
     def get_run(self, run_id: str) -> dict[str, Any]: ...
+    def get_docs(self, run_id: str) -> dict[str, Any]: ...
     def list_sequences(self, run_id: str) -> list[dict[str, Any]]: ...
     def get_sequence(self, run_id: str, name: str, *,
                      step_from: int | None, step_to: int | None,
@@ -1535,10 +1534,14 @@ class _LocalBackend:
         ])
         if not rows:
             raise KeyError(f"Run {run_id!r} not found")
+        return {"run": rows[0]}
+
+    def get_docs(self, run_id: str) -> dict[str, Any]:
+        """``{"config": doc, "summary": doc}`` exactly as stored."""
         from ..server.ingest_ops import run_docs
 
-        docs = run_docs(self._db, run_id)
-        return {"run": rows[0], "config_doc": docs["config"], "summary_doc": docs["summary"]}
+        self._drain_wals()
+        return run_docs(self._db, run_id)
 
     def list_sequences(self, run_id: str) -> list[dict[str, Any]]:
         return self._db.read_columns(
@@ -1770,6 +1773,12 @@ class _HttpBackend:
 
     def get_run(self, run_id: str) -> dict[str, Any]:
         return self._get(f"/api/runs/{run_id}")
+
+    def get_docs(self, run_id: str) -> dict[str, Any]:
+        """``{"config": doc, "summary": doc}`` exactly as stored (NaN/inf kept)."""
+        resp = self._client.get(f"/api/runs/{run_id}/documents")
+        resp.raise_for_status()
+        return json.loads(resp.text)
 
     def list_sequences(self, run_id: str) -> list[dict[str, Any]]:
         return self._get(f"/api/runs/{run_id}/sequences")["sequences"]

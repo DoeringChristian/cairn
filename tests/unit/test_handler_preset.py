@@ -99,6 +99,6 @@ def test_tracked_preset_reads_back(tmp_path):
     run.finish()
     with cairn.Reader(repo=tmp_path / ".cairn") as reader:
         r = reader.run(run.id)
-        assert r.artifact("cm") == {"kind": "confusion_matrix",
+        assert r.media("cm").load() == {"kind": "confusion_matrix",
                                     "data": {"labels": ["0", "1"], "counts": [[0, 1], [0, 1]]}}
         assert [s.object_type for s in r.sequences() if s.name == "cm"] == ["preset"]
