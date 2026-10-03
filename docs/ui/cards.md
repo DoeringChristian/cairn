@@ -101,7 +101,7 @@ The slider saves a *value* rather than an index, so the position stays put when 
 
 ### Section media sync
 
-When **Follow section slider** is on *(default; on by default)*, a media card follows its section's shared slider. The section shows that slider above its cards. It covers the union of every following card's values and has its own key field. When a section has synced videos, the bar also gets play/pause. Turn **Follow section slider** off to give the card its own slider. The section slider position is remembered in this browser.
+When **Follow section slider** is on *(default; on by default)*, a media card follows its section's shared slider. The section shows that slider above its cards. It covers the union of the values of every following card loaded so far (panels load as they come near the screen, see [Loading](workspace.md#loading)) and has its own key field. When a section has synced videos, the bar also gets play/pause. Turn **Follow section slider** off to give the card its own slider. The section slider position is remembered in this browser.
 
 ### Layout: gallery, grid, compare
 

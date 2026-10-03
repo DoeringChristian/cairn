@@ -23,6 +23,10 @@ A panel has a card type (see [Cards](cards.md)), a metric selector and its setti
 - one or more metric names (`val.loss`, or `train.loss` and `val.loss` on one line plot), or
 - a regular expression matched against the whole metric name (`val\..*`). The panel shows whatever the bound runs log that matches, so a new matching metric joins it.
 
+### Loading
+
+A workspace with hundreds of panels opens at once: a panel loads its data and draws when it comes within a screen's height of the window, and until then a placeholder of its size holds its place, so the page does not jump as you scroll. A panel stays loaded once it has been on screen. Collapsed sections load nothing.
+
 ### Automatic panels
 
 You don't have to build a layout. Every metric that no panel shows gets an **automatic panel** of its type, grouped into sections:
