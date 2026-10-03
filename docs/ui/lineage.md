@@ -23,7 +23,7 @@ The graph flows left to right, from inputs to outputs, laid out automatically.
 
 - **Pan** by dragging the background; **zoom** with the scroll wheel, a pinch, or the **+** / **−** buttons at the bottom left.
 - The **minimap** at the bottom right shows the whole graph; drag or scroll on it to move around.
-- **Fit** (toolbar) or the frame button (bottom left) fits the whole graph into view. When the graph opens, or grows, it is fitted automatically, but never zoomed out so far that the cards are unreadable: a wide graph is then centred on its centre node, and you pan for the rest.
+- **Fit** (toolbar) or the frame button (bottom left) fits the whole graph into view. When the graph opens, or grows, it is fitted automatically. The project graph fits whole; a centred graph is never zoomed out so far that its cards are unreadable: when it is too wide, the view is centred on its centre node and you pan for the rest.
 - **Drag a card** to move it. Moved cards stay put while you expand and filter. Positions are not saved: the graph is laid out afresh on every visit, and **Reset layout** returns to the automatic layout.
 
 ## Details panel
