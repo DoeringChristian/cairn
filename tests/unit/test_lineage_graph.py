@@ -131,3 +131,18 @@ def test_sibling_groups_and_server_side_clustering(fresh_db, blob_store):
     assert set(nodes) == {data["id"], *(g["id"] for g in groups)}
     # Below the threshold nothing collapses.
     assert len(ops.lineage_graph(db, version_id=data["id"], cluster=60)["nodes"]) == 102  # + prep
+
+
+def test_full_degree_counts_edges_beyond_the_returned_graph(chain):
+    db, ids = chain
+    one = ops.lineage_graph(db, version_id=ids["data"], depth=1)
+    nodes = {n["id"]: n for n in one["nodes"]}
+    # train logged data AND other; only data is in this graph.
+    assert nodes[ids["train"]]["degree"] == {"in": 0, "out": 1}
+    assert nodes[ids["train"]]["full_degree"] == {"in": 0, "out": 2}
+    # eval used data and logged report (not walked at depth 1).
+    assert nodes[ids["eval"]]["full_degree"] == {"in": 1, "out": 1}
+    assert nodes[ids["data"]]["full_degree"] == {"in": 1, "out": 1}
+    project = {n["id"]: n for n in ops.project_lineage(db, "p")["nodes"]}
+    assert project[ids["report"]]["full_degree"] == {"in": 1, "out": 1}
+    assert project[ids["publish"]]["full_degree"] == {"in": 1, "out": 0}

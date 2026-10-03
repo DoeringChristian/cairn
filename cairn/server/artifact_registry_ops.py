@@ -695,7 +695,10 @@ def run_inputs(db: Database, run_id: str, role: str | None = None) -> list[dict[
 # * edge: ``{source, target, kind: "produced" (run -> version) | "consumed"
 #   (version -> run, with ``role``) | "forked" (run -> run)}``.
 #
-# ``degree`` is ``{in, out}`` within the returned graph. Clustering: nodes of
+# ``degree`` is ``{in, out}`` within the returned graph; ``full_degree`` is
+# ``{in, out}`` over the node's produced/consumed edges in the whole repo
+# (what one-hop expansions from it can add: a viewer compares the two to show
+# "more upstream / downstream"). Clustering: nodes of
 # one kind whose edges are identical (same neighbours, kinds, roles and
 # directions) and, for versions, of one artifact name, are SIBLINGS and share
 # a ``group_key`` (null for a node without siblings). With ``cluster=N``,
@@ -754,6 +757,43 @@ def _consumed(version_id: str, run_id: str, role: str) -> dict[str, Any]:
     return {"source": version_id, "target": run_id, "kind": "consumed", "role": role}
 
 
+def _full_degrees(
+    db: Database, version_ids: list[str], run_ids: list[str],
+) -> dict[str, dict[str, int]]:
+    """``{id: {in, out}}`` over every produced/consumed edge in the repo: a
+    version's producer (0 or 1) and consumers, a run's inputs and outputs."""
+    out = {i: {"in": 0, "out": 0} for i in [*version_ids, *run_ids]}
+    for i in range(0, len(version_ids), 500):
+        chunk = version_ids[i:i + 500]
+        for r in db.read_columns(
+            f"SELECT id FROM artifact_versions WHERE id IN ({_holes(chunk)}) "
+            "AND created_by_run IS NOT NULL",
+            chunk,
+        ):
+            out[r["id"]]["in"] = 1
+        for r in db.read_columns(
+            f"SELECT artifact_version_id AS vid, COUNT(*) AS n FROM run_inputs "
+            f"WHERE artifact_version_id IN ({_holes(chunk)}) GROUP BY artifact_version_id",
+            chunk,
+        ):
+            out[r["vid"]]["out"] = r["n"]
+    for i in range(0, len(run_ids), 500):
+        chunk = run_ids[i:i + 500]
+        for r in db.read_columns(
+            f"SELECT run_id, COUNT(*) AS n FROM run_inputs WHERE run_id IN ({_holes(chunk)}) "
+            "GROUP BY run_id",
+            chunk,
+        ):
+            out[r["run_id"]]["in"] = r["n"]
+        for r in db.read_columns(
+            f"SELECT created_by_run AS rid, COUNT(*) AS n FROM artifact_versions "
+            f"WHERE created_by_run IN ({_holes(chunk)}) GROUP BY created_by_run",
+            chunk,
+        ):
+            out[r["rid"]]["out"] = r["n"]
+    return out
+
+
 def _graph(
     db: Database, version_ids: Iterable[str], run_ids: Iterable[str],
     edges: list[dict[str, Any]], *, center: str | None = None, cluster: int | None = None,
@@ -762,8 +802,11 @@ def _graph(
     nodes = [_version_node(v) for v in versions] + _run_nodes(db, list(dict.fromkeys(run_ids)))
     by_id = {n["id"]: n for n in nodes}
     ins: dict[str, list[tuple]] = {n["id"]: [] for n in nodes}
+    full = _full_degrees(db, [n["id"] for n in nodes if n["kind"] == "artifact_version"],
+                         [n["id"] for n in nodes if n["kind"] == "run"])
     for n in nodes:
         n["degree"] = {"in": 0, "out": 0}
+        n["full_degree"] = full[n["id"]]
         n["group_key"] = None
     for e in edges:
         if e["source"] in by_id:
