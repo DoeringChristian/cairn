@@ -64,7 +64,7 @@ types](../guides/media.md).
 
 ::: cairn.sdk.wrappers.ROCCurve
 
-::: cairn.sdk.wrappers.Artifact
+::: cairn.sdk.wrappers.Pickle
 
 ## Reading data
 
@@ -104,8 +104,6 @@ data back](../guides/reading.md).
     options:
       show_if_no_docstring: true
 
-::: cairn.sdk.reader.ArtifactInfo
-
 ::: cairn.sdk.reader.LogLine
 
 ::: cairn.sdk.reader.SourceFile
@@ -117,7 +115,7 @@ data back](../guides/reading.md).
 ## Live query URLs
 
 `query_url` builds a URL that a server resolves to the freshest matching
-artifact every time it is fetched. See [Live query
+media point every time it is fetched. See [Live query
 URLs](../guides/reading.md#live-query-urls).
 
 ::: cairn.sdk.query_urls.query_url
@@ -135,23 +133,21 @@ and controls it. See [Sweeps](../guides/sweeps.md).
 
 ## Artifacts
 
-Versioned artifacts outside a run, multi-file artifacts, and the objects
-`Run.log_artifact` and `Run.use_artifact` return. See [Artifacts and
-lineage](../guides/artifacts.md).
+`Artifact` builds a version; `Run.log_artifact` / `cairn.log_artifact` log
+it; `Run.use_artifact` and the reader return `ArtifactVersion`s. See
+[Artifacts and lineage](../guides/artifacts.md).
+
+::: cairn.sdk.artifacts.Artifact
 
 ::: cairn.log_artifact
 
-::: cairn.load_artifact
-
-::: cairn.list_artifacts
-
-::: cairn.sdk.run.ArtifactVersion
-
-::: cairn.sdk.artifact_dir.Reference
+::: cairn.sdk.artifacts.ArtifactVersion
     options:
       show_if_no_docstring: true
 
-::: cairn.sdk.artifact_dir.ArtifactDir
+::: cairn.sdk.artifacts.ArtifactEntry
+
+::: cairn.sdk.artifacts.ArtifactFamily
 
 ## Configuration
 

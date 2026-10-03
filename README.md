@@ -203,7 +203,7 @@ reader = cairn.Reader(repo="./.cairn")
 # or: cairn.Reader(repo="cairn://localhost:4300")
 
 for run in reader.runs(project="sweep").filter(status="completed", metrics__loss__lt=0.1):
-    print(run.name, run.final["loss"], run.config["hparams.lr"])
+    print(run.name, run.final["loss"], run.config["hparams"]["lr"])
 
 reader.runs("sweep").where("last(val.acc) > 0.9 and config.opt == 'adam'").list()
 ```
@@ -215,8 +215,10 @@ reader.runs("sweep").where("last(val.acc) > 0.9 and config.opt == 'adam'").list(
 
 - **Sweeps** — `cairn sweep create sweep.yaml` + `cairn agent <id>` on any number
   of machines, or `cairn.sweep(space, ...).run(train)` in process.
-- **Artifacts** — `run.log_artifact(path_or_value, name, artifact_type="model")`
-  versions it with aliases; `run.use_artifact("model:latest")` records lineage.
+- **Artifacts** — `run.log_artifact(value_or_path, name, type="model", aliases=["best"])`
+  logs a new version (`cairn.Artifact` builds multi-file ones: directories, references,
+  generated files); `run.use_artifact("model:best")` records lineage and returns the
+  version (`.get()`, `.download()`).
 - **Integrations** — `cairn.integrations.{huggingface,lightning,keras,xgboost}`.
 - **Import/export** — `cairn import-tb LOGDIR`, `cairn export RUN_ID` or
   `cairn export --project P --format csv|parquet`.
@@ -257,7 +259,7 @@ Selector grammar (query params):
 | `name` | display-name glob (`exp*`) or case-insensitive substring |
 | `status` | exact run status (`completed`, …) |
 | `<param>__<op>` | run-param / metric predicate — `lr__gt=1e-4`, `metrics.loss__lt=0.1`, `tags__contains=best` (ops: `gt`/`lt`/`gte`/`lte`/`in`/`contains`/`startswith`/…) |
-| `tag` | **required** — the artifact / sequence name to resolve |
+| `tag` | **required** — the media sequence name to resolve |
 | `step` | `latest` (default, highest step) or an explicit `<N>` |
 | `at` | ISO-8601 pin — "latest run created ≤ this instant" |
 | `format` | `raw` (default → 302) or `json` (`{run_id, digest, step, mime_type, size, url}`) |

@@ -72,12 +72,11 @@ edited.
 ```text
 manifest.json                  {cairn_export_version, exported_at, run_ids}
 sweeps.json                    the runs' sweeps and their trials
-artifact_registry.json         registry families, versions, aliases and input records
+artifact_registry.json         registry families, versions, entries, aliases and input records
 artifacts/<hash><ext>          artifact bytes
 artifacts/<hash>.meta.json     artifact metadata
-<run_id>/run.json              {run, params, summary}
+<run_id>/run.json              {run}: the runs row, with its config and summary documents
 <run_id>/sequences.json        every logged point
-<run_id>/run_artifacts.json    named artifacts (run.log_artifact)
 <run_id>/metric_defs.json      summary= / x= metric rules
 <run_id>/alerts.json           alerts
 <run_id>/logs/...              captured stdout/stderr

@@ -185,7 +185,7 @@ CUDA availability and GPU names, and a hash of the installed packages.
 **Git state** (with `capture_source` or `capture_env`): the commit, branch, dirty flag and
 `origin` remote of the working directory, with credentials stripped from the URL. If the tree is
 dirty and `capture_source` is on, the diff against `HEAD` plus a list of untracked files (capped
-at 2 MB) is stored as the text attachment `_cairn/git.diff`.
+at 2 MB) is stored with the source snapshot; the run's overview links it as **Diff**.
 
 **Source snapshot** (`capture_source`): cairn walks up from the working directory to the project
 root, marked by `.git`, `pyproject.toml`, `pixi.toml`, `setup.py` and similar files, and uploads
@@ -265,9 +265,9 @@ it to the training run instead of duplicating its data:
 
 ```python
 with cairn.Run("cifar10", name="eval-resnet18", group="resnet18", job_type="eval") as run:
-    model_file = run.use_artifact("resnet18-weights:best")   # records the lineage edge
+    weights = run.use_artifact("resnet18-weights:best")      # records the lineage edge
     run.config(split="test", tta=True)
-    run.track(evaluate(model_file), "test.acc", 0)
+    run.track(evaluate(weights.file("model.pt")), "test.acc", 0)
 ```
 
 `group` puts the training and evaluation runs together in the runs table, and `job_type="eval"`

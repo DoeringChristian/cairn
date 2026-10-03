@@ -66,11 +66,11 @@ class Dataset:
     def __cairn_track__(self, scope):
         scope.config(n_samples=len(self), augment=self.augment)
 
-run.track(train_set, "data", step=0)     # -> config data.n_samples, data.augment
+run.track(train_set, "data", step=0)     # -> config {"data": {"n_samples": ..., "augment": ...}}
 ```
 
-Nested values are flattened under the prefix: `scope.config(opt={"lr": 1e-3})` under `model`
-records `model.opt.lr`.
+The values nest under the scope's name: `scope.config(opt={"lr": 1e-3})` under `model` records
+`{"model": {"opt": {"lr": 1e-3}}}`, whose dotted path is `model.opt.lr`.
 
 ## Metric rules inside components
 

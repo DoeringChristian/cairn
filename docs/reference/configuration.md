@@ -38,6 +38,7 @@ file.
 | `CAIRN_SERVER` | SDK, `Reader`, CLI | A server URL. For the SDK, used when `CAIRN_REPO` is not set. For the client commands (`list`, `export`, …) it takes precedence over `CAIRN_REPO`. |
 | `CAIRN_TOKEN` | SDK, `Reader`, CLI, `cairn ui` proxy | The bearer token sent to a server |
 | `CAIRN_MODE` | SDK | `enabled` or `disabled` |
+| `CAIRN_ARTIFACT_DIR` | SDK, `Reader` | Where `ArtifactVersion.download()` and `.file()` write by default: `<dir>/<name>-v<N>/`. Default: `./artifacts`. |
 | `CAIRN_WAL_DIR` | SDK | Where server-mode runs keep their local write-ahead log. Default: `<user cache dir>/cairn/wal` (e.g. `~/.cache/cairn/wal` on Linux, `~/Library/Caches/cairn/wal` on macOS). Point it at node-local scratch on a cluster. |
 | `CAIRN_ALERT_WEBHOOK` | `cairn server`, `cairn ui` | Same as `--alert-webhook`: the URL alerts are posted to |
 | `CAIRN_UI_DIST` | `cairn ui`, `cairn server --ui` | Serve the web UI from this build directory instead of the installed `cairn-ui` package. It must contain `index.html` and `assets/`; if it doesn't, no UI is served (there is no fallback). |

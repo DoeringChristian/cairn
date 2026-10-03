@@ -118,8 +118,9 @@ repo (every 2 seconds, so you get a live view) and by `cairn.Reader` before it r
 
 !!! note
     Because a WAL-mode run never touches the database, anything that needs an immediate answer
-    from it is unavailable: `use_artifact` raises, and `log_artifact(..., artifact_type=...)`
-    returns `None` instead of the version. Sweeps need a direct-mode repo or a server.
+    from it is unavailable: `use_artifact` raises, and `log_artifact` returns a *pending* version
+    (its number is decided when the repo ingests the log). Sweeps need a direct-mode repo or a
+    server.
 
 ### Server mode: log across machines
 

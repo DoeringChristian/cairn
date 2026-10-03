@@ -41,35 +41,67 @@ Keyword arguments:
 ## Projects and runs
 
 ```python
-reader.projects()          # [Project(id, name, created_at, run_count, active_run_count, last_run_at)]
-reader.run("40b0f87d69...")  # one run by id
-reader.runs()              # a query over all runs
-reader.runs("mnist")       # a query over one project
+reader.projects()            # [Project(id, name, created_at, run_count, active_run_count, last_run_at)]
+reader.run("40b0f87d69...")  # one run by id (archived runs too)
+reader.runs()                # a query over all runs
+reader.runs("mnist")         # a query over one project (a name or id: "My Project" works)
 ```
 
 `reader.runs(...)` returns a lazy `RunQuery`. Nothing is fetched until you
-iterate it or call `list()`, `first()`, `last()` or `len()`. Each method below
-returns a new query, so you can chain them:
+iterate it or call `list()`, `first()`, `last()`, `get()` or `len()`. Each
+method below returns a new query, so you can chain them:
 
 ```python
 q = (reader.runs("mnist")
-     .filter(status="completed", optimizer="adam")
+     .filter(status="completed", optim__name="adam")
      .where("min(val.loss) < 0.2")
-     .sort("created_at", desc=True)
+     .sort("metrics.val.acc", desc=True)
      .limit(10))
 
 runs = q.list()
-newest = reader.runs("mnist").last()    # newest by creation time
-oldest = reader.runs("mnist").first()   # oldest by creation time
+best = q.first()                            # the best val.acc
+newest = reader.runs("mnist").last()        # the newest run
+base = reader.runs("mnist").filter(name="base", status="completed").last()
+only = reader.runs("mnist").filter(name="base").get()   # exactly one, else LookupError
 ```
 
-`sort()` accepts `created_at` (the default), `ended_at`, `display_name` and
-`status`.
+A query is evaluated by one evaluator, the server's, so it returns the same
+runs in the same order on a local repo and on a server (a local repo runs the
+same code in-process).
 
-!!! warning "Sorting over HTTP"
-    `sort()` is applied only when the reader opens a local repo. A reader
-    connected to a server gets runs newest first whatever you pass, so
-    `first()` and `last()` both return the newest run there.
+### Order
+
+- The default order is **chronological**: `created_at` ascending. Iteration,
+  `list()` and `history()` follow it.
+- `sort(key, desc=False)` replaces the order. `key` is `created_at`,
+  `ended_at`, `duration`, `name`, `status`, `id`, `config.<path>`,
+  `summary.<path>` or `metrics.<name>` (the final value, as `Run.final`; a
+  dotted metric name is written as is, `metrics.val.acc`). An unknown key
+  raises `ValueError`.
+- Ties break by `created_at`, then by run id, in the sort's direction, so
+  `desc=True` is the exact reverse of `desc=False` among runs that have the
+  key.
+- Runs **missing** the key sort after all others, in both directions: no such
+  config key or metric, the `ended_at` of a running run, NaN, or a value whose
+  type differs from that of most runs (a string among numbers).
+
+### `first()`, `last()`, `get()`
+
+- `first()` is the first run of the query's order and `last()` the last; both
+  return None when nothing matches. With the default order that is the oldest
+  and the newest run; `sort("metrics.val.acc", desc=True).first()` is the best
+  one (a run without the metric never wins).
+- With `limit(n)`, `last()` is the last of the first `n`.
+- `get()` returns the one matching run, or raises `LookupError` when none or
+  several match. Names are not unique (a resume keeps its name, re-runs reuse
+  names), so `filter(name=...)` can match several runs: use `.last()` for the
+  newest, or `.get()` when a duplicate would be a bug.
+
+### Archived runs
+
+Archiving a run (from the UI) hides it without changing its status.
+`reader.runs(project)` leaves archived runs out; `reader.runs(project,
+archived=True)` lists only them, `archived=None` both. `Run.archived` tells.
 
 ## Filtering with `filter()`
 
@@ -82,9 +114,10 @@ reader.runs("mnist").filter(
     name__startswith="lr-search",
     tags__contains="best",           # the run has this tag
     lr__gt=1e-4,                     # a config key
+    optim__lr__lte=3e-4,             # the config path optim.lr
     optimizer__in=["adam", "sgd"],
     summary__test_acc__gte=0.9,      # a run.summary(...) value
-    metrics__val_loss__lt=0.3,       # a scalar metric (see below)
+    metrics__val__loss__lt=0.3,      # the final value of the metric val.loss
 )
 ```
 
@@ -95,23 +128,17 @@ reader.runs("mnist").filter(
 
 | Field | Compares |
 |---|---|
-| `name`, `status`, `project`, `id`, `hostname`, `notes`, `group`, `job_type` | That run attribute |
+| `name`, `status`, `project`, `id`, `hostname`, `user`, `notes`, `group`, `job_type` | That run attribute |
 | `tags` | The tag list. Use `tags__contains="best"`. |
-| `params__<key>` | A config key |
-| `summary__<key>` | A key recorded with `run.summary(...)` |
-| `metrics__<name>` | The **last logged point** of that scalar series |
-| anything else | A config key. For nested config, join the levels with `__`: `hparams__lr__gt=1e-3` compares the config key `hparams.lr`. |
+| `config__<path>` | A config path: `config__optim__lr__lt=1e-2` is `optim.lr`; so is `**{"config.optim.lr__lt": 1e-2}` |
+| `summary__<path>` | A summary path |
+| `metrics__<name>` | The metric's **final value**, exactly as `Run.final` (and the runs table) shows it |
+| anything else | A config path: `optim__lr__gt=1e-3` compares `optim.lr` |
 
-!!! note
-    `metrics__<name>` looks at the last point, not the metric's final value.
-    It ignores `summary=` rules and summary keys. To filter on the final value,
-    use `where()` with an expression such as `min(val.loss) < 0.3`, or filter
-    on `summary__<name>`.
-
-Only `status=` is applied by the database. Every other filter is applied in
-Python, after all of the project's runs have been fetched, and a `metrics__`
-filter fetches each run's series. On a large project, narrow the query with
-`status=` first.
+A path that names a sub-document compares the whole dict
+(`config__optim={"lr": 1e-3}`). Lists are values: `layers__contains=64`. A run
+whose value cannot be compared (missing under `gt`, a string under `gt=5`) does
+not match.
 
 ## Filtering with expressions: `where()`
 
@@ -135,22 +162,22 @@ A reader `Run` loads its data lazily:
 
 | Attribute | Contents |
 |---|---|
-| `id`, `name`, `project`, `status` | Identity and status |
+| `id`, `name`, `project`, `status`, `archived` | Identity and status |
 | `created_at`, `ended_at`, `duration` | `datetime` / `timedelta`. `duration` runs to now for a live run. |
 | `tags`, `notes`, `group`, `job_type`, `hostname` | Metadata |
 | `git` | `GitInfo(sha, branch, dirty, remote)`, or `None` |
-| `config` (alias `params`) | The config, as flattened dotted keys: `{"hparams.lr": 0.001, …}` |
-| `summary` | The keys recorded with `run.summary(...)` |
-| `final` | Every metric's final value, exactly as the runs table shows it |
+| `config` | The config, the nested document exactly as logged: `{"optim": {"lr": 0.001}, ...}` (a copy) |
+| `summary` | The summary, nested the same way |
+| `final` | Every metric's final value, exactly as the runs table shows it (flat metric names) |
 
-`run.final` resolves each metric in this order: an explicit `run.summary` key,
-else the metric's `summary=` rule, else its last logged point (see
-[Final values and metric rules](metric-rules.md)). It includes the `system.*`
-metrics and every summary key.
+`run.final` resolves each metric in this order: an explicit `run.summary` key
+of the same dotted name, else the metric's `summary=` rule, else its last
+logged point (see [Final values and metric rules](metric-rules.md)). It
+includes the `system.*` metrics and every summary key.
 
 ```python
 run = reader.runs("mnist").last()
-run.config["hparams.lr"]
+run.config["optim"]["lr"]
 run.final["val.loss"]
 ```
 
@@ -191,19 +218,20 @@ run.eval("ema(loss, 0.9)")                   # a cairn.expr.Series (steps, value
 A parse or type error raises `cairn.expr.ExprError`. Joining series that were
 logged at different steps emits a `cairn.expr.ExprWarning`.
 
-## Media and artifacts
+## Media
 
-Everything that is not a scalar (images, tables, tensors, figures, files) is
-stored as an artifact:
+A media point (an image, table, tensor, figure, … logged with `run.track`) is
+read with `run.media(name, step=None)`: the point at `step`, or the highest
+step. It returns a `MediaRef`, which downloads nothing until you call `.load()`
+(decoded) or `.bytes()` (raw):
 
 ```python
-run.artifacts()                    # [ArtifactInfo(name, hash, step, mime_type, size_bytes, ...)]
-img = run.artifact("samples")      # the highest step, decoded
-img = run.artifact("samples", step=10)
-raw = run.artifact_bytes("samples", step=10)
+img = run.media("samples").load()             # the highest step, decoded
+img = run.media("samples", step=10).load()
+raw = run.media("samples", step=10).bytes()
 ```
 
-`artifact()` decodes by type:
+`load()` decodes by type:
 
 | Logged as | Returned as |
 |---|---|
@@ -214,17 +242,13 @@ raw = run.artifact_bytes("samples", step=10)
 | `cairn.Text` | `str` |
 | `cairn.Histogram` | `(counts, edges)` |
 | `cairn.Table` | `{"columns": [...], "data": [...]}`. Media cells are `MediaRef` objects. |
-| a figure | `PIL.Image`, rasterized. Use `artifact_bytes()` for the source. |
-| `cairn.Artifact` | The unpickled object |
+| a figure | `PIL.Image`, rasterized |
+| `cairn.Pickle` | The unpickled object |
 | anything else | `bytes` |
 
-A [gallery](media.md#captions-and-galleries) (a list of media of one kind logged at one step)
-returns a list with each item decoded as above.
-
-A `MediaRef` (an image, audio or video cell of a table, or a point from `run.media`) downloads
-nothing until you call `.load()` (decoded, as above) or `.bytes()` (raw). `run.media(name,
-step)` gives a media point without downloading it: one `MediaRef`, or for a gallery a list of
-them, each with the item's `caption` and `metadata`:
+A [gallery](media.md#captions-and-galleries) (a list of media of one kind
+logged at one step) comes back as a list of `MediaRef`s, each with the item's
+`caption` and `metadata`:
 
 ```python
 for item in run.media("samples", step=10):
@@ -236,7 +260,7 @@ for item in run.media("samples", step=10):
 
 ```python
 ref = run["samples"]
-ref.resolve()          # the artifact (latest step), or the scalar Sequence for a metric
+ref.resolve()          # the media value (latest step), or the scalar Sequence for a metric
 run["samples"][10]     # narrowed to step 10
 ref.url                # a live query URL pinned to this run (needs a server)
 ```
@@ -247,13 +271,23 @@ The run's other captured data:
 run.logs(stream="stdout", search="error", limit=100)   # [LogLine]
 run.source_tree()               # [SourceFile(path, size, sha256)], or None
 run.source_file("train.py")     # str, or None for binary files
-run.input_artifacts()           # registry versions this run used
-run.output_artifacts()          # registry versions this run produced
 ```
 
-For the versioned artifact registry (`reader.artifact_families`,
-`reader.artifact_versions`, `reader.lineage`, `cairn.load_artifact`), see
-[Artifacts and lineage](artifacts.md).
+## Artifacts
+
+```python
+run.logged_artifacts()                     # [ArtifactVersion] this run logged
+run.used_artifacts()                       # [ArtifactVersion] this run used
+run.used_artifacts(role="dataset")
+reader.artifact("base-ckpt:best", project="denoise")    # one version
+reader.artifact("denoise/base-ckpt:v3")                  # the project in the ref
+reader.artifact_versions("base-ckpt", project="denoise") # oldest first
+reader.artifact_families("denoise", type="model")        # [ArtifactFamily]
+reader.lineage("denoise")                                # the graph
+```
+
+`reader.artifact` records no consumption (that is `cairn.Run.use_artifact`).
+See [Artifacts and lineage](artifacts.md).
 
 ## Editing runs
 
@@ -263,9 +297,9 @@ or the `cairn://` server the reader reads.
 
 ```python
 with reader.run(run_id).edit() as e:
-    e.set_summary(test_acc=0.93)        # merge keys into the summary
-    e.set_config(dataset="v2")        # merge keys into the config
-    e.delete_keys("summary", ["tmp"])   # "config" or "summary"; also removes nested keys
+    e.set_summary(test_acc=0.93)        # deep-merged into the summary
+    e.set_config(data={"version": 2})   # deep-merged into the config
+    e.delete_keys("summary", ["tmp"])   # "config" or "summary": dotted paths, subtree included
     e.add_tag("best")
     e.remove_tag("draft")
     e.set_tags(["best", "paper"])       # replace all tags
@@ -290,16 +324,16 @@ url = cairn.query_url("train/render", project="demo", server="cairn://localhost:
 # http://localhost:4300/api/query?run=latest&tag=train%2Frender&project=demo
 ```
 
-When fetched, `GET /api/query?...` redirects (302) to the immutable artifact
-URL `/api/artifacts/<digest>`. The query response is never cached; the artifact
+When fetched, `GET /api/query?...` redirects (302) to the immutable blob
+URL `/api/artifacts/<digest>` of that run's media point. The query response is never cached; the artifact
 it points to can be cached forever.
 
 `cairn.query_url(tag, *, run, name, project, live, step, server, token, **filters)`:
 
 | Argument | Meaning |
 |---|---|
-| `tag` | The artifact or sequence name to resolve (required) |
-| `run` | `latest` (default), `latest:N` (the N-th newest), `newest-per-name`, or `id:<run_id>` |
+| `tag` | The media sequence to resolve (required) |
+| `run` | `latest` (default), `latest:N` (the N-th newest), `newest-per-name`, or `id:<run_id>`. Archived runs are never selected; `latest` is `reader.runs(...).last()`. |
 | `project` | Restrict to one project |
 | `name` | A display-name glob (`exp*`) or case-insensitive substring |
 | `step` | `latest` (the highest step, default) or an integer |
@@ -315,8 +349,8 @@ In a query URL, nested fields use a dot: `metrics.loss__lt=0.1`,
 cairn.query_url("render", project="demo", **{"metrics.loss__lt": 0.1})
 ```
 
-In URL filters, `metrics.<name>` compares the metric's value after its
-`summary=` rule is applied (else its last point).
+In URL filters, `metrics.<name>` compares the metric's final value, as in
+`filter()`; any other dotted key is a config path.
 
 Two shortcuts build the same URLs from reader objects:
 

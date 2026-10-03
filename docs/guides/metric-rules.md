@@ -77,7 +77,8 @@ run.track(val_acc, "val.acc", step, summary="max")
 run.summary({"val.acc": acc_of_selected_checkpoint})   # the runs table shows this
 ```
 
-Nested dictionaries are flattened, so `run.summary({"val": {"acc": 0.9}})` sets `val.acc`.
+The match is on the dotted path, so `run.summary({"val": {"acc": 0.9}})` overrides `val.acc`
+too (the summary itself keeps the nesting you logged).
 
 ## Reading final values in Python
 

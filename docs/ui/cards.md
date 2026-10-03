@@ -24,7 +24,7 @@ Series cards show one logged name (plus any extra series you add), and the Pytho
 | `pointcloud`, `mesh`, `boxes3d` | 3D | Point clouds, meshes, boxes / octrees / BVHs | `cairn.PointCloud`, `cairn.Mesh`, `cairn.Boxes3D` / `Octree` / `BVH` |
 | `volume` | Volume | A placeholder with a `.npz` download (volumes are not rendered) | `cairn.Volume` |
 | `preset` | Confusion / PR / ROC | Confusion matrices, PR and ROC curves | `cairn.ConfusionMatrix`, `PRCurve`, `ROCCurve` |
-| `artifact` | Artifact | File name, size and MIME type, with a download link | `run.log_artifact(...)` |
+| `artifact` | Artifact | A pickled point, or the versions of an artifact the run logged: files, sizes and download links | `run.track(cairn.Pickle(...))`, `run.log_artifact(...)` |
 | `parallel` | Parallel coordinates | One polyline per run across expression columns | multi-run |
 | `scatter` | Scatter plot | One point per run | multi-run |
 | `bar` | Bar chart | One bar (or distribution) per run or group | multi-run |
@@ -219,7 +219,7 @@ Volume cards don't render the volume. Each pane offers the step's `.npz` for dow
 ### Text and artifact
 
 - **Text** shows the logged text at the slider's step. Settings: **Font size**, **Word wrap** *(default)*.
-- **Artifact** shows a named artifact's file name, size and MIME type, with a download link and a step slider over the steps it was logged at.
+- **Artifact** shows a pickled point (`cairn.Pickle`) or the versions of an artifact the run logged: file names, sizes and MIME types with download links, and a step slider over the steps they were logged at (a version without a step sits at its version number).
 
 ## Table
 

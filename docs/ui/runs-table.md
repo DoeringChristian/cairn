@@ -8,7 +8,7 @@ Runs load 100 at a time as you scroll. While a filter or a group-by is active, t
 
 | Control | What it does |
 |---|---|
-| **Status** | Show only runs with one status (`running`, `completed`, `failed`, `killed`, `stopped`, `archived`). With **All**, archived runs are hidden. |
+| **Status** | Show only runs with one status (`running`, `completed`, `failed`, `killed`, `stopped`), or only the **archived** runs. Every other choice hides archived runs. |
 | **Search** | A case-insensitive regex over each run's name, id, status and tags. An invalid regex turns the box red. |
 | Filter chips, **Filter** | The [filter tree](#filters). |
 | **Group** | [Nested group-by](#group-by). |
@@ -128,7 +128,7 @@ Tick a row's checkbox to select it; ++shift++-click another checkbox to select t
 | **Compare** | Create a comparison of the selected runs, starting from a copy of the project workspace's layout, and open it. See [Comparisons](comparisons.md). |
 | **Export** | Download the selected runs as `cairn_export_<date>.zip`. |
 | **Stop** | Ask the selected *running* runs to stop (asks first). See [Run lifecycle](../guides/runs.md). |
-| **Archive** / **Unarchive** | Archive or restore the selected runs. |
+| **Archive** / **Unarchive** | Archive or restore the selected runs. Archiving hides a run without changing its status; an archived run shows an `archived` mark beside it. |
 | **Delete** | Delete the selected runs permanently (asks first). |
 
 ### Tags on a row

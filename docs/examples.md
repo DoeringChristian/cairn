@@ -30,7 +30,7 @@ them:
 
 | Script | What it logs | Needs | What to look at |
 |---|---|---|---|
-| `demo_training.py` | One run, `full-demo` in project `demo`: nested config, `train.*`/`val.*` losses and accuracy, `grad_norm`, sample images, a matplotlib figure, a histogram, audio, a tensor, text, stdout, three run artifacts (`final_weights`, `summary_plot`, `run_config`) and a note. Sleeps 0.1 s per step, so you can watch it live. | `[media]` | Every tab of the run page: overview, metrics and media, logs, source, environment |
+| `demo_training.py` | One run, `full-demo` in project `demo`: nested config, `train.*`/`val.*` losses and accuracy, `grad_norm`, sample images, a matplotlib figure, a histogram, audio, a tensor, text, stdout, a versioned `final_weights` artifact, a `summary_plot` image and a pickled `run_config` and a note. Sleeps 0.1 s per step, so you can watch it live. | `[media]` | Every tab of the run page: overview, metrics and media, logs, source, environment |
 | `demo_metric_rules.py` | Three runs using `summary="min"/"max"` rules and `x="epoch"`, including a component that logs itself through `__cairn_track__`, plus a `best_epoch` summary key | — | The runs table's metric columns; the **From** column of a run's metrics; the comparison table's best-value colouring; `val.*` charts plotted against `epoch`. See [Final values and metric rules](guides/metric-rules.md). |
 | `demo_summary_cards.py` | Four runs with different hyperparameters that converge to different `final.accuracy` and `final.loss`, plus `grad_norm` | — | Compare the four runs; add bar-chart and scalar-tile cards on `final.accuracy` |
 | `rd_curve.py` | One run per codec and quality level (project `rd-curve`), with `codec`/`quality` as config and `bpp`, `psnr_db`, `bpp.positions`, `bpp.normals` as summary values. No series. | — | A scatter-plot card of `bpp` against `psnr_db`, coloured by `codec` |
@@ -58,7 +58,7 @@ them:
 
 | Script | What it logs | Needs | What to look at |
 |---|---|---|---|
-| `artifact_registry.py` | A pipeline in project `artifact-demo`, run twice (v0 and v1): data-prep runs log a `training-data` artifact, training runs use it and log a `linear-model` (v1 with the aliases `latest` and `best`), and an evaluation run uses both and logs an `eval-report`. Uses `log_artifact` and `use_artifact`. | — | The project's **Artifacts** and **Lineage** pages. See [Artifacts and lineage](guides/artifacts.md). |
+| `artifact_registry.py` | A pipeline in project `artifact-demo`: data-prep runs log a `training-data` dataset (a directory, an S3 reference and a generated file, built with `cairn.Artifact`), training runs use it and log a `linear-model` checkpoint every epoch with a moving `best` alias, an evaluation run uses `linear-model:best`, and a reader walks the lineage back. | — | The project's **Artifacts** and **Lineage** pages. See [Artifacts and lineage](guides/artifacts.md). |
 
 ## Reports and notebooks
 

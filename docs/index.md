@@ -41,8 +41,8 @@ cairn ui      # opens the viewer on http://localhost:4301
 - **Run lifecycle.** You can resume, rewind or fork runs, stop them from the UI, raise alerts,
   record gradient histograms, and capture system metrics, stdout, source code and the git
   state.
-- **Artifacts and lineage.** Versioned artifacts with aliases, multi-file directory artifacts
-  and external references. Every `use_artifact` is recorded, and the project's lineage graph is
+- **Artifacts and lineage.** Versioned artifacts (objects, files, directories, external
+  references) with aliases and tags. Every `use_artifact` is recorded, and the project's lineage graph is
   built from those records.
 - **Sweeps and integrations.** Grid, random and Bayesian sweeps, plus callbacks for Hugging Face,
   Lightning, Keras and XGBoost.

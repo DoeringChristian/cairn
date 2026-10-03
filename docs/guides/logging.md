@@ -79,34 +79,64 @@ See [Components and scopes](scopes.md).
 
 ## Config
 
-`run.config` records the run's inputs. It accepts a mapping, keyword arguments, or both. Nested
-dictionaries are flattened to dotted keys:
+`run.config` records the run's inputs. It accepts a mapping, keyword arguments, or both, and keeps
+them as a **nested document**, read back exactly as logged (`Reader(...).run(id).config`):
 
 ```python
-run.config(lr=1e-3, optimizer={"name": "adam", "betas": [0.9, 0.999]})
+run.config(lr=1e-3, optim={"name": "adam", "betas": [0.9, 0.999]})
 run.config(vars(args))                 # e.g. an argparse Namespace
-# -> lr, optimizer.name, optimizer.betas, plus every argparse field
 ```
 
-Calling it again adds keys and overwrites keys that already exist. Config values appear as
-columns in the runs table and can be used in filters and
-[expressions](../reference/expressions.md).
+Each call is **deep-merged** into the document:
+
+- a dict into a dict merges key by key, recursively;
+- anything else replaces: a value over a dict drops that subtree, a dict over a value replaces
+  the value, and a list replaces the whole list;
+- `None` is a value, not a deletion. Delete with `Reader(...).run(id).edit().delete_keys("config",
+  ["optim.lr"])`.
+
+```python
+run.config(model={"depth": 4, "width": 64})
+run.config(model={"depth": 8})          # {"model": {"depth": 8, "width": 64}}
+run.config(model="resnet")              # {"model": "resnet"}: the subtree is gone
+```
+
+Values must be JSON: dicts with string keys, lists (tuples become lists), strings, numbers
+(NaN and infinity included), booleans and `None`. NumPy scalars become Python numbers. Anything
+else raises `TypeError` naming the key path.
+
+Every leaf is also addressable by its **dotted path** (`optim.lr`): as a column in the runs table,
+in [filters](reading.md#filtering-with-filter) and in [expressions](../reference/expressions.md)
+(`config.optim.lr`). Keys may contain dots (`{"a.b": 1}` comes back as is), but two different
+paths that join to the same dotted path (`{"a.b": 1}` beside `{"a": {"b": 2}}`) raise
+`ValueError`, so a dotted path always names one value. An empty dict is kept in the document and
+has no column.
+
+A [scope's](scopes.md) config nests under the scope's name: `scope.config(opt={"lr": 1e-3})`
+inside the scope `model.encoder` writes `{"model": {"encoder": {"opt": {"lr": 1e-3}}}}`.
 
 ## Summary
 
-`run.summary` has the same shape as `config` and the opposite meaning: it records the results
-you are claiming.
+`run.summary` has the same shape and merge rules as `config` and the opposite meaning: it records
+the results you are claiming.
 
 ```python
 run.summary(best_val_acc=0.91, epochs_run=30)
-run.summary({"test": {"psnr": 31.4}})    # -> test.psnr
+run.summary({"test": {"psnr": 31.4}})    # summary["test"]["psnr"]; dotted path test.psnr
 ```
 
 cairn never writes to the summary implicitly. A metric's last value is not a summary entry.
-However, a summary key with the same name as a metric **overrides** that metric's final value in
-the runs table. That lets you report, for example, the accuracy of the checkpoint you actually
-kept rather than the last one logged. See
+However, a summary key whose dotted path equals a metric's name **overrides** that metric's final
+value in the runs table. That lets you report, for example, the accuracy of the checkpoint you
+actually kept rather than the last one logged. See
 [Final values and metric rules](metric-rules.md).
+
+## Python objects
+
+`cairn.Pickle(obj)` stores any picklable object as a media point (`run.track(cairn.Pickle(state),
+"state", step)`), read back with `Reader(...).run(id).media("state", step).load()`. For an object
+that other runs should use, log an [artifact](artifacts.md) instead:
+`run.log_artifact(model.state_dict(), "ckpt", type="model")`.
 
 ## Tags and notes
 

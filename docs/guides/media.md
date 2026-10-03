@@ -130,7 +130,7 @@ to `run.track` apply to every item. Some lists are not galleries:
   Wrap strings in `cairn.Text` for a text gallery.
 - A list of raw frames (PIL images, `H×W×C` arrays) is one **video**, as in the table above.
   Wrap them in `cairn.Image` for an image gallery.
-- Tables, presets and `cairn.Artifact` have no gallery (`TypeError`).
+- Tables, presets and `cairn.Pickle` have no gallery (`TypeError`).
 - `summary=` and `x=` are for scalars only, so they raise `ValueError` on a gallery.
 
 How each card shows a gallery:
@@ -146,9 +146,9 @@ How each card shows a gallery:
 In every card a step change swaps the whole gallery at once, when all its items have loaded, and
 runs compared side by side switch together.
 
-Each item is stored as an artifact of its own, and the point's artifact is a small JSON manifest
-naming them. `Run.artifact(name, step)` returns the list of decoded items, and `Run.media(name,
-step)` the list of `MediaRef`s with their captions (see [Reading runs](reading.md)).
+Each item is stored as a blob of its own, and the point's blob is a small JSON manifest naming
+them. `Run.media(name, step)` returns the list of `MediaRef`s with their captions; `.load()` on
+each decodes it (see [Reading runs](reading.md)).
 
 ### Boxes and masks
 
@@ -349,12 +349,12 @@ and weight histograms of a torch model, use [`run.watch`](runs.md#gradient-and-p
 
 ```python
 run.track(cairn.Tensor(activations), "activations", step)
-run.track(cairn.Artifact(model.state_dict()), "checkpoint", step)
+run.track(cairn.Pickle(model.state_dict()), "checkpoint", step)
 ```
 
 - `cairn.Tensor` stores a NumPy array or torch tensor as `.npy` (at most 10 MB), with its shape,
   dtype, min, max and mean.
-- `cairn.Artifact` pickles any Python object. Downloading it from the UI gives a `.pkl` file.
+- `cairn.Pickle` pickles any Python object. Downloading it from the UI gives a `.pkl` file.
 
 For files and versioned models or datasets, use [artifacts](artifacts.md) instead.
 
