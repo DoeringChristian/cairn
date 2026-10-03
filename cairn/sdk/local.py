@@ -330,12 +330,6 @@ class LocalTransport:
         else:
             ingest_ops.set_metric_rule(self.db, run_id, name, x, summary)
 
-    def attach_artifact(self, run_id: str, name: str, digest: str, step: int | None = None) -> None:
-        if self._use_wal:
-            self._wal_write("attach_artifact", {"run_id": run_id, "name": name, "hash": digest, "step": step})
-        else:
-            ingest_ops.attach_artifact(self.db, self.blobs, run_id, name, digest, step)
-
     def upload_source(self, run_id: str, archive: bytes, manifest: dict[str, Any]) -> None:
         if self._use_wal:
             digest = hashlib.sha256(archive).hexdigest()
@@ -377,50 +371,27 @@ class LocalTransport:
 
     # ---- versioned artifact registry ------------------------------------------
 
-    def create_artifact_version(
-        self,
-        project_id: str,
-        family_name: str,
-        family_type: str,
-        digest: str,
-        size_bytes: int,
-        metadata: dict[str, Any],
-        created_by_run: str,
-        aliases: list[str] | None,
-    ) -> dict[str, Any]:
-        """Ensure the artifact family exists and create a new version."""
-        if self._use_wal:
-            self._wal_write("create_artifact_version", {
-                # Client-generated so replaying the WAL is idempotent.
-                "version_id": secrets.token_hex(8),
-                "project_id": project_id,
-                "family_name": family_name,
-                "family_type": family_type,
-                "hash": digest,
-                "size_bytes": size_bytes,
-                "metadata": metadata,
-                "created_by_run": created_by_run,
-                "aliases": aliases or ["latest"],
-            })
-            # WAL mode can't return the full version info synchronously.
-            return {}
+    def create_artifact_version(self, project_id: str, body: dict[str, Any]) -> dict[str, Any] | None:
+        """Register an uploaded manifest as a new version (``body``: the
+        ``POST /api/projects/{id}/artifact-versions`` shape). WAL mode cannot
+        answer now: the op is logged with a client-generated ``version_id``
+        and None is returned."""
         from ..server import artifact_registry_ops
-        return artifact_registry_ops.create_artifact_version(
-            self.db,
-            project_id=project_id,
-            family_name=family_name,
-            family_type=family_type,
-            digest=digest,
-            size_bytes=size_bytes,
-            metadata=metadata,
-            created_by_run=created_by_run,
-            aliases=aliases or ["latest"],
+
+        if self._use_wal:
+            artifact_registry_ops.validate_name(body["name"])
+            for alias in body.get("aliases") or []:
+                artifact_registry_ops.validate_user_alias(alias)
+            self._wal_write("create_artifact_version", {"project_id": project_id, **body})
+            return None
+        return artifact_registry_ops.create_version(
+            self.db, self.blobs, project_id=project_id, **body,
         )
 
     def resolve_artifact(self, project_id: str, ref: str) -> dict[str, Any]:
-        """Resolve ``"name:alias"`` or ``"name:vN"`` to a version dict."""
+        """``[project/]name[:alias|:vN]`` -> the version dict."""
         if self._use_wal:
-            raise RuntimeError("resolve_artifact is not supported in WAL mode")
+            raise RuntimeError("use_artifact is not supported in WAL mode (it needs an answer now)")
         from ..server import artifact_registry_ops
         return artifact_registry_ops.resolve_ref(self.db, project_id, ref)
 
@@ -428,9 +399,7 @@ class LocalTransport:
         """Record that a run consumed an artifact version."""
         if self._use_wal:
             self._wal_write("record_artifact_input", {
-                "run_id": run_id,
-                "artifact_version_id": artifact_version_id,
-                "role": role,
+                "run_id": run_id, "artifact_version_id": artifact_version_id, "role": role,
             })
         else:
             from ..server import artifact_registry_ops
@@ -438,14 +407,21 @@ class LocalTransport:
                 self.db, run_id=run_id, artifact_version_id=artifact_version_id, role=role,
             )
 
+    def add_artifact_alias(self, version_id: str, alias: str) -> dict[str, Any]:
+        from ..server import artifact_registry_ops
+        return artifact_registry_ops.add_alias(self._sweep_db(), version_id, alias)
+
+    def remove_artifact_alias(self, version_id: str, alias: str) -> dict[str, Any]:
+        from ..server import artifact_registry_ops
+        return artifact_registry_ops.remove_alias(self._sweep_db(), version_id, alias)
+
     # ---- sweeps (direct mode only: a trial claim needs an answer now) ---------
 
     def _sweep_db(self) -> Database:
         if self._use_wal:
             raise RuntimeError(
-                "sweeps need a server or a direct-mode repo: WAL mode never writes the "
-                "database, so it cannot claim trials. Drop local_wal=True, or start "
-                "`cairn server` on the repo."
+                "this needs a server or a direct-mode repo: WAL mode never writes the "
+                "database. Drop local_wal=True, or start `cairn server` on the repo."
             )
         return self.db
 

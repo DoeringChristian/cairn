@@ -183,8 +183,9 @@ class Scope:
                 def __cairn_track__(self, scope):
                     scope.config(n_samples=len(self), augment=self.augment)
 
-        With the scope named ``data`` that is ``data.n_samples`` /
-        ``data.augment`` on the run, beside every other component's.
+        With the scope named ``data`` that nests under ``config["data"]``
+        (``data.n_samples`` / ``data.augment`` as dotted paths), beside every
+        other component's.
 
         This exists because a property is not a metric. Routed through
         ``track`` it would become a one-point sequence, get a step it never
@@ -202,14 +203,16 @@ class Scope:
         self._run.summary(self._prefixed("scope.summary", args, kwargs))
 
     def _prefixed(self, who: str, args: tuple, kwargs: dict) -> dict[str, Any]:
-        """Merge the mapping and put this scope's name in front of every key.
-
-        Nested values are left alone — the server flattens them onto the
-        prefixed key, so ``scope.config(opt={"lr": 1e-3})`` under ``model``
-        lands as ``model.opt.lr``.
-        """
-        merged = self._run._merge_mapping(who, args, kwargs)
-        return {join_names(self._prefix, k): v for k, v in merged.items()}
+        """Merge the mapping and nest it under this scope's name: under the
+        scope ``model.encoder``, ``opt={"lr": 1e-3}`` becomes
+        ``{"model": {"encoder": {"opt": {"lr": 1e-3}}}}`` (dotted path
+        ``model.encoder.opt.lr``)."""
+        merged: dict[str, Any] = self._run._merge_mapping(who, args, kwargs)
+        if not self._prefix:
+            return merged
+        for part in reversed(self._prefix.split(".")):
+            merged = {part: merged}
+        return merged
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"Scope(name={self._prefix!r}, step={self._step!r})"

@@ -272,14 +272,6 @@ class Transport:
         """Each of the run's series as ``{name, max_step}``."""
         return self.get(f"/api/runs/{run_id}/sequences").json()["sequences"]
 
-    def attach_artifact(
-        self, run_id: str, name: str, digest: str, step: int | None = None
-    ) -> None:
-        self.post_json(
-            f"/api/runs/{run_id}/artifacts",
-            {"name": name, "hash": digest, "step": step},
-        )
-
     def upload_source(self, run_id: str, archive: bytes, manifest: dict[str, Any]) -> None:
         self.post_multipart(
             f"/api/runs/{run_id}/source",
@@ -319,48 +311,47 @@ class Transport:
 
     # ---- versioned artifact registry -----------------------------------------
 
-    def create_artifact_version(
-        self,
-        project_id: str,
-        family_name: str,
-        family_type: str,
-        digest: str,
-        size_bytes: int,
-        metadata: dict[str, Any],
-        created_by_run: str,
-        aliases: list[str] | None,
-    ) -> dict[str, Any]:
-        """Ensure the artifact family exists and create a new version."""
-        # Ensure family exists
-        self.post_json(f"/api/projects/{project_id}/artifact-families", {
-            "name": family_name, "type": family_type,
-        })
-        # Get family id
-        family = self.get(f"/api/projects/{project_id}/artifact-families/by-name/{family_name}").json()
-        # Create version
-        return self.post_json(
-            f"/api/artifact-families/{family['id']}/versions",
-            {
-                "hash": digest,
-                "size_bytes": size_bytes,
-                "metadata": metadata,
-                "created_by_run": created_by_run,
-                "aliases": aliases or ["latest"],
-            },
-        ).json()
+    def _registry_request(self, method: str, path: str, **kwargs: Any) -> Any:
+        """A registry call; a 4xx becomes ValueError/LookupError with the server's detail."""
+        try:
+            return self._request(method, path, **kwargs).json()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code >= 500:
+                raise
+            try:
+                detail = exc.response.json().get("detail", exc.response.text)
+            except ValueError:
+                detail = exc.response.text
+            raise (LookupError if exc.response.status_code == 404 else ValueError)(detail) from None
+
+    def create_artifact_version(self, project_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        """Register an uploaded manifest as a new version -> the version dict."""
+        return self._registry_request(
+            "POST", f"/api/projects/{project_id}/artifact-versions", json=body,
+        )
 
     def resolve_artifact(self, project_id: str, ref: str) -> dict[str, Any]:
-        """Resolve ``"name:alias"`` or ``"name:vN"`` to a version dict."""
-        return self.post_json(
-            f"/api/projects/{project_id}/resolve-artifact-ref",
-            {"ref": ref},
-        ).json()
+        """``[project/]name[:alias|:vN]`` -> the version dict."""
+        return self._registry_request(
+            "POST", f"/api/projects/{project_id}/resolve-artifact-ref", json={"ref": ref},
+        )
 
     def record_artifact_input(self, run_id: str, artifact_version_id: str, role: str) -> None:
         """Record that a run consumed an artifact version."""
-        self.post_json(f"/api/runs/{run_id}/inputs", {
+        self._registry_request("POST", f"/api/runs/{run_id}/inputs", json={
             "artifact_version_id": artifact_version_id, "role": role,
         })
+
+    def add_artifact_alias(self, version_id: str, alias: str) -> dict[str, Any]:
+        return self._registry_request(
+            "POST", f"/api/artifact-versions/{version_id}/aliases", json={"alias": alias},
+        )
+
+    def remove_artifact_alias(self, version_id: str, alias: str) -> dict[str, Any]:
+        from urllib.parse import quote
+        return self._registry_request(
+            "DELETE", f"/api/artifact-versions/{version_id}/aliases/{quote(alias, safe='')}",
+        )
 
     def download_artifact_bytes(self, digest: str) -> bytes:
         """Download raw artifact bytes by hash."""

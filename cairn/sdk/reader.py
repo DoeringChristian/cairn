@@ -11,7 +11,7 @@ import cairn
 
 r = cairn.Reader()  # auto-detect
 run = r.runs(project="demo").filter(status="completed").last()
-print(run.params, run.sequence("loss").values[-1])
+print(run.config, run.sequence("loss").values[-1])
 ```
 """
 
@@ -25,7 +25,8 @@ from typing import Any, Callable, Iterator, Protocol, runtime_checkable
 
 from .. import config as _config
 from .. import expr as _expr
-from .artifact_dir import MANIFEST_MIME, ArtifactDir
+from ..server import config_doc as _config_doc
+from .artifacts import ArtifactFamily, ArtifactVersion
 from .gallery import GALLERY_MIME
 
 
@@ -108,8 +109,8 @@ class SequencePoint:
         step: The step it was logged at.
         wall_time: When it was logged, as an ISO 8601 string.
         scalar_value: The value of a scalar point; None for media points.
-        artifact_hash: Content hash of a media point's artifact (download it
-            with ``Run.artifact``); None for scalar points.
+        artifact_hash: Content hash of a media point's blob (``Run.media``
+            fetches it); None for scalar points.
         artifact_metadata: The artifact's metadata as a JSON string, or None.
         object_type: ``"scalar"``, or the media kind (``"image"``, ...).
         metadata: Per-point metadata (e.g. ``{"caption": ...}``), decoded;
@@ -131,37 +132,12 @@ class SequencePoint:
 
 
 @dataclass(frozen=True)
-class ArtifactInfo:
-    """One artifact of a run, from ``Run.artifacts``.
-
-    Attributes:
-        name: The artifact's name, or the sequence name for a media point.
-        hash: Content hash (SHA-256) of the stored bytes.
-        step: The step it was logged at; None for an artifact logged
-            without a step.
-        mime_type: MIME type of the stored bytes.
-        size_bytes: Size of the stored bytes.
-        metadata: The artifact's metadata as a JSON string, or None.
-        object_type: The handler kind (``"image"``, ``"table"``, ...) that
-            ``Run.artifact`` uses to decode it; None if unknown.
-    """
-
-    name: str
-    hash: str
-    step: int | None
-    mime_type: str
-    size_bytes: int
-    metadata: str | None = None
-    object_type: str | None = None
-
-
-@dataclass(frozen=True)
 class MediaRef:
     """One stored media value, downloaded only on demand: a media cell of a
     logged table, or one point (or gallery item) from ``Run.media``.
 
-    Nothing is downloaded until ``load`` (decoded like ``Run.artifact``)
-    or ``bytes`` (raw) is called.
+    Nothing is downloaded until ``load`` (decoded by its type) or ``bytes``
+    (raw) is called.
 
     Attributes:
         hash: Content hash of the value's artifact.
@@ -191,19 +167,27 @@ class MediaRef:
     def load(self) -> Any:
         """Download the value and decode it by its ``object_type``.
 
+        Decoders by kind: ``pickle`` -> the unpickled object; ``image`` ->
+        ``PIL.Image`` (PNG) or ndarray (``exr``/``npy``); ``audio`` ->
+        ``(samples, sample_rate)``; ``video`` -> ndarray (T, H, W, C);
+        ``tensor`` -> ndarray; ``text`` -> str; ``table`` -> ``{"columns",
+        "data"}`` with ``MediaRef`` media cells; ``histogram`` -> ``(counts,
+        edges)``; ``figure`` -> ``PIL.Image``.
+
         Returns:
-            The decoded value, like ``Run.artifact`` returns for the same
-            kind (e.g. a ``PIL.Image`` for a PNG image, ``(samples,
-            sample_rate)`` for audio); the raw bytes when the kind has no
-            decoder.
+            The decoded value; the raw bytes when the kind has no decoder.
         """
+        from . import handlers as _handlers  # noqa: F401  (register built-ins)
         from .handlers.registry import default_registry
 
         data = self.bytes()
         handler = default_registry.find_by_type(self.object_type) if self.object_type else None
         if handler is None or not hasattr(handler, "deserialize"):
             return data
-        return handler.deserialize(data, self.metadata or {})
+        value = handler.deserialize(data, self.metadata or {})
+        if self.object_type == "table":
+            return _table_media_refs(value, self._backend)
+        return value
 
 
 def _gallery_refs(manifest: bytes, object_type: str | None, backend: Any) -> list[MediaRef]:
@@ -376,19 +360,19 @@ class DataRef:
 
     Wraps ``(run, tag[, step])`` only — it does **not** fetch anything at
     construction time. Resolution happens only when something actually
-    needs the data: ``.resolve()`` fetches it eagerly (via the existing
-    ``Run.sequence``/``Run.artifact``), and ``cairn.plot`` element builders
+    needs the data: ``.resolve()`` fetches it eagerly (via
+    ``Run.media``/``Run.sequence``), and ``cairn.plot`` element builders
     resolve just the ``(runId, name)`` pair needed to build
     a server-anchored ``SeriesRef`` (no bytes ever move for that path — the
     card renders by reference through ``/embed/card``).
 
     ``run[tag][step]`` (via ``__getitem__``) narrows to one step,
-    mapping to the existing ``step=`` args on ``Run.sequence``/``Run.artifact``.
+    mapping to the ``step=`` args on ``Run.media``/``Run.sequence``.
 
     Attributes:
         run: The run the tag belongs to.
-        tag: The sequence or artifact name.
-        step: The step narrowed to, or None for all steps (latest artifact).
+        tag: The sequence name.
+        step: The step narrowed to, or None for all steps (latest media point).
     """
 
     run: "Run"
@@ -408,21 +392,22 @@ class DataRef:
     def resolve(self) -> Any:
         """Eagerly fetch the underlying data.
 
-        Tries a named/sequence artifact first (images, meshes, tensors,
-        ...); falls back to the raw scalar ``Sequence`` when the tag
-        isn't an artifact (e.g. a plain scalar metric).
+        Tries a media point first (images, meshes, tensors, ...); falls back
+        to the raw scalar ``Sequence`` when the tag has no media (e.g. a
+        plain scalar metric).
 
         Returns:
-            The decoded artifact (as ``Run.artifact`` returns it; the
-            highest-step one unless a step was given); else the
-            ``Sequence``, or its ``SequencePoint`` at the given step.
+            The decoded media value (``Run.media(...).load()``; the
+            highest-step one unless a step was given; a list for a gallery);
+            else the ``Sequence``, or its ``SequencePoint`` at the given step.
 
         Raises:
-            KeyError: A step was given and neither an artifact nor a
+            KeyError: A step was given and neither a media point nor a
                 sequence point exists at it.
         """
         try:
-            return self.run.artifact(self.tag, step=self.step)
+            ref = self.run.media(self.tag, step=self.step)
+            return [r.load() for r in ref] if isinstance(ref, list) else ref.load()
         except KeyError:
             seq = self.run.sequence(self.tag)
             if self.step is not None:
@@ -462,23 +447,23 @@ class Run:
 
     Get one from ``Reader.run`` or a ``RunQuery``. Metadata
     properties come from the row the run was loaded with; config, summary,
-    sequences, artifacts, logs and source are fetched when first asked for.
-    ``run[tag]`` returns a lazy ``DataRef``.
+    sequences, media, artifacts, logs and source are fetched when first
+    asked for. ``run[tag]`` returns a lazy ``DataRef``.
 
     Example:
         ```python
         run = reader.run("a1b2c3")
-        run.params["lr"], run.final["val.acc"]
+        run.config["optim"]["lr"], run.final["val.acc"]
         run.sequence("train.loss").values
-        img = run.artifact("samples", step=1000)
+        img = run.media("samples", step=1000).load()
+        ckpt = run.logged_artifacts()[-1].get()
         ```
     """
 
     def __init__(self, raw: dict[str, Any], backend: _Backend) -> None:
         self._raw = raw
         self._backend = backend
-        self._params: dict[str, Any] | None = None
-        self._summary: dict[str, Any] | None = None
+        self._docs: dict[str, Any] | None = None
 
     @property
     def id(self) -> str:
@@ -497,9 +482,15 @@ class Run:
 
     @property
     def status(self) -> str:
-        """The run status, e.g. ``"running"``, ``"completed"``, ``"failed"``,
-        ``"killed"``, ``"stopped"`` or ``"archived"``."""
+        """The run status: ``"running"``, ``"completed"``, ``"failed"``,
+        ``"killed"`` or ``"stopped"``."""
         return self._raw.get("status", "")
+
+    @property
+    def archived(self) -> bool:
+        """Whether the run is archived (hidden from ``Reader.runs`` by
+        default; archiving never changes ``status``)."""
+        return bool(self._raw.get("archived_at"))
 
     @property
     def created_at(self) -> datetime | None:
@@ -526,28 +517,26 @@ class Run:
         """The run's tags."""
         return _parse_json(self._raw.get("tags")) or []
 
-    def _key_values(self, table: str) -> dict[str, Any]:
-        out: dict[str, Any] = {}
-        for p in self._backend.get_run(self.id).get(table, []):
-            val = _parse_json(p["value"])
-            out[p["key"]] = val if val is not None else p["value"]
-        return out
+    def _doc(self, kind: str) -> dict[str, Any]:
+        if self._docs is None:
+            data = self._backend.get_run(self.id)
+            self._docs = {"config": data.get("config_doc") or {},
+                          "summary": data.get("summary_doc") or {}}
+        import copy
+
+        return copy.deepcopy(self._docs[kind])
 
     @property
-    def params(self) -> dict[str, Any]:
-        """The run's config (values recorded with ``run.config(...)``), keyed
-        by flattened dotted keys (e.g. ``"optim.lr"``). Fetched on first
-        access, then cached."""
-        if self._params is None:
-            self._params = self._key_values("params")
-        return self._params
+    def config(self) -> dict[str, Any]:
+        """The run's config, the nested document exactly as logged with
+        ``run.config(...)`` (after merging every write). A copy: changing it
+        changes nothing stored."""
+        return self._doc("config")
 
     @property
     def summary(self) -> dict[str, Any]:
-        """Values recorded with ``run.summary(...)`` (flattened dotted keys)."""
-        if self._summary is None:
-            self._summary = self._key_values("summary")
-        return self._summary
+        """The run's summary (``run.summary(...)``), nested like ``config``."""
+        return self._doc("summary")
 
     @property
     def final(self) -> dict[str, Any]:
@@ -557,11 +546,6 @@ class Run:
         if "values" not in self._raw:
             self._raw["values"] = self._backend.get_run(self.id)["run"]["values"]
         return dict(self._raw["values"])
-
-    @property
-    def config(self) -> dict[str, Any]:
-        """Alias of ``params`` (the write side is ``run.config(...)``)."""
-        return self.params
 
     @property
     def git(self) -> GitInfo | None:
@@ -681,131 +665,20 @@ class Run:
             warnings.warn(w, stacklevel=2)
         return r.value
 
-    # ---- Artifacts ----
+    # ---- Media ----
 
-    def artifacts(self) -> list[ArtifactInfo]:
-        """List the run's artifacts: named artifacts (newest first), then
-        the media points of its sequences (by name, then step).
-
-        Returns:
-            One ``ArtifactInfo`` per stored artifact and step.
-        """
-        data = self._backend.list_artifacts(self.id)
-        result = []
-        for r in data.get("named", []):
-            result.append(ArtifactInfo(
-                name=r["name"], hash=r["hash"], step=r.get("step"),
-                mime_type=r.get("mime_type", ""), size_bytes=r.get("size_bytes", 0),
-                metadata=r.get("metadata"), object_type=r.get("object_type"),
-            ))
-        for r in data.get("from_sequences", []):
-            result.append(ArtifactInfo(
-                name=r["name"], hash=r["hash"], step=r.get("step"),
-                mime_type=r.get("mime_type", ""), size_bytes=r.get("size_bytes", 0),
-                metadata=r.get("metadata"), object_type=r.get("object_type"),
-            ))
-        return result
-
-    def _find_artifact(self, name: str, step: int | None) -> dict[str, Any]:
-        """Locate an artifact entry by name (and optional step).
-
-        When ``step`` is ``None``, returns the highest-step entry (the
-        "latest" checkpoint). Pass an explicit ``step`` for a specific one.
-        """
-        arts = self._backend.list_artifacts(self.id)
-        # Collect all matches across both pools.
-        matches: list[dict[str, Any]] = []
-        for pool in (arts.get("named", []), arts.get("from_sequences", [])):
-            for a in pool:
-                if a["name"] != name:
-                    continue
-                if step is not None and a.get("step") != step:
-                    continue
-                matches.append(a)
-        if not matches:
+    def _media_point(self, name: str, step: int | None) -> dict[str, Any]:
+        """The media point of sequence ``name`` at ``step`` (None: the highest step)."""
+        points = [
+            p for p in self._backend.get_sequence(self.id, name, step_from=step, step_to=step)
+            if p.get("artifact_hash")
+        ]
+        if not points:
             raise KeyError(
-                f"No artifact named {name!r}"
+                f"No media point in sequence {name!r}"
                 + (f" at step {step}" if step is not None else "")
             )
-        if step is not None:
-            return matches[0]
-        # No step specified — return the entry with the highest step
-        # (or the only one, if there's just one).
-        return max(matches, key=lambda a: a.get("step") if a.get("step") is not None else -1)
-
-    def artifact_bytes(self, name: str, step: int | None = None) -> bytes:
-        """Download an artifact's raw bytes (no deserialization).
-
-        Args:
-            name: Artifact or sequence name.
-            step: The step to fetch (None: the highest step).
-
-        Returns:
-            The stored bytes.
-
-        Raises:
-            KeyError: The run has no artifact of that name (at that step).
-        """
-        a = self._find_artifact(name, step)
-        return self._backend.get_artifact_bytes(a["hash"])
-
-    def artifact(self, name: str, step: int | None = None) -> Any:
-        """Download an artifact and deserialize back to its original Python type.
-
-        Uses the artifact's ``object_type`` to dispatch to the matching
-        handler's ``deserialize()`` method:
-
-        - ``artifact``  → unpickled Python object (any picklable type)
-        - ``image``     → PIL.Image (PNG), ndarray (``exr``/``npy`` encodings);
-        - ``audio``     → ``(samples: np.ndarray, sample_rate: int)``
-        - ``video``     → np.ndarray (T, H, W, C)
-        - ``tensor``    → np.ndarray
-        - ``text``      → str
-        - ``table``     → ``{"columns", "data"}``; media cells are ``MediaRef``
-        - ``histogram`` → ``(counts: np.ndarray, edges: np.ndarray)``
-        - ``figure``    → PIL.Image (rasterized; use ``artifact_bytes`` for source)
-
-        A gallery (a tracked list of media of one kind) decodes to a list of
-        its items, each as above; ``media`` gives them undecoded, with their
-        captions.
-
-        For unknown types, falls back to raw bytes. Use ``artifact_bytes()``
-        explicitly when you want raw bytes regardless of type.
-
-        Args:
-            name: Artifact or sequence name.
-            step: The step to fetch (None: the highest step).
-
-        Returns:
-            The decoded artifact.
-
-        Raises:
-            KeyError: The run has no artifact of that name (at that step).
-        """
-        from .handlers.registry import default_registry
-
-        a = self._find_artifact(name, step)
-        data = self._backend.get_artifact_bytes(a["hash"])
-        object_type = a.get("object_type")
-        if not object_type:
-            # Unknown type — return raw bytes.
-            return data
-        handler = default_registry.find_by_type(object_type)
-        if handler is None or not hasattr(handler, "deserialize"):
-            return data
-        # Parse metadata if it's a JSON string.
-        meta = a.get("metadata")
-        if isinstance(meta, str):
-            import json as _json
-            try:
-                meta = _json.loads(meta)
-            except _json.JSONDecodeError:
-                meta = {}
-        if a.get("mime_type") == GALLERY_MIME:
-            return [ref.load() for ref in _gallery_refs(data, object_type, self._backend)]
-        if object_type == "table":
-            return _table_media_refs(handler.deserialize(data, meta or {}), self._backend)
-        return handler.deserialize(data, meta or {})
+        return max(points, key=lambda p: p["step"])
 
     def media(self, name: str, step: int | None = None) -> "MediaRef | list[MediaRef]":
         """A media point, not yet downloaded: its ``MediaRef``, or for a
@@ -818,65 +691,30 @@ class Run:
         ```
 
         Args:
-            name: Sequence (or named artifact) name.
+            name: Sequence name.
             step: The step to fetch (None: the highest step).
 
         Returns:
-            One ``MediaRef``, or a list of them for a gallery point.
+            One ``MediaRef`` (``.load()`` decodes it, ``.bytes()`` is raw), or
+            a list of them for a gallery point.
 
         Raises:
-            KeyError: The run has no artifact of that name (at that step).
+            KeyError: The sequence has no media point (at that step).
         """
-        a = self._find_artifact(name, step)
-        object_type = a.get("object_type")
-        if a.get("mime_type") == GALLERY_MIME:
-            return _gallery_refs(self._backend.get_artifact_bytes(a["hash"]), object_type, self._backend)
-        meta = a.get("metadata")
+        p = self._media_point(name, step)
+        object_type = p.get("object_type")
+        if p.get("artifact_mime") == GALLERY_MIME:
+            return _gallery_refs(
+                self._backend.get_artifact_bytes(p["artifact_hash"]), object_type, self._backend,
+            )
+        meta = p.get("artifact_metadata")
         if isinstance(meta, str):
             try:
                 meta = json.loads(meta)
             except json.JSONDecodeError:
                 meta = None
-        return MediaRef(a["hash"], a.get("mime_type", ""), object_type, self._backend,
+        return MediaRef(p["artifact_hash"], p.get("artifact_mime") or "", object_type, self._backend,
                         metadata=meta if isinstance(meta, dict) else None)
-
-    def artifact_path(self, name: str, step: int | None = None) -> Path | None:
-        """The local file holding an artifact's bytes (local repo only).
-
-        Args:
-            name: Artifact or sequence name.
-            step: The step to look up (None: the first entry of that name
-                found, not necessarily the highest step).
-
-        Returns:
-            The blob's path, or None when there is no such artifact or the
-            Reader is connected to a server.
-        """
-        arts = self._backend.list_artifacts(self.id)
-        for pool in (arts.get("named", []), arts.get("from_sequences", [])):
-            for a in pool:
-                if a["name"] == name and (step is None or a.get("step") == step):
-                    return self._backend.get_artifact_path(a["hash"])
-        return None
-
-    def save_artifact(self, name: str, dest: str | Path, step: int | None = None) -> Path:
-        """Download an artifact and save to a file.
-
-        Args:
-            name: Artifact or sequence name.
-            dest: The file to write.
-            step: The step to fetch (None: the highest step).
-
-        Returns:
-            ``dest`` as a ``Path``.
-
-        Raises:
-            KeyError: The run has no artifact of that name (at that step).
-        """
-        data = self.artifact(name, step=step)
-        path = Path(dest)
-        path.write_bytes(data)
-        return path
 
     # ---- Logs ----
 
@@ -927,15 +765,16 @@ class Run:
         """
         return self._backend.get_source_file(self.id, path)
 
-    # ---- Versioned Artifact Inputs/Outputs ----
+    # ---- Artifacts ----
 
-    def input_artifacts(self) -> list[dict[str, Any]]:
-        """Return versioned artifacts consumed by this run."""
-        return self._backend.get_run_inputs(self.id)
+    def logged_artifacts(self) -> list[ArtifactVersion]:
+        """The artifact versions this run logged, in the order it logged them."""
+        return [ArtifactVersion(v, self._backend) for v in self._backend.run_outputs(self.id)]
 
-    def output_artifacts(self) -> list[dict[str, Any]]:
-        """Return versioned artifacts produced by this run."""
-        return self._backend.get_run_outputs(self.id)
+    def used_artifacts(self, role: str | None = None) -> list[ArtifactVersion]:
+        """The artifact versions this run consumed (``run.use_artifact``), in
+        the order it consumed them; only ``role``'s when given."""
+        return [ArtifactVersion(v, self._backend) for v in self._backend.run_inputs(self.id, role)]
 
     def edit(self) -> RunEditor:
         """An editing handle for this run (config, summary, tags, name,
@@ -1001,12 +840,15 @@ class RunEditor:
             **kwargs: More keys, applied last.
 
         Raises:
-            TypeError: A positional argument is not a mapping.
+            TypeError: A positional argument is not a mapping, or a value is
+                not JSON.
+            ValueError: The merge would give two paths one dotted key.
         """
         values = _merge_mappings("set_config", args, kwargs)
         if values:
+            values = self._checked("config", values)
             self._transport.post_params(self._run.id, values)
-            self._run._params = None
+            self._run._docs = None
 
     def set_summary(self, *args: Any, **kwargs: Any) -> None:
         """Merge keys into the run's summary (like ``cairn.Run.summary``).
@@ -1020,17 +862,26 @@ class RunEditor:
         """
         values = _merge_mappings("set_summary", args, kwargs)
         if values:
+            values = self._checked("summary", values)
             self._transport.post_summary(self._run.id, values)
-            self._run._summary = None
+            self._run._docs = None
             self._run._raw.pop("values", None)
+
+    def _checked(self, kind: str, values: dict[str, Any]) -> dict[str, Any]:
+        """``values`` validated, and its merge into the stored document
+        checked, before anything is sent (``cairn.server.config_doc``)."""
+        values = _config_doc.normalize(values)
+        current = self._run.config if kind == "config" else self._run.summary
+        _config_doc.nodes(_config_doc.merge(current, values))
+        return values
 
     def delete_keys(self, which: str, keys: list[str]) -> None:
         """Delete keys from the run's config or summary.
 
         Args:
             which: ``"config"`` or ``"summary"``.
-            keys: Dotted keys to delete; a key also removes the keys nested
-                under it.
+            keys: Dotted paths into the document; a path removes that node
+                with everything under it.
 
         Raises:
             ValueError: ``which`` is neither ``"config"`` nor ``"summary"``.
@@ -1039,8 +890,7 @@ class RunEditor:
         if which not in tables:
             raise ValueError(f"which must be 'config' or 'summary', got {which!r}")
         self._transport.delete_keys(self._run.id, tables[which], list(keys))
-        self._run._params = None
-        self._run._summary = None
+        self._run._docs = None
         self._run._raw.pop("values", None)
 
     def set_tags(self, tags: list[str]) -> None:
@@ -1113,12 +963,12 @@ def _merge_mappings(who: str, args: tuple, kwargs: dict) -> dict[str, Any]:
 # RunQuery — lazy chainable query builder
 # ---------------------------------------------------------------------------
 
-# Mapping from Django-style suffix to a comparator. Each comparator takes
-# (actual_value, query_value) and returns True if the row matches.
-# MIRROR of the server-owned query grammar (cairn/server/_operators.py +
-# query_grammar.OPERATOR_NAMES); pinned by schema/query-vectors.json —
-# change all mirrors together. The server is AUTHORITATIVE (it decodes and
-# evaluates); this copy only validates kwargs early and encodes urls.
+# The operator vocabulary. MIRROR of the server-owned query grammar
+# (cairn/server/_operators.py + query_grammar.OPERATOR_NAMES); pinned by
+# schema/query-vectors.json — change all mirrors together. The server's
+# run_query.select_runs is the ONE evaluator (in-process for a local repo,
+# over POST /api/runs/query for a server); this copy only validates kwargs
+# early and encodes urls.
 _OPERATORS: dict[str, "Callable[[Any, Any], bool]"] = {
     "exact": lambda a, b: a == b,
     "iexact": lambda a, b: isinstance(a, str) and isinstance(b, str) and a.lower() == b.lower(),
@@ -1138,64 +988,26 @@ _OPERATORS: dict[str, "Callable[[Any, Any], bool]"] = {
     "isnull": lambda a, b: (a is None) == bool(b),
 }
 
-# Top-level fields on a Run that can be filtered. Anything else is treated
-# as a param lookup (params.<key>).
-_RUN_FIELDS = {
-    "name", "status", "project", "tags", "id", "hostname", "user", "notes",
-    "group", "job_type",
-}
-
 
 def _parse_lookup(key: str) -> tuple[str, str, str | None]:
-    """Parse a Django-style filter key into (field_root, op, sub_field).
+    """Parse a Django-style filter key into ``(field_root, op, sub_path)``;
+    the sub path is dotted.
 
     Examples:
-      "lr"               → ("lr", "exact", None)
-      "lr__gt"           → ("lr", "gt", None)
-      "tags__contains"   → ("tags", "contains", None)
-      "metrics__loss"    → ("metrics", "exact", "loss")
-      "metrics__loss__lt" → ("metrics", "lt", "loss")
+      "lr"                  → ("lr", "exact", None)
+      "lr__gt"              → ("lr", "gt", None)
+      "tags__contains"      → ("tags", "contains", None)
+      "metrics__loss"       → ("metrics", "exact", "loss")
+      "optim__lr__lt"       → ("optim", "lt", "lr")
+      "config.optim.lr__lt" → ("config", "lt", "optim.lr")
     """
     parts = key.split("__")
-    if len(parts) == 1:
-        return parts[0], "exact", None
-    # Last part might be an operator
-    last = parts[-1]
-    if last in _OPERATORS:
-        op = last
-        if len(parts) == 2:
-            return parts[0], op, None
-        return parts[0], op, "__".join(parts[1:-1])
-    # No trailing operator → the whole tail is a sub-field path
-    return parts[0], "exact", "__".join(parts[1:])
-
-
-def _get_field_value(run: "Run", field: str, sub_field: str | None) -> Any:
-    """Resolve a filter field to a value on the Run."""
-    if field in _RUN_FIELDS:
-        # Built-in run fields. Sub-field ignored (run has no nested structures here).
-        return getattr(run, field, None)
-    if field == "metrics":
-        if sub_field is None:
-            return None
-        # The resolved final value (``Run.final``): the value the runs table
-        # shows, not merely the last point. Python keywords cannot contain
-        # dots, so ``metrics__val__acc`` also finds the metric ``val.acc``.
-        final = run.final
-        if sub_field in final:
-            return final[sub_field]
-        return final.get(sub_field.replace("__", "."))
-    if field == "params":
-        # params__lr or just lr (param fallback handled at parse time)
-        return run.params.get(sub_field) if sub_field else None
-    if field == "summary":
-        return run.summary.get(sub_field) if sub_field else None
-    # Default: treat field as a param key.
-    if sub_field:
-        # e.g. hparams__lr → params["hparams.lr"]
-        full = f"{field}.{sub_field}"
-        return run.params.get(full)
-    return run.params.get(field)
+    op = "exact"
+    if len(parts) > 1 and parts[-1] in _OPERATORS:
+        op = parts.pop()
+    head, _, dotted = parts[0].partition(".")
+    rest = [p for p in [dotted, *parts[1:]] if p]
+    return head, op, (".".join(rest) or None)
 
 
 _PAGE = 1000  # /api/runs caps limit at 1000
@@ -1234,6 +1046,7 @@ class _RunExprContext:
     def __init__(self, run: Run) -> None:
         self._run = run
         self._series: dict[str, dict[str, list] | None] = {}
+        self._nodes: dict[str, dict[str, Any]] = {}
 
     def series(self, name: str) -> dict[str, list] | None:
         if name not in self._series:
@@ -1245,11 +1058,20 @@ class _RunExprContext:
             } if points else None
         return self._series[name]
 
+    def _node(self, kind: str, key: str) -> Any:
+        if kind not in self._nodes:
+            doc = self._run.config if kind == "config" else self._run.summary
+            try:
+                self._nodes[kind] = _config_doc.nodes(doc)
+            except ValueError:
+                self._nodes[kind] = {}
+        return self._nodes[kind].get(key)
+
     def config(self, key: str) -> Any:
-        return self._run.params.get(key)
+        return self._node("config", key)
 
     def summary(self, key: str) -> Any:
-        return self._run.summary.get(key)
+        return self._node("summary", key)
 
     def run(self, field: str) -> Any:
         r = self._run
@@ -1262,84 +1084,84 @@ class _RunExprContext:
 class RunQuery:
     """Lazy query builder for runs, from ``Reader.runs``.
 
-    Builder methods (``filter``, ``where``, ``sort``,
-    ``limit``) return a new query and leave this one unchanged. The
-    query runs on ``list``, ``first``, ``last``,
-    ``history``, iteration and ``len()``; each of these runs it anew.
+    Builder methods (``filter``, ``where``, ``sort``, ``limit``) return a new
+    query and leave this one unchanged. The query runs on ``list``,
+    ``first``, ``last``, ``get``, ``history``, iteration and ``len()``; each
+    of these runs it anew. It is evaluated by ONE evaluator (the server's
+    ``run_query.select_runs``, in-process for a local repo), so a query gives
+    the same runs in the same order on a local repo and on a server.
+
+    Order: by default ``created_at`` ascending (oldest first). ``sort(key,
+    desc=...)`` replaces it; ties break by ``created_at`` then ``id`` in the
+    same direction, and runs MISSING the key (no such config key or metric, a
+    running run's ``ended_at``, NaN, a value of another type than most) come
+    after all others in both directions. ``first()`` / ``last()`` are the ends
+    of that order: with the default, the oldest and the newest run;
+    ``sort("metrics.val.acc", desc=True).first()`` is the best run.
 
     Filters use Django-style ``field__operator=value`` suffixes:
 
     ```python
-    reader.runs(project="x").filter(
+    reader.runs("x").filter(
         status="completed",                    # exact match (default op)
         name__contains="my-run",               # substring
         tags__contains="best",                 # list membership
-        lr__gt=1e-4,                           # > on a param
-        lr__lt=1e-2,
-        status__in=["completed", "killed"],    # set membership
+        lr__gt=1e-4,                           # a config key (any other root)
+        optim__lr__lt=1e-2,                    # the config path optim.lr
+        **{"config.optim.lr__lt": 1e-2},       # the same, spelled out
+        status__in=["completed", "killed"],
         metrics__loss__lt=0.1,                 # final value (Run.final)
-        hostname__startswith="gpu",
+        summary__test__psnr__gt=30,            # a summary path
     )
     ```
 
-    Supported operators: ``exact``, ``iexact``, ``gt``, ``gte``, ``lt``,
-    ``lte``, ``in``, ``contains``, ``icontains``, ``startswith``,
-    ``endswith``, ``isnull``.
+    Operators: ``exact``, ``iexact``, ``gt``, ``gte``, ``lt``, ``lte``,
+    ``in``, ``contains``, ``icontains``, ``startswith``, ``endswith``,
+    ``isnull``. Field roots: run fields (``name``, ``status``, ``tags``,
+    ``id``, ``hostname``, ``user``, ``notes``, ``group``, ``job_type``,
+    ``project``), ``metrics`` (the final value, exactly ``Run.final``; write
+    ``metrics__val__acc`` for ``val.acc``), ``config`` and ``summary`` (a
+    dotted path; a path naming a sub-document compares the whole dict), and
+    any other root, which is a config path. A run whose value cannot be
+    compared (missing under ``gt``, ...) does not match.
 
-    Special field roots: ``metrics`` (the metric's final value as
-    ``Run.final`` resolves it: the last point, replaced by a
-    ``track(..., summary=)`` rule, replaced by an explicit summary key; write
-    ``metrics__val__acc`` for the metric ``val.acc``), ``params`` (explicit
-    param lookup), ``summary`` (a ``run.summary`` value), ``tags`` (list
-    membership). Any other root is treated as a param key.
-
-    ``where(expr)`` adds a ``cairn.expr`` expression filter; a run matches
-    when the (scalar) expression is truthy and not None:
+    ``where(expr)`` adds a ``cairn.expr`` filter; a run matches when the
+    scalar result is truthy and not None:
 
     ```python
     reader.runs("x").where("last(val.acc) > 0.9 and config.opt == 'adam'")
     ```
-
-    Args:
-        backend: The Reader's storage backend.
-        project: Only runs of this project id.
-        status: Only runs with this status.
-        filters: ``(field, operator, sub_field, value)`` filters.
-        sort_col: The column to order by.
-        sort_desc: Order descending.
-        limit_n: At most this many runs.
-        wheres: ``(source, parsed expression)`` filters.
     """
 
     def __init__(
         self, backend: _Backend, *,
         project: str | None = None,
+        archived: bool | None = False,
         status: str | None = None,
         filters: list[tuple[str, str, str | None, Any]] | None = None,
-        sort_col: str = "created_at",
-        sort_desc: bool = True,
+        sort_key: str = "created_at",
+        sort_desc: bool = False,
         limit_n: int | None = None,
-        wheres: list[tuple[str, _expr.Node]] | None = None,
+        wheres: list[str] | None = None,
     ) -> None:
         self._backend = backend
         self._project = project
-        # status is kept separate because it's pushed down to SQL (faster).
+        self._archived = archived
         self._status = status
-        # All other filters: list of (field, op, sub_field, value) tuples.
         self._filters = filters or []
-        self._sort_col = sort_col
+        self._sort_key = sort_key
         self._sort_desc = sort_desc
         self._limit_n = limit_n
-        # Expression filters: (source, parsed node), applied after the filters.
         self._wheres = wheres or []
 
     def _clone(self, **overrides: Any) -> RunQuery:
         kw: dict[str, Any] = {
             "backend": self._backend,
             "project": self._project,
+            "archived": self._archived,
             "status": self._status,
             "filters": list(self._filters),
-            "sort_col": self._sort_col,
+            "sort_key": self._sort_key,
             "sort_desc": self._sort_desc,
             "limit_n": self._limit_n,
             "wheres": list(self._wheres),
@@ -1348,14 +1170,8 @@ class RunQuery:
         return RunQuery(**kw)
 
     def filter(self, **kwargs: Any) -> RunQuery:
-        """Add filters using Django-style ``field__operator=value`` syntax.
-
-        See the class docstring for the full operator list and examples.
-        All filters must match. A run whose value cannot be compared (e.g. a
-        missing param under ``gt``) does not match.
-
-        Args:
-            **kwargs: ``field__operator=value`` filters.
+        """Add filters using Django-style ``field__operator=value`` syntax
+        (see the class docstring). All filters must match.
 
         Returns:
             A new query with the filters added.
@@ -1363,12 +1179,11 @@ class RunQuery:
         new_filters = list(self._filters)
         new_status = self._status
         for key, value in kwargs.items():
-            field, op, sub_field = _parse_lookup(key)
-            # Push status=... down to SQL for performance.
-            if field == "status" and op == "exact" and sub_field is None:
+            field, op, sub = _parse_lookup(key)
+            if field == "status" and op == "exact" and sub is None:
                 new_status = value
                 continue
-            new_filters.append((field, op, sub_field, value))
+            new_filters.append((field, op, sub, value))
         return self._clone(status=new_status, filters=new_filters)
 
     def where(self, expr: str) -> RunQuery:
@@ -1392,94 +1207,71 @@ class RunQuery:
                 "where() needs a scalar expression; reduce the series, e.g. last(loss) < 0.1",
                 node.span,
             )
-        return self._clone(wheres=[*self._wheres, (expr, node)])
+        return self._clone(wheres=[*self._wheres, expr])
 
-    def sort(self, column: str, *, desc: bool = True) -> RunQuery:
-        """Order the runs by a column (the default is ``created_at``,
-        newest first).
-
-        Note:
-            Only a local repo or archive applies the order; a server
-            returns runs newest first regardless.
+    def sort(self, key: str, *, desc: bool = False) -> RunQuery:
+        """Order the runs by ``key`` (replacing any earlier ``sort``).
 
         Args:
-            column: ``"created_at"``, ``"ended_at"``, ``"display_name"`` or
-                ``"status"``; any other column orders by ``created_at``.
-            desc: Descending order.
+            key: ``created_at``, ``ended_at``, ``duration``, ``name``,
+                ``status``, ``id``, ``config.<path>``, ``summary.<path>`` or
+                ``metrics.<name>`` (the final value, as ``Run.final``; a
+                dotted metric name is written as is: ``metrics.val.acc``).
+            desc: Descending order. Missing values stay last either way.
 
         Returns:
             A new query with this order.
+
+        Raises:
+            ValueError: An unknown key.
         """
-        return self._clone(sort_col=column, sort_desc=desc)
+        from ..server.run_query import validate_sort_key
+
+        return self._clone(sort_key=validate_sort_key(key), sort_desc=desc)
 
     def limit(self, n: int) -> RunQuery:
-        """Return at most ``n`` runs (counted after filtering).
-
-        Args:
-            n: The maximum number of runs.
+        """Keep at most the first ``n`` runs of the order.
 
         Returns:
             A new query with this limit.
         """
+        if n < 0:
+            raise ValueError("limit must be >= 0")
         return self._clone(limit_n=n)
 
-    def list(self) -> list[Run]:
-        """Execute the query and return matching runs.
+    def _spec(self) -> dict[str, Any]:
+        return {
+            "project": self._project,
+            "archived": self._archived,
+            "status": self._status,
+            "predicates": [[f, op, sub, value] for f, op, sub, value in self._filters],
+            "where": list(self._wheres),
+            "sort": {"key": self._sort_key, "desc": self._sort_desc},
+        }
 
-        Filters other than ``status`` run client-side, so with filters every
-        page of runs is fetched first and the limit applies after filtering.
+    def _fetch(self, *, limit: int | None, offset: int = 0, reverse: bool = False) -> tuple[list[Run], int]:
+        """Evaluate the query, paging ``_PAGE`` runs at a time."""
+        spec = self._spec()
+        spec["reverse"] = reverse
+        rows: list[dict[str, Any]] = []
+        total = 0
+        while True:
+            want = _PAGE if limit is None else min(_PAGE, limit - len(rows))
+            page, total = self._backend.query_runs(
+                {**spec, "limit": want, "offset": offset + len(rows)},
+            )
+            rows.extend(page)
+            if len(page) < want or (limit is not None and len(rows) >= limit):
+                break
+        return [Run(r, self._backend) for r in rows], total
+
+    def list(self) -> list[Run]:
+        """Execute the query.
 
         Returns:
-            The matching runs, in the query's order.
+            The matching runs, in the query's order (at most ``limit``).
         """
-        runs: list[dict[str, Any]] = []
-        pushdown = (
-            self._limit_n if self._limit_n and not self._filters and not self._wheres else None
-        )
-        while True:
-            page = _PAGE if pushdown is None else min(_PAGE, pushdown - len(runs))
-            rows, total = self._backend.list_runs(
-                project=self._project,
-                status=self._status,
-                limit=page,
-                offset=len(runs),
-                sort_col=self._sort_col,
-                sort_desc=self._sort_desc,
-            )
-            runs.extend(rows)
-            if not rows or len(runs) >= total or (pushdown is not None and len(runs) >= pushdown):
-                break
-        result = [Run(r, self._backend) for r in runs]
-
-        # Apply Django-style filters client-side.
-        for field, op, sub_field, value in self._filters:
-            comparator = _OPERATORS[op]
-            kept: list[Run] = []
-            for run in result:
-                actual = _get_field_value(run, field, sub_field)
-                try:
-                    if comparator(actual, value):
-                        kept.append(run)
-                except (TypeError, ValueError):
-                    pass
-            result = kept
-
-        for _src, node in self._wheres:
-            result = [run for run in result if self._where_matches(node, run)]
-
-        if self._limit_n and len(result) > self._limit_n:
-            result = result[:self._limit_n]
-
-        return result
-
-    @staticmethod
-    def _where_matches(node: _expr.Node, run: Run) -> bool:
-        import warnings
-
-        r = _expr.evaluate(node, _RunExprContext(run))
-        for w in r.warnings:
-            warnings.warn(w, stacklevel=4)
-        return _expr.matches(r)
+        return self._fetch(limit=self._limit_n)[0]
 
     def history(self, keys: list[str] | None = None) -> Any:
         """Scalar history of every matching run as a long pandas DataFrame.
@@ -1500,34 +1292,49 @@ class RunQuery:
         return _history_frame(self._backend, self.list(), keys)
 
     def first(self) -> Run | None:
-        """The first matching run in ascending order of the sort column
-        (by default the oldest), whatever ``desc`` ``sort`` set.
-
-        Note:
-            A server returns runs newest first whatever the order asked
-            for, so against a server this is the newest run, like
-            ``last``.
-
-        Returns:
-            The run, or None if no run matches.
-        """
-        runs = self._clone(sort_desc=False, limit_n=self._limit_n or 1000).list()
+        """The first run of the query's order (by default the oldest), or None."""
+        if self._limit_n == 0:
+            return None
+        runs, _ = self._fetch(limit=1)
         return runs[0] if runs else None
 
     def last(self) -> Run | None:
-        """The first matching run in descending order of the sort column
-        (by default the newest), whatever ``desc`` ``sort`` set.
-
-        Returns:
-            The run, or None if no run matches.
+        """The last run of the query's order (by default the newest), or None.
+        With ``limit(n)``: the last of the first ``n``.
 
         Example:
             ```python
-            run = reader.runs("demo").filter(status="completed").last()
+            run = reader.runs("demo").filter(name="base", status="completed").last()
             ```
         """
-        runs = self._clone(sort_desc=True, limit_n=self._limit_n or 1000).list()
+        if self._limit_n is None:
+            runs, _ = self._fetch(limit=1, reverse=True)
+            return runs[0] if runs else None
+        if self._limit_n == 0:
+            return None
+        _, total = self._fetch(limit=0)
+        n = min(self._limit_n, total)
+        if n == 0:
+            return None
+        runs, _ = self._fetch(limit=1, offset=n - 1)
         return runs[0] if runs else None
+
+    def get(self) -> Run:
+        """Exactly one matching run.
+
+        Raises:
+            LookupError: No run matches, or more than one does.
+        """
+        runs, total = self._fetch(limit=5)
+        if self._limit_n is not None:
+            total = min(total, self._limit_n)
+            runs = runs[: self._limit_n]
+        if total == 0:
+            raise LookupError("no run matches")
+        if total > 1:
+            ids = ", ".join(r.id for r in runs)
+            raise LookupError(f"{total} runs match: {ids}{', ...' if total > len(runs) else ''}")
+        return runs[0]
 
     def latest_url(self, tag: str, *, live: bool = True, step: str | int = "latest") -> str:
         """A live query URL for ``tag`` on the *latest* run matching this query.
@@ -1537,11 +1344,14 @@ class RunQuery:
         ``reader.runs("demo").filter(lr__gt=1e-4).latest_url("render")`` yields
         ``.../api/query?run=latest&tag=render&project=demo&lr__gt=0.0001``.
 
+        The URL always names the newest matching run (``created_at``),
+        whatever ``sort`` says, and never an archived run.
+
         Requires a server target (the URL is fetched over HTTP); raises on a
         local-only backend.
 
         Args:
-            tag: The sequence or artifact name.
+            tag: The sequence name.
             live: True for a URL that resolves on every fetch; False to
                 resolve once now and return the immutable digest URL.
             step: ``"latest"`` or a step number.
@@ -1550,11 +1360,13 @@ class RunQuery:
             The URL.
 
         Raises:
-            ValueError: The query has ``where`` filters, or the Reader
-                is not connected to a server.
+            ValueError: The query has ``where`` filters or includes archived
+                runs, or the Reader is not connected to a server.
         """
         if self._wheres:
             raise ValueError("latest_url() cannot express where() filters; use filter(...)")
+        if self._archived is not False:
+            raise ValueError("latest_url() never selects archived runs")
         base = getattr(self._backend, "server_url", None)
         if base is None:
             from .query_urls import _LOCAL_ONLY_MSG
@@ -1578,21 +1390,28 @@ class RunQuery:
         return iter(self.list())
 
     def __len__(self) -> int:
-        return len(self.list())
+        _, total = self._fetch(limit=0)
+        return total if self._limit_n is None else min(total, self._limit_n)
 
     def __repr__(self) -> str:
         parts = []
         if self._project:
             parts.append(f"project={self._project!r}")
+        if self._archived is not False:
+            parts.append(f"archived={self._archived!r}")
         if self._status:
             parts.append(f"status={self._status!r}")
         for field, op, sub_field, value in self._filters:
-            key = field if sub_field is None else f"{field}__{sub_field}"
+            key = field if sub_field is None else f"{field}.{sub_field}"
             if op != "exact":
                 key = f"{key}__{op}"
             parts.append(f"{key}={value!r}")
-        for src, _node in self._wheres:
+        for src in self._wheres:
             parts.append(f"where({src!r})")
+        if (self._sort_key, self._sort_desc) != ("created_at", False):
+            parts.append(f"sort({self._sort_key!r}, desc={self._sort_desc})")
+        if self._limit_n is not None:
+            parts.append(f"limit({self._limit_n})")
         return f"RunQuery({', '.join(parts)})"
 
 
@@ -1603,28 +1422,37 @@ class RunQuery:
 @runtime_checkable
 class _Backend(Protocol):
     def list_projects(self) -> list[dict[str, Any]]: ...
-    def list_runs(self, project: str | None, status: str | None,
-                  limit: int, offset: int, sort_col: str, sort_desc: bool) -> tuple[list[dict[str, Any]], int]: ...
+    def query_runs(self, spec: dict[str, Any]) -> tuple[list[dict[str, Any]], int]: ...
     def get_run(self, run_id: str) -> dict[str, Any]: ...
     def list_sequences(self, run_id: str) -> list[dict[str, Any]]: ...
     def get_sequence(self, run_id: str, name: str, *,
                      step_from: int | None, step_to: int | None,
 ) -> list[dict[str, Any]]: ...
     def scalar_series(self, run_ids: list[str], names: list[str] | None) -> list[dict[str, Any]]: ...
-    def list_artifacts(self, run_id: str) -> dict[str, Any]: ...
     def get_artifact_bytes(self, digest: str) -> bytes: ...
-    def get_artifact_path(self, digest: str) -> Path | None: ...
     def get_logs(self, run_id: str, *, stream: str | None, search: str | None,
                  limit: int, offset: int) -> tuple[list[dict[str, Any]], int]: ...
     def get_source_tree(self, run_id: str) -> dict[str, Any] | None: ...
     def get_source_file(self, run_id: str, path: str) -> str | None: ...
-    # Versioned artifact registry
+    # Artifact registry
     def list_artifact_families(self, project_id: str, type_filter: str | None = None) -> list[dict[str, Any]]: ...
-    def list_artifact_versions(self, family_id: str) -> list[dict[str, Any]]: ...
-    def resolve_artifact_ref(self, project_id: str, ref: str) -> dict[str, Any]: ...
-    def get_run_inputs(self, run_id: str) -> list[dict[str, Any]]: ...
-    def get_run_outputs(self, run_id: str) -> list[dict[str, Any]]: ...
-    def get_lineage(self, project_id: str, **kwargs: Any) -> dict[str, Any]: ...
+    def family_versions(self, project_id: str, name: str) -> list[dict[str, Any]]: ...
+    def resolve_artifact_ref(self, project_id: str | None, ref: str) -> dict[str, Any]: ...
+    def version_files(self, version_id: str) -> list[dict[str, Any]]: ...
+    def version_consumers(self, version_id: str) -> list[dict[str, Any]]: ...
+    def run_inputs(self, run_id: str, role: str | None) -> list[dict[str, Any]]: ...
+    def run_outputs(self, run_id: str) -> list[dict[str, Any]]: ...
+    def add_alias(self, version_id: str, alias: str) -> dict[str, Any]: ...
+    def remove_alias(self, version_id: str, alias: str) -> dict[str, Any]: ...
+    def get_lineage(self, project_id: str, family_id: str | None) -> dict[str, Any]: ...
+
+
+def _edit_transport(backend: Any) -> Any:
+    """A writer transport for the backend's target (``open_transport``: the
+    repo DB, or the server holding it)."""
+    from .connect import open_transport
+
+    return open_transport(backend.edit_target)[0]
 
 
 # ---------------------------------------------------------------------------
@@ -1684,28 +1512,12 @@ class _LocalBackend:
                FROM projects p ORDER BY last_run_at DESC"""
         )
 
-    def list_runs(
-        self, project: str | None, status: str | None,
-        limit: int, offset: int, sort_col: str, sort_desc: bool,
-    ) -> tuple[list[dict[str, Any]], int]:
+    def query_runs(self, spec: dict[str, Any]) -> tuple[list[dict[str, Any]], int]:
+        """The shared evaluator, in-process (``run_query.select_runs``)."""
+        from ..server.run_query import select_runs
+
         self._drain_wals()
-        clauses: list[str] = []
-        params: list[Any] = []
-        if project:
-            clauses.append("project_id = ?")
-            params.append(project)
-        if status:
-            clauses.append("status = ?")
-            params.append(status)
-        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        direction = "DESC" if sort_desc else "ASC"
-        safe_col = sort_col if sort_col in ("created_at", "display_name", "status", "ended_at") else "created_at"
-        rows = self._db.read_columns(
-            f"SELECT * FROM runs {where} ORDER BY {safe_col} {direction} LIMIT ? OFFSET ?",
-            [*params, limit, offset],
-        )
-        (total,) = self._db.read_one(f"SELECT COUNT(*) FROM runs {where}", params) or (0,)
-        return self._with_values([_api_run_row(r) for r in rows]), total
+        return select_runs(self._db, spec)
 
     def _with_values(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Each row with ``values``, from the server function the runs routes use."""
@@ -1723,15 +1535,10 @@ class _LocalBackend:
         ])
         if not rows:
             raise KeyError(f"Run {run_id!r} not found")
-        params = self._db.read_columns(
-            "SELECT key, value, value_type FROM params WHERE run_id = ? ORDER BY key",
-            [run_id],
-        )
-        summary = self._db.read_columns(
-            "SELECT key, value, value_type FROM summary WHERE run_id = ? ORDER BY key",
-            [run_id],
-        )
-        return {"run": rows[0], "params": params, "summary": summary}
+        from ..server.ingest_ops import run_docs
+
+        docs = run_docs(self._db, run_id)
+        return {"run": rows[0], "config_doc": docs["config"], "summary_doc": docs["summary"]}
 
     def list_sequences(self, run_id: str) -> list[dict[str, Any]]:
         return self._db.read_columns(
@@ -1774,31 +1581,9 @@ class _LocalBackend:
 
         return scalar_series(self._db, run_ids, names)
 
-    def list_artifacts(self, run_id: str) -> dict[str, Any]:
-        named = self._db.read_columns(
-            """SELECT ra.name, ra.hash, CASE WHEN ra.step = -1 THEN NULL ELSE ra.step END AS step,
-                      a.mime_type, a.size_bytes, a.metadata, a.object_type
-               FROM run_artifacts ra JOIN artifacts a ON a.hash = ra.hash
-               WHERE ra.run_id = ? ORDER BY ra.created_at DESC""",
-            [run_id],
-        )
-        from_seq = self._db.read_columns(
-            """SELECT DISTINCT s.name, s.artifact_hash AS hash, s.step,
-                      a.mime_type, a.size_bytes, a.metadata, s.object_type
-               FROM sequences s JOIN artifacts a ON a.hash = s.artifact_hash
-               WHERE s.run_id = ? AND s.artifact_hash IS NOT NULL
-               ORDER BY s.name, s.step""",
-            [run_id],
-        )
-        return {"named": named, "from_sequences": from_seq}
-
     def get_artifact_bytes(self, digest: str) -> bytes:
         data, _ = self._blobs.get(digest)
         return data
-
-    def get_artifact_path(self, digest: str) -> Path | None:
-        p = self._blobs.path_for(digest)
-        return p if p.exists() else None
 
     def get_logs(
         self, run_id: str, *, stream: str | None = None,
@@ -1849,37 +1634,55 @@ class _LocalBackend:
             return None
         return None
 
-    # ---- Versioned artifact registry ----
+    # ---- Artifact registry ----
+
+    def _ops(self) -> Any:
+        from ..server import artifact_registry_ops
+
+        self._drain_wals()
+        return artifact_registry_ops
 
     def list_artifact_families(self, project_id: str, type_filter: str | None = None) -> list[dict[str, Any]]:
-        self._drain_wals()
-        from ..server import artifact_registry_ops
-        return artifact_registry_ops.list_families(self._db, project_id, type_filter=type_filter)
+        return self._ops().list_families(self._db, project_id, type_filter=type_filter)
 
-    def list_artifact_versions(self, family_id: str) -> list[dict[str, Any]]:
-        self._drain_wals()
-        from ..server import artifact_registry_ops
-        return artifact_registry_ops.list_versions(self._db, family_id)
+    def family_versions(self, project_id: str, name: str) -> list[dict[str, Any]]:
+        ops = self._ops()
+        fam = ops.get_family_by_name(self._db, project_id, name)
+        if fam is None:
+            raise LookupError(f"no artifact {name!r} in project {project_id!r}")
+        return ops.list_versions(self._db, fam["id"])
 
-    def resolve_artifact_ref(self, project_id: str, ref: str) -> dict[str, Any]:
-        self._drain_wals()
-        from ..server import artifact_registry_ops
-        return artifact_registry_ops.resolve_ref(self._db, project_id, ref)
+    def resolve_artifact_ref(self, project_id: str | None, ref: str) -> dict[str, Any]:
+        return self._ops().resolve_ref(self._db, project_id, ref)
 
-    def get_run_inputs(self, run_id: str) -> list[dict[str, Any]]:
-        self._drain_wals()
-        from ..server import artifact_registry_ops
-        return artifact_registry_ops.get_run_inputs(self._db, run_id)
+    def version_files(self, version_id: str) -> list[dict[str, Any]]:
+        return self._ops().version_files(self._db, version_id)
 
-    def get_run_outputs(self, run_id: str) -> list[dict[str, Any]]:
-        self._drain_wals()
-        from ..server import artifact_registry_ops
-        return artifact_registry_ops.get_run_outputs(self._db, run_id)
+    def version_consumers(self, version_id: str) -> list[dict[str, Any]]:
+        return self._ops().version_consumers(self._db, version_id)
 
-    def get_lineage(self, project_id: str, **kwargs: Any) -> dict[str, Any]:
-        self._drain_wals()
-        from ..server import artifact_registry_ops
-        return artifact_registry_ops.get_lineage_graph(self._db, project_id, **kwargs)
+    def run_inputs(self, run_id: str, role: str | None = None) -> list[dict[str, Any]]:
+        return self._ops().run_inputs(self._db, run_id, role)
+
+    def run_outputs(self, run_id: str) -> list[dict[str, Any]]:
+        return self._ops().run_outputs(self._db, run_id)
+
+    def add_alias(self, version_id: str, alias: str) -> dict[str, Any]:
+        t = _edit_transport(self)
+        try:
+            return t.add_artifact_alias(version_id, alias)
+        finally:
+            t.close()
+
+    def remove_alias(self, version_id: str, alias: str) -> dict[str, Any]:
+        t = _edit_transport(self)
+        try:
+            return t.remove_artifact_alias(version_id, alias)
+        finally:
+            t.close()
+
+    def get_lineage(self, project_id: str, family_id: str | None = None) -> dict[str, Any]:
+        return self._ops().project_lineage(self._db, project_id, family_id=family_id)
 
     def close(self) -> None:
         self._db.close()
@@ -1943,17 +1746,27 @@ class _HttpBackend:
     def list_projects(self) -> list[dict[str, Any]]:
         return self._get("/api/projects")["projects"]
 
-    def list_runs(
-        self, project: str | None, status: str | None,
-        limit: int, offset: int, sort_col: str, sort_desc: bool,
-    ) -> tuple[list[dict[str, Any]], int]:
-        params: dict[str, Any] = {"limit": limit, "offset": offset}
-        if project:
-            params["project"] = project
-        if status:
-            params["status"] = status
-        data = self._get("/api/runs", params=params)
+    def query_runs(self, spec: dict[str, Any]) -> tuple[list[dict[str, Any]], int]:
+        """The shared evaluator, on the server (``POST /api/runs/query``)."""
+        data = self._request("POST", "/api/runs/query", json=spec)
         return data["runs"], data["total"]
+
+    def _request(self, method: str, path: str, **kwargs: Any) -> Any:
+        """A call whose 4xx becomes ValueError / LookupError with the server's detail."""
+        import httpx
+
+        resp = self._client.request(method, path, **kwargs)
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError:
+            if resp.status_code >= 500:
+                raise
+            try:
+                detail = resp.json().get("detail", resp.text)
+            except ValueError:
+                detail = resp.text
+            raise (LookupError if resp.status_code == 404 else ValueError)(detail) from None
+        return resp.json()
 
     def get_run(self, run_id: str) -> dict[str, Any]:
         return self._get(f"/api/runs/{run_id}")
@@ -1976,9 +1789,6 @@ class _HttpBackend:
         resp = self._client.post("/api/compare", json={"run_ids": run_ids, "metrics": names})
         resp.raise_for_status()
         return resp.json()["series"]
-
-    def list_artifacts(self, run_id: str) -> dict[str, Any]:
-        return self._get(f"/api/runs/{run_id}/artifacts")
 
     def get_artifact_bytes(self, digest: str) -> bytes:
         if self._cache_dir is not None:
@@ -2005,9 +1815,6 @@ class _HttpBackend:
 
         return data
 
-    def get_artifact_path(self, digest: str) -> Path | None:
-        return None  # HTTP backend can't provide local paths.
-
     def get_logs(
         self, run_id: str, *, stream: str | None = None,
         search: str | None = None, limit: int = 10_000, offset: int = 0,
@@ -2033,32 +1840,59 @@ class _HttpBackend:
         except Exception:
             return None
 
-    # ---- Versioned artifact registry ----
+    # ---- Artifact registry ----
 
     def list_artifact_families(self, project_id: str, type_filter: str | None = None) -> list[dict[str, Any]]:
-        params: dict[str, Any] = {}
-        if type_filter:
-            params["type"] = type_filter
-        return self._get(f"/api/projects/{project_id}/artifact-families", params=params)["families"]
+        params = {"type": type_filter} if type_filter else None
+        return self._request(
+            "GET", f"/api/projects/{project_id}/artifact-families", params=params,
+        )["families"]
 
-    def list_artifact_versions(self, family_id: str) -> list[dict[str, Any]]:
-        return self._get(f"/api/artifact-families/{family_id}/versions")["versions"]
+    def family_versions(self, project_id: str, name: str) -> list[dict[str, Any]]:
+        from urllib.parse import quote
 
-    def resolve_artifact_ref(self, project_id: str, ref: str) -> dict[str, Any]:
-        resp = self._client.post(
-            f"/api/projects/{project_id}/resolve-artifact-ref", json={"ref": ref}
+        return self._request(
+            "GET", f"/api/projects/{project_id}/artifact-families/by-name/{quote(name, safe='')}",
+        )["versions"]
+
+    def resolve_artifact_ref(self, project_id: str | None, ref: str) -> dict[str, Any]:
+        if project_id is None:
+            # A qualified ref carries its own project; the route needs one in the path.
+            project_id = ref.partition("/")[0] if "/" in ref else ""
+            if not project_id:
+                raise ValueError(f"artifact ref {ref!r} needs a project")
+        return self._request(
+            "POST", f"/api/projects/{project_id}/resolve-artifact-ref", json={"ref": ref},
         )
-        resp.raise_for_status()
-        return resp.json()
 
-    def get_run_inputs(self, run_id: str) -> list[dict[str, Any]]:
-        return self._get(f"/api/runs/{run_id}/inputs")["inputs"]
+    def version_files(self, version_id: str) -> list[dict[str, Any]]:
+        return self._request("GET", f"/api/artifact-versions/{version_id}/files")["files"]
 
-    def get_run_outputs(self, run_id: str) -> list[dict[str, Any]]:
-        return self._get(f"/api/runs/{run_id}/outputs")["outputs"]
+    def version_consumers(self, version_id: str) -> list[dict[str, Any]]:
+        return self._request("GET", f"/api/artifact-versions/{version_id}/consumers")["consumers"]
 
-    def get_lineage(self, project_id: str, **kwargs: Any) -> dict[str, Any]:
-        return self._get(f"/api/projects/{project_id}/lineage", params=kwargs)
+    def run_inputs(self, run_id: str, role: str | None = None) -> list[dict[str, Any]]:
+        params = {"role": role} if role is not None else None
+        return self._request("GET", f"/api/runs/{run_id}/inputs", params=params)["inputs"]
+
+    def run_outputs(self, run_id: str) -> list[dict[str, Any]]:
+        return self._request("GET", f"/api/runs/{run_id}/outputs")["outputs"]
+
+    def add_alias(self, version_id: str, alias: str) -> dict[str, Any]:
+        return self._request(
+            "POST", f"/api/artifact-versions/{version_id}/aliases", json={"alias": alias},
+        )
+
+    def remove_alias(self, version_id: str, alias: str) -> dict[str, Any]:
+        from urllib.parse import quote
+
+        return self._request(
+            "DELETE", f"/api/artifact-versions/{version_id}/aliases/{quote(alias, safe='')}",
+        )
+
+    def get_lineage(self, project_id: str, family_id: str | None = None) -> dict[str, Any]:
+        params = {"family_id": family_id} if family_id else None
+        return self._request("GET", f"/api/projects/{project_id}/lineage", params=params)
 
     def close(self) -> None:
         self._client.close()
@@ -2067,6 +1901,13 @@ class _HttpBackend:
 # ---------------------------------------------------------------------------
 # ZIP archive support — load an exported run.zip into a temp .cairn/
 # ---------------------------------------------------------------------------
+
+
+def _project_id(project: str) -> str:
+    """A project name as its id (the normalisation ``cairn.Run`` applies)."""
+    from ..server.routes._common import slugify
+
+    return slugify(project)
 
 
 def _load_zip_to_tempdir(zip_path: Path) -> tuple[Path, Path]:
@@ -2179,16 +2020,20 @@ class Reader:
             last_run_at=r.get("last_run_at"),
         ) for r in rows]
 
-    def runs(self, project: str | None = None) -> RunQuery:
-        """Start a lazy run query, optionally filtered by project.
+    def runs(self, project: str | None = None, *, archived: bool | None = False) -> RunQuery:
+        """Start a lazy run query (see ``RunQuery`` for order and filters).
 
         Args:
-            project: Only runs of this project id (None: all projects).
+            project: Only runs of this project (name or id; normalised like
+                ``cairn.Run``'s). None: all projects.
+            archived: ``False`` (default) leaves archived runs out, ``True``
+                keeps only them, ``None`` both.
 
         Returns:
-            A ``RunQuery`` over the runs, newest first.
+            A ``RunQuery`` over the runs, oldest first.
         """
-        return RunQuery(self._backend, project=project)
+        return RunQuery(self._backend, project=_project_id(project) if project else None,
+                        archived=archived)
 
     def run(self, run_id: str) -> Run:
         """Get a specific run by ID.
@@ -2206,98 +2051,65 @@ class Reader:
         data = self._backend.get_run(run_id)
         return Run(data["run"], self._backend)
 
-    # ---- Versioned Artifact Registry ----
+    # ---- Artifacts ----
 
-    def artifact_families(self, project: str, *, type: str | None = None) -> list[dict[str, Any]]:
-        """List the versioned artifact families of a project.
-
-        Args:
-            project: Project name or id (normalised to an id: lowercase,
-                spaces become dashes).
-            type: Only families of this artifact type.
-
-        Returns:
-            One dict per family.
-        """
-        project_id = project.lower().replace(" ", "-")
-        return self._backend.list_artifact_families(project_id, type_filter=type)
-
-    def artifact_versions(self, family_name: str, *, project: str) -> list[dict[str, Any]]:
-        """List all versions of a versioned artifact family.
+    def artifact(self, ref: str, *, project: str | None = None) -> ArtifactVersion:
+        """One artifact version (no consumption is recorded; that is
+        ``cairn.Run.use_artifact``).
 
         Args:
-            family_name: The family's name.
-            project: Project name or id (normalised to an id).
-
-        Returns:
-            One dict per version.
+            ref: ``"name"`` (= ``name:latest``), ``"name:alias"``,
+                ``"name:vN"``, or ``"project/name:..."``.
+            project: The project, unless ``ref`` names it.
 
         Raises:
-            KeyError: The project has no family of that name.
+            LookupError: No such artifact, alias or version.
+            ValueError: A malformed ref, or no project.
         """
-        project_id = project.lower().replace(" ", "-")
-        # Resolve family name to id first
-        ref = f"{family_name}:latest"
-        try:
-            info = self._backend.resolve_artifact_ref(project_id, ref)
-            family_id = info.get("family_id", "")
-        except Exception:
-            # Fallback: search through families
-            families = self._backend.list_artifact_families(project_id)
-            family_id = ""
-            for f in families:
-                if f.get("name") == family_name:
-                    family_id = f["id"]
-                    break
-            if not family_id:
-                raise KeyError(f"Artifact family {family_name!r} not found in project {project!r}")
-        return self._backend.list_artifact_versions(family_id)
+        return ArtifactVersion(
+            self._backend.resolve_artifact_ref(_project_id(project) if project else None, ref),
+            self._backend,
+        )
 
-    def lineage(self, project: str, **kwargs: Any) -> dict[str, Any]:
-        """Get the artifact lineage graph of a project.
+    def artifact_versions(self, name: str, *, project: str) -> list[ArtifactVersion]:
+        """Every version of an artifact, oldest first (v1..vN).
 
-        Args:
-            project: Project name or id (normalised to an id).
-            **kwargs: ``family_id`` (only that family's versions) and
-                ``depth``.
+        Raises:
+            LookupError: The project has no artifact of that name.
+        """
+        rows = self._backend.family_versions(_project_id(project), name)
+        return [ArtifactVersion(r, self._backend) for r in sorted(rows, key=lambda r: r["version"])]
+
+    def artifact_families(self, project: str, *, type: str | None = None) -> list[ArtifactFamily]:
+        """A project's artifacts (each name with its versions), most recently
+        updated first; only those of ``type`` when given."""
+        return [
+            ArtifactFamily(
+                name=f["name"], type=f["type"], project=f["project_id"],
+                description=f.get("description"), versions=f["version_count"],
+                aliases=dict(f.get("aliases") or {}), created_at=f["created_at"],
+                updated_at=f["updated_at"], _backend=self._backend,
+            )
+            for f in self._backend.list_artifact_families(_project_id(project), type_filter=type)
+        ]
+
+    def lineage(self, project: str, *, family: str | None = None) -> dict[str, Any]:
+        """The artifact lineage graph of a project (or of one artifact).
 
         Returns:
-            ``{"nodes": [...], "edges": [...]}``: artifact-version and run
-            nodes, and ``produced``/``consumed``/``forked`` edges.
+            ``{"nodes": [...], "edges": [...]}``: run nodes and
+            artifact-version nodes, ``produced`` (run -> version),
+            ``consumed`` (version -> run, with ``role``) and ``forked``
+            (run -> run) edges.
         """
-        project_id = project.lower().replace(" ", "-")
-        return self._backend.get_lineage(project_id, **kwargs)
-
-    def resolve_and_download_artifact(self, project_id: str, ref: str) -> Any:
-        """Resolve a versioned artifact ref, then download and decode it.
-
-        Args:
-            project_id: The project id (not normalised).
-            ref: ``"name:alias"`` or ``"name:vN"``, e.g. ``"model:latest"``
-                or ``"model:v3"``.
-
-        Returns:
-            A ``cairn.ArtifactDir`` for a multi-file
-            artifact; else the value decoded by its type's handler, or the
-            raw bytes when it has none.
-        """
-        info = self._backend.resolve_artifact_ref(project_id, ref)
-        data = self._backend.get_artifact_bytes(info["hash"])
-        if info.get("mime_type") == MANIFEST_MIME:
-            return ArtifactDir.from_bytes(data, self._backend.get_artifact_bytes)
-        object_type = info.get("object_type")
-        if object_type:
-            from .handlers.registry import default_registry
-            handler = default_registry.find_by_type(object_type)
-            if handler and hasattr(handler, "deserialize"):
-                meta = info.get("metadata", {})
-                if isinstance(meta, str):
-                    try:
-                        meta = json.loads(meta)
-                    except (json.JSONDecodeError, TypeError):
-                        meta = {}
-                return handler.deserialize(data, meta)
-        return data
+        project_id = _project_id(project)
+        family_id = None
+        if family is not None:
+            fams = [f for f in self._backend.list_artifact_families(project_id) if f["name"] == family]
+            if not fams:
+                raise LookupError(f"no artifact {family!r} in project {project_id!r}")
+            family_id = fams[0]["id"]
+        return self._backend.get_lineage(project_id, family_id)
 
     def close(self) -> None:
         """Close the underlying database or HTTP connection."""

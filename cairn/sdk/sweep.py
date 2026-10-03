@@ -236,7 +236,10 @@ def _work(
                 **run_kwargs, "name": run_kwargs.get("name") or trial["name"],
             })
             transport.report_trial(sweep_id, trial["id"], run_id=run.id, status="running")
-            run.config(params)
+            # Dotted parameter names ("optim.lr") nest like hand-written config.
+            from ..server.config_doc import unflatten
+
+            run.config(unflatten(params))
             value = None
             try:
                 result = fn(params, run) if _takes_run(fn) else fn(params)

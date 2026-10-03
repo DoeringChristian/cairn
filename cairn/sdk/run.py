@@ -22,7 +22,6 @@ import signal
 import sys
 import threading
 import _thread
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -34,65 +33,22 @@ from ..sdk.capture.env import capture_env as _capture_env
 from ..sdk.capture.git import capture_git, diff_text
 from ..sdk.capture.source import build_source_archive, find_project_root
 from ..sdk.capture.system import SystemMetricsCollector
-from ..sdk.handlers.registry import HandlerRegistry, default_registry, resolve_mime_type
-from ..sdk.handlers.table import MAX_ROWS as _TABLE_MAX_ROWS
-from ..sdk.wrappers import Audio, Image, Text, Video, _TypeWrapper
-from .artifact_dir import MANIFEST_MIME, ArtifactDir, is_multi_file, upload_manifest
+from ..sdk.handlers.registry import HandlerRegistry, default_registry
+from ..sdk.wrappers import _TypeWrapper
+from ..server import artifact_registry_ops as _registry_rules
+from ..server import config_doc
+from .artifacts import Artifact, ArtifactVersion, draft_from_shorthand
 from .buffer import MetricBuffer
 from .connect import open_transport
 from .gallery import GALLERY_MIME, GalleryItem, resolve_gallery
 from .local import LocalTransport
 from .scope import Scope
 from .transport import Transport
+from .uploads import upload_value
 from .wal import WriteAheadLog
 from .watch import Watcher
 
 log = logging.getLogger(__name__)
-
-
-@dataclass
-class ArtifactVersion:
-    """One version of an artifact in the registry.
-
-    Returned by ``Run.log_artifact(..., artifact_type=...)`` and
-    ``cairn.log_artifact``.
-
-    Attributes:
-        id: The version's id.
-        family_id: Id of the artifact family (all versions of one name).
-        family_name: The artifact's name.
-        version: Version number within the family, from 1 (``"name:v3"``).
-        hash: SHA-256 of the stored bytes (for a multi-file artifact, of its
-            manifest).
-        size_bytes: Stored size (for a multi-file artifact, of all files).
-        metadata: Handler metadata merged with the caller's ``metadata``.
-        created_at: Creation time, ISO 8601.
-        created_by_run: Id of the run that logged it, if any.
-        aliases: Aliases set on this version (default ``["latest"]``), when
-            the backend reports them.
-    """
-    id: str
-    family_id: str
-    family_name: str
-    version: int
-    hash: str
-    size_bytes: int
-    metadata: dict
-    created_at: str
-    created_by_run: str | None = None
-    aliases: list | None = None
-
-    @classmethod
-    def from_row(cls, row: dict) -> "ArtifactVersion":
-        """Build from a server row, tolerating extra/missing envelope keys
-        (forward-compatible ingest)."""
-        import dataclasses
-
-        names = {f.name for f in dataclasses.fields(cls)}
-        data = {k: v for k, v in row.items() if k in names}
-        data.setdefault("family_name", row.get("name", ""))
-        data.setdefault("metadata", row.get("metadata") or {})
-        return cls(**data)
 
 
 def _now_iso() -> str:
@@ -167,8 +123,8 @@ class Run:
             Use it for many concurrent writers on shared storage (NFS,
             Slurm, Ray).
         capture_source: Upload a snapshot of the project's source files
-            (and, in a git checkout, the ``git diff HEAD`` as the text
-            artifact ``_cairn/git.diff``).
+            (and, in a git checkout with uncommitted changes, the
+            ``git diff HEAD``, stored with the snapshot).
         capture_stdout: Record stdout/stderr lines as the run's logs.
         capture_env: Record the environment: Python version, packages,
             hostname, user, command line, git commit/branch/remote.
@@ -346,6 +302,13 @@ class Run:
             resp = self._transport.create_run(create_body)
         self._run_id: str = resp["run_id"]
         self._project_id: str = resp["project_id"]
+        # This run's copy of its config / summary documents, so a write that
+        # the merge rules reject raises here, on both backends.
+        self._docs: dict[str, dict[str, Any]] = {
+            "config": dict(resp.get("config") or {}),
+            "summary": dict(resp.get("summary") or {}),
+        }
+        self._backend_cache: Any = None
         self._url_path: str = resp.get("url", f"/p/{self._project_id}/r/{self._run_id}")
 
         # Attach WAL for HTTP transports (local mode writes the repo-dir WAL itself).
@@ -486,7 +449,9 @@ class Run:
             self.finish(status="failed")
             raise
         if trial.get("params"):
-            self.config(trial["params"])
+            # Sweep parameters are dotted names ("optim.lr"): nest them like
+            # hand-written config.
+            self.config(config_doc.unflatten(trial["params"]))
 
     # ---- properties -------------------------------------------------------
 
@@ -748,153 +713,111 @@ class Run:
 
     def log_artifact(
         self,
-        value: Any,
-        name: str,
-        step: int | None = None,
+        artifact: Artifact | str | Path | Any,
+        name: str | None = None,
         *,
-        artifact_type: str | None = None,
-        metadata: dict | None = None,
+        type: str = "artifact",
         aliases: list[str] | None = None,
-    ) -> "ArtifactVersion | str":
-        """Attach an artifact to the run.
+        step: int | None = None,
+        metadata: dict | None = None,
+        description: str | None = None,
+    ) -> ArtifactVersion:
+        """Log a new version of an artifact, produced by this run.
 
-        Without ``artifact_type``: serialize + upload + attach as a NAMED run
-        artifact (the ``run_artifacts`` pool) and return its content digest.
-        With ``artifact_type``: register a version in the artifact registry
-        (family + versions) and return the ``ArtifactVersion``.
+        ``artifact`` is a ``cairn.Artifact`` draft (its name, type, metadata
+        and description are used; passing ``name``/``type``/``metadata``/
+        ``description`` too is a ``TypeError``), or a shorthand needing
+        ``name``: a directory path (every file under it), a file path (stored
+        at its basename), or any other value (stored at ``"<name>.<ext>"``:
+        wrappers with their handler, bytes as is, anything else pickled).
 
-        A directory path, a ``Reference`` or a
-        list of them is a multi-file artifact: each file is uploaded
-        content-addressed (references are only recorded), and a manifest
-        naming them is versioned — in the ``artifact_type`` family, or
-        ``"artifact"`` when none is given. ``use_artifact`` returns it as an
-        ``ArtifactDir``.
+            run.log_artifact(model.state_dict(), "ckpt", type="model", step=epoch,
+                             aliases=["best"] if improved else None)
 
-        Sequence points go through ``track``, not here.
+        Every call creates a new version, even for identical content.
+        ``latest`` always moves to it; ``aliases`` (user aliases) move to it
+        too. ``step`` places it on the run's timeline.
 
-        Names starting with ``_cairn/`` are reserved for cairn's internal
-        attachments (e.g. ``_cairn/git.diff``); the UI keeps them out of
-        card grids. Don't use that prefix for your own artifacts.
+        Returns:
+            The new ``ArtifactVersion``. In WAL mode a PENDING one (version
+            None; readable once the repo has ingested it).
+
+        Raises:
+            TypeError: A draft together with name/type/metadata/description,
+                or a shorthand without a name.
+            FileNotFoundError: A shorthand path that does not exist.
+            ValueError: A reserved alias (``latest``, ``vN``), a bad name, or
+                a type differing from the artifact's existing type.
         """
-        if is_multi_file(value):
-            digest, size, meta = upload_manifest(self._transport, value)
-            return self._create_version(
-                name, artifact_type or "artifact", digest, size, {**meta, **(metadata or {})}, aliases,
-            )
-        if artifact_type is not None:
-            return self._log_versioned_artifact(value, name, artifact_type, metadata, aliases)
+        if self._finished:
+            raise RuntimeError("Run has already been finished")
+        draft = self._draft(artifact, name, type, metadata, description)
+        return self._log_draft(draft, aliases, step, created_by_run=self._run_id)
 
-        # Named-artifact path: handler dispatch (wrapper unwrap, like track).
-        if isinstance(value, _TypeWrapper):
-            payload, object_type = value.obj, value.object_type
-            handler = self._registry.find_by_type(object_type)
-            kwargs = value.kwargs
-        else:
-            payload = value
-            handler = self._registry.find_handler(value)
-            object_type = handler.object_type if handler else None
-            kwargs = {}
-        if handler is None:
-            raise TypeError(
-                f"No handler for value of type {value.__class__.__name__}; "
-                "wrap with cairn.Image/Figure/Tensor/... to force a handler."
-            )
-        payload, media_hashes = self._upload_table_media(handler, payload)
-        blob, meta = handler.serialize(payload, **kwargs)
-        if media_hashes:
-            meta["media_hashes"] = media_hashes
-        if metadata:
-            meta = {**meta, **metadata}
-        digest = self._transport.upload_artifact(
-            blob, resolve_mime_type(handler, payload, kwargs), meta, object_type=object_type
-        )
-        self._transport.attach_artifact(self._run_id, name, digest, step)
-        return digest
-
-    def _log_versioned_artifact(
-        self,
-        value: Any,
-        name: str,
-        family_type: str,
-        metadata: dict | None,
-        aliases: list[str] | None,
-    ) -> ArtifactVersion | None:
-        """Upload a blob and create a versioned artifact entry."""
-        handler_meta: dict[str, Any] = {}
-        mime_type = "application/octet-stream"
-
-        # Handle Path/str as file path
-        if isinstance(value, (str, Path)):
-            path = Path(value)
-            with open(path, "rb") as f:
-                blob = f.read()
-        else:
-            # Use the handler registry to serialize the value
-            handler = self._registry.find_handler(value)
-            if handler is not None:
-                blob, handler_meta = handler.serialize(value)
-                mime_type = resolve_mime_type(handler, value, {})
-            elif isinstance(value, (bytes, bytearray)):
-                blob = bytes(value)
-            else:
+    def _draft(
+        self, artifact: Any, name: str | None, type: str, metadata: dict | None,
+        description: str | None,
+    ) -> Artifact:
+        if isinstance(artifact, Artifact):
+            extra = [k for k, v in (("name", name), ("metadata", metadata),
+                                    ("description", description)) if v is not None]
+            if type != "artifact":
+                extra.append("type")
+            if extra:
                 raise TypeError(
-                    f"No handler for value of type {type(value).__name__} and "
-                    "value is not bytes or a file path."
+                    f"log_artifact got a cairn.Artifact and {', '.join(extra)}; set those on "
+                    "the Artifact instead"
                 )
+            return artifact
+        draft = draft_from_shorthand(artifact, name, type, self._registry)
+        draft.metadata = dict(metadata or {})
+        draft.description = description
+        return draft
 
-        # Merge metadata
-        merged_meta = {**handler_meta, **(metadata or {})}
-
-        # Upload blob (reuse existing upload_artifact)
-        digest = self._transport.upload_artifact(blob, mime_type, merged_meta)
-        return self._create_version(name, family_type, digest, len(blob), merged_meta, aliases)
-
-    def _create_version(
-        self,
-        name: str,
-        family_type: str,
-        digest: str,
-        size_bytes: int,
-        metadata: dict[str, Any],
-        aliases: list[str] | None,
-    ) -> ArtifactVersion | None:
-        result = self._transport.create_artifact_version(
-            project_id=self._project_id,
-            family_name=name,
-            family_type=family_type,
-            digest=digest,
-            size_bytes=size_bytes,
-            metadata=metadata,
-            created_by_run=self._run_id,
-            aliases=aliases,
+    def _log_draft(
+        self, draft: Artifact, aliases: list[str] | None, step: int | None,
+        *, created_by_run: str | None,
+    ) -> ArtifactVersion:
+        return log_draft(
+            self._transport, self._registry, self._project_id, draft, aliases, step,
+            created_by_run=created_by_run, backend=self._reader_backend,
         )
-        return ArtifactVersion.from_row(result) if result else None
 
-    def use_artifact(self, ref: str, *, role: str = "input") -> Any:
-        """Consume an artifact. ``ref`` is ``"name:alias"`` or ``"name:vN"``.
+    def _reader_backend(self) -> Any:
+        """The Reader backend over this run's target (ArtifactVersion reads)."""
+        if getattr(self, "_backend_cache", None) is None:
+            self._backend_cache = backend_for_transport(self._transport)
+        return self._backend_cache
 
-        A multi-file artifact comes back as an
-        ``ArtifactDir`` (``.files``,
-        ``.open(path)``, ``.download(root)``); anything else as its
-        deserialized value, or bytes.
+    def use_artifact(self, ref: str | ArtifactVersion, *, role: str = "input") -> ArtifactVersion:
+        """Consume an artifact version: resolve it now and record it as an
+        input of this run (re-using the same version is a no-op).
+
+        ``ref`` is ``"name"`` (= ``name:latest``), ``"name:alias"``,
+        ``"name:vN"``, ``"project/name:..."`` for another project, or an
+        ``ArtifactVersion``. The resolved immutable version is recorded, not
+        the alias.
+
+            ckpt = run.use_artifact("base-ckpt:best")
+            model.load_state_dict(ckpt.get())
+
+        Returns:
+            The ``ArtifactVersion`` (``.get()`` for a logged object,
+            ``.download()`` for files).
+
+        Raises:
+            LookupError: No such artifact, alias or version.
+            RuntimeError: In WAL mode (it needs an answer now).
         """
-        version_info = self._transport.resolve_artifact(self._project_id, ref)
-        # Record consumption
-        self._transport.record_artifact_input(self._run_id, version_info["id"], role)
-        # Download bytes (uses existing cache)
-        data = self._transport.download_artifact_bytes(version_info["hash"])
-        if version_info.get("mime_type") == MANIFEST_MIME:
-            return ArtifactDir.from_bytes(data, self._transport.download_artifact_bytes)
-        # Deserialize if possible
-        object_type = version_info.get("object_type")
-        if object_type:
-            handler = self._registry.find_by_type(object_type)
-            if handler and hasattr(handler, "deserialize"):
-                meta = version_info.get("metadata", {})
-                if isinstance(meta, str):
-                    meta = json.loads(meta) if meta else {}
-                return handler.deserialize(data, meta)
-        return data
+        if self._finished:
+            raise RuntimeError("Run has already been finished")
+        if isinstance(ref, ArtifactVersion):
+            if ref.pending:
+                raise RuntimeError("cannot use a pending (WAL-mode) artifact version")
+            ref = ref.qualified_ref
+        info = self._transport.resolve_artifact(self._project_id, ref)
+        self._transport.record_artifact_input(self._run_id, info["id"], role)
+        return ArtifactVersion(info, self._reader_backend)
 
     # ---- params / metadata ------------------------------------------------
 
@@ -908,42 +831,62 @@ class Run:
         merged.update(kwargs)
         return merged
 
+    def _merge_doc(self, kind: str, update: dict[str, Any]) -> dict[str, Any]:
+        """Validate ``update`` and merge it into this run's copy of the
+        document, raising before anything is sent (see ``config_doc``)."""
+        update = config_doc.normalize(update)
+        merged = config_doc.merge(self._docs[kind], update)
+        config_doc.nodes(merged)  # raises ValueError on a flat-key collision
+        self._docs[kind] = merged
+        return update
+
     def config(self, *args: Any, **kwargs: Any) -> None:
         """Record the run's INPUTS — what was decided before the work ran.
 
-        Accepts a mapping and/or kwargs; nested dicts flatten to dotted keys
-        server-side (``run.config(hparams={"lr": 1e-3})`` → ``hparams.lr``).
+        Accepts a mapping and/or kwargs, DEEP-MERGED into the run's config
+        document: a dict into a dict recurses; anything else replaces (a value
+        over a dict drops that subtree; lists are replaced whole). ``None`` is
+        a value. The document reads back exactly (``Reader.Run.config``); its
+        leaves are also addressable by dotted path (``optim.lr``) in filters,
+        expressions and the runs table.
 
             run.config(lr=1e-3, sched={"warmup": 100})
             run.config(vars(args))
 
         The counterpart is ``summary``, for results.
+
+        Raises:
+            TypeError: A value is not JSON (dict with str keys, list, str,
+                int, float, bool, None; tuples become lists, numpy scalars
+                Python scalars). The message names the key path.
+            ValueError: Two paths flatten to the same dotted key
+                (``{"a.b": 1}`` next to ``{"a": {"b": 2}}``).
         """
         if self._finished:
             raise RuntimeError("Run has already been finished")
         merged = self._merge_mapping("run.config", args, kwargs)
         if merged:
-            self._transport.post_params(self._run_id, merged)
+            self._transport.post_params(self._run_id, self._merge_doc("config", merged))
 
     def summary(self, *args: Any, **kwargs: Any) -> None:
         """Record the run's RESULTS — the numbers you are claiming.
 
             run.summary(best_val_acc=0.91, epochs_run=30)
-            run.summary({"test": {"psnr": 31.4}})      # -> test.psnr
+            run.summary({"test": {"psnr": 31.4}})      # summary["test"]["psnr"]
 
-        Same shape as ``config``, opposite meaning: config is what went in,
-        summary is what came out. Nothing writes here implicitly — a metric's
-        last value is NOT a summary entry. A metric's final value (the runs
-        table, ``Reader.Run.final``) is its last point, replaced by its
-        ``track(..., summary=)`` rule, replaced by an explicit summary key of
-        the same name — so a number appears here only because you said so,
-        and "who claimed this" stays answerable.
+        Same shape and merge rules as ``config``, opposite meaning: config is
+        what went in, summary is what came out. Nothing writes here
+        implicitly — a metric's last value is NOT a summary entry. A metric's
+        final value (the runs table, ``Reader.Run.final``) is its last point,
+        replaced by its ``track(..., summary=)`` rule, replaced by an explicit
+        summary key of the same dotted name — so a number appears here only
+        because you said so, and "who claimed this" stays answerable.
         """
         if self._finished:
             raise RuntimeError("Run has already been finished")
         merged = self._merge_mapping("run.summary", args, kwargs)
         if merged:
-            self._transport.post_summary(self._run_id, merged)
+            self._transport.post_summary(self._run_id, self._merge_doc("summary", merged))
 
     def set_tag(self, tag: str) -> None:
         """Add one tag, keeping the ones the run already has."""
@@ -1199,11 +1142,6 @@ class Run:
         max_file_size_mb: float,
         diff: str = "",
     ) -> None:
-        if diff:
-            try:
-                self.log_artifact(Text(diff), name="_cairn/git.diff")
-            except Exception:  # noqa: BLE001
-                log.warning("git diff upload failed", exc_info=True)
         try:
             if root_override is not None:
                 root = Path(root_override).resolve()
@@ -1219,6 +1157,12 @@ class Run:
                 max_file_size_mb=max_file_size_mb,
                 marker=marker,
             )
+            if diff:
+                # The dirty-tree diff travels with the snapshot: its blob's
+                # hash is in the manifest (the UI downloads it from there).
+                manifest["diff_hash"] = self._transport.upload_artifact(
+                    diff.encode("utf-8"), "text/x-diff", {},
+                )
             self._transport.upload_source(self._run_id, archive, manifest)
         except Exception:  # noqa: BLE001
             log.warning("source capture failed", exc_info=True)
@@ -1273,7 +1217,7 @@ class _DisabledRun(Run):
     def log_artifact(self, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
         pass
 
-    def use_artifact(self, *args: Any, **kwargs: Any) -> None:
+    def use_artifact(self, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
         pass
 
     def set_tag(self, *args: Any, **kwargs: Any) -> None:
@@ -1302,6 +1246,50 @@ class _DisabledRun(Run):
 
     def finish(self, *args: Any, **kwargs: Any) -> None:
         self._finished = True
+
+
+def log_draft(
+    transport: Any, registry: HandlerRegistry, project_id: str, draft: Artifact,
+    aliases: list[str] | None, step: int | None, *, created_by_run: str | None,
+    backend: Any,
+) -> ArtifactVersion:
+    """Upload a draft's entries and manifest, then register the version
+    (shared by ``Run.log_artifact`` and ``cairn.log_artifact``)."""
+    for alias in aliases or []:
+        _registry_rules.validate_user_alias(alias)
+    if step is not None and (isinstance(step, bool) or not isinstance(step, int)):
+        raise TypeError(f"step must be an int, got {step!r}")
+    digest, _files = draft._build_manifest(transport, registry)
+    body = {
+        "name": draft.name,
+        "type": draft.type,
+        "digest": digest,
+        "description": draft.description,
+        "metadata": config_doc.normalize(draft.metadata),
+        "step": step,
+        "created_by_run": created_by_run,
+        "aliases": list(dict.fromkeys(aliases or [])),
+        # Client-generated: a WAL replay of the op stays one version.
+        "version_id": secrets.token_hex(8),
+    }
+    info = transport.create_artifact_version(project_id, body)
+    if info is None:  # WAL mode: registered when the repo ingests the log
+        info = {
+            "id": body["version_id"], "name": draft.name, "type": draft.type,
+            "project_id": project_id, "version": None, "aliases": [],
+            "metadata": body["metadata"], "description": draft.description,
+            "digest": digest, "step": step, "created_by_run": created_by_run,
+        }
+    return ArtifactVersion(info, backend)
+
+
+def backend_for_transport(transport: Any) -> Any:
+    """A Reader backend over the same target as a writer transport."""
+    from .reader import _HttpBackend, _LocalBackend
+
+    if isinstance(transport, LocalTransport):
+        return _LocalBackend(transport.data_dir.root)
+    return _HttpBackend(transport.server_url, token=getattr(transport, "token", None))
 
 
 def configure(**kwargs: Any) -> None:

@@ -137,6 +137,11 @@ def write_archive(
                     zf.write(log_file, prefix + "logs/" + log_file.name)
 
         src_dir = data_dir.sources_dir / run_id
+        src_manifest = src_dir / "manifest.json"
+        if src_manifest.is_file():
+            diff_hash = json.loads(src_manifest.read_text()).get("diff_hash")
+            if diff_hash:
+                write_blobs([diff_hash])
         if src_dir.is_dir():
             for src_file in src_dir.iterdir():
                 if src_file.is_file():

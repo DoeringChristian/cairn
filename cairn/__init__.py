@@ -36,16 +36,17 @@ from .config import configure  # noqa: E402
 _LAZY_ATTRS: dict[str, str] = {
     "Run": ".sdk.run",
     "Scope": ".sdk.scope",
-    "ArtifactVersion": ".sdk.run",
+    "Artifact": ".sdk.artifacts",
+    "ArtifactVersion": ".sdk.artifacts",
+    "ArtifactEntry": ".sdk.artifacts",
+    "ArtifactFamily": ".sdk.artifacts",
     "Reader": ".sdk.reader",
-    "Reference": ".sdk.artifact_dir",
-    "ArtifactDir": ".sdk.artifact_dir",
     "MediaRef": ".sdk.reader",
     "sweep": ".sdk.sweep",
     "Sweep": ".sdk.sweep",
     "query_url": ".sdk.query_urls",
     "register_handler": ".sdk.handlers.registry",
-    "Artifact": ".sdk.wrappers",
+    "Pickle": ".sdk.wrappers",
     "Audio": ".sdk.wrappers",
     "Boxes3D": ".sdk.wrappers",
     "BVH": ".sdk.wrappers",
@@ -71,14 +72,13 @@ if TYPE_CHECKING:  # static-analysis only — never executed, never eager at run
     from pathlib import Path
     from . import plot as plot
     from . import ui as ui
-    from .sdk.artifact_dir import ArtifactDir, Reference
+    from .sdk.artifacts import Artifact, ArtifactEntry, ArtifactFamily, ArtifactVersion
     from .sdk.query_urls import query_url
     from .sdk.reader import MediaRef, Reader
-    from .sdk.run import ArtifactVersion, Run
+    from .sdk.run import Run
     from .sdk.sweep import Sweep, sweep
     from .sdk.handlers.registry import register_handler
     from .sdk.wrappers import (
-        Artifact,
         Audio,
         Boxes3D,
         BVH,
@@ -91,6 +91,7 @@ if TYPE_CHECKING:  # static-analysis only — never executed, never eager at run
         Mesh,
         Octree,
         PointCloud,
+        Pickle,
         PRCurve,
         ROCCurve,
         Table,
@@ -173,15 +174,16 @@ __all__ = [
     "register_handler",
     "Reader",
     "MediaRef",
-    "Reference",
-    "ArtifactDir",
     "sweep",
     "Sweep",
     "query_url",
+    "Artifact",
     "ArtifactVersion",
+    "ArtifactEntry",
+    "ArtifactFamily",
     "plot",
     "ui",
-    "Artifact",
+    "Pickle",
     "Image",
     "Figure",
     "Audio",
@@ -202,157 +204,80 @@ __all__ = [
     "PRCurve",
     "ROCCurve",
     "log_artifact",
-    "load_artifact",
-    "list_artifacts",
 ]
 
 
 def log_artifact(
-    data: Any,
+    artifact: Any,
+    name: str | None = None,
     *,
-    name: str,
-    type: str = "artifact",
     project: str,
-    repo: str | Path | None = None,
-    metadata: dict | None = None,
+    type: str = "artifact",
     aliases: list[str] | None = None,
-) -> "ArtifactVersion | None":
-    """Register a new artifact version without a run.
+    metadata: dict | None = None,
+    description: str | None = None,
+    repo: str | Path | None = None,
+) -> "ArtifactVersion":
+    """Log a new artifact version without a run (it has no producing run).
 
-    Like ``Run.log_artifact(..., artifact_type=...)``, but the version is not
-    linked to any run.
+    Same forms as ``Run.log_artifact``: a ``cairn.Artifact`` draft, or a
+    shorthand (a directory, a file, any value) with a ``name``.
 
     Example:
         ```python
-        cairn.log_artifact("data/", name="mnist", type="dataset", project="mnist")
-        cairn.log_artifact("ckpt.pt", name="resnet", type="model",
-                           project="mnist", aliases=["best"])
+        cairn.log_artifact("data/", "mnist", type="dataset", project="mnist")
+        art = cairn.Artifact("cifar10", type="dataset")
+        art.add_dir("data/cifar10")
+        cairn.log_artifact(art, project="cifar", aliases=["normalised"])
         ```
 
     Args:
-        data: What to store: a file path or bytes (stored as is), a directory,
-            a ``cairn.Reference`` or a list of them (a multi-file artifact),
-            or a value a registered handler detects (e.g. a PIL image).
-        name: The artifact's name; each call adds a version to it.
-        type: The artifact family's type (``"dataset"``, ``"model"``, ...).
-        project: Project the artifact belongs to.
+        artifact: A ``cairn.Artifact``, or a shorthand value.
+        name: The artifact's name (shorthand only).
+        project: Project the artifact belongs to (normalised to an id).
+        type: The artifact's type (shorthand only).
+        aliases: User aliases moved to the new version (``latest`` always is).
+        metadata: Version metadata (shorthand only).
+        description: Version description (shorthand only).
         repo: Where to write, resolved like ``cairn.Run(repo=...)``.
-        metadata: Extra metadata, merged over the handler's.
-        aliases: Aliases to point at the new version. Default: ``["latest"]``.
 
     Returns:
-        The new version, or None if the server returned nothing.
-
-    Raises:
-        TypeError: If no handler can serialize ``data``.
+        The new ``ArtifactVersion`` (pending in WAL mode).
     """
-    from .config import resolve_target
-    # Import the handlers PACKAGE (not just the registry) so the built-in type
-    # handlers are registered — the no-Run path can't rely on `cairn.sdk.run`
-    # having been imported to do it.
-    from .sdk import handlers as _handlers  # noqa: F401
-    from .sdk.handlers.registry import default_registry, resolve_mime_type
-    from .sdk.run import ArtifactVersion
+    import functools
 
-    target = resolve_target(repo=repo)
-    if target.is_local:
-        from .sdk.local import LocalTransport
-        transport = LocalTransport(target.location)
+    from .sdk import handlers as _handlers  # noqa: F401  (register built-ins)
+    from .sdk.connect import open_transport
+    from .sdk.artifacts import Artifact as _Artifact
+    from .sdk.artifacts import draft_from_shorthand
+    from .sdk.handlers.registry import default_registry
+    from .sdk.run import backend_for_transport, log_draft
+    from .server.routes._common import slugify
+
+    if isinstance(artifact, _Artifact):
+        extra = [k for k, v in (("name", name), ("metadata", metadata),
+                                ("description", description)) if v is not None]
+        if type != "artifact":
+            extra.append("type")
+        if extra:
+            raise TypeError(
+                f"log_artifact got a cairn.Artifact and {', '.join(extra)}; set those on "
+                "the Artifact instead"
+            )
+        draft = artifact
     else:
-        from .sdk.transport import Transport
-        transport = Transport(target.location)
+        draft = draft_from_shorthand(artifact, name, type, default_registry)
+        draft.metadata = dict(metadata or {})
+        draft.description = description
 
+    transport, _server = open_transport(repo)
     try:
-        # Serialize
-        from pathlib import Path as _Path
-        from .sdk.artifact_dir import is_multi_file, upload_manifest
-        handler_meta: dict = {}
-        mime_type = "application/octet-stream"
-        if is_multi_file(data):
-            digest, size, handler_meta = upload_manifest(transport, data)
-            merged_meta = {**handler_meta, **(metadata or {})}
-        else:
-            if isinstance(data, (str, _Path)):
-                path = _Path(data)
-                with open(path, "rb") as f:
-                    blob = f.read()
-            elif isinstance(data, (bytes, bytearray)):
-                blob = bytes(data)
-            else:
-                handler = default_registry.find_handler(data)
-                if handler is not None:
-                    blob, handler_meta = handler.serialize(data)
-                    mime_type = resolve_mime_type(handler, data)
-                else:
-                    raise TypeError(f"No handler for type {type(data).__name__}")
-            merged_meta = {**handler_meta, **(metadata or {})}
-            digest = transport.upload_artifact(blob, mime_type, merged_meta)
-            size = len(blob)
-
-        # Resolve project_id
-        project_id = project.lower().replace(" ", "-")
-
-        result = transport.create_artifact_version(
-            project_id=project_id,
-            family_name=name,
-            family_type=type,
-            digest=digest,
-            size_bytes=size,
-            metadata=merged_meta,
-            created_by_run="",
-            aliases=aliases,
+        version = log_draft(
+            transport, default_registry, slugify(project), draft, aliases, None,
+            created_by_run=None, backend=None,
         )
-        return ArtifactVersion(**result) if result else None
+        # Reads open their own connection (the writer is closed below).
+        version._backend_src = functools.partial(backend_for_transport, transport)
     finally:
         transport.close()
-
-
-def load_artifact(ref: str, *, project: str, repo: str | Path | None = None, cache: bool = True) -> Any:
-    """Download an artifact version.
-
-    Example:
-        ```python
-        raw = cairn.load_artifact("resnet:best", project="mnist")
-        cairn.load_artifact("mnist:v2", project="mnist").download("data/")
-        ```
-
-    Args:
-        ref: ``"name:alias"`` (e.g. ``"resnet:latest"``) or ``"name:vN"``.
-        project: Project the artifact belongs to.
-        repo: Where to read from, resolved like ``cairn.Reader(repo=...)``.
-        cache: For a server, cache downloaded bytes on disk by hash.
-
-    Returns:
-        An ``ArtifactDir`` for a multi-file artifact; otherwise the value
-        decoded by its handler when the stored blob records its type, else
-        the raw bytes.
-    """
-    from .sdk.reader import Reader
-
-    reader = Reader(repo=repo, cache=cache)
-    try:
-        project_id = project.lower().replace(" ", "-")
-        return reader.resolve_and_download_artifact(project_id, ref)
-    finally:
-        reader.close()
-
-
-def list_artifacts(*, project: str, type: str | None = None, repo: str | Path | None = None) -> list[dict]:
-    """List the artifacts (families of versions) in a project.
-
-    Args:
-        project: The project.
-        type: Only artifacts of this type (``"dataset"``, ``"model"``, ...).
-        repo: Where to read from, resolved like ``cairn.Reader(repo=...)``.
-
-    Returns:
-        One dict per artifact with its name, type, version count, latest
-        version and aliases.
-    """
-    from .sdk.reader import Reader
-
-    reader = Reader(repo=repo)
-    try:
-        return reader.artifact_families(project, type=type)
-    finally:
-        reader.close()
+    return version
