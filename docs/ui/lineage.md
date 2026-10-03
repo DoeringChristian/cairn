@@ -30,7 +30,7 @@ The graph flows left to right, from inputs to outputs, laid out automatically.
 
 Click a card to open its details on the right (click the background or **×** to close it). The panel is the place to act on a node:
 
-- **Run**: status, group, job type, created, tags (editable), how many artifacts it used and logged, a summary of its config, **Open run**.
+- **Run**: status, group, job type, created, tags (editable), how many artifacts it used and logged, its config as a collapsible tree, **Open run**.
 - **Version**: aliases and tags (editable), description (editable), digest, created, step, files and size, the run that logged it, the number of consumers, **Open in explorer** and **Files**.
 - **Group**: its members (clicking one expands the group and selects it) and **Expand group**.
 

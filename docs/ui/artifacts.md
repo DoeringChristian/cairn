@@ -37,7 +37,7 @@ A version opens on **Overview**, except a version that no run has used yet: it o
 | Created at | When the version was logged. |
 | Step | The `step` given to `log_artifact`, if any. |
 | Description | Markdown, rendered like run notes ([editable](#editing)). |
-| Created by run | The run that logged it, with its status, or *Logged without a run*. |
+| Created by run | The run that logged it, with its status, or *Logged without a run*. **Its config** unfolds that run's config as a tree. |
 | Linked to, TTL | Not supported by cairn; always `—`. |
 | Consumers | How many runs used this exact version, and each one with its role and when it used it. |
 | Number of files | Entries, with how many are references. |
@@ -69,18 +69,26 @@ The snippets use the version's real entry paths, so they run as pasted.
 
 A directory tree of the version's entries beside the selected entry. Selecting a directory lists its contents with sizes, types and digests; selecting a file shows its size, SHA-256 digest, MIME type and, for an object logged with `add` or the shorthand, how it was logged. The selected path is in the URL (`?path=`).
 
+A file is shown with the same viewer its card uses, so it behaves the same here as on the run page. The viewer is picked from how the file was logged (`add` with a cairn type), then from its MIME type, then from its extension.
+
 | Entry | Preview |
 |---|---|
-| Image (`.png`, `.jpg`, …) | The image, on a checkerboard. |
-| Markdown (`.md`) | Rendered with the same pipeline as run notes and reports (GFM tables, math). |
-| JSON | Pretty-printed and highlighted. |
-| CSV / TSV | A table of the first 500 rows. |
+| Image (`.png`, `.jpg`, `.webp`, `.gif`, …) | The [image card's](cards.md#image) pane: wheel to zoom about the cursor, drag to pan, double-click to fit again, crisp pixels once upscaled, a checkerboard under transparency, and the boxes and masks of an image logged with them. An image the browser cannot decode (EXR, TIFF) shows its logged thumbnail and a download. |
+| Video (`.mp4`, `.webm`, …) | The [video card's](cards.md#audio-and-video) player: the same zoomable pane, a play / scrub bar with a loop toggle, and the clip's size, frames and fps when they were logged. |
+| Audio (`.wav`, `.mp3`, …) | The audio card's player with a waveform (decoded in the browser for a plain file) and its rate, length and channels. |
+| Markdown (`.md`) | Rendered with the same pipeline as run notes and reports (GFM tables, math). **Source** shows the text. |
+| HTML (`.html`) | Rendered in the HTML card's sandboxed frame (scripts run; the page cannot reach cairn). **Source** shows the markup. |
+| CSV / TSV / JSON Lines, a logged `cairn.Table` | The table card's table: sortable, paginated, with its row query bar (e.g. `loss < 0.5`). |
+| JSON | A Plotly figure (`{"data": [...], "layout": ...}`) is drawn as an interactive chart; a list of records shows as a table; anything else as a collapsible tree. The buttons above switch to the other views, including the highlighted text. |
+| Logged figure, point cloud, mesh, 3D boxes, tensor | The card's viewer: the interactive figure (or its PNG), the orbit 3D view, the tensor's heatmap / histogram / stats. |
+| `.npy` | The tensor viewer. |
+| `.npz` | The 3D viewer when its arrays are a mesh (`positions`, `faces`), a point cloud (`points`) or boxes (`mins`, `maxs`); otherwise a table of its arrays with their shapes and ranges. |
 | Text and source files | The text, highlighted when the language is known. |
 | Pickle (`.pkl`, objects logged with `add`) | The Python type and the snippet to load it; browsers cannot unpickle. |
 | Reference | Its URI (a link for `http(s)://`), size and ETag. Its bytes are not stored in cairn. |
 | Anything else | No preview; download it. |
 
-Text previews read the first 256 KiB of a file and say when they are cut. **Download** on a file saves that file; **Download &lt;name&gt;-v&lt;N&gt;.zip** saves every uploaded file of the version at its path. References are not in the zip.
+Text-based previews (Markdown, HTML, tables, JSON, text) read the first 256 KiB of a file and say when they are cut. **Download** on a file saves that file; **Download &lt;name&gt;-v&lt;N&gt;.zip** saves every uploaded file of the version at its path. References are not in the zip.
 
 ### Lineage
 

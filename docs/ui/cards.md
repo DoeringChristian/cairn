@@ -154,7 +154,7 @@ On a card, only the controls for what the images actually carry are shown.
 
 ### Figure
 
-Plotly figures, one pane per run and metric.
+Plotly figures, one pane per run and metric. A figure logged without a Plotly source (a matplotlib figure Plotly could not convert) shows its PNG in the image card's zoomable pane.
 
 - **Runs:** with several runs, `Panes` puts figures side by side. `Overlay` merges every run's traces into one plot, when the figures can be merged.
 - **Appearance** *(default)*: **Show modebar**, **Scroll to zoom**, **Hover mode** (closest, x/y unified, none), **Drag mode** (zoom, pan, select, lasso, none), **Show legend**, **WebGL**.
@@ -219,11 +219,11 @@ Volume cards don't render the volume. Each pane offers the step's `.npz` for dow
 ### Text and artifact
 
 - **Text** shows the logged text at the slider's step. Settings: **Font size**, **Word wrap** *(default)*.
-- **Artifact** shows a pickled point (`cairn.Pickle`) or the versions of an artifact the run logged: file names, sizes and MIME types with download links, and a step slider over the steps they were logged at (a version without a step sits at its version number).
+- **Artifact** shows a pickled point (`cairn.Pickle`) or the versions of an artifact the run logged: a one-file version in the viewer for its kind (an image zooms, a table sorts, as in the [explorer](artifacts.md#files)); otherwise file names, sizes and MIME types with download links, and a step slider over the steps they were logged at (a version without a step sits at its version number).
 
 ## Table
 
-Logged tables, one pane per run. Cells that hold `cairn.Image`, `Audio` or `Video` render inline; click **Enlarge** to open one. Click a column header to sort (ascending, descending, off). **Save** downloads the current table as CSV.
+Logged tables, one pane per run. Cells that hold `cairn.Image`, `Audio` or `Video` render inline; click **Enlarge** to open an image or video in the image card's zoomable pane or the video card's player. Click a column header to sort (ascending, descending, off). **Save** downloads the current table as CSV.
 
 **Query bar.** Above the table, type a boolean [expression](../reference/expressions.md) over the columns to keep only the rows where it is true. Examples: `score > 0.5` or `` `pred/label` != null ``.
 
