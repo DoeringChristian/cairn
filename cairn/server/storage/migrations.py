@@ -136,6 +136,12 @@ SCHEMA_SQL: list[str] = [
     """,
     "CREATE INDEX IF NOT EXISTS idx_sequences_run_name ON sequences(run_id, name)",
     "CREATE INDEX IF NOT EXISTS idx_sequences_step ON sequences(step)",
+    # The points ``metric_stats`` does not summarize (media, NaN scalars,
+    # anything not typed ``scalar``): with it, a run's sequence catalogue
+    # reads both instead of scanning every point (routes/sequences.py).
+    "CREATE INDEX IF NOT EXISTS idx_sequences_unsummarized "
+    "ON sequences(run_id, name, step, object_type, scalar_value) "
+    "WHERE object_type != 'scalar' OR scalar_value IS NULL",
     "CREATE INDEX IF NOT EXISTS idx_log_lines_run ON log_lines(run_id, line_no)",
     # Indexes for efficient project listing and run queries at scale.
     "CREATE INDEX IF NOT EXISTS idx_runs_project_created ON runs(project_id, created_at DESC)",
