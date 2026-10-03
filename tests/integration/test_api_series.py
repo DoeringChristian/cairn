@@ -7,6 +7,7 @@ every point gives.
 
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime, timezone
 
 import pytest
@@ -127,3 +128,19 @@ def test_catalogue_equals_a_scan_randomized(client, app, seed):
             points.append(_pt(name, step, value, otype))
     rid = _run(client, points)
     assert client.get(f"/api/runs/{rid}/sequences").json()["sequences"] == _scan(app, rid)
+
+
+def test_json_is_gzipped_blobs_are_not(client):
+    rid = _run(client, [_pt("loss", s, float(s)) for s in range(2000)])
+    r = client.get(f"/api/runs/{rid}/series", params={"name": "loss"}, headers={"Accept-Encoding": "gzip"})
+    assert r.headers.get("content-encoding") == "gzip"
+    assert r.json()["series"][0]["count"] == 2000  # the client decodes it
+    small = client.get(f"/api/runs/{rid}", headers={"Accept-Encoding": "identity"})
+    assert "content-encoding" not in small.headers
+    blob = b"\x89PNG" + b"\0" * 10_000
+    client.post("/api/artifacts", files={"file": ("a.png", blob, "image/png")}, data={"mime_type": "image/png"})
+    digest = hashlib.sha256(blob).hexdigest()
+    got = client.get(f"/api/artifacts/{digest}", headers={"Accept-Encoding": "gzip"})
+    assert got.status_code == 200
+    assert "content-encoding" not in got.headers
+    assert got.content == blob

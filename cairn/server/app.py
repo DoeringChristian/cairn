@@ -20,6 +20,8 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.datastructures import Headers
+from starlette.middleware.gzip import GZipResponder
 from fastapi.responses import JSONResponse
 
 from .. import __version__
@@ -58,6 +60,36 @@ from .storage.db import Database
 from .wal_ingest import ingest_all
 
 _log = logging.getLogger(__name__)
+
+
+class _JsonGZipResponder(GZipResponder):
+    """Starlette's gzip responder, applied to JSON bodies only: blobs (images,
+    video, archives) are already compressed, and a byte range must stay a
+    byte range of the stored file."""
+
+    async def send_with_compression(self, message) -> None:
+        if message["type"] == "http.response.start":
+            ctype = Headers(raw=message["headers"]).get("content-type", "")
+            await super().send_with_compression(message)
+            if not ctype.startswith("application/json"):
+                self.content_type_is_excluded = True
+            return
+        await super().send_with_compression(message)
+
+
+class _JsonGZip:
+    """ASGI middleware: gzip JSON responses of 4 KB or more for clients that
+    accept it, at level 1 (~3 ms per MB, a sequence shrinks about 4x): what
+    matters over a network link, nearly free on loopback."""
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http" or "gzip" not in Headers(scope=scope).get("accept-encoding", ""):
+            await self.app(scope, receive, send)
+            return
+        await _JsonGZipResponder(self.app, minimum_size=4096, compresslevel=1)(scope, receive, send)
 
 
 class _NoReferrer:
@@ -217,6 +249,7 @@ def create_app(
     # No page or API response may leak its URL (a share link's secret sits in
     # one) to another origin through the Referer header.
     app.add_middleware(_NoReferrer)
+    app.add_middleware(_JsonGZip)
 
     app.add_middleware(
         CORSMiddleware,
