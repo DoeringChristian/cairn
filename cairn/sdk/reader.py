@@ -1446,12 +1446,47 @@ class _Backend(Protocol):
     def get_lineage(self, project_id: str, family_id: str | None) -> dict[str, Any]: ...
 
 
-def _edit_transport(backend: Any) -> Any:
-    """A writer transport for the backend's target (``open_transport``: the
-    repo DB, or the server holding it)."""
+def _edit(backend: Any, method: str, *args: Any) -> Any:
+    """Call a registry write on a writer transport for the backend's target
+    (``open_transport``: the repo DB, or the server holding it)."""
     from .connect import open_transport
 
-    return open_transport(backend.edit_target)[0]
+    t = open_transport(backend.edit_target)[0]
+    try:
+        return getattr(t, method)(*args)
+    finally:
+        t.close()
+
+
+class _RegistryWrites:
+    """Registry edits, shared by both backends (through ``_edit``)."""
+
+    def add_alias(self, version_id: str, alias: str) -> dict[str, Any]:
+        return _edit(self, "add_artifact_alias", version_id, alias)
+
+    def remove_alias(self, version_id: str, alias: str) -> dict[str, Any]:
+        return _edit(self, "remove_artifact_alias", version_id, alias)
+
+    def add_version_tag(self, version_id: str, tag: str) -> dict[str, Any]:
+        return _edit(self, "add_artifact_tag", version_id, tag)
+
+    def remove_version_tag(self, version_id: str, tag: str) -> dict[str, Any]:
+        return _edit(self, "remove_artifact_tag", version_id, tag)
+
+    def update_version(self, version_id: str, *, description: str | None = None,
+                       metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+        body: dict[str, Any] = {}
+        if description is not None:
+            body["description"] = description
+        if metadata is not None:
+            body["metadata"] = metadata
+        return _edit(self, "update_artifact_version", version_id, body)
+
+    def delete_version(self, version_id: str, force: bool = False) -> None:
+        _edit(self, "delete_artifact_version", version_id, force)
+
+    def delete_family(self, project_id: str, name: str) -> None:
+        _edit(self, "delete_artifact_family", project_id, name)
 
 
 # ---------------------------------------------------------------------------
@@ -1465,7 +1500,7 @@ def _api_run_row(row: dict[str, Any]) -> dict[str, Any]:
     return api_run_row(row)
 
 
-class _LocalBackend:
+class _LocalBackend(_RegistryWrites):
     def __init__(self, repo: str | Path, *, zip_source: str | None = None) -> None:
         from ..server.storage.blobs import BlobStore
         from ..server.storage.datadir import DataDir
@@ -1670,20 +1705,6 @@ class _LocalBackend:
     def run_outputs(self, run_id: str) -> list[dict[str, Any]]:
         return self._ops().run_outputs(self._db, run_id)
 
-    def add_alias(self, version_id: str, alias: str) -> dict[str, Any]:
-        t = _edit_transport(self)
-        try:
-            return t.add_artifact_alias(version_id, alias)
-        finally:
-            t.close()
-
-    def remove_alias(self, version_id: str, alias: str) -> dict[str, Any]:
-        t = _edit_transport(self)
-        try:
-            return t.remove_artifact_alias(version_id, alias)
-        finally:
-            t.close()
-
     def get_lineage(self, project_id: str, family_id: str | None = None) -> dict[str, Any]:
         return self._ops().project_lineage(self._db, project_id, family_id=family_id)
 
@@ -1713,7 +1734,7 @@ def _resolve_cache_dir(explicit: Path | None) -> Path:
     return Path(platformdirs.user_cache_dir("cairn")) / "reader" / "blobs"
 
 
-class _HttpBackend:
+class _HttpBackend(_RegistryWrites):
     def __init__(
         self,
         server_url: str,
@@ -1886,18 +1907,6 @@ class _HttpBackend:
 
     def run_outputs(self, run_id: str) -> list[dict[str, Any]]:
         return self._request("GET", f"/api/runs/{run_id}/outputs")["outputs"]
-
-    def add_alias(self, version_id: str, alias: str) -> dict[str, Any]:
-        return self._request(
-            "POST", f"/api/artifact-versions/{version_id}/aliases", json={"alias": alias},
-        )
-
-    def remove_alias(self, version_id: str, alias: str) -> dict[str, Any]:
-        from urllib.parse import quote
-
-        return self._request(
-            "DELETE", f"/api/artifact-versions/{version_id}/aliases/{quote(alias, safe='')}",
-        )
 
     def get_lineage(self, project_id: str, family_id: str | None = None) -> dict[str, Any]:
         params = {"family_id": family_id} if family_id else None

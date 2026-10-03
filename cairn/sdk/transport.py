@@ -358,6 +358,33 @@ class Transport:
             "DELETE", f"/api/artifact-versions/{version_id}/aliases/{quote(alias, safe='')}",
         )
 
+    def add_artifact_tag(self, version_id: str, tag: str) -> dict[str, Any]:
+        return self._registry_request(
+            "POST", f"/api/artifact-versions/{version_id}/tags", json={"tag": tag},
+        )
+
+    def remove_artifact_tag(self, version_id: str, tag: str) -> dict[str, Any]:
+        from urllib.parse import quote
+        return self._registry_request(
+            "DELETE", f"/api/artifact-versions/{version_id}/tags/{quote(tag, safe='')}",
+        )
+
+    def update_artifact_version(self, version_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        return self._registry_request("PATCH", f"/api/artifact-versions/{version_id}", json=body)
+
+    def delete_artifact_version(self, version_id: str, force: bool) -> None:
+        self._registry_request(
+            "DELETE", f"/api/artifact-versions/{version_id}",
+            params={"force": "true" if force else "false"},
+        )
+
+    def delete_artifact_family(self, project_id: str, name: str) -> None:
+        from urllib.parse import quote
+        fam = self._registry_request(
+            "GET", f"/api/projects/{project_id}/artifact-families/by-name/{quote(name, safe='')}",
+        )
+        self._registry_request("DELETE", f"/api/artifact-families/{fam['id']}")
+
     def download_artifact_bytes(self, digest: str) -> bytes:
         """Download raw artifact bytes by hash."""
         resp = self._client.get(f"/api/artifacts/{digest}")

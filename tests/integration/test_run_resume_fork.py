@@ -52,4 +52,4 @@ def test_killed_run_resumes_and_continues(live_server):
                         **QUIET)
         kid.finish()
         graph = c.get("/api/projects/p/lineage").json()
-        assert {"source": first.id, "target": kid.id, "relation": "forked"} in graph["edges"]
+        assert {"source": first.id, "target": kid.id, "kind": "forked"} in graph["edges"]

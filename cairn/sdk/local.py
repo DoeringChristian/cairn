@@ -382,6 +382,7 @@ class LocalTransport:
             artifact_registry_ops.validate_name(body["name"])
             for alias in body.get("aliases") or []:
                 artifact_registry_ops.validate_user_alias(alias)
+            artifact_registry_ops.validate_tags(body.get("tags"))
             self._wal_write("create_artifact_version", {"project_id": project_id, **body})
             return None
         return artifact_registry_ops.create_version(
@@ -414,6 +415,30 @@ class LocalTransport:
     def remove_artifact_alias(self, version_id: str, alias: str) -> dict[str, Any]:
         from ..server import artifact_registry_ops
         return artifact_registry_ops.remove_alias(self._sweep_db(), version_id, alias)
+
+    def add_artifact_tag(self, version_id: str, tag: str) -> dict[str, Any]:
+        from ..server import artifact_registry_ops
+        return artifact_registry_ops.add_tag(self._sweep_db(), version_id, tag)
+
+    def remove_artifact_tag(self, version_id: str, tag: str) -> dict[str, Any]:
+        from ..server import artifact_registry_ops
+        return artifact_registry_ops.remove_tag(self._sweep_db(), version_id, tag)
+
+    def update_artifact_version(self, version_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        from ..server import artifact_registry_ops
+        return artifact_registry_ops.update_version(self._sweep_db(), version_id, **body)
+
+    def delete_artifact_version(self, version_id: str, force: bool) -> None:
+        from ..server import artifact_registry_ops
+        artifact_registry_ops.delete_version(self._sweep_db(), version_id, force=force)
+
+    def delete_artifact_family(self, project_id: str, name: str) -> None:
+        from ..server import artifact_registry_ops
+        db = self._sweep_db()
+        fam = artifact_registry_ops.get_family_by_name(db, project_id, name)
+        if fam is None:
+            raise LookupError(f"no artifact {name!r} in project {project_id!r}")
+        artifact_registry_ops.delete_family(db, fam["id"])
 
     # ---- sweeps (direct mode only: a trial claim needs an answer now) ---------
 

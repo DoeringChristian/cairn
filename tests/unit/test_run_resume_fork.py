@@ -135,9 +135,9 @@ def test_lineage_has_fork_edges_only_for_the_project_graph(fresh_db, blob_store)
     parent = _seed_parent(db, blob_store)
     kid = ingest_ops.fork_run(db, parent_id=parent, step=4)["run_id"]
     graph = artifact_registry_ops.project_lineage(db, "p")
-    assert graph["edges"] == [{"source": parent, "target": kid, "relation": "forked"}]
+    assert graph["edges"] == [{"source": parent, "target": kid, "kind": "forked"}]
     runs = {n["id"]: n for n in graph["nodes"]}
-    assert runs[parent]["name"] == "parent" and runs[kid]["type"] == "run"
+    assert runs[parent]["name"] == "parent" and runs[kid]["kind"] == "run"
     fam = artifact_registry_ops.project_lineage(db, "p", family_id="none")
     assert fam["edges"] == []
 

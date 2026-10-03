@@ -180,6 +180,8 @@ class Artifact:
             keeps one type: logging a draft of another type raises.
         description: Free text stored on the version.
         metadata: A JSON dict stored on the version.
+        tags: Labels stored on the version (unlike aliases, a tag may be on
+            any number of versions).
 
     Raises:
         TypeError: ``name`` is not a string (e.g. old ``cairn.Artifact(obj)``
@@ -194,6 +196,7 @@ class Artifact:
         *,
         description: str | None = None,
         metadata: dict[str, Any] | None = None,
+        tags: list[str] | None = None,
     ) -> None:
         self.name = _check_name(name)
         if not isinstance(type, str) or not type:
@@ -201,6 +204,7 @@ class Artifact:
         self.type = type
         self.description = description
         self.metadata: dict[str, Any] = dict(metadata or {})
+        self.tags: list[str] = list(tags or [])
         self._entries: dict[str, _Staged] = {}
         self._tmp: tempfile.TemporaryDirectory[str] | None = None
 
@@ -571,6 +575,11 @@ class ArtifactVersion:
         return dict(self._info.get("metadata") or {})
 
     @property
+    def tags(self) -> list[str]:
+        """The version's tags when this object was fetched."""
+        return list(self._info.get("tags") or [])
+
+    @property
     def description(self) -> str | None:
         return self._info.get("description")
 
@@ -779,6 +788,33 @@ class ArtifactVersion:
         _check_alias(alias)
         self._info = self._backend.remove_alias(self.id, alias)
 
+    # ---- tags and edits ----
+
+    def add_tag(self, tag: str) -> None:
+        """Add a tag to this version (a no-op when it has it)."""
+        if not isinstance(tag, str) or not tag.strip():
+            raise ValueError("a tag must be a non-empty string")
+        self._info = self._backend.add_version_tag(self.id, tag)
+
+    def remove_tag(self, tag: str) -> None:
+        """Remove a tag from this version (a no-op when it does not have it)."""
+        self._info = self._backend.remove_version_tag(self.id, tag)
+
+    def update(self, *, description: str | None = None, metadata: dict[str, Any] | None = None) -> None:
+        """Replace the description and/or merge keys into the metadata. The
+        entries are immutable; only these annotations change."""
+        self._info = self._backend.update_version(self.id, description=description, metadata=metadata)
+
+    def delete(self, *, force: bool = False) -> None:
+        """Delete this version from the registry.
+
+        A version that an alias names (``latest`` included) is refused with
+        ``ValueError`` unless ``force=True``; then its aliases go with it and
+        ``latest`` moves to the newest remaining version. Version numbers are
+        never reused.
+        """
+        self._backend.delete_version(self.id, force=force)
+
 
 def _check_alias(alias: str) -> None:
     import re
@@ -828,3 +864,7 @@ class ArtifactFamily:
         """One version by alias or ``vN`` (``"best"``, ``"v3"``)."""
         info = self._backend.resolve_artifact_ref(self.project, f"{self.name}:{ref}")
         return ArtifactVersion(info, self._backend)
+
+    def delete(self) -> None:
+        """Delete the artifact: every version, alias and consumption record."""
+        self._backend.delete_family(self.project, self.name)

@@ -208,25 +208,26 @@ def main() -> None:
         # Breathe so the viewer has time to poll & you can watch live
         time.sleep(0.1)
 
-    # One-off artifact (not tied to a step) — exercises log_artifact path
+    # A versioned artifact: the final weights (pickled; Reader.artifact(...).get()
+    # gives the array back) — shows up under Artifacts and as a card.
     final_checkpoint = (
         np.random.default_rng(42).normal(size=(32, 32)).astype(np.float32)
     )
-    run.log_artifact(cairn.Tensor(final_checkpoint), name="final_weights")
+    run.log_artifact(final_checkpoint, "final_weights", type="model", step=num_steps - 1)
 
-    # A dedicated figure artifact attached to the run itself
+    # A one-off figure: a one-point media series renders as an image card.
     fig = make_matplotlib_figure(num_steps)
-    run.log_artifact(cairn.Image(fig), name="summary_plot")
+    run.track(cairn.Image(fig), name="summary_plot", step=num_steps - 1)
     plt.close(fig)
 
-    # Pickle a Python dict via cairn.Artifact — downloads as .pkl in UI
+    # Pickle a Python dict via cairn.Pickle — downloads as .pkl in UI
     config_dict = {
         "lr": 3e-4,
         "batch_size": 32,
         "model": {"type": "cnn", "layers": [64, 128, 256]},
         "optimizer": "adamw",
     }
-    run.log_artifact(cairn.Artifact(config_dict), name="run_config")
+    run.track(cairn.Pickle(config_dict), name="run_config", step=0)
 
     run.add_note(
         "Demo finished. Check every tab: Overview (params/git/env), "

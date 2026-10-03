@@ -278,7 +278,7 @@ def test_lineage(repo, reader):
     assert [x.ref for x in run.logged_artifacts()] == ["residual-ckpt:v1"]
     assert reader.artifact("q/data").ref == q.ref
     graph = reader.lineage("p")
-    assert {(e["relation"], e.get("role")) for e in graph["edges"]} == {
+    assert {(e["kind"], e.get("role")) for e in graph["edges"]} == {
         ("produced", None), ("consumed", "input"),
     }
     with pytest.raises(LookupError):
@@ -360,3 +360,63 @@ def test_wal_mode_pending_version(tmp_path):
 def test_pickle_wrapper_tracks():
     assert cairn.Pickle({"a": 1}).object_type == "pickle"
     assert pickle.loads(pickle.dumps({"a": 1})) == {"a": 1}
+
+
+# ---------------------------------------------------------------------------
+# Tags, edits, deletes
+# ---------------------------------------------------------------------------
+
+def test_tags(repo, reader):
+    art = cairn.Artifact("tagged", tags=["raw"])
+    art.add(b"1", "a.bin")
+    with _run(repo) as run:
+        v = run.log_artifact(art, tags=["candidate", "raw"])
+        w = run.log_artifact(b"2", "tagged", tags=["candidate"])
+        with pytest.raises(ValueError):
+            run.log_artifact(b"3", "tagged", tags=[""])
+    assert v.tags == ["raw", "candidate"] and w.tags == ["candidate"]  # tags may repeat across versions
+    back = reader.artifact("tagged:v1", project="p")
+    back.add_tag("reviewed")
+    back.add_tag("reviewed")
+    back.remove_tag("raw")
+    assert back.tags == ["candidate", "reviewed"]
+    assert reader.artifact("tagged:v1", project="p").tags == ["candidate", "reviewed"]
+
+
+def test_update_description_and_metadata(repo, reader):
+    with _run(repo) as run:
+        run.log_artifact(b"1", "notes", metadata={"a": 1, "b": 2}, description="first")
+    v = reader.artifact("notes", project="p")
+    v.update(description="second", metadata={"b": 3, "c": None})
+    assert (v.description, v.metadata) == ("second", {"a": 1, "b": 3, "c": None})
+    v.update(metadata={"d": 4})
+    assert reader.artifact("notes", project="p").metadata == {"a": 1, "b": 3, "c": None, "d": 4}
+    assert reader.artifact("notes", project="p").description == "second"
+
+
+def test_delete_versions_and_artifacts(repo, reader):
+    with _run(repo) as run:
+        run.log_artifact(b"1", "ckpt", aliases=["best"])
+        run.log_artifact(b"2", "ckpt")
+        run.log_artifact(b"3", "ckpt")
+    with _run(repo, "user") as user:
+        user.use_artifact("ckpt:v2")
+
+    v2 = reader.artifact("ckpt:v2", project="p")
+    v2.delete()                                         # no alias: fine; its consumption goes too
+    assert [v.version for v in reader.artifact_versions("ckpt", project="p")] == [1, 3]
+    v3 = reader.artifact("ckpt:latest", project="p")
+    with pytest.raises(ValueError, match="aliases"):
+        v3.delete()                                     # "latest" names it
+    v3.delete(force=True)
+    assert reader.artifact("ckpt:latest", project="p").version == 1  # latest moved back
+    with _run(repo) as run:
+        assert run.log_artifact(b"4", "ckpt").version == 4  # numbers are never reused
+    with pytest.raises(LookupError):
+        reader.artifact("ckpt:v3", project="p")
+
+    (fam,) = [f for f in reader.artifact_families("p") if f.name == "ckpt"]
+    fam.delete()
+    assert [f.name for f in reader.artifact_families("p")] == []
+    with pytest.raises(LookupError):
+        reader.artifact("ckpt", project="p")

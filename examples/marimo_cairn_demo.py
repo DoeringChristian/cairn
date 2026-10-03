@@ -219,7 +219,7 @@ def _(cairn, latest_run):
         s.name for s in latest_run.sequences()
     ]:
         # Real data: pull the logged Plotly figure straight out of the run.
-        fig = latest_run.artifact("eval.roc_curve")
+        fig = latest_run.media("eval.roc_curve").load()
     else:
         # No run available (or the demo project hasn't been logged yet) —
         # fall back to synthetic 3-class predictions, same shape the demo

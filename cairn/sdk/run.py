@@ -718,6 +718,7 @@ class Run:
         *,
         type: str = "artifact",
         aliases: list[str] | None = None,
+        tags: list[str] | None = None,
         step: int | None = None,
         metadata: dict | None = None,
         description: str | None = None,
@@ -736,7 +737,8 @@ class Run:
 
         Every call creates a new version, even for identical content.
         ``latest`` always moves to it; ``aliases`` (user aliases) move to it
-        too. ``step`` places it on the run's timeline.
+        too. ``tags`` are added to the version (beside a draft's own).
+        ``step`` places it on the run's timeline.
 
         Returns:
             The new ``ArtifactVersion``. In WAL mode a PENDING one (version
@@ -752,7 +754,7 @@ class Run:
         if self._finished:
             raise RuntimeError("Run has already been finished")
         draft = self._draft(artifact, name, type, metadata, description)
-        return self._log_draft(draft, aliases, step, created_by_run=self._run_id)
+        return self._log_draft(draft, aliases, step, created_by_run=self._run_id, tags=tags)
 
     def _draft(
         self, artifact: Any, name: str | None, type: str, metadata: dict | None,
@@ -776,11 +778,11 @@ class Run:
 
     def _log_draft(
         self, draft: Artifact, aliases: list[str] | None, step: int | None,
-        *, created_by_run: str | None,
+        *, created_by_run: str | None, tags: list[str] | None = None,
     ) -> ArtifactVersion:
         return log_draft(
             self._transport, self._registry, self._project_id, draft, aliases, step,
-            created_by_run=created_by_run, backend=self._reader_backend,
+            created_by_run=created_by_run, backend=self._reader_backend, tags=tags,
         )
 
     def _reader_backend(self) -> Any:
@@ -1251,12 +1253,13 @@ class _DisabledRun(Run):
 def log_draft(
     transport: Any, registry: HandlerRegistry, project_id: str, draft: Artifact,
     aliases: list[str] | None, step: int | None, *, created_by_run: str | None,
-    backend: Any,
+    backend: Any, tags: list[str] | None = None,
 ) -> ArtifactVersion:
     """Upload a draft's entries and manifest, then register the version
     (shared by ``Run.log_artifact`` and ``cairn.log_artifact``)."""
     for alias in aliases or []:
         _registry_rules.validate_user_alias(alias)
+    all_tags = _registry_rules.validate_tags([*draft.tags, *(tags or [])])
     if step is not None and (isinstance(step, bool) or not isinstance(step, int)):
         raise TypeError(f"step must be an int, got {step!r}")
     digest, _files = draft._build_manifest(transport, registry)
@@ -1269,6 +1272,7 @@ def log_draft(
         "step": step,
         "created_by_run": created_by_run,
         "aliases": list(dict.fromkeys(aliases or [])),
+        "tags": all_tags,
         # Client-generated: a WAL replay of the op stays one version.
         "version_id": secrets.token_hex(8),
     }
@@ -1276,7 +1280,7 @@ def log_draft(
     if info is None:  # WAL mode: registered when the repo ingests the log
         info = {
             "id": body["version_id"], "name": draft.name, "type": draft.type,
-            "project_id": project_id, "version": None, "aliases": [],
+            "project_id": project_id, "version": None, "aliases": [], "tags": all_tags,
             "metadata": body["metadata"], "description": draft.description,
             "digest": digest, "step": step, "created_by_run": created_by_run,
         }

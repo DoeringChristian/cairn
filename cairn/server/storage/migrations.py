@@ -240,6 +240,9 @@ SCHEMA_SQL: list[str] = [
         name          TEXT NOT NULL,
         type          TEXT NOT NULL DEFAULT 'artifact',
         description   TEXT,
+        -- The highest version number ever given: numbers are never reused,
+        -- also after a version is deleted.
+        last_version  INTEGER NOT NULL DEFAULT 0,
         created_at    TEXT NOT NULL,
         updated_at    TEXT NOT NULL,
         UNIQUE(project_id, name)
@@ -261,6 +264,9 @@ SCHEMA_SQL: list[str] = [
         metadata        TEXT,
         description     TEXT,
         step            INTEGER,
+        -- A JSON list of free-form labels (aliases name versions; tags
+        -- describe them and may repeat across versions).
+        tags            TEXT,
         created_at      TEXT NOT NULL,
         created_by_run  TEXT,
         UNIQUE(family_id, version)
@@ -495,6 +501,8 @@ def apply_migrations(con: sqlite3.Connection) -> int:
     for column, col_type in _ADDED_RUN_COLUMNS:
         _add_column_if_missing(con, "runs", column, col_type)
     _add_column_if_missing(con, "sequences", "metadata", "TEXT")
+    _add_column_if_missing(con, "artifact_versions", "tags", "TEXT")
+    _add_column_if_missing(con, "artifact_families", "last_version", "INTEGER NOT NULL DEFAULT 0")
     # Indexes on added columns run after the ALTERs: in SCHEMA_SQL they would
     # fail on a database that predates the column.
     for stmt in _ADDED_COLUMN_INDEXES:

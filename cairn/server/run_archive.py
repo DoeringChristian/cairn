@@ -463,6 +463,12 @@ def _restore_registry(
 
     # ``latest`` always names a family's newest version, also after appending.
     for family_id in set(fam_map.values()):
+        db.write(
+            "UPDATE artifact_families SET last_version = MAX(last_version, "
+            "(SELECT COALESCE(MAX(version), 0) FROM artifact_versions WHERE family_id = ?)) "
+            "WHERE id = ?",
+            [family_id, family_id],
+        )
         newest = db.read_columns(
             "SELECT id FROM artifact_versions WHERE family_id = ? ORDER BY version DESC LIMIT 1",
             [family_id],

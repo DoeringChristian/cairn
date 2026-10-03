@@ -214,6 +214,7 @@ def log_artifact(
     project: str,
     type: str = "artifact",
     aliases: list[str] | None = None,
+    tags: list[str] | None = None,
     metadata: dict | None = None,
     description: str | None = None,
     repo: str | Path | None = None,
@@ -237,6 +238,7 @@ def log_artifact(
         project: Project the artifact belongs to (normalised to an id).
         type: The artifact's type (shorthand only).
         aliases: User aliases moved to the new version (``latest`` always is).
+        tags: Tags added to the version.
         metadata: Version metadata (shorthand only).
         description: Version description (shorthand only).
         repo: Where to write, resolved like ``cairn.Run(repo=...)``.
@@ -274,7 +276,7 @@ def log_artifact(
     try:
         version = log_draft(
             transport, default_registry, slugify(project), draft, aliases, None,
-            created_by_run=None, backend=None,
+            created_by_run=None, backend=None, tags=tags,
         )
         # Reads open their own connection (the writer is closed below).
         version._backend_src = functools.partial(backend_for_transport, transport)

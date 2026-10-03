@@ -8,7 +8,8 @@ Shapes are the ``artifact_registry_ops`` dicts:
   qualified_ref, digest, size, file_count, ref_count, metadata, description,
   step, created_at, aliases, created_by_run, producer, consumer_count}``;
 * entry: ``{path, size, digest, mime, object_type, uri, etag, meta}``;
-* lineage: ``{nodes, edges[, center]}`` (see ``lineage_graph``).
+* lineage: ``{nodes, edges, groups[, center]}`` (see the Lineage section of
+  ``artifact_registry_ops``).
 """
 
 from __future__ import annotations
@@ -119,6 +120,7 @@ class CreateVersionBody(BaseModel):
     created_by_run: str | None = None
     #: User aliases moved to the new version (``latest`` always moves).
     aliases: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
     #: Client-generated id: replaying the request returns the same version.
     version_id: str | None = None
 
@@ -152,6 +154,59 @@ def resolve_ref(project_id: str, body: ResolveRefBody, request: Request) -> dict
 def get_version(version_id: str, request: Request) -> dict[str, Any]:
     try:
         return ops.get_version(get_db(request), version_id)
+    except LookupError as exc:
+        raise _http(exc) from None
+
+
+class VersionUpdate(BaseModel):
+    #: Replaces the description when given.
+    description: str | None = None
+    #: Merged key by key into the metadata when given.
+    metadata: dict[str, Any] | None = None
+
+
+@router.patch("/artifact-versions/{version_id}", dependencies=[_write])
+def update_version(version_id: str, body: VersionUpdate, request: Request) -> dict[str, Any]:
+    """Edit a version's description / merge into its metadata -> the version."""
+    try:
+        return ops.update_version(
+            get_db(request), version_id, description=body.description, metadata=body.metadata,
+        )
+    except (LookupError, ValueError) as exc:
+        raise _http(exc) from None
+
+
+@router.delete("/artifact-versions/{version_id}", dependencies=[_write])
+def delete_version(version_id: str, request: Request, force: bool = False) -> dict[str, Any]:
+    """Delete a version. One that an alias names (``latest`` included) is a
+    409 unless ``force=true``."""
+    try:
+        ops.delete_version(get_db(request), version_id, force=force)
+    except LookupError as exc:
+        raise _http(exc) from None
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    return {"deleted": version_id}
+
+
+class TagBody(BaseModel):
+    tag: str
+
+
+@router.post("/artifact-versions/{version_id}/tags", dependencies=[_write])
+def add_tag(version_id: str, body: TagBody, request: Request) -> dict[str, Any]:
+    """Add a tag -> the version."""
+    try:
+        return ops.add_tag(get_db(request), version_id, body.tag)
+    except (LookupError, ValueError) as exc:
+        raise _http(exc) from None
+
+
+@router.delete("/artifact-versions/{version_id}/tags/{tag}", dependencies=[_write])
+def remove_tag(version_id: str, tag: str, request: Request) -> dict[str, Any]:
+    """Remove a tag -> the version."""
+    try:
+        return ops.remove_tag(get_db(request), version_id, tag)
     except LookupError as exc:
         raise _http(exc) from None
 
@@ -228,11 +283,13 @@ def version_lineage(
     version_id: str, request: Request,
     depth: int | None = Query(default=None, ge=0),
     direction: str = Query(default="both", pattern="^(upstream|downstream|both)$"),
+    cluster: int | None = Query(default=None, ge=1, description="Collapse sibling sets larger than this."),
 ) -> dict[str, Any]:
     """The lineage graph centred on the version."""
     try:
         return ops.lineage_graph(
             get_db(request), version_id=version_id, depth=depth, direction=direction,
+            cluster=cluster,
         )
     except (LookupError, ValueError) as exc:
         raise _http(exc) from None
@@ -284,10 +341,13 @@ def run_lineage(
     run_id: str, request: Request,
     depth: int | None = Query(default=None, ge=0),
     direction: str = Query(default="both", pattern="^(upstream|downstream|both)$"),
+    cluster: int | None = Query(default=None, ge=1, description="Collapse sibling sets larger than this."),
 ) -> dict[str, Any]:
     """The lineage graph centred on the run."""
     try:
-        return ops.lineage_graph(get_db(request), run_id=run_id, depth=depth, direction=direction)
+        return ops.lineage_graph(
+            get_db(request), run_id=run_id, depth=depth, direction=direction, cluster=cluster,
+        )
     except (LookupError, ValueError) as exc:
         raise _http(exc) from None
 
@@ -295,6 +355,9 @@ def run_lineage(
 @router.get("/projects/{project_id}/lineage")
 def project_lineage(
     project_id: str, request: Request, family_id: str | None = None,
+    cluster: int | None = Query(default=None, ge=1, description="Collapse sibling sets larger than this."),
 ) -> dict[str, Any]:
     """The project-wide lineage graph (``family_id``: one family's versions)."""
-    return ops.project_lineage(get_db(request), _project(project_id), family_id=family_id)
+    return ops.project_lineage(
+        get_db(request), _project(project_id), family_id=family_id, cluster=cluster,
+    )

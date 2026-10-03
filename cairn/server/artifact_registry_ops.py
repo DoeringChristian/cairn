@@ -70,6 +70,21 @@ def validate_user_alias(alias: str) -> str:
     return alias
 
 
+def validate_tags(tags: Any) -> list[str]:
+    """Version tags: non-empty strings, deduplicated in order."""
+    if tags is None:
+        return []
+    if isinstance(tags, str) or not isinstance(tags, (list, tuple)):
+        raise ValueError("tags must be a list of strings")
+    out: list[str] = []
+    for t in tags:
+        if not isinstance(t, str) or not t.strip():
+            raise ValueError(f"a tag must be a non-empty string, got {t!r}")
+        if t not in out:
+            out.append(t)
+    return out
+
+
 def parse_ref(ref: str, project_id: str | None) -> tuple[str, str, str]:
     """``[project/]name[:alias|:vN]`` -> ``(project_id, name, qualifier)``.
 
@@ -302,6 +317,7 @@ def _shape_versions(db: Database, rows: list[dict[str, Any]]) -> list[dict[str, 
             "step": r.get("step"),
             "created_at": r["created_at"],
             "aliases": names,
+            "tags": json.loads(r["tags"]) if r.get("tags") else [],
             "created_by_run": producer,
             "producer": producers.get(producer) if producer else None,
             "consumer_count": consumers.get(r["id"], 0),
@@ -325,7 +341,7 @@ def get_version(db: Database, version_id: str) -> dict[str, Any]:
     ``{id, family_id, project_id, name, type, version, ref ("name:vN"),
     qualified_ref ("project/name:vN"), digest (of the manifest), size
     (uploaded bytes; references excluded), file_count, ref_count, metadata,
-    description, step, created_at, aliases (``latest`` first), created_by_run,
+    description, step, created_at, aliases (``latest`` first), tags, created_by_run,
     producer ({id, name, status, project_id, created_at, archived} | None),
     consumer_count}``.
     """
@@ -356,6 +372,7 @@ def create_version(
     step: int | None = None,
     created_by_run: str | None = None,
     aliases: list[str] | None = None,
+    tags: list[str] | None = None,
     version_id: str | None = None,
 ) -> dict[str, Any]:
     """Register the manifest ``digest`` as the next version of ``name``.
@@ -374,6 +391,7 @@ def create_version(
         return get_version(db, version_id)
     validate_name(name)
     user_aliases = [validate_user_alias(a) for a in dict.fromkeys(aliases or [])]
+    tag_list = validate_tags(tags)
     files = read_manifest(blobs, digest)
     size = sum(int(f.get("size") or 0) for f in files if "hash" in f)
     n_refs = sum(1 for f in files if "uri" in f)
@@ -405,16 +423,21 @@ def create_version(
                     f"type {type!r} (a family keeps one type)"
                 )
         (next_version,) = con.execute(
-            "SELECT COALESCE(MAX(version), 0) + 1 FROM artifact_versions WHERE family_id = ?",
-            [family_id],
+            "SELECT MAX(last_version, (SELECT COALESCE(MAX(version), 0) FROM artifact_versions "
+            "WHERE family_id = ?)) + 1 FROM artifact_families WHERE id = ?",
+            [family_id, family_id],
         ).fetchone()
+        con.execute(
+            "UPDATE artifact_families SET last_version = ? WHERE id = ?", [next_version, family_id],
+        )
         con.execute(
             """INSERT INTO artifact_versions
                    (id, family_id, version, hash, size_bytes, file_count, ref_count,
-                    metadata, description, step, created_at, created_by_run)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    metadata, description, step, tags, created_at, created_by_run)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             [version_id, family_id, next_version, digest, size, len(files), n_refs,
-             json.dumps(metadata or {}), description, step, now, created_by_run or None],
+             json.dumps(metadata or {}), description, step, json.dumps(tag_list), now,
+             created_by_run or None],
         )
         con.executemany(
             """INSERT INTO artifact_entries
@@ -509,6 +532,87 @@ def remove_alias(db: Database, version_id: str, alias: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Tags, edits, deletes
+# ---------------------------------------------------------------------------
+
+def _set_tags(db: Database, version_id: str, tags: list[str]) -> dict[str, Any]:
+    db.write("UPDATE artifact_versions SET tags = ? WHERE id = ?", [json.dumps(tags), version_id])
+    return get_version(db, version_id)
+
+
+def add_tag(db: Database, version_id: str, tag: str) -> dict[str, Any]:
+    """Add a tag to the version (a no-op when it has it)."""
+    (tag,) = validate_tags([tag])
+    tags = get_version(db, version_id)["tags"]
+    return _set_tags(db, version_id, tags if tag in tags else [*tags, tag])
+
+
+def remove_tag(db: Database, version_id: str, tag: str) -> dict[str, Any]:
+    """Remove a tag from the version (a no-op when it does not have it)."""
+    tags = get_version(db, version_id)["tags"]
+    return _set_tags(db, version_id, [t for t in tags if t != tag])
+
+
+def update_version(
+    db: Database, version_id: str, *, description: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Replace the description and/or shallow-merge keys into the metadata
+    (a key set to None is stored as None, not removed). The manifest is
+    immutable; only these annotations change."""
+    ver = get_version(db, version_id)
+    if description is not None:
+        db.write("UPDATE artifact_versions SET description = ? WHERE id = ?", [description, version_id])
+    if metadata is not None:
+        if not isinstance(metadata, dict):
+            raise ValueError("metadata must be a dict")
+        db.write(
+            "UPDATE artifact_versions SET metadata = ? WHERE id = ?",
+            [json.dumps({**ver["metadata"], **metadata}), version_id],
+        )
+    return get_version(db, version_id)
+
+
+def _move_latest(con: Any, family_id: str) -> None:
+    """Point ``latest`` at the family's newest version (or nowhere)."""
+    con.execute("DELETE FROM artifact_aliases WHERE family_id = ? AND alias = 'latest'", [family_id])
+    row = con.execute(
+        "SELECT id FROM artifact_versions WHERE family_id = ? ORDER BY version DESC LIMIT 1",
+        [family_id],
+    ).fetchone()
+    if row:
+        con.execute(
+            "INSERT INTO artifact_aliases (family_id, alias, version_id) VALUES (?, 'latest', ?)",
+            [family_id, row[0]],
+        )
+
+
+def delete_version(db: Database, version_id: str, *, force: bool = False) -> None:
+    """Delete one version (its entries, aliases and consumption records).
+
+    A version that any alias names (``latest`` included, as in wandb) is
+    refused with ``ValueError`` unless ``force``; forcing it drops its
+    aliases and moves ``latest`` to the newest remaining version. Version
+    numbers are never reused. Blobs stay (content-addressed, maybe shared).
+    """
+    ver = get_version(db, version_id)
+    if ver["aliases"] and not force:
+        raise ValueError(
+            f"{ver['ref']} has aliases ({', '.join(ver['aliases'])}); remove them first or force"
+        )
+    with db.transaction() as con:
+        con.execute("DELETE FROM run_inputs WHERE artifact_version_id = ?", [version_id])
+        con.execute("DELETE FROM artifact_entries WHERE version_id = ?", [version_id])
+        con.execute("DELETE FROM artifact_aliases WHERE version_id = ?", [version_id])
+        con.execute("DELETE FROM artifact_versions WHERE id = ?", [version_id])
+        _move_latest(con, ver["family_id"])
+        con.execute(
+            "UPDATE artifact_families SET updated_at = ? WHERE id = ?",
+            [_now_iso(), ver["family_id"]],
+        )
+
+
+# ---------------------------------------------------------------------------
 # Ref resolution
 # ---------------------------------------------------------------------------
 
@@ -578,39 +682,159 @@ def run_inputs(db: Database, run_id: str, role: str | None = None) -> list[dict[
 # ---------------------------------------------------------------------------
 # Lineage
 # ---------------------------------------------------------------------------
+#
+# A lineage graph is ``{nodes, edges, groups[, center]}``:
+#
+# * version node: ``{kind: "artifact_version", id, label ("name:vN"), type
+#   (the artifact type), name, family_id, project_id, version, ref,
+#   qualified_ref, aliases, tags, step, created_at, file_count, size, degree,
+#   group_key}``;
+# * run node: ``{kind: "run", id, label (name, else the id's first 8), name,
+#   status, tags, group, job_type, project_id, created_at, archived, degree,
+#   group_key}``;
+# * edge: ``{source, target, kind: "produced" (run -> version) | "consumed"
+#   (version -> run, with ``role``) | "forked" (run -> run)}``.
+#
+# ``degree`` is ``{in, out}`` within the returned graph. Clustering: nodes of
+# one kind whose edges are identical (same neighbours, kinds, roles and
+# directions) and, for versions, of one artifact name, are SIBLINGS and share
+# a ``group_key`` (null for a node without siblings). With ``cluster=N``,
+# every sibling set larger than N (the centre never included) is collapsed
+# into one group node ``{kind: "group", id: "group:<key>", group_key,
+# member_kind, count, members: [ids], label}``, which takes over the
+# members' edges (deduplicated; ``count`` on each edge says how many member
+# edges it stands for). ``groups`` lists every sibling set as ``{group_key,
+# member_kind, members}`` either way, so a client can cluster or expand
+# without asking again.
 
 def _version_node(v: dict[str, Any]) -> dict[str, Any]:
     return {
-        "id": v["id"], "type": "artifact_version", "family_id": v["family_id"],
-        "project_id": v["project_id"], "name": v["name"], "artifact_type": v["type"],
+        "kind": "artifact_version", "id": v["id"], "label": v["ref"], "type": v["type"],
+        "name": v["name"], "family_id": v["family_id"], "project_id": v["project_id"],
         "version": v["version"], "ref": v["ref"], "qualified_ref": v["qualified_ref"],
-        "aliases": v["aliases"], "step": v["step"], "created_at": v["created_at"],
-        "file_count": v["file_count"], "size": v["size"],
+        "aliases": v["aliases"], "tags": v["tags"], "step": v["step"],
+        "created_at": v["created_at"], "file_count": v["file_count"], "size": v["size"],
     }
 
 
-def _graph(
-    db: Database, version_ids: Iterable[str], run_ids: Iterable[str],
-    edges: list[dict[str, Any]], center: str | None = None,
-) -> dict[str, Any]:
-    versions = _versions_by_ids(db, list(dict.fromkeys(version_ids)))
-    rids = list(dict.fromkeys(run_ids))
-    infos = _run_infos(db, rids)
-    out: dict[str, Any] = {
-        "nodes": [_version_node(v) for v in versions] + [{"type": "run", **infos[r]} for r in rids],
-        "edges": edges,
-    }
-    if center is not None:
-        out["center"] = center
+def _run_nodes(db: Database, run_ids: list[str]) -> list[dict[str, Any]]:
+    """Run nodes; a deleted run keeps a node (its edges need an endpoint)."""
+    info: dict[str, dict[str, Any]] = {}
+    for i in range(0, len(run_ids), 500):
+        chunk = run_ids[i:i + 500]
+        for r in db.read_columns(
+            f"SELECT id, display_name, status, tags, run_group, job_type, project_id, "
+            f"created_at, archived_at FROM runs WHERE id IN ({_holes(chunk)})",
+            chunk,
+        ):
+            info[r["id"]] = r
+    out = []
+    for rid in run_ids:
+        r = info.get(rid)
+        name = r["display_name"] if r else None
+        out.append({
+            "kind": "run", "id": rid, "label": name or rid[:8], "name": name,
+            "status": r["status"] if r else None,
+            "tags": json.loads(r["tags"]) if r and r["tags"] else [],
+            "group": r["run_group"] if r else None,
+            "job_type": r["job_type"] if r else None,
+            "project_id": r["project_id"] if r else None,
+            "created_at": str(r["created_at"]) if r else None,
+            "archived": bool(r and r["archived_at"]),
+            "deleted": r is None,
+        })
     return out
 
 
 def _produced(run_id: str, version_id: str) -> dict[str, Any]:
-    return {"source": run_id, "target": version_id, "relation": "produced"}
+    return {"source": run_id, "target": version_id, "kind": "produced"}
 
 
 def _consumed(version_id: str, run_id: str, role: str) -> dict[str, Any]:
-    return {"source": version_id, "target": run_id, "relation": "consumed", "role": role}
+    return {"source": version_id, "target": run_id, "kind": "consumed", "role": role}
+
+
+def _graph(
+    db: Database, version_ids: Iterable[str], run_ids: Iterable[str],
+    edges: list[dict[str, Any]], *, center: str | None = None, cluster: int | None = None,
+) -> dict[str, Any]:
+    versions = _versions_by_ids(db, list(dict.fromkeys(version_ids)))
+    nodes = [_version_node(v) for v in versions] + _run_nodes(db, list(dict.fromkeys(run_ids)))
+    by_id = {n["id"]: n for n in nodes}
+    ins: dict[str, list[tuple]] = {n["id"]: [] for n in nodes}
+    for n in nodes:
+        n["degree"] = {"in": 0, "out": 0}
+        n["group_key"] = None
+    for e in edges:
+        if e["source"] in by_id:
+            by_id[e["source"]]["degree"]["out"] += 1
+        if e["target"] in by_id:
+            by_id[e["target"]]["degree"]["in"] += 1
+            ins[e["target"]].append((e["source"], e["kind"], e.get("role")))
+    import hashlib
+
+    def key_of(parts: Any) -> str:
+        return hashlib.sha1(json.dumps(parts, default=str).encode()).hexdigest()[:16]
+
+    def collect(kind: str, keyf: Any) -> dict[str, list[str]]:
+        sets: dict[str, list[str]] = {}
+        for n in nodes:
+            if n["kind"] != kind or n["id"] == center:
+                continue
+            k = keyf(n)
+            if k is not None:
+                sets.setdefault(k, []).append(n["id"])
+        return {k: m for k, m in sets.items() if len(m) > 1}
+
+    # Runs: siblings share their inputs (e.g. every run that used one dataset).
+    run_sets = collect("run", lambda n: key_of(["run", sorted(ins[n["id"]], key=str)])
+                       if ins[n["id"]] else None)
+    for k, members in run_sets.items():
+        for m in members:
+            by_id[m]["group_key"] = k
+
+    # Versions: siblings share their artifact name and producer, a producer in
+    # a run group counting as the group (each sibling run's checkpoint).
+    def version_key(n: dict[str, Any]) -> str | None:
+        src = [(by_id[s_]["group_key"] or s_) if s_ in by_id else s_ for s_, _k, _r in ins[n["id"]]]
+        if not src and not n["degree"]["out"]:
+            return None
+        return key_of(["artifact_version", n["name"], sorted(src)])
+
+    version_sets = collect("artifact_version", version_key)
+    for k, members in version_sets.items():
+        for m in members:
+            by_id[m]["group_key"] = k
+    groups = [
+        {"group_key": k, "member_kind": by_id[m[0]]["kind"], "members": m}
+        for k, m in [*run_sets.items(), *version_sets.items()]
+    ]
+
+    out: dict[str, Any] = {"nodes": nodes, "edges": edges, "groups": groups}
+    if cluster is not None:
+        collapse = {g["group_key"]: g for g in groups if len(g["members"]) > cluster}
+        member_of = {m: f"group:{k}" for k, g in collapse.items() for m in g["members"]}
+        kept = [n for n in nodes if n["id"] not in member_of]
+        for k, g in collapse.items():
+            first = by_id[g["members"][0]]
+            what = (f"{first['name']} versions" if g["member_kind"] == "artifact_version" else "runs")
+            kept.append({
+                "kind": "group", "id": f"group:{k}", "group_key": k,
+                "member_kind": g["member_kind"], "count": len(g["members"]),
+                "members": g["members"], "label": f"{len(g['members'])} {what}",
+            })
+        merged: dict[tuple, dict[str, Any]] = {}
+        for e in edges:
+            src, tgt = member_of.get(e["source"], e["source"]), member_of.get(e["target"], e["target"])
+            k2 = (src, tgt, e["kind"], e.get("role"))
+            if k2 in merged:
+                merged[k2]["count"] += 1
+            else:
+                merged[k2] = {**e, "source": src, "target": tgt, "count": 1}
+        out["nodes"], out["edges"] = kept, list(merged.values())
+    if center is not None:
+        out["center"] = center
+    return out
 
 
 def lineage_graph(
@@ -620,21 +844,17 @@ def lineage_graph(
     run_id: str | None = None,
     depth: int | None = None,
     direction: str = "both",
+    cluster: int | None = None,
 ) -> dict[str, Any]:
-    """The lineage around one version or run: ``{nodes, edges, center}``.
+    """The lineage around one version or run: ``{nodes, edges, groups, center}``
+    (shapes and clustering: see the section comment above).
 
     Walks the bipartite run/version graph from the centre, at most ``depth``
     hops (None: unbounded). ``upstream`` follows where the centre came from (a
     version's producing run, a run's inputs, their producers, ...),
     ``downstream`` what came of it (a version's consumers, a run's outputs,
     ...); ``both`` is the union of the two walks (it never turns around, so
-    siblings are not pulled in).
-
-    Nodes: ``{type: "artifact_version", id, family_id, project_id, name,
-    artifact_type, version, ref, qualified_ref, aliases, step, created_at,
-    file_count, size}`` and ``{type: "run", id, name, status, project_id,
-    created_at, archived}``. Edges: ``{source, target, relation: "produced"}``
-    (run -> version) and ``{..., relation: "consumed", role}`` (version -> run).
+    siblings of the centre are not pulled in).
     """
     if direction not in ("upstream", "downstream", "both"):
         raise ValueError("direction must be upstream, downstream or both")
@@ -642,6 +862,8 @@ def lineage_graph(
         raise ValueError("pass exactly one of version_id or run_id")
     if depth is not None and depth < 0:
         raise ValueError("depth must be >= 0")
+    if cluster is not None and cluster < 1:
+        raise ValueError("cluster must be >= 1")
     if version_id is not None:
         get_version(db, version_id)
         start = ("v", version_id)
@@ -704,15 +926,19 @@ def lineage_graph(
         [i for k, i in found if k == "r"],
         list(edges.values()),
         center=start[1],
+        cluster=cluster,
     )
 
 
 def project_lineage(
     db: Database, project_id: str, *, family_id: str | None = None,
+    cluster: int | None = None,
 ) -> dict[str, Any]:
     """The whole project's lineage (or one family's): every version with its
     producer and consumer edges, plus ``forked`` run -> run edges for the
-    whole project. Node and edge shapes as ``lineage_graph``."""
+    whole project. Shapes and clustering as ``lineage_graph``."""
+    if cluster is not None and cluster < 1:
+        raise ValueError("cluster must be >= 1")
     if family_id:
         vrows = db.read_columns(
             "SELECT id, created_by_run FROM artifact_versions WHERE family_id = ? ORDER BY version",
@@ -749,5 +975,5 @@ def project_lineage(
         ):
             runs.setdefault(fork["parent_run_id"])
             runs.setdefault(fork["id"])
-            edges.append({"source": fork["parent_run_id"], "target": fork["id"], "relation": "forked"})
-    return _graph(db, ids, runs, edges)
+            edges.append({"source": fork["parent_run_id"], "target": fork["id"], "kind": "forked"})
+    return _graph(db, ids, runs, edges, cluster=cluster)

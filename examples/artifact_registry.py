@@ -1,7 +1,9 @@
-"""Demo: Versioned artifact registry with lineage tracking.
+"""Demo: versioned artifacts with lineage.
 
-Shows how to produce and consume versioned artifacts across runs,
-building a lineage graph that the UI displays.
+A data-prep run logs a dataset (a directory, a reference and a generated
+file), a training run consumes it and logs a checkpoint per epoch with a
+moving ``best`` alias, an evaluation run consumes the best checkpoint, and a
+reader walks the lineage back.
 
 **Usage**::
 
@@ -24,6 +26,8 @@ from __future__ import annotations
 import json
 import math
 import random
+import tempfile
+from pathlib import Path
 
 import numpy as np
 
@@ -32,195 +36,89 @@ import cairn
 PROJECT = "artifact-demo"
 
 
-def make_dataset(seed: int, n_samples: int = 1000) -> dict:
-    """Generate a fake dataset as a dict (serialized to JSON bytes)."""
+def write_dataset(root: Path, seed: int, n: int) -> None:
+    """A tiny on-disk dataset: one .npy shard per split plus a label map."""
     rng = np.random.default_rng(seed)
-    X = rng.normal(size=(n_samples, 10))
-    y = (X[:, 0] * 2 + X[:, 1] * -1 + rng.normal(scale=0.1, size=n_samples)).tolist()
-    return {
-        "X_shape": list(X.shape),
-        "y_shape": [len(y)],
-        "seed": seed,
-        "n_samples": n_samples,
-        "features": [f"feat_{i}" for i in range(10)],
-        # Store just the summary; a real dataset would be a parquet/numpy file.
-        "X_mean": X.mean(axis=0).tolist(),
-        "y_mean": float(np.mean(y)),
-    }
+    for split, size in (("train", n), ("val", n // 5)):
+        (root / split).mkdir(parents=True, exist_ok=True)
+        np.save(root / split / "x.npy", rng.normal(size=(size, 10)).astype(np.float32))
+        np.save(root / split / "y.npy", rng.normal(size=size).astype(np.float32))
+    (root / "labels.json").write_text(json.dumps({"target": "y"}))
 
 
-def make_model_weights(n_features: int = 10) -> bytes:
-    """Generate fake model weights as a numpy array."""
-    rng = np.random.default_rng(42)
-    weights = rng.normal(size=(n_features, 1)).astype(np.float32)
-    import io
-    buf = io.BytesIO()
-    np.save(buf, weights)
-    return buf.getvalue()
+def prepare(seed: int, n: int) -> cairn.ArtifactVersion:
+    with cairn.Run(PROJECT, name=f"data-prep-{seed}", tags=["data-prep"]) as run:
+        run.config(data={"seed": seed, "n_samples": n})
+        with tempfile.TemporaryDirectory() as tmp:
+            write_dataset(Path(tmp), seed, n)
+            art = cairn.Artifact("training-data", type="dataset",
+                                 description=f"{n} samples, seed {seed}",
+                                 metadata={"n_samples": n, "seed": seed})
+            art.add_dir(tmp)
+            # A file that stays where it is: recorded, never uploaded.
+            art.add_reference("s3://example-bucket/raw/dump.tar", size=170_498_071)
+            with art.new_file("stats.json") as f:
+                json.dump({"mean": 0.0, "std": 1.0}, f)
+            version = run.log_artifact(art)  # files are read now, while tmp exists
+    print(f"  -> {version.qualified_ref}  aliases={version.aliases}")
+    return version
+
+
+def train(name: str, lr: float) -> None:
+    with cairn.Run(PROJECT, name=name, tags=["training"]) as run:
+        run.config(model={"kind": "linear", "n_features": 10}, optim={"lr": lr, "epochs": 20})
+        data = run.use_artifact("training-data", role="train")  # = training-data:latest
+        x = np.load(data.file("train/x.npy"))
+        print(f"  <- {data.ref}: x{tuple(x.shape)}")
+        best = math.inf
+        for epoch in range(20):
+            loss = 2.0 * math.exp(-epoch / 5) + random.gauss(0, 0.05)
+            run.track(loss, name="train.loss", step=epoch)
+            weights = {"w": np.random.default_rng(epoch).normal(size=10), "epoch": epoch}
+            improved = loss < best
+            best = min(best, loss)
+            # Every call is a new version; "latest" always moves, "best" only on improvement.
+            run.log_artifact(weights, "linear-model", type="model", step=epoch,
+                             aliases=["best"] if improved else None,
+                             metadata={"loss": round(loss, 4)})
+        run.summary(best_loss=best)
+
+
+def evaluate() -> None:
+    with cairn.Run(PROJECT, name="eval", tags=["evaluation"]) as run:
+        model = run.use_artifact("linear-model:best", role="model")
+        test = run.use_artifact("training-data:v1", role="test")
+        weights = model.get()  # the logged dict, unpickled
+        print(f"  <- {model.ref} (epoch {weights['epoch']}, step {model.step}) and {test.ref}")
+        run.track(0.12, name="eval.loss", step=0)
+        report = {"test_loss": 0.12, "model": model.qualified_ref}
+        run.log_artifact(cairn.Text(json.dumps(report, indent=2)), "eval-report", type="report")
 
 
 def main() -> None:
-    print(f"=== Artifact Registry Demo (project: {PROJECT}) ===\n")
+    print(f"=== Artifact demo (project: {PROJECT}) ===\n")
+    print("1. Dataset v1")
+    prepare(seed=42, n=1000)
+    print("2. Training on training-data:latest")
+    train("train-a", lr=0.01)
+    print("3. Evaluating linear-model:best")
+    evaluate()
+    print("4. Dataset v2, retraining")
+    prepare(seed=123, n=2000)
+    train("train-b", lr=0.005)
 
-    # ── Step 1: Create and version a dataset ─────────────────────────────
-    print("Step 1: Creating dataset v0...")
-    with cairn.Run(project=PROJECT, name="data-prep-v0", tags=["data-prep"]) as run:
-        run.config({"task": "prepare training data"})
-        run.config({"seed": 42})
-        run.config({"n_samples": 1000})
-
-        dataset = make_dataset(seed=42, n_samples=1000)
-        data_bytes = json.dumps(dataset).encode("utf-8")
-
-        art = run.log_artifact(
-            data_bytes,
-            name="training-data",
-            type="dataset",
-            metadata={
-                "format": "json",
-                "n_samples": 1000,
-                "n_features": 10,
-                "seed": 42,
-            },
-        )
-        print(f"  → training-data v{art.version} (hash: {art.hash[:12]}...)")
-
-    # ── Step 2: Train a model using the dataset ──────────────────────────
-    print("\nStep 2: Training model using training-data:latest...")
-    with cairn.Run(project=PROJECT, name="train-v0", tags=["training"]) as run:
-        run.config({"model": "linear_regression"})
-        run.config({"lr": 0.01})
-        run.config({"epochs": 100})
-
-        # Consume the dataset
-        data_raw = run.use_artifact("training-data:latest", role="train")
-        if isinstance(data_raw, bytes):
-            dataset = json.loads(data_raw)
-        else:
-            dataset = data_raw
-        print(f"  ← Loaded training-data (n_samples={dataset.get('n_samples', '?')})")
-
-        # Simulate training with metrics
-        for epoch in range(20):
-            loss = 2.0 * math.exp(-epoch / 5) + random.gauss(0, 0.05)
-            acc = min(0.95, 0.3 + epoch * 0.035 + random.gauss(0, 0.01))
-            run.track(loss, name="train.loss", step=epoch)
-            run.track(acc, name="train.accuracy", step=epoch)
-
-        # Produce model weights
-        weights = make_model_weights()
-        model_art = run.log_artifact(
-            weights,
-            name="linear-model",
-            type="model",
-            metadata={
-                "format": "numpy",
-                "architecture": "linear_regression",
-                "n_features": 10,
-                "final_loss": round(loss, 4),
-                "final_accuracy": round(acc, 4),
-            },
-        )
-        print(f"  → linear-model v{model_art.version} (hash: {model_art.hash[:12]}...)")
-
-    # ── Step 3: Evaluate the model ───────────────────────────────────────
-    print("\nStep 3: Evaluating model...")
-    with cairn.Run(project=PROJECT, name="eval-v0", tags=["evaluation"]) as run:
-        run.config({"task": "evaluate on test set"})
-
-        # Consume both the model and the dataset
-        model_data = run.use_artifact("linear-model:latest", role="model")
-        test_data = run.use_artifact("training-data:latest", role="test")
-        print(f"  ← Loaded linear-model and training-data")
-
-        # Simulate evaluation metrics
-        run.track(0.12, name="eval.loss", step=0)
-        run.track(0.93, name="eval.accuracy", step=0)
-        run.track(0.91, name="eval.f1_score", step=0)
-
-        # Produce an evaluation report artifact
-        report = json.dumps({
-            "test_loss": 0.12,
-            "test_accuracy": 0.93,
-            "test_f1": 0.91,
-            "confusion_matrix": [[450, 50], [30, 470]],
-        }).encode("utf-8")
-        report_art = run.log_artifact(
-            report,
-            name="eval-report",
-            type="report",
-            metadata={"format": "json", "metrics": ["loss", "accuracy", "f1_score"]},
-        )
-        print(f"  → eval-report v{report_art.version}")
-
-    # ── Step 4: Create a new version of the dataset and retrain ──────────
-    print("\nStep 4: Creating improved dataset v1...")
-    with cairn.Run(project=PROJECT, name="data-prep-v1", tags=["data-prep"]) as run:
-        run.config({"task": "prepare improved training data"})
-        run.config({"seed": 123})
-        run.config({"n_samples": 2000})
-
-        dataset_v1 = make_dataset(seed=123, n_samples=2000)
-        data_bytes_v1 = json.dumps(dataset_v1).encode("utf-8")
-
-        art_v1 = run.log_artifact(
-            data_bytes_v1,
-            name="training-data",
-            type="dataset",
-            metadata={
-                "format": "json",
-                "n_samples": 2000,
-                "n_features": 10,
-                "seed": 123,
-            },
-        )
-        print(f"  → training-data v{art_v1.version} (now has 2 versions)")
-
-    print("\nStep 5: Retraining on improved dataset...")
-    with cairn.Run(project=PROJECT, name="train-v1", tags=["training"]) as run:
-        run.config({"model": "linear_regression"})
-        run.config({"lr": 0.005})
-        run.config({"epochs": 200})
-
-        # Consume the LATEST dataset (v1 now)
-        data_raw = run.use_artifact("training-data:latest", role="train")
-
-        for epoch in range(20):
-            loss = 1.5 * math.exp(-epoch / 4) + random.gauss(0, 0.03)
-            acc = min(0.98, 0.4 + epoch * 0.03 + random.gauss(0, 0.01))
-            run.track(loss, name="train.loss", step=epoch)
-            run.track(acc, name="train.accuracy", step=epoch)
-
-        weights_v1 = make_model_weights(n_features=10)
-        model_art_v1 = run.log_artifact(
-            weights_v1,
-            name="linear-model",
-            type="model",
-            metadata={
-                "format": "numpy",
-                "architecture": "linear_regression",
-                "n_features": 10,
-                "final_loss": round(loss, 4),
-                "final_accuracy": round(acc, 4),
-            },
-            aliases=["latest", "best"],
-        )
-        print(f"  → linear-model v{model_art_v1.version} (aliased as 'best')")
-
-    # ── Summary ──────────────────────────────────────────────────────────
-    print("\n=== Summary ===")
-    print("Artifact families created:")
-    print("  - training-data (dataset): 2 versions")
-    print("  - linear-model (model): 2 versions")
-    print("  - eval-report (report): 1 version")
-    print()
-    print("Lineage graph:")
-    print("  data-prep-v0 → training-data:v0 → train-v0 → linear-model:v0 → eval-v0 → eval-report:v0")
-    print("                  training-data:v0 → eval-v0")
-    print("  data-prep-v1 → training-data:v1 → train-v1 → linear-model:v1")
-    print()
-    print(f"Browse: http://localhost:4301/p/{PROJECT}/artifacts")
-    print(f"Lineage: http://localhost:4301/p/{PROJECT}/lineage")
+    print("\n=== Reading it back ===")
+    with cairn.Reader() as r:
+        for fam in r.artifact_families(PROJECT):
+            print(f"  {fam.name} ({fam.type}): {fam.versions} versions, aliases {fam.aliases}")
+        best = r.artifact("linear-model:best", project=PROJECT)
+        producer = best.logged_by()
+        print(f"  {best.qualified_ref} was logged by {producer.name} "
+              f"with lr={producer.config['optim']['lr']}")
+        print(f"  used by: {[run.name for run in best.used_by()]}")
+        root = r.artifact("training-data:latest", project=PROJECT).download()
+        print(f"  downloaded the dataset to {root} (the s3 reference is listed, not fetched)")
+    print(f"\nBrowse: http://localhost:4301/p/{PROJECT}/artifacts")
 
 
 if __name__ == "__main__":

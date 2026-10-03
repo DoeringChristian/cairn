@@ -40,9 +40,9 @@ def test_versioned_artifact_lineage_survives_wal(tmp_path):
         graph = reader.lineage("p")
     finally:
         reader.close()
-    versions = [n for n in graph["nodes"] if n["type"] == "artifact_version"]
+    versions = [n for n in graph["nodes"] if n["kind"] == "artifact_version"]
     assert [(v["name"], v["version"]) for v in versions] == [("model", 1)]
-    assert {"source": producer, "target": versions[0]["id"], "relation": "produced"} in graph["edges"]
+    assert {"source": producer, "target": versions[0]["id"], "kind": "produced"} in graph["edges"]
 
 
 def test_record_artifact_input_is_replayed(tmp_path):
