@@ -505,7 +505,7 @@ SHARE_ALLOWED: dict[str, ShareChecker] = {
     "/api/runs/{run_id}/sequences": _run_in_scope,
     "/api/runs/{run_id}/sequences/{name:path}": _run_in_scope,
     "/api/runs/{run_id}/updates": _run_in_scope,
-    "/api/runs/{run_id}/artifacts": _run_in_scope,
+    "/api/runs/{run_id}/outputs": _run_in_scope,
     "/api/artifacts/{digest}": _artifact_in_scope,
     "/api/runs/{run_id}/source/tree": _source_in_scope,
     "/api/runs/{run_id}/source/file": _source_in_scope,

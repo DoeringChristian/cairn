@@ -6,14 +6,15 @@ Layout:
 ```text
 manifest.json                  {cairn_export_version, exported_at, run_ids}
 sweeps.json                    [{sweep: row, trials: [row]}] for the runs' sweeps
-artifact_registry.json         {families, versions, aliases, inputs}: the versions
-                               the runs produced or consumed, their families and
-                               aliases, and the runs' input records
+artifact_registry.json         {families, versions, entries, aliases, inputs}: the
+                               versions the runs produced or consumed, their
+                               families, entries and aliases, and the runs'
+                               input records
 artifacts/{hash}{ext}          blob bytes
 artifacts/{hash}.meta.json     the artifacts row
-{run_id}/run.json              {run, params, summary}
+{run_id}/run.json              {run}: the runs row, with its config / summary
+                               documents (the flat index is rebuilt on restore)
 {run_id}/sequences.json        sequences rows (without run_id)
-{run_id}/run_artifacts.json    run_artifacts rows (without run_id)
 {run_id}/metric_defs.json      metric_defs rows (without run_id)
 {run_id}/alerts.json           alerts rows
 {run_id}/logs/*, {run_id}/source/*
@@ -42,6 +43,7 @@ import secrets
 import zipfile
 from typing import Any, Callable
 
+from . import config_doc, ingest_ops
 from .artifact_refs import referenced_hashes
 from .routes._common import utc_now
 from .storage.blobs import BlobStore
@@ -110,28 +112,13 @@ def write_archive(
         if run.get("sweep_id"):
             sweep_ids.add(run["sweep_id"])
 
-        params = db.read_columns(
-            "SELECT key, value, value_type FROM params WHERE run_id = ?", [run_id],
-        )
-        summary = db.read_columns(
-            "SELECT key, value, value_type FROM summary WHERE run_id = ?", [run_id],
-        )
         prefix = f"{run_id}/"
-        zf.writestr(prefix + "run.json", json.dumps({
-            "run": run,
-            "params": params,
-            "summary": summary,
-        }, default=str, indent=2))
+        zf.writestr(prefix + "run.json", json.dumps({"run": run}, default=str, indent=2))
 
         seq_rows = _without(db.read_columns(
             "SELECT * FROM sequences WHERE run_id = ? ORDER BY name, step", [run_id],
         ), "run_id")
         zf.writestr(prefix + "sequences.json", json.dumps(seq_rows, default=str))
-
-        named_arts = _without(db.read_columns(
-            "SELECT * FROM run_artifacts WHERE run_id = ?", [run_id],
-        ), "run_id")
-        zf.writestr(prefix + "run_artifacts.json", json.dumps(named_arts, default=str))
 
         metric_defs = _without(db.read_columns(
             "SELECT * FROM metric_defs WHERE run_id = ?", [run_id],
@@ -141,8 +128,7 @@ def write_archive(
         alerts = db.read_columns("SELECT * FROM alerts WHERE run_id = ?", [run_id])
         zf.writestr(prefix + "alerts.json", json.dumps(alerts, default=str))
 
-        write_blobs([r["artifact_hash"] for r in seq_rows if r.get("artifact_hash")]
-                    + [r["hash"] for r in named_arts])
+        write_blobs([r["artifact_hash"] for r in seq_rows if r.get("artifact_hash")])
 
         log_dir = data_dir.logs_dir / run_id
         if log_dir.is_dir():
@@ -176,7 +162,7 @@ def _registry_rows(db: Database, run_ids: list[str]) -> dict[str, list[dict[str,
     runs produced or consumed, those versions' families, the families' aliases
     that point at a carried version, and the runs' input records."""
     if not run_ids:
-        return {"families": [], "versions": [], "aliases": [], "inputs": []}
+        return {"families": [], "versions": [], "entries": [], "aliases": [], "inputs": []}
     holes = ", ".join("?" * len(run_ids))
     inputs = db.read_columns(f"SELECT * FROM run_inputs WHERE run_id IN ({holes})", run_ids)
     versions = db.read_columns(
@@ -195,7 +181,13 @@ def _registry_rows(db: Database, run_ids: list[str]) -> dict[str, list[dict[str,
             a for a in db.read_columns("SELECT * FROM artifact_aliases WHERE family_id = ?", [fid])
             if a["version_id"] in version_ids
         ]
-    return {"families": families, "versions": versions, "aliases": aliases, "inputs": inputs}
+    entries = []
+    for v in versions:
+        entries += db.read_columns("SELECT * FROM artifact_entries WHERE version_id = ?", [v["id"]])
+    return {
+        "families": families, "versions": versions, "entries": entries,
+        "aliases": aliases, "inputs": inputs,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -309,7 +301,6 @@ def restore_archive(
 
     run_cols = _columns(db, "runs")
     seq_cols = _columns(db, "sequences")
-    ra_cols = _columns(db, "run_artifacts")
     md_cols = _columns(db, "metric_defs")
     alert_cols = _columns(db, "alerts")
     imported: list[dict[str, str]] = []
@@ -333,12 +324,10 @@ def restore_archive(
         )
         _insert(db, "runs", run_cols, run)
 
-        for table in ("params", "summary"):
-            for p in run_data.get(table, []):
-                db.write(
-                    f"INSERT OR IGNORE INTO {table} (run_id, key, value, value_type) VALUES (?, ?, ?, ?)",
-                    [new_id, p["key"], p["value"], p.get("value_type", "str")],
-                )
+        with db.transaction() as con:
+            for table in ingest_ops.KEY_TABLES:
+                doc = config_doc.loads(run.get(ingest_ops.DOC_COLUMN[table]))
+                ingest_ops.write_doc(con, table, new_id, doc)
 
         for row in _read_json(zf, prefix + "sequences.json", []):
             row.setdefault("object_type", "scalar")
@@ -346,14 +335,6 @@ def restore_archive(
             _insert(db, "sequences", seq_cols, dict(row, run_id=new_id))
         with db.transaction() as con:
             rebuild_metric_stats(con, [new_id])
-
-        for ra in _read_json(zf, prefix + "run_artifacts.json", []):
-            _insert(db, "run_artifacts", ra_cols, dict(
-                ra,
-                run_id=new_id,
-                step=ra["step"] if ra.get("step") is not None else -1,
-                created_at=ra.get("created_at") or utc_now(),
-            ))
 
         for md in _read_json(zf, prefix + "metric_defs.json", []):
             _insert(db, "metric_defs", md_cols, dict(md, run_id=new_id))
@@ -426,6 +407,7 @@ def _restore_registry(
 
     ver_cols = _columns(db, "artifact_versions")
     ver_map: dict[str, str] = {}
+    added: set[str] = set()
     for v in registry.get("versions", []):
         family_id = fam_map.get(v["family_id"])
         if family_id is None or not db.read_columns("SELECT 1 FROM artifacts WHERE hash = ?", [v["hash"]]):
@@ -451,6 +433,12 @@ def _restore_registry(
             created_by_run=remap_run(v.get("created_by_run")),
         ))
         ver_map[v["id"]] = new_id
+        added.add(new_id)
+
+    entry_cols = _columns(db, "artifact_entries")
+    for e in registry.get("entries", []):
+        if ver_map.get(e["version_id"]) in added:
+            _insert(db, "artifact_entries", entry_cols, dict(e, version_id=ver_map[e["version_id"]]))
 
     alias_cols = _columns(db, "artifact_aliases")
     for a in registry.get("aliases", []):
@@ -467,3 +455,16 @@ def _restore_registry(
                 i, run_id=run_id, artifact_version_id=ver_map[i["artifact_version_id"]],
                 created_at=i.get("created_at") or utc_now(),
             ))
+
+    # ``latest`` always names a family's newest version, also after appending.
+    for family_id in set(fam_map.values()):
+        newest = db.read_columns(
+            "SELECT id FROM artifact_versions WHERE family_id = ? ORDER BY version DESC LIMIT 1",
+            [family_id],
+        )
+        if newest:
+            db.write(
+                """INSERT INTO artifact_aliases (family_id, alias, version_id) VALUES (?, 'latest', ?)
+                   ON CONFLICT (family_id, alias) DO UPDATE SET version_id = EXCLUDED.version_id""",
+                [family_id, newest[0]["id"]],
+            )

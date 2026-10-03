@@ -119,12 +119,6 @@ class AlertRequest(BaseModel):
     created_at: str | None = None
 
 
-class RunArtifactRequest(BaseModel):
-    name: str
-    hash: str
-    step: int | None = None
-
-
 # ---------- Helpers ---------------------------------------------------------
 
 
@@ -151,6 +145,8 @@ def set_params(run_id: str, body: ParamsRequest, request: Request) -> dict[str, 
         updated = ingest_ops.set_params(db, run_id, body.params)
     except ingest_ops.RunNotFound as exc:
         raise _run_not_found(exc) from None
+    except (TypeError, ValueError) as exc:  # non-JSON value, flat-key collision
+        raise HTTPException(status_code=400, detail=str(exc)) from None
     return {"updated": updated}
 
 
@@ -161,6 +157,8 @@ def set_summary(run_id: str, body: SummaryRequest, request: Request) -> dict[str
         updated = ingest_ops.set_summary(db, run_id, body.summary)
     except ingest_ops.RunNotFound as exc:
         raise _run_not_found(exc) from None
+    except (TypeError, ValueError) as exc:  # non-JSON value, flat-key collision
+        raise HTTPException(status_code=400, detail=str(exc)) from None
     return {"updated": updated}
 
 
@@ -229,21 +227,6 @@ async def post_artifact(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="metadata must be JSON") from None
     obj_type = object_type if isinstance(object_type, str) else None
     return ingest_ops.put_artifact(db, blobs, data, mime_type, meta_dict, object_type=obj_type)
-
-
-@router.post("/runs/{run_id}/artifacts")
-def attach_run_artifact(
-    run_id: str, body: RunArtifactRequest, request: Request
-) -> dict[str, Any]:
-    db = get_db(request)
-    blobs = get_blobs(request)
-    try:
-        ingest_ops.attach_artifact(db, blobs, run_id, body.name, body.hash, body.step)
-    except ingest_ops.RunNotFound as exc:
-        raise _run_not_found(exc) from None
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from None
-    return {"run_id": run_id, "name": body.name, "hash": body.hash}
 
 
 @router.post("/runs/{run_id}/source")
@@ -448,8 +431,8 @@ def archive_run(run_id: str, request: Request) -> dict[str, Any]:
         ingest_ops._require_run(db, run_id)
     except ingest_ops.RunNotFound as exc:
         raise _run_not_found(exc) from None
-    db.write("UPDATE runs SET status = 'archived' WHERE id = ?", [run_id])
-    return {"run_id": run_id, "status": "archived"}
+    archived_at = ingest_ops.set_archived(db, run_id, True)
+    return {"run_id": run_id, "archived": True, "archived_at": archived_at}
 
 
 @router.post("/runs/{run_id}/unarchive")
@@ -459,8 +442,8 @@ def unarchive_run(run_id: str, request: Request) -> dict[str, Any]:
         ingest_ops._require_run(db, run_id)
     except ingest_ops.RunNotFound as exc:
         raise _run_not_found(exc) from None
-    db.write("UPDATE runs SET status = 'completed' WHERE id = ?", [run_id])
-    return {"run_id": run_id, "status": "completed"}
+    ingest_ops.set_archived(db, run_id, False)
+    return {"run_id": run_id, "archived": False, "archived_at": None}
 
 
 @router.delete("/runs/{run_id}")

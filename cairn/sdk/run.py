@@ -698,21 +698,9 @@ class Run:
         self._metric_rules[name] = rule
 
     def _upload_value(self, handler: Any, payload: Any, kwargs: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
-        """Serialize one media value and upload it (a figure's source and a
-        table's media cells as artifacts of their own). Returns its
-        ``(hash, mime_type, metadata)``."""
-        payload, media_hashes = self._upload_table_media(handler, payload)
-        blob, meta = handler.serialize(payload, **kwargs)
-        if media_hashes:
-            meta["media_hashes"] = media_hashes
-        # Figure handler dual-storage: upload source as a second artifact.
-        source_blob = meta.pop("_source_blob", None)
-        source_mime = meta.pop("_source_mime", None)
-        if source_blob is not None and source_mime is not None:
-            src_hash = self._transport.upload_artifact(source_blob, source_mime, {})
-            meta["source_hash"] = src_hash
-        mime = resolve_mime_type(handler, payload, kwargs)
-        digest = self._transport.upload_artifact(blob, mime, meta, object_type=handler.object_type)
+        """Serialize one media value and upload it (``uploads.upload_value``).
+        Returns its ``(hash, mime_type, metadata)``."""
+        digest, mime, meta, _size = upload_value(self._transport, self._registry, handler, payload, kwargs)
         return digest, mime, meta
 
     def _track_gallery(
@@ -757,34 +745,6 @@ class Run:
         if caption is not None:
             point["metadata"] = {"caption": str(caption)}
         self._metric_buffer.append(point)
-
-    def _upload_table_media(self, handler: Any, payload: Any) -> tuple[Any, list[str]]:
-        """Upload a table's ``cairn.Image``/``Audio``/``Video`` cells as their own
-        artifacts and put ``{"$media": {hash, mime_type, object_type}}`` in their place.
-
-        Only tables are touched (any other handler gets ``payload`` back). The
-        table is normalized first, so DataFrame cells are covered too; only the
-        first ``MAX_ROWS`` rows are walked, as the rest are truncated anyway.
-        Returns the (possibly rewritten) payload and the uploaded hashes, which
-        go in the table's metadata so export can follow them.
-        """
-        if getattr(handler, "object_type", None) != "table":
-            return payload, []
-        names, rows = handler._normalize(payload)
-        hashes: list[str] = []
-        for row in rows[:_TABLE_MAX_ROWS]:
-            for c, cell in enumerate(row):
-                if not isinstance(cell, (Image, Audio, Video)):
-                    continue
-                cell_handler = self._registry.find_by_type(cell.object_type)
-                assert cell_handler is not None
-                blob, meta = cell_handler.serialize(cell.obj, **cell.kwargs)
-                mime = resolve_mime_type(cell_handler, cell.obj, cell.kwargs)
-                digest = self._transport.upload_artifact(blob, mime, meta, object_type=cell.object_type)
-                row[c] = {"$media": {"hash": digest, "mime_type": mime, "object_type": cell.object_type}}
-                if digest not in hashes:
-                    hashes.append(digest)
-        return {"columns": names, "data": rows, "dataframe": None}, hashes
 
     def log_artifact(
         self,

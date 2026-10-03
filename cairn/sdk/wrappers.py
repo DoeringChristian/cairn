@@ -532,25 +532,25 @@ class Volume(_TypeWrapper):
     object_type = "volume"
 
 
-class Artifact(_TypeWrapper):
-    """Pickle-serialized Python object.
+class Pickle(_TypeWrapper):
+    """Any Python object, stored pickled.
 
-    Wraps any Python object and stores it as a pickle blob. Useful for
-    tracking checkpoints, configs, custom dataclasses, model state dicts,
-    or any other Python object that doesn't fit into the typed wrappers.
-
-    Download via the UI yields a ``.pkl`` file that can be loaded with
-    ``pickle.load(open("file.pkl", "rb"))``.
+    For checkpoints, custom dataclasses, model state dicts, or anything else
+    that doesn't fit the typed wrappers. ``Reader.Run.media(name).load()``
+    unpickles it; the UI offers it as a ``.pkl`` download.
 
     Usage:
 
     ```python
-    run.track(cairn.Artifact({"lr": 1e-3, "model": "cnn"}), name="config", step=0)
-    run.track(cairn.Artifact(model.state_dict()), name="checkpoint", step=100)
-    run.log_artifact(cairn.Artifact(my_dataclass), name="final_state")
+    run.track(cairn.Pickle({"lr": 1e-3, "model": "cnn"}), name="config", step=0)
+    run.track(cairn.Pickle(model.state_dict()), name="checkpoint", step=100)
     ```
+
+    Versioned checkpoints belong in an artifact instead
+    (``run.log_artifact(model.state_dict(), "ckpt", type="model")``), which
+    pickles values without a wrapper anyway.
     """
-    object_type = "artifact"
+    object_type = "pickle"
 
 
 class ConfusionMatrix(_TypeWrapper):

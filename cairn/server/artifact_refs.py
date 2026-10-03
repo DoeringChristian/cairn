@@ -19,8 +19,8 @@ from .storage.db import Database
 #: the SDK; a unit test pins the two together).
 GALLERY_MIME = "application/vnd.cairn.gallery+json"
 
-#: A multi-file artifact's manifest — it names its files by hash
-#: (``cairn.sdk.artifact_dir.MANIFEST_MIME``; pinned together by a unit test).
+#: An artifact version's manifest — it names its files by hash
+#: (``cairn.sdk.artifacts.MANIFEST_MIME``; pinned together by a unit test).
 MANIFEST_MIME = "application/vnd.cairn.artifact-manifest+json"
 
 
@@ -64,8 +64,8 @@ def walk_hashes(db: Database, blobs: BlobStore, seeds: Iterable[str]) -> set[str
 
 
 def run_seed_hashes(db: Database, run_ids: Iterable[str]) -> set[str]:
-    """The blobs runs name directly: their sequence points, their named
-    artifacts, and the registry versions they produced."""
+    """The blobs runs name directly: their sequence points and the manifests
+    of the artifact versions they produced."""
     ids = list(run_ids)
     if not ids:
         return set()
@@ -76,8 +76,6 @@ def run_seed_hashes(db: Database, run_ids: Iterable[str]) -> set[str]:
         f"WHERE run_id IN ({holes}) AND artifact_hash IS NOT NULL",
         ids,
     ):
-        out.add(h)
-    for (h,) in db.read(f"SELECT DISTINCT hash FROM run_artifacts WHERE run_id IN ({holes})", ids):
         out.add(h)
     for (h,) in db.read(
         f"SELECT DISTINCT hash FROM artifact_versions WHERE created_by_run IN ({holes})", ids,

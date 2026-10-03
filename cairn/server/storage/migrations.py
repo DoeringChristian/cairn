@@ -53,7 +53,16 @@ SCHEMA_SQL: list[str] = [
         job_type      TEXT,
         sweep_id      TEXT,
         -- Timestamp of a stop request from the UI; NULL when none is pending.
-        stop_requested TEXT
+        stop_requested TEXT,
+        -- The nested config / summary documents exactly as logged (after the
+        -- deep merge of every write): the source of truth. The ``params`` and
+        -- ``summary`` tables are a derived flat index (dotted keys) rebuilt
+        -- from them on every write (see config_doc.py).
+        config        TEXT,
+        summary       TEXT,
+        -- When the run was archived; NULL = not archived. Archiving never
+        -- touches ``status``.
+        archived_at   TEXT
     )
     """,
     """
@@ -96,16 +105,6 @@ SCHEMA_SQL: list[str] = [
         metadata      TEXT,
         object_type   TEXT,
         created_at    TEXT NOT NULL
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS run_artifacts (
-        run_id        TEXT NOT NULL REFERENCES runs(id),
-        name          TEXT NOT NULL,
-        hash          TEXT NOT NULL REFERENCES artifacts(hash),
-        step          INTEGER NOT NULL DEFAULT -1,
-        created_at    TEXT NOT NULL,
-        PRIMARY KEY (run_id, name, step)
     )
     """,
     """
@@ -233,6 +232,7 @@ SCHEMA_SQL: list[str] = [
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_project_docs_workspace "
     "ON project_docs(project_id) WHERE kind = 'workspace'",
     # ── Artifact registry tables ──────────────────────────────────────
+    # A family is every version of one name in a project; it keeps one type.
     """
     CREATE TABLE IF NOT EXISTS artifact_families (
         id            TEXT PRIMARY KEY,
@@ -245,17 +245,42 @@ SCHEMA_SQL: list[str] = [
         UNIQUE(project_id, name)
     )
     """,
+    # A version is an immutable manifest of entries; ``hash`` is the manifest
+    # blob's digest. ``size_bytes`` sums the uploaded entries (references
+    # excluded); ``file_count`` counts every entry, ``ref_count`` the
+    # references among them.
     """
     CREATE TABLE IF NOT EXISTS artifact_versions (
         id              TEXT PRIMARY KEY,
         family_id       TEXT NOT NULL REFERENCES artifact_families(id),
         version         INTEGER NOT NULL,
-        hash            TEXT NOT NULL REFERENCES artifacts(hash),
+        hash            TEXT NOT NULL,
         size_bytes      INTEGER NOT NULL,
+        file_count      INTEGER NOT NULL,
+        ref_count       INTEGER NOT NULL DEFAULT 0,
         metadata        TEXT,
+        description     TEXT,
+        step            INTEGER,
         created_at      TEXT NOT NULL,
         created_by_run  TEXT,
         UNIQUE(family_id, version)
+    )
+    """,
+    # The manifest's entries, indexed for the explorer (the manifest blob
+    # stays the source of truth). An uploaded entry has ``hash``; a reference
+    # has ``uri`` instead.
+    """
+    CREATE TABLE IF NOT EXISTS artifact_entries (
+        version_id    TEXT NOT NULL REFERENCES artifact_versions(id),
+        path          TEXT NOT NULL,
+        hash          TEXT,
+        size          INTEGER,
+        mime          TEXT,
+        object_type   TEXT,
+        uri           TEXT,
+        etag          TEXT,
+        meta          TEXT,
+        PRIMARY KEY (version_id, path)
     )
     """,
     """
@@ -388,6 +413,9 @@ _ADDED_RUN_COLUMNS: list[tuple[str, str]] = [
     ("job_type", "TEXT"),
     ("sweep_id", "TEXT"),
     ("stop_requested", "TEXT"),
+    ("config", "TEXT"),
+    ("summary", "TEXT"),
+    ("archived_at", "TEXT"),
 ]
 
 _ADDED_COLUMN_INDEXES: list[str] = [
@@ -437,8 +465,26 @@ def _migrate_workspaces(con: sqlite3.Connection) -> None:
     con.execute("DROP TABLE project_docs_old")
 
 
+#: The artifact registry tables, dependants first (the order they are dropped in).
+_REGISTRY_TABLES = ("run_inputs", "artifact_aliases", "artifact_entries",
+                    "artifact_versions", "artifact_families")
+
+
+def _drop_old_registry(con: sqlite3.Connection) -> None:
+    """Artifacts became versioned manifests (a user ruling, no conversion):
+    a registry from before that (``artifact_versions`` without ``file_count``)
+    and the per-run attachments (``run_artifacts``) are dropped, then
+    recreated empty by ``SCHEMA_SQL``. Destructive by design."""
+    con.execute("DROP TABLE IF EXISTS run_artifacts")
+    cols = {row[1] for row in con.execute("PRAGMA table_info(artifact_versions)").fetchall()}
+    if cols and "file_count" not in cols:
+        for table in _REGISTRY_TABLES:
+            con.execute(f"DROP TABLE IF EXISTS {table}")
+
+
 def apply_migrations(con: sqlite3.Connection) -> int:
     """Run schema DDL idempotently; return current schema version."""
+    _drop_old_registry(con)
     for stmt in SCHEMA_SQL:
         con.execute(stmt)
 

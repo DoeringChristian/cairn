@@ -14,7 +14,8 @@ import shutil
 from datetime import datetime
 from typing import Any
 
-from .routes._common import flatten, parse_timestamp, slugify, utc_now, value_type
+from . import config_doc
+from .routes._common import parse_timestamp, slugify, utc_now, value_type
 from .storage.blobs import BlobStore
 from .storage.datadir import DataDir
 from .storage.db import Database
@@ -125,35 +126,59 @@ def create_run(
     }
 
 
-def _upsert_flat_values(
-    db: Database, table: str, run_id: str, values: dict[str, Any]
-) -> int:
-    """Flatten a mapping to dotted keys and upsert it into a key/value table.
+#: The document column on ``runs`` and its flat index table, per kind.
+KEY_TABLES = ("params", "summary")
+DOC_COLUMN = {"params": "config", "summary": "summary"}
 
-    ``params`` and ``summary`` are the same shape carrying different meanings —
-    inputs versus declared results — so the write is implemented once. ``table``
-    is never caller-supplied; both call sites pass a literal.
+
+def write_doc(con: Any, table: str, run_id: str, doc: dict[str, Any]) -> int:
+    """Store ``doc`` on the run and rebuild its flat index in ``table``.
+
+    Raises ValueError (before writing anything) when two paths of ``doc``
+    share a flat key.
     """
-    _require_run(db, run_id)
-    flat = flatten(values)
-    rows = [(run_id, k, json.dumps(v), value_type(v)) for k, v in flat.items()]
+    flat = config_doc.flatten(doc)
+    con.execute(
+        f"UPDATE runs SET {DOC_COLUMN[table]} = ? WHERE id = ?",
+        [config_doc.dumps(doc), run_id],
+    )
+    con.execute(f"DELETE FROM {table} WHERE run_id = ?", [run_id])
+    con.executemany(
+        f"INSERT INTO {table} (run_id, key, value, value_type) VALUES (?, ?, ?, ?)",
+        [(run_id, k, json.dumps(v), value_type(v)) for k, v in flat.items()],
+    )
+    return len(flat)
+
+
+def _read_doc(con: Any, table: str, run_id: str) -> dict[str, Any]:
+    row = con.execute(
+        f"SELECT {DOC_COLUMN[table]} FROM runs WHERE id = ?", [run_id],
+    ).fetchone()
+    if row is None:
+        raise RunNotFound(f"run {run_id} not found")
+    return config_doc.loads(row[0])
+
+
+def _merge_doc(db: Database, table: str, run_id: str, values: dict[str, Any]) -> int:
+    """Deep-merge ``values`` into the run's document (see ``config_doc``) and
+    rebuild the flat index, in one transaction. ``params`` and ``summary``
+    are the same shape carrying different meanings — inputs versus declared
+    results — so the write is implemented once. ``table`` is never
+    caller-supplied; both call sites pass a literal.
+
+    Raises:
+        TypeError: A value is not JSON.
+        ValueError: The merged document has two paths with one flat key.
+    """
+    update = config_doc.normalize(values)
     with db.transaction() as con:
-        for row in rows:
-            con.execute(
-                f"""
-                INSERT INTO {table} (run_id, key, value, value_type)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT (run_id, key) DO UPDATE
-                  SET value = EXCLUDED.value, value_type = EXCLUDED.value_type
-                """,
-                list(row),
-            )
-    return len(rows)
+        doc = config_doc.merge(_read_doc(con, table, run_id), update)
+        return write_doc(con, table, run_id, doc)
 
 
 def set_params(db: Database, run_id: str, params: dict[str, Any]) -> int:
     """Run inputs: hyperparameters, argv, anything decided before the work."""
-    return _upsert_flat_values(db, "params", run_id, params)
+    return _merge_doc(db, "params", run_id, params)
 
 
 def set_summary(db: Database, run_id: str, summary: dict[str, Any]) -> int:
@@ -164,7 +189,15 @@ def set_summary(db: Database, run_id: str, summary: dict[str, Any]) -> int:
     summary key over the last point of the series with the same name. Keeping
     the write explicit is what makes "who claimed this number" answerable.
     """
-    return _upsert_flat_values(db, "summary", run_id, summary)
+    return _merge_doc(db, "summary", run_id, summary)
+
+
+def run_docs(db: Database, run_id: str) -> dict[str, Any]:
+    """The run's ``{"config": doc, "summary": doc}``."""
+    row = db.read_one("SELECT config, summary FROM runs WHERE id = ?", [run_id])
+    if row is None:
+        raise RunNotFound(f"run {run_id} not found")
+    return {"config": config_doc.loads(row[0]), "summary": config_doc.loads(row[1])}
 
 
 def insert_batch(
@@ -241,29 +274,6 @@ def put_artifact(
         [digest, mime_type, size, json.dumps(metadata or {}), object_type, utc_now()],
     )
     return {"hash": digest, "size_bytes": size}
-
-
-def attach_artifact(
-    db: Database,
-    blobs: BlobStore,
-    run_id: str,
-    name: str,
-    digest: str,
-    step: int | None = None,
-) -> None:
-    _require_run(db, run_id)
-    if not blobs.exists(digest):
-        raise ValueError(f"artifact {digest} unknown")
-    step_val = -1 if step is None else step
-    db.write(
-        """
-        INSERT INTO run_artifacts (run_id, name, hash, step, created_at)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT (run_id, name, step) DO UPDATE
-          SET hash = EXCLUDED.hash, created_at = EXCLUDED.created_at
-        """,
-        [run_id, name, digest, step_val, utc_now()],
-    )
 
 
 def save_source(
@@ -360,23 +370,32 @@ def rename_run(db: Database, run_id: str, display_name: str) -> None:
     db.write("UPDATE runs SET display_name = ? WHERE id = ?", [display_name, run_id])
 
 
-KEY_TABLES = ("params", "summary")
-
-
 def delete_keys(db: Database, run_id: str, table: str, keys: list[str]) -> None:
-    """Delete config (``params``) or summary keys. Keys are the flattened
-    dotted keys, and a key also removes the keys nested under it
-    (``hparams`` takes ``hparams.lr`` with it), since a nested mapping was
-    written as exactly those keys."""
+    """Delete config (``params``) or summary keys. A key is a dotted path into
+    the document and removes that node with everything under it (``hparams``
+    takes ``hparams.lr`` with it)."""
     if table not in KEY_TABLES:
         raise ValueError(f"table must be one of {KEY_TABLES}, got {table!r}")
-    _require_run(db, run_id)
     with db.transaction() as con:
+        doc = _read_doc(con, table, run_id)
         for key in keys:
-            con.execute(
-                f"DELETE FROM {table} WHERE run_id = ? AND (key = ? OR substr(key, 1, ?) = ?)",
-                [run_id, key, len(key) + 1, key + "."],
-            )
+            doc = config_doc.delete(doc, key)
+        write_doc(con, table, run_id, doc)
+
+
+def set_archived(db: Database, run_id: str, archived: bool) -> str | None:
+    """Archive (or unarchive) a run; its ``status`` is untouched. Archiving an
+    archived run keeps its first ``archived_at``. Returns ``archived_at``."""
+    _require_run(db, run_id)
+    if archived:
+        db.write(
+            "UPDATE runs SET archived_at = COALESCE(archived_at, ?) WHERE id = ?",
+            [utc_now().isoformat(), run_id],
+        )
+    else:
+        db.write("UPDATE runs SET archived_at = NULL WHERE id = ?", [run_id])
+    (archived_at,) = db.read_one("SELECT archived_at FROM runs WHERE id = ?", [run_id])
+    return archived_at
 
 
 def heartbeat(db: Database, run_id: str) -> str | None:
@@ -474,6 +493,9 @@ def resume_run(db: Database, run_id: str) -> dict[str, Any]:
         "project_id": row["project_id"],
         "url": f"/p/{row['project_id']}/r/{run_id}",
         "tags": json.loads(row["tags"]) if row.get("tags") else [],
+        # The stored documents, so the SDK can check later writes against them.
+        "config": config_doc.loads(row.get("config")),
+        "summary": config_doc.loads(row.get("summary")),
     }
 
 
@@ -492,9 +514,6 @@ def rewind_run(db: Database, run_id: str, step: int) -> dict[str, Any]:
         )
         rebuild_metric_stats(con, [run_id])
         con.execute(
-            "DELETE FROM run_artifacts WHERE run_id = ? AND step > ?", [run_id, step],
-        )
-        con.execute(
             "UPDATE runs SET data_epoch = COALESCE(data_epoch, 0) + 1 WHERE id = ?",
             [run_id],
         )
@@ -508,8 +527,8 @@ def fork_run(
     """Create a run from ``parent_id``'s history up to ``step``.
 
     The child is independent: it gets a COPY of the parent's history <= step
-    (see ``_HISTORY_KEEP``; run artifacts with step <= step, run-level ones
-    included), its params, summary and metric definitions. ``fields`` are the
+    (see ``_HISTORY_KEEP``), its config and summary documents and its metric
+    definitions. ``fields`` are the
     other ``create_run`` fields (name, tags, env, ...).
 
     Idempotent for WAL replay: an existing child is not re-created, and the
@@ -536,25 +555,22 @@ def fork_run(
             [run_id, parent_id, *keep],
         )
         rebuild_metric_stats(con, [run_id])
-        for table in ("params", "summary"):
-            con.execute(
-                f"""INSERT OR IGNORE INTO {table} (run_id, key, value, value_type)
-                    SELECT ?, key, value, value_type FROM {table} WHERE run_id = ?""",
-                [run_id, parent_id],
+        for table in KEY_TABLES:
+            # The child's own writes (a replayed WAL) merge over the parent's.
+            doc = config_doc.merge(
+                _read_doc(con, table, parent_id), _read_doc(con, table, run_id),
             )
+            write_doc(con, table, run_id, doc)
         con.execute(
             """INSERT OR IGNORE INTO metric_defs (run_id, name, x, summary)
                SELECT ?, name, x, summary FROM metric_defs WHERE run_id = ?""",
             [run_id, parent_id],
         )
-        con.execute(
-            """INSERT OR IGNORE INTO run_artifacts (run_id, name, hash, step, created_at)
-               SELECT ?, name, hash, step, created_at FROM run_artifacts
-                WHERE run_id = ? AND step <= ?""",
-            [run_id, parent_id, step],
-        )
     project_id = parent["project_id"]
-    return {"run_id": run_id, "project_id": project_id, "url": f"/p/{project_id}/r/{run_id}"}
+    return {
+        "run_id": run_id, "project_id": project_id, "url": f"/p/{project_id}/r/{run_id}",
+        **run_docs(db, run_id),
+    }
 
 
 def delete_run(db: Database, data_dir: DataDir, run_id: str) -> None:
@@ -567,7 +583,6 @@ def delete_run(db: Database, data_dir: DataDir, run_id: str) -> None:
     db.write("DELETE FROM summary WHERE run_id = ?", [run_id])
     db.write("DELETE FROM run_inputs WHERE run_id = ?", [run_id])
     db.write("DELETE FROM log_lines WHERE run_id = ?", [run_id])
-    db.write("DELETE FROM run_artifacts WHERE run_id = ?", [run_id])
     db.write("DELETE FROM alerts WHERE run_id = ?", [run_id])
     db.write("DELETE FROM metric_defs WHERE run_id = ?", [run_id])
     # Trials and forks outlive the run; they just lose the link.

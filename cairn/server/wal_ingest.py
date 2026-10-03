@@ -114,18 +114,22 @@ def _apply_op(
     if op == "create_artifact_version":
         from . import artifact_registry_ops
 
-        artifact_registry_ops.create_artifact_version(
-            db,
-            project_id=payload["project_id"],
-            family_name=payload["family_name"],
-            family_type=payload.get("family_type", "artifact"),
-            digest=payload["hash"],
-            size_bytes=payload["size_bytes"],
-            metadata=payload.get("metadata"),
-            created_by_run=payload.get("created_by_run"),
-            aliases=payload.get("aliases"),
-            version_id=payload.get("version_id"),
-        )
+        try:
+            artifact_registry_ops.create_version(
+                db, blobs,
+                project_id=payload["project_id"],
+                name=payload["name"],
+                type=payload.get("type", "artifact"),
+                digest=payload["digest"],
+                description=payload.get("description"),
+                metadata=payload.get("metadata"),
+                step=payload.get("step"),
+                created_by_run=payload.get("created_by_run"),
+                aliases=payload.get("aliases"),
+                version_id=payload.get("version_id"),
+            )
+        except (LookupError, ValueError) as exc:
+            log.warning("WAL artifact version %s failed: %s", payload.get("name"), exc)
         return run_id
 
     rid = payload.get("run_id", run_id)
@@ -157,13 +161,6 @@ def _apply_op(
             ingest_ops.rename_run(db, rid, payload["name"])
         elif op == "delete_keys":
             ingest_ops.delete_keys(db, rid, payload["table"], payload["keys"])
-        elif op == "attach_artifact":
-            ingest_ops.attach_artifact(
-                db, blobs, rid,
-                name=payload["name"],
-                digest=payload["hash"],
-                step=payload.get("step"),
-            )
         elif op == "record_artifact_input":
             from . import artifact_registry_ops
 
@@ -206,8 +203,8 @@ def _apply_op(
             log.debug("unknown WAL op %r — skipping", op)
     except ingest_ops.RunNotFound:
         log.warning("WAL %s for unknown run %s — skipping", op, rid)
-    except ValueError as exc:
-        # attach_artifact with a blob that never arrived.
+    except (TypeError, ValueError) as exc:
+        # A config write the document rejects (a flat-key collision).
         log.warning("WAL %s for run %s failed: %s", op, rid, exc)
     return run_id
 

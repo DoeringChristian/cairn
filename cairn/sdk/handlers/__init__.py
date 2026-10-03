@@ -4,7 +4,7 @@ default registry in LIFO order matching the spec's dispatch table.
 
 from __future__ import annotations
 
-from .artifact import ArtifactHandler
+from .pickle import PickleHandler
 from .audio import AudioHandler
 from .boxes3d import Boxes3DHandler
 from .figure import FigureHandler
@@ -53,7 +53,7 @@ if not _already_registered:
     default_registry.register(Boxes3DHandler())
     # Wrapper-only, like PointCloud — order among themselves doesn't matter.
     default_registry.register(VolumeHandler())
-    default_registry.register(ArtifactHandler())
+    default_registry.register(PickleHandler())
     # Wrapper-only, like Histogram/Tensor — order among themselves doesn't
     # matter since dispatch never falls through can_handle for these.
     default_registry.register(HtmlHandler())
@@ -80,7 +80,7 @@ __all__ = [
     "MeshHandler",
     "Boxes3DHandler",
     "VolumeHandler",
-    "ArtifactHandler",
+    "PickleHandler",
     "HtmlHandler",
     "MarkdownHandler",
     "PresetHandler",

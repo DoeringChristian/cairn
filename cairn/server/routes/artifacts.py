@@ -1,14 +1,14 @@
-"""Artifact read endpoints — list per run, fetch bytes with Range support."""
+"""Blob read endpoint: fetch content-addressed bytes with Range support."""
 
 from __future__ import annotations
 
 import re
-from typing import Any
+from urllib.parse import quote
 
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 
-from ._common import get_blobs, get_db, require_run
+from ._common import get_blobs, get_db
 
 router = APIRouter(prefix="/api", tags=["artifacts"])
 
@@ -36,39 +36,6 @@ def _etag_matches(if_none_match: str | None, digest: str) -> bool:
     return any(t == "*" or t.removeprefix("W/") == _etag(digest) for t in tags)
 
 
-@router.get("/runs/{run_id}/artifacts")
-def list_run_artifacts(run_id: str, request: Request) -> dict[str, Any]:
-    db = get_db(request)
-    require_run(db, run_id)
-    # Union of run_artifacts (named, non-sequence) and artifacts referenced by
-    # sequences for this run.
-    rows = db.read_columns(
-        """
-        SELECT ra.name, ra.hash,
-               CASE WHEN ra.step = -1 THEN NULL ELSE ra.step END AS step,
-               ra.created_at, a.mime_type, a.size_bytes, a.metadata,
-               a.object_type
-        FROM run_artifacts ra
-        JOIN artifacts a ON a.hash = ra.hash
-        WHERE ra.run_id = ?
-        ORDER BY ra.created_at DESC
-        """,
-        [run_id],
-    )
-    seq_rows = db.read_columns(
-        """
-        SELECT DISTINCT s.name, s.artifact_hash AS hash, s.step,
-               a.mime_type, a.size_bytes, a.metadata, s.object_type
-        FROM sequences s
-        JOIN artifacts a ON a.hash = s.artifact_hash
-        WHERE s.run_id = ? AND s.artifact_hash IS NOT NULL
-        ORDER BY s.name, s.step
-        """,
-        [run_id],
-    )
-    return {"named": rows, "from_sequences": seq_rows}
-
-
 @router.get("/artifacts/{digest}")
 def get_artifact(
     digest: str,
@@ -76,6 +43,23 @@ def get_artifact(
     range_header: str | None = Header(default=None, alias="range"),
     if_none_match: str | None = Header(default=None, alias="if-none-match"),
 ) -> Response:
+    return serve_blob(request, digest, range_header=range_header, if_none_match=if_none_match)
+
+
+def serve_blob(
+    request: Request,
+    digest: str,
+    *,
+    mime_type: str | None = None,
+    filename: str | None = None,
+    range_header: str | None = None,
+    if_none_match: str | None = None,
+) -> Response:
+    """A content-addressed blob's bytes (Range and If-None-Match aware).
+
+    ``mime_type`` overrides the stored one; ``filename`` adds an inline
+    ``Content-Disposition`` naming it.
+    """
     db = get_db(request)
     blobs = get_blobs(request)
     rows = db.read_columns(
@@ -83,9 +67,11 @@ def get_artifact(
     )
     if not rows:
         raise HTTPException(status_code=404, detail="artifact not found")
-    mime_type = rows[0]["mime_type"]
+    mime_type = mime_type or rows[0]["mime_type"]
     total_size = rows[0]["size_bytes"]
     cache_headers = {"Cache-Control": _IMMUTABLE, "ETag": _etag(digest)}
+    if filename:
+        cache_headers["Content-Disposition"] = f"inline; filename*=UTF-8''{quote(filename)}"
 
     # A validator the client already holds names these exact bytes.
     if _etag_matches(if_none_match, digest):

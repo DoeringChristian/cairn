@@ -5,22 +5,49 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
+from pydantic import BaseModel, Field
 
 from .. import auth
 from ..storage.db import Database
+from ..run_query import RUN_LIST_COLUMNS, RunQueryError, docs_by_run, select_runs
 from ..summary_rules import resolved_values
 from ._common import api_run_row, get_db, require_run
 
 router = APIRouter(prefix="/api", tags=["runs"])
 
-#: A run row as run lists return it: every column but ``env_snapshot``, which
-#: is large and only shown on the run page.
-RUN_LIST_COLUMNS = """id, project_id, display_name, created_at, ended_at, status,
-                   exit_code, git_sha, git_dirty, git_branch, git_remote, cli_args,
-                   hostname, "user", tags, notes, last_heartbeat,
-                   parent_run_id, fork_step, data_epoch, run_group, job_type,
-                   sweep_id, stop_requested"""
+def _extras(include: str | list[str] | None) -> set[str]:
+    if include is None:
+        return set()
+    parts = include.split(",") if isinstance(include, str) else include
+    return {p.strip() for p in parts if p.strip()}
+
+
+def _decorate(db: Database, rows: list[dict[str, Any]], extras: set[str]) -> None:
+    """Add the requested per-run extras to a page of rows (one query each)."""
+    run_ids = [r["id"] for r in rows]
+    run_params = _params_by_run(db, run_ids) if "params" in extras else None
+    run_stats = _metric_stats(db, run_ids) if "stats" in extras else None
+    docs = docs_by_run(db, run_ids) if "config" in extras else None
+    for row in rows:
+        if run_params is not None:
+            row["params"] = run_params.get(row["id"], {})
+        if run_stats is not None:
+            row["stats"] = run_stats.get(row["id"], {})
+        if docs is not None:
+            d = docs.get(row["id"], {})
+            row["config_doc"] = d.get("config", {})
+            row["summary_doc"] = d.get("summary", {})
+
+
+def _archived_param(value: str) -> bool | None:
+    if value == "false":
+        return False
+    if value == "true":
+        return True
+    if value == "all":
+        return None
+    raise HTTPException(status_code=400, detail="archived must be false, true or all")
 
 
 @router.get("/runs")
@@ -36,53 +63,74 @@ def list_runs(
         description="Comma-separated run ids: only these runs (the UI's poll "
                     "of its running runs).",
     ),
+    archived: str = Query(
+        default="false",
+        description="'false' (default) leaves archived runs out, 'true' lists "
+                    "only them, 'all' both.",
+    ),
+    sort: str = Query(
+        default="created_at",
+        description="created_at | ended_at | duration | name | status | id | "
+                    "config.<path> | summary.<path> | metrics.<name>",
+    ),
+    desc: bool = Query(default=False),
     include: str | None = Query(
         default=None,
         description="Comma-separated extras per run: 'params' adds a "
-                    "{key: value} map of the run's config (values JSON-decoded); "
-                    "'stats' adds per-metric scalar statistics (see _metric_stats).",
+                    "{key: value} map of the run's config (flat dotted keys, values "
+                    "JSON-decoded); 'config' adds the nested 'config_doc' and "
+                    "'summary_doc'; 'stats' adds per-metric scalar statistics "
+                    "(see _metric_stats).",
     ),
     limit: int = Query(default=50, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
+    """Runs, ordered and paged by the shared evaluator (``run_query``)."""
     db = get_db(request)
-
-    clauses: list[str] = []
-    params: list[Any] = []
-    for column, value in (
-        ("project_id", project),
-        ("status", status),
-        ("run_group", group),
-        ("job_type", job_type),
-        ("sweep_id", sweep_id),
-    ):
-        if value:
-            clauses.append(f"{column} = ?")
-            params.append(value)
+    spec: dict[str, Any] = {
+        "project": project, "status": status, "group": group, "job_type": job_type,
+        "sweep_id": sweep_id, "archived": _archived_param(archived),
+        "sort": {"key": sort, "desc": desc}, "limit": limit, "offset": offset,
+    }
     if ids is not None:
-        id_list = [i for i in (part.strip() for part in ids.split(",")) if i]
-        clauses.append(f"id IN ({','.join('?' * len(id_list))})" if id_list else "0")
-        params.extend(id_list)
-    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    rows = db.read_columns(
-        f"""SELECT {RUN_LIST_COLUMNS}
-            FROM runs {where} ORDER BY created_at DESC LIMIT ? OFFSET ?""",
-        [*params, limit, offset],
-    )
-    (total,) = db.read_one(f"SELECT COUNT(*) FROM runs {where}", params) or (0,)
-    run_ids = [r["id"] for r in rows]
-    resolved = resolved_values(db, run_ids)
-    extras = {part.strip() for part in (include or "").split(",") if part.strip()}
-    run_params = _params_by_run(db, run_ids) if "params" in extras else None
-    run_stats = _metric_stats(db, run_ids) if "stats" in extras else None
-    for row in rows:
-        api_run_row(row)
-        row["values"] = resolved.get(row["id"], {})
-        if run_params is not None:
-            row["params"] = run_params.get(row["id"], {})
-        if run_stats is not None:
-            row["stats"] = run_stats.get(row["id"], {})
+        spec["ids"] = [i for i in (part.strip() for part in ids.split(",")) if i]
+    try:
+        rows, total = select_runs(db, spec)
+    except RunQueryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    _decorate(db, rows, _extras(include))
     return {"runs": rows, "total": total, "limit": limit, "offset": offset}
+
+
+class RunQueryBody(BaseModel):
+    """``POST /api/runs/query``: the reader's ``RunQuery`` on the wire."""
+
+    project: str | None = None
+    #: False: not archived (default); True: only archived; None: both.
+    archived: bool | None = False
+    status: str | None = None
+    #: ``[field, op, sub, value]``; see ``run_query``.
+    predicates: list[list[Any]] = Field(default_factory=list)
+    where: list[str] = Field(default_factory=list)
+    sort: dict[str, Any] | None = None
+    #: Reverse the final order (``RunQuery.last``).
+    reverse: bool = False
+    limit: int | None = Field(default=None, ge=0)
+    offset: int = Field(default=0, ge=0)
+    include: list[str] = Field(default_factory=list)
+
+
+@router.post("/runs/query")
+def query_runs(body: RunQueryBody, request: Request) -> dict[str, Any]:
+    """Evaluate a run query (``run_query.select_runs``) -> ``{runs, total}``."""
+    db = get_db(request)
+    spec = body.model_dump(exclude={"include"})
+    try:
+        rows, total = select_runs(db, spec)
+    except RunQueryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    _decorate(db, rows, _extras(body.include))
+    return {"runs": rows, "total": total}
 
 
 def _params_by_run(db: Database, run_ids: list[str]) -> dict[str, dict[str, Any]]:
@@ -137,6 +185,7 @@ def _metric_stats(
 def get_run(run_id: str, request: Request) -> dict[str, Any]:
     db = get_db(request)
     run = require_run(db, run_id)
+    docs = docs_by_run(db, [run_id]).get(run_id, {})
     if auth.request_share(request) is not None:
         # A share link never reveals a run's environment.
         run.pop("env_snapshot", None)
@@ -154,4 +203,9 @@ def get_run(run_id: str, request: Request) -> dict[str, Any]:
     )
     run["values"] = resolved_values(db, [run_id])[run_id]
     run["stats"] = _metric_stats(db, [run_id])[run_id]
-    return {"run": run, "params": params, "summary": summary, "metric_defs": metric_defs}
+    return {
+        "run": run, "params": params, "summary": summary, "metric_defs": metric_defs,
+        # The nested documents as logged; ``params`` / ``summary`` are their
+        # flat index.
+        "config_doc": docs.get("config", {}), "summary_doc": docs.get("summary", {}),
+    }

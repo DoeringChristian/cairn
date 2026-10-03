@@ -40,6 +40,12 @@ def api_run_row(row: dict[str, Any]) -> dict[str, Any]:
     field (GROUP is a reserved word in SQL, so only the column is renamed)."""
     if "run_group" in row:
         row["group"] = row.pop("run_group")
+    if "archived_at" in row:
+        row["archived"] = row["archived_at"] is not None
+    # The documents are served decoded, under their own names (``config_doc``
+    # / ``summary_doc``), only where asked for; never as raw columns.
+    row.pop("config", None)
+    row.pop("summary", None)
     return row
 
 
@@ -87,15 +93,3 @@ def value_type(v: Any) -> str:
     if isinstance(v, dict):
         return "dict"
     return "str"
-
-
-def flatten(d: dict[str, Any], prefix: str = "") -> dict[str, Any]:
-    """Flatten a nested dict into dotted keys. Non-dict values are kept as-is."""
-    out: dict[str, Any] = {}
-    for k, v in d.items():
-        key = f"{prefix}.{k}" if prefix else k
-        if isinstance(v, dict):
-            out.update(flatten(v, key))
-        else:
-            out[key] = v
-    return out

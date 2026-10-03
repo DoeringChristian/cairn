@@ -1,277 +1,300 @@
-"""Artifact registry routes -- versioned artifact families, versions, aliases, lineage."""
+"""Artifact registry routes: families, versions, entries, aliases, lineage.
+
+Shapes are the ``artifact_registry_ops`` dicts:
+
+* family: ``{id, project_id, name, type, description, created_at, updated_at,
+  version_count, latest_version, total_size, aliases: {alias: version}}``;
+* version: ``{id, family_id, project_id, name, type, version, ref,
+  qualified_ref, digest, size, file_count, ref_count, metadata, description,
+  step, created_at, aliases, created_by_run, producer, consumer_count}``;
+* entry: ``{path, size, digest, mime, object_type, uri, etag, meta}``;
+* lineage: ``{nodes, edges[, center]}`` (see ``lineage_graph``).
+"""
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Form
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi.responses import Response
+from pydantic import BaseModel, Field
 
-from ._common import get_blobs, get_db
 from .. import artifact_registry_ops as ops
 from .. import auth
+from ._common import get_blobs, get_db, slugify
+from .artifacts import serve_blob
 
 router = APIRouter(prefix="/api", tags=["artifact-registry"])
 _write = Depends(auth.require_role("write"))
 
 
-# ---------------------------------------------------------------------------
-# Request models
-# ---------------------------------------------------------------------------
-
-class FamilyCreate(BaseModel):
-    name: str
-    type: str = "artifact"
-    description: str | None = None
+def _http(exc: Exception) -> HTTPException:
+    if isinstance(exc, LookupError):
+        return HTTPException(status_code=404, detail=str(exc).strip("'\""))
+    return HTTPException(status_code=400, detail=str(exc))
 
 
-class FamilyUpdate(BaseModel):
-    description: str | None = None
-
-
-class AliasSet(BaseModel):
-    alias: str
-    version_id: str
-
-
-class RecordInputBody(BaseModel):
-    artifact_version_id: str
-    role: str = "input"
-
-
-class ResolveRefBody(BaseModel):
-    ref: str
+def _project(project_id: str) -> str:
+    try:
+        return slugify(project_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
 
 
 # ---------------------------------------------------------------------------
 # Families
 # ---------------------------------------------------------------------------
 
+class FamilyUpdate(BaseModel):
+    description: str | None = None
+
+
 @router.get("/projects/{project_id}/artifact-families")
-def list_families(
-    project_id: str, request: Request, type: str | None = None,
-) -> dict[str, Any]:
-    db = get_db(request)
-    families = ops.list_families(db, project_id, type_filter=type)
-    return {"families": families}
-
-
-@router.post("/projects/{project_id}/artifact-families", dependencies=[_write])
-def create_family(
-    project_id: str, body: FamilyCreate, request: Request,
-) -> dict[str, Any]:
-    db = get_db(request)
-    family = ops.get_or_create_family(
-        db,
-        project_id=project_id,
-        name=body.name,
-        type=body.type,
-        description=body.description,
-    )
-    return family
+def list_families(project_id: str, request: Request, type: str | None = None) -> dict[str, Any]:
+    """``{families: [family]}``, most recently updated first; ``type`` filters."""
+    return {"families": ops.list_families(get_db(request), _project(project_id), type_filter=type)}
 
 
 @router.get("/projects/{project_id}/artifact-families/by-name/{name:path}")
-def get_family_by_name(
-    project_id: str, name: str, request: Request,
-) -> dict[str, Any]:
+def get_family_by_name(project_id: str, name: str, request: Request) -> dict[str, Any]:
+    """The family named ``name`` with ``versions`` (newest first)."""
     db = get_db(request)
-    family = ops.get_family_by_name(db, project_id, name)
+    family = ops.get_family_by_name(db, _project(project_id), name)
     if family is None:
-        raise HTTPException(status_code=404, detail=f"family '{name}' not found")
-    return family
+        raise HTTPException(status_code=404, detail=f"artifact {name!r} not found")
+    return ops.family_detail(db, family["id"])
 
 
 @router.get("/artifact-families/{family_id}")
 def get_family(family_id: str, request: Request) -> dict[str, Any]:
-    db = get_db(request)
+    """The family with ``versions`` (newest first)."""
     try:
-        family = ops.get_family(db, family_id)
-        family["versions"] = ops.list_versions(db, family_id)
-        # Add aliases
-        alias_rows = db.read_columns(
-            """SELECT a.alias, v.version
-               FROM artifact_aliases a
-               JOIN artifact_versions v ON v.id = a.version_id
-               WHERE a.family_id = ?
-               ORDER BY a.alias""",
-            [family_id],
-        )
-        family["aliases"] = [r["alias"] for r in alias_rows]
-        # Add aggregate fields the UI expects
-        versions = family["versions"]
-        family["total_versions"] = len(versions)
-        family["latest_version"] = max((v["version"] for v in versions), default=None)
-        family["total_size"] = sum(v["size_bytes"] for v in versions)
-        return family
+        return ops.family_detail(get_db(request), family_id)
     except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise _http(exc) from None
 
 
 @router.patch("/artifact-families/{family_id}", dependencies=[_write])
-def update_family(
-    family_id: str, body: FamilyUpdate, request: Request,
-) -> dict[str, Any]:
+def update_family(family_id: str, body: FamilyUpdate, request: Request) -> dict[str, Any]:
     db = get_db(request)
     try:
         ops.update_family(db, family_id, description=body.description)
+        return ops.family_detail(db, family_id)
     except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    return {"updated": family_id}
+        raise _http(exc) from None
 
 
 @router.delete("/artifact-families/{family_id}", dependencies=[_write])
 def delete_family(family_id: str, request: Request) -> dict[str, Any]:
-    db = get_db(request)
     try:
-        ops.delete_family(db, family_id)
+        ops.delete_family(get_db(request), family_id)
     except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise _http(exc) from None
     return {"deleted": family_id}
+
+
+@router.get("/artifact-families/{family_id}/versions")
+def list_versions(family_id: str, request: Request) -> dict[str, Any]:
+    """``{versions: [version]}``, newest first."""
+    try:
+        return {"versions": ops.list_versions(get_db(request), family_id)}
+    except LookupError as exc:
+        raise _http(exc) from None
 
 
 # ---------------------------------------------------------------------------
 # Versions
 # ---------------------------------------------------------------------------
 
-@router.get("/artifact-families/{family_id}/versions")
-def list_versions(family_id: str, request: Request) -> dict[str, Any]:
-    db = get_db(request)
-    versions = ops.list_versions(db, family_id)
-    return {"versions": versions}
-
-
 class CreateVersionBody(BaseModel):
-    """A version REFERENCES an already-uploaded blob by
-    digest (content-addressed, single upload) — the shape the SDK always
-    sent. The old multipart re-upload form is gone."""
+    """Register an uploaded manifest blob as the next version of ``name``."""
 
-    hash: str
-    size_bytes: int | None = None
+    name: str
+    type: str = "artifact"
+    #: Digest of the manifest blob (uploaded with every file it names first).
+    digest: str
+    description: str | None = None
     metadata: dict[str, Any] | None = None
+    step: int | None = None
     created_by_run: str | None = None
-    aliases: list[str] | None = None
+    #: User aliases moved to the new version (``latest`` always moves).
+    aliases: list[str] = Field(default_factory=list)
+    #: Client-generated id: replaying the request returns the same version.
+    version_id: str | None = None
 
 
-@router.post("/artifact-families/{family_id}/versions", dependencies=[_write])
-def create_version(
-    family_id: str, body: CreateVersionBody, request: Request,
-) -> dict[str, Any]:
-    db = get_db(request)
+@router.post("/projects/{project_id}/artifact-versions", dependencies=[_write])
+def create_version(project_id: str, body: CreateVersionBody, request: Request) -> dict[str, Any]:
+    """Create a version -> the version."""
     try:
-        return ops.create_version_from_digest(
-            db,
-            family_id=family_id,
-            digest=body.hash,
-            size_bytes=body.size_bytes,
-            metadata=body.metadata,
-            created_by_run=body.created_by_run,
-            aliases=body.aliases,
+        return ops.create_version(
+            get_db(request), get_blobs(request), project_id=_project(project_id),
+            **body.model_dump(),
         )
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+    except (LookupError, ValueError) as exc:
+        raise _http(exc) from None
+
+
+class ResolveRefBody(BaseModel):
+    ref: str
+
+
+@router.post("/projects/{project_id}/resolve-artifact-ref")
+def resolve_ref(project_id: str, body: ResolveRefBody, request: Request) -> dict[str, Any]:
+    """``[project/]name[:alias|:vN]`` (bare name = ``latest``) -> the version."""
+    try:
+        return ops.resolve_ref(get_db(request), _project(project_id), body.ref)
+    except (ValueError, LookupError) as exc:
+        raise _http(exc) from None
 
 
 @router.get("/artifact-versions/{version_id}")
 def get_version(version_id: str, request: Request) -> dict[str, Any]:
-    db = get_db(request)
     try:
-        return ops.get_version(db, version_id)
+        return ops.get_version(get_db(request), version_id)
     except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise _http(exc) from None
 
 
-@router.get("/artifact-families/{family_id}/versions/{version_num}")
-def get_version_by_number(
-    family_id: str, version_num: int, request: Request,
-) -> dict[str, Any]:
-    db = get_db(request)
-    ver = ops.get_version_by_number(db, family_id, version_num)
-    if ver is None:
+@router.get("/artifact-versions/{version_id}/files")
+def version_files(version_id: str, request: Request) -> dict[str, Any]:
+    """``{files: [entry]}`` by path."""
+    try:
+        return {"files": ops.version_files(get_db(request), version_id)}
+    except LookupError as exc:
+        raise _http(exc) from None
+
+
+@router.get("/artifact-versions/{version_id}/file")
+def version_file_content(
+    version_id: str,
+    request: Request,
+    path: str = Query(..., description="The entry's path inside the version."),
+    range_header: str | None = Header(default=None, alias="range"),
+    if_none_match: str | None = Header(default=None, alias="if-none-match"),
+) -> Response:
+    """One uploaded entry's bytes, served with the entry's mime type (Range
+    aware). A reference entry is a 409: its bytes live at its ``uri``."""
+    try:
+        entry = ops.version_file(get_db(request), version_id, path)
+    except LookupError as exc:
+        raise _http(exc) from None
+    if entry["digest"] is None:
         raise HTTPException(
-            status_code=404,
-            detail=f"version {version_num} not found in family {family_id}",
+            status_code=409,
+            detail=f"entry {path!r} is a reference to {entry['uri']}; it is not stored here",
         )
-    return ver
+    return serve_blob(
+        request, entry["digest"], mime_type=entry["mime"] or None,
+        filename=path.rsplit("/", 1)[-1], range_header=range_header, if_none_match=if_none_match,
+    )
 
 
-# ---------------------------------------------------------------------------
-# Aliases
-# ---------------------------------------------------------------------------
-
-@router.put("/artifact-families/{family_id}/aliases", dependencies=[_write])
-def set_alias(
-    family_id: str, body: AliasSet, request: Request,
-) -> dict[str, Any]:
-    db = get_db(request)
+@router.get("/artifact-versions/{version_id}/consumers")
+def version_consumers(version_id: str, request: Request) -> dict[str, Any]:
+    """``{consumers: [{run, role, used_at}], count}``, oldest use first."""
     try:
-        ops.set_alias(db, family_id, body.alias, body.version_id)
+        consumers = ops.version_consumers(get_db(request), version_id)
     except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    return {"family_id": family_id, "alias": body.alias, "version_id": body.version_id}
+        raise _http(exc) from None
+    return {"consumers": consumers, "count": len(consumers)}
 
 
-@router.delete("/artifact-families/{family_id}/aliases/{alias}", dependencies=[_write])
-def delete_alias(
-    family_id: str, alias: str, request: Request,
-) -> dict[str, Any]:
-    db = get_db(request)
-    ops.delete_alias(db, family_id, alias)
-    return {"deleted": alias}
+class AliasBody(BaseModel):
+    alias: str
 
 
-# ---------------------------------------------------------------------------
-# Ref resolution
-# ---------------------------------------------------------------------------
-
-@router.post("/projects/{project_id}/resolve-artifact-ref")
-def resolve_ref(
-    project_id: str, body: ResolveRefBody, request: Request,
-) -> dict[str, Any]:
-    db = get_db(request)
+@router.post("/artifact-versions/{version_id}/aliases", dependencies=[_write])
+def add_alias(version_id: str, body: AliasBody, request: Request) -> dict[str, Any]:
+    """Point a user alias at this version (moving it) -> the version.
+    ``latest`` and ``vN`` are reserved (400)."""
     try:
-        return ops.resolve_ref(db, project_id, body.ref)
-    except (ValueError, LookupError) as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        return ops.add_alias(get_db(request), version_id, body.alias)
+    except (LookupError, ValueError) as exc:
+        raise _http(exc) from None
+
+
+@router.delete("/artifact-versions/{version_id}/aliases/{alias}", dependencies=[_write])
+def remove_alias(version_id: str, alias: str, request: Request) -> dict[str, Any]:
+    """Remove a user alias from this version -> the version."""
+    try:
+        return ops.remove_alias(get_db(request), version_id, alias)
+    except (LookupError, ValueError) as exc:
+        raise _http(exc) from None
+
+
+@router.get("/artifact-versions/{version_id}/lineage")
+def version_lineage(
+    version_id: str, request: Request,
+    depth: int | None = Query(default=None, ge=0),
+    direction: str = Query(default="both", pattern="^(upstream|downstream|both)$"),
+) -> dict[str, Any]:
+    """The lineage graph centred on the version."""
+    try:
+        return ops.lineage_graph(
+            get_db(request), version_id=version_id, depth=depth, direction=direction,
+        )
+    except (LookupError, ValueError) as exc:
+        raise _http(exc) from None
 
 
 # ---------------------------------------------------------------------------
-# Run inputs / outputs / lineage
+# Runs
 # ---------------------------------------------------------------------------
+
+class RecordInputBody(BaseModel):
+    artifact_version_id: str
+    role: str = "input"
+
 
 @router.post("/runs/{run_id}/inputs", dependencies=[_write])
-def record_input(
-    run_id: str, body: RecordInputBody, request: Request,
-) -> dict[str, Any]:
+def record_input(run_id: str, body: RecordInputBody, request: Request) -> dict[str, Any]:
     db = get_db(request)
-    ops.record_input(
-        db,
-        run_id=run_id,
-        artifact_version_id=body.artifact_version_id,
-        role=body.role,
-    )
+    try:
+        ops.get_version(db, body.artifact_version_id)
+    except LookupError as exc:
+        raise _http(exc) from None
+    ops.record_input(db, run_id=run_id, artifact_version_id=body.artifact_version_id, role=body.role)
     return {"run_id": run_id, "artifact_version_id": body.artifact_version_id}
 
 
 @router.get("/runs/{run_id}/inputs")
-def get_run_inputs(run_id: str, request: Request) -> dict[str, Any]:
-    db = get_db(request)
-    return {"inputs": ops.get_run_inputs(db, run_id)}
+def run_inputs(run_id: str, request: Request, role: str | None = None) -> dict[str, Any]:
+    """``{inputs: [version + {role, used_at}]}`` in consumption order."""
+    return {"inputs": ops.run_inputs(get_db(request), run_id, role)}
 
 
 @router.get("/runs/{run_id}/outputs")
-def get_run_outputs(run_id: str, request: Request) -> dict[str, Any]:
+def run_outputs(
+    run_id: str, request: Request,
+    include: str | None = Query(default=None, description="'files' adds each version's entries."),
+) -> dict[str, Any]:
+    """``{outputs: [version]}`` in creation order (with ``files`` when asked:
+    the run page's artifact cards render from these)."""
     db = get_db(request)
-    return {"outputs": ops.get_run_outputs(db, run_id)}
+    outputs = ops.run_outputs(db, run_id)
+    if include and "files" in include.split(","):
+        for v in outputs:
+            v["files"] = ops.version_files(db, v["id"])
+    return {"outputs": outputs}
+
+
+@router.get("/runs/{run_id}/lineage")
+def run_lineage(
+    run_id: str, request: Request,
+    depth: int | None = Query(default=None, ge=0),
+    direction: str = Query(default="both", pattern="^(upstream|downstream|both)$"),
+) -> dict[str, Any]:
+    """The lineage graph centred on the run."""
+    try:
+        return ops.lineage_graph(get_db(request), run_id=run_id, depth=depth, direction=direction)
+    except (LookupError, ValueError) as exc:
+        raise _http(exc) from None
 
 
 @router.get("/projects/{project_id}/lineage")
-def get_lineage(
-    project_id: str,
-    request: Request,
-    family_id: str | None = None,
-    depth: int | None = None,
+def project_lineage(
+    project_id: str, request: Request, family_id: str | None = None,
 ) -> dict[str, Any]:
-    db = get_db(request)
-    return ops.get_lineage_graph(db, project_id, family_id=family_id, depth=depth)
+    """The project-wide lineage graph (``family_id``: one family's versions)."""
+    return ops.project_lineage(get_db(request), _project(project_id), family_id=family_id)

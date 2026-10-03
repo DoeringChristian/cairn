@@ -7,10 +7,10 @@ HTTP-free module so they can be unit-tested directly against a ``Database``:
 
 * the ``QueryRunSelector`` schema (``mode: latest-n | newest-per-name``,
   a faithful mirror of ``resolveRunSelectorFromRuns``;
-* ``RunQuery``'s Django-style ``field__op=value`` filter semantics
-  (``reader.py``) — the operator table is imported verbatim from the reader so
-  the two can never drift;
-* ``_find_artifact``'s highest-step ("latest checkpoint") logic (``reader.py``).
+* ``RunQuery``'s Django-style ``field__op=value`` filters — evaluated by the
+  one run-selection evaluator (``run_query.select_runs``), so ``latest`` here
+  is ``reader.runs(...).last()``;
+* the highest-step ("latest") point of a run's media sequence.
 
 The public entry point is ``resolve``, which turns a parsed
 ``QuerySpec`` (see ``parse_query_params``) into a
@@ -30,8 +30,8 @@ from typing import Any, Iterable, Literal, Mapping
 # the same comparison semantics as ``RunQuery.filter(...)``.
 from .query_grammar import OPERATOR_NAMES
 from ._operators import OPERATORS as _OPERATORS
+from .run_query import RunQueryError, select_runs
 from .storage.db import Database
-from .summary_rules import resolved_values
 
 
 class QueryError(ValueError):
@@ -45,15 +45,6 @@ class QueryNotFound(LookupError):
 # ---------------------------------------------------------------------------
 # Grammar dataclasses
 # ---------------------------------------------------------------------------
-
-# Top-level run columns filterable directly (everything else is a param key).
-# Mirrors ``reader._RUN_FIELDS`` but maps to DB column names where they differ.
-_RUN_FIELDS = {
-    "name", "status", "project", "tags", "id", "hostname", "user", "notes",
-    "group", "job_type",
-}
-_FIELD_TO_COLUMN = {"name": "display_name", "project": "project_id", "group": "run_group"}
-
 
 @dataclass(frozen=True)
 class RunSelection:
@@ -268,104 +259,27 @@ def _matches_name(display_name: str | None, pattern: str | None) -> bool:
     return p in name
 
 
-def _parse_tags(tags_json: str | None) -> list[str]:
-    if not tags_json:
-        return []
-    try:
-        parsed = json.loads(tags_json)
-    except (json.JSONDecodeError, TypeError):
-        return []
-    return [t for t in parsed if isinstance(t, str)] if isinstance(parsed, list) else []
-
-
-def _matches_tags(tags_json: str | None, want: list[str] | None) -> bool:
-    if not want:
-        return True
-    have = set(_parse_tags(tags_json))
-    return all(t in have for t in want)
-
-
-# ---------------------------------------------------------------------------
-# Field resolution + predicate evaluation (mirror of reader._get_field_value)
-# ---------------------------------------------------------------------------
-
-def _param_value(db: Database, run_id: str, key: str, table: str = "params") -> Any:
-    rows = db.read_columns(
-        f"SELECT value FROM {table} WHERE run_id = ? AND key = ?", [run_id, key]
-    )
-    if not rows:
-        return None
-    raw = rows[0]["value"]
-    try:
-        return json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        return raw
-
-
-def _final_metric(db: Database, run_id: str, name: str) -> Any:
-    """The metric's resolved final value, as the runs table shows it: the last
-    point, replaced by a ``run.track(..., summary=)`` rule, replaced by an
-    explicit summary key (``resolved_values``)."""
-    return resolved_values(db, [run_id])[run_id].get(name)
-
-
-def _field_value(db: Database, run_row: dict[str, Any], pred: Predicate) -> Any:
-    fld, sub = pred.field, pred.sub_field
-    if fld in _RUN_FIELDS:
-        if fld == "tags":
-            return _parse_tags(run_row.get("tags"))
-        return run_row.get(_FIELD_TO_COLUMN.get(fld, fld))
-    if fld == "metrics":
-        return _final_metric(db, run_row["id"], sub) if sub else None
-    if fld == "params":
-        return _param_value(db, run_row["id"], sub) if sub else None
-    if fld == "summary":
-        return _param_value(db, run_row["id"], sub, table="summary") if sub else None
-    # Default: treat the field as a (possibly dotted) param key.
-    full = f"{fld}.{sub}" if sub else fld
-    return _param_value(db, run_row["id"], full)
-
-
-def _run_matches(db: Database, run_row: dict[str, Any], spec: QuerySpec) -> bool:
-    if not _matches_name(run_row.get("display_name"), spec.name):
-        return False
-    for pred in spec.predicates:
-        actual = _field_value(db, run_row, pred)
-        comparator = _OPERATORS[pred.op]
-        try:
-            if not comparator(actual, pred.value):
-                return False
-        except (TypeError, ValueError):
-            return False
-    return True
-
-
 # ---------------------------------------------------------------------------
 # Run loading + selection
 # ---------------------------------------------------------------------------
 
 def _load_candidates(db: Database, spec: QuerySpec) -> list[dict[str, Any]]:
-    """Return matching runs ordered newest-first (created_at DESC)."""
+    """Matching runs, newest first, from the shared evaluator
+    (``run_query.select_runs``; archived runs are left out). ``name`` is the
+    UI's substring/glob pattern, applied on top."""
     if spec.run.mode == "id":
-        rows = db.read_columns("SELECT * FROM runs WHERE id = ?", [spec.run.run_id])
-        return rows
-
-    clauses: list[str] = []
-    params: list[Any] = []
-    if spec.project:
-        clauses.append("project_id = ?")
-        params.append(spec.project)
-    if spec.status:
-        clauses.append("status = ?")
-        params.append(spec.status)
-    if spec.at:
-        clauses.append("created_at <= ?")
-        params.append(spec.at)
-    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    rows = db.read_columns(
-        f"SELECT * FROM runs {where} ORDER BY created_at DESC", params
-    )
-    return [r for r in rows if _run_matches(db, r, spec)]
+        return db.read_columns("SELECT * FROM runs WHERE id = ?", [spec.run.run_id])
+    try:
+        rows, _ = select_runs(db, {
+            "project": spec.project,
+            "status": spec.status,
+            "created_before": spec.at,
+            "predicates": [[p.field, p.op, p.sub_field, p.value] for p in spec.predicates],
+            "sort": {"key": "created_at", "desc": True},
+        })
+    except RunQueryError as exc:
+        raise QueryError(str(exc)) from None
+    return [r for r in rows if _matches_name(r.get("display_name"), spec.name)]
 
 
 def _select_run(candidates: list[dict[str, Any]], sel: RunSelection) -> dict[str, Any] | None:
@@ -394,22 +308,13 @@ def _resolve_artifact(
     db: Database, run_id: str, tag: str,
     step: Literal["latest"] | int, kind: str | None,
 ) -> ResolvedArtifact | None:
-    named = db.read_columns(
-        """SELECT ra.hash AS hash,
-                  CASE WHEN ra.step = -1 THEN NULL ELSE ra.step END AS step,
-                  a.mime_type, a.size_bytes, a.object_type
-           FROM run_artifacts ra JOIN artifacts a ON a.hash = ra.hash
-           WHERE ra.run_id = ? AND ra.name = ?""",
-        [run_id, tag],
-    )
-    seq = db.read_columns(
+    matches = db.read_columns(
         """SELECT DISTINCT s.artifact_hash AS hash, s.step,
                   a.mime_type, a.size_bytes, s.object_type
            FROM sequences s JOIN artifacts a ON a.hash = s.artifact_hash
            WHERE s.run_id = ? AND s.name = ? AND s.artifact_hash IS NOT NULL""",
         [run_id, tag],
     )
-    matches = [*named, *seq]
     if kind:
         matches = [m for m in matches if m.get("object_type") == kind]
     if step != "latest":
