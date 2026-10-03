@@ -93,7 +93,7 @@ Click **Group** to add levels. Each level splits its parent group by one of:
 - `param: <key>`: a config value;
 - **expression…**: a scalar [expression](../reference/expressions.md), e.g. `min(val.loss) < 0.3`.
 
-Levels nest in order (`by …`, `then …`); reorder them with ↑/↓ and remove one with ×. Groups are ordered by value, and runs with no value go last as `(none)`. Each group header shows its run count; click it to collapse or expand it. Changing the group-by expands every group again.
+Levels nest in order (`by …`, `then …`); reorder them with ↑/↓ and remove one with ×. Grouping and sorting compose: the runs inside each group follow the table's sort, and the groups themselves are ordered by their first run in that sort, at every level. Sorting by **Created** (newest first) puts the group with the most recent run on top; sorting by the grouped column orders the groups by their value. Runs with no value for a level go last as `(none)`. Each group header shows its run count; click it to collapse or expand it. Changing the group-by expands every group again.
 
 ## Columns
 
