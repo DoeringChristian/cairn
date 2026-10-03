@@ -54,10 +54,10 @@ dependencies = [
 # enforces that they agree. Swap both back to version ranges the day the
 # packages are published.
 plot = [
-    "cairn-plot @ git+https://github.com/doeringchristian/cairn-plot@1f37f37b7a747f77f17f02a9d328b2c23d830845",
+    "cairn-plot @ git+https://github.com/doeringchristian/cairn-plot@d3ab5f0b5c40981a0a69addd29f1fb284ad063cd",
 ]
 ui = [
-    "cairn-ui @ git+https://github.com/DoeringChristian/cairn-ui@130489dec7fffe7eb7e7f0b932d24fe532fbc82f",
+    "cairn-ui @ git+https://github.com/DoeringChristian/cairn-ui@335ee8ca01c1b57b1b464cf74f061f8be1a45fad",
 ]
 media = [
     "matplotlib>=3.7",
