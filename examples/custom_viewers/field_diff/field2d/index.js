@@ -21,7 +21,7 @@ const PALETTES = {
 };
 
 const canvas = document.createElement("canvas");
-canvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;image-rendering:pixelated";
+canvas.style.cssText = "position:absolute;image-rendering:pixelated";
 const tip = document.createElement("div");
 tip.style.cssText = "position:absolute;pointer-events:none;padding:2px 6px;border-radius:4px;font:11px var(--cairn-mono);" +
   "background:var(--cairn-bg);color:var(--cairn-fg);border:1px solid var(--cairn-border);display:none;white-space:pre";
@@ -76,9 +76,10 @@ onRender(({ inputs, settings, size }) => {
   ctx.putImageData(img, 0, 0);
   // Keep the field's aspect inside the frame.
   const fit = Math.min(size.width / canvas.width, (size.height - 18) / h);
-  Object.assign(canvas.style, { width: `${canvas.width * fit}px`, height: `${h * fit}px`, inset: "0 auto auto 0" });
+  const left = (size.width - canvas.width * fit) / 2;
+  Object.assign(canvas.style, { width: `${canvas.width * fit}px`, height: `${h * fit}px`, left: `${left}px`, top: "0px" });
   legend.textContent = `${panels.map((p) => p.title).join("  |  ")}   ·   ±${range.toPrecision(3)}   ·   step ${inputs[0].step}`;
-  shown = { panels, w, h, gap, fit, a, b, labels: inputs.map((i) => i.label), size };
+  shown = { panels, w, h, gap, fit, left, a, b, labels: inputs.map((i) => i.label), size };
 });
 
 // Hover readout: the field values under the pointer.
@@ -92,21 +93,21 @@ canvas.addEventListener("pointermove", (e) => {
   const lines = [`x ${x}  y ${fy}`, `${labels[0]}: ${a.data[i].toPrecision(4)}`];
   if (b) lines.push(`${labels[1]}: ${b.data[i].toPrecision(4)}`, `A − B: ${(a.data[i] - b.data[i]).toPrecision(4)}`);
   tip.textContent = lines.join("\n");
-  Object.assign(tip.style, { display: "block", left: `${e.offsetX + 12}px`, top: `${e.offsetY + 12}px` });
+  Object.assign(tip.style, { display: "block", left: `${shown.left + e.offsetX + 12}px`, top: `${e.offsetY + 12}px` });
 });
 canvas.addEventListener("pointerleave", () => (tip.style.display = "none"));
 // The picture for report exports and paused frames: the frame as it looks,
 // at screen resolution (without it, the small field-sized canvas is used).
 snapshot(() => {
   if (!shown) return null;
-  const { size, fit } = shown;
+  const { size, fit, left } = shown;
   const out = document.createElement("canvas");
   out.width = size.width * size.dpr;
   out.height = size.height * size.dpr;
   const o = out.getContext("2d");
   o.scale(size.dpr, size.dpr);
   o.imageSmoothingEnabled = false;
-  o.drawImage(canvas, 0, 0, canvas.width * fit, canvas.height * fit);
+  o.drawImage(canvas, left, 0, canvas.width * fit, canvas.height * fit);
   o.fillStyle = getComputedStyle(legend).color;
   o.font = getComputedStyle(legend).font;
   o.fillText(legend.textContent, 6, size.height - 6);

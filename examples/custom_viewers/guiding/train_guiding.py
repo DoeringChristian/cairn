@@ -9,12 +9,12 @@ and a scalar loss. Two runs with different learning rates.
     cd examples/custom_viewers/guiding
     cairn init /tmp/cairn-viewers && export CAIRN_REPO=/tmp/cairn-viewers/.cairn
     python train_guiding.py          # publishes ./vmf (run.use_viewer)
-    cairn ui                         # project "custom-viewers"
+    cairn ui --repo $CAIRN_REPO       # project "viewers-guiding"
 
 In a run's page the ``guide`` card is drawn by the viewer. Open its gear >
 Compare and pick ``guide_ref`` as the reference: learned and reference show
 side by side, one camera. Edit the viewer live with
-``cairn viewer dev vmf --project custom-viewers``.
+``cairn viewer dev vmf --project viewers-guiding``.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ import numpy as np
 
 import cairn
 
-PROJECT = "custom-viewers"
+PROJECT = "viewers-guiding"
 STEPS = 12
 
 

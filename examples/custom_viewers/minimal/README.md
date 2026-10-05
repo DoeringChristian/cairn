@@ -8,15 +8,16 @@ exactly this folder.
 
 ```
 cd examples/custom_viewers/minimal
-export CAIRN_REPO=/tmp/cairn-viewers/.cairn       # any scratch repo
-cairn init /tmp/cairn-viewers
+cairn init /tmp/cairn-viewers                     # any scratch repo
+export CAIRN_REPO=/tmp/cairn-viewers/.cairn
 python log_hist.py                                # 2 runs, publishes ./hist
-cairn ui                                          # project "custom-viewers"
+cairn ui --repo $CAIRN_REPO                       # project "viewers-minimal"
 ```
 
-Open a run of project `custom-viewers`: the `hist` card is drawn by the viewer.
-Edit `hist/index.js` live while `cairn ui` runs:
+Open a run of project `viewers-minimal`: the `hist` card is drawn by the viewer.
+Edit `hist/index.js` live while `cairn ui` runs (it finds the `cairn ui`
+serving `$CAIRN_REPO`; every save reloads the open cards):
 
 ```
-cairn viewer dev hist --project custom-viewers
+cairn viewer dev hist --project viewers-minimal
 ```

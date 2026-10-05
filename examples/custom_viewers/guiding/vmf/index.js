@@ -44,7 +44,8 @@ function makePane() {
   const lobes = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({ sizeAttenuation: false }));
   scene.add(sphere, wire, lobes);
   const label = document.createElement("div");
-  label.style.cssText = "position:absolute;top:4px;font:11px var(--cairn-font);color:var(--cairn-muted);pointer-events:none";
+  // Named only when two panes share the frame (A | B); the card labels a single pane itself.
+  label.style.cssText = "position:absolute;bottom:4px;font:11px var(--cairn-font);color:var(--cairn-muted);pointer-events:none";
   document.body.append(label);
   return { scene, sphere, wire, lobes, label };
 }
@@ -76,6 +77,8 @@ function lobesOf(value, max) {
   return all.sort((a, b) => b.w - a.w).slice(0, max);
 }
 
+const tmp = new THREE.Color();
+
 function fillPane(pane, input, settings, theme) {
   const lobes = lobesOf(input.data, settings.maxLobes);
   const density = densityFn(lobes);
@@ -83,9 +86,12 @@ function fillPane(pane, input, settings, theme) {
   const col = pane.sphere.geometry.attributes.color;
   // Exposure maps density to [0, 1) the same way for every pane, so a learned
   // and a reference distribution compare by colour.
+  // Colormaps are sRGB; three.js wants vertex colours in linear space.
   for (let i = 0; i < pos.count; i++) {
     const f = density(pos.getX(i), pos.getY(i), pos.getZ(i));
-    col.setXYZ(i, ...colormap(settings.colormap, 1 - Math.exp(-settings.exposure * f)));
+    const [r, g, b] = colormap(settings.colormap, 1 - Math.exp(-settings.exposure * f));
+    tmp.setRGB(r, g, b, THREE.SRGBColorSpace);
+    col.setXYZ(i, tmp.r, tmp.g, tmp.b);
   }
   col.needsUpdate = true;
 
@@ -115,7 +121,7 @@ function draw() {
     renderer.render(panes[i].scene, camera);
     panes[i].label.style.left = `${i * w + 6}px`;
   }
-  panes.forEach((p, i) => (p.label.hidden = i >= count));
+  panes.forEach((p, i) => (p.label.hidden = count < 2 || i >= count));
 }
 
 function resize(s) {

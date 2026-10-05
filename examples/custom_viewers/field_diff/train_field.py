@@ -8,7 +8,7 @@ scalar error. Two runs; the second learns more slowly.
     cd examples/custom_viewers/field_diff
     cairn init /tmp/cairn-viewers && export CAIRN_REPO=/tmp/cairn-viewers/.cairn
     python train_field.py            # publishes ./field2d (run.use_viewer)
-    cairn ui                         # project "custom-viewers"
+    cairn ui --repo $CAIRN_REPO       # project "viewers-field"
 
 On the ``field`` card: gear > Compare > reference ``field_target`` shows the
 error A - B on a symmetric colormap; hover a pixel for its values. The gear's
@@ -23,7 +23,7 @@ import numpy as np
 
 import cairn
 
-PROJECT = "custom-viewers"
+PROJECT = "viewers-field"
 STEPS = 15
 H, W = 64, 96
 

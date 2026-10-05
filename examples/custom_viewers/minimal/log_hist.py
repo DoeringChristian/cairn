@@ -8,7 +8,7 @@ import cairn
 
 for seed in (0, 1):
     rng = np.random.default_rng(seed)
-    with cairn.Run(project="custom-viewers", name=f"minimal-{seed}") as run:
+    with cairn.Run(project="viewers-minimal", name=f"minimal-{seed}") as run:
         run.use_viewer(Path(__file__).parent / "hist")  # publishes ./hist when it changed
         for step in range(0, 100, 10):
             samples = rng.normal(loc=seed + step / 40, scale=1 + step / 100, size=4000)

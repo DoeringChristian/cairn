@@ -10,7 +10,7 @@ converges faster than the other.
     cd examples/custom_viewers/volume
     cairn init /tmp/cairn-viewers && export CAIRN_REPO=/tmp/cairn-viewers/.cairn
     python train_volume.py           # publishes ./raymarch (run.use_viewer)
-    cairn ui                         # project "custom-viewers"
+    cairn ui --repo $CAIRN_REPO       # project "viewers-volume"
 
 Drag to orbit, wheel to zoom; the gear has the colormap, density, steps,
 threshold and a slice plane. Gear > Compare > reference ``density_target``
@@ -25,7 +25,7 @@ import numpy as np
 
 import cairn
 
-PROJECT = "custom-viewers"
+PROJECT = "viewers-volume"
 STEPS = 10
 SHAPE = (48, 64, 80)  # (D, H, W)
 SPACING = (1.5, 1.0, 1.0)  # physical size of a voxel along D, H, W
