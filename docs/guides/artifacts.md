@@ -181,7 +181,8 @@ such as `s3fs`, installed); otherwise it is skipped with a warning and stays lis
 ```python
 ds = run.use_artifact("cifar10:normalised")
 root = ds.download()                              # ./artifacts/cifar10-v1/
-stats = json.load(ds.open("stats.json", "r"))
+stats = ds.get("stats.pkl")                       # norm_stats, unpickled
+readme = ds.open("README.md", "r").read()
 labels = ds.file("labels.json")                   # Path to the downloaded file
 [e.path for e in ds.files() if e.uri]             # ["raw.tar"]
 ```

@@ -13,10 +13,10 @@
       "type": "string",
       "pattern": "^[a-z0-9][a-z0-9_.-]{0,63}$"
     },
-    "title": {"type": "string", "minLength": 1, "description": "Label in the card builder (default: name)."},
+    "title": {"type": "string", "minLength": 1, "description": "Label in the card editor and the add-card flow (default: name)."},
     "description": {"type": "string"},
     "icon": {
-      "description": "Icon beside the title in the card builder (a Font Awesome solid name from this list).",
+      "description": "Icon beside the title in the card editor and the add-card flow (a Font Awesome solid name from this list).",
       "enum": ["cube", "cubes", "globe", "sun", "fire", "eye", "compass", "brain", "image", "images",
                "chart-line", "chart-area", "chart-column", "wave-square", "table", "table-cells", "shapes",
                "layer-group", "circle-nodes", "diagram-project", "route", "microscope", "atom", "wand-magic-sparkles"]

@@ -198,12 +198,17 @@ run.final["val.loss"]
 seq = run.sequence("val.loss")                    # a Sequence
 seq = run.sequence("val.loss", step_from=100, step_to=200)
 seq.steps, seq.values, seq.timestamps              # parallel lists
-seq[-1]                                            # the last SequencePoint
-seq[10:20]                                         # a Sequence
+seq[100]                                           # the SequencePoint at step 100
+list(seq)[-1]                                      # the last SequencePoint
+seq[10:20]                                         # a Sequence: steps 10 to 19
 seq.dataframe()                                    # pandas: step, value, wall_time, artifact_hash
 
 run.sequences()                                    # [SequenceInfo(name, object_type, min_step, max_step, count)]
 ```
+
+Indexing a `Sequence` is by step, not by position: `seq[100]` is the point
+logged at step 100 (`KeyError` if there is none), and a slice selects a step
+range.
 
 For pandas DataFrames of scalar metrics, use `history()`. It needs the
 `[export]` extra (`pip install 'cairn-track[export]'`).

@@ -220,8 +220,9 @@ or from the sweep's page in the web UI.
 | `cairn sweep pause\|resume\|cancel ID [--repo R]` | Changes a sweep's status |
 | `cairn agent ID [--count N] [--poll S] [--repo R]` | Runs a sweep's trials |
 
-Without `--repo`, these commands use `./.cairn` if it exists, and otherwise your
-environment or config file. See the [CLI reference](../reference/cli.md) for
+Without `--repo` (or `--server`), these commands use `CAIRN_REPO` or
+`CAIRN_SERVER`, then the config file, then `./.cairn`, like every other data
+command. See the [CLI reference](../reference/cli.md) for
 every option.
 
 ## In the web UI

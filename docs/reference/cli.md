@@ -30,8 +30,11 @@ path, or a `cairn://host:port` / `http(s)://` URL) and `--server URL`, and
 works on a local repo without a server as well as on a server. Without
 either option the target is `CAIRN_REPO` or `CAIRN_SERVER`, then the config
 file, then `./.cairn`; see
-[Configuration](configuration.md#resolution-order). Listing commands take
-`--format table|json`. A failure prints one line, `Error: ...`, and exits 1.
+[Configuration](configuration.md#resolution-order). `cairn list`
+(`table|json|csv`), `artifact ls|versions` and `report ls|shares`
+(`table|json`), and `artifact lineage` (`tree|json`) take `--format`;
+`sweep ls` and `viewer ls` print a table only. A failure prints one line,
+`Error: ...`, and exits 1.
 
 ## Commands
 

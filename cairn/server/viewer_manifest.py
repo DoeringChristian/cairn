@@ -41,7 +41,8 @@ SETTING_TABS = ("values", "grouping", "display", "expressions")
 SETTING_SECTIONS = (
     "Axes", "Smoothing", "Outliers", "Series", "Appearance", "Overlays", "Layout", "Playback", "Compare",
 )
-#: Icons a viewer may show beside its title in the card builder (Font Awesome solid names).
+#: Icons a viewer may show beside its title in the card editor and the add-card flow
+#: (Font Awesome solid names).
 ICONS = (
     "cube", "cubes", "globe", "sun", "fire", "eye", "compass", "brain", "image", "images",
     "chart-line", "chart-area", "chart-column", "wave-square", "table", "table-cells", "shapes",

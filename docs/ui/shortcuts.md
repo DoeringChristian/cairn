@@ -19,7 +19,6 @@ Each project has its own undo stack. It starts empty when you open or switch pro
 |---|---|
 | ++cmd+k++ | Focus the **Search panels** box and select its text. Works from inside other text fields. |
 | ++escape++ in the search box | Clear the search. |
-| ++enter++ in the quick panel builder's regex box | Add the panels. |
 
 See [Run page and workspace](workspace.md).
 
