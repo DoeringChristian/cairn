@@ -209,15 +209,15 @@ Point clouds, meshes and boxes render in an orbitable 3D view, one pane per run.
     - meshes: colouring and wireframe
     - boxes: colouring
 
-Volume cards draw the volume with `cairn.volume`, the [built-in viewer](../guides/custom-viewers.md#built-in-viewers) cairn ships: WebGL2 ray marching with a colormap transfer function, density, step count, a threshold and a slice plane (gear › Display), drag to orbit and wheel to zoom. A project can make another viewer the default for volumes (Defaults › **Default viewer per type**), and a card can pin its own (in a workspace, the viewer's entry in the gear's **Card type**; in a report, gear › Data › Series › **Viewer**). Without WebGL2, each pane offers the step's `.npz` for download.
+Volume cards draw the volume with `cairn.volume`, the [built-in viewer](../guides/custom-viewers.md#built-in-viewers) cairn ships: WebGL2 ray marching with a colormap transfer function, density, step count, a threshold and a slice plane (gear › Display), drag to orbit and wheel to zoom. A project can make another viewer the default for volumes (Defaults › **Default viewer per type**), and a card can pin its own (in a workspace, the viewer's entry in the gear's **Type** tab; in a report, gear › Data › Series › **Viewer**). Without WebGL2, each pane offers the step's `.npz` for download.
 
 Every kind of data has one [default viewer](../guides/custom-viewers.md#default-viewers): other built-in types show in their built-in card unless the project makes a custom viewer their default.
 
 ### Custom viewer
 
-A custom viewer card draws its data with one of the project's [custom viewers](../guides/custom-viewers.md#how-cards-pick-a-viewer), in a sandboxed frame per pane, with the step slider, galleries, the panel modes and the section slider of the other media cards. The gear's **Card type** list names each viewer that accepts the card's data by its title, after **Default (<name>)**.
+A custom viewer card draws its data with one of the project's [custom viewers](../guides/custom-viewers.md#how-cards-pick-a-viewer), in a sandboxed frame per pane, with the step slider, galleries, the panel modes and the section slider of the other media cards. The gear's **Type** tab names each viewer that accepts the card's data by its title, after **Default (<name>)**.
 
-- **Viewer**: **Default (<name>)** (the project's [default viewer](../guides/custom-viewers.md#default-viewers) of the data's kind) or a named one. In a workspace it is the card type (gear › **Card type**); in reports and share links, Data › Series › **Viewer**. **Version** (Data › Series): `latest` or a published `vN`.
+- **Viewer**: **Default (<name>)** (the project's [default viewer](../guides/custom-viewers.md#default-viewers) of the data's kind) or a named one. In a workspace it is the card type (gear › **Type**); in reports and share links, Data › Series › **Viewer**. **Version** (Data › Series): `latest` or a published `vN`.
 - **Reference tag** and **Pin reference step** (Data › Compare): a `compare` viewer gets the value and the reference together; any other viewer shows the reference as a second frame.
 - The viewer's own settings, in the tabs and sections its manifest names. They cascade from section and workspace defaults per viewer.
 - **Reset view** in the header clears a viewer's stored camera (viewers with a shared view).

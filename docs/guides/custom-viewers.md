@@ -45,7 +45,7 @@ run.track(cairn.Data({"values": counts.astype(np.float32)}, kind="demo/hist"), "
 ```
 
 The `hist` card is drawn by the viewer. Every save of a file in `viewers/hist` reloads it in open
-cards. The viewer is also an entry of the **Card type** list in the card's gear editor (by its title and
+cards. The viewer is also an entry of the **Type** tab in the card's gear editor (by its title and
 icon), and its two settings sit in the gear's **Display** and **Data** tabs.
 
 When you are done, publish the folder, or let the training script publish it whenever it changed:
@@ -395,7 +395,7 @@ Cairn ships viewers with the UI, named `cairn.<name>`, in every project without 
 |---|---|---|
 | `cairn.volume` (Volume (ray marching)) | `volume` | `volume` |
 
-They are listed with the project's viewers (marked built-in), show in the **Card type** list, the
+They are listed with the project's viewers (marked built-in), show in the **Type** tab, the
 **Viewer** setting of reports and the Defaults page like any viewer, and are always available to reports and
 share links. Viewer names starting with `cairn.` are reserved. In a browser without WebGL2 a
 volume card falls back to offering each step's `.npz` for download.
@@ -417,12 +417,11 @@ volume card falls back to offering each step's `.npz` for download.
 ### The gear editor
 
 The gear is the card's only editor (the [card editor](../ui/workspace.md#full-screen-card-and-settings),
-which also adds cards). Its **Card** section picks the series (**Data**) and the **Card type**: the
-type list offers **Default (<name>)** (the kind's default viewer; a built-in type shows it as
+which also adds cards). Its **Data** tab picks the series and its **Type** tab the card type: the
+list offers **Default (<name>)** (the kind's default viewer; a built-in type shows it as
 `Volume (default: …)`) and every viewer that accepts all of the card's data (by title, with its
-icon) next to the built-in types, each as a live tile, and the card changes at once. Under it are
-the title and the card's settings: the viewer's own sit in the tabs and sections their manifest
-names; Data › Series has **Version** (latest or a published `vN`), and Data › Compare has the
+icon) next to the built-in types, each as a live tile, and the card changes at once. The
+viewer's own settings sit in the tabs and sections their manifest names; Data › Series has **Version** (latest or a published `vN`), and Data › Compare has the
 reference. (In reports and share links, which have no Card section, Data › Series also has
 **Viewer**.)
 
