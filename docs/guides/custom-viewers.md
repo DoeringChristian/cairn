@@ -342,9 +342,9 @@ Series) stores `viewer_version: N` in the card's settings.
 ### Live development
 
 `cairn viewer dev` scans the folder every `--interval` seconds and sends changed files to the
-server. It needs a running `cairn ui` or `cairn server` and write access: with a local repo
-(`--repo`, `CAIRN_REPO`, `./.cairn`) it uses the `cairn ui` that serves it (each one advertises
-itself in the repo's `servers.json`), and refuses when none does. Each complete change bumps the source's revision, and open cards reload their frames
+server. It needs a running `cairn ui` or `cairn server` and write access: a local repo
+(`--repo`, `CAIRN_REPO`, `./.cairn`) that a `cairn ui` serves connects to that server, as every
+command does; with no server on it, the command refuses. Each complete change bumps the source's revision, and open cards reload their frames
 (the UI polls the viewer list every 2 s while a dev source exists). While the dev source lives it
 wins over the published viewer of the same name in every card that does not pin a version. An invalid manifest is reported in the command's output and the last valid one stays
 in use. Ctrl-C removes the source; otherwise it expires 30 s after the command stops. Dev sources

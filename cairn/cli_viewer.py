@@ -114,9 +114,9 @@ def _list(project: str, all_versions: bool, repo: str | None) -> list[dict[str, 
 def viewer_dev(folder: Path, project: str, repo: str | None, interval: float) -> None:
     """Serve FOLDER live to a running server: every change reloads the viewer
     in open cards. Needs a running ``cairn ui``/``cairn server`` (write
-    access): with a local repo, the ``cairn ui`` serving it is found by
-    itself. The dev source disappears ~30 s after this stops. It is never
-    part of a report or share link."""
+    access): a local repo that a ``cairn ui`` serves connects to that server.
+    The dev source disappears ~30 s after this stops. It is never part of a
+    report or share link."""
     import httpx
 
     from .sdk.connect import open_transport
@@ -127,22 +127,13 @@ def viewer_dev(folder: Path, project: str, repo: str | None, interval: float) ->
 
     transport, url = open_transport(repo)
     if isinstance(transport, LocalTransport):
-        # A local repo: the `cairn ui` serving it (it advertises itself in the repo).
-        root = transport.data_dir.root
+        # (A local repo that a `cairn ui` serves opens as that server already.)
         transport.close()
-        found = _live_server(root)
-        if found is None:
-            raise click.ClickException(
-                f"`cairn viewer dev` needs a running server: no `cairn ui` is serving {root} "
-                "(start one, or pass --server URL)"
-            )
-        url = found
-        from .config import resolve_token
-
-        token = resolve_token(url)
-    else:
-        token = getattr(transport, "token", None)
-        transport.close()
+        raise click.ClickException(
+            "`cairn viewer dev` needs a running server: start `cairn ui` on this repo (or pass --server URL)"
+        )
+    token = getattr(transport, "token", None)
+    transport.close()
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     client = httpx.Client(base_url=url, headers=headers, timeout=30.0)
     try:
@@ -168,26 +159,6 @@ def viewer_dev(folder: Path, project: str, repo: str | None, interval: float) ->
         sync.close()
         client.close()
     sys.exit(0)
-
-
-def _live_server(root: Path) -> str | None:
-    """The URL of a live server advertised for the local repo ``root`` (newest first), or None."""
-    import httpx
-
-    from .server.storage.datadir import read_live_servers
-
-    entries = sorted(read_live_servers(root), key=lambda e: e.get("started_at") or "", reverse=True)
-    for entry in entries:
-        if entry.get("port") is None:
-            continue
-        host = entry.get("host") or "localhost"
-        url = f"http://{'localhost' if host in ('0.0.0.0', '127.0.0.1', '::') else host}:{entry['port']}"
-        try:
-            if httpx.get(f"{url}/api/health", timeout=1.0).status_code < 500:
-                return url
-        except httpx.HTTPError:
-            continue
-    return None
 
 
 @viewer_group.command("add")
