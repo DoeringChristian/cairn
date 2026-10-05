@@ -473,3 +473,20 @@ def test_empty_exports_warn(live_server, monkeypatch, tmp_path):
     result = CliRunner().invoke(cli.main, ["export", "--project", "nope", "--format", "csv", "--out", str(tmp_path / "b.csv")])
     assert result.exit_code == 0, result.output
     assert "no run of project 'nope' matches" in result.output
+
+
+def test_sync_against_a_down_server_fails_and_keeps_the_log(monkeypatch, tmp_path):
+    """A WAL whose server is unreachable used to print `replayed 0 op(s)`
+    and `nothing to sync` with exit 0 although every op was still pending."""
+    from cairn.sdk.wal import WriteAheadLog
+
+    monkeypatch.setenv("CAIRN_WAL_DIR", str(tmp_path / "wal"))
+    monkeypatch.setattr(cli, "default_spill_dir", lambda: tmp_path / "spill")
+    wal = WriteAheadLog("r1", tmp_path / "wal", target="http://127.0.0.1:1")
+    wal.append("params", {"run_id": "r1", "params": {"a": 1}})
+    wal.close()
+    result = CliRunner().invoke(cli.main, ["sync"])
+    assert result.exit_code == 1, result.output
+    assert "r1: FAILED after 0 op(s)" in result.output
+    assert "sync incomplete" in result.output
+    assert (tmp_path / "wal" / "r1.wal.jsonl").exists()

@@ -1254,12 +1254,20 @@ def sync_cmd() -> None:
             wal.close()
             continue
         target = wal.target or _config.resolve_server()
-        t = Transport(target, wal=wal)
+        t = Transport(target, wal=wal, max_retries=2, backoff_base=0.2, backoff_cap=0.5)
         try:
             n = t.drain_wal()
             replayed += n
-            click.echo(f"{run_id}: replayed {n} op(s) -> {target}")
-            if not wal.has_pending:
+            if wal.has_pending:
+                # drain_wal stops at the first op that fails to send (and
+                # logs why), leaving the rest pending.
+                failed += 1
+                click.echo(
+                    f"{run_id}: FAILED after {n} op(s) -> {target}; the rest are kept for retry",
+                    err=True,
+                )
+            else:
+                click.echo(f"{run_id}: replayed {n} op(s) -> {target}")
                 wal.cleanup()
         except Exception as exc:  # noqa: BLE001 - keep draining other runs
             failed += 1
@@ -1278,8 +1286,13 @@ def sync_cmd() -> None:
 
     if replayed == 0 and failed == 0:
         click.echo("nothing to sync")
+    elif failed:
+        raise click.ClickException(
+            f"sync incomplete: {replayed} op(s) replayed, {failed} run(s) failed; "
+            "run `cairn sync` again once the server is reachable"
+        )
     else:
-        click.echo(f"sync complete: {replayed} op(s) replayed, {failed} run(s) failed")
+        click.echo(f"sync complete: {replayed} op(s) replayed")
 
 
 @main.command("configure")
