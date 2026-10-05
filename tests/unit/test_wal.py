@@ -158,3 +158,34 @@ def test_header_carries_epoch_and_target(tmp_path):
     assert wal2.target == "http://srv:4300"
     # header record never surfaces as a pending op
     assert all(e.op != "header" for e in wal2.pending())
+
+
+def test_concurrent_appends_get_distinct_seqs_and_pending_skips_acked(tmp_path):
+    """The metric and log flush threads append at once; pending() seeks
+    past the delivered prefix."""
+    import threading
+
+    wal = WriteAheadLog("run", wal_dir=tmp_path)
+    seqs: list[int] = []
+    lock = threading.Lock()
+
+    def worker() -> None:
+        for _ in range(200):
+            s = wal.append("batch", {"points": [1]})
+            with lock:
+                seqs.append(s)
+
+    threads = [threading.Thread(target=worker) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert sorted(seqs) == list(range(1, 801))
+    for s in range(1, 791):
+        wal.ack(s)
+    assert [e.seq for e in wal.pending()] == list(range(791, 801))
+    # A fresh handle (no in-memory offsets) reads the same from disk.
+    wal.close()
+    again = WriteAheadLog("run", wal_dir=tmp_path)
+    assert [e.seq for e in again.pending()] == list(range(791, 801))
+    again.close()
