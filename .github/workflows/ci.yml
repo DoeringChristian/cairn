@@ -14,8 +14,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # cairn-plot ships from the standalone repo, vendored at
-          # vendor/cairn-plot; uv's path source needs it checked out.
+          # cairn-ui ships from its own repo, vendored at vendor/cairn-ui;
+          # uv's path source needs it checked out.
           submodules: recursive
 
       - uses: astral-sh/setup-uv@v3
@@ -67,7 +67,7 @@ jobs:
           import glob, zipfile
           wheel, = glob.glob("dist/cairn_ui-*.whl")
           names = set(zipfile.ZipFile(wheel).namelist())
-          for shell in ("index.html", "embed.html", "plot.html"):
+          for shell in ("index.html", "embed.html"):
               assert f"cairn_ui/_dist/{shell}" in names, shell
           assert any(n.startswith("cairn_ui/_dist/assets/") for n in names)
           PY
@@ -109,20 +109,9 @@ jobs:
           /tmp/extra/bin/pip install --quiet "$(echo dist/cairn_track-*.whl)[ui]"
           cd /tmp   # keep the repo off sys.path so this tests the INSTALL
           /tmp/extra/bin/python -c "
-          import cairn_plot, cairn_ui
+          import cairn_ui
           from cairn import viewer
           import cairn
           assert viewer.is_available()
-          cairn.ui; cairn.plot
-          "
-
-      - name: the [plot] extra resolves and pulls no viewer
-        run: |
-          python -m venv /tmp/plotonly
-          /tmp/plotonly/bin/pip install --quiet "$(echo dist/cairn_track-*.whl)[plot]"
-          cd /tmp
-          /tmp/plotonly/bin/python -c "
-          import cairn, importlib.util
-          cairn.plot
-          assert importlib.util.find_spec('cairn_ui') is None, '[plot] dragged the viewer in'
+          cairn.ui
           "

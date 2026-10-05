@@ -371,5 +371,3 @@ Query URLs need a server, both to build them and to fetch them. With a local
 repo target, `query_url`, `latest_url` and `DataRef.url` raise `ValueError`. A
 server with authentication also needs a token on every fetch: the browser sends
 its login cookie when the page is served from the same origin.
-`examples/report_query_url.py` builds a `cairn.plot` report from live query
-URLs.

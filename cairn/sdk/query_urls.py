@@ -1,9 +1,9 @@
 """Python sugar for building live query URLs (``cairn.query_url``).
 
 A *live query URL* is a stable server URL that always resolves to "the ``tag``
-artifact of the latest (optionally filtered) run" — the thing a cairn-plot
-report embeds so it shows the freshest data every time it opens
-(``cp.Image(url=cairn.query_url("train/render"))``).
+artifact of the latest (optionally filtered) run" — the thing to embed in a
+page or notebook (e.g. ``<img src="{cairn.query_url('train/render')}">``) so it
+shows the freshest data every time it opens.
 
 Two emission modes:
 
@@ -15,7 +15,7 @@ Two emission modes:
 Both require a **server** target: a live URL is only meaningful against a
 running server, and baked resolution needs one to query. Against a local-only
 (``.cairn/``) target, ``query_url`` raises a clear error pointing at server
-mode or baked reports.
+mode.
 """
 
 from __future__ import annotations
@@ -29,8 +29,7 @@ _LOCAL_ONLY_MSG = (
     "query_url needs a server target (there is no server to resolve against in "
     "local-only mode). Point at a running server — e.g. "
     "cairn.query_url(..., server='cairn://host:4300'), cairn.configure("
-    "repo='cairn://host:4300'), or CAIRN_REPO — or bake a self-contained "
-    "report instead."
+    "repo='cairn://host:4300'), or CAIRN_REPO."
 )
 
 

@@ -23,7 +23,6 @@ Some examples need extras or third-party packages. The **Needs** column lists
 them:
 
 - `[media]`: `pip install 'cairn-track[media]'` (matplotlib, plotly, …)
-- `[plot]`: `pip install 'cairn-track[plot]'` (`cairn.plot`)
 - `[ui]`: `pip install 'cairn-track[ui]'` (the viewer; `cairn ui` always needs it)
 
 ## Metrics and the runs table
@@ -48,7 +47,7 @@ them:
 | `demo_table.py` | Two runs. `predictions`: a 1000-row table with int, string, float and bool columns, per step. `summary`: a small table at the last step. Plus `accuracy`. | — | The table card: sorting, filtering, paging, CSV download, the step slider |
 | `demo_histogram_tensor.py` | Two runs. Histograms (`weights/layer1`, `activations`) that change over steps; 1-D, 2-D and 3-D tensors (`grad_norms`, `attention`, `attention_heads`); `loss` | — | The histogram card over steps; the tensor card's heatmap and slice selectors |
 | `demo_html_markdown.py` | Two runs. A `cairn.Html` report per step (`reports.summary`) whose height changes, `cairn.Markdown` notes (`notes.training`), and one HTML page with a script that tries to escape its sandbox (`reports.sandbox_probe`) | — | The HTML and Markdown cards. The sandbox probe must report that it was blocked. |
-| `demo_plot_helpers.py` | Two runs of a fake 3-class classifier. Per step: accuracy and losses, and Plotly figures from `cairn.plot`: `eval.confusion_matrix` (raw and normalized), `eval.roc_curve`, `eval.pr_curve`, `eval.per_class_accuracy`; at the end `eval.loss_curves` | `[plot]`, `[media]` | The figure cards, stepped and compared across runs |
+| `demo_classification.py` | Two runs of a fake 3-class classifier. Per step: accuracy and losses, and the classification presets `cairn.ConfusionMatrix` (`eval.confusion_matrix`), `cairn.ROCCurve` (`eval.roc_curve`) and `cairn.PRCurve` (`eval.pr_curve`) | — | The confusion-matrix, ROC and PR cards, stepped and compared across runs |
 | `demo_pointcloud.py` | Three runs of rotating point clouds: RGB (`sphere_rgb`), per-point categories (`torus_category`), plain xyz (`helix_height`), a named per-point property (`grid_scan`); one cloud of over 300,000 points (`big_scan`) | — | The point-cloud card's colour modes and property selector |
 | `demo_mesh.py` | Three runs of meshes: a deforming sphere with two per-vertex properties (`blob_sphere`), a torus with vertex colours and normals (`rainbow_torus`), a cube with explicit normals (`faceted_cube`), and a sphere with half its faces flipped (`mixed_winding_sphere`, which must still render solid) | — | The mesh card: property colouring, vertex colours, shading |
 | `demo_boxes3d.py` | Two runs of box hierarchies: an adaptive `cairn.Octree`, a `cairn.BVH` with per-node values, and a fixed `cairn.Boxes3D` grid with per-box values | — | The boxes card: depth range filter, colour by depth or value |
@@ -80,13 +79,6 @@ cairn viewer dev examples/custom_viewers/guiding/vmf --project viewers-guiding  
 | Script | What it logs | Needs | What to look at |
 |---|---|---|---|
 | `artifact_registry.py` | A pipeline in project `artifact-demo`: data-prep runs log a `training-data` dataset (a directory, an S3 reference and a generated file, built with `cairn.Artifact`), training runs use it and log a `linear-model` checkpoint every epoch with a moving `best` alias, an evaluation run uses `linear-model:best`, and a reader walks the lineage back. | — | The project's **Artifacts** and **Lineage** pages. See [Artifacts and lineage](guides/artifacts.md). |
-
-## Reports and notebooks
-
-| Script | What it does | Needs | How to run |
-|---|---|---|---|
-| `report_query_url.py` | Builds a standalone HTML report (`cairn.plot.Report`) whose images are [live query URLs](guides/reading.md#live-query-urls): the latest run's `train/render`, the latest run tagged `best`'s `eval/render`, and the second-newest run's `train/render`. It prints the URLs. | `[plot]` | `python examples/report_query_url.py --server cairn://localhost:4300 --project demo -o report.html`. The URLs resolve only when fetched from that server. |
-| `marimo_cairn_demo.py` | A [marimo](https://marimo.io) notebook: `cairn.Reader` queries, `cairn.plot` figures, `run[tag]` handles, `cairn.ui` comparison cards and a `cairn.plot.Report`. Falls back to synthetic data when there are no runs. | `[examples]`, `[media]`, `[plot]`, `[ui]` | Populate a repo with `demo_plot_helpers.py` (and optionally `demo_image_comparison.py`), then `marimo edit examples/marimo_cairn_demo.py`. Running it with `python` executes every cell as a test. |
 
 ## Distributed and parallel training
 

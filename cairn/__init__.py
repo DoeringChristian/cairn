@@ -19,13 +19,11 @@ from .config import configure  # noqa: E402
 # ---------------------------------------------------------------------------
 # Lazy top-level surface (PEP 562).
 #
-# Everything else — ``Run``/``Reader``/``Report``, the plugin + wrapper
-# classes, ``cairn.plot`` — is loaded on first attribute access rather than at
+# Everything else — ``Run``/``Reader``, the plugin + wrapper classes,
+# ``cairn.ui`` — is loaded on first attribute access rather than at
 # ``import cairn``. This keeps ``import cairn`` (and therefore importing any
 # ``cairn.sdk.*`` submodule, which runs THIS package initializer) from eagerly
-# pulling the server/run/transport/handler graph, so the pure ``cairn.plot``
-# modules stay decoupled from the app (proven by
-# ``tests/unit/test_plot_import_purity.py``). ``cairn.Run``, ``cairn.plot``,
+# pulling the server/run/transport/handler graph. ``cairn.Run``, ``cairn.ui``,
 # ``cairn.Image`` … all still resolve as plain attributes.
 #
 # Handler registration is a side effect of importing ``cairn.sdk.run`` (which
@@ -72,7 +70,6 @@ _LAZY_ATTRS: dict[str, str] = {
 
 if TYPE_CHECKING:  # static-analysis only — never executed, never eager at runtime.
     from pathlib import Path
-    from . import plot as plot
     from . import ui as ui
     from .sdk.artifacts import Artifact, ArtifactEntry, ArtifactFamily, ArtifactVersion
     from .sdk.query_urls import query_url
@@ -107,17 +104,15 @@ if TYPE_CHECKING:  # static-analysis only — never executed, never eager at run
 
 
 #: Attributes gated behind an optional extra, and which extra unlocks each.
-#: cairn-track is the tracker and the server; drawing and the browser viewer are
-#: opt-in halves, like ray[tune] / ray[serve]. Listed here so a missing extra
-#: reports itself instead of surfacing as a bare ImportError on `cairn_plot`
-#: from three modules deep.
+#: cairn-track is the tracker and the server; the browser viewer is an opt-in
+#: half, like ray[tune] / ray[serve]. Listed here so a missing extra reports
+#: itself instead of surfacing as a bare ImportError on `cairn_ui` from three
+#: modules deep.
 _EXTRA_FOR = {
-    "plot": "plot",
     "ui": "ui",
 }
 
 _WHAT = {
-    "plot": "the renderer surface",
     "ui": "the Cairn viewer surface (cards and notebook embeds)",
 }
 
@@ -125,7 +120,7 @@ from . import viewer as _viewer  # stdlib-only; widens no import closure
 
 #: Import names that belong to the optional distributions themselves. A missing
 #: one means "extra not installed"; anything else is a genuine error.
-_OPTIONAL_DISTS = frozenset({"cairn_plot", _viewer.PACKAGE})
+_OPTIONAL_DISTS = frozenset({_viewer.PACKAGE})
 
 _EXTRA_HINT = (
     "`cairn.{name}` is {what}, which needs an optional extra.\n"
@@ -141,7 +136,7 @@ _EXTRA_HINT = (
 def __getattr__(name: str):
     """PEP 562 lazy loader for the top-level API (see module docstring)."""
     try:
-        if name in ("plot", "ui"):
+        if name == "ui":
             module = importlib.import_module(f".{name}", __name__)
             globals()[name] = module
             return module
@@ -185,7 +180,6 @@ __all__ = [
     "ArtifactVersion",
     "ArtifactEntry",
     "ArtifactFamily",
-    "plot",
     "ui",
     "Pickle",
     "Image",

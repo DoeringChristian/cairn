@@ -37,27 +37,21 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# The optional halves, gated separately.
+# The optional half.
 #
-#   [plot] unlocks `cairn.plot` — cairn-plot, for notebooks and standalone
-#          HTML reports.
 #   [ui]   unlocks `cairn.ui` (cards and notebook embeds) AND the browser
-#          viewer itself. The viewer draws with its own libraries; it does
-#          not need cairn-plot.
+#          viewer itself.
 #
-# Both are pinned to a git commit rather than a version range, because neither
-# is on PyPI (nor is cairn-track). A range would send pip to an index that
+# Pinned to a git commit rather than a version range, because cairn-ui is not
+# on PyPI (nor is cairn-track). A range would send pip to an index that
 # answers 404, so `pip install 'cairn-track[ui]'` would fail at resolution
-# before it ever got to the wheels. The viewer pin is lock-step with this
-# server — the bundle encodes the /api/* response shapes and the card-spec
-# schema — so bump it together with vendor/cairn-ui; test_package_boundaries.py
-# enforces that they agree. Swap both back to version ranges the day the
-# packages are published.
-plot = [
-    "cairn-plot @ git+https://github.com/doeringchristian/cairn-plot@d3ab5f0b5c40981a0a69addd29f1fb284ad063cd",
-]
+# before it ever got to the wheels. The pin is lock-step with this server —
+# the bundle encodes the /api/* response shapes and the card-spec schema — so
+# bump it together with vendor/cairn-ui; test_package_boundaries.py enforces
+# that they agree. Swap it back to a version range the day the package is
+# published.
 ui = [
-    "cairn-ui @ git+https://github.com/DoeringChristian/cairn-ui@6cd6ff257ff57f5d3d91a7599e5d29a249290ae3",
+    "cairn-ui @ git+https://github.com/DoeringChristian/cairn-ui@77f37350e20156f2e463ffbe0ed9158954858055",
 ]
 media = [
     "matplotlib>=3.7",
@@ -73,9 +67,6 @@ hf = [
 ]
 discovery = [
     "zeroconf>=0.132",
-]
-examples = [
-    "marimo>=0.10",
 ]
 export = [
     "pandas>=2.0",
@@ -105,10 +96,10 @@ docs = [
     "mkdocs-click>=0.8",
 ]
 dev = [
-    # Both optional halves (and the export deps), so a dev checkout can
-    # exercise everything they unlock. Via the extras, so the git pins live in exactly one place;
-    # [tool.uv.sources] below redirects both to the local checkouts anyway.
-    "cairn-track[ui,plot,export,docs]",
+    # The viewer (and the export deps), so a dev checkout can exercise
+    # everything they unlock. Via the extra, so the git pin lives in exactly
+    # one place; [tool.uv.sources] below redirects it to the local checkout.
+    "cairn-track[ui,export,docs]",
     "pytest>=8.0",
     "pytest-cov>=4.1",
     "pytest-asyncio>=0.23",
@@ -132,20 +123,17 @@ cairn = "cairn.cli:main"
 [project.urls]
 Repository = "https://github.com/DoeringChristian/cairn"
 
-# cairn-plot lives in a standalone repository
-# (github.com/doeringchristian/cairn-plot), consumed here as a git submodule at
-# `vendor/cairn-plot` (pinned commit). It backs the `plot` extra only (neither
-# cairn-track itself nor the viewer needs it); in dev it resolves editable from
-# that checkout.
+# cairn-ui lives in its own repository, consumed here as a git submodule at
+# `vendor/cairn-ui` (pinned commit); in dev it resolves editable from that
+# checkout.
 [tool.uv.sources]
-cairn-plot = { path = "vendor/cairn-plot", editable = true }
 cairn-ui = { path = "vendor/cairn-ui", editable = true }
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-# Required for the `@ git+...` pins in [plot] and [ui]. Hatchling refuses direct
+# Required for the `@ git+...` pin in [ui]. Hatchling refuses direct
 # references by default because PyPI rejects any distribution carrying one —
 # the right guard, and the thing to undo when these packages get published.
 [tool.hatch.metadata]

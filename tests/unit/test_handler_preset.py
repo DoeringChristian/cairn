@@ -72,25 +72,6 @@ def test_curves_are_downsampled_but_auc_is_exact():
         assert len(c["x"]) <= MAX_CURVE_POINTS and len(c["x"]) == len(c["y"])
         assert c["x"][0] == 0.0 and c["x"][-1] == 1.0
 
-    recipes = pytest.importorskip("cairn_plot.recipes")
-    pytest.importorskip("plotly")
-    ref = recipes.roc_curve(y, s)
-    for c, trace in zip(roc["curves"], ref.data):
-        assert trace.name == f"{c['label']} (AUC={c['auc']:.3f})"
-    pr, _ = _data(cairn.PRCurve(y, s))
-    ref = recipes.pr_curve(y, s)
-    for c, trace in zip(pr["curves"], ref.data):
-        assert trace.name == f"{c['label']} (AP={c['auc']:.3f})"
-
-
-def test_matches_reference_confusion_matrix():
-    recipes = pytest.importorskip("cairn_plot.recipes")
-    pytest.importorskip("plotly")
-    rng = np.random.default_rng(1)
-    y, p = rng.integers(0, 4, 200), rng.integers(0, 4, 200)
-    data, _ = _data(cairn.ConfusionMatrix(y, p))
-    assert np.array_equal(np.asarray(recipes.confusion_matrix(y, p).data[0].z), np.asarray(data["counts"]))
-
 
 def test_tracked_preset_reads_back(tmp_path):
     run = cairn.Run(project="p", repo=tmp_path / ".cairn", capture_source=False, capture_stdout=False,

@@ -30,14 +30,12 @@ point on a compute node that will only ever log metrics. `cairn ui` and
 Optional extras:
 
 - `cairn-track[ui]` — the browser viewer (`cairn ui`, `cairn server --ui`) and `cairn.ui` notebook card embeds
-- `cairn-track[plot]` — `cairn.plot`, for notebooks and standalone HTML reports
 - `cairn-track[media]` — matplotlib, plotly, kaleido, imageio, soundfile for richer media handlers
 - `cairn-track[export]` — pandas + pyarrow for `cairn export --project`, Parquet and `RunQuery.history()`
 - `cairn-track[sweep]` — Optuna, for `method: bayes` sweeps (grid and random need nothing)
 - `cairn-track[hf]` / `[lightning]` / `[keras]` / `[xgboost]` — framework callbacks in `cairn.integrations`
 - `cairn-track[tb]` — `cairn import-tb` for TensorBoard event files
 - `cairn-track[discovery]` — zeroconf/mDNS server discovery on the LAN
-- `cairn-track[examples]` — marimo, for the notebook example
 - `cairn-track[docs]` — MkDocs, to build the documentation site
 
 ## Quick start — local mode
@@ -230,20 +228,18 @@ reader.runs("sweep").where("last(val.acc) > 0.9 and config.opt == 'adam'").list(
 ## Live query URLs
 
 A **live query URL** is a stable server URL that always resolves to "the
-`<tag>` artifact of the latest (optionally filtered) run". It lets a
-[cairn-plot](https://github.com/doeringchristian/cairn-plot) report show the
-freshest data *every time it opens* — the HTML never changes, only what the URL
-resolves to does.
+`<tag>` artifact of the latest (optionally filtered) run". It lets a page or
+notebook show the freshest data *every time it opens* — the HTML never changes,
+only what the URL resolves to does.
 
 ```python
 import cairn
-import cairn.plot as cp
 
 # "the train/render image of the most recent run in project 'demo'"
 url = cairn.query_url("train/render", project="demo", server="cairn://localhost:4300")
 
-# Embed it in a report — the browser fetches it fresh on every open.
-cp.Report(title="live dashboard").add(cp.Image(url=url)).save("dashboard.html")
+# Embed it anywhere — the browser fetches it fresh on every open.
+html = f'<img src="{url}">'
 ```
 
 Under the hood `GET /api/query?run=latest&project=demo&tag=train/render`
@@ -269,14 +265,13 @@ Selector grammar (query params):
 `cairn.query_url(..., live=False)` resolves once now and returns the baked
 immutable digest URL (fully pinned). `reader.runs("demo").filter(lr__gt=1e-4).latest_url("render")`
 and `run["render"].url` are equivalent sugar. Query URLs need a **server** when
-fetched; offline reports keep using baked, self-contained HTML.
-See `examples/report_query_url.py`.
+fetched.
 
 ## Examples
 
 `examples/` holds about 30 runnable scripts: every media type
 (`demo_image_*`, `demo_mesh.py`, `demo_table.py`, ...), metric rules, sweeps,
-reports, and the distributed setups below. See [docs/examples.md](docs/examples.md).
+and the distributed setups below. See [docs/examples.md](docs/examples.md).
 
 | Example | Framework | Multi-machine? |
 |---------|-----------|---------------|
@@ -289,26 +284,12 @@ reports, and the distributed setups below. See [docs/examples.md](docs/examples.
 | `examples/dask_sweep.py` | Dask SSHCluster | Yes |
 | `examples/kubernetes_jobs.py` | Kubernetes Jobs | Yes |
 
-### Notebook / marimo
-
-`examples/marimo_cairn_demo.py` shows cairn's read API and `cairn.plot`
-helpers rendered inline in a [marimo](https://marimo.io) notebook. marimo
-and plotly are optional dependencies, installed via the `examples` +
-`media` extras:
-
-```bash
-uv run --extra examples --extra media marimo edit examples/marimo_cairn_demo.py
-```
-
 ## Development
 
 This project uses [uv](https://docs.astral.sh/uv/) for Python and npm for the UI.
 
 The browser viewer ([cairn-ui](https://github.com/DoeringChristian/cairn-ui))
-and the [cairn-plot](https://github.com/doeringchristian/cairn-plot) notebook /
-HTML-report library are vendored as git submodules under `vendor/`. The viewer
-does not use cairn-plot; `cairn.plot` (the `plot` extra) does. Clone with
-submodules:
+is vendored as a git submodule under `vendor/`. Clone with submodules:
 
 ```bash
 git clone --recurse-submodules https://github.com/DoeringChristian/cairn

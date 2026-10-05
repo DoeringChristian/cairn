@@ -30,7 +30,7 @@ many concurrent writers on shared storage, or over HTTP to `cairn server`
   frozen columns, nested group-by and baseline deltas; synced workspaces, saved
   views and a defaults cascade; comparisons and templates; a lineage page;
   reports with notebook cells, math, comments, PDF/LaTeX export and share links.
-- **Notebooks**: `cairn.plot` (cairn-plot) reports and `cairn.ui` card embeds.
+- **Notebooks**: `cairn.ui` card embeds.
 
 ## Ideas
 

@@ -23,7 +23,6 @@ Optional extras:
 | Extra | Adds | Needed for |
 |---|---|---|
 | `ui` | the browser viewer (cairn-ui) | `cairn ui`, `cairn server --ui`, `cairn.ui` notebook embeds |
-| `plot` | cairn-plot | `cairn.plot`, notebook and standalone HTML reports |
 | `media` | matplotlib, plotly, kaleido, imageio, imageio-ffmpeg, soundfile | figures, video encoding, better audio and figure rasterizing |
 | `export` | pandas, pyarrow | `cairn export` to Parquet/CSV, `Run.history()` DataFrames |
 | `tb` | tensorboard | `cairn import-tb` |

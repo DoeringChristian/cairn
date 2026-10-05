@@ -12,7 +12,7 @@ Dispatches only via the ``cairn.ConfusionMatrix`` / ``cairn.PRCurve`` /
   (ROC: or no negatives). Curves keep at most ``MAX_CURVE_POINTS`` points;
   the AUC is computed before downsampling.
 
-The math is numpy only (no sklearn), ported from cairn-plot's recipes.
+The math is numpy only (no sklearn).
 """
 
 from __future__ import annotations

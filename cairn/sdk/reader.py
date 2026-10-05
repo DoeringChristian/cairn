@@ -362,7 +362,7 @@ class DataRef:
     Wraps ``(run, tag[, step])`` only — it does **not** fetch anything at
     construction time. Resolution happens only when something actually
     needs the data: ``.resolve()`` fetches it eagerly (via
-    ``Run.media``/``Run.sequence``), and ``cairn.plot`` element builders
+    ``Run.media``/``Run.sequence``), and the ``cairn.ui`` card builders
     resolve just the ``(runId, name)`` pair needed to build
     a server-anchored ``SeriesRef`` (no bytes ever move for that path — the
     card renders by reference through ``/embed/card``).
@@ -803,7 +803,7 @@ class Run:
         """``run[tag]`` — a lazy ``DataRef`` over a sequence/artifact tag.
 
         Does not fetch anything; resolves only when the handle is rendered
-        (``cairn.plot`` element builders) or explicitly ``.resolve()``d.
+        (``cairn.ui`` card builders) or explicitly ``.resolve()``d.
         Optional step indexing: ``run[tag][step]``.
         """
         if not isinstance(tag, str):
@@ -1524,8 +1524,8 @@ class _LocalBackend(_RegistryWrites):
 
     @property
     def repo_path(self) -> str:
-        """The ``.cairn/`` dir this backend reads — lets `cairn.plot`
-        element builders thread the actual repo dir to `CardElement` for
+        """The ``.cairn/`` dir this backend reads — lets the `cairn.ui`
+        card builders thread the actual repo dir to `CardElement` for
         local server auto-discovery (`servers.json`), rather than relying
         on global `cairn.configure`/`CAIRN_REPO` state."""
         return str(self._dd.root)
@@ -1754,7 +1754,7 @@ class _HttpBackend(_RegistryWrites):
     @property
     def server_url(self) -> str:
         """The HTTP base this backend queries — threaded into `CardElement`
-        (via `cairn.plot`) so a card renders against the SAME server a
+        (via `cairn.ui`) so a card renders against the SAME server a
         `Reader(repo="cairn://host:port")` was connected to, without needing
         `cairn.configure`/`CAIRN_REPO`/`server=`."""
         return self._base
