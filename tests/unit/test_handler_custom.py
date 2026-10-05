@@ -133,3 +133,27 @@ def test_gallery_is_homogeneous_by_kind(tmp_path):
         assert refs[1].load() == [1]
     finally:
         reader.close()
+
+
+def test_catalogue_reports_the_kind(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from cairn.server.app import create_app
+
+    repo = tmp_path / ".cairn"
+    with cairn.Run(project="cd", repo=repo, **QUIET) as run:
+        run.track(cairn.Data([0], kind="old/kind"), "guide", 0)
+        run.track(cairn.Data({"a": np.ones(1)}, kind="guiding/vmf"), "guide", 1)
+        run.track([cairn.Data([1], kind="g/x"), cairn.Data([2], kind="g/x")], "gal", 0)
+        run.track(cairn.Tensor(np.ones(2)), "t", 0)
+        run.track(0.5, "loss", 0)
+    with TestClient(create_app(data_dir=repo, background_tasks=False)) as client:
+        seqs = {s["name"]: s for s in client.get(f"/api/runs/{run.id}/sequences").json()["sequences"]}
+        assert seqs["guide"]["object_type"] == "custom"
+        assert seqs["guide"]["kind"] == "guiding/vmf"  # the latest point's
+        assert seqs["gal"]["kind"] == "g/x"
+        assert "kind" not in seqs["t"] and "kind" not in seqs["loss"]
+        # Per-point artifact metadata carries the kind too.
+        series = client.get(f"/api/runs/{run.id}/series", params={"name": "guide"}).json()["series"][0]
+        metas = series["columns"].get("artifact_metadata") or [series["constant"]["artifact_metadata"]]
+        assert [json.loads(m)["kind"] for m in metas] == ["old/kind", "guiding/vmf"]
