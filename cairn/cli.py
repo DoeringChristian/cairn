@@ -131,7 +131,14 @@ def _http_error_text(exc: Exception) -> str | None:
             where = _server_of(exc.request)
         except RuntimeError:  # no request attached
             where = "the server"
-        return f"cannot reach {where}: {exc}"
+        hint = ""
+        if where.rstrip("/") == _config.DEFAULT_SERVER:
+            # Nothing configured: the fallback URL, not one the user chose.
+            hint = (
+                ". No server is configured, so this is the default; start one with "
+                "`cairn server`, or point at yours with CAIRN_SERVER or `cairn configure`"
+            )
+        return f"cannot reach {where}: {exc}{hint}"
     return None
 
 

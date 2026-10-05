@@ -565,3 +565,12 @@ def test_token_list_shows_expiry_and_revoked(tmp_path):
     lines = {line.split()[0]: line for line in out.splitlines()[1:]}
     assert "active" in lines["ci"] and "2099-01-01" in lines["ci"]
     assert "revoked" in lines["dev"] and lines["dev"].endswith("never")
+
+
+def test_unconfigured_default_server_error_says_so(monkeypatch):
+    monkeypatch.delenv("CAIRN_SERVER", raising=False)
+    monkeypatch.delenv("CAIRN_REPO", raising=False)
+    monkeypatch.setattr(config, "DEFAULT_SERVER", "http://127.0.0.1:1")
+    result = CliRunner().invoke(cli.main, ["ping"])
+    assert result.exit_code == 1
+    assert "No server is configured" in result.output
