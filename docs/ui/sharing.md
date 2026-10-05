@@ -49,7 +49,7 @@ When the server runs with `--no-auth`, the dialog explains that anyone who can r
 
 ## What a viewer sees
 
-When someone opens a link, the browser swaps the secret for an HttpOnly `cairn_share` cookie that lasts until the link expires. The address then changes to `/s/<report-id>`, so the secret does not stay in the address bar or browser history. A client gets at most 10 attempts per minute at redeeming a link.
+When someone opens a link, the browser swaps the secret for an HttpOnly `cairn_share_<server id>` cookie (named per server, so links from several servers on one host do not collide) that lasts until the link expires. The address then changes to `/s/<report-id>`, so the secret does not stay in the address bar or browser history. A client gets at most 10 attempts per minute at redeeming a link.
 
 The viewer gets the report without the rest of the app: a title, *Shared report · view only*, and the report's cells.
 

@@ -137,10 +137,11 @@ Then point runs on other machines at it with a `cairn://` URL:
 run = cairn.Run("my-project", repo="cairn://192.168.1.42:4300")
 ```
 
-The server prints a reusable access token on startup. Give it to remote clients through the
-`CAIRN_TOKEN` environment variable or the `token` key of the config file. See
-[Server, auth and deployment](guides/server.md) for tokens, roles, `cairn login --ssh` and
-running behind other hosts.
+The server prints a reusable access token on startup. Save it on a client with
+`cairn login cairn://192.168.1.42:4300` (one token per server, so you can be logged into several),
+or set the `CAIRN_TOKEN` environment variable. See [Server, auth and
+deployment](guides/server.md) for tokens, roles, `cairn login --ssh` and running behind other
+hosts.
 
 In server mode each run first writes every event to a client-side log and replays the backlog
 when the server comes back. If a process exits with events still unsent, `cairn sync` replays
@@ -152,8 +153,8 @@ To use the UI in your local browser while the data stays on a remote server, run
 proxy:
 
 ```bash
-CAIRN_TOKEN=... cairn ui --repo cairn://192.168.1.42:4300   # token used server-side
-cairn ui --repo cairn://192.168.1.42:4300                   # or log in from the browser
+cairn ui --repo cairn://192.168.1.42:4300   # saved login or CAIRN_TOKEN used server-side;
+                                            # without one, log in from the browser
 ```
 
 Then open `http://localhost:4301`. The page is served from loopback, and API calls, artifacts and

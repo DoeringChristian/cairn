@@ -27,8 +27,7 @@ replace earlier ones, and `None` values are ignored. It reads these keys:
 | `server` | A server URL (`cairn://…` or `http(s)://…`). Used when `repo` is not set. |
 | `mode` | `"enabled"` (default) or `"disabled"` |
 
-A token cannot be set through `configure`; use `CAIRN_TOKEN` or the config
-file.
+A token cannot be set through `configure`; use `CAIRN_TOKEN` or `cairn login`.
 
 ## Environment variables
 
@@ -36,7 +35,7 @@ file.
 |---|---|---|
 | `CAIRN_REPO` | SDK, `Reader`, CLI | Where runs are written and read: a path or a server URL |
 | `CAIRN_SERVER` | SDK, `Reader`, CLI | A server URL. For the SDK, used when `CAIRN_REPO` is not set. For the client commands (`list`, `export`, …) it takes precedence over `CAIRN_REPO`. |
-| `CAIRN_TOKEN` | SDK, `Reader`, CLI, `cairn ui` proxy | The bearer token sent to a server |
+| `CAIRN_TOKEN` | SDK, `Reader`, CLI, `cairn ui` proxy | The bearer token sent to every server; overrides the per-server tokens `cairn login` saves |
 | `CAIRN_MODE` | SDK | `enabled` or `disabled` |
 | `CAIRN_ARTIFACT_DIR` | SDK, `Reader` | Where `ArtifactVersion.download()` and `.file()` write by default: `<dir>/<name>-v<N>/`. Default: `./artifacts`. |
 | `CAIRN_WAL_DIR` | SDK | Where server-mode runs keep their local write-ahead log. Default: `<user cache dir>/cairn/wal` (e.g. `~/.cache/cairn/wal` on Linux, `~/Library/Caches/cairn/wal` on macOS). Point it at node-local scratch on a cluster. |
@@ -60,23 +59,35 @@ To print the path on your machine:
 python -c "from cairn.config import config_file_path; print(config_file_path())"
 ```
 
-It is plain TOML with up to four keys:
+It is plain TOML with up to three keys and a `[tokens]` table:
 
 ```toml
 repo = "cairn://gpu-server:4300"   # or a path, e.g. "/shared/nfs/.cairn"
 server = "http://gpu-server:4300"
-token = "D1uFBMpdjRTxYPO1XBpji_..."
 mode = "enabled"
+
+[tokens]                           # one token per server
+"http://gpu-server:4300" = "D1uFBMpdjRTxYPO1XBpji_..."
+"http://localhost:4301" = "-QSOdOIAGj0yBaqE0GKlHar3..."
 ```
 
-Two commands write it:
+Commands that write it:
 
 - `cairn configure [--server URL]` sets `server` (it prompts when you leave out
   `--server`).
-- `cairn login --ssh` sets `server` and `token`.
+- `cairn login [URL]` (with `--token`, `--ssh` or a prompt) adds the server's
+  entry to `[tokens]`, and sets `server` if neither `server` nor `repo` is set
+  yet. `cairn logout [URL]` removes the entry.
+
+`[tokens]` keys are server URLs in a normal form, and a token is used for every
+spelling of its server: `cairn://` becomes `http://`, `host:port` without a
+scheme means `http://`, scheme and host are lowercased, the default port (80
+for `http`, 443 for `https`) and trailing slashes are dropped, and `127.0.0.1`
+and `[::1]` become `localhost`. A path (a server behind a reverse proxy under a
+prefix) is kept. The same host on another port is another server.
 
 cairn creates the file with mode 0600 and its directory with mode 0700,
-because it can hold a token. A missing or malformed file is treated as empty.
+because it can hold tokens. A missing or malformed file is treated as empty.
 
 ## The repo value
 
@@ -115,9 +126,9 @@ the order above otherwise.
 ### Which server the CLI talks to
 
 `cairn ping`, `list`, `open`, `rm`, `export` and `sync` (and `cairn login`
-without `--server`) only talk to servers. They pick one in this order:
+without a URL) only talk to servers. They pick one in this order:
 
-1. `--server`, where the command has it
+1. the command's URL argument or `--server`, where it has one
 2. `CAIRN_SERVER`
 3. `CAIRN_REPO`, if it is a server URL
 4. `server` in the config file
@@ -129,9 +140,11 @@ local repo without a server running on it.
 
 ### The token
 
+Every request carries the token for the server it goes to:
+
 1. an explicit `token=` argument (for example `cairn.query_url(..., token=...)`)
-2. `CAIRN_TOKEN`
-3. `token` in the config file
+2. `CAIRN_TOKEN` (for every server)
+3. that server's entry in the config file's `[tokens]` table
 
 With none of them set, requests carry no token, which works against a server
 started with `--no-auth`. On the same machine as a server, a run that logs to

@@ -69,7 +69,9 @@ cairn ui --no-open-browser    # serve without opening a browser tab
 Authentication is on by default: at startup `cairn ui` prints the repo's
 reusable access token and a one-time browser login link (`cairn ui` opens it
 for you). `cairn token create|list|revoke` manages further tokens; `--no-auth`
-turns authentication off for local debugging.
+turns authentication off for local debugging. `cairn login URL` saves a token
+for the SDK and CLI. Logins are per server, in the browser and in the config
+file, so you can be logged into several servers on one host at once.
 
 ## WAL mode — concurrent / distributed training
 
@@ -115,11 +117,11 @@ To render with the browser and GPU on your workstation while the data stays on
 that server, run a local same-origin UI proxy:
 
 ```bash
-# Uses CAIRN_TOKEN server-side when configured:
-CAIRN_TOKEN=... cairn ui --repo cairn://192.168.1.42:4300
-
-# Or omit CAIRN_TOKEN and paste the remote token into the local browser login:
+# Uses the server's token server-side (from `cairn login` or CAIRN_TOKEN):
+cairn login cairn://192.168.1.42:4300
 cairn ui --repo cairn://192.168.1.42:4300
+
+# Without a saved token, paste the remote token into the local browser login.
 ```
 
 Open `http://localhost:4301`. The JavaScript is served from loopback (a browser

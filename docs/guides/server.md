@@ -142,7 +142,7 @@ the UI, a one-time login link:
   Auth is ON. Reusable local access token:
     -QSOdOIAGj0yBaqE0GKlHar3Ppp9bBh_fT9tW2E7900
 
-  SDK/CLI:  CAIRN_TOKEN=<token above>  (or `cairn configure` + config.toml)
+  SDK/CLI:  cairn login http://localhost:4301  (paste the token), or CAIRN_TOKEN=<token>
   Browser (one-time login link, single-use, expires in 15 min):
     http://localhost:4301/login?otp=uir5ljIt6K1iz0qX2uFMKcncAozK9xOT
 ```
@@ -152,9 +152,23 @@ the UI, a one-time login link:
   the same user, pick it up on their own (see the tip above).
 - The login link works once and expires after 15 minutes. You can also open the
   UI and paste a token into the login form.
-- The browser keeps its credential in an HttpOnly `cairn_token` cookie. Logging
-  in through a link mints a separate per-browser token derived from the
-  original (named `<token name>-browser-<hex>`).
+- The browser keeps its credential in an HttpOnly `cairn_token_<server id>`
+  cookie. Logging in through a link mints a separate per-browser token derived
+  from the original (named `<token name>-browser-<hex>`).
+
+### Several servers on one host
+
+Browsers keep cookies per host, not per port, so every server names its
+cookies after its *server id*: 8 random hex characters created in
+`.cairn/auth/server_id` on first start. The id belongs to the repo, so it
+survives restarts and port changes, and every server process on the same repo
+shares one login. One browser can be logged into any number of servers on the
+same host, on different ports or behind one reverse proxy under different
+paths. Logging out of one leaves the others logged in. `GET /api/health`
+reports the id as `server_id`.
+
+The SDK and CLI keep one token per server too; see [Logging in from the SDK
+and CLI](#logging-in-from-the-sdk-and-cli).
 
 ### Tokens and roles
 
@@ -179,8 +193,31 @@ printed once; only its hash is stored. `--expires` takes `30d`, `12h`, `90m`,
 `60s` or an ISO 8601 timestamp. Revoking a token also revokes every per-browser
 token derived from it.
 
-Give the token to SDK and CLI clients with the `CAIRN_TOKEN` environment
-variable or a `token` key in the [config file](../reference/configuration.md).
+Give the token to SDK and CLI clients with `cairn login` (below) or the
+`CAIRN_TOKEN` environment variable.
+
+### Logging in from the SDK and CLI
+
+`cairn login URL` saves a token for the server at `URL`; every SDK and CLI
+call to that server then sends it. Each server keeps its own token, so you can
+be logged into several at once:
+
+```bash
+cairn login cairn://tracking-host:4300          # prompts for the token
+cairn login http://localhost:4301 --token ...   # or pass it
+cairn login --list                              # saved logins, and who each is
+cairn logout cairn://tracking-host:4300         # forget one server's token
+```
+
+`URL` defaults to the configured server. `cairn://host:port`,
+`http://host:port/` and `host:port` name the same server (see
+[the config file](../reference/configuration.md#the-config-file)). `cairn login`
+checks the token against the server before saving it. The first login also
+sets the default `server` when none is configured. `cairn logout` only
+deletes the local copy; the token stays valid until `cairn token revoke`.
+
+`CAIRN_TOKEN`, when set, is sent to every server and overrides the saved
+tokens.
 
 ### Logging in with an SSH key
 
@@ -198,14 +235,14 @@ If you have SSH keys, `cairn login --ssh` gets a token without copying secrets:
 2. On the client:
 
     ```bash
-    cairn login --ssh --server cairn://tracking-host:4300
+    cairn login --ssh cairn://tracking-host:4300
     ```
 
 The client signs a one-time challenge with `ssh-keygen -Y sign`, so both
 machines need the OpenSSH `ssh-keygen` tool. By default it uses the first of
 `~/.ssh/id_ed25519.pub`, `id_ecdsa.pub` and `id_rsa.pub`; pass `--key` to choose
-one and `--name` to name the new token. The server URL and the token are saved
-to your config file.
+one and `--name` to name the new token. The token is saved to your config file
+for that server.
 
 ### Turning authentication off
 
@@ -225,17 +262,22 @@ the data on the server but run the UI from your own machine, start a local
 proxy:
 
 ```bash
-# authenticate server-side with a token:
-CAIRN_TOKEN=... cairn ui --repo cairn://tracking-host:4300
-
-# or leave CAIRN_TOKEN unset and log in through the browser:
+# authenticate server-side with the token `cairn login` saved for it:
+cairn login cairn://tracking-host:4300
 cairn ui --repo cairn://tracking-host:4300
+
+# or with CAIRN_TOKEN:
+CAIRN_TOKEN=... cairn ui --repo cairn://tracking-host:4300
 ```
 
 Then open `http://localhost:4301`. The page is served from your machine, and
 `/api/*` requests, artifact downloads and uploads are streamed to the remote
-server. With `CAIRN_TOKEN` set, the proxy adds the token to every request, so
-the browser needs no login and never sees the token. The proxy must bind to
+server. With a token (`CAIRN_TOKEN`, else the server's saved login), the
+proxy adds it to every request, so the browser needs no login and never sees
+the token. Without one, you log in through the browser; the proxy relays only
+the remote server's own cookies, never the cookies of other servers on
+`localhost`. Proxies to different servers can run side by side on different
+ports. The proxy must bind to
 loopback (the default `--host 127.0.0.1`), and `--no-auth` is not accepted
 for it.
 

@@ -24,7 +24,7 @@ cairn.Reader("runs.zip")                  # a run archive exported from the UI
 | Target | How it reads |
 |---|---|
 | Local `.cairn/` directory | Opens the SQLite database directly. It first ingests any pending [WAL files](server.md#wal-mode), so runs logged with `local_wal=True` show up without a running server. |
-| Server | Reads over HTTP. Sends the token from `CAIRN_TOKEN` or the config file's `token` key, if there is one. Downloaded artifact bytes are cached by hash (see `cache` and `cache_dir` below). |
+| Server | Reads over HTTP. Sends `CAIRN_TOKEN`, else the token `cairn login` saved for that server, if there is one. Downloaded artifact bytes are cached by hash (see `cache` and `cache_dir` below). |
 | `.zip` archive | Unpacks the archive into a temporary repo, which is deleted by `close()`. Runs read this way cannot be edited. |
 
 Keyword arguments:
@@ -339,7 +339,7 @@ it points to can be cached forever.
 | `step` | `latest` (the highest step, default) or an integer |
 | `live` | `True` (default): return the re-resolving query URL. `False`: resolve it once now and return the fixed `/api/artifacts/<digest>` URL. |
 | `server` | The server (`cairn://host:port` or `http(s)://…`). Default: the configured target, which must be a server. |
-| `token` | The token for the one-time resolve when `live=False`. Default: `CAIRN_TOKEN` or the config file. |
+| `token` | The token for the one-time resolve when `live=False`. Default: `CAIRN_TOKEN`, else the server's `cairn login` token. |
 | `**filters` | Predicates: `lr__gt=1e-4`, `tags__contains="best"`, `status="completed"` |
 
 In a query URL, nested fields use a dot: `metrics.loss__lt=0.1`,
@@ -370,6 +370,6 @@ ones. It cannot express `where()` filters and raises if the query has one.
 Query URLs need a server, both to build them and to fetch them. With a local
 repo target, `query_url`, `latest_url` and `DataRef.url` raise `ValueError`. A
 server with authentication also needs a token on every fetch: the browser sends
-its `cairn_token` login cookie when the page is served from the same origin.
+its login cookie when the page is served from the same origin.
 `examples/report_query_url.py` builds a `cairn.plot` report from live query
 URLs.

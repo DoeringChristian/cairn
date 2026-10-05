@@ -34,7 +34,7 @@ If the link has expired, open the UI and paste a token into the login form (a to
 
 ### Remote servers
 
-`cairn ui --repo cairn://HOST:PORT` serves the UI locally and proxies its API to the remote server. The proxy binds to loopback only, and `--no-auth` is not accepted. Set `CAIRN_TOKEN` to let the proxy authenticate for you; without it you log in in the browser.
+`cairn ui --repo cairn://HOST:PORT` serves the UI locally and proxies its API to the remote server. The proxy binds to loopback only, and `--no-auth` is not accepted. With a token for that server (`cairn login cairn://HOST:PORT`, or `CAIRN_TOKEN`) the proxy authenticates for you; without one you log in in the browser.
 
 !!! tip "Prefer `localhost` over a LAN IP"
     Serving the page from loopback keeps it a browser *secure context*. Some browser features, such as copying a run id or a share link to the clipboard, only work in a secure context, so they can fail on a plain-HTTP LAN address.

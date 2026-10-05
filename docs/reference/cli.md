@@ -9,7 +9,7 @@ The `cairn` command is installed with `cairn-track`. Run `cairn --help`, or
 | `cairn ui` | Serve the web UI over a local repo, or proxy a remote server | [Server](../guides/server.md) |
 | `cairn server` | Run the tracking server (optionally with the UI) | [Server](../guides/server.md) |
 | `cairn token create\|list\|revoke` | Manage auth tokens on the server host | [Server](../guides/server.md#tokens-and-roles) |
-| `cairn login --ssh` | Get a token with an SSH key | [Server](../guides/server.md#logging-in-with-an-ssh-key) |
+| `cairn login [URL]`, `cairn logout [URL]` | Save or forget a server's token (`--ssh`: get one with an SSH key; `--list`: show saved logins) | [Server](../guides/server.md#logging-in-from-the-sdk-and-cli) |
 | `cairn configure` | Save the server URL to the config file | [Configuration](configuration.md) |
 | `cairn ping`, `list`, `open`, `rm` | Talk to a running server | [Server](../guides/server.md#other-client-commands) |
 | `cairn sync` | Replay run logs that never reached their server | [Server](../guides/server.md#server-mode-and-connection-loss) |
