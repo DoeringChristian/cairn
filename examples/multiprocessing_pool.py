@@ -1,8 +1,10 @@
 """Cairn + multiprocessing.Pool: pool.starmap hyperparameter sweep.
 
 Uses multiprocessing.Pool(processes=4) with pool.starmap to run 4 training
-configurations in parallel.  Each worker creates its own cairn.Run against a
-shared local .cairn repo.
+configurations in parallel.  Each worker creates its own
+``cairn.Run(local_wal=True)`` against a shared local .cairn repo, so it appends
+to its own WAL file rather than the shared database.  After the pool finishes,
+the WALs are ingested and the runs are verified through cairn.Reader.
 
 Usage::
 
@@ -37,6 +39,9 @@ def train(repo_path_str: str, config: dict) -> str:
         capture_stdout=False,
         capture_env=False,
         capture_system_metrics=False,
+        # Append to a per-run WAL file instead of the shared SQLite DB; the
+        # parent ingests every worker's WAL once they are done.
+        local_wal=True,
     )
     run.config({"hparams": {
         "lr": config["lr"],

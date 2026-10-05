@@ -1,9 +1,9 @@
 """Cairn + ProcessPoolExecutor: parallel hyperparameter sweep.
 
 Launches 4 workers via concurrent.futures.ProcessPoolExecutor, each training
-with a different learning rate.  Every worker creates its own cairn.Run
-against a shared local .cairn repo.  After all workers finish, WALs are
-ingested and the runs are verified through cairn.Reader.
+with a different learning rate.  Every worker creates its own
+``cairn.Run(local_wal=True)`` against a shared local .cairn repo, appending to
+its own WAL file.  After all workers finish, the WALs are ingested and the runs are verified through cairn.Reader.
 
 Usage::
 
@@ -39,6 +39,9 @@ def train(repo_path_str: str, config: dict) -> str:
         capture_stdout=False,
         capture_env=False,
         capture_system_metrics=False,
+        # Append to a per-run WAL file instead of the shared SQLite DB; the
+        # parent ingests every worker's WAL once they are done.
+        local_wal=True,
     )
     run.config({"hparams": {
         "lr": config["lr"],
