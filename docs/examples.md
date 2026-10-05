@@ -58,8 +58,15 @@ them:
 
 Each folder of `examples/custom_viewers/` holds a viewer (a folder with `cairn-viewer.json`, to
 copy as a template) and a script that logs two runs of data for it over steps and publishes the
-viewer with `run.use_viewer`. Run a script against a scratch repo, then `cairn ui`; see
+viewer with `run.use_viewer`. Run a script against a scratch repo and open it; see
 [Custom viewers](guides/custom-viewers.md).
+
+```bash
+cairn init /tmp/cairn-viewers && export CAIRN_REPO=/tmp/cairn-viewers/.cairn
+python examples/custom_viewers/guiding/train_guiding.py
+cairn ui --repo $CAIRN_REPO
+cairn viewer dev examples/custom_viewers/guiding/vmf --project viewers-guiding   # optional: live edits
+```
 
 | Folder | Script | What it logs | What to look at |
 |---|---|---|---|
