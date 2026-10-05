@@ -1,6 +1,6 @@
 [project]
 name = "cairn-track"
-version = "0.2.0"
+version = "0.3.0"
 description = "An open-source ML experiment tracker with a client/server architecture for easy cross-device use on a local network."
 readme = "README.md"
 requires-python = ">=3.10"

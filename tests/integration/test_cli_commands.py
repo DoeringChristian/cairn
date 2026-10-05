@@ -226,6 +226,18 @@ def test_diff_takes_the_target_order(target, tmp_path, monkeypatch):
     assert "no source snapshot" in result.output
 
 
+def test_viewer_ls_lists_builtins(target):
+    from cairn.server.custom_viewers import builtin_viewers
+
+    builtins = sorted(builtin_viewers())
+    assert "cairn.volume" in builtins  # the viewer bundle is installed in dev
+    _seed(target)
+    out = target.run("viewer", "ls", "--project", "proj").output
+    assert "vNone" not in out
+    rows = {line.split()[0]: line.split()[1] for line in out.splitlines()[1:]}
+    assert {name: rows.get(name) for name in builtins} == {name: "built-in" for name in builtins}
+
+
 # ---------------------------------------------------------------------------
 # Artifacts
 # ---------------------------------------------------------------------------

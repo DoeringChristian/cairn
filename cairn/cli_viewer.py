@@ -83,14 +83,19 @@ def viewer_publish(
 @click.option("--all-versions", is_flag=True, help="Every version, not only latest.")
 @click.option("--repo", "--server", "repo", default=None, help=_REPO_HELP)
 def viewer_ls(project: str, all_versions: bool, repo: str | None) -> None:
-    """List the project's viewers (published, and live dev sources)."""
+    """List the project's viewers (built-in, published, and live dev sources)."""
     viewers = _list(project, all_versions, repo)
     if not viewers:
         click.echo("(no viewers)")
         return
     click.echo(f"{'NAME':<24} {'VERSION':<9} {'INPUTS':<8} ACCEPTS")
     for v in viewers:
-        ver = f"dev r{v['revision']}" if v.get("dev") else f"v{v['version']}"
+        if v.get("dev"):
+            ver = f"dev r{v['revision']}"
+        elif v.get("builtin"):
+            ver = "built-in"
+        else:
+            ver = f"v{v['version']}"
         accepts = ", ".join(v.get("accepts") or []) or "-"
         err = f"  [error: {v['error']}]" if v.get("error") else ""
         click.echo(f"{v['name']:<24} {ver:<9} {str(v.get('inputs') or '-'):<8} {accepts}{err}")
@@ -99,13 +104,15 @@ def viewer_ls(project: str, all_versions: bool, repo: str | None) -> None:
 def _list(project: str, all_versions: bool, repo: str | None) -> list[dict[str, Any]]:
     from .sdk.connect import open_transport
     from .sdk.local import LocalTransport
-    from .server.custom_viewers import published_viewers
+    from .server.custom_viewers import builtin_viewers, published_viewers
     from .server.routes._common import slugify
 
     transport, _url = open_transport(repo)
     try:
         if isinstance(transport, LocalTransport):
-            return published_viewers(transport.db, slugify(project), all_versions=all_versions)
+            # The same list a server answers with: built-ins first.
+            builtins = [v.entry() for v in builtin_viewers().values()]
+            return builtins + published_viewers(transport.db, slugify(project), all_versions=all_versions)
         resp = transport.get(
             f"/api/projects/{slugify(project)}/viewers",
             params={"all_versions": "1"} if all_versions else None,
