@@ -13,12 +13,23 @@ transaction, and reads never wait behind each other. The one exception: a
 read made by the thread that currently holds the write lock (inside
 ``transaction()``, say) runs on the writer connection, so it sees that
 transaction's own uncommitted rows.
+
+Heavy reads (a statement that returned thousands of rows last time) run one
+at a time. Python's sqlite3 releases the GIL around every row it steps, so
+two threads fetching large results at once hand the GIL back and forth per
+row, each waiting up to the interpreter's switch interval for it: measured,
+four concurrent 4000-row series reads took 250-400 ms each instead of 3 ms,
+and the WAL could not be checkpointed while they overlapped (it grew by
+hundreds of MB). Light reads (a project list, a session check) skip that
+queue, so they never wait behind a heavy one.
 """
 
 from __future__ import annotations
 
 import sqlite3
+from collections import deque
 import threading
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -30,6 +41,36 @@ from .migrations import apply_migrations
 #: Idle read connections kept for reuse; more are opened on demand under
 #: load and closed again when returned beyond this many.
 _MAX_IDLE_READERS = 8
+
+#: A read statement that last took longer than this is "heavy": heavy reads
+#: run one at a time (see ``_reader``).
+_HEAVY_READ_S = 0.005
+
+
+class _FifoLock:
+    """A lock granted in arrival order (``threading.Lock`` is not: a thread
+    that releases and re-acquires in a loop can starve the others)."""
+
+    def __init__(self) -> None:
+        self._mutex = threading.Lock()
+        self._held = False
+        self._waiters: deque[threading.Event] = deque()
+
+    def acquire(self) -> None:
+        with self._mutex:
+            if not self._held:
+                self._held = True
+                return
+            turn = threading.Event()
+            self._waiters.append(turn)
+        turn.wait()  # release() hands the lock over by setting it
+
+    def release(self) -> None:
+        with self._mutex:
+            if self._waiters:
+                self._waiters.popleft().set()
+            else:
+                self._held = False
 
 
 class Database:
@@ -52,6 +93,9 @@ class Database:
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._pool: list[sqlite3.Connection] = []
         self._pool_lock = threading.Lock()
+        self._heavy_gate = _FifoLock()
+        # SQL text -> seconds its last run took (bounded; see _note_duration).
+        self._read_cost: dict[str, float] = {}
         self._closed = False
 
     @classmethod
@@ -93,19 +137,32 @@ class Database:
         con.execute("PRAGMA query_only=ON")
         return con
 
+    def _note_duration(self, sql: str, seconds: float) -> None:
+        cost = self._read_cost
+        if len(cost) > 4096 and sql not in cost:  # dynamic SQL: start over
+            cost.clear()
+        cost[sql] = seconds
+
     @contextmanager
-    def _reader(self) -> Iterator[sqlite3.Connection]:
+    def _reader(self, sql: str) -> Iterator[sqlite3.Connection]:
         if getattr(self._writing, "depth", 0):
             # Inside this thread's own write: read what it wrote so far.
             yield self._conn
             return
+        heavy = self._read_cost.get(sql, 0.0) > _HEAVY_READ_S
+        if heavy:
+            self._heavy_gate.acquire()
         with self._pool_lock:
             con = self._pool.pop() if self._pool else None
         if con is None:
             con = self._open_reader()
+        t0 = time.perf_counter()
         try:
             yield con
         finally:
+            if heavy:
+                self._heavy_gate.release()
+            self._note_duration(sql, time.perf_counter() - t0)
             with self._pool_lock:
                 keep = not self._closed and len(self._pool) < _MAX_IDLE_READERS
                 if keep:
@@ -150,13 +207,13 @@ class Database:
     def read(
         self, sql: str, params: Sequence[Any] | None = None
     ) -> list[tuple[Any, ...]]:
-        with self._reader() as con:
+        with self._reader(sql) as con:
             return con.execute(sql, params or []).fetchall()
 
     def read_one(
         self, sql: str, params: Sequence[Any] | None = None
     ) -> tuple[Any, ...] | None:
-        with self._reader() as con:
+        with self._reader(sql) as con:
             cur = con.execute(sql, params or [])
             try:
                 return cur.fetchone()
@@ -168,7 +225,7 @@ class Database:
         self, sql: str, params: Sequence[Any] | None = None
     ) -> list[dict[str, Any]]:
         """Return rows as dicts keyed by column name."""
-        with self._reader() as con:
+        with self._reader(sql) as con:
             cur = con.execute(sql, params or [])
             cols = [d[0] for d in cur.description]
             return [dict(zip(cols, row)) for row in cur.fetchall()]
