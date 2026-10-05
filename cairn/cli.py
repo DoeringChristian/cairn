@@ -1,14 +1,14 @@
-"""Cairn CLI: ``cairn server``, ``cairn ui``, ``cairn init``, ``cairn list``, …
+"""Cairn CLI: `cairn server`, `cairn ui`, `cairn init`, `cairn list`, …
 
 The two server commands:
 
-* ``cairn server [--repo PATH]`` — runs the ingest tracking API. ``--ui``
+* `cairn server [--repo PATH]` — runs the ingest tracking API. `--ui`
   additionally launches the paired UI viewer; one Ctrl+C stops both.
-* ``cairn ui [--repo PATH|cairn://HOST:PORT]`` — standalone UI over a
+* `cairn ui [--repo PATH|cairn://HOST:PORT]` — standalone UI over a
   local repo, or a loopback UI/proxy connected to a remote tracking server.
-  Local mode acquires the repo write-lock in ``mode="ui"``.
+  Local mode acquires the repo write-lock in `mode="ui"`.
 
-Client commands (``list``, ``ping``, ``open``, ``rm``, ``export``, ``sync``)
+Client commands (`list`, `ping`, `open`, `rm`, `export`, `sync`)
 talk to a running server over HTTP.
 """
 
@@ -55,12 +55,108 @@ def _lan_ip() -> str:
         return "127.0.0.1"
 
 
+def _network_host(host: str) -> str | None:
+    """The address other machines reach a server bound to `host` at: the
+    LAN IP for a wildcard bind, `host` itself for a specific address, and
+    None for loopback (nothing outside this machine can connect)."""
+    if host in ("0.0.0.0", "::", ""):
+        return _lan_ip()
+    if host == "localhost" or host.startswith("127.") or host == "::1":
+        return None
+    return host
+
+
 def _default_repo() -> Path:
     """Default repo: ./.cairn in CWD."""
     return Path.cwd() / ".cairn"
 
 
-@click.group()
+def _server_of(request: Any) -> str:
+    url = request.url
+    return f"{url.scheme}://{url.netloc.decode()}"
+
+
+def _unauthorized_text(base: str, detail: str, sent_token: bool) -> str:
+    """A 401 from `base` as advice: log in, or log in again."""
+    if sent_token:
+        source = "CAIRN_TOKEN" if os.environ.get("CAIRN_TOKEN") else "the saved token"
+        return f"{base}: {detail}; it rejected {source}. Log in again with `cairn login {base}`."
+    return f"{base}: {detail}. Log in with `cairn login {base}` (or set CAIRN_TOKEN)."
+
+
+class _ReaderErrors:
+    """Turns the Reader's HTTP errors (a 4xx becomes ValueError/LookupError
+    carrying the server's detail) into one-line CLI errors."""
+
+    def __init__(self, server: str) -> None:
+        self.server = server.rstrip("/")
+
+    def __enter__(self) -> None:
+        return None
+
+    def __exit__(self, typ: Any, exc: BaseException | None, tb: Any) -> None:
+        if not isinstance(exc, (ValueError, LookupError)) or isinstance(exc, click.ClickException):
+            return
+        detail = str(exc.args[0]) if exc.args else str(exc)
+        if detail == "authentication required":
+            text = _unauthorized_text(
+                self.server, detail, _config.resolve_token(self.server) is not None,
+            )
+        else:
+            text = f"{self.server}: {detail}"
+        raise click.ClickException(text) from None
+
+
+def _http_error_text(exc: Exception) -> str | None:
+    """A one-line message for an HTTP failure, or None for other errors.
+
+    A 4xx/5xx answer shows the server's `detail`; 401 also says how to
+    log in. A connection failure names the server it could not reach.
+    """
+    import httpx
+
+    if isinstance(exc, httpx.HTTPStatusError):
+        resp = exc.response
+        base = _server_of(exc.request)
+        try:
+            detail = resp.json().get("detail")
+        except Exception:  # noqa: BLE001
+            detail = None
+        detail = detail if isinstance(detail, str) and detail else resp.reason_phrase
+        if resp.status_code == 401:
+            return _unauthorized_text(base, detail, "authorization" in exc.request.headers)
+        return f"{base}: {detail} (HTTP {resp.status_code})"
+    if isinstance(exc, httpx.TransportError):
+        try:
+            where = _server_of(exc.request)
+        except RuntimeError:  # no request attached
+            where = "the server"
+        hint = ""
+        if where.rstrip("/") == _config.DEFAULT_SERVER:
+            # Nothing configured: the fallback URL, not one the user chose.
+            hint = (
+                ". No server is configured, so this is the default; start one with "
+                "`cairn server`, or point at yours with CAIRN_SERVER or `cairn configure`"
+            )
+        return f"cannot reach {where}: {exc}{hint}"
+    return None
+
+
+class _CairnGroup(click.Group):
+    """Turns an HTTP or connection failure in any command into a one-line
+    `Error: ...` and exit code 1 instead of a traceback."""
+
+    def invoke(self, ctx: click.Context) -> Any:
+        try:
+            return super().invoke(ctx)
+        except Exception as exc:
+            text = _http_error_text(exc)
+            if text is None:
+                raise
+            raise click.ClickException(text) from None
+
+
+@click.group(cls=_CairnGroup)
 @click.version_option(package_name="cairn-track")
 def main() -> None:
     """Cairn — open-source ML experiment tracker."""
@@ -78,13 +174,13 @@ def main() -> None:
 def init_cmd(path: Path) -> None:
     """Create a local Cairn repo at PATH/.cairn (default: CWD).
 
-    After ``cairn init`` you can log runs with ``cairn.Run(project=...)``
-    or start the viewer with ``cairn ui``.
+    After `cairn init` you can log runs with `cairn.Run(project=...)`
+    or start the viewer with `cairn ui`.
     """
     repo = (path / ".cairn").resolve()
     already = repo.exists() and (repo / "cairn.db").exists()
     dd = DataDir(repo)
-    # ``Database.open`` runs migrations idempotently, so init is safe to
+    # `Database.open` runs migrations idempotently, so init is safe to
     # re-run on an existing repo.
     db = Database.open(dd.db_path)
     db.close()
@@ -98,7 +194,7 @@ def init_cmd(path: Path) -> None:
 
 
 def _find_free_port(host: str, start: int, max_attempts: int = 20) -> int:
-    """Return ``start`` if available, otherwise scan upward for a free port.
+    """Return `start` if available, otherwise scan upward for a free port.
 
     Uses SO_REUSEADDR so a recently-killed server's TIME_WAIT socket
     doesn't push us off the default port.
@@ -120,7 +216,7 @@ def _find_free_port(host: str, start: int, max_attempts: int = 20) -> int:
 def _ensure_repo(repo: Path) -> Path:
     """Resolve + create the repo tree on demand.
 
-    The tracking server expects to be pointed at a ``.cairn/`` directory;
+    The tracking server expects to be pointed at a `.cairn/` directory;
     we create it lazily if it doesn't exist so the quickstart is a single
     command.
     """
@@ -153,8 +249,8 @@ def _print_access_banner(
 ) -> str | None:
     """Print the reusable same-user access token on every authenticated start.
 
-    The token is stored in ``auth/local.token`` with mode 0600 and has the
-    ``write`` role. Reusing it avoids accumulating a new token row on every
+    The token is stored in `auth/local.token` with mode 0600 and has the
+    `write` role. Reusing it avoids accumulating a new token row on every
     restart while still giving the operator one copy/paste credential for the
     SDK, ingest API, and UI. A fresh single-use browser OTP is derived from the
     same token for convenience.
@@ -251,7 +347,7 @@ def server_cmd(
     verbose: bool,
     alert_webhook: str | None,
 ) -> None:
-    """Start the Cairn tracking server (ingest-only unless ``--ui``)."""
+    """Start the Cairn tracking server (ingest-only unless `--ui`)."""
     import uvicorn
 
     if ui and not _viewer.is_available():
@@ -274,7 +370,7 @@ def server_cmd(
 
     dd = DataDir(repo)
     # Record the UI port (if present, else the ingest port) in the lock
-    # file so a concurrent SDK ``Run(repo=...)`` on the same repo can
+    # file so a concurrent SDK `Run(repo=...)` on the same repo can
     # transparently switch to HTTP mode. We store 127.0.0.1 as the host
     # even when --host is 0.0.0.0 because the SDK that detects the lock
     # will always be on the same machine.
@@ -312,6 +408,8 @@ def server_cmd(
             auth_enabled=auth_enabled, background_tasks=False,
         )
     )
+    if ui_app is not None:
+        ingest_app.state.ui_port = ui_port
 
     advertiser = None
     if advertise:
@@ -328,18 +426,18 @@ def server_cmd(
                 err=True,
             )
 
-    lan = _lan_ip()
+    network = _network_host(host)
     banner_lines = [
         "",
         "  Cairn tracking server:",
         f"    Ingest API local:   http://localhost:{port}",
-        f"    Ingest API network: http://{lan}:{port}",
     ]
+    if network is not None:
+        banner_lines.append(f"    Ingest API network: http://{network}:{port}")
     if ui_app is not None:
-        banner_lines += [
-            f"    UI local:           http://localhost:{ui_port}",
-            f"    UI network:         http://{lan}:{ui_port}",
-        ]
+        banner_lines.append(f"    UI local:           http://localhost:{ui_port}")
+        if network is not None:
+            banner_lines.append(f"    UI network:         http://{network}:{ui_port}")
     banner_lines += [
         f"  Repo: {dd.root}",
         f"  Auth: {'ON' if auth_enabled else 'OFF (--no-auth)'}",
@@ -452,10 +550,10 @@ def ui_cmd(
 ) -> None:
     """Serve the Cairn viewer over a local repo or remote Cairn server.
 
-    A remote ``--repo cairn://HOST:PORT`` keeps the page on loopback (a browser
+    A remote `--repo cairn://HOST:PORT` keeps the page on loopback (a browser
     secure context) while proxying relative API requests to the server. Its
-    token (``CAIRN_TOKEN``, else the one ``cairn login HOST:PORT`` saved)
-    authenticates server-side; without one, log in through the browser. ``--no-auth`` applies only to local-repo mode.
+    token (`CAIRN_TOKEN`, else the one `cairn login HOST:PORT` saved)
+    authenticates server-side; without one, log in through the browser. `--no-auth` applies only to local-repo mode.
     """
     # First, before resolving the target, acquiring a repo lock or registering a
     # live server — so a missing viewer cannot leave any of that behind.
@@ -597,7 +695,9 @@ def ui_cmd(
 
 
 def _client() -> Transport:
-    return Transport(_config.resolve_server())
+    # One quick retry: an interactive command against a down server should
+    # say so in a second, not back off for half a minute like a training run.
+    return Transport(_config.resolve_server(), max_retries=2, backoff_base=0.2, backoff_cap=0.5)
 
 
 @main.command("ping")
@@ -605,87 +705,259 @@ def ping_cmd() -> None:
     """Check that the configured server is reachable."""
     t = _client()
     try:
-        resp = t.get("/api/health")
-        click.echo(json.dumps(resp.json(), indent=2))
-    except Exception as exc:  # noqa: BLE001
-        click.echo(f"ERROR: {exc}", err=True)
-        sys.exit(1)
+        click.echo(json.dumps(t.get("/api/health").json(), indent=2))
     finally:
         t.close()
+
+
+_FILTER_HELP = (
+    "Keep runs matching a Reader filter, e.g. status=completed, "
+    "optim__lr__gt=0.001, tags__contains=best, metrics__val/acc__gt=0.9. "
+    "VALUE is parsed as JSON when it can be. Repeatable."
+)
+
+
+def _parse_filters(filters: tuple[str, ...]) -> dict[str, Any]:
+    """`KEY=VALUE` options as `RunQuery.filter` keywords (VALUE as JSON when it parses)."""
+    kwargs: dict[str, Any] = {}
+    for f in filters:
+        key, sep, raw = f.partition("=")
+        if not sep or not key:
+            raise click.UsageError(f"--filter expects KEY=VALUE, got {f!r}")
+        try:
+            kwargs[key] = json.loads(raw)
+        except json.JSONDecodeError:
+            kwargs[key] = raw
+    return kwargs
+
+
+#: `cairn list` run-field columns: key -> (header, getter). The default
+#: set mirrors the UI runs table's built-ins (name, status, created_at,
+#: duration, tags), plus the id and project a shell user needs.
+_LIST_FIELDS: dict[str, Any] = {
+    "id": lambda r: r.id,
+    "name": lambda r: r.name,
+    "project": lambda r: r.project,
+    "status": lambda r: r.status,
+    "created_at": lambda r: r.created_at,
+    "ended_at": lambda r: r.ended_at,
+    "duration": lambda r: r.duration,
+    "tags": lambda r: r.tags,
+    "group": lambda r: r.group,
+    "job_type": lambda r: r.job_type,
+    "hostname": lambda r: r.hostname,
+    "user": lambda r: r._raw.get("user"),
+    "notes": lambda r: r.notes,
+    "archived": lambda r: r.archived,
+}
+_LIST_PREFIXES = ("config.", "summary.", "metrics.")
+
+
+def _list_value(run: Any, key: str) -> Any:
+    from .server import config_doc
+
+    if key in _LIST_FIELDS:
+        return _LIST_FIELDS[key](run)
+    if key.startswith("config."):
+        return config_doc.get(run.config, key[len("config."):])
+    if key.startswith("summary."):
+        return config_doc.get(run.summary, key[len("summary."):])
+    return run.final.get(key[len("metrics."):])
+
+
+def _cell(value: Any) -> str:
+    """A value as table/CSV text: local times to the minute, durations as
+    H:MM:SS, floats to 6 significant digits, lists comma-joined, documents as JSON."""
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "yes" if value else ""
+    if isinstance(value, datetime):
+        return value.astimezone().strftime("%Y-%m-%d %H:%M")
+    if isinstance(value, timedelta):
+        secs = int(value.total_seconds())
+        return f"{secs // 3600}:{secs % 3600 // 60:02d}:{secs % 60:02d}"
+    if isinstance(value, float):
+        return f"{value:.6g}"
+    if isinstance(value, list) and all(isinstance(v, str) for v in value):
+        return ",".join(value)
+    if isinstance(value, (dict, list)):
+        return json.dumps(value)
+    return str(value)
+
+
+def _json_value(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, timedelta):
+        return value.total_seconds()
+    return value
+
+
+def _csv_cell(value: Any) -> str:
+    value = _json_value(value)
+    return repr(value) if isinstance(value, float) else _cell(value)
 
 
 @main.command("list")
-@click.option("--project", default=None)
-@click.option("--status", default=None)
-@click.option("--limit", default=50, type=int)
+@click.option("--project", default=None, help="Only runs of this project.")
+@click.option("--status", default=None, help="Only runs with this status (running, completed, failed, killed, stopped).")
+@click.option("--filter", "filters", multiple=True, metavar="KEY=VALUE", help=_FILTER_HELP)
+@click.option(
+    "--where", "wheres", multiple=True, metavar="EXPR",
+    help="Keep runs for which this cairn.expr expression is true, e.g. "
+         "'last(val.acc) > 0.9'. Repeatable.",
+)
+@click.option(
+    "--archived", type=click.Choice(["hide", "only", "all"]), default="hide", show_default=True,
+    help="Archived runs: leave them out, list only them, or list both (adds an ARCHIVED column).",
+)
+@click.option(
+    "--sort", "sort_key", default="created_at", show_default=True,
+    help="created_at, ended_at, duration, name, status, id, config.<path>, "
+         "summary.<path> or metrics.<name> (the final value, as in the UI). "
+         "Runs missing the key come last.",
+)
+@click.option("--asc/--desc", default=False, help="Sort order. Default: descending (newest first).")
+@click.option("--limit", default=50, show_default=True, type=click.IntRange(min=1), help="Show at most this many runs.")
+@click.option(
+    "-c", "--column", "columns", multiple=True, metavar="KEY",
+    help="Add a column: config.<path>, summary.<path>, metrics.<name> (final "
+         "value) or a run field (group, job_type, hostname, user, notes, "
+         "ended_at, archived). Repeatable.",
+)
+@click.option(
+    "--format", "fmt", type=click.Choice(["table", "json", "csv"]), default="table", show_default=True,
+    help="json: one object per run with the shown columns' raw values.",
+)
 def list_cmd(
-    project: str | None, status: str | None, limit: int
+    project: str | None, status: str | None, filters: tuple[str, ...], wheres: tuple[str, ...],
+    archived: str, sort_key: str, asc: bool, limit: int, columns: tuple[str, ...], fmt: str,
 ) -> None:
-    """List recent runs on the configured server."""
-    t = _client()
-    try:
-        # Newest first: the most recent runs.
-        params: dict[str, Any] = {"limit": limit, "sort": "created_at", "desc": "true"}
-        if project:
-            params["project"] = project
-        if status:
-            params["status"] = status
-        resp = t.get("/api/runs", params=params)
-        runs = resp.json().get("runs", [])
-        if not runs:
-            click.echo("(no runs)")
-            return
-        click.echo(
-            f"{'RUN_ID':<14} {'STATUS':<10} {'PROJECT':<20} NAME"
-        )
-        for r in runs:
-            click.echo(
-                f"{r['id']:<14} {r['status']:<10} {r['project_id']:<20} "
-                f"{r.get('display_name') or ''}"
-            )
-    finally:
-        t.close()
+    """List runs on the configured server, newest first.
 
+    The runs and their order come from the same query evaluator as the UI's
+    runs table and `cairn.Reader().runs()`.
 
-def _server_lacks_viewer(t: Transport) -> bool:
-    """True when the server answers `/` with a no-viewer marker.
-
-    Any failure to tell is reported as False: a probe that cannot decide must
-    not suppress the browser.
+    \b
+        cairn list --project mnist -c config.optim.lr -c metrics.val/acc
+        cairn list --sort metrics.val/acc --filter tags__contains=best
+        cairn list --archived all --format json
     """
+    from .expr import ExprError
+    from .sdk.reader import Reader
+
+    for key in columns:
+        if key not in _LIST_FIELDS and not (
+            key.startswith(_LIST_PREFIXES) and key not in _LIST_PREFIXES
+        ):
+            raise click.UsageError(
+                f"unknown column {key!r}; use config.<path>, summary.<path>, "
+                f"metrics.<name> or one of {', '.join(_LIST_FIELDS)}"
+            )
+    keys = ["id", "name"] + ([] if project else ["project"]) + [
+        "status", "created_at", "duration", "tags",
+    ] + (["archived"] if archived == "all" else [])
+    keys += [k for k in columns if k not in keys]
+
+    server = _config.resolve_server()
+    with Reader(server) as reader, _ReaderErrors(server):
+        query = reader.runs(project, archived={"hide": False, "only": True, "all": None}[archived])
+        try:
+            if status:
+                query = query.filter(status=status)
+            query = query.filter(**_parse_filters(filters))
+            for expr in wheres:
+                query = query.where(expr)
+            query = query.sort(sort_key, desc=not asc).limit(limit)
+        except (ValueError, ExprError) as exc:
+            raise click.UsageError(str(exc)) from None
+        runs = query.list()
+        rows = [[_list_value(r, k) for k in keys] for r in runs]
+
+    if fmt == "json":
+        click.echo(json.dumps(
+            [{k: _json_value(v) for k, v in zip(keys, row)} for row in rows], indent=2, default=str,
+        ))
+        return
+    if fmt == "csv":
+        import csv
+        import io
+
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(keys)
+        # Machine-readable cells: ISO 8601 times, seconds, full-precision floats.
+        writer.writerows([[_csv_cell(v) for v in row] for row in rows])
+        click.echo(buf.getvalue(), nl=False)
+        return
+    if not rows:
+        click.echo("(no runs)")
+        return
+    headers = [k.upper() if k in _LIST_FIELDS else k for k in keys]
+    if "created_at" in keys:
+        headers[keys.index("created_at")] = "CREATED"
+    if "ended_at" in keys:
+        headers[keys.index("ended_at")] = "ENDED"
+    text = [[_cell(v) for v in row] for row in rows]
+    widths = [max(len(h), *(len(t[i]) for t in text)) for i, h in enumerate(headers)]
+    for line in [headers, *text]:
+        click.echo("  ".join(c.ljust(w) for c, w in zip(line, widths)).rstrip())
+
+
+def _viewer_base(t: Transport, server: str) -> str | None:
+    """The base URL where `server`'s viewer renders, or None if it serves none.
+
+    A `cairn server --ui` ingest port answers `/` with the paired UI port; a
+    server without the viewer answers with a no-viewer marker. Any failure to
+    tell keeps `server`: a probe that cannot decide must not suppress the
+    browser.
+    """
+    from urllib.parse import urlsplit, urlunsplit
+
     try:
         body = t.get("/").json()
     except Exception:  # noqa: BLE001
-        return False
-    return isinstance(body, dict) and body.get("status") in {"no_ui", "ingest"}
+        return server
+    if not isinstance(body, dict) or body.get("status") not in {"no_ui", "ingest"}:
+        return server
+    ui_port = body.get("ui_port")
+    if not isinstance(ui_port, int):
+        return None
+    parts = urlsplit(server)
+    host = parts.hostname or "localhost"
+    netloc = f"[{host}]:{ui_port}" if ":" in host else f"{host}:{ui_port}"
+    return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
 
 
 @main.command("open")
 @click.argument("run_id")
-@click.option("--no-browser", is_flag=True)
+@click.option("--no-browser", is_flag=True, help="Only print the URL.")
 def open_cmd(run_id: str, no_browser: bool) -> None:
-    """Print the URL for a run (and open in a browser by default)."""
+    """Print the URL of a run's page in the viewer and open it in a browser.
+
+    Against the ingest port of `cairn server --ui`, the URL points at the
+    paired UI port.
+    """
+    server = _config.resolve_server().rstrip("/")
     t = _client()
     try:
-        resp = t.get(f"/api/runs/{run_id}")
-        run = resp.json()["run"]
-        url = (
-            f"{_config.resolve_server().rstrip('/')}/p/{run['project_id']}/r/{run['id']}"
-        )
+        run = t.get(f"/api/runs/{run_id}").json()["run"]
+        base = _viewer_base(t, server)
+        url = f"{(base or server).rstrip('/')}/p/{run['project_id']}/r/{run['id']}"
         click.echo(url)
+        if base is None:
+            # Whether that server serves the viewer is its property, not a
+            # local install question, so the URL is still printed and the
+            # exit code stays 0; opening a browser onto a JSON blob is not.
+            click.echo(
+                "note: that server is not serving the viewer, so the URL "
+                "above will not render. Run it with `cairn server --ui`, or "
+                "install the viewer there: pip install 'cairn-track[ui]'",
+                err=True,
+            )
+            return
         if not no_browser:
-            # Whether that server serves the viewer is its property, not a local
-            # install question, so the URL is always printed and the exit code
-            # stays 0. But opening a browser onto a JSON blob is the actively
-            # bad outcome, so probe once and say so instead.
-            if _server_lacks_viewer(t):
-                click.echo(
-                    "note: that server is not serving the viewer, so the URL "
-                    "above will not render. Install it there:  "
-                    "pip install 'cairn-track[ui]'",
-                    err=True,
-                )
-                return
             try:
                 webbrowser.open(url)
             except Exception:  # noqa: BLE001
@@ -697,7 +969,7 @@ def open_cmd(run_id: str, no_browser: bool) -> None:
 @main.command("rm")
 @click.argument("run_id")
 def rm_cmd(run_id: str) -> None:
-    """Delete a run."""
+    """Delete a run and all its data from the configured server (no undo)."""
     t = _client()
     try:
         t.delete(f"/api/runs/{run_id}")
@@ -719,23 +991,24 @@ def rm_cmd(run_id: str) -> None:
     "filters",
     multiple=True,
     metavar="KEY=VALUE",
-    help="With --project: keep runs matching a Reader filter, e.g. "
-         "status=completed, lr__gt=0.001, tags__contains=best. VALUE is "
-         "parsed as JSON when it can be. Repeatable.",
+    help="With --project: " + _FILTER_HELP[0].lower() + _FILTER_HELP[1:],
 )
 @click.option(
     "--format",
     "fmt",
     type=click.Choice(["json", "csv", "parquet"]),
     default="json",
-    help="json: the run and its raw points (with --project: the table as a "
-         "list of records). csv/parquet: one row per scalar point (run_id, "
-         "name, step, wall_time, value); parquet needs the [export] extra.",
+    show_default=True,
+    help="json: the run and every point of every sequence (with --project: "
+         "the table as a list of records). csv/parquet: one row per scalar "
+         "point (run_id, name, step, wall_time, value; --project adds "
+         "run_name); parquet needs the [export] extra.",
 )
 @click.option(
     "--out",
     type=click.Path(dir_okay=False, path_type=Path),
     required=True,
+    help="File to write.",
 )
 def export_cmd(
     run_id: str | None, project: str | None, filters: tuple[str, ...], fmt: str, out: Path,
@@ -752,10 +1025,8 @@ def export_cmd(
     t = _client()
     try:
         run = t.get(f"/api/runs/{run_id}").json()
-        seqs_meta = t.get(f"/api/runs/{run_id}/sequences").json()["sequences"]
-        seqs: dict[str, list[dict[str, Any]]] = {}
-        for name in (s["name"] for s in seqs_meta):
-            seqs[name] = t.get(f"/api/runs/{run_id}/sequences/{name}").json()["points"]
+        names = [s["name"] for s in t.get(f"/api/runs/{run_id}/sequences").json()["sequences"]]
+        seqs = _run_points(t, run_id, names)
         if fmt == "json":
             out.write_text(json.dumps({"run": run, "sequences": seqs}, default=str, indent=2))
         else:
@@ -771,33 +1042,52 @@ def export_cmd(
                 for p in pts
                 if p.get("scalar_value") is not None
             ]
+            if not rows:
+                click.echo(f"warning: run {run_id} has no scalar points; the export is empty", err=True)
             _write_table(rows, fmt, out)
         click.echo(f"exported to {out}")
     finally:
         t.close()
 
 
+#: Names per `/api/runs/{id}/series` request (the server's batch limit).
+_SERIES_BATCH = 200
+
+
+def _run_points(t: Transport, run_id: str, names: list[str]) -> dict[str, list[dict[str, Any]]]:
+    """Every point of the named sequences, fetched in `/series` batches
+    and expanded from columns back to one dict per point."""
+    out: dict[str, list[dict[str, Any]]] = {}
+    for i in range(0, len(names), _SERIES_BATCH):
+        batch = names[i:i + _SERIES_BATCH]
+        resp = t.get(f"/api/runs/{run_id}/series", params=[("name", n) for n in batch])
+        for series in resp.json()["series"]:
+            columns, constant = series["columns"], series["constant"]
+            out[series["name"]] = [
+                {**constant, **{k: col[j] for k, col in columns.items()}}
+                for j in range(series["count"])
+            ]
+    return out
+
+
 _EXPORT_COLUMNS = ["run_id", "name", "step", "wall_time", "value"]
 
 
 def _export_project(project: str, filters: tuple[str, ...], fmt: str, out: Path) -> None:
-    """Every (filtered) run of ``project`` through ``RunQuery.history``."""
+    """Every (filtered) run of `project` through `RunQuery.history`."""
     from .sdk.reader import Reader
 
-    kwargs: dict[str, Any] = {}
-    for f in filters:
-        key, sep, raw = f.partition("=")
-        if not sep or not key:
-            raise click.UsageError(f"--filter expects KEY=VALUE, got {f!r}")
+    kwargs = _parse_filters(filters)
+    server = _config.resolve_server()
+    with Reader(server) as reader, _ReaderErrors(server):
+        query = reader.runs(project).filter(**kwargs)
         try:
-            kwargs[key] = json.loads(raw)
-        except json.JSONDecodeError:
-            kwargs[key] = raw
-    with Reader(_config.resolve_server()) as reader:
-        try:
-            df = reader.runs(project).filter(**kwargs).history()
+            df = query.history()
         except ImportError as exc:
             raise click.ClickException(str(exc)) from exc
+        if df.empty:
+            why = "the matching runs have no scalar points" if len(query) else f"no run of project {project!r} matches"
+            click.echo(f"warning: {why}; the export is empty", err=True)
     # Times as ISO strings: the single-run export's shape.
     columns = list(df.columns)
     rows = [
@@ -875,9 +1165,8 @@ def diff_cmd(run_id: str, repo: str | None, summary: bool) -> None:
     try:
         try:
             run = reader.run(run_id)
-        except Exception as exc:  # noqa: BLE001
-            click.echo(f"run not found: {exc}", err=True)
-            sys.exit(1)
+        except KeyError:
+            raise click.ClickException(f"run {run_id} not found") from None
 
         tree = run.source_tree()
         if tree is None:
@@ -999,12 +1288,20 @@ def sync_cmd() -> None:
             wal.close()
             continue
         target = wal.target or _config.resolve_server()
-        t = Transport(target, wal=wal)
+        t = Transport(target, wal=wal, max_retries=2, backoff_base=0.2, backoff_cap=0.5)
         try:
             n = t.drain_wal()
             replayed += n
-            click.echo(f"{run_id}: replayed {n} op(s) -> {target}")
-            if not wal.has_pending:
+            if wal.has_pending:
+                # drain_wal stops at the first op that fails to send (and
+                # logs why), leaving the rest pending.
+                failed += 1
+                click.echo(
+                    f"{run_id}: FAILED after {n} op(s) -> {target}; the rest are kept for retry",
+                    err=True,
+                )
+            else:
+                click.echo(f"{run_id}: replayed {n} op(s) -> {target}")
                 wal.cleanup()
         except Exception as exc:  # noqa: BLE001 - keep draining other runs
             failed += 1
@@ -1023,14 +1320,19 @@ def sync_cmd() -> None:
 
     if replayed == 0 and failed == 0:
         click.echo("nothing to sync")
+    elif failed:
+        raise click.ClickException(
+            f"sync incomplete: {replayed} op(s) replayed, {failed} run(s) failed; "
+            "run `cairn sync` again once the server is reachable"
+        )
     else:
-        click.echo(f"sync complete: {replayed} op(s) replayed, {failed} run(s) failed")
+        click.echo(f"sync complete: {replayed} op(s) replayed")
 
 
 @main.command("configure")
 @click.option("--server", default=None, help="Server URL.")
 def configure_cmd(server: str | None) -> None:
-    """Save the default server URL to the config file (prompts when ``--server`` is omitted)."""
+    """Save the default server URL to the config file (prompts when `--server` is omitted)."""
     existing = _config.load_config_file()
     if server is None:
         server = click.prompt(
@@ -1045,8 +1347,18 @@ def configure_cmd(server: str | None) -> None:
 # ---------- token management (operator, direct-DB, local host only) --------
 
 
+def _parse_iso(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
 def _parse_expiry(value: str) -> str:
-    """Accept a relative duration (``30d``, ``12h``, ``90m``, ``60s``) or a
+    """Accept a relative duration (`30d`, `12h`, `90m`, `60s`) or a
     full ISO8601 timestamp; return an ISO8601 UTC string."""
     m = re.fullmatch(r"(\d+)([smhd])", value.strip())
     if m:
@@ -1066,8 +1378,13 @@ def _parse_expiry(value: str) -> str:
 
 def _token_db(repo: Path | None) -> tuple[DataDir, Database]:
     """Open the token DB directly (operator on the server host — no remote
-    admin API in v1)."""
-    resolved = _ensure_repo(repo or _default_repo())
+    admin API in v1). The repo must exist: a token for a repo nobody serves
+    is a typo, not a request to create one."""
+    resolved = (repo or _default_repo()).expanduser().resolve()
+    if not (resolved / "cairn.db").exists():
+        raise click.ClickException(
+            f"no Cairn repo at {resolved}; pass --repo PATH/.cairn (or run `cairn init`)"
+        )
     dd = DataDir(resolved)
     return dd, Database.open(dd.db_path)
 
@@ -1077,7 +1394,7 @@ def token_group() -> None:
     """Manage auth tokens — operates directly on the local data dir's DB.
 
     Run this on the machine hosting the repo (there is no remote token-admin
-    API); pair with ``--repo`` when it isn't ``./.cairn``.
+    API); pair with `--repo` when it isn't `./.cairn`.
     """
 
 
@@ -1124,18 +1441,20 @@ def token_list_cmd(repo: Path | None) -> None:
             click.echo("(no tokens)")
             return
         # No LAST_USED column: resolving a request never writes, so
-        # ``tokens.last_used_at`` is no longer maintained.
+        # `tokens.last_used_at` is no longer maintained.
         # NAME is 40 wide: a per-browser token minted by /api/auth/otp is named
         # "<parent>-browser-<16 hex>", i.e. its parent's name plus 25
         # characters, so a long parent name still overflows the column.
         # PARENT is the short id of the token a browser login derived from;
         # revoking that parent revokes this row with it.
-        click.echo(f"{'NAME':<40} {'ROLE':<8} {'STATUS':<10} {'PARENT':<10} CREATED")
+        click.echo(f"{'NAME':<40} {'ROLE':<8} {'STATUS':<8} {'PARENT':<9} {'CREATED':<17} EXPIRES")
+        now = datetime.now(timezone.utc).isoformat()
         for r in rows:
-            status = "disabled" if r["disabled"] else ("expired" if r["expires_at"] and r["expires_at"] <= datetime.now(timezone.utc).isoformat() else "active")
+            status = "revoked" if r["disabled"] else ("expired" if r["expires_at"] and r["expires_at"] <= now else "active")
             parent = (r["parent_id"] or "")[:8]
             click.echo(
-                f"{r['name']:<40} {r['role']:<8} {status:<10} {parent:<10} {r['created_at']}"
+                f"{r['name']:<40} {r['role']:<8} {status:<8} {parent:<9} "
+                f"{_cell(_parse_iso(r['created_at'])):<17} {_cell(_parse_iso(r['expires_at'])) or 'never'}"
             )
     finally:
         db.close()
@@ -1172,8 +1491,8 @@ def _find_default_ssh_key() -> Path | None:
 
 
 def _ssh_login(server_url: str, key_path: Path | None, name: str | None) -> dict[str, Any]:
-    """Run the SSH challenge/response against ``server_url``; return the
-    server's ``{"token", "name", "role"}`` answer."""
+    """Run the SSH challenge/response against `server_url`; return the
+    server's `{"token", "name", "role"}` answer."""
     ssh_keygen = shutil.which("ssh-keygen")
     if not ssh_keygen:
         raise click.ClickException(
@@ -1225,7 +1544,7 @@ def _ssh_login(server_url: str, key_path: Path | None, name: str | None) -> dict
 
 
 def _session(server_url: str, token: str, timeout: float = 10.0) -> dict[str, Any]:
-    """``/api/auth/session`` of ``server_url`` as seen with ``token``."""
+    """`/api/auth/session` of `server_url` as seen with `token`."""
     import httpx
 
     resp = httpx.get(
@@ -1271,12 +1590,12 @@ def login_cmd(
 ) -> None:
     """Log in to the server at URL and save its token to config.toml.
 
-    URL is ``cairn://host:port`` or ``http(s)://host:port[/prefix]``
+    URL is `cairn://host:port` or `http(s)://host:port[/prefix]`
     (default: the configured server). Each server keeps its own token, so you
     can stay logged into several at once; SDK and CLI calls pick the token of
-    the server they talk to. ``--ssh`` mints a token by signing a challenge
-    with your SSH key; otherwise paste a token (``--token`` or the prompt).
-    ``--list`` shows every saved login and who it is on its server.
+    the server they talk to. `--ssh` mints a token by signing a challenge
+    with your SSH key; otherwise paste a token (`--token` or the prompt).
+    `--list` shows every saved login and who it is on its server.
     """
     if list_logins:
         _list_logins()
@@ -1294,7 +1613,10 @@ def login_cmd(
             session = _session(server_url, token)
         except Exception as exc:  # noqa: BLE001
             raise click.ClickException(f"could not reach {server_url}: {exc}") from None
-        if session.get("auth_enabled") and not session.get("authenticated"):
+        if session.get("auth_enabled") is False:
+            click.echo(f"{server_url} runs without auth (--no-auth): no token needed, nothing saved.")
+            return
+        if not session.get("authenticated"):
             raise click.ClickException(f"{server_url} rejected that token")
         result = {"name": session.get("name"), "role": session.get("role")}
 
@@ -1343,7 +1665,7 @@ def _list_logins() -> None:
 def logout_cmd(url: str | None) -> None:
     """Forget the saved token of the server at URL (default: the configured
     server). Logins to other servers are kept; the token itself stays valid
-    on the server (``cairn token revoke`` ends it)."""
+    on the server (`cairn token revoke` ends it)."""
     server_url = _server_url_arg(url)
     if server_url not in _config.saved_tokens():
         raise click.ClickException(f"not logged into {server_url}")
@@ -1381,7 +1703,7 @@ def _sweep_call(repo: str | None, method: str, *args: Any, **kwargs: Any) -> Any
 @main.group("sweep")
 def sweep_group() -> None:
     """Hyperparameter sweeps: create one from a YAML file, then run
-    ``cairn agent <sweep_id>`` (on as many machines as you like)."""
+    `cairn agent <sweep_id>` (on as many machines as you like)."""
 
 
 @sweep_group.command("create")
@@ -1467,8 +1789,8 @@ def _cli_value(value: Any) -> str:
               help="Seconds between checks while the sweep is paused.")
 def agent_cmd(sweep_id: str, count: int | None, repo: str | None, poll: float) -> None:
     """Run a sweep's trials: claim one, run the sweep's command with the
-    params as ``--key=value`` args (and CAIRN_SWEEP_ID / CAIRN_TRIAL_ID set, so
-    ``cairn.Run()`` joins the trial), report the outcome, repeat."""
+    params as `--key=value` args (and CAIRN_SWEEP_ID / CAIRN_TRIAL_ID set, so
+    `cairn.Run()` joins the trial), report the outcome, repeat."""
     import shlex
     import time
 
