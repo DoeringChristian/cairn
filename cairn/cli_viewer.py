@@ -1,4 +1,4 @@
-"""``cairn viewer``: publish, develop, list and vendor custom viewers.
+"""``cairn viewer``: start, publish, develop, list and vendor custom viewers.
 
 Registered into the main group by ``cairn.cli`` (one line); everything else
 lives here.
@@ -23,6 +23,33 @@ _DIR = click.Path(exists=True, file_okay=False, path_type=Path)
 def viewer_group() -> None:
     """Custom viewers: folders of browser code (a cairn-viewer.json manifest +
     ES modules) that show data logged with ``cairn.Data``."""
+
+
+@viewer_group.command("init")
+@click.argument("folder", type=click.Path(file_okay=False, path_type=Path))
+@click.option("--kind", default=None, help="Data kind it accepts (custom:KIND). Default: the viewer's name.")
+@click.option("--name", default=None, help="Viewer name. Default: the folder's name.")
+@click.option("--three", is_flag=True, help="A three.js starter (points) instead of the 2D-canvas one (bars).")
+def viewer_init(folder: Path, kind: str | None, name: str | None, three: bool) -> None:
+    """Write a starter viewer into FOLDER: cairn-viewer.json, index.js, README.md.
+
+    \b
+        cairn viewer init viewers/hist --kind demo/hist
+        cairn viewer dev viewers/hist --project P     # live, with `cairn ui` running
+    """
+    from .sdk.viewer_scaffold import init_viewer
+
+    try:
+        made = init_viewer(folder, kind=kind, three=three, name=name)
+    except (FileExistsError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from None
+    for p in made.files:
+        click.echo(f"wrote {p}")
+    click.echo(
+        f"viewer {made.name!r} accepts custom:{made.kind}. Next:\n"
+        f"  cairn viewer dev {folder} --project <project>   # with `cairn ui` running\n"
+        f"  log cairn.Data(..., kind={made.kind!r}) - see {folder / 'README.md'}"
+    )
 
 
 @viewer_group.command("publish")

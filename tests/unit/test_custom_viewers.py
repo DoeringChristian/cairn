@@ -583,3 +583,41 @@ def test_add_from_the_real_cdn(tmp_path):
         pytest.skip(f"no network: {exc}")
     assert (root / result.entry).is_file()
     load_folder(root)
+
+
+def test_cli_init_writes_the_minimal_example(tmp_path, monkeypatch):
+    """`cairn viewer init hist --kind demo/hist` is exactly examples/custom_viewers/minimal/hist."""
+    from cairn.cli import main
+
+    example = Path(__file__).resolve().parents[2] / "examples" / "custom_viewers" / "minimal" / "hist"
+    monkeypatch.chdir(tmp_path)
+    r = CliRunner().invoke(main, ["viewer", "init", "hist", "--kind", "demo/hist"])
+    assert r.exit_code == 0, r.output
+    made = sorted(p.name for p in (tmp_path / "hist").iterdir())
+    assert made == sorted(p.name for p in example.iterdir()) == ["README.md", "cairn-viewer.json", "index.js"]
+    for name in made:
+        assert (tmp_path / "hist" / name).read_text() == (example / name).read_text(), name
+    # A valid, publishable viewer: two settings, one on the Display tab and one on the Data tab.
+    manifest, _ = load_folder(tmp_path / "hist")
+    assert manifest["name"] == "hist" and manifest["accepts"] == ["custom:demo/hist"]
+    assert [(s["key"], s["tab"]) for s in manifest["settings"]] == [("color", "display"), ("normalize", "data")]
+    # Never over an existing viewer.
+    r = CliRunner().invoke(main, ["viewer", "init", "hist"])
+    assert r.exit_code != 0 and "exists already" in r.output
+
+
+def test_cli_init_three_and_defaults(tmp_path):
+    from cairn.cli import main
+
+    r = CliRunner().invoke(main, ["viewer", "init", str(tmp_path / "My Points"), "--three"])
+    assert r.exit_code == 0, r.output
+    manifest, files = load_folder(tmp_path / "My Points")
+    assert manifest["name"] == "my-points" and manifest["accepts"] == ["custom:my-points"]
+    assert manifest["webgl"] is True
+    assert 'from "cairn:three"' in (tmp_path / "My Points" / "index.js").read_text()
+    # It publishes as is.
+    repo = str(tmp_path / ".cairn")
+    r = CliRunner().invoke(main, ["viewer", "publish", str(tmp_path / "My Points"), "--project", "p", "--repo", repo])
+    assert r.exit_code == 0 and "p/my-points:v1" in r.output, r.output
+    r = CliRunner().invoke(main, ["viewer", "init", str(tmp_path / "x"), "--kind", "Bad Kind"])
+    assert r.exit_code != 0 and "invalid data kind" in r.output
