@@ -127,7 +127,8 @@ def report_share(report_id: str, expires: str | None, repo: str | None, server: 
     """Create a share link: anyone with it can read the report, and only it,
     without logging in. The link is printed once and cannot be shown again.
     Needs a server with auth on and the write role."""
-    from .cli import _parse_expiry, _viewer_base
+    from .cli import _parse_expiry
+    from .sdk.viewer_url import viewer_base as _viewer_base
 
     with open_api(repo, server) as api:
         _require_share_server(api)

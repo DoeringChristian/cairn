@@ -149,7 +149,9 @@ def test_run_without_ui_uses_local_transport(tmp_path):
         capture_env=False,
         capture_system_metrics=False,
     ) as run:
-        assert run.url.startswith("file://"), run.url
+        from cairn.sdk.local import LocalTransport
+
+        assert isinstance(run._transport, LocalTransport)
         run.track(1.0, name="x", step=0)
 
 

@@ -54,8 +54,8 @@ def test_local_run_full_lifecycle(tmp_path):
         # A versioned artifact via log_artifact
         run.log_artifact(cairn.Text("a" * 2000), "generation")
         run_id = run.id
-        # url should be a file:// URL, not http://
-        assert run.url.startswith("file://")
+        # No viewer runs over the repo: the URL it will have once one does.
+        assert run.url == f"http://localhost:4301/p/local-demo/r/{run.id}"
 
     # After close, verify state directly in the DB.
     db, blobs = _inspect(repo)

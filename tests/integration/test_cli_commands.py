@@ -219,6 +219,22 @@ def test_open(target):
         assert result.stdout.strip().endswith(f"/p/proj/r/{ids['train']}")
 
 
+def test_run_url_is_the_open_url(tmp_path):
+    """``Run.url`` is the page ``cairn open`` prints: the paired UI port of a
+    ``cairn server --ui``, never the ingest port the run writes to."""
+    app = create_app(data_dir=tmp_path / "srv", mount_ui=False)
+    app.state.ui_port = 54321
+    with _serve(app) as url:
+        with cairn.Run("proj", name="r", repo=url.replace("http://", "cairn://"), **QUIET) as run:
+            assert run.url == f"http://127.0.0.1:54321/p/proj/r/{run.id}"
+        opened = CliRunner().invoke(cli.main, ["open", run.id, "--no-browser", "--server", url])
+        assert opened.stdout.strip() == run.url
+    # A local repo with no viewer running: the URL once `cairn ui` starts.
+    root = tmp_path / "repo" / ".cairn"
+    with cairn.Run("proj", name="r", repo=str(root), **QUIET) as run:
+        assert run.url == f"http://localhost:4301/p/proj/r/{run.id}"
+
+
 def test_diff_takes_the_target_order(target, tmp_path, monkeypatch):
     ids = _seed(target)
     result = target.run("diff", ids["train"], ok=False)

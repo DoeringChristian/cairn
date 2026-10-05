@@ -216,6 +216,7 @@ class Run:
         self._stop_mode = stop_mode
         self._on_stop: list[Callable[["Run"], Any]] = [on_stop] if on_stop else []
         self._wal: WriteAheadLog | None = None
+        self._page_url: str | None = None
         if transport is not None:
             self._transport = transport
             self._owns_transport = False
@@ -472,9 +473,21 @@ class Run:
 
     @property
     def url(self) -> str:
-        """The run's page: the server URL (``file://<repo>`` for a local
-        repo) followed by ``/p/<project>/r/<id>``."""
-        return f"{self._server.rstrip('/')}{self._url_path}"
+        """The run's page in the viewer, the URL ``cairn open`` prints.
+
+        Against a ``cairn server --ui`` that is the paired UI port, not the
+        ingest port the run writes to. For a local repo it is the ``cairn ui``
+        running over it, else the URL the page will have once
+        ``cairn ui --repo PATH`` starts on its default port.
+        """
+        from .viewer_url import run_page_url
+
+        if self._server.startswith("file://"):
+            # A viewer over the repo may come and go: ask every time.
+            return run_page_url(self._transport, self._server, self._url_path)
+        if self._page_url is None:
+            self._page_url = run_page_url(self._transport, self._server, self._url_path)
+        return self._page_url
 
     @property
     def should_stop(self) -> bool:
