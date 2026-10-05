@@ -535,6 +535,14 @@ def _artifact_in_scope(request: Request, scope: ShareScope) -> bool:
     return digest in scope.artifacts(request.app.state.db, request.app.state.blobs)
 
 
+def _viewer_version_in_scope(request: Request, scope: ShareScope) -> bool:
+    return request.path_params.get("version_id") in scope.viewer_versions
+
+
+def _the_project(request: Request, scope: ShareScope) -> bool:
+    return request.path_params.get("project_id") == scope.project_id
+
+
 def _the_report(request: Request, scope: ShareScope) -> bool:
     return (
         request.path_params.get("report_id") == scope.report_id
@@ -558,6 +566,10 @@ SHARE_ALLOWED: dict[str, ShareChecker] = {
     "/api/artifacts/{digest}": _artifact_in_scope,
     "/api/runs/{run_id}/source/tree": _source_in_scope,
     "/api/runs/{run_id}/source/file": _source_in_scope,
+    # Custom viewers the report's cards use (the list is filtered to them).
+    "/api/projects/{project_id}/viewers": _the_project,
+    "/api/artifact-versions/{version_id}/files": _viewer_version_in_scope,
+    "/api/artifact-versions/{version_id}/file": _viewer_version_in_scope,
 }
 
 

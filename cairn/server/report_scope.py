@@ -5,7 +5,9 @@ A report's runs are named in its ```cairn fences: ``runs.ids``, the runs a
 the UI resolves it), each card's explicit ``series[].runId``, the cell's run
 view, and run ids in card settings (a code-diff card's ``leftRunId``/
 ``rightRunId``). Source files are in scope only for the runs a code-diff card
-can show. Scope is live: it is recomputed from the report's current source,
+can show. A card's custom viewer (``settings.viewer``, pinned by
+``settings.viewer_version`` or else ``latest``) puts that viewer version's
+files in scope. Scope is live: it is recomputed from the report's current source,
 cached for ``SCOPE_TTL_S`` per share.
 
 ``resolve_run_selector_from_runs`` is a port of cairn-ui's
@@ -30,6 +32,7 @@ from typing import Any
 import yaml
 
 from .artifact_refs import reachable_hashes
+from .custom_viewers import resolve_viewer_version
 from .storage.blobs import BlobStore
 from .storage.db import Database
 
@@ -190,6 +193,9 @@ class ShareScope:
     run_ids: frozenset[str]
     #: The runs a code-diff card may show source files of.
     source_run_ids: frozenset[str]
+    #: The custom viewer versions the report's cards use (``settings.viewer``
+    #: + optional ``settings.viewer_version``; default ``latest``).
+    viewer_versions: frozenset[str] = frozenset()
     _artifacts: frozenset[str] | None = field(default=None, repr=False)
 
     def artifacts(self, db: Database, blobs: BlobStore) -> frozenset[str]:
@@ -234,6 +240,7 @@ def compute_scope(db: Database, report: dict[str, Any]) -> ShareScope:
     run_ids: set[str] = set()
     source_run_ids: set[str] = set()
     pool: list[dict[str, Any]] | None = None
+    viewer_refs: set[tuple[str, Any]] = set()
 
     for body in cairn_fence_bodies(source if isinstance(source, str) else ""):
         try:
@@ -278,17 +285,26 @@ def compute_scope(db: Database, report: dict[str, Any]) -> ShareScope:
                 if isinstance(s, dict) and isinstance(s.get("runId"), str) and s["runId"]:
                     named.append(s["runId"])
             named += _settings_run_ids(card.get("settings"))
+            settings = card.get("settings")
+            if isinstance(settings, dict) and isinstance(settings.get("viewer"), str):
+                version = settings.get("viewer_version")
+                viewer_refs.add((settings["viewer"], version if isinstance(version, (int, str)) else None))
             run_ids.update(named)
             if card.get("type") == CODE_DIFF_CARD:
                 # A viewer may point the diff at any run of its cell.
                 source_run_ids.update(block_runs)
                 source_run_ids.update(named)
 
+    viewer_versions = {
+        vid for name, version in sorted(viewer_refs, key=repr)
+        if (vid := resolve_viewer_version(db, project_id, name, version)) is not None
+    }
     return ShareScope(
         report_id=report["id"],
         project_id=project_id,
         run_ids=frozenset(run_ids),
         source_run_ids=frozenset(source_run_ids),
+        viewer_versions=frozenset(viewer_versions),
     )
 
 

@@ -75,6 +75,7 @@ def _cases():
         "boxes3d": [cairn.Boxes3D(mins=np.zeros((2, 3)), maxs=np.ones((2, 3))),
                     cairn.Boxes3D(mins=np.zeros((1, 3)), maxs=np.ones((1, 3)) * 2)],
         "volume": [cairn.Volume(np.zeros((4, 4, 4), np.float32)), cairn.Volume(np.ones((4, 4, 4), np.float32))],
+        "custom": [cairn.Data({"a": np.zeros(3)}, kind="k/x"), cairn.Data({"a": np.ones(2)}, kind="k/x")],
     }
     return cases
 

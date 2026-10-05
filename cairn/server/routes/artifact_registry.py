@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 from .. import artifact_registry_ops as ops
 from .. import auth
 from ._common import get_blobs, get_db, slugify
+from ..viewer_manifest import VIEWER_TYPE, mime_for
 from .artifacts import serve_blob
 
 router = APIRouter(prefix="/api", tags=["artifact-registry"])
@@ -38,6 +39,14 @@ def _http(exc: Exception) -> HTTPException:
     if isinstance(exc, LookupError):
         return HTTPException(status_code=404, detail=str(exc).strip("'\""))
     return HTTPException(status_code=400, detail=str(exc))
+
+
+def _version_type(db: Any, version_id: str) -> str | None:
+    rows = db.read(
+        "SELECT af.type FROM artifact_versions av JOIN artifact_families af "
+        "ON af.id = av.family_id WHERE av.id = ?", [version_id],
+    )
+    return rows[0][0] if rows else None
 
 
 def _project(project_id: str) -> str:
@@ -244,8 +253,13 @@ def version_file_content(
             status_code=409,
             detail=f"entry {path!r} is a reference to {entry['uri']}; it is not stored here",
         )
+    mime = entry["mime"] or None
+    if _version_type(get_db(request), version_id) == VIEWER_TYPE:
+        # A viewer's modules must load as JavaScript whatever the publishing
+        # platform's mimetypes guessed.
+        mime = mime_for(path)
     return serve_blob(
-        request, entry["digest"], mime_type=entry["mime"] or None,
+        request, entry["digest"], mime_type=mime,
         filename=path.rsplit("/", 1)[-1], range_header=range_header, if_none_match=if_none_match,
     )
 

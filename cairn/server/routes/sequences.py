@@ -92,7 +92,8 @@ def get_updates(
 @router.get("/runs/{run_id}/sequences")
 def list_sequences(run_id: str, request: Request) -> dict[str, Any]:
     """Every sequence of the run: name, object type (the greatest one, if a
-    series mixes them), first and last step, and point count.
+    series mixes them), first and last step, and point count. A ``custom``
+    series also has its data ``kind`` (that of its latest point).
 
     Read from ``metric_stats`` (the run's scalar points, any object type)
     plus the partial index ``idx_sequences_unsummarized`` (every point that
@@ -131,7 +132,34 @@ def list_sequences(run_id: str, request: Request) -> dict[str, Any]:
         seq["min_step"] = min(seq["min_step"], lo)
         seq["max_step"] = max(seq["max_step"], hi)
         seq["count"] += count - valued
+    for name, kind in custom_kinds(db, [run_id]).get(run_id, {}).items():
+        if name in out and out[name]["object_type"] == "custom":
+            out[name]["kind"] = kind
     return {"sequences": [out[n] for n in sorted(out)]}
+
+
+def custom_kinds(db: Any, run_ids: list[str]) -> dict[str, dict[str, str]]:
+    """``{run_id: {name: kind}}`` for the runs' ``custom`` series: the data
+    kind (artifact metadata ``kind``) of each series' latest-step point. Reads
+    only ``custom`` points (through ``idx_sequences_unsummarized``)."""
+    if not run_ids:
+        return {}
+    holes = ",".join("?" * len(run_ids))
+    out: dict[str, dict[str, str]] = {}
+    # SQLite: the bare column next to MAX(step) comes from the max-step row.
+    for run_id, name, _step, kind in db.read(
+        f"""
+        SELECT s.run_id, s.name, MAX(s.step), json_extract(a.metadata, '$.kind')
+        FROM sequences s
+        JOIN artifacts a ON a.hash = s.artifact_hash
+        WHERE s.run_id IN ({holes}) AND s.object_type = 'custom'
+        GROUP BY s.run_id, s.name
+        """,
+        run_ids,
+    ):
+        if isinstance(kind, str):
+            out.setdefault(run_id, {})[name] = kind
+    return out
 
 
 # Most names one /series request may ask for (the client splits bigger batches).

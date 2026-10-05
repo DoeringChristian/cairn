@@ -52,6 +52,7 @@ from .routes import (
     shares,
     source,
     sweeps,
+    viewers,
 )
 from .ui_mount import mount_viewer
 from .storage.blobs import BlobStore
@@ -305,6 +306,7 @@ def create_app(
         embed.router,
         alerts.router,
         sweeps.router,
+        viewers.router,
     ):
         app.include_router(router, dependencies=[Depends(require("read"))])
 

@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cairn.dev/schemas/cairn-viewer.schema.json",
+  "title": "cairn-viewer.json",
+  "description": "Manifest of a cairn custom viewer folder. Validated at publish (cairn/server/viewer_manifest.py implements the same rules plus file checks: the entry and every imports target must exist; the folder is at most 50 MB).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "accepts"],
+  "properties": {
+    "$schema": {"type": "string"},
+    "name": {
+      "description": "Artifact family name and the card's `viewer` setting.",
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_.-]{0,63}$"
+    },
+    "title": {"type": "string", "minLength": 1, "description": "Label in the card builder (default: name)."},
+    "description": {"type": "string"},
+    "entry": {
+      "description": "ES module the host imports first, relative to the folder (default index.js).",
+      "type": "string",
+      "default": "index.js",
+      "pattern": "^(\\./)?[^/\\\\:][^\\\\:]*$"
+    },
+    "accepts": {
+      "description": "What the viewer shows: `custom:<kind glob>` or built-in object types. `*` matches any characters (including `/`), `?` one.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "anyOf": [
+          {"pattern": "^custom:[a-z0-9_.\\-/*?]+$"},
+          {"pattern": "^[a-z0-9_*?-]+$"}
+        ]
+      }
+    },
+    "inputs": {"enum": ["single", "compare"], "default": "single"},
+    "webgl": {"type": "boolean", "default": false},
+    "view": {"type": "boolean", "default": false, "description": "Opaque view state synced across panes."},
+    "imports": {
+      "description": "Import-map entries: bare specifier -> ./path inside the folder. A key ending in '/' maps a folder (its value ends in '/').",
+      "type": "object",
+      "propertyNames": {"pattern": "^(?![./])(?![A-Za-z][A-Za-z0-9+.-]*:).+$"},
+      "additionalProperties": {"type": "string", "pattern": "^\\./"}
+    },
+    "settings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/setting"}
+    }
+  },
+  "$defs": {
+    "key": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$", "not": {"enum": ["viewer", "viewer_version"]}},
+    "setting": {
+      "type": "object",
+      "required": ["key", "type"],
+      "properties": {
+        "key": {"$ref": "#/$defs/key"},
+        "type": {"enum": ["slider", "number", "select", "switch", "colormap", "text"]},
+        "label": {"type": "string"}
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "type": {"const": "slider"},
+            "key": true, "label": true,
+            "min": {"type": "number"}, "max": {"type": "number"},
+            "step": {"type": "number", "exclusiveMinimum": 0},
+            "default": {"type": "number"}
+          },
+          "required": ["min", "max"],
+          "additionalProperties": false
+        },
+        {
+          "properties": {
+            "type": {"const": "number"},
+            "key": true, "label": true,
+            "min": {"type": "number"}, "max": {"type": "number"},
+            "step": {"type": "number", "exclusiveMinimum": 0},
+            "default": {"type": "number"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "properties": {
+            "type": {"const": "select"},
+            "key": true, "label": true,
+            "options": {
+              "type": "array", "minItems": 1,
+              "items": {
+                "anyOf": [
+                  {"type": "string"},
+                  {"type": "object", "required": ["value"], "additionalProperties": false,
+                   "properties": {"value": {"type": "string"}, "label": {"type": "string"}}}
+                ]
+              }
+            },
+            "default": {"type": "string"}
+          },
+          "required": ["options"],
+          "additionalProperties": false
+        },
+        {
+          "properties": {
+            "type": {"const": "switch"},
+            "key": true, "label": true,
+            "default": {"type": "boolean"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "properties": {
+            "type": {"const": "colormap"},
+            "key": true, "label": true,
+            "options": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+            "default": {"type": "string"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "properties": {
+            "type": {"const": "text"},
+            "key": true, "label": true,
+            "placeholder": {"type": "string"},
+            "default": {"type": "string"}
+          },
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}

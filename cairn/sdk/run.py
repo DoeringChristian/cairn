@@ -694,6 +694,8 @@ class Run:
             entries.append(entry)
         manifest = json.dumps({"items": entries}).encode()
         meta: dict[str, Any] = {"gallery": len(entries)}
+        if object_type == "custom":
+            meta["kind"] = entries[0]["metadata"].get("kind")
         preview = entries[0]["metadata"].get("preview")
         if preview is not None:
             meta["preview"] = preview
@@ -820,6 +822,33 @@ class Run:
         info = self._transport.resolve_artifact(self._project_id, ref)
         self._transport.record_artifact_input(self._run_id, info["id"], role)
         return ArtifactVersion(info, self._reader_backend)
+
+    def use_viewer(self, path: str | Path, *, aliases: list[str] | None = None) -> ArtifactVersion:
+        """Publish a custom viewer folder to this run's project if it changed,
+        so a training script keeps its viewer in sync with its data.
+
+        The folder (``cairn-viewer.json`` + ES modules) becomes a new version
+        of the artifact ``<manifest name>`` (type ``cairn-viewer``) only when
+        its content differs from ``latest``; the run is recorded as its
+        producer. See ``cairn.publish_viewer``.
+
+            run.use_viewer("viewers/vmf")
+            run.track(cairn.Data(lobes, kind="guiding/vmf"), "guide", step)
+
+        Returns:
+            The viewer's ``ArtifactVersion`` (new, or the unchanged ``latest``).
+
+        Raises:
+            ManifestError: The folder is not a valid viewer.
+        """
+        from .custom_viewers import publish_folder
+
+        if self._finished:
+            raise RuntimeError("Run has already been finished")
+        return publish_folder(
+            self._transport, self._registry, self._project_id, path, aliases=aliases,
+            created_by_run=self._run_id, backend=self._reader_backend,
+        )
 
     # ---- params / metadata ------------------------------------------------
 
@@ -1220,6 +1249,9 @@ class _DisabledRun(Run):
         pass
 
     def use_artifact(self, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
+        pass
+
+    def use_viewer(self, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
         pass
 
     def set_tag(self, *args: Any, **kwargs: Any) -> None:

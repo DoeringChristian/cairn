@@ -51,6 +51,8 @@ _LAZY_ATTRS: dict[str, str] = {
     "Boxes3D": ".sdk.wrappers",
     "BVH": ".sdk.wrappers",
     "ConfusionMatrix": ".sdk.wrappers",
+    "Data": ".sdk.wrappers",
+    "publish_viewer": ".sdk.custom_viewers",
     "Figure": ".sdk.wrappers",
     "Histogram": ".sdk.wrappers",
     "Html": ".sdk.wrappers",
@@ -77,12 +79,14 @@ if TYPE_CHECKING:  # static-analysis only — never executed, never eager at run
     from .sdk.reader import MediaRef, Reader
     from .sdk.run import Run
     from .sdk.sweep import Sweep, sweep
+    from .sdk.custom_viewers import publish_viewer
     from .sdk.handlers.registry import register_handler
     from .sdk.wrappers import (
         Audio,
         Boxes3D,
         BVH,
         ConfusionMatrix,
+        Data,
         Figure,
         Histogram,
         Html,
@@ -197,6 +201,7 @@ __all__ = [
     "BVH",
     "Octree",
     "Volume",
+    "Data",
     "Text",
     "Html",
     "Markdown",
@@ -204,6 +209,7 @@ __all__ = [
     "PRCurve",
     "ROCCurve",
     "log_artifact",
+    "publish_viewer",
 ]
 
 

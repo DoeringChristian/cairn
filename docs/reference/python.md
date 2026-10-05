@@ -58,6 +58,8 @@ types](../guides/media.md).
 
 ::: cairn.sdk.wrappers.Volume
 
+::: cairn.sdk.wrappers.Data
+
 ::: cairn.sdk.wrappers.ConfusionMatrix
 
 ::: cairn.sdk.wrappers.PRCurve
@@ -148,6 +150,14 @@ it; `Run.use_artifact` and the reader return `ArtifactVersion`s. See
 ::: cairn.sdk.artifacts.ArtifactEntry
 
 ::: cairn.sdk.artifacts.ArtifactFamily
+
+## Custom viewers
+
+Viewer folders (a `cairn-viewer.json` manifest and ES modules) are published as artifacts of type
+`cairn-viewer`; `Run.use_viewer` publishes one from a training script. See
+[Media › Custom data for your own viewers](../guides/media.md#custom-data-for-your-own-viewers).
+
+::: cairn.publish_viewer
 
 ## Configuration
 

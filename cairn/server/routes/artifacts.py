@@ -23,6 +23,17 @@ _RANGE_RE = re.compile(r"^bytes=(\d*)-(\d*)$")
 # hard reload, or a cache that ignores `immutable`) is a bodiless 304.
 _IMMUTABLE = "public, max-age=31536000, immutable"
 
+#: On every response carrying stored (user-supplied) bytes: the browser never
+#: sniffs a type other than the declared one, and a blob opened directly as a
+#: document (an HTML file, a viewer's script) runs in an opaque-origin
+#: sandbox — no scripts, no same-origin access to the API or cookies. Only
+#: documents are affected: ``<img>``/``<video>``/``<audio>``, ``fetch`` and
+#: downloads load as before.
+UNTRUSTED_CONTENT_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": "sandbox",
+}
+
 
 def _etag(digest: str) -> str:
     return f'"{digest}"'
@@ -69,7 +80,7 @@ def serve_blob(
         raise HTTPException(status_code=404, detail="artifact not found")
     mime_type = mime_type or rows[0]["mime_type"]
     total_size = rows[0]["size_bytes"]
-    cache_headers = {"Cache-Control": _IMMUTABLE, "ETag": _etag(digest)}
+    cache_headers = {"Cache-Control": _IMMUTABLE, "ETag": _etag(digest), **UNTRUSTED_CONTENT_HEADERS}
     if filename:
         cache_headers["Content-Disposition"] = f"inline; filename*=UTF-8''{quote(filename)}"
 

@@ -32,6 +32,7 @@ from ._common import api_run_row, get_db, utc_now
 from .report_assets import require_report
 from .reports import _parse_payload
 from .runs import RUN_LIST_COLUMNS
+from .sequences import custom_kinds
 
 router = APIRouter(prefix="/api", tags=["shares"])
 #: Registered without the require_role dependency: redeeming is how a share
@@ -229,6 +230,12 @@ def _metric_index(db: Database, run_ids: list[str]) -> dict[str, list[dict[str, 
         run_ids,
     ):
         out[r.pop("run_id")].append(r)
+    kinds = custom_kinds(db, run_ids)
+    for rid, seqs in out.items():
+        for seq in seqs:
+            kind = kinds.get(rid, {}).get(seq["name"])
+            if kind is not None and seq["object_type"] == "custom":
+                seq["kind"] = kind
     return out
 
 

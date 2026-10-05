@@ -11,7 +11,8 @@ point's artifact is a JSON manifest naming them::
                 "caption": "..."}, ...]}
 
 stored under ``GALLERY_MIME``, with the point's ``object_type`` the items'
-kind. ``caption`` is present only on items whose wrapper had one; the
+kind. A gallery of ``cairn.Data`` holds one data kind, recorded as ``kind`` in
+the manifest's metadata. ``caption`` is present only on items whose wrapper had one; the
 point's own ``caption=`` stays on the point.
 """
 
@@ -33,6 +34,7 @@ GALLERY_MIME = "application/vnd.cairn.gallery+json"
 GALLERY_TYPES = frozenset({
     "image", "figure", "audio", "video", "text", "html", "markdown",
     "histogram", "tensor", "pointcloud", "mesh", "boxes3d", "volume",
+    "custom",
 })
 
 
@@ -91,4 +93,11 @@ def resolve_gallery(registry: Any, value: Any) -> tuple[str, list[GalleryItem]] 
             f"a list of {kind} values is not a gallery (galleries hold "
             f"{', '.join(sorted(GALLERY_TYPES))}); track each one under its own name"
         )
+    if kind == "custom":
+        data_kinds = sorted({str(i.kwargs.get("kind")) for i in items})
+        if len(data_kinds) > 1:
+            raise ValueError(
+                f"a gallery of cairn.Data holds one kind, got {', '.join(data_kinds)}; "
+                "track each kind under its own name"
+            )
     return kind, items
