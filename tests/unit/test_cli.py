@@ -428,3 +428,48 @@ def test_list_rejects_unknown_columns_and_sort_keys(live_server, monkeypatch):
     for argv in (["-c", "bogus"], ["--sort", "bogus"], ["--where", "last(("]):
         result = CliRunner().invoke(cli.main, ["list", *argv])
         assert result.exit_code == 2, result.output
+
+
+def test_export_fetches_sequences_in_series_batches(live_server, monkeypatch, tmp_path):
+    """A run's sequences come from batched /series requests (one request per
+    200 names, not one per sequence), with the same point fields as before."""
+    import httpx
+
+    from cairn.sdk.transport import Transport
+
+    monkeypatch.setenv("CAIRN_SERVER", live_server)
+    with httpx.Client(base_url=live_server) as c:
+        rid = c.post("/api/runs", json={"project": "p"}).json()["run_id"]
+        c.post(f"/api/runs/{rid}/batch", json={"points": [
+            {"name": f"m{i:03d}", "step": s, "wall_time": "2025-01-01T00:00:00Z",
+             "object_type": "scalar", "scalar_value": float(i + s)}
+            for i in range(201) for s in range(2)
+        ]}).raise_for_status()
+    paths: list[str] = []
+    real_get = Transport.get
+    monkeypatch.setattr(Transport, "get", lambda self, path, params=None: paths.append(path) or real_get(self, path, params))
+    out = tmp_path / "run.json"
+    result = CliRunner().invoke(cli.main, ["export", rid, "--out", str(out)])
+    assert result.exit_code == 0, result.output
+    assert sum(p.endswith("/series") for p in paths) == 2
+    assert not any("/sequences/" in p for p in paths)
+    seqs = json.loads(out.read_text())["sequences"]
+    assert len(seqs) == 201
+    assert [(p["step"], p["scalar_value"], p["object_type"]) for p in seqs["m200"]] == [
+        (0, 200.0, "scalar"), (1, 201.0, "scalar"),
+    ]
+
+
+def test_empty_exports_warn(live_server, monkeypatch, tmp_path):
+    import httpx
+
+    monkeypatch.setenv("CAIRN_SERVER", live_server)
+    with httpx.Client(base_url=live_server) as c:
+        rid = c.post("/api/runs", json={"project": "p"}).json()["run_id"]
+    result = CliRunner().invoke(cli.main, ["export", rid, "--format", "csv", "--out", str(tmp_path / "a.csv")])
+    assert result.exit_code == 0
+    assert f"warning: run {rid} has no scalar points" in result.output
+    pytest.importorskip("pandas")
+    result = CliRunner().invoke(cli.main, ["export", "--project", "nope", "--format", "csv", "--out", str(tmp_path / "b.csv")])
+    assert result.exit_code == 0, result.output
+    assert "no run of project 'nope' matches" in result.output

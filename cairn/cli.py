@@ -65,6 +65,37 @@ def _server_of(request: Any) -> str:
     return f"{url.scheme}://{url.netloc.decode()}"
 
 
+def _unauthorized_text(base: str, detail: str, sent_token: bool) -> str:
+    """A 401 from ``base`` as advice: log in, or log in again."""
+    if sent_token:
+        source = "CAIRN_TOKEN" if os.environ.get("CAIRN_TOKEN") else "the saved token"
+        return f"{base}: {detail}; it rejected {source}. Log in again with `cairn login {base}`."
+    return f"{base}: {detail}. Log in with `cairn login {base}` (or set CAIRN_TOKEN)."
+
+
+class _ReaderErrors:
+    """Turns the Reader's HTTP errors (a 4xx becomes ValueError/LookupError
+    carrying the server's detail) into one-line CLI errors."""
+
+    def __init__(self, server: str) -> None:
+        self.server = server.rstrip("/")
+
+    def __enter__(self) -> None:
+        return None
+
+    def __exit__(self, typ: Any, exc: BaseException | None, tb: Any) -> None:
+        if not isinstance(exc, (ValueError, LookupError)) or isinstance(exc, click.ClickException):
+            return
+        detail = str(exc.args[0]) if exc.args else str(exc)
+        if detail == "authentication required":
+            text = _unauthorized_text(
+                self.server, detail, _config.resolve_token(self.server) is not None,
+            )
+        else:
+            text = f"{self.server}: {detail}"
+        raise click.ClickException(text) from None
+
+
 def _http_error_text(exc: Exception) -> str | None:
     """A one-line message for an HTTP failure, or None for other errors.
 
@@ -82,16 +113,7 @@ def _http_error_text(exc: Exception) -> str | None:
             detail = None
         detail = detail if isinstance(detail, str) and detail else resp.reason_phrase
         if resp.status_code == 401:
-            if "authorization" in exc.request.headers:
-                source = "CAIRN_TOKEN" if os.environ.get("CAIRN_TOKEN") else "the saved token"
-                return (
-                    f"{base}: {detail}; it rejected {source}. Log in again with "
-                    f"`cairn login {base}`."
-                )
-            return (
-                f"{base}: {detail}. Log in with `cairn login {base}` "
-                "(or set CAIRN_TOKEN)."
-            )
+            return _unauthorized_text(base, detail, "authorization" in exc.request.headers)
         return f"{base}: {detail} (HTTP {resp.status_code})"
     if isinstance(exc, httpx.TransportError):
         try:
@@ -818,7 +840,8 @@ def list_cmd(
     ] + (["archived"] if archived == "all" else [])
     keys += [k for k in columns if k not in keys]
 
-    with Reader(_config.resolve_server()) as reader:
+    server = _config.resolve_server()
+    with Reader(server) as reader, _ReaderErrors(server):
         query = reader.runs(project, archived={"hide": False, "only": True, "all": None}[archived])
         try:
             if status:
@@ -934,23 +957,24 @@ def rm_cmd(run_id: str) -> None:
     "filters",
     multiple=True,
     metavar="KEY=VALUE",
-    help="With --project: keep runs matching a Reader filter, e.g. "
-         "status=completed, lr__gt=0.001, tags__contains=best. VALUE is "
-         "parsed as JSON when it can be. Repeatable.",
+    help="With --project: " + _FILTER_HELP[0].lower() + _FILTER_HELP[1:],
 )
 @click.option(
     "--format",
     "fmt",
     type=click.Choice(["json", "csv", "parquet"]),
     default="json",
-    help="json: the run and its raw points (with --project: the table as a "
-         "list of records). csv/parquet: one row per scalar point (run_id, "
-         "name, step, wall_time, value); parquet needs the [export] extra.",
+    show_default=True,
+    help="json: the run and every point of every sequence (with --project: "
+         "the table as a list of records). csv/parquet: one row per scalar "
+         "point (run_id, name, step, wall_time, value; --project adds "
+         "run_name); parquet needs the [export] extra.",
 )
 @click.option(
     "--out",
     type=click.Path(dir_okay=False, path_type=Path),
     required=True,
+    help="File to write.",
 )
 def export_cmd(
     run_id: str | None, project: str | None, filters: tuple[str, ...], fmt: str, out: Path,
@@ -967,10 +991,8 @@ def export_cmd(
     t = _client()
     try:
         run = t.get(f"/api/runs/{run_id}").json()
-        seqs_meta = t.get(f"/api/runs/{run_id}/sequences").json()["sequences"]
-        seqs: dict[str, list[dict[str, Any]]] = {}
-        for name in (s["name"] for s in seqs_meta):
-            seqs[name] = t.get(f"/api/runs/{run_id}/sequences/{name}").json()["points"]
+        names = [s["name"] for s in t.get(f"/api/runs/{run_id}/sequences").json()["sequences"]]
+        seqs = _run_points(t, run_id, names)
         if fmt == "json":
             out.write_text(json.dumps({"run": run, "sequences": seqs}, default=str, indent=2))
         else:
@@ -986,10 +1008,32 @@ def export_cmd(
                 for p in pts
                 if p.get("scalar_value") is not None
             ]
+            if not rows:
+                click.echo(f"warning: run {run_id} has no scalar points; the export is empty", err=True)
             _write_table(rows, fmt, out)
         click.echo(f"exported to {out}")
     finally:
         t.close()
+
+
+#: Names per ``/api/runs/{id}/series`` request (the server's batch limit).
+_SERIES_BATCH = 200
+
+
+def _run_points(t: Transport, run_id: str, names: list[str]) -> dict[str, list[dict[str, Any]]]:
+    """Every point of the named sequences, fetched in ``/series`` batches
+    and expanded from columns back to one dict per point."""
+    out: dict[str, list[dict[str, Any]]] = {}
+    for i in range(0, len(names), _SERIES_BATCH):
+        batch = names[i:i + _SERIES_BATCH]
+        resp = t.get(f"/api/runs/{run_id}/series", params=[("name", n) for n in batch])
+        for series in resp.json()["series"]:
+            columns, constant = series["columns"], series["constant"]
+            out[series["name"]] = [
+                {**constant, **{k: col[j] for k, col in columns.items()}}
+                for j in range(series["count"])
+            ]
+    return out
 
 
 _EXPORT_COLUMNS = ["run_id", "name", "step", "wall_time", "value"]
@@ -1000,11 +1044,16 @@ def _export_project(project: str, filters: tuple[str, ...], fmt: str, out: Path)
     from .sdk.reader import Reader
 
     kwargs = _parse_filters(filters)
-    with Reader(_config.resolve_server()) as reader:
+    server = _config.resolve_server()
+    with Reader(server) as reader, _ReaderErrors(server):
+        query = reader.runs(project).filter(**kwargs)
         try:
-            df = reader.runs(project).filter(**kwargs).history()
+            df = query.history()
         except ImportError as exc:
             raise click.ClickException(str(exc)) from exc
+        if df.empty:
+            what = "the matching runs have" if len(query) else f"no run of project {project!r} matches, so it has"
+            click.echo(f"warning: {what} no scalar points; the export is empty", err=True)
     # Times as ISO strings: the single-run export's shape.
     columns = list(df.columns)
     rows = [
