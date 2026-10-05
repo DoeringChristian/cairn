@@ -32,12 +32,19 @@ from collections import deque
 import threading
 import time
 from collections.abc import Iterator
+from datetime import date, datetime
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Sequence
 
 from .metric_stats import backfill_metric_stats
 from .migrations import apply_migrations
+
+# Explicit adapters for datetime/date parameters: Python 3.12 deprecates the
+# implicit defaults. ISO 8601 with a "T", the format every other timestamp in
+# the database is written in (``.isoformat()``); the old default wrote a space.
+sqlite3.register_adapter(datetime, datetime.isoformat)
+sqlite3.register_adapter(date, date.isoformat)
 
 #: Idle read connections kept for reuse; more are opened on demand under
 #: load and closed again when returned beyond this many.
