@@ -14,6 +14,7 @@ import re
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
 
 from .. import auth
@@ -56,7 +57,7 @@ async def upload_report_asset(
     project_id: str, report_id: str, request: Request, file: UploadFile = File(...),
 ) -> dict[str, Any]:
     db = get_db(request)
-    require_report(db, project_id, report_id)
+    await run_in_threadpool(require_report, db, project_id, report_id)
     data = await file.read(MAX_ASSET_BYTES + 1)
     if len(data) > MAX_ASSET_BYTES:
         raise HTTPException(status_code=413, detail="image larger than 20 MB")
@@ -65,13 +66,19 @@ async def upload_report_asset(
         raise HTTPException(
             status_code=415, detail="only PNG, JPEG, GIF and WebP images are accepted",
         )
-    digest, size = get_blobs(request).put(data, mime_type)
-    db.write(
-        """INSERT OR IGNORE INTO report_assets
-               (report_id, hash, mime_type, size_bytes, created_at)
-           VALUES (?, ?, ?, ?, ?)""",
-        [report_id, digest, mime_type, size, utc_now().isoformat()],
-    )
+    blobs = get_blobs(request)
+
+    def store() -> tuple[str, int]:  # blocking: blob write + the write lock
+        digest, size = blobs.put(data, mime_type)
+        db.write(
+            """INSERT OR IGNORE INTO report_assets
+                   (report_id, hash, mime_type, size_bytes, created_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            [report_id, digest, mime_type, size, utc_now().isoformat()],
+        )
+        return digest, size
+
+    digest, size = await run_in_threadpool(store)
     return {
         "hash": digest,
         "mime_type": mime_type,

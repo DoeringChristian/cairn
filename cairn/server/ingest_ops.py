@@ -202,11 +202,20 @@ def run_docs(db: Database, run_id: str) -> dict[str, Any]:
     return {"config": config_doc.loads(row[0]), "summary": config_doc.loads(row[1])}
 
 
+#: Points written per transaction. A transaction holds the process's write
+#: lock, so this bounds how long any other write (a comparison created from
+#: the UI, another run's batch) waits behind a large batch: ~5 ms. (Smaller
+#: transactions measured no slower: 1000 points ~190k points/s, 5000 ~145k.)
+INGEST_CHUNK = 1000
+
+
 def insert_batch(
     db: Database, run_id: str, points: list[dict[str, Any]]
 ) -> int:
     """Insert points (a point already stored at its step is kept) and fold
-    the inserted ones into ``metric_stats``, in one transaction."""
+    the inserted ones into ``metric_stats``, in transactions of at most
+    ``INGEST_CHUNK`` points (each consistent on its own: the points it
+    inserted and their stats)."""
     _require_run(db, run_id)
     rows = [
         (
@@ -222,8 +231,9 @@ def insert_batch(
     ]
     # IMMEDIATE: insert_points reads the top rowid before writing, and a
     # deferred read lock cannot be upgraded while another process writes.
-    with db.transaction(immediate=True) as con:
-        insert_points(con, run_id, rows)
+    for i in range(0, len(rows), INGEST_CHUNK):
+        with db.transaction(immediate=True) as con:
+            insert_points(con, run_id, rows[i:i + INGEST_CHUNK])
     return len(rows)
 
 

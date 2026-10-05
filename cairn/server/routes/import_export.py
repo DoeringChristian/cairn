@@ -12,6 +12,7 @@ import zipfile
 from typing import Any
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -58,7 +59,8 @@ async def import_runs(request: Request, file: UploadFile = File(...)) -> dict[st
     except zipfile.BadZipFile:
         raise HTTPException(status_code=400, detail="Invalid ZIP file") from None
     try:
-        imported = restore_archive(
+        imported = await run_in_threadpool(  # long and blocking: off the event loop
+            restore_archive,
             get_db(request), get_blobs(request), get_data_dir(request), zf, keep_ids=False,
         )
     except ValueError as exc:

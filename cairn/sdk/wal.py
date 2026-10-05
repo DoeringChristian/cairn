@@ -32,6 +32,8 @@ import base64
 import json
 import logging
 import os
+import threading
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
@@ -58,6 +60,23 @@ class WALEntry:
     payload: dict[str, Any]
 
 
+def _seq_of(line: bytes) -> int | None:
+    """The ``seq`` of an entry line as ``append`` writes it (``{"seq":N,...``),
+    read without parsing the rest; None for any other shape."""
+    if not line.startswith(b'{"seq":'):
+        return None
+    end = line.find(b",", 7)
+    try:
+        return int(line[7:end])
+    except ValueError:
+        return None
+
+
+def dead_letter_path(wal_dir: Path, run_id: str) -> Path:
+    """Where ``WriteAheadLog.dead_letter`` keeps a run's rejected ops."""
+    return wal_dir / f"{run_id}.dead.jsonl"
+
+
 class WriteAheadLog:
     """Append-only JSONL log with checkpoint-based replay."""
 
@@ -69,6 +88,12 @@ class WriteAheadLog:
         self.wal_dir.mkdir(parents=True, exist_ok=True)
         self._wal_path = self.wal_dir / f"{run_id}.wal.jsonl"
         self._checkpoint_path = self.wal_dir / f"{run_id}.checkpoint"
+        # The run's flush threads (metrics, logs), its heartbeat and the
+        # training thread all append and ack.
+        self._lock = threading.RLock()
+        # Byte offset of each entry appended by this process: ``pending()``
+        # seeks past the delivered prefix instead of re-reading the file.
+        self._offsets: dict[int, int] = {}
         self._seq = self._read_last_seq()
         self._fh = open(self._wal_path, "a")  # noqa: SIM115
         self.epoch, self.target = self._read_or_write_header(target)
@@ -123,35 +148,41 @@ class WriteAheadLog:
 
     def append(self, op: str, payload: dict[str, Any]) -> int:
         """Write one entry to the WAL. Returns the sequence number."""
-        self._seq += 1
-        entry = {"seq": self._seq, "op": op, "payload": payload}
-        line = json.dumps(entry, separators=(",", ":"))
-        self._fh.write(line + "\n")
-        self._fh.flush()
-        os.fsync(self._fh.fileno())
-        return self._seq
+        with self._lock:
+            self._seq += 1
+            entry = {"seq": self._seq, "op": op, "payload": payload}
+            line = json.dumps(entry, separators=(",", ":"))
+            self._offsets[self._seq] = self._fh.tell()
+            self._fh.write(line + "\n")
+            self._fh.flush()
+            os.fsync(self._fh.fileno())
+            return self._seq
 
     def append_artifact(
-        self, data: bytes, mime_type: str, metadata: dict[str, Any] | None
+        self, data: bytes, mime_type: str, metadata: dict[str, Any] | None,
+        object_type: str | None = None,
     ) -> int:
-        """Write an artifact entry. Small artifacts are inlined as base64;
-        large ones are written to a temp file referenced by path."""
+        """Write an artifact entry (see ``artifact_payload``)."""
+        return self.append(
+            "artifact", self.artifact_payload(data, mime_type, metadata, object_type),
+        )
+
+    def artifact_payload(
+        self, data: bytes, mime_type: str, metadata: dict[str, Any] | None,
+        object_type: str | None = None,
+    ) -> dict[str, Any]:
+        """An artifact entry's payload. Small artifacts are inlined as base64;
+        large ones are written to a file beside the log, referenced by path."""
+        payload: dict[str, Any] = {"mime_type": mime_type, "metadata": metadata or {}}
+        if object_type:
+            payload["object_type"] = object_type
         if len(data) <= INLINE_ARTIFACT_MAX:
-            payload = {
-                "data_b64": base64.b64encode(data).decode("ascii"),
-                "mime_type": mime_type,
-                "metadata": metadata or {},
-            }
+            payload["data_b64"] = base64.b64encode(data).decode("ascii")
         else:
-            # Write to temp file in WAL dir
-            temp_path = self.wal_dir / f"{self.run_id}.artifact.{self._seq + 1}.bin"
+            temp_path = self.wal_dir / f"{self.run_id}.artifact.{uuid.uuid4().hex}.bin"
             temp_path.write_bytes(data)
-            payload = {
-                "data_file": str(temp_path),
-                "mime_type": mime_type,
-                "metadata": metadata or {},
-            }
-        return self.append("artifact", payload)
+            payload["data_file"] = str(temp_path)
+        return payload
 
     def _read_ack_state(self) -> tuple[int, set[int]]:
         try:
@@ -182,25 +213,32 @@ class WriteAheadLog:
         The low water advances only over CONTIGUOUS acks — a failed earlier
         op keeps everything behind it pending, so it can never be shadowed.
         """
-        low, acked = self._read_ack_state()
-        if seq <= low:
-            return
-        acked.add(seq)
-        while (low + 1) in acked:
-            low += 1
-            acked.discard(low)
-        self._write_ack_state(low, acked)
+        with self._lock:
+            low, acked = self._read_ack_state()
+            if seq <= low:
+                return
+            acked.add(seq)
+            while (low + 1) in acked:
+                low += 1
+                acked.discard(low)
+            self._write_ack_state(low, acked)
 
     def pending(self) -> Iterator[WALEntry]:
         """Yield all UNACKED entries (above the low water, minus the acked
         set), in order."""
         cp, acked = self._read_ack_state()
         try:
-            with open(self._wal_path) as f:
-                for line in f:
-                    line = line.strip()
+            with open(self._wal_path, "rb") as f:
+                start = self._offsets.get(cp + 1)
+                if start is not None:
+                    f.seek(start)
+                for raw_line in f:
+                    line = raw_line.strip()
                     if not line:
                         continue
+                    seq = _seq_of(line)
+                    if seq is not None and (seq <= cp or seq in acked):
+                        continue  # delivered: skip without parsing the payload
                     try:
                         raw = json.loads(line)
                     except json.JSONDecodeError:
@@ -213,6 +251,33 @@ class WriteAheadLog:
                     )
         except OSError:
             return
+
+    @property
+    def dead_letter_path(self) -> Path:
+        return dead_letter_path(self.wal_dir, self.run_id)
+
+    def dead_letter(self, entry: WALEntry, reason: str) -> None:
+        """Move an entry the server REJECTED (a 4xx: resending cannot help)
+        out of the replay queue, into ``{run_id}.dead.jsonl`` beside the log,
+        so the ops behind it are not blocked. The file is kept (``cleanup``
+        leaves it; ``cairn sync`` lists it): the data is set aside, not lost.
+        """
+        with self._lock:
+            payload = dict(entry.payload)
+            data_file = payload.get("data_file")
+            if data_file:  # an artifact too large to inline: keep its bytes
+                kept = self.wal_dir / f"{self.run_id}.dead.{entry.seq}.bin"
+                try:
+                    Path(data_file).replace(kept)
+                    payload["data_file"] = str(kept)
+                except OSError:
+                    pass
+            rec = {"seq": entry.seq, "op": entry.op, "reason": reason, "payload": payload}
+            with open(self.dead_letter_path, "a") as f:
+                f.write(json.dumps(rec, separators=(",", ":")) + "\n")
+                f.flush()
+                os.fsync(f.fileno())
+            self.ack(entry.seq)
 
     def close(self) -> None:
         """Close the WAL file handle."""

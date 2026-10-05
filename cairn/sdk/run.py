@@ -21,6 +21,7 @@ import secrets
 import signal
 import sys
 import threading
+import time
 import _thread
 from datetime import datetime, timezone
 from pathlib import Path
@@ -323,10 +324,19 @@ class Run:
         stdout_capture.set_active_run(self._run_id)
 
         # Metric + log buffers.
+        # Over HTTP with a WAL, a backlog the server cannot take right now is
+        # spilled to the WAL and replayed by ``catch_up``: memory stays
+        # bounded and track() never waits on the network.
+        wal_backed = isinstance(self._transport, Transport) and self._wal is not None
         self._metric_buffer = MetricBuffer(
             flush_fn=lambda batch: self._transport.post_batch(self._run_id, batch),
             flush_interval=0.5,
             max_rows=1000,
+            spill_fn=(
+                (lambda batch: self._transport.defer_batch(self._run_id, batch))
+                if wal_backed else None
+            ),
+            idle_fn=self._transport.catch_up if wal_backed else None,
         )
         self._log_buffer = MetricBuffer(
             flush_fn=self._flush_logs,
@@ -1025,21 +1035,32 @@ class Run:
             # Large projects can take a while to archive + upload.
             if self._source_thread is not None and self._source_thread.is_alive():
                 self._source_thread.join(timeout=120)
-            try:
-                self._transport.drain_spill(self._run_id)
-            except Exception:  # noqa: BLE001
-                log.warning("drain_spill failed during finish", exc_info=True)
-            self._transport.finish_run(self._run_id, status, exit_code)
-            # Clean up WAL after successful finish
-            if self._wal is not None:
+            if self._wal is not None and isinstance(self._transport, Transport):
+                # Everything pending replays in order, ending with the finish
+                # itself, for at most ``timeout`` seconds: a slow or dead
+                # server leaves the rest in the WAL for ``cairn sync``.
+                delivered = self._transport.finish_run(
+                    self._run_id, status, exit_code,
+                    deadline=time.monotonic() + self._timeout,
+                )
                 try:
-                    if not self._wal.has_pending:
+                    if delivered and not self._wal.has_pending:
                         self._wal.cleanup()
                     else:
-                        log.warning("WAL has %d pending entries after finish", self._wal._seq - self._wal.read_checkpoint())
+                        log.warning(
+                            "cairn: run %s finished, but some of its data has not reached "
+                            "%s yet; it is kept in %s. Run `cairn sync` to send it.",
+                            self._run_id, self._server, self._wal.wal_dir,
+                        )
                         self._wal.close()
                 except Exception:  # noqa: BLE001
                     log.warning("WAL cleanup failed", exc_info=True)
+            else:
+                try:
+                    self._transport.drain_spill(self._run_id)
+                except Exception:  # noqa: BLE001
+                    log.warning("drain_spill failed during finish", exc_info=True)
+                self._transport.finish_run(self._run_id, status, exit_code)
         finally:
             self._finished = True
             stdout_capture.clear_active_run(self._run_id)

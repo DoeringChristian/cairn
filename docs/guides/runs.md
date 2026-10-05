@@ -35,7 +35,7 @@ The project is the only positional argument. Everything else is a keyword:
 | `system_metrics_include_per_core` | `False` | Also record per-core CPU utilisation. |
 | `source_root`, `source_include`, `source_exclude`, `source_max_file_size_mb` | auto, defaults, defaults, `1.0` | What the source snapshot contains. |
 | `created_at` | now | Override the creation time, for example when importing historical runs. |
-| `timeout` | `10.0` | HTTP timeout in seconds (server mode). |
+| `timeout` | `10.0` | HTTP timeout in seconds (server mode), also how long `finish()` keeps sending what is left (see [Server mode](server.md#server-mode-and-connection-loss)). |
 
 `group` and `job_type` are shown in the runs table, where you can filter and group by them. They
 are also available in [expressions](../reference/expressions.md) and on

@@ -7,6 +7,7 @@ import hashlib
 import json
 import logging
 import random
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -16,7 +17,7 @@ import httpx
 import platformdirs
 
 from .. import config as _config
-from .wal import WriteAheadLog
+from .wal import WALEntry, WriteAheadLog
 
 log = logging.getLogger(__name__)
 
@@ -45,6 +46,19 @@ DEFAULT_MAX_RETRIES = 5
 DEFAULT_BACKOFF_CAP = 30.0
 DEFAULT_BACKOFF_BASE = 1.0
 
+#: 4xx statuses that are not a verdict on the request itself: a credential
+#: fixed later, a timeout, a rate limit. Every other 4xx is final.
+_TRANSIENT_4XX = frozenset({401, 403, 408, 425, 429})
+
+
+def _rejected(exc: Exception) -> bool:
+    """The server refused this request for good (resending cannot help)."""
+    return (
+        isinstance(exc, httpx.HTTPStatusError)
+        and exc.response.status_code < 500
+        and exc.response.status_code not in _TRANSIENT_4XX
+    )
+
 
 def default_spill_dir() -> Path:
     return Path(platformdirs.user_cache_dir("cairn")) / "pending"
@@ -58,7 +72,21 @@ class Transport:
     daemon thread).
 
     When a WAL is attached, every event is written to the WAL before being
-    sent. On failure, the event stays in the WAL and can be replayed later.
+    sent, and the WAL is the queue (see ``_deliver``):
+
+    * an event is sent ONCE. A timeout is not retried in place: the server
+      may still be working on it, and resending a slow request piles more
+      work on a server that is already behind (timed-out batches used to be
+      sent up to five times while the first copy was still being written).
+    * a failure (timeout, connection error, 5xx) marks the server down for
+      a backoff that doubles up to ``backoff_cap``; meanwhile events are
+      only appended to the WAL, so no caller waits on a dead or overloaded
+      server.
+    * once the backoff ends, a flush thread (``catch_up``) replays the
+      pending events in order, then sending resumes directly.
+    * an event the server rejects (a 4xx other than auth/timeout/rate
+      limit) goes to the run's dead-letter file and is skipped, so the
+      events behind it are not blocked.
     """
 
     def __init__(
@@ -94,6 +122,17 @@ class Transport:
         )
         self._owns_client = client is None
         self._wal = wal
+        # Backoff state for WAL-backed sends (see the class docstring).
+        self._state_lock = threading.Lock()
+        self._down_until = 0.0  # time.monotonic() before which nothing is sent
+        self._backoff = 0.0
+        # Some WAL events were not delivered in order: send nothing directly
+        # until a replay has caught up.
+        self._behind = False
+        self._replay_lock = threading.Lock()  # one replay at a time
+        # Set by finish_run: every replay (a flush thread's catch_up too)
+        # stops by then, so finish() is not left waiting behind one.
+        self._finish_deadline: float | None = None
 
     def close(self) -> None:
         if self._owns_client:
@@ -125,37 +164,150 @@ class Transport:
     # ---- core HTTP ---------------------------------------------------------
 
     def _request(
-        self, method: str, path: str, **kwargs: Any
+        self, method: str, path: str, *, retry: bool = True, **kwargs: Any
     ) -> httpx.Response:
         def call() -> httpx.Response:
             resp = self._client.request(method, path, **kwargs)
             resp.raise_for_status()
             return resp
 
-        return self._retry(call)
+        return self._retry(call) if retry else call()
 
-    def post_json(self, path: str, body: dict[str, Any]) -> httpx.Response:
+    def post_json(
+        self, path: str, body: dict[str, Any], *, retry: bool = True,
+    ) -> httpx.Response:
         # Encoded here rather than by httpx: config values may be NaN/inf,
         # which Python's JSON (the server's parser) round-trips.
         return self._request(
-            "POST", path, content=json.dumps(body).encode(),
+            "POST", path, retry=retry, content=json.dumps(body).encode(),
             headers={"Content-Type": "application/json"},
         )
 
     def post_multipart(
-        self, path: str, files: dict[str, Any], data: dict[str, Any] | None = None
+        self, path: str, files: dict[str, Any], data: dict[str, Any] | None = None,
+        *, retry: bool = True,
     ) -> httpx.Response:
-        return self._request("POST", path, files=files, data=data or {})
+        return self._request("POST", path, retry=retry, files=files, data=data or {})
 
     def get(self, path: str, params: dict[str, Any] | None = None) -> httpx.Response:
         return self._request("GET", path, params=params or {})
 
-    def head(self, path: str) -> httpx.Response:
+    def head(self, path: str, *, retry: bool = True) -> httpx.Response:
         """HEAD does not raise on 404 — used for dedup probes."""
         def call() -> httpx.Response:
             return self._client.request("HEAD", path)
 
-        return self._retry(call)
+        return self._retry(call) if retry else call()
+
+    # ---- WAL-backed delivery (see the class docstring) ---------------------
+
+    def _backing_off(self) -> bool:
+        return time.monotonic() < self._down_until
+
+    def _mark_down(self, exc: BaseException) -> None:
+        with self._state_lock:
+            self._behind = True
+            first = self._backoff == 0.0
+            self._backoff = min(
+                self.backoff_cap, max(self.backoff_base, self._backoff * 2),
+            )
+            self._down_until = time.monotonic() + self._backoff * random.uniform(1.0, 1.25)
+        if first:
+            log.warning(
+                "cairn server %s unreachable or overloaded (%s); logging to the "
+                "local WAL and retrying in the background", self.server_url, exc,
+            )
+
+    def _mark_up(self) -> None:
+        with self._state_lock:
+            recovered = self._backoff != 0.0
+            self._backoff = 0.0
+            self._down_until = 0.0
+        if recovered:
+            log.info("cairn server %s reachable again", self.server_url)
+
+    def _dead_letter(self, entry: WALEntry, exc: Exception) -> None:
+        assert self._wal is not None
+        log.warning(
+            "server rejected %s (WAL seq %d): %s; kept in %s", entry.op, entry.seq,
+            exc, self._wal.dead_letter_path,
+        )
+        self._wal.dead_letter(entry, str(exc))
+
+    def _deliver(
+        self, entry: WALEntry, send: Callable[[], Any], *, catch_up: bool,
+    ) -> bool:
+        """Deliver ``entry`` (already appended to the WAL) once, or leave it
+        pending. ``catch_up``: the caller is a flush thread, which may replay
+        a backlog; the training thread never does (it would stall)."""
+        assert self._wal is not None
+        if self._behind or self._backing_off():
+            self._behind = True
+            return self.catch_up() if catch_up else False
+        try:
+            send()
+        except (httpx.HTTPError, OSError) as exc:
+            if _rejected(exc):
+                self._dead_letter(entry, exc)
+            else:
+                self._mark_down(exc)
+            return False
+        self._wal.ack(entry.seq)
+        self._mark_up()
+        return True
+
+    def catch_up(self) -> bool:
+        """Replay pending WAL events if the server's backoff is over; True
+        once nothing is behind. Never blocks on another thread's replay."""
+        if not self._behind:
+            return True
+        if self._wal is None or self._backing_off():
+            return False
+        if not self._replay_lock.acquire(blocking=False):
+            return False
+        try:
+            _, done = self._replay_pending(None)
+        finally:
+            self._replay_lock.release()
+        return done
+
+    def _replay_pending(self, deadline: float | None) -> tuple[int, bool]:
+        """Replay pending WAL events in order, once each, until one fails or
+        ``deadline`` (``time.monotonic()``) passes -> (replayed, all done)."""
+        assert self._wal is not None
+        if self._finish_deadline is not None:
+            deadline = min(deadline or self._finish_deadline, self._finish_deadline)
+        replayed = 0
+        for entry in self._wal.pending():
+            if deadline is not None and time.monotonic() > deadline:
+                return replayed, False
+            try:
+                self._replay_wal_entry(entry)
+            except (httpx.HTTPError, OSError) as exc:
+                if _rejected(exc):
+                    self._dead_letter(entry, exc)
+                    continue
+                log.warning("WAL replay failed at seq %d: %s", entry.seq, exc)
+                self._mark_down(exc)
+                return replayed, False
+            self._wal.ack(entry.seq)
+            replayed += 1
+        self._behind = False
+        self._mark_up()
+        return replayed, True
+
+    def _logged(
+        self, op: str, payload: dict[str, Any], path: str, body: dict[str, Any],
+        *, catch_up: bool,
+    ) -> bool:
+        """Append ``op`` to the WAL and deliver it as a JSON POST."""
+        assert self._wal is not None
+        seq = self._wal.append(op, payload)
+        return self._deliver(
+            WALEntry(seq, op, payload),
+            lambda: self.post_json(path, body, retry=False),
+            catch_up=catch_up,
+        )
 
     def delete(self, path: str) -> httpx.Response:
         return self._request("DELETE", path)
@@ -178,59 +330,82 @@ class Transport:
         return self.post_json("/api/runs", body).json()
 
     def post_batch(self, run_id: str, points: list[dict[str, Any]]) -> bool:
-        """Post a sequence batch. WAL ensures data is durable before sending."""
-        seq = self._wal.append("batch", {"run_id": run_id, "points": points}) if self._wal else None
+        """Post a sequence batch (from a flush thread). With a WAL, the batch
+        is durable before it is sent; False when it was left pending."""
+        path = f"/api/runs/{run_id}/batch"
+        if self._wal is not None:
+            return self._logged("batch", {"run_id": run_id, "points": points}, path,
+                                {"points": points}, catch_up=True)
         try:
-            self.post_json(f"/api/runs/{run_id}/batch", {"points": points})
-            if seq is not None and self._wal:
-                self._wal.ack(seq)
+            self.post_json(path, {"points": points})
             return True
         except (httpx.HTTPError, OSError) as exc:
-            log.warning("batch POST failed for %s (WAL seq %s): %s", run_id, seq, exc)
-            if self._wal is None:
-                # No WAL — fall back to legacy spill
-                self._spill(run_id, f"/api/runs/{run_id}/batch", {"points": points})
+            log.warning("batch POST failed for %s: %s", run_id, exc)
+            self._spill(run_id, path, {"points": points})
             return False
 
+    def defer_batch(self, run_id: str, points: list[dict[str, Any]]) -> None:
+        """Log a batch to the WAL without sending it now; ``catch_up`` (or
+        ``finish``) sends it. How a full buffer sheds load without blocking
+        the training loop."""
+        if self._wal is None:
+            self.post_batch(run_id, points)
+            return
+        self._wal.append("batch", {"run_id": run_id, "points": points})
+        self._behind = True
+
     def post_params(self, run_id: str, params: dict[str, Any]) -> None:
-        seq = self._wal.append("params", {"run_id": run_id, "params": params}) if self._wal else None
+        path = f"/api/runs/{run_id}/params"
+        if self._wal is not None:
+            self._logged("params", {"run_id": run_id, "params": params}, path,
+                         {"params": params}, catch_up=False)
+            return
         try:
-            self.post_json(f"/api/runs/{run_id}/params", {"params": params})
-            if seq is not None and self._wal:
-                self._wal.ack(seq)
+            self.post_json(path, {"params": params})
         except (httpx.HTTPError, OSError) as exc:
-            log.warning("params POST failed for %s (WAL seq %s): %s", run_id, seq, exc)
+            log.warning("params POST failed for %s: %s", run_id, exc)
 
     def post_summary(self, run_id: str, summary: dict[str, Any]) -> None:
-        seq = self._wal.append("summary", {"run_id": run_id, "summary": summary}) if self._wal else None
+        path = f"/api/runs/{run_id}/summary"
+        if self._wal is not None:
+            self._logged("summary", {"run_id": run_id, "summary": summary}, path,
+                         {"summary": summary}, catch_up=False)
+            return
         try:
-            self.post_json(f"/api/runs/{run_id}/summary", {"summary": summary})
-            if seq is not None and self._wal:
-                self._wal.ack(seq)
+            self.post_json(path, {"summary": summary})
         except (httpx.HTTPError, OSError) as exc:
-            log.warning("summary POST failed for %s (WAL seq %s): %s", run_id, seq, exc)
+            log.warning("summary POST failed for %s: %s", run_id, exc)
 
     def post_logs(self, run_id: str, lines: list[dict[str, Any]]) -> bool:
-        seq = self._wal.append("logs", {"run_id": run_id, "lines": lines}) if self._wal else None
+        path = f"/api/runs/{run_id}/logs"
+        if self._wal is not None:
+            return self._logged("logs", {"run_id": run_id, "lines": lines}, path,
+                                {"lines": lines}, catch_up=True)
         try:
-            self.post_json(f"/api/runs/{run_id}/logs", {"lines": lines})
-            if seq is not None and self._wal:
-                self._wal.ack(seq)
+            self.post_json(path, {"lines": lines})
             return True
         except (httpx.HTTPError, OSError) as exc:
-            log.warning("logs POST failed for %s (WAL seq %s): %s", run_id, seq, exc)
-            if self._wal is None:
-                self._spill(run_id, f"/api/runs/{run_id}/logs", {"lines": lines})
+            log.warning("logs POST failed for %s: %s", run_id, exc)
+            self._spill(run_id, path, {"lines": lines})
             return False
 
     def finish_run(
         self, run_id: str, status: str, exit_code: int | None = None,
-        ended_at: str | None = None,
-    ) -> None:
-        self.post_json(
-            f"/api/runs/{run_id}/finish",
-            {"status": status, "exit_code": exit_code, "ended_at": ended_at},
-        )
+        ended_at: str | None = None, *, deadline: float | None = None,
+    ) -> bool:
+        """Mark the run finished. With a WAL: logged, then everything still
+        pending is replayed in order until ``deadline`` (``time.monotonic()``);
+        False if something is left for ``cairn sync``. Never raises for an
+        unreachable server then."""
+        body = {"status": status, "exit_code": exit_code, "ended_at": ended_at}
+        if self._wal is None:
+            self.post_json(f"/api/runs/{run_id}/finish", body)
+            return True
+        self._finish_deadline = deadline
+        self._wal.append("finish", {"run_id": run_id, **body})
+        self._behind = True
+        self.drain_wal(deadline=deadline, wait_backoff=True)
+        return not self._behind
 
     def set_tags(self, run_id: str, tags: list[str]) -> None:
         self.post_json(f"/api/runs/{run_id}/tags", {"tags": tags})
@@ -294,11 +469,15 @@ class Transport:
         metadata: dict[str, Any] | None = None,
         object_type: str | None = None,
     ) -> str:
-        """Hash, dedup-probe, upload if absent; return the sha256 digest."""
+        """Hash, dedup-probe, upload if absent; return the sha256 digest.
+
+        Called on the training thread: with a WAL it makes one attempt at
+        most, and none while the server is backing off (the upload then
+        waits in the WAL)."""
         digest = hashlib.sha256(data).hexdigest()
-        seq = self._wal.append_artifact(data, mime_type, metadata) if self._wal else None
-        try:
-            head_resp = self.head(f"/api/artifacts/{digest}")
+
+        def send() -> None:
+            head_resp = self.head(f"/api/artifacts/{digest}", retry=self._wal is None)
             if head_resp.status_code != 200:
                 form_data: dict[str, Any] = {
                     "mime_type": mime_type,
@@ -309,12 +488,18 @@ class Transport:
                 self.post_multipart(
                     "/api/artifacts",
                     files={"file": ("blob", data, mime_type)},
-                    data=form_data,
+                    data=form_data, retry=self._wal is None,
                 )
-            if seq is not None and self._wal:
-                self._wal.ack(seq)
-        except (httpx.HTTPError, OSError) as exc:
-            log.warning("artifact upload failed (WAL seq %s): %s", seq, exc)
+
+        if self._wal is None:
+            try:
+                send()
+            except (httpx.HTTPError, OSError) as exc:
+                log.warning("artifact upload failed: %s", exc)
+            return digest
+        payload = self._wal.artifact_payload(data, mime_type, metadata, object_type)
+        seq = self._wal.append("artifact", payload)
+        self._deliver(WALEntry(seq, "artifact", payload), send, catch_up=False)
         return digest
 
     # ---- versioned artifact registry -----------------------------------------
@@ -432,34 +617,47 @@ class Transport:
             "POST", f"/api/sweeps/{sweep_id}/trials/{trial_id}/report", json=body,
         )
 
-    def drain_wal(self) -> int:
-        """Replay pending WAL entries. Return count replayed."""
+    def drain_wal(
+        self, *, deadline: float | None = None, wait_backoff: bool = False,
+    ) -> int:
+        """Replay pending WAL entries in order, ignoring any backoff; stop at
+        the first failure or at ``deadline`` (``time.monotonic()``). Return
+        the count replayed. ``wait_backoff``: on a failure, wait out the
+        backoff and try again while the deadline allows (``finish``)."""
         if not self._wal or not self._wal.has_pending:
+            self._behind = False
             return 0
         replayed = 0
-        for entry in self._wal.pending():
+        while True:
+            wait = -1 if deadline is None else max(0.0, deadline - time.monotonic())
+            if not self._replay_lock.acquire(timeout=wait):
+                return replayed  # another thread's replay ran past the deadline
             try:
-                self._replay_wal_entry(entry)
-                self._wal.ack(entry.seq)
-                replayed += 1
-            except (httpx.HTTPError, OSError) as exc:
-                log.warning("WAL replay failed at seq %d: %s", entry.seq, exc)
-                break  # stop on first error to preserve order
-        return replayed
+                n, done = self._replay_pending(deadline)
+            finally:
+                self._replay_lock.release()
+            replayed += n
+            if done or not wait_backoff or deadline is None:
+                return replayed
+            resume = self._down_until
+            if resume >= deadline or time.monotonic() >= deadline:
+                return replayed
+            time.sleep(max(0.0, resume - time.monotonic()))
 
     def _replay_wal_entry(self, entry: "WriteAheadLog | Any") -> None:
         """Replay a single WAL entry by re-executing the operation."""
         from .wal import WALEntry
         e: WALEntry = entry
         p = e.payload
+        # Once each: a failure is the caller's to back off from.
         if e.op == "batch":
-            self.post_json(f"/api/runs/{p['run_id']}/batch", {"points": p["points"]})
+            self.post_json(f"/api/runs/{p['run_id']}/batch", {"points": p["points"]}, retry=False)
         elif e.op == "params":
-            self.post_json(f"/api/runs/{p['run_id']}/params", {"params": p["params"]})
+            self.post_json(f"/api/runs/{p['run_id']}/params", {"params": p["params"]}, retry=False)
         elif e.op == "summary":
-            self.post_json(f"/api/runs/{p['run_id']}/summary", {"summary": p["summary"]})
+            self.post_json(f"/api/runs/{p['run_id']}/summary", {"summary": p["summary"]}, retry=False)
         elif e.op == "logs":
-            self.post_json(f"/api/runs/{p['run_id']}/logs", {"lines": p["lines"]})
+            self.post_json(f"/api/runs/{p['run_id']}/logs", {"lines": p["lines"]}, retry=False)
         elif e.op == "artifact":
             # Reconstruct artifact data from inline or file
             if "data_b64" in p:
@@ -472,18 +670,22 @@ class Transport:
             mime_type = p.get("mime_type", "application/octet-stream")
             metadata = p.get("metadata", {})
             digest = hashlib.sha256(data).hexdigest()
-            head_resp = self.head(f"/api/artifacts/{digest}")
+            head_resp = self.head(f"/api/artifacts/{digest}", retry=False)
             if head_resp.status_code != 200:
+                form = {"mime_type": mime_type, "metadata": json.dumps(metadata)}
+                if p.get("object_type"):
+                    form["object_type"] = p["object_type"]
                 self.post_multipart(
                     "/api/artifacts",
                     files={"file": ("blob", data, mime_type)},
-                    data={"mime_type": mime_type, "metadata": json.dumps(metadata)},
+                    data=form, retry=False,
                 )
         elif e.op == "finish":
             self.post_json(
                 f"/api/runs/{p['run_id']}/finish",
                 {"status": p.get("status", "completed"), "exit_code": p.get("exit_code"),
                  "ended_at": p.get("ended_at")},
+                retry=False,
             )
         else:
             log.warning("unknown WAL op %r at seq %d", e.op, e.seq)

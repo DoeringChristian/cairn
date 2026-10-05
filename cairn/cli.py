@@ -1318,6 +1318,13 @@ def sync_cmd() -> None:
         finally:
             t.close()
 
+    # Ops a server rejected (4xx) are set aside, never replayed: say where.
+    for dead in sorted(wal_dir.glob("*.dead.jsonl")) if wal_dir.exists() else []:
+        with dead.open() as f:
+            n = sum(1 for _ in f)
+        click.echo(f"{dead.name.removesuffix('.dead.jsonl')}: {n} op(s) rejected by the "
+                   f"server, kept in {dead}", err=True)
+
     if replayed == 0 and failed == 0:
         click.echo("nothing to sync")
     elif failed:
