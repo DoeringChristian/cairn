@@ -106,7 +106,7 @@ The UI adapts to narrow screens (below 768 px) and to touch input:
 - **Navigation**: the top bar collapses into a menu button; project navigation moves to a bottom bar.
 - **Runs table**: rows become a list of run cards. The selection bar keeps **Clear**, **Tag** and **Compare** and moves the other actions into **More**.
 - **Card grid**: one column, no resize handles; a card's fixed height is capped at 75% of the viewport.
-- **Card headers**: on narrow screens Reset view, Save, Screenshot, Settings and Remove card move into the card's menu. On touch devices the menu also offers **Move up** / **Move down** instead of drag-to-reorder.
+- **Card headers**: on narrow screens the shared actions (Screenshot, Download data, Reset view, Settings, Duplicate card, Remove card) move into the card's **⋯** menu; Add to report stays a button. On touch devices the menu also offers **Move up** / **Move down** instead of drag-to-reorder.
 - **Tap to interact**: on touch devices, charts, image panes and 3D views start non-interactive, so a one-finger drag scrolls the page. Tap the hand button in the card header to pan and zoom the content; tap it again to go back to scrolling. In full screen the content is always interactive.
 - **Charts on touch**: drag to zoom, tap for the tooltip, double-tap to reset.
 - **Overlays**: popovers open as bottom sheets and dialogs go full screen on small viewports (including a phone in landscape).
