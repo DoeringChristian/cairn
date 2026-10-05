@@ -1562,7 +1562,10 @@ def login_cmd(
             session = _session(server_url, token)
         except Exception as exc:  # noqa: BLE001
             raise click.ClickException(f"could not reach {server_url}: {exc}") from None
-        if session.get("auth_enabled") and not session.get("authenticated"):
+        if session.get("auth_enabled") is False:
+            click.echo(f"{server_url} runs without auth (--no-auth): no token needed, nothing saved.")
+            return
+        if not session.get("authenticated"):
             raise click.ClickException(f"{server_url} rejected that token")
         result = {"name": session.get("name"), "role": session.get("role")}
 

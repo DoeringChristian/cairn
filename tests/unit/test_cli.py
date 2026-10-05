@@ -490,3 +490,12 @@ def test_sync_against_a_down_server_fails_and_keeps_the_log(monkeypatch, tmp_pat
     assert "r1: FAILED after 0 op(s)" in result.output
     assert "sync incomplete" in result.output
     assert (tmp_path / "wal" / "r1.wal.jsonl").exists()
+
+
+def test_login_to_an_auth_off_server_saves_nothing(live_server):
+    """It used to report `Logged in ... as None (role=admin)` and save the
+    pasted token for a server that ignores tokens."""
+    result = CliRunner().invoke(cli.main, ["login", live_server, "--token", "whatever"])
+    assert result.exit_code == 0, result.output
+    assert "runs without auth" in result.output
+    assert config.saved_tokens() == {}
