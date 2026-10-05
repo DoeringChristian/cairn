@@ -27,7 +27,7 @@ Optional extras:
 | `export` | pandas, pyarrow | `cairn export` to Parquet/CSV, `Run.history()` DataFrames |
 | `tb` | tensorboard | `cairn import-tb` |
 | `lightning` | lightning | `cairn.integrations.lightning` |
-| `keras` | keras | `cairn.integrations.keras` |
+| `keras` | keras (not a backend: add tensorflow, jax or torch) | `cairn.integrations.keras` |
 | `xgboost` | xgboost | `cairn.integrations.xgboost` |
 | `hf` | transformers, datasets | `cairn.integrations.huggingface` |
 | `sweep` | optuna | Bayesian sweeps (`method: bayes`); grid and random need nothing |

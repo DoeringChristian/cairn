@@ -113,6 +113,43 @@ def test_lightning_trainer_end_to_end(tmp_path):
 # ---- Keras -------------------------------------------------------------------
 
 
+def _import_keras_integration(monkeypatch, tmp_path, keras_init: str | None):
+    """Import cairn.integrations.keras against a stand-in ``keras`` package
+    (``keras_init`` is its __init__.py; None: no keras at all)."""
+    import sys
+
+    for mod in ("keras", "cairn.integrations.keras"):
+        monkeypatch.delitem(sys.modules, mod, raising=False)
+    if keras_init is None:
+        import importlib.util
+
+        real = importlib.util.find_spec
+        monkeypatch.setattr(
+            importlib.util, "find_spec",
+            lambda name, *a, **k: None if name == "keras" else real(name, *a, **k),
+        )
+    else:
+        (tmp_path / "keras").mkdir()
+        (tmp_path / "keras" / "__init__.py").write_text(keras_init)
+        monkeypatch.syspath_prepend(str(tmp_path))
+    import cairn.integrations.keras  # noqa: F401
+
+
+def test_keras_without_a_backend_says_so(monkeypatch, tmp_path):
+    """Keras installed (the extra) but no tensorflow: name the backend, not the extra."""
+    with pytest.raises(ImportError) as info:
+        _import_keras_integration(
+            monkeypatch, tmp_path, "raise ModuleNotFoundError(\"No module named 'tensorflow'\", name='tensorflow')\n",
+        )
+    msg = str(info.value)
+    assert "backend" in msg and "tensorflow" in msg and "KERAS_BACKEND" in msg
+
+
+def test_keras_missing_names_the_extra(monkeypatch, tmp_path):
+    with pytest.raises(ImportError, match="`keras` extra"):
+        _import_keras_integration(monkeypatch, tmp_path, None)
+
+
 def _keras():
     os.environ.setdefault("KERAS_BACKEND", "torch")
     return _importorskip("keras")

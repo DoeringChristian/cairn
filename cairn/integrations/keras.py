@@ -15,13 +15,23 @@ running batch metrics as ``batch/<name>`` at the global batch index.
 
 from __future__ import annotations
 
+import importlib.util
 from typing import Any
 
+if importlib.util.find_spec("keras") is None:
+    raise ImportError(
+        "cairn Keras integration requires Keras 3: install the `keras` extra "
+        "of cairn-track, plus a backend (tensorflow, jax or torch)"
+    )
 try:
     import keras
-except ImportError as exc:  # pragma: no cover - covered when keras extra absent
+except ImportError as exc:
+    # Keras itself is installed; what failed is its backend. The `keras` extra
+    # brings Keras only: the backend is the user's choice (and a heavy one).
     raise ImportError(
-        "cairn Keras integration requires `pip install cairn-track[keras]`"
+        f"Keras is installed but could not load its backend ({exc}). Keras 3 "
+        "needs one of tensorflow, jax or torch: install it, and select it with "
+        "KERAS_BACKEND=tensorflow|jax|torch (default: tensorflow)."
     ) from exc
 
 from .. import Run

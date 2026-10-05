@@ -54,6 +54,11 @@ The callback exposes the run as `callback.run`.
 
 ## Keras
 
+The `keras` extra installs Keras 3 only, not a backend. Install one of
+TensorFlow, JAX or PyTorch as well, and pick it with `KERAS_BACKEND`
+(Keras defaults to `tensorflow`); without one, importing the integration raises
+an `ImportError` that says so.
+
 ```python
 from cairn.integrations.keras import CairnCallback
 
