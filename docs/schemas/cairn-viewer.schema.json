@@ -15,6 +15,12 @@
     },
     "title": {"type": "string", "minLength": 1, "description": "Label in the card builder (default: name)."},
     "description": {"type": "string"},
+    "icon": {
+      "description": "Icon beside the title in the card builder (a Font Awesome solid name from this list).",
+      "enum": ["cube", "cubes", "globe", "sun", "fire", "eye", "compass", "brain", "image", "images",
+               "chart-line", "chart-area", "chart-column", "wave-square", "table", "table-cells", "shapes",
+               "layer-group", "circle-nodes", "diagram-project", "route", "microscope", "atom", "wand-magic-sparkles"]
+    },
     "entry": {
       "description": "ES module the host imports first, relative to the folder (default index.js).",
       "type": "string",
@@ -49,19 +55,28 @@
   },
   "$defs": {
     "key": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$", "not": {"enum": ["viewer", "viewer_version"]}},
+    "tab": {"description": "The card settings tab the setting sits in.", "enum": ["data", "grouping", "display", "expressions"], "default": "display"},
+    "section": {
+      "description": "The settings section the setting sits in.",
+      "enum": ["Axes", "Smoothing", "Outliers", "Series", "Appearance", "Overlays", "Layout", "Playback", "Compare"],
+      "default": "Appearance"
+    },
     "setting": {
       "type": "object",
       "required": ["key", "type"],
       "properties": {
         "key": {"$ref": "#/$defs/key"},
         "type": {"enum": ["slider", "number", "select", "switch", "colormap", "text"]},
-        "label": {"type": "string"}
+        "label": {"type": "string"},
+        "help": {"type": "string", "description": "Help text under the control."},
+        "tab": {"$ref": "#/$defs/tab"},
+        "section": {"$ref": "#/$defs/section"}
       },
       "oneOf": [
         {
           "properties": {
             "type": {"const": "slider"},
-            "key": true, "label": true,
+            "key": true, "label": true, "help": true, "tab": true, "section": true,
             "min": {"type": "number"}, "max": {"type": "number"},
             "step": {"type": "number", "exclusiveMinimum": 0},
             "default": {"type": "number"}
@@ -72,7 +87,7 @@
         {
           "properties": {
             "type": {"const": "number"},
-            "key": true, "label": true,
+            "key": true, "label": true, "help": true, "tab": true, "section": true,
             "min": {"type": "number"}, "max": {"type": "number"},
             "step": {"type": "number", "exclusiveMinimum": 0},
             "default": {"type": "number"}
@@ -82,7 +97,7 @@
         {
           "properties": {
             "type": {"const": "select"},
-            "key": true, "label": true,
+            "key": true, "label": true, "help": true, "tab": true, "section": true,
             "options": {
               "type": "array", "minItems": 1,
               "items": {
@@ -101,7 +116,7 @@
         {
           "properties": {
             "type": {"const": "switch"},
-            "key": true, "label": true,
+            "key": true, "label": true, "help": true, "tab": true, "section": true,
             "default": {"type": "boolean"}
           },
           "additionalProperties": false
@@ -109,7 +124,7 @@
         {
           "properties": {
             "type": {"const": "colormap"},
-            "key": true, "label": true,
+            "key": true, "label": true, "help": true, "tab": true, "section": true,
             "options": {"type": "array", "minItems": 1, "items": {"type": "string"}},
             "default": {"type": "string"}
           },
@@ -118,7 +133,7 @@
         {
           "properties": {
             "type": {"const": "text"},
-            "key": true, "label": true,
+            "key": true, "label": true, "help": true, "tab": true, "section": true,
             "placeholder": {"type": "string"},
             "default": {"type": "string"}
           },

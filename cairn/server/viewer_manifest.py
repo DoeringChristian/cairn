@@ -35,6 +35,18 @@ _SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 
 SETTING_TYPES = ("slider", "number", "select", "switch", "colormap", "text")
 INPUTS = ("single", "compare")
+#: The card settings tabs a setting can sit in (the UI's settings palette).
+SETTING_TABS = ("data", "grouping", "display", "expressions")
+#: The settings sections a setting can sit in (the UI's settings palette).
+SETTING_SECTIONS = (
+    "Axes", "Smoothing", "Outliers", "Series", "Appearance", "Overlays", "Layout", "Playback", "Compare",
+)
+#: Icons a viewer may show beside its title in the card builder (Font Awesome solid names).
+ICONS = (
+    "cube", "cubes", "globe", "sun", "fire", "eye", "compass", "brain", "image", "images",
+    "chart-line", "chart-area", "chart-column", "wave-square", "table", "table-cells", "shapes",
+    "layer-group", "circle-nodes", "diagram-project", "route", "microscope", "atom", "wand-magic-sparkles",
+)
 #: Fields a setting of each type may have beside key/type/label/default.
 _SETTING_FIELDS = {
     "slider": {"min", "max", "step"},
@@ -144,13 +156,25 @@ def _setting(i: int, s: Any, seen: set[str]) -> dict[str, Any]:
     typ = s.get("type")
     if typ not in SETTING_TYPES:
         raise ManifestError(f"{where}: type must be one of {', '.join(SETTING_TYPES)}, got {typ!r}")
-    extra = sorted(set(s) - {"key", "type", "label", "default"} - _SETTING_FIELDS[typ])
+    extra = sorted(set(s) - {"key", "type", "label", "default", "help", "tab", "section"} - _SETTING_FIELDS[typ])
     if extra:
         raise ManifestError(f"{where}: {', '.join(extra)} do(es) not apply to a {typ}")
     label = s.get("label", key)
     if not isinstance(label, str):
         raise ManifestError(f"{where}: label must be a string")
     out: dict[str, Any] = {"key": key, "type": typ, "label": label}
+    help_ = s.get("help")
+    if help_ is not None and not isinstance(help_, str):
+        raise ManifestError(f"{where}: help must be a string")
+    out["help"] = help_
+    tab = s.get("tab", "display")
+    if tab not in SETTING_TABS:
+        raise ManifestError(f"{where}: tab must be one of {', '.join(SETTING_TABS)}, got {tab!r}")
+    out["tab"] = tab
+    section = s.get("section", "Appearance")
+    if section not in SETTING_SECTIONS:
+        raise ManifestError(f"{where}: section must be one of {', '.join(SETTING_SECTIONS)}, got {section!r}")
+    out["section"] = section
     for k in ("min", "max", "step"):
         if k in s and s[k] is not None:
             if not _num(s[k]):
@@ -263,6 +287,9 @@ def validate_manifest(raw: Any, files: Iterable[str] | None = None) -> dict[str,
     description = raw.get("description")
     if description is not None and not isinstance(description, str):
         raise ManifestError("description must be a string")
+    icon = raw.get("icon")
+    if icon is not None and icon not in ICONS:
+        raise ManifestError(f"icon must be one of {', '.join(ICONS)}, got {icon!r}")
     entry = safe_rel_path(raw.get("entry", "index.js"))
     accepts = raw.get("accepts")
     if not isinstance(accepts, list) or not accepts or not all(isinstance(a, str) and a for a in accepts):
@@ -292,7 +319,7 @@ def validate_manifest(raw: Any, files: Iterable[str] | None = None) -> dict[str,
     settings = [_setting(i, s, seen) for i, s in enumerate(settings_raw)]
     imports = _imports(raw.get("imports"))
     known = {
-        "name", "title", "description", "entry", "accepts", "inputs", "webgl",
+        "name", "title", "description", "icon", "entry", "accepts", "inputs", "webgl",
         "view", "settings", "imports", "$schema",
     }
     unknown = sorted(set(raw) - known)
@@ -313,6 +340,7 @@ def validate_manifest(raw: Any, files: Iterable[str] | None = None) -> dict[str,
         "name": name,
         "title": title,
         "description": description,
+        "icon": icon,
         "entry": entry,
         "accepts": list(accepts),
         "inputs": inputs,
