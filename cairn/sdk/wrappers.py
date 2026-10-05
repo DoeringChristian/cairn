@@ -532,6 +532,56 @@ class Volume(_TypeWrapper):
     object_type = "volume"
 
 
+class Data(_TypeWrapper):
+    """Data of your own ``kind``, shown by a custom viewer.
+
+    ``kind`` names the data's shape (lowercase segments separated by ``/``,
+    e.g. ``"guiding/vmf"``); viewers declare the kinds they accept
+    (``"accepts": ["custom:guiding/*"]`` in their ``cairn-viewer.json``).
+    The payload is stored by its shape:
+
+    * a ``dict`` holding numpy arrays (or torch tensors) → ``.npz``; its other
+      entries (numbers, strings, lists) are kept as JSON beside the arrays;
+    * any other JSON-able value (dict, list, str, number) → JSON;
+    * ``bytes`` → stored as is.
+
+    ``meta`` is a JSON dict passed to the viewer with the data. Without a
+    viewer for the kind, the card offers the value for download.
+
+    Usage:
+
+    ```python
+    run.track(cairn.Data({"mu": mu, "kappa": kappa, "weights": w},
+                         kind="guiding/vmf", meta={"lobes": 8}),
+              name="guide", step=step)
+    ```
+
+    A list of ``cairn.Data`` of one kind under one name and step is a gallery.
+    ``Reader`` decodes it back with ``.load()``: a dict of arrays (and the
+    JSON entries), the JSON value, or the bytes.
+
+    Raises:
+        ValueError: ``kind`` is not a valid kind.
+    """
+
+    object_type = "custom"
+
+    def __init__(
+        self, obj: Any, *, kind: str, meta: dict[str, Any] | None = None, **kwargs: Any,
+    ):
+        from ..server.viewer_manifest import validate_kind
+
+        validate_kind(kind)
+        if meta is not None and not isinstance(meta, dict):
+            raise TypeError("cairn.Data meta must be a dict")
+        super().__init__(obj, kind=kind, **({"meta": meta} if meta is not None else {}), **kwargs)
+
+    @property
+    def kind(self) -> str:
+        """The data's kind."""
+        return self.kwargs["kind"]
+
+
 class Pickle(_TypeWrapper):
     """Any Python object, stored pickled.
 

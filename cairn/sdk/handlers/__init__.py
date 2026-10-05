@@ -7,6 +7,7 @@ from __future__ import annotations
 from .pickle import PickleHandler
 from .audio import AudioHandler
 from .boxes3d import Boxes3DHandler
+from .custom import CustomHandler
 from .figure import FigureHandler
 from .histogram import HistogramHandler
 from .html import HtmlHandler
@@ -59,6 +60,7 @@ if not _already_registered:
     default_registry.register(HtmlHandler())
     default_registry.register(MarkdownHandler())
     default_registry.register(PresetHandler())
+    default_registry.register(CustomHandler())
     _already_registered = True
 
 
@@ -84,4 +86,5 @@ __all__ = [
     "HtmlHandler",
     "MarkdownHandler",
     "PresetHandler",
+    "CustomHandler",
 ]

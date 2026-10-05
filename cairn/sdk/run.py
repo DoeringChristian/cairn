@@ -694,6 +694,8 @@ class Run:
             entries.append(entry)
         manifest = json.dumps({"items": entries}).encode()
         meta: dict[str, Any] = {"gallery": len(entries)}
+        if object_type == "custom":
+            meta["kind"] = entries[0]["metadata"].get("kind")
         preview = entries[0]["metadata"].get("preview")
         if preview is not None:
             meta["preview"] = preview
