@@ -83,8 +83,10 @@ def test_good_manifest_is_normalized():
     assert s["cmap"]["default"] == "turbo"
     assert s["note"]["default"] == "" and s["note"]["placeholder"] == "..."
     minimal = validate_manifest({"name": "v", "accepts": ["image"]}, ["index.js"])
+    assert s["exposure"]["tab"] == "display" and s["exposure"]["section"] == "Appearance"
+    assert s["exposure"]["help"] is None
     assert minimal == {
-        "name": "v", "title": "v", "description": None, "entry": "index.js",
+        "name": "v", "title": "v", "description": None, "icon": None, "entry": "index.js",
         "accepts": ["image"], "inputs": "single", "webgl": False, "view": False,
         "settings": [], "imports": {},
     }
@@ -116,7 +118,43 @@ BAD = [
     ({**GOOD, "settings": [{"key": "a", "type": "text"}, {"key": "a", "type": "text"}]}, "twice"),
     ({**GOOD, "settings": [{"key": "a", "type": "switch", "min": 0}]}, "does not apply|do\\(es\\) not apply"),
     ({**GOOD, "extra": 1}, "unknown manifest field"),
+    ({**GOOD, "icon": "skull"}, "icon must be one of"),
+    ({**GOOD, "settings": [{"key": "a", "type": "text", "tab": "advanced"}]}, "tab must be one of"),
+    ({**GOOD, "settings": [{"key": "a", "type": "text", "section": "Misc"}]}, "section must be one of"),
+    ({**GOOD, "settings": [{"key": "a", "type": "text", "help": 3}]}, "help must be a string"),
 ]
+
+
+def test_setting_placement_help_and_icon():
+    raw = {
+        **GOOD,
+        "icon": "globe",
+        "settings": [
+            {"key": "lobes", "type": "number", "tab": "data", "section": "Series", "help": "How many lobes."},
+            {"key": "exposure", "type": "slider", "min": 0, "max": 4},
+        ],
+    }
+    m = validate_manifest(raw, FILES)
+    assert m["icon"] == "globe"
+    lobes, exposure = m["settings"]
+    assert (lobes["tab"], lobes["section"], lobes["help"]) == ("data", "Series", "How many lobes.")
+    assert (exposure["tab"], exposure["section"], exposure["help"]) == ("display", "Appearance", None)
+
+
+def test_placement_vocabulary_matches_the_ui_palette():
+    """The tabs/sections are the settings palette's (vendor/cairn-ui/src/components/settings/palette/logic.ts)."""
+    from cairn.server.viewer_manifest import SETTING_SECTIONS, SETTING_TABS
+
+    schema = json.loads(SCHEMA.read_text())
+    assert schema["$defs"]["tab"]["enum"] == list(SETTING_TABS)
+    assert schema["$defs"]["section"]["enum"] == list(SETTING_SECTIONS)
+    logic = Path(__file__).resolve().parents[2] / "vendor/cairn-ui/src/components/settings/palette/logic.ts"
+    if logic.exists():
+        text = logic.read_text()
+        for name in SETTING_SECTIONS:
+            assert f'"{name}"' in text
+        for tab in SETTING_TABS:
+            assert f'id: "{tab}"' in text
 
 
 @pytest.mark.parametrize("raw,match", BAD)
@@ -143,7 +181,7 @@ def test_schema_vocabulary_matches_the_validator():
     assert schema["$defs"]["setting"]["properties"]["type"]["enum"] == list(SETTING_TYPES)
     assert schema["properties"]["inputs"]["enum"] == ["single", "compare"]
     assert set(schema["properties"]) == {
-        "$schema", "name", "title", "description", "entry", "accepts", "inputs",
+        "$schema", "name", "title", "description", "icon", "entry", "accepts", "inputs",
         "webgl", "view", "imports", "settings",
     }
 
