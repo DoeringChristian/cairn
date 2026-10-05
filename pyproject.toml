@@ -148,15 +148,17 @@ allow-direct-references = true
 packages = ["cairn"]
 
 [tool.hatch.build.targets.sdist]
-# The viewer is its own sdist (vendor/cairn-ui); nothing is excluded here
-# because nothing UI-shaped is under cairn/ any more.
+# The viewer is its own sdist (vendor/cairn-ui). Patterns use gitignore
+# semantics, so each one is anchored at the root with a leading "/": an
+# unanchored "tests/" or "examples/" also matches any such directory deeper
+# down — vendor/cairn-ui/node_modules is full of them.
 include = [
-    "cairn/",
-    "tests/",
-    "examples/",
-    "README.md",
-    "LICENSE",
-    "pyproject.toml",
+    "/cairn",
+    "/tests",
+    "/examples",
+    "/README.md",
+    "/LICENSE",
+    "/pyproject.toml",
 ]
 
 [tool.pytest.ini_options]
