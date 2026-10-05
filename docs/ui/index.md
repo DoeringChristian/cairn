@@ -48,7 +48,7 @@ The top bar holds the **Cairn** logo (back to the projects list), a **Projects**
 The home page lists every project with its last run time, total runs and currently active runs. From here you can:
 
 - **New project**: type a name, press ++enter++ (or ++escape++ to cancel).
-- **Import runs**: upload a `.zip` produced by the runs table's **Export** action or by `cairn export`. Imported runs get new ids. See [Import and export](../guides/import-export.md).
+- **Import runs**: upload a `.zip` produced by the runs table's **Export** action (`cairn export` writes metrics, not run archives). Imported runs get new ids. See [Import and export](../guides/import-export.md).
 
 ### Inside a project
 
