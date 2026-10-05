@@ -154,8 +154,8 @@ it; `Run.use_artifact` and the reader return `ArtifactVersion`s. See
 ## Custom viewers
 
 Viewer folders (a `cairn-viewer.json` manifest and ES modules) are published as artifacts of type
-`cairn-viewer`; `Run.use_viewer` publishes one from a training script. See
-[Media › Custom data for your own viewers](../guides/media.md#custom-data-for-your-own-viewers).
+`cairn-viewer`; `Run.use_viewer` publishes one from a training script, and `cairn.Data` logs the
+data they draw. See [Custom viewers](../guides/custom-viewers.md).
 
 ::: cairn.publish_viewer
 

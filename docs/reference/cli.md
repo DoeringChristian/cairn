@@ -19,7 +19,7 @@ The `cairn` command is installed with `cairn-track`. Run `cairn --help`, or
 | `cairn diff` | Diff the working directory against a run's source snapshot | [Run lifecycle](../guides/runs.md) |
 | `cairn sweep create\|ls\|pause\|resume\|cancel` | Manage sweeps | [Sweeps](../guides/sweeps.md) |
 | `cairn agent` | Run a sweep's trials | [Sweeps](../guides/sweeps.md#quick-start-from-the-command-line) |
-| `cairn viewer publish\|dev\|ls\|add` | Publish, develop live, list and vendor libraries into custom viewers | [Media](../guides/media.md#custom-data-for-your-own-viewers) |
+| `cairn viewer init\|add\|dev\|publish\|ls` | Start a custom viewer, vendor libraries into it, develop it live, publish and list viewers | [Custom viewers](../guides/custom-viewers.md#commands) |
 
 Commands that take `--repo` accept a local `.cairn/` path or a
 `cairn://host:port` URL. The client commands `ping`, `list`, `open`, `rm`,
