@@ -117,6 +117,10 @@ def viewer_dev(folder: Path, project: str, repo: str | None, interval: float) ->
         stamp = f"[{sync.name} r{revision}]"
         click.echo(f"{stamp} {problem}" if problem else f"{stamp} updated", err=bool(problem))
 
+    import signal
+
+    # A terminated `cairn viewer dev` removes its source like Ctrl-C does.
+    signal.signal(signal.SIGTERM, lambda *_: sync.stop())
     click.echo(f"serving {folder} as dev viewer {sync.name!r} on {url} (project {slugify(project)}); Ctrl-C stops")
     try:
         sync.run(interval=interval, on_change=report)
