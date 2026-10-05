@@ -499,3 +499,46 @@ def test_login_to_an_auth_off_server_saves_nothing(live_server):
     assert result.exit_code == 0, result.output
     assert "runs without auth" in result.output
     assert config.saved_tokens() == {}
+
+
+def test_network_urls_only_for_reachable_binds(monkeypatch):
+    monkeypatch.setattr(cli, "_lan_ip", lambda: "10.0.0.5")
+    assert cli._network_host("0.0.0.0") == "10.0.0.5"
+    assert cli._network_host("127.0.0.1") is None
+    assert cli._network_host("localhost") is None
+    assert cli._network_host("192.168.1.7") == "192.168.1.7"
+
+
+def test_open_points_at_the_paired_ui_port(app, monkeypatch):
+    """Against the ingest port of `cairn server --ui`, `cairn open` used to
+    print an ingest-port URL (a JSON blob); it now uses the UI port."""
+    import threading, time
+
+    import httpx
+    import uvicorn
+
+    from tests.conftest import _find_free_port
+
+    port = _find_free_port()
+    app.state.ui_port = 4999
+    server = uvicorn.Server(uvicorn.Config(app=app, host="127.0.0.1", port=port, log_level="warning"))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.time() + 10
+    while not server.started and time.time() < deadline:
+        time.sleep(0.02)
+    try:
+        url = f"http://127.0.0.1:{port}"
+        rid = httpx.post(f"{url}/api/runs", json={"project": "p"}).json()["run_id"]
+        monkeypatch.setenv("CAIRN_SERVER", url)
+        result = CliRunner().invoke(cli.main, ["open", rid, "--no-browser"])
+        assert result.exit_code == 0, result.output
+        assert f"http://127.0.0.1:4999/p/p/r/{rid}" in result.output
+        assert "not serving the viewer" not in result.output
+        del app.state.ui_port
+        result = CliRunner().invoke(cli.main, ["open", rid, "--no-browser"])
+        assert f"{url}/p/p/r/{rid}" in result.output
+        assert "not serving the viewer" in result.output
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)

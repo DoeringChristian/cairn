@@ -55,6 +55,17 @@ def _lan_ip() -> str:
         return "127.0.0.1"
 
 
+def _network_host(host: str) -> str | None:
+    """The address other machines reach a server bound to ``host`` at: the
+    LAN IP for a wildcard bind, ``host`` itself for a specific address, and
+    None for loopback (nothing outside this machine can connect)."""
+    if host in ("0.0.0.0", "::", ""):
+        return _lan_ip()
+    if host == "localhost" or host.startswith("127.") or host == "::1":
+        return None
+    return host
+
+
 def _default_repo() -> Path:
     """Default repo: ./.cairn in CWD."""
     return Path.cwd() / ".cairn"
@@ -390,6 +401,8 @@ def server_cmd(
             auth_enabled=auth_enabled, background_tasks=False,
         )
     )
+    if ui_app is not None:
+        ingest_app.state.ui_port = ui_port
 
     advertiser = None
     if advertise:
@@ -406,18 +419,18 @@ def server_cmd(
                 err=True,
             )
 
-    lan = _lan_ip()
+    network = _network_host(host)
     banner_lines = [
         "",
         "  Cairn tracking server:",
         f"    Ingest API local:   http://localhost:{port}",
-        f"    Ingest API network: http://{lan}:{port}",
     ]
+    if network is not None:
+        banner_lines.append(f"    Ingest API network: http://{network}:{port}")
     if ui_app is not None:
-        banner_lines += [
-            f"    UI local:           http://localhost:{ui_port}",
-            f"    UI network:         http://{lan}:{ui_port}",
-        ]
+        banner_lines.append(f"    UI local:           http://localhost:{ui_port}")
+        if network is not None:
+            banner_lines.append(f"    UI network:         http://{network}:{ui_port}")
     banner_lines += [
         f"  Repo: {dd.root}",
         f"  Auth: {'ON' if auth_enabled else 'OFF (--no-auth)'}",
@@ -885,45 +898,59 @@ def list_cmd(
         click.echo("  ".join(c.ljust(w) for c, w in zip(line, widths)).rstrip())
 
 
-def _server_lacks_viewer(t: Transport) -> bool:
-    """True when the server answers `/` with a no-viewer marker.
+def _viewer_base(t: Transport, server: str) -> str | None:
+    """The base URL where ``server``'s viewer renders, or None if it serves none.
 
-    Any failure to tell is reported as False: a probe that cannot decide must
-    not suppress the browser.
+    A `cairn server --ui` ingest port answers `/` with the paired UI port; a
+    server without the viewer answers with a no-viewer marker. Any failure to
+    tell keeps ``server``: a probe that cannot decide must not suppress the
+    browser.
     """
+    from urllib.parse import urlsplit, urlunsplit
+
     try:
         body = t.get("/").json()
     except Exception:  # noqa: BLE001
-        return False
-    return isinstance(body, dict) and body.get("status") in {"no_ui", "ingest"}
+        return server
+    if not isinstance(body, dict) or body.get("status") not in {"no_ui", "ingest"}:
+        return server
+    ui_port = body.get("ui_port")
+    if not isinstance(ui_port, int):
+        return None
+    parts = urlsplit(server)
+    host = parts.hostname or "localhost"
+    netloc = f"[{host}]:{ui_port}" if ":" in host else f"{host}:{ui_port}"
+    return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
 
 
 @main.command("open")
 @click.argument("run_id")
-@click.option("--no-browser", is_flag=True)
+@click.option("--no-browser", is_flag=True, help="Only print the URL.")
 def open_cmd(run_id: str, no_browser: bool) -> None:
-    """Print the URL for a run (and open in a browser by default)."""
+    """Print the URL of a run's page in the viewer and open it in a browser.
+
+    Against the ingest port of `cairn server --ui`, the URL points at the
+    paired UI port.
+    """
+    server = _config.resolve_server().rstrip("/")
     t = _client()
     try:
-        resp = t.get(f"/api/runs/{run_id}")
-        run = resp.json()["run"]
-        url = (
-            f"{_config.resolve_server().rstrip('/')}/p/{run['project_id']}/r/{run['id']}"
-        )
+        run = t.get(f"/api/runs/{run_id}").json()["run"]
+        base = _viewer_base(t, server)
+        url = f"{(base or server).rstrip('/')}/p/{run['project_id']}/r/{run['id']}"
         click.echo(url)
+        if base is None:
+            # Whether that server serves the viewer is its property, not a
+            # local install question, so the URL is still printed and the
+            # exit code stays 0; opening a browser onto a JSON blob is not.
+            click.echo(
+                "note: that server is not serving the viewer, so the URL "
+                "above will not render. Run it with `cairn server --ui`, or "
+                "install the viewer there: pip install 'cairn-track[ui]'",
+                err=True,
+            )
+            return
         if not no_browser:
-            # Whether that server serves the viewer is its property, not a local
-            # install question, so the URL is always printed and the exit code
-            # stays 0. But opening a browser onto a JSON blob is the actively
-            # bad outcome, so probe once and say so instead.
-            if _server_lacks_viewer(t):
-                click.echo(
-                    "note: that server is not serving the viewer, so the URL "
-                    "above will not render. Install it there:  "
-                    "pip install 'cairn-track[ui]'",
-                    err=True,
-                )
-                return
             try:
                 webbrowser.open(url)
             except Exception:  # noqa: BLE001

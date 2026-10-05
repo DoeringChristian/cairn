@@ -317,6 +317,9 @@ def create_app(
     else:
         @app.get("/", include_in_schema=False)
         def _ingest_root() -> JSONResponse:
+            # ``ui_port``: the paired viewer's port when `cairn server --ui`
+            # runs one (set on app.state by the CLI), so `cairn open` can
+            # print a URL that renders.
             return JSONResponse(
                 {
                     "status": "ingest",
@@ -324,6 +327,7 @@ def create_app(
                         "Cairn ingest API is running here; UI lives on the "
                         "companion UI port."
                     ),
+                    "ui_port": getattr(app.state, "ui_port", None),
                 },
                 status_code=200,
             )
