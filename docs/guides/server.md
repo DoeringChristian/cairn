@@ -195,7 +195,7 @@ database directly; there is no remote token API.
 ```bash
 cairn token create --name laptop                        # role write, never expires
 cairn token create --name dashboard --role read --expires 30d
-cairn token list                                        # name, role, status, parent, created
+cairn token list                                        # name, role, status, parent, created, expires
 cairn token revoke laptop                               # by name or id
 ```
 
@@ -392,9 +392,38 @@ back to `http://localhost:4300`:
 | Command | Does |
 |---|---|
 | `cairn ping` | Prints the server's `/api/health` response |
-| `cairn list [--project P] [--status S] [--limit N]` | Lists recent runs |
-| `cairn open RUN_ID [--no-browser]` | Prints the run's UI URL and opens it |
-| `cairn rm RUN_ID` | Deletes a run |
+| `cairn list` | Lists runs, newest first (see below) |
+| `cairn open RUN_ID [--no-browser]` | Prints the run's UI URL and opens it; against the ingest port of `cairn server --ui` the URL uses the UI port |
+| `cairn rm RUN_ID` | Deletes a run and its data |
 | `cairn configure [--server URL]` | Saves the server URL to the config file |
+
+A failed request prints one line, `Error: <server>: <reason>`, and exits 1; a
+401 says which `cairn login` to run.
+
+### Listing runs
+
+`cairn list` selects runs with the same evaluator as the UI's runs table and
+`Reader.runs()`, so a filter or sort means the same in all three:
+
+```bash
+cairn list                                             # newest 50 runs, archived ones left out
+cairn list --project mnist --status completed --limit 10
+cairn list --project mnist -c config.optim.lr -c metrics.val.acc --sort metrics.val.acc
+cairn list --filter tags__contains=best --where "config.optim.lr < 0.01"
+cairn list --archived all --format json                # or csv
+```
+
+| Option | Does |
+|---|---|
+| `--project`, `--status` | Only runs of that project / with that status |
+| `--filter KEY=VALUE` | A [`filter()`](reading.md#filtering-with-filter) keyword; `VALUE` is parsed as JSON when it can be. Repeatable |
+| `--where EXPR` | A [`where()`](reading.md#filtering-with-expressions-where) expression. Repeatable |
+| `--archived hide\|only\|all` | Leave archived runs out (default), list only them, or both (adds an `ARCHIVED` column) |
+| `--sort KEY`, `--asc`/`--desc` | `created_at` (default), `ended_at`, `duration`, `name`, `status`, `id`, `config.<path>`, `summary.<path>` or `metrics.<name>`; descending by default. Runs missing the key come last |
+| `-c KEY` | Add a column: `config.<path>` (nested config), `summary.<path>`, `metrics.<name>` (the final value the runs table shows) or a run field (`group`, `job_type`, `hostname`, `user`, `notes`, `ended_at`, `archived`). Repeatable |
+| `--format table\|json\|csv` | `json` and `csv` give ISO 8601 times and durations in seconds |
+
+The default columns are `ID`, `NAME`, `PROJECT` (left out with `--project`),
+`STATUS`, `CREATED` (local time), `DURATION` and `TAGS`.
 
 See the [CLI reference](../reference/cli.md) for all commands.

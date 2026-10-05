@@ -295,3 +295,282 @@ def test_sync_scans_and_replays_orphaned_wals(live_server, monkeypatch, tmp_path
     with httpx.Client(base_url=live_server, timeout=5.0) as c:
         pts = c.get(f"/api/runs/{rid}/sequences/loss").json()["points"]
     assert len(pts) == 1 and pts[0]["scalar_value"] == 0.5
+
+
+def test_http_errors_are_one_line_not_tracebacks(live_server, monkeypatch):
+    """A 404 from the server is `Error: <detail>`, exit 1, for every client
+    command (open/rm used to dump an httpx traceback)."""
+    monkeypatch.setenv("CAIRN_SERVER", live_server)
+    for argv in (["open", "nope", "--no-browser"], ["rm", "nope"]):
+        result = CliRunner().invoke(cli.main, argv)
+        assert result.exit_code == 1, result.output
+        assert "Traceback" not in result.output
+        assert "run nope not found (HTTP 404)" in result.output
+
+
+def test_unreachable_server_is_one_line(monkeypatch):
+    monkeypatch.setenv("CAIRN_SERVER", "http://127.0.0.1:1")
+    result = CliRunner().invoke(cli.main, ["list"])
+    assert result.exit_code == 1
+    assert result.output.startswith("Error: cannot reach http://127.0.0.1:1")
+
+
+def test_unauthenticated_request_says_how_to_log_in(tmp_path, monkeypatch):
+    from cairn.server.app import create_app
+    from tests.conftest import _find_free_port
+    import threading, time, uvicorn
+
+    app = create_app(data_dir=tmp_path / "authrepo", mount_ui=False, auth_enabled=True)
+    port = _find_free_port()
+    server = uvicorn.Server(uvicorn.Config(app=app, host="127.0.0.1", port=port, log_level="warning"))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.time() + 10
+    while not server.started and time.time() < deadline:
+        time.sleep(0.02)
+    try:
+        url = f"http://127.0.0.1:{port}"
+        monkeypatch.setenv("CAIRN_SERVER", url)
+        monkeypatch.delenv("CAIRN_TOKEN", raising=False)
+        result = CliRunner().invoke(cli.main, ["list"])
+        assert result.exit_code == 1
+        assert f"Log in with `cairn login {url}`" in result.output
+        monkeypatch.setenv("CAIRN_TOKEN", "wrong")
+        result = CliRunner().invoke(cli.main, ["list"])
+        assert result.exit_code == 1
+        assert "rejected CAIRN_TOKEN" in result.output
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
+
+
+def _seed_list_runs(live_server, monkeypatch, tmp_path) -> dict[str, str]:
+    """Three runs of `p` (one archived, one failed) and one of `q`, with nested
+    config, a summary rule and tags, created a minute apart."""
+    import datetime as dt
+
+    import httpx
+
+    import cairn
+
+    monkeypatch.setenv("CAIRN_WAL_DIR", str(tmp_path / "wal"))
+    base = dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc)
+    ids = {}
+    for i, (name, project, lr, status, tags) in enumerate([
+        ("a", "p", 0.1, "completed", ["best"]),
+        ("b", "p", 0.01, "failed", []),
+        ("c", "p", 0.2, "completed", []),
+        ("d", "q", 0.3, "completed", []),
+    ]):
+        run = cairn.Run(
+            project, name=name, tags=tags, repo=live_server, created_at=base + dt.timedelta(minutes=i),
+            capture_source=False, capture_stdout=False, capture_env=False, capture_system_metrics=False,
+        )
+        run.config({"optim": {"lr": lr, "betas": [0.9, 0.99]}})
+        for step, v in enumerate([0.5, 0.9 - i * 0.1, 0.4]):
+            run.track(v, "val/acc", step, summary="max")
+        run.finish(status)
+        ids[name] = run.id
+    with httpx.Client(base_url=live_server) as c:
+        c.post(f"/api/runs/{ids['c']}/archive").raise_for_status()
+    return ids
+
+
+def _table(output: str) -> list[list[str]]:
+    return [line.split() for line in output.strip().splitlines()]
+
+
+def test_list_columns_order_archived_and_formats(live_server, monkeypatch, tmp_path):
+    """`cairn list`: full-width ids, newest first, archived runs hidden unless
+    asked for, nested-config and final-metric columns, json/csv output."""
+    monkeypatch.setenv("CAIRN_SERVER", live_server)
+    ids = _seed_list_runs(live_server, monkeypatch, tmp_path)
+    run = lambda *argv: CliRunner().invoke(cli.main, ["list", *argv])  # noqa: E731
+
+    result = run()
+    assert result.exit_code == 0, result.output
+    rows = _table(result.output)
+    assert rows[0][:4] == ["ID", "NAME", "PROJECT", "STATUS"]
+    # Newest first, archived `c` left out, every id printed whole.
+    assert [r[0] for r in rows[1:]] == [ids["d"], ids["b"], ids["a"]]
+
+    rows = _table(run("--archived", "only").output)
+    assert [r[0] for r in rows[1:]] == [ids["c"]]
+    result = run("--archived", "all", "--project", "p")
+    rows = _table(result.output)
+    assert "ARCHIVED" in rows[0] and "PROJECT" not in rows[0]
+    assert {r[0] for r in rows[1:]} == {ids["a"], ids["b"], ids["c"]}
+
+    # Final value = the max rule; sorted by it, best first.
+    result = run("--project", "p", "-c", "config.optim.lr", "-c", "metrics.val/acc",
+                 "--sort", "metrics.val/acc")
+    rows = _table(result.output)
+    assert rows[0][-2:] == ["config.optim.lr", "metrics.val/acc"]
+    assert [(r[1], r[-2], r[-1]) for r in rows[1:]] == [("a", "0.1", "0.9"), ("b", "0.01", "0.8")]
+
+    result = run("--filter", "optim__lr__lt=0.05", "--format", "json", "-c", "config.optim")
+    data = json.loads(result.output)
+    assert [r["id"] for r in data] == [ids["b"]]
+    assert data[0]["config.optim"] == {"lr": 0.01, "betas": [0.9, 0.99]}
+    assert data[0]["status"] == "failed" and data[0]["created_at"].startswith("2026-01-01T00:01")
+
+    result = run("--format", "csv", "--asc", "--status", "completed")
+    lines = result.output.strip().splitlines()
+    assert lines[0] == "id,name,project,status,created_at,duration,tags"
+    assert [line.split(",")[1] for line in lines[1:]] == ["a", "d"]
+
+    result = run("--where", "config.optim.lr > 0.2")
+    assert [r[0] for r in _table(result.output)[1:]] == [ids["d"]]
+
+
+def test_list_rejects_unknown_columns_and_sort_keys(live_server, monkeypatch):
+    monkeypatch.setenv("CAIRN_SERVER", live_server)
+    for argv in (["-c", "bogus"], ["--sort", "bogus"], ["--where", "last(("]):
+        result = CliRunner().invoke(cli.main, ["list", *argv])
+        assert result.exit_code == 2, result.output
+
+
+def test_export_fetches_sequences_in_series_batches(live_server, monkeypatch, tmp_path):
+    """A run's sequences come from batched /series requests (one request per
+    200 names, not one per sequence), with the same point fields as before."""
+    import httpx
+
+    from cairn.sdk.transport import Transport
+
+    monkeypatch.setenv("CAIRN_SERVER", live_server)
+    with httpx.Client(base_url=live_server) as c:
+        rid = c.post("/api/runs", json={"project": "p"}).json()["run_id"]
+        c.post(f"/api/runs/{rid}/batch", json={"points": [
+            {"name": f"m{i:03d}", "step": s, "wall_time": "2025-01-01T00:00:00Z",
+             "object_type": "scalar", "scalar_value": float(i + s)}
+            for i in range(201) for s in range(2)
+        ]}).raise_for_status()
+    paths: list[str] = []
+    real_get = Transport.get
+    monkeypatch.setattr(Transport, "get", lambda self, path, params=None: paths.append(path) or real_get(self, path, params))
+    out = tmp_path / "run.json"
+    result = CliRunner().invoke(cli.main, ["export", rid, "--out", str(out)])
+    assert result.exit_code == 0, result.output
+    assert sum(p.endswith("/series") for p in paths) == 2
+    assert not any("/sequences/" in p for p in paths)
+    seqs = json.loads(out.read_text())["sequences"]
+    assert len(seqs) == 201
+    assert [(p["step"], p["scalar_value"], p["object_type"]) for p in seqs["m200"]] == [
+        (0, 200.0, "scalar"), (1, 201.0, "scalar"),
+    ]
+
+
+def test_empty_exports_warn(live_server, monkeypatch, tmp_path):
+    import httpx
+
+    monkeypatch.setenv("CAIRN_SERVER", live_server)
+    with httpx.Client(base_url=live_server) as c:
+        rid = c.post("/api/runs", json={"project": "p"}).json()["run_id"]
+    result = CliRunner().invoke(cli.main, ["export", rid, "--format", "csv", "--out", str(tmp_path / "a.csv")])
+    assert result.exit_code == 0
+    assert f"warning: run {rid} has no scalar points" in result.output
+    pytest.importorskip("pandas")
+    result = CliRunner().invoke(cli.main, ["export", "--project", "nope", "--format", "csv", "--out", str(tmp_path / "b.csv")])
+    assert result.exit_code == 0, result.output
+    assert "no run of project 'nope' matches" in result.output
+
+
+def test_sync_against_a_down_server_fails_and_keeps_the_log(monkeypatch, tmp_path):
+    """A WAL whose server is unreachable used to print `replayed 0 op(s)`
+    and `nothing to sync` with exit 0 although every op was still pending."""
+    from cairn.sdk.wal import WriteAheadLog
+
+    monkeypatch.setenv("CAIRN_WAL_DIR", str(tmp_path / "wal"))
+    monkeypatch.setattr(cli, "default_spill_dir", lambda: tmp_path / "spill")
+    wal = WriteAheadLog("r1", tmp_path / "wal", target="http://127.0.0.1:1")
+    wal.append("params", {"run_id": "r1", "params": {"a": 1}})
+    wal.close()
+    result = CliRunner().invoke(cli.main, ["sync"])
+    assert result.exit_code == 1, result.output
+    assert "r1: FAILED after 0 op(s)" in result.output
+    assert "sync incomplete" in result.output
+    assert (tmp_path / "wal" / "r1.wal.jsonl").exists()
+
+
+def test_login_to_an_auth_off_server_saves_nothing(live_server):
+    """It used to report `Logged in ... as None (role=admin)` and save the
+    pasted token for a server that ignores tokens."""
+    result = CliRunner().invoke(cli.main, ["login", live_server, "--token", "whatever"])
+    assert result.exit_code == 0, result.output
+    assert "runs without auth" in result.output
+    assert config.saved_tokens() == {}
+
+
+def test_network_urls_only_for_reachable_binds(monkeypatch):
+    monkeypatch.setattr(cli, "_lan_ip", lambda: "10.0.0.5")
+    assert cli._network_host("0.0.0.0") == "10.0.0.5"
+    assert cli._network_host("127.0.0.1") is None
+    assert cli._network_host("localhost") is None
+    assert cli._network_host("192.168.1.7") == "192.168.1.7"
+
+
+def test_open_points_at_the_paired_ui_port(app, monkeypatch):
+    """Against the ingest port of `cairn server --ui`, `cairn open` used to
+    print an ingest-port URL (a JSON blob); it now uses the UI port."""
+    import threading, time
+
+    import httpx
+    import uvicorn
+
+    from tests.conftest import _find_free_port
+
+    port = _find_free_port()
+    app.state.ui_port = 4999
+    server = uvicorn.Server(uvicorn.Config(app=app, host="127.0.0.1", port=port, log_level="warning"))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.time() + 10
+    while not server.started and time.time() < deadline:
+        time.sleep(0.02)
+    try:
+        url = f"http://127.0.0.1:{port}"
+        rid = httpx.post(f"{url}/api/runs", json={"project": "p"}).json()["run_id"]
+        monkeypatch.setenv("CAIRN_SERVER", url)
+        result = CliRunner().invoke(cli.main, ["open", rid, "--no-browser"])
+        assert result.exit_code == 0, result.output
+        assert f"http://127.0.0.1:4999/p/p/r/{rid}" in result.output
+        assert "not serving the viewer" not in result.output
+        del app.state.ui_port
+        result = CliRunner().invoke(cli.main, ["open", rid, "--no-browser"])
+        assert f"{url}/p/p/r/{rid}" in result.output
+        assert "not serving the viewer" in result.output
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
+
+
+def test_token_commands_need_an_existing_repo(tmp_path):
+    """`cairn token list` in a directory without a repo used to create one."""
+    missing = tmp_path / "nowhere" / ".cairn"
+    for argv in (["list"], ["create", "--name", "x"], ["revoke", "x"]):
+        result = CliRunner().invoke(cli.main, ["token", *argv, "--repo", str(missing)])
+        assert result.exit_code == 1, result.output
+        assert "no Cairn repo at" in result.output
+    assert not missing.exists()
+
+
+def test_token_list_shows_expiry_and_revoked(tmp_path):
+    repo = tmp_path / ".cairn"
+    assert CliRunner().invoke(cli.main, ["init", str(tmp_path)]).exit_code == 0
+    runner = CliRunner()
+    assert runner.invoke(cli.main, ["token", "create", "--name", "ci", "--expires", "2099-01-01T00:00:00", "--repo", str(repo)]).exit_code == 0
+    assert runner.invoke(cli.main, ["token", "create", "--name", "dev", "--repo", str(repo)]).exit_code == 0
+    assert runner.invoke(cli.main, ["token", "revoke", "dev", "--repo", str(repo)]).exit_code == 0
+    out = runner.invoke(cli.main, ["token", "list", "--repo", str(repo)]).output
+    lines = {line.split()[0]: line for line in out.splitlines()[1:]}
+    assert "active" in lines["ci"] and "2099-01-01" in lines["ci"]
+    assert "revoked" in lines["dev"] and lines["dev"].endswith("never")
+
+
+def test_unconfigured_default_server_error_says_so(monkeypatch):
+    monkeypatch.delenv("CAIRN_SERVER", raising=False)
+    monkeypatch.delenv("CAIRN_REPO", raising=False)
+    monkeypatch.setattr(config, "DEFAULT_SERVER", "http://127.0.0.1:1")
+    result = CliRunner().invoke(cli.main, ["ping"])
+    assert result.exit_code == 1
+    assert "No server is configured" in result.output

@@ -11,7 +11,8 @@ The `cairn` command is installed with `cairn-track`. Run `cairn --help`, or
 | `cairn token create\|list\|revoke` | Manage auth tokens on the server host | [Server](../guides/server.md#tokens-and-roles) |
 | `cairn login [URL]`, `cairn logout [URL]` | Save or forget a server's token (`--ssh`: get one with an SSH key; `--list`: show saved logins) | [Server](../guides/server.md#logging-in-from-the-sdk-and-cli) |
 | `cairn configure` | Save the server URL to the config file | [Configuration](configuration.md) |
-| `cairn ping`, `list`, `open`, `rm` | Talk to a running server | [Server](../guides/server.md#other-client-commands) |
+| `cairn list` | List runs with filters, sorting, config and metric columns, as a table, JSON or CSV | [Server](../guides/server.md#listing-runs) |
+| `cairn ping`, `open`, `rm` | Check, open or delete on a running server | [Server](../guides/server.md#other-client-commands) |
 | `cairn sync` | Replay run logs that never reached their server | [Server](../guides/server.md#server-mode-and-connection-loss) |
 | `cairn export` | Write a run's or a project's metrics to JSON, CSV or Parquet | [Import and export](../guides/import-export.md#exporting-metrics) |
 | `cairn import-tb` | Import TensorBoard event files | [Integrations](../guides/integrations.md#importing-tensorboard-logs) |
