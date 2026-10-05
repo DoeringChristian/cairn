@@ -114,7 +114,8 @@ def _list(project: str, all_versions: bool, repo: str | None) -> list[dict[str, 
 def viewer_dev(folder: Path, project: str, repo: str | None, interval: float) -> None:
     """Serve FOLDER live to a running server: every change reloads the viewer
     in open cards. Needs a running ``cairn ui``/``cairn server`` (write
-    access); the dev source disappears ~30 s after this stops. It is never
+    access): with a local repo, the ``cairn ui`` serving it is found by
+    itself. The dev source disappears ~30 s after this stops. It is never
     part of a report or share link."""
     import httpx
 
@@ -126,12 +127,22 @@ def viewer_dev(folder: Path, project: str, repo: str | None, interval: float) ->
 
     transport, url = open_transport(repo)
     if isinstance(transport, LocalTransport):
+        # A local repo: the `cairn ui` serving it (it advertises itself in the repo).
+        root = transport.data_dir.root
         transport.close()
-        raise click.ClickException(
-            "`cairn viewer dev` needs a running server: start `cairn ui` (or pass --server URL)"
-        )
-    token = getattr(transport, "token", None)
-    transport.close()
+        found = _live_server(root)
+        if found is None:
+            raise click.ClickException(
+                f"`cairn viewer dev` needs a running server: no `cairn ui` is serving {root} "
+                "(start one, or pass --server URL)"
+            )
+        url = found
+        from .config import resolve_token
+
+        token = resolve_token(url)
+    else:
+        token = getattr(transport, "token", None)
+        transport.close()
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     client = httpx.Client(base_url=url, headers=headers, timeout=30.0)
     try:
@@ -159,6 +170,26 @@ def viewer_dev(folder: Path, project: str, repo: str | None, interval: float) ->
     sys.exit(0)
 
 
+def _live_server(root: Path) -> str | None:
+    """The URL of a live server advertised for the local repo ``root`` (newest first), or None."""
+    import httpx
+
+    from .server.storage.datadir import read_live_servers
+
+    entries = sorted(read_live_servers(root), key=lambda e: e.get("started_at") or "", reverse=True)
+    for entry in entries:
+        if entry.get("port") is None:
+            continue
+        host = entry.get("host") or "localhost"
+        url = f"http://{'localhost' if host in ('0.0.0.0', '127.0.0.1', '::') else host}:{entry['port']}"
+        try:
+            if httpx.get(f"{url}/api/health", timeout=1.0).status_code < 500:
+                return url
+        except httpx.HTTPError:
+            continue
+    return None
+
+
 @viewer_group.command("add")
 @click.argument("folder", type=_DIR)
 @click.argument("spec")
@@ -184,8 +215,12 @@ def viewer_add(folder: Path, spec: str, name: str | None, externals: tuple[str, 
     except Exception as exc:  # noqa: BLE001  (network)
         raise click.ClickException(f"cannot download {spec}: {exc}") from None
     click.echo(f"imports[{result.name!r}] = {result.entry!r}  ({len(result.files)} file(s))")
-    if result.bare_imports:
+    # The bare `three` is the host's own three.js (`cairn:three`), mapped for every viewer.
+    unmapped = [b for b in result.bare_imports if b != "three"]
+    if "three" in result.bare_imports:
+        click.echo("`three` imports resolve to the host's three.js (cairn:three)")
+    if unmapped:
         click.echo(
-            "bare imports left for the viewer to map in `imports`: " + ", ".join(result.bare_imports),
+            "bare imports left for the viewer to map in `imports`: " + ", ".join(unmapped),
             err=True,
         )

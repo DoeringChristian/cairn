@@ -654,3 +654,33 @@ def test_share_scope_includes_viewers_a_card_may_pick(tmp_path):
         assert listed("  - {metric: blob, type: volume}\n") == {vol_v1.id}
         assert listed("  - {metric: d, type: scalar}\n") == set()
         assert img_v1.id not in listed("  - {metric: d, type: custom}\n  - {metric: blob, type: volume}\n")
+
+
+def test_cli_dev_finds_the_ui_serving_a_local_repo(tmp_path, monkeypatch):
+    """With a local repo, `cairn viewer dev` uses the `cairn ui` the repo advertises (servers.json)."""
+    import os
+
+    import httpx
+
+    from cairn.cli_viewer import _live_server
+    from cairn.server.storage.datadir import DataDir
+
+    repo = tmp_path / ".cairn"
+    assert _live_server(repo) is None
+    DataDir(repo).add_live_server("ui", host="0.0.0.0", port=4999)
+    probed = []
+
+    def fake_get(url, timeout):
+        probed.append(url)
+        return httpx.Response(200, json={"status": "ok"})
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    assert _live_server(repo) == "http://localhost:4999"
+    assert probed == ["http://localhost:4999/api/health"]
+
+    def down(url, timeout):
+        raise httpx.ConnectError("refused")
+
+    monkeypatch.setattr(httpx, "get", down)
+    assert _live_server(repo) is None
+    assert os.getpid() in {e["pid"] for e in json.loads((repo / "servers.json").read_text())}
