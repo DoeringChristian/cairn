@@ -621,3 +621,36 @@ def test_cli_init_three_and_defaults(tmp_path):
     assert r.exit_code == 0 and "p/my-points:v1" in r.output, r.output
     r = CliRunner().invoke(main, ["viewer", "init", str(tmp_path / "x"), "--kind", "Bad Kind"])
     assert r.exit_code != 0 and "invalid data kind" in r.output
+
+
+def test_share_scope_includes_viewers_a_card_may_pick(tmp_path):
+    """A custom card without `viewer` (the UI picks the most specific accepting
+    viewer) and a volume card (a viewer accepting `volume` takes it over) put
+    the latest of the viewers they could pick in scope."""
+    repo = tmp_path / ".cairn"
+    kinds = make_viewer(tmp_path / "kinds", {"name": "kinds", "accepts": ["custom:k/*"]})
+    vol = make_viewer(tmp_path / "vol", {"name": "vol", "accepts": ["volume"]})
+    img = make_viewer(tmp_path / "img", {"name": "img", "accepts": ["image"]})
+    kinds_v1 = cairn.publish_viewer(kinds, project="p", repo=repo)
+    vol_v1 = cairn.publish_viewer(vol, project="p", repo=repo)
+    img_v1 = cairn.publish_viewer(img, project="p", repo=repo)
+    with cairn.Run(project="p", repo=repo, **QUIET) as run:
+        run.track(cairn.Data([1], kind="k/a"), "d", 0)
+
+    app = create_app(data_dir=repo, auth_enabled=True, background_tasks=False)
+    with TestClient(app) as owner:
+        _id, token = auth_core.create_token(app.state.db, name="w", role="write")
+        owner.headers.update({"Authorization": f"Bearer {token}"})
+
+        def listed(cards: str) -> set[str]:
+            source = f"```cairn\nruns: {{ids: [{run.id}]}}\ncards:\n{cards}```"
+            rid = owner.post("/api/projects/p/reports", json={"name": "r", "payload": {"source": source}}).json()["id"]
+            secret = owner.post(f"/api/projects/p/reports/{rid}/shares", json={}).json()["secret"]
+            viewer = TestClient(app)
+            assert viewer.post("/api/share/redeem", json={"secret": secret}).status_code == 200
+            return {v["version_id"] for v in viewer.get("/api/projects/p/viewers").json()["viewers"]}
+
+        assert listed("  - {metric: d, type: custom}\n") == {kinds_v1.id}
+        assert listed("  - {metric: blob, type: volume}\n") == {vol_v1.id}
+        assert listed("  - {metric: d, type: scalar}\n") == set()
+        assert img_v1.id not in listed("  - {metric: d, type: custom}\n  - {metric: blob, type: volume}\n")
