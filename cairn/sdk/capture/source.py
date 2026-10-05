@@ -68,12 +68,17 @@ DEFAULT_EXCLUDE: tuple[str, ...] = (
 )
 
 
+#: Whether find_project_root already warned about a missing marker.
+_warned_no_marker = False
+
+
 def find_project_root(start: Path) -> tuple[Path, str | None]:
     """Walk upward from ``start`` looking for a project marker.
 
-    Returns ``(root, marker)`` or ``(start, None)`` with a logged warning if
-    no marker is found.
+    Returns ``(root, marker)`` or ``(start, None)`` with a logged warning
+    (the first time in a process; debug after that) if no marker is found.
     """
+    global _warned_no_marker
     start = Path(start).resolve()
     current: Path = start if start.is_dir() else start.parent
     while True:
@@ -83,11 +88,14 @@ def find_project_root(start: Path) -> tuple[Path, str | None]:
         if current.parent == current:
             break
         current = current.parent
-    log.warning(
+    # Once per process: a sweep or a notebook starts many runs from the same
+    # place, and the advice does not change between them.
+    (log.debug if _warned_no_marker else log.warning)(
         "No project marker found walking up from %s; using it as root. "
         "Pass source_root= explicitly or add a pyproject.toml/.git.",
         start,
     )
+    _warned_no_marker = True
     return start, None
 
 

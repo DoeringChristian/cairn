@@ -45,6 +45,18 @@ def test_find_project_root_fallback_warns(tmp_path, caplog):
     assert isinstance(found, Path)
 
 
+def test_missing_marker_warns_once_per_process(tmp_path, caplog, monkeypatch):
+    from cairn.sdk.capture import source
+
+    monkeypatch.setattr(source, "PROJECT_MARKERS", ("no-such-marker-anywhere",))
+    monkeypatch.setattr(source, "_warned_no_marker", False)
+    with caplog.at_level(logging.DEBUG, logger=source.log.name):
+        for _ in range(3):
+            assert find_project_root(tmp_path) == (tmp_path.resolve(), None)
+    levels = [r.levelno for r in caplog.records if "No project marker" in r.getMessage()]
+    assert levels == [logging.WARNING, logging.DEBUG, logging.DEBUG]
+
+
 def test_build_archive_includes_expected_files(tmp_path):
     root = tmp_path / "proj"
     (root / "configs").mkdir(parents=True)
