@@ -52,7 +52,28 @@ them:
 | `demo_pointcloud.py` | Three runs of rotating point clouds: RGB (`sphere_rgb`), per-point categories (`torus_category`), plain xyz (`helix_height`), a named per-point property (`grid_scan`); one cloud of over 300,000 points (`big_scan`) | — | The point-cloud card's colour modes and property selector |
 | `demo_mesh.py` | Three runs of meshes: a deforming sphere with two per-vertex properties (`blob_sphere`), a torus with vertex colours and normals (`rainbow_torus`), a cube with explicit normals (`faceted_cube`), and a sphere with half its faces flipped (`mixed_winding_sphere`, which must still render solid) | — | The mesh card: property colouring, vertex colours, shading |
 | `demo_boxes3d.py` | Two runs of box hierarchies: an adaptive `cairn.Octree`, a `cairn.BVH` with per-node values, and a fixed `cairn.Boxes3D` grid with per-box values | — | The boxes card: depth range filter, colour by depth or value |
-| `demo_volume.py` | Two runs of `cairn.Volume` grids: an animated gaussian blob, and a static shell with anisotropic `spacing` | — | The volume card. Volumes are not rendered in the browser: the card shows the shape and value range, with the step's `.npz` to download. |
+| `demo_volume.py` | Two runs of `cairn.Volume` grids: an animated gaussian blob, and a static shell with anisotropic `spacing` | — | The volume card. Without a custom viewer the card shows the shape and value range, with the step's `.npz` to download; `custom_viewers/volume` renders them. |
+
+## Custom viewers
+
+Each folder of `examples/custom_viewers/` holds a viewer (a folder with `cairn-viewer.json`, to
+copy as a template) and a script that logs two runs of data for it over steps and publishes the
+viewer with `run.use_viewer`. Run a script against a scratch repo and open it; see
+[Custom viewers](guides/custom-viewers.md).
+
+```bash
+cairn init /tmp/cairn-viewers && export CAIRN_REPO=/tmp/cairn-viewers/.cairn
+python examples/custom_viewers/guiding/train_guiding.py
+cairn ui --repo $CAIRN_REPO
+cairn viewer dev examples/custom_viewers/guiding/vmf --project viewers-guiding   # optional: live edits
+```
+
+| Folder | Script | What it logs | What to look at |
+|---|---|---|---|
+| `minimal/` | `log_hist.py` | Project `viewers-minimal`: `hist`, a 24-bin histogram per step as `cairn.Data({"values": …}, kind="demo/hist")` | The smallest complete viewer (`hist/`, exactly what `cairn viewer init hist --kind demo/hist` writes): a 2D canvas, one setting on the Display tab (bar colour) and one on the Data tab (normalize) |
+| `guiding/` | `train_guiding.py` | Project `viewers-guiding`: a learned von Mises-Fisher mixture (`guide`) converging to a reference (`guide_ref`), a gallery of 4 per-pixel mixtures (`guide_pixels`) and `loss` | The `vmf/` viewer: three.js via `cairn:three`, vendored OrbitControls, a `compare` viewer (gear › Compare › reference `guide_ref` shows learned and reference side by side), settings across tabs and sections, camera sync across panes |
+| `volume/` | `train_volume.py` | Project `viewers-volume`: built-in `cairn.Volume` grids, a reconstruction (`density`) refining towards its target (`density_target`), and `l1` | The `raymarch/` viewer accepts `volume`, so every volume card is drawn by WebGL2 ray marching: colormap, density, step count, threshold and a slice plane |
+| `field_diff/` | `train_field.py` | Project `viewers-field`: a predicted 2D field (`field`), its target (`field_target`), a gallery of its three parts (`field_parts`) and `rmse`, as `kind="field/2d"` | The `field2d/` viewer: a symmetric diverging colormap from vendored `d3-scale`, A − B against a reference, threshold, hover readout |
 
 ## Artifacts
 

@@ -583,3 +583,75 @@ def test_add_from_the_real_cdn(tmp_path):
         pytest.skip(f"no network: {exc}")
     assert (root / result.entry).is_file()
     load_folder(root)
+
+
+def test_cli_init_writes_the_minimal_example(tmp_path, monkeypatch):
+    """`cairn viewer init hist --kind demo/hist` is exactly examples/custom_viewers/minimal/hist."""
+    from cairn.cli import main
+
+    example = Path(__file__).resolve().parents[2] / "examples" / "custom_viewers" / "minimal" / "hist"
+    monkeypatch.chdir(tmp_path)
+    r = CliRunner().invoke(main, ["viewer", "init", "hist", "--kind", "demo/hist"])
+    assert r.exit_code == 0, r.output
+    made = sorted(p.name for p in (tmp_path / "hist").iterdir())
+    assert made == sorted(p.name for p in example.iterdir()) == ["README.md", "cairn-viewer.json", "index.js"]
+    for name in made:
+        assert (tmp_path / "hist" / name).read_text() == (example / name).read_text(), name
+    # A valid, publishable viewer: two settings, one on the Display tab and one on the Data tab.
+    manifest, _ = load_folder(tmp_path / "hist")
+    assert manifest["name"] == "hist" and manifest["accepts"] == ["custom:demo/hist"]
+    assert [(s["key"], s["tab"]) for s in manifest["settings"]] == [("color", "display"), ("normalize", "data")]
+    # Never over an existing viewer.
+    r = CliRunner().invoke(main, ["viewer", "init", "hist"])
+    assert r.exit_code != 0 and "exists already" in r.output
+
+
+def test_cli_init_three_and_defaults(tmp_path):
+    from cairn.cli import main
+
+    r = CliRunner().invoke(main, ["viewer", "init", str(tmp_path / "My Points"), "--three"])
+    assert r.exit_code == 0, r.output
+    manifest, files = load_folder(tmp_path / "My Points")
+    assert manifest["name"] == "my-points" and manifest["accepts"] == ["custom:my-points"]
+    assert manifest["webgl"] is True
+    assert 'from "cairn:three"' in (tmp_path / "My Points" / "index.js").read_text()
+    # It publishes as is.
+    repo = str(tmp_path / ".cairn")
+    r = CliRunner().invoke(main, ["viewer", "publish", str(tmp_path / "My Points"), "--project", "p", "--repo", repo])
+    assert r.exit_code == 0 and "p/my-points:v1" in r.output, r.output
+    r = CliRunner().invoke(main, ["viewer", "init", str(tmp_path / "x"), "--kind", "Bad Kind"])
+    assert r.exit_code != 0 and "invalid data kind" in r.output
+
+
+def test_share_scope_includes_viewers_a_card_may_pick(tmp_path):
+    """A custom card without `viewer` (the UI picks the most specific accepting
+    viewer) and a volume card (a viewer accepting `volume` takes it over) put
+    the latest of the viewers they could pick in scope."""
+    repo = tmp_path / ".cairn"
+    kinds = make_viewer(tmp_path / "kinds", {"name": "kinds", "accepts": ["custom:k/*"]})
+    vol = make_viewer(tmp_path / "vol", {"name": "vol", "accepts": ["volume"]})
+    img = make_viewer(tmp_path / "img", {"name": "img", "accepts": ["image"]})
+    kinds_v1 = cairn.publish_viewer(kinds, project="p", repo=repo)
+    vol_v1 = cairn.publish_viewer(vol, project="p", repo=repo)
+    img_v1 = cairn.publish_viewer(img, project="p", repo=repo)
+    with cairn.Run(project="p", repo=repo, **QUIET) as run:
+        run.track(cairn.Data([1], kind="k/a"), "d", 0)
+
+    app = create_app(data_dir=repo, auth_enabled=True, background_tasks=False)
+    with TestClient(app) as owner:
+        _id, token = auth_core.create_token(app.state.db, name="w", role="write")
+        owner.headers.update({"Authorization": f"Bearer {token}"})
+
+        def listed(cards: str) -> set[str]:
+            source = f"```cairn\nruns: {{ids: [{run.id}]}}\ncards:\n{cards}```"
+            rid = owner.post("/api/projects/p/reports", json={"name": "r", "payload": {"source": source}}).json()["id"]
+            secret = owner.post(f"/api/projects/p/reports/{rid}/shares", json={}).json()["secret"]
+            viewer = TestClient(app)
+            assert viewer.post("/api/share/redeem", json={"secret": secret}).status_code == 200
+            return {v["version_id"] for v in viewer.get("/api/projects/p/viewers").json()["viewers"]}
+
+        assert listed("  - {metric: d, type: custom}\n") == {kinds_v1.id}
+        assert listed("  - {metric: blob, type: volume}\n") == {vol_v1.id}
+        assert listed("  - {metric: d, type: scalar}\n") == set()
+        assert img_v1.id not in listed("  - {metric: d, type: custom}\n  - {metric: blob, type: volume}\n")
+

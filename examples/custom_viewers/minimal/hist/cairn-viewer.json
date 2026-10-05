@@ -1,0 +1,43 @@
+{
+  "name": "hist",
+  "title": "Hist",
+  "description": "Bars of a logged 1-D array (cairn.Data({'values': arr}, kind='demo/hist')).",
+  "accepts": [
+    "custom:demo/hist"
+  ],
+  "icon": "chart-column",
+  "settings": [
+    {
+      "key": "color",
+      "type": "select",
+      "label": "Bar colour",
+      "options": [
+        {
+          "value": "accent",
+          "label": "Accent (theme)"
+        },
+        {
+          "value": "#e45756",
+          "label": "Red"
+        },
+        {
+          "value": "#54a24b",
+          "label": "Green"
+        }
+      ],
+      "default": "accent",
+      "tab": "display",
+      "section": "Appearance",
+      "help": "The colour of the bars."
+    },
+    {
+      "key": "normalize",
+      "type": "switch",
+      "label": "Normalize",
+      "default": false,
+      "tab": "data",
+      "section": "Series",
+      "help": "Show every bar as a fraction of the total."
+    }
+  ]
+}

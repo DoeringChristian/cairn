@@ -434,8 +434,10 @@ bounds. `spacing` and `origin` follow the `[D, H, W]` axis order. Volumes may be
 float32.
 
 !!! note
-    The viewer does not render volumes. The card shows a placeholder with the `.npz` file for
-    download.
+    The built-in volume card shows a placeholder with the `.npz` file for download. A
+    [custom viewer](custom-viewers.md) that accepts `volume` draws volumes instead: with one
+    published in the project (for example the WebGL2 ray marcher in
+    `examples/custom_viewers/volume`), every volume card uses it.
 
 ## Custom data for your own viewers
 
@@ -465,8 +467,8 @@ A viewer is a folder with a `cairn-viewer.json` manifest and ES modules. Publish
 `cairn viewer publish viewers/vmf --project P` (or `cairn.publish_viewer`, or `run.use_viewer`
 as above), develop it live with `cairn viewer dev viewers/vmf --project P`, and vendor libraries
 it imports with `cairn viewer add viewers/vmf d3@7`. Without a viewer for a kind, the card offers
-the value for download. The manifest's JSON schema is
-[`docs/schemas/cairn-viewer.schema.json`](../schemas/cairn-viewer.schema.json).
+the value for download. [Custom viewers](custom-viewers.md) covers writing, publishing and using
+viewers; `cairn viewer init` writes a starter.
 
 ## Custom types
 

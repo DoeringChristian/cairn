@@ -72,6 +72,7 @@ nav:
       - guides/index.md
       - Logging metrics: guides/logging.md
       - Media and rich types: guides/media.md
+      - Custom viewers: guides/custom-viewers.md
       - Final values and metric rules: guides/metric-rules.md
       - Run lifecycle: guides/runs.md
       - Components and scopes: guides/scopes.md

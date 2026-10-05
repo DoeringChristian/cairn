@@ -7,7 +7,10 @@ view, and run ids in card settings (a code-diff card's ``leftRunId``/
 ``rightRunId``). Source files are in scope only for the runs a code-diff card
 can show. A card's custom viewer (``settings.viewer``, pinned by
 ``settings.viewer_version`` or else ``latest``) puts that viewer version's
-files in scope. Scope is live: it is recomputed from the report's current source,
+files in scope. A card that lets the UI pick its viewer (a ``custom`` card
+without ``settings.viewer``, or a ``volume`` card, which a viewer accepting
+``volume`` takes over) puts the ``latest`` of every viewer that could be
+picked in scope: those accepting some custom kind, or ``volume``. Scope is live: it is recomputed from the report's current source,
 cached for ``SCOPE_TTL_S`` per share.
 
 ``resolve_run_selector_from_runs`` is a port of cairn-ui's
@@ -32,7 +35,8 @@ from typing import Any
 import yaml
 
 from .artifact_refs import reachable_hashes
-from .custom_viewers import resolve_viewer_version
+from .custom_viewers import published_viewers, resolve_viewer_version
+from .viewer_manifest import accepts_matches
 from .storage.blobs import BlobStore
 from .storage.db import Database
 
@@ -241,6 +245,8 @@ def compute_scope(db: Database, report: dict[str, Any]) -> ShareScope:
     source_run_ids: set[str] = set()
     pool: list[dict[str, Any]] | None = None
     viewer_refs: set[tuple[str, Any]] = set()
+    #: Cards whose viewer the UI picks: "custom" (custom data) and/or "volume".
+    auto_viewers: set[str] = set()
 
     for body in cairn_fence_bodies(source if isinstance(source, str) else ""):
         try:
@@ -289,6 +295,8 @@ def compute_scope(db: Database, report: dict[str, Any]) -> ShareScope:
             if isinstance(settings, dict) and isinstance(settings.get("viewer"), str):
                 version = settings.get("viewer_version")
                 viewer_refs.add((settings["viewer"], version if isinstance(version, (int, str)) else None))
+            elif card.get("type") in ("custom", "volume"):
+                auto_viewers.add(card["type"])
             run_ids.update(named)
             if card.get("type") == CODE_DIFF_CARD:
                 # A viewer may point the diff at any run of its cell.
@@ -299,6 +307,15 @@ def compute_scope(db: Database, report: dict[str, Any]) -> ShareScope:
         vid for name, version in sorted(viewer_refs, key=repr)
         if (vid := resolve_viewer_version(db, project_id, name, version)) is not None
     }
+    if auto_viewers:
+        for v in published_viewers(db, project_id):
+            accepts = v.get("accepts") or []
+            if v.get("error") or not isinstance(accepts, list):
+                continue
+            if ("custom" in auto_viewers and any(str(p).startswith("custom:") for p in accepts)) or (
+                "volume" in auto_viewers and any(accepts_matches(str(p), "volume") for p in accepts)
+            ):
+                viewer_versions.add(v["version_id"])
     return ShareScope(
         report_id=report["id"],
         project_id=project_id,

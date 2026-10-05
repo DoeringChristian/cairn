@@ -22,7 +22,8 @@ Series cards show one logged name (plus any extra series you add), and the Pytho
 | `html` | HTML | Sandboxed HTML | `cairn.Html` |
 | `markdown` | Markdown | Rendered Markdown | `cairn.Markdown` |
 | `pointcloud`, `mesh`, `boxes3d` | 3D | Point clouds, meshes, boxes / octrees / BVHs | `cairn.PointCloud`, `cairn.Mesh`, `cairn.Boxes3D` / `Octree` / `BVH` |
-| `volume` | Volume | A placeholder with a `.npz` download (volumes are not rendered) | `cairn.Volume` |
+| `volume` | Volume | A placeholder with a `.npz` download, or the project's [custom viewer](../guides/custom-viewers.md) accepting `volume` | `cairn.Volume` |
+| `custom` | Custom viewer | Your own browser code: a [custom viewer](../guides/custom-viewers.md) of the project, listed by its title | `cairn.Data`, or a built-in kind a viewer accepts |
 | `preset` | Confusion / PR / ROC | Confusion matrices, PR and ROC curves | `cairn.ConfusionMatrix`, `PRCurve`, `ROCCurve` |
 | `artifact` | Artifact | A pickled point, or the versions of an artifact the run logged: files, sizes and download links | `run.track(cairn.Pickle(...))`, `run.log_artifact(...)` |
 | `parallel` | Parallel coordinates | One polyline per run across expression columns | multi-run |
@@ -208,7 +209,16 @@ Point clouds, meshes and boxes render in an orbitable 3D view, one pane per run.
     - meshes: colouring and wireframe
     - boxes: colouring
 
-Volume cards don't render the volume. Each pane offers the step's `.npz` for download.
+Volume cards don't render the volume themselves: each pane offers the step's `.npz` for download. When the project has a [custom viewer](../guides/custom-viewers.md) that accepts `volume`, the card is drawn by it instead.
+
+### Custom viewer
+
+A custom viewer card draws its data with one of the project's [custom viewers](../guides/custom-viewers.md#how-cards-pick-a-viewer), in a sandboxed frame per pane, with the step slider, galleries, the panel modes and the section slider of the other media cards. The gear's type list names each viewer that accepts the card's data by its title.
+
+- **Viewer** (Data › Series): **Automatic** (the project's most specific accepting viewer) or a named one; **Version**: `latest` or a published `vN`.
+- **Reference tag** and **Pin reference step** (Data › Compare): a `compare` viewer gets the value and the reference together; any other viewer shows the reference as a second frame.
+- The viewer's own settings, in the tabs and sections its manifest names. They cascade from section and workspace defaults per viewer.
+- **Reset view** in the header clears a viewer's stored camera (viewers with a shared view).
 
 ### Confusion / PR / ROC (`preset`)
 

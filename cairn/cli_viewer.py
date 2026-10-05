@@ -1,4 +1,4 @@
-"""``cairn viewer``: publish, develop, list and vendor custom viewers.
+"""``cairn viewer``: start, publish, develop, list and vendor custom viewers.
 
 Registered into the main group by ``cairn.cli`` (one line); everything else
 lives here.
@@ -23,6 +23,33 @@ _DIR = click.Path(exists=True, file_okay=False, path_type=Path)
 def viewer_group() -> None:
     """Custom viewers: folders of browser code (a cairn-viewer.json manifest +
     ES modules) that show data logged with ``cairn.Data``."""
+
+
+@viewer_group.command("init")
+@click.argument("folder", type=click.Path(file_okay=False, path_type=Path))
+@click.option("--kind", default=None, help="Data kind it accepts (custom:KIND). Default: the viewer's name.")
+@click.option("--name", default=None, help="Viewer name. Default: the folder's name.")
+@click.option("--three", is_flag=True, help="A three.js starter (points) instead of the 2D-canvas one (bars).")
+def viewer_init(folder: Path, kind: str | None, name: str | None, three: bool) -> None:
+    """Write a starter viewer into FOLDER: cairn-viewer.json, index.js, README.md.
+
+    \b
+        cairn viewer init viewers/hist --kind demo/hist
+        cairn viewer dev viewers/hist --project P     # live, with `cairn ui` running
+    """
+    from .sdk.viewer_scaffold import init_viewer
+
+    try:
+        made = init_viewer(folder, kind=kind, three=three, name=name)
+    except (FileExistsError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from None
+    for p in made.files:
+        click.echo(f"wrote {p}")
+    click.echo(
+        f"viewer {made.name!r} accepts custom:{made.kind}. Next:\n"
+        f"  cairn viewer dev {folder} --project <project>   # with `cairn ui` running\n"
+        f"  log cairn.Data(..., kind={made.kind!r}) - see {folder / 'README.md'}"
+    )
 
 
 @viewer_group.command("publish")
@@ -87,8 +114,9 @@ def _list(project: str, all_versions: bool, repo: str | None) -> list[dict[str, 
 def viewer_dev(folder: Path, project: str, repo: str | None, interval: float) -> None:
     """Serve FOLDER live to a running server: every change reloads the viewer
     in open cards. Needs a running ``cairn ui``/``cairn server`` (write
-    access); the dev source disappears ~30 s after this stops. It is never
-    part of a report or share link."""
+    access): a local repo that a ``cairn ui`` serves connects to that server.
+    The dev source disappears ~30 s after this stops. It is never part of a
+    report or share link."""
     import httpx
 
     from .sdk.connect import open_transport
@@ -99,9 +127,10 @@ def viewer_dev(folder: Path, project: str, repo: str | None, interval: float) ->
 
     transport, url = open_transport(repo)
     if isinstance(transport, LocalTransport):
+        # (A local repo that a `cairn ui` serves opens as that server already.)
         transport.close()
         raise click.ClickException(
-            "`cairn viewer dev` needs a running server: start `cairn ui` (or pass --server URL)"
+            "`cairn viewer dev` needs a running server: start `cairn ui` on this repo (or pass --server URL)"
         )
     token = getattr(transport, "token", None)
     transport.close()
@@ -157,8 +186,12 @@ def viewer_add(folder: Path, spec: str, name: str | None, externals: tuple[str, 
     except Exception as exc:  # noqa: BLE001  (network)
         raise click.ClickException(f"cannot download {spec}: {exc}") from None
     click.echo(f"imports[{result.name!r}] = {result.entry!r}  ({len(result.files)} file(s))")
-    if result.bare_imports:
+    # The bare `three` is the host's own three.js (`cairn:three`), mapped for every viewer.
+    unmapped = [b for b in result.bare_imports if b != "three"]
+    if "three" in result.bare_imports:
+        click.echo("`three` imports resolve to the host's three.js (cairn:three)")
+    if unmapped:
         click.echo(
-            "bare imports left for the viewer to map in `imports`: " + ", ".join(result.bare_imports),
+            "bare imports left for the viewer to map in `imports`: " + ", ".join(unmapped),
             err=True,
         )
