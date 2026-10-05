@@ -422,7 +422,7 @@ provides-extras = ["ui", "media", "hf", "discovery", "export", "tb", "lightning"
 
 [[package]]
 name = "cairn-ui"
-version = "0.2.0"
+version = "0.3.0"
 source = { editable = "vendor/cairn-ui" }
 dependencies = [
     { name = "cairn-track" },
