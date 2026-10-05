@@ -49,11 +49,22 @@ run = cairn.Run(project="mnist", repo="cairn://192.168.1.42:4300")
 When a run starts, the SDK checks `http://host:port/api/health` and logs a
 warning if the server does not answer. Every write is first appended to a local
 log (by default in the user cache directory, `…/cairn/wal/`; set
-`CAIRN_WAL_DIR` to move it, e.g. to node-local scratch). If the server goes
-away, writes queue up there and are replayed in order when it comes back or
-when the run finishes.
+`CAIRN_WAL_DIR` to move it, e.g. to node-local scratch). Each write is sent
+once. If the server times out, is unreachable or answers with a 5xx error, the
+SDK stops sending for a while (1 second at first, doubling up to 30), keeps
+appending to the log, and then replays the backlog in order. Training never
+waits on a slow or unreachable server: metrics go out in batches of at most
+5000 points, and a backlog beyond 100,000 points waits in the log on disk,
+not in memory.
 
-If a process dies before its log is sent, replay it later:
+`run.finish()` sends what is left for at most `timeout` seconds (the `Run`
+argument, 10 by default), riding out a short outage. Whatever is still
+unsent then stays in the log, and a warning says so. A write the server
+rejects for good (a 4xx error other than 401, 403, 408, 425 or 429) is not
+retried. It is moved to `<run_id>.dead.jsonl` next to the log, so the writes
+behind it still go through, and it is kept there.
+
+Replay what a run could not send (and list rejected writes) later:
 
 ```bash
 cairn sync     # replays every pending run log to the server it was meant for
