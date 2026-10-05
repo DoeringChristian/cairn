@@ -1,14 +1,14 @@
-"""Cairn CLI: ``cairn server``, ``cairn ui``, ``cairn init``, ``cairn list``, …
+"""Cairn CLI: `cairn server`, `cairn ui`, `cairn init`, `cairn list`, …
 
 The two server commands:
 
-* ``cairn server [--repo PATH]`` — runs the ingest tracking API. ``--ui``
+* `cairn server [--repo PATH]` — runs the ingest tracking API. `--ui`
   additionally launches the paired UI viewer; one Ctrl+C stops both.
-* ``cairn ui [--repo PATH|cairn://HOST:PORT]`` — standalone UI over a
+* `cairn ui [--repo PATH|cairn://HOST:PORT]` — standalone UI over a
   local repo, or a loopback UI/proxy connected to a remote tracking server.
-  Local mode acquires the repo write-lock in ``mode="ui"``.
+  Local mode acquires the repo write-lock in `mode="ui"`.
 
-Client commands (``list``, ``ping``, ``open``, ``rm``, ``export``, ``sync``)
+Client commands (`list`, `ping`, `open`, `rm`, `export`, `sync`)
 talk to a running server over HTTP.
 """
 
@@ -56,8 +56,8 @@ def _lan_ip() -> str:
 
 
 def _network_host(host: str) -> str | None:
-    """The address other machines reach a server bound to ``host`` at: the
-    LAN IP for a wildcard bind, ``host`` itself for a specific address, and
+    """The address other machines reach a server bound to `host` at: the
+    LAN IP for a wildcard bind, `host` itself for a specific address, and
     None for loopback (nothing outside this machine can connect)."""
     if host in ("0.0.0.0", "::", ""):
         return _lan_ip()
@@ -77,7 +77,7 @@ def _server_of(request: Any) -> str:
 
 
 def _unauthorized_text(base: str, detail: str, sent_token: bool) -> str:
-    """A 401 from ``base`` as advice: log in, or log in again."""
+    """A 401 from `base` as advice: log in, or log in again."""
     if sent_token:
         source = "CAIRN_TOKEN" if os.environ.get("CAIRN_TOKEN") else "the saved token"
         return f"{base}: {detail}; it rejected {source}. Log in again with `cairn login {base}`."
@@ -110,7 +110,7 @@ class _ReaderErrors:
 def _http_error_text(exc: Exception) -> str | None:
     """A one-line message for an HTTP failure, or None for other errors.
 
-    A 4xx/5xx answer shows the server's ``detail``; 401 also says how to
+    A 4xx/5xx answer shows the server's `detail`; 401 also says how to
     log in. A connection failure names the server it could not reach.
     """
     import httpx
@@ -137,7 +137,7 @@ def _http_error_text(exc: Exception) -> str | None:
 
 class _CairnGroup(click.Group):
     """Turns an HTTP or connection failure in any command into a one-line
-    ``Error: ...`` and exit code 1 instead of a traceback."""
+    `Error: ...` and exit code 1 instead of a traceback."""
 
     def invoke(self, ctx: click.Context) -> Any:
         try:
@@ -167,13 +167,13 @@ def main() -> None:
 def init_cmd(path: Path) -> None:
     """Create a local Cairn repo at PATH/.cairn (default: CWD).
 
-    After ``cairn init`` you can log runs with ``cairn.Run(project=...)``
-    or start the viewer with ``cairn ui``.
+    After `cairn init` you can log runs with `cairn.Run(project=...)`
+    or start the viewer with `cairn ui`.
     """
     repo = (path / ".cairn").resolve()
     already = repo.exists() and (repo / "cairn.db").exists()
     dd = DataDir(repo)
-    # ``Database.open`` runs migrations idempotently, so init is safe to
+    # `Database.open` runs migrations idempotently, so init is safe to
     # re-run on an existing repo.
     db = Database.open(dd.db_path)
     db.close()
@@ -187,7 +187,7 @@ def init_cmd(path: Path) -> None:
 
 
 def _find_free_port(host: str, start: int, max_attempts: int = 20) -> int:
-    """Return ``start`` if available, otherwise scan upward for a free port.
+    """Return `start` if available, otherwise scan upward for a free port.
 
     Uses SO_REUSEADDR so a recently-killed server's TIME_WAIT socket
     doesn't push us off the default port.
@@ -209,7 +209,7 @@ def _find_free_port(host: str, start: int, max_attempts: int = 20) -> int:
 def _ensure_repo(repo: Path) -> Path:
     """Resolve + create the repo tree on demand.
 
-    The tracking server expects to be pointed at a ``.cairn/`` directory;
+    The tracking server expects to be pointed at a `.cairn/` directory;
     we create it lazily if it doesn't exist so the quickstart is a single
     command.
     """
@@ -242,8 +242,8 @@ def _print_access_banner(
 ) -> str | None:
     """Print the reusable same-user access token on every authenticated start.
 
-    The token is stored in ``auth/local.token`` with mode 0600 and has the
-    ``write`` role. Reusing it avoids accumulating a new token row on every
+    The token is stored in `auth/local.token` with mode 0600 and has the
+    `write` role. Reusing it avoids accumulating a new token row on every
     restart while still giving the operator one copy/paste credential for the
     SDK, ingest API, and UI. A fresh single-use browser OTP is derived from the
     same token for convenience.
@@ -340,7 +340,7 @@ def server_cmd(
     verbose: bool,
     alert_webhook: str | None,
 ) -> None:
-    """Start the Cairn tracking server (ingest-only unless ``--ui``)."""
+    """Start the Cairn tracking server (ingest-only unless `--ui`)."""
     import uvicorn
 
     if ui and not _viewer.is_available():
@@ -363,7 +363,7 @@ def server_cmd(
 
     dd = DataDir(repo)
     # Record the UI port (if present, else the ingest port) in the lock
-    # file so a concurrent SDK ``Run(repo=...)`` on the same repo can
+    # file so a concurrent SDK `Run(repo=...)` on the same repo can
     # transparently switch to HTTP mode. We store 127.0.0.1 as the host
     # even when --host is 0.0.0.0 because the SDK that detects the lock
     # will always be on the same machine.
@@ -543,10 +543,10 @@ def ui_cmd(
 ) -> None:
     """Serve the Cairn viewer over a local repo or remote Cairn server.
 
-    A remote ``--repo cairn://HOST:PORT`` keeps the page on loopback (a browser
+    A remote `--repo cairn://HOST:PORT` keeps the page on loopback (a browser
     secure context) while proxying relative API requests to the server. Its
-    token (``CAIRN_TOKEN``, else the one ``cairn login HOST:PORT`` saved)
-    authenticates server-side; without one, log in through the browser. ``--no-auth`` applies only to local-repo mode.
+    token (`CAIRN_TOKEN`, else the one `cairn login HOST:PORT` saved)
+    authenticates server-side; without one, log in through the browser. `--no-auth` applies only to local-repo mode.
     """
     # First, before resolving the target, acquiring a repo lock or registering a
     # live server — so a missing viewer cannot leave any of that behind.
@@ -711,7 +711,7 @@ _FILTER_HELP = (
 
 
 def _parse_filters(filters: tuple[str, ...]) -> dict[str, Any]:
-    """``KEY=VALUE`` options as ``RunQuery.filter`` keywords (VALUE as JSON when it parses)."""
+    """`KEY=VALUE` options as `RunQuery.filter` keywords (VALUE as JSON when it parses)."""
     kwargs: dict[str, Any] = {}
     for f in filters:
         key, sep, raw = f.partition("=")
@@ -724,7 +724,7 @@ def _parse_filters(filters: tuple[str, ...]) -> dict[str, Any]:
     return kwargs
 
 
-#: ``cairn list`` run-field columns: key -> (header, getter). The default
+#: `cairn list` run-field columns: key -> (header, getter). The default
 #: set mirrors the UI runs table's built-ins (name, status, created_at,
 #: duration, tags), plus the id and project a shell user needs.
 _LIST_FIELDS: dict[str, Any] = {
@@ -830,7 +830,7 @@ def list_cmd(
     """List runs on the configured server, newest first.
 
     The runs and their order come from the same query evaluator as the UI's
-    runs table and ``cairn.Reader().runs()``.
+    runs table and `cairn.Reader().runs()`.
 
     \b
         cairn list --project mnist -c config.optim.lr -c metrics.val/acc
@@ -899,11 +899,11 @@ def list_cmd(
 
 
 def _viewer_base(t: Transport, server: str) -> str | None:
-    """The base URL where ``server``'s viewer renders, or None if it serves none.
+    """The base URL where `server`'s viewer renders, or None if it serves none.
 
     A `cairn server --ui` ingest port answers `/` with the paired UI port; a
     server without the viewer answers with a no-viewer marker. Any failure to
-    tell keeps ``server``: a probe that cannot decide must not suppress the
+    tell keeps `server`: a probe that cannot decide must not suppress the
     browser.
     """
     from urllib.parse import urlsplit, urlunsplit
@@ -962,7 +962,7 @@ def open_cmd(run_id: str, no_browser: bool) -> None:
 @main.command("rm")
 @click.argument("run_id")
 def rm_cmd(run_id: str) -> None:
-    """Delete a run."""
+    """Delete a run and all its data from the configured server (no undo)."""
     t = _client()
     try:
         t.delete(f"/api/runs/{run_id}")
@@ -1043,12 +1043,12 @@ def export_cmd(
         t.close()
 
 
-#: Names per ``/api/runs/{id}/series`` request (the server's batch limit).
+#: Names per `/api/runs/{id}/series` request (the server's batch limit).
 _SERIES_BATCH = 200
 
 
 def _run_points(t: Transport, run_id: str, names: list[str]) -> dict[str, list[dict[str, Any]]]:
-    """Every point of the named sequences, fetched in ``/series`` batches
+    """Every point of the named sequences, fetched in `/series` batches
     and expanded from columns back to one dict per point."""
     out: dict[str, list[dict[str, Any]]] = {}
     for i in range(0, len(names), _SERIES_BATCH):
@@ -1067,7 +1067,7 @@ _EXPORT_COLUMNS = ["run_id", "name", "step", "wall_time", "value"]
 
 
 def _export_project(project: str, filters: tuple[str, ...], fmt: str, out: Path) -> None:
-    """Every (filtered) run of ``project`` through ``RunQuery.history``."""
+    """Every (filtered) run of `project` through `RunQuery.history`."""
     from .sdk.reader import Reader
 
     kwargs = _parse_filters(filters)
@@ -1325,7 +1325,7 @@ def sync_cmd() -> None:
 @main.command("configure")
 @click.option("--server", default=None, help="Server URL.")
 def configure_cmd(server: str | None) -> None:
-    """Save the default server URL to the config file (prompts when ``--server`` is omitted)."""
+    """Save the default server URL to the config file (prompts when `--server` is omitted)."""
     existing = _config.load_config_file()
     if server is None:
         server = click.prompt(
@@ -1351,7 +1351,7 @@ def _parse_iso(value: str | None) -> datetime | None:
 
 
 def _parse_expiry(value: str) -> str:
-    """Accept a relative duration (``30d``, ``12h``, ``90m``, ``60s``) or a
+    """Accept a relative duration (`30d`, `12h`, `90m`, `60s`) or a
     full ISO8601 timestamp; return an ISO8601 UTC string."""
     m = re.fullmatch(r"(\d+)([smhd])", value.strip())
     if m:
@@ -1387,7 +1387,7 @@ def token_group() -> None:
     """Manage auth tokens — operates directly on the local data dir's DB.
 
     Run this on the machine hosting the repo (there is no remote token-admin
-    API); pair with ``--repo`` when it isn't ``./.cairn``.
+    API); pair with `--repo` when it isn't `./.cairn`.
     """
 
 
@@ -1434,7 +1434,7 @@ def token_list_cmd(repo: Path | None) -> None:
             click.echo("(no tokens)")
             return
         # No LAST_USED column: resolving a request never writes, so
-        # ``tokens.last_used_at`` is no longer maintained.
+        # `tokens.last_used_at` is no longer maintained.
         # NAME is 40 wide: a per-browser token minted by /api/auth/otp is named
         # "<parent>-browser-<16 hex>", i.e. its parent's name plus 25
         # characters, so a long parent name still overflows the column.
@@ -1484,8 +1484,8 @@ def _find_default_ssh_key() -> Path | None:
 
 
 def _ssh_login(server_url: str, key_path: Path | None, name: str | None) -> dict[str, Any]:
-    """Run the SSH challenge/response against ``server_url``; return the
-    server's ``{"token", "name", "role"}`` answer."""
+    """Run the SSH challenge/response against `server_url`; return the
+    server's `{"token", "name", "role"}` answer."""
     ssh_keygen = shutil.which("ssh-keygen")
     if not ssh_keygen:
         raise click.ClickException(
@@ -1537,7 +1537,7 @@ def _ssh_login(server_url: str, key_path: Path | None, name: str | None) -> dict
 
 
 def _session(server_url: str, token: str, timeout: float = 10.0) -> dict[str, Any]:
-    """``/api/auth/session`` of ``server_url`` as seen with ``token``."""
+    """`/api/auth/session` of `server_url` as seen with `token`."""
     import httpx
 
     resp = httpx.get(
@@ -1583,12 +1583,12 @@ def login_cmd(
 ) -> None:
     """Log in to the server at URL and save its token to config.toml.
 
-    URL is ``cairn://host:port`` or ``http(s)://host:port[/prefix]``
+    URL is `cairn://host:port` or `http(s)://host:port[/prefix]`
     (default: the configured server). Each server keeps its own token, so you
     can stay logged into several at once; SDK and CLI calls pick the token of
-    the server they talk to. ``--ssh`` mints a token by signing a challenge
-    with your SSH key; otherwise paste a token (``--token`` or the prompt).
-    ``--list`` shows every saved login and who it is on its server.
+    the server they talk to. `--ssh` mints a token by signing a challenge
+    with your SSH key; otherwise paste a token (`--token` or the prompt).
+    `--list` shows every saved login and who it is on its server.
     """
     if list_logins:
         _list_logins()
@@ -1658,7 +1658,7 @@ def _list_logins() -> None:
 def logout_cmd(url: str | None) -> None:
     """Forget the saved token of the server at URL (default: the configured
     server). Logins to other servers are kept; the token itself stays valid
-    on the server (``cairn token revoke`` ends it)."""
+    on the server (`cairn token revoke` ends it)."""
     server_url = _server_url_arg(url)
     if server_url not in _config.saved_tokens():
         raise click.ClickException(f"not logged into {server_url}")
@@ -1696,7 +1696,7 @@ def _sweep_call(repo: str | None, method: str, *args: Any, **kwargs: Any) -> Any
 @main.group("sweep")
 def sweep_group() -> None:
     """Hyperparameter sweeps: create one from a YAML file, then run
-    ``cairn agent <sweep_id>`` (on as many machines as you like)."""
+    `cairn agent <sweep_id>` (on as many machines as you like)."""
 
 
 @sweep_group.command("create")
@@ -1782,8 +1782,8 @@ def _cli_value(value: Any) -> str:
               help="Seconds between checks while the sweep is paused.")
 def agent_cmd(sweep_id: str, count: int | None, repo: str | None, poll: float) -> None:
     """Run a sweep's trials: claim one, run the sweep's command with the
-    params as ``--key=value`` args (and CAIRN_SWEEP_ID / CAIRN_TRIAL_ID set, so
-    ``cairn.Run()`` joins the trial), report the outcome, repeat."""
+    params as `--key=value` args (and CAIRN_SWEEP_ID / CAIRN_TRIAL_ID set, so
+    `cairn.Run()` joins the trial), report the outcome, repeat."""
     import shlex
     import time
 
