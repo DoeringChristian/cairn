@@ -382,10 +382,9 @@ class Run:
             self._source_thread = None
 
         # Register an atexit hook so users don't have to call ``finish()``
-        # explicitly — matches Aim's ergonomics. If ``finish()`` is called
-        # explicitly (directly or via the context-manager __exit__), it
-        # unregisters the hook so a second Run in the same process doesn't
-        # double-clean.
+        # explicitly. If ``finish()`` is called (directly or via the
+        # context-manager __exit__), it unregisters the hook so a second Run in
+        # the same process doesn't double-clean.
         atexit.register(self._atexit_finish)
 
         # Heartbeat — periodically update last_heartbeat so the server can
