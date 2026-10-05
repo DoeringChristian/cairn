@@ -89,8 +89,10 @@ def _accepts_gzip(request: Request) -> bool:
 # viewers, logged HTML): a frame's navigation is checked against its
 # PARENT's ``frame-src``, so a viewer that sets ``location`` to an outside URL
 # (data in the query string) is refused before any request leaves. srcdoc
-# frames inherit this policy too, so nested frames inside them are held to it
-# as well. Only ``frame-src`` (not ``child-src``, which would also govern
+# frames (custom viewers) inherit this policy too, so nested frames inside
+# them are held to it as well. Logged HTML is NOT a srcdoc: it is its own
+# same-origin document (``/api/artifacts/{digest}/html``, allowed by
+# ``'self'``) with its own CSP, so it may embed external pages. Only ``frame-src`` (not ``child-src``, which would also govern
 # workers) and nothing else: scripts, styles, images and connections of the
 # app are unaffected.
 FRAME_CSP = "frame-src 'self' blob:"

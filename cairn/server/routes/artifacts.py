@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from urllib.parse import quote
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 
 from ._common import get_blobs, get_db
@@ -131,3 +132,99 @@ def serve_blob(
         **cache_headers,
     }
     return Response(content=data, media_type=mime_type, headers=headers)
+
+
+# ---------------------------------------------------------------------------
+# Logged HTML as its own document
+# ---------------------------------------------------------------------------
+
+#: The sandbox a logged HTML document runs in (``cairn.Html``, an ``.html``
+#: file). Like ``wandb.Html``, it may run scripts and load anything from
+#: anywhere — CDN scripts, images, external iframes — so it has no
+#: ``frame-src``/``script-src``/``img-src`` restriction. What it never gets is
+#: cairn's origin: without ``allow-same-origin`` the document has an opaque
+#: origin, so no cookies, no storage and no readable API responses of cairn.
+#: Links may open in a new tab (``allow-popups``) as an ordinary page
+#: (``allow-popups-to-escape-sandbox``: an external site works there, and
+#: cairn opened that way is just cairn, logged in as the user). Not granted:
+#: ``allow-same-origin`` (the document would BE cairn), ``allow-top-navigation``
+#: (it could replace the app), ``allow-forms`` (form posts), ``allow-modals``.
+#: Its own navigation is still held to the app shell's ``frame-src 'self'
+#: blob:`` (ui_mount.FRAME_CSP), which checks a frame's navigation against its
+#: parent. The iframe (HtmlViewer.tsx) sets the same sandbox attribute.
+#:
+#: Known limit: sandbox flags are inherited by nested frames, so an embedded
+#: YouTube player (which needs its own origin) stays black; plain external
+#: pages, scripts and images work.
+HTML_DOC_SANDBOX = "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox"
+
+#: Posts the document's height to the host (``cairn:resize``, read by the
+#: UI's card-kit/use-iframe-auto-height). Re-posts on a short fixed schedule
+#: after ``load`` because a frame's layout may settle after the first
+#: ResizeObserver callback; measures ``document.body`` (``documentElement``'s
+#: scrollHeight is clamped to the viewport, so a frame could never shrink)
+#: plus the body's margins.
+RESIZE_SHIM = (
+    "<script>(function(){function height(){var b=document.body;"
+    "if(!b)return Math.ceil(document.documentElement.getBoundingClientRect().height);"
+    "var m=0;try{var s=getComputedStyle(b);m=(parseFloat(s.marginTop)||0)+(parseFloat(s.marginBottom)||0)}catch(e){}"
+    "return Math.ceil(Math.max(b.scrollHeight,b.offsetHeight)+m)}"
+    "function post(){try{parent.postMessage({type:\"cairn:resize\",height:height(),protocolVersion:1},\"*\")}catch(e){}}"
+    "try{new ResizeObserver(post).observe(document.body||document.documentElement)}catch(e){}"
+    "try{new MutationObserver(post).observe(document.body||document.documentElement,{childList:true,subtree:true})}catch(e){}"
+    "window.addEventListener(\"load\",function(){post();[0,100,300,1000].forEach(function(d){setTimeout(post,d)})});"
+    "post();})();</script>"
+)
+#: Part of every HTML document's ETag: a new shim invalidates cached copies.
+_SHIM_TAG = hashlib.blake2b(f"{HTML_DOC_SANDBOX}\n{RESIZE_SHIM}".encode(), digest_size=4).hexdigest()
+
+_BODY_END = re.compile(r"</body>", re.IGNORECASE)
+_HTML_END = re.compile(r"</html>", re.IGNORECASE)
+
+
+def inject_resize_shim(html: str) -> str:
+    """``html`` with the resize shim before ``</body>`` (else ``</html>``, else at the end)."""
+    for pattern in (_BODY_END, _HTML_END):
+        m = pattern.search(html)
+        if m:
+            return html[: m.start()] + RESIZE_SHIM + html[m.start():]
+    return html + RESIZE_SHIM
+
+
+@router.get("/artifacts/{digest}/html")
+def get_artifact_html(
+    digest: str,
+    request: Request,
+    max_bytes: int | None = Query(default=None, ge=1),
+    if_none_match: str | None = Header(default=None, alias="if-none-match"),
+) -> Response:
+    """A stored HTML file as its own sandboxed document (the HTML card's frame).
+
+    ``max_bytes`` serves only the head of a big file. The document gets the
+    resize shim and ``HTML_DOC_SANDBOX``; it is revalidated (``no-cache``)
+    against an ETag naming the bytes, the cut and the shim.
+    """
+    db = get_db(request)
+    rows = db.read_columns("SELECT size_bytes FROM artifacts WHERE hash = ?", [digest])
+    if not rows:
+        raise HTTPException(status_code=404, detail="artifact not found")
+    total = rows[0]["size_bytes"]
+    cut = max_bytes is not None and total is not None and total > max_bytes
+    etag = f'"{digest}.{_SHIM_TAG}{f".{max_bytes}" if cut else ""}"'
+    headers = {
+        "Cache-Control": "no-cache",
+        "ETag": etag,
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": HTML_DOC_SANDBOX,
+    }
+    if if_none_match and any(t.strip().removeprefix("W/") == etag for t in if_none_match.split(",")):
+        return Response(status_code=304, headers=headers)
+    blobs = get_blobs(request)
+    if cut:
+        with blobs.open_stream(digest) as fh:
+            data = fh.read(max_bytes)
+    else:
+        data, _meta = blobs.get(digest)
+    # A cut may split a multi-byte character: drop the partial tail.
+    text = data.decode("utf-8", errors="ignore" if cut else "replace")
+    return Response(content=inject_resize_shim(text), media_type="text/html; charset=utf-8", headers=headers)
