@@ -3,11 +3,11 @@
 A share link is ``/share/<secret>``: 256 random bits, stored only as their
 sha256, with a required expiry (30 days unless given) and revocable. The
 viewer's page redeems the secret (``POST /api/share/redeem``, public and
-rate-limited), which puts it in the HttpOnly ``cairn_share`` cookie; from
-then on the browser is a share principal, admitted only to the routes in
-``auth.SHARE_ALLOWED`` and only for the report's own runs
-(``report_scope.py``). ``GET /api/share/context`` hands the viewer everything
-the report page needs up front.
+rate-limited), which puts it in the server's HttpOnly
+``cairn_share_<server id>`` cookie; from then on the browser is a share
+principal, admitted only to the routes in ``auth.SHARE_ALLOWED`` and only for
+the report's own runs (``report_scope.py``). ``GET /api/share/context``
+hands the viewer everything the report page needs up front.
 
 Creating, listing and revoking shares takes the write role. Share links need
 auth: without it every request is already admitted, so creating one is a 400.
@@ -181,14 +181,14 @@ def _client_key(request: Request) -> str:
 
 @public_router.post("/share/redeem")
 def redeem_share(body: RedeemRequest, request: Request, response: Response) -> dict[str, Any]:
-    """Trade a link's secret for the ``cairn_share`` cookie."""
+    """Trade a link's secret for this server's share cookie."""
     if not request.app.state.share_redeem_limiter.allow(_client_key(request)):
         raise HTTPException(status_code=429, detail="too many attempts; try again in a minute")
     grant = auth.verify_share(get_db(request), body.secret)
     if grant is None:
         raise HTTPException(status_code=404, detail="this share link is invalid, expired or revoked")
     response.set_cookie(
-        key=auth.SHARE_COOKIE,
+        key=auth.share_cookie_name(request.app.state.server_id),
         value=body.secret,
         httponly=True,
         samesite="lax",

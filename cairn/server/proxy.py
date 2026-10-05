@@ -16,6 +16,7 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from .auth import auth_cookie_name, share_cookie_name
 from .ui_mount import mount_viewer
 
 _HOP_BY_HOP = {
@@ -41,18 +42,44 @@ def _connection_fields(headers: list[tuple[bytes, bytes]]) -> set[bytes]:
     return nominated
 
 
-def _request_headers(request: Request, *, token: str | None) -> list[tuple[bytes, bytes]]:
+def _own_cookies(raw: list[tuple[bytes, bytes]], names: frozenset[str]) -> bytes:
+    """The browser's cookies named in ``names``, as one Cookie header value.
+
+    A browser sends a loopback page every cookie of the host — the logins of
+    other Cairn servers and proxies on other ports included. Only the
+    upstream's own cookies may leave this process.
+    """
+    kept: list[str] = []
+    for name, value in raw:
+        if name.lower() != b"cookie":
+            continue
+        for part in value.decode("latin-1").split(";"):
+            key = part.split("=", 1)[0].strip()
+            if key in names:
+                kept.append(part.strip())
+    return "; ".join(kept).encode("latin-1")
+
+
+def _request_headers(
+    request: Request, *, token: str | None, cookie_names: frozenset[str] = frozenset()
+) -> list[tuple[bytes, bytes]]:
     raw = list(request.headers.raw)
     drop = _REQUEST_DROP | _connection_fields(raw)
     headers = [
         (name, value)
         for name, value in raw
         if name.lower() not in drop
+        # Cookies are re-added below, filtered to the upstream's own.
+        and name.lower() != b"cookie"
         # A configured server-side token owns authentication. Do not let a
-        # browser override it with its own header or cairn_token cookie.
-        and not (token is not None and name.lower() in {b"authorization", b"cookie"})
+        # browser override it with its own header.
+        and not (token is not None and name.lower() == b"authorization")
     ]
-    if token is not None:
+    if token is None:
+        own = _own_cookies(raw, cookie_names)
+        if own:
+            headers.append((b"cookie", own))
+    else:
         headers.append((b"authorization", f"Bearer {token}".encode("ascii")))
     if not any(name.lower() == b"cookie" for name, _ in headers):
         # Explicitly suppress the shared HTTPX cookie jar: an already-present
@@ -121,8 +148,10 @@ def create_proxy_app(
     """Serve the bundled UI locally and stream its API calls to ``upstream``.
 
     ``token`` remains server-side and is attached as ``Authorization: Bearer``
-    to every relayed request. When absent, browser login is proxied unchanged
-    and the upstream ``cairn_token`` cookie is rebound to the local origin.
+    to every relayed request. When absent, browser login is proxied unchanged:
+    the upstream's login and share cookies (named by its ``server_id``) are
+    rebound to the local origin, and only those cookies are relayed back —
+    never another server's cookie for the same host.
     ``transport`` is an injection seam for protocol tests.
     """
     upstream = upstream_url.rstrip("/")
@@ -130,7 +159,9 @@ def create_proxy_app(
     if parsed_upstream.scheme not in {"http", "https"} or not parsed_upstream.hostname:
         raise ValueError("remote Cairn URL must be an absolute http(s) URL")
     if parsed_upstream.username is not None or parsed_upstream.password is not None:
-        raise ValueError("remote Cairn URL must not contain credentials; use CAIRN_TOKEN")
+        raise ValueError(
+            "remote Cairn URL must not contain credentials; use `cairn login` or CAIRN_TOKEN"
+        )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -142,11 +173,12 @@ def create_proxy_app(
         )
         app.state.proxy_client = client
         app.state.token_identity = {"name": None, "role": None}
+        app.state.upstream_cookie_names = None
         try:
             if token is not None:
                 # Token mode carries `Authorization: Bearer` on every relayed
                 # request, so there is nothing to log in to. One probe with the
-                # header just fails fast on a bad or revoked CAIRN_TOKEN
+                # header just fails fast on a bad or revoked token
                 # instead of 401ing the first page load.
                 try:
                     session = await client.get(
@@ -156,8 +188,8 @@ def create_proxy_app(
                     session.raise_for_status()
                     state = session.json()
                     if state.get("auth_enabled", True) and not state.get("authenticated"):
-                        raise RuntimeError("remote Cairn rejected CAIRN_TOKEN")
-                    # Who CAIRN_TOKEN is, for the local login routes below.
+                        raise RuntimeError("remote Cairn rejected the configured token")
+                    # Who the token is, for the local login routes below.
                     app.state.token_identity = {
                         "name": state.get("name"),
                         "role": state.get("role"),
@@ -185,20 +217,39 @@ def create_proxy_app(
         parsed = urlsplit(origin)
         return parsed.scheme == request.url.scheme and parsed.netloc == request.url.netloc
 
+    async def _upstream_cookie_names(app: FastAPI) -> frozenset[str]:
+        """The upstream's cookie names, learned once from its ``/api/health``.
+        Empty (relay no cookie) while the upstream cannot tell."""
+        if app.state.upstream_cookie_names is None:
+            try:
+                health = await app.state.proxy_client.get("/api/health")
+                health.raise_for_status()
+                sid = health.json().get("server_id")
+            except (httpx.HTTPError, ValueError):
+                sid = None
+            finally:
+                app.state.proxy_client.cookies.clear()
+            if not isinstance(sid, str) or not sid:
+                return frozenset()
+            app.state.upstream_cookie_names = frozenset(
+                {auth_cookie_name(sid), share_cookie_name(sid)}
+            )
+        return app.state.upstream_cookie_names
+
     if token is not None:
         @app.post("/api/auth/logout")
         async def configured_token_logout(request: Request):
             if not _same_origin(request):
                 return JSONResponse({"detail": "cross-origin proxy request rejected"}, status_code=403)
-            # CAIRN_TOKEN is process-level authority: there is no per-browser
+            # The configured token is process-level authority: there is no per-browser
             # credential to clear, and relaying the logout upstream would only
             # strand the UI in a half-authenticated state.
-            return JSONResponse({"ok": True, "auth_source": "CAIRN_TOKEN"})
+            return JSONResponse({"ok": True, "auth_source": "server_token"})
 
         @app.post("/api/auth/login")
         @app.post("/api/auth/otp")
         async def configured_token_login(request: Request):
-            # Already authenticated by CAIRN_TOKEN, so there is nothing to log
+            # Already authenticated by the configured token, so there is nothing to log
             # into. Answering locally with the identity the start-up probe
             # reported lets the UI's login page complete, and — unlike relaying
             # — mints no per-browser token on the remote for a credential the
@@ -220,11 +271,18 @@ def create_proxy_app(
         upstream_request = client.build_request(
             request.method,
             target,
-            headers=_request_headers(request, token=token),
+            headers=_request_headers(
+                request,
+                token=token,
+                cookie_names=(
+                    frozenset() if token is not None
+                    else await _upstream_cookie_names(request.app)
+                ),
+            ),
             content=None if request.method in {"GET", "HEAD"} else request.stream(),
         )
         if token is not None:
-            # CAIRN_TOKEN is the only credential the remote may see. The
+            # The configured token is the only credential the remote may see. The
             # placeholder header set above already blocked the jar merge; drop
             # it so nothing cookie-shaped leaves this process at all.
             upstream_request.headers.pop("cookie", None)

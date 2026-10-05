@@ -7,7 +7,7 @@ Design:
   exactly once, at creation; only their sha256 hex digest is ever persisted.
 * One credential, two carriers, one read: a request presents the token either
   as ``Authorization: Bearer <token>`` (SDK/CLI) or as the HttpOnly cookie
-  ``cairn_token=<token>`` (browser). The header wins when both are sent. Both
+  ``cairn_token_<server id>=<token>`` (browser). The header wins when both are sent. Both
   carriers resolve through ``verify_token``. There are no sessions.
 * **Resolving a request never writes.** Authentication is a pure read: hash,
   look up, ``compare_digest``, check ``disabled``/``expires_at``. Nothing is
@@ -22,8 +22,13 @@ Design:
   ``secrets.compare_digest`` before trusting the row — defense in depth
   against any future change to the lookup query (e.g. a collation quirk)
   and against subtle timing side-channels.
+* Browser cookies are scoped by host, not port, so every cookie name carries
+  the server's id (``server_id``: a random id kept in the repo's ``auth/``
+  dir). Servers on one host — different ports, or path prefixes behind one
+  reverse proxy — each read only their own cookies, and a browser stays logged
+  into all of them at once.
 * A report share link is a third, much narrower credential: the HttpOnly
-  ``cairn_share`` cookie holds the link's secret and resolves to a
+  ``cairn_share_<server id>`` cookie holds the link's secret and resolves to a
   ``ShareGrant``. It is default-deny — ``require_role`` lets it
   through only on the GET routes in ``SHARE_ALLOWED`` whose checker passes
   against the report's live scope (``report_scope.py``).
@@ -55,10 +60,11 @@ from .storage.db import Database
 ROLE_RANK: dict[str, int] = {"read": 0, "write": 1, "admin": 2}
 ROLES = tuple(ROLE_RANK)
 
-# The browser carries the token itself in this HttpOnly cookie.
-AUTH_COOKIE = "cairn_token"
-# A redeemed share link: the link's secret, in its own HttpOnly cookie.
-SHARE_COOKIE = "cairn_share"
+# The browser carries the token itself in the HttpOnly cookie
+# ``AUTH_COOKIE_PREFIX + server_id``; a redeemed share link keeps the link's
+# secret in ``SHARE_COOKIE_PREFIX + server_id`` (see ``server_id``).
+AUTH_COOKIE_PREFIX = "cairn_token_"
+SHARE_COOKIE_PREFIX = "cairn_share_"
 # The pseudo-role of a share principal. Deliberately not in ROLE_RANK: nothing
 # may rank it, so only the share branch of ``require_role`` ever admits it.
 SHARE_ROLE = "share"
@@ -197,7 +203,7 @@ def verify_token(db: Database, plaintext: str) -> Principal | None:
     """Resolve a presented token to its principal, or ``None``.
 
     Pure read — both carriers (``Authorization: Bearer`` and the
-    ``cairn_token`` cookie) land here and nothing is written. ``last_used_at``
+    login cookie) land here and nothing is written. ``last_used_at``
     is deliberately NOT touched: it would turn every authenticated request
     into an fsync on the shared connection.
     """
@@ -443,21 +449,63 @@ def find_authorized_key(dd: DataDir, keytype: str, keyblob: str) -> dict[str, st
 # ---------------------------------------------------------------------------
 
 
+def server_id(data_dir_root: Any) -> str:
+    """This repo's server id: 8 random hex characters, created on first use in
+    ``<data_dir>/auth/server_id`` and stable from then on.
+
+    It names this server's browser cookies (``auth_cookie_name``). Tied to the
+    repo — the token database the cookies are checked against — rather than
+    to the port, it survives restarts and port changes, and every process
+    serving the same repo (``cairn server --ui``, a concurrent ``cairn ui``)
+    shares one login. Not a secret: it is visible in the cookie names.
+    """
+    import os
+    from pathlib import Path
+
+    auth_dir = Path(data_dir_root) / "auth"
+    auth_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path = auth_dir / "server_id"
+    try:
+        # O_EXCL: two processes starting on one repo at once agree on the
+        # first writer's id.
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    except FileExistsError:
+        existing = path.read_text().strip()
+        if re.fullmatch(r"[0-9a-f]{8}", existing):
+            return existing
+        fd = os.open(path, os.O_WRONLY | os.O_TRUNC)
+    sid = secrets.token_hex(4)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(sid + "\n")
+    return sid
+
+
+def auth_cookie_name(sid: str) -> str:
+    """The login cookie of the server with id ``sid``."""
+    return AUTH_COOKIE_PREFIX + sid
+
+
+def share_cookie_name(sid: str) -> str:
+    """The redeemed-share-link cookie of the server with id ``sid``."""
+    return SHARE_COOKIE_PREFIX + sid
+
+
 def principal_from_request(request: Request) -> Principal | None:
     """Resolve the caller's identity: ``Authorization: Bearer`` (SDK/CLI),
-    then the ``cairn_token`` cookie (browser), then the ``cairn_share``
-    cookie (a redeemed share link). A bearer header is authoritative when
-    sent. Never writes."""
+    then this server's login cookie (browser), then its share cookie (a
+    redeemed share link). A bearer header is authoritative when sent. Cookies
+    of other servers on the same host are ignored. Never writes."""
     db: Database = request.app.state.db
     authz = request.headers.get("authorization")
     if authz and authz.lower().startswith("bearer "):
         return verify_token(db, authz[7:].strip())
-    cookie_token = request.cookies.get(AUTH_COOKIE)
+    sid: str = request.app.state.server_id
+    cookie_token = request.cookies.get(auth_cookie_name(sid))
     if cookie_token:
         principal = verify_token(db, cookie_token)
         if principal is not None:
             return principal
-    share_secret = request.cookies.get(SHARE_COOKIE)
+    share_secret = request.cookies.get(share_cookie_name(sid))
     if share_secret:
         grant = verify_share(db, share_secret)
         if grant is not None:

@@ -4,8 +4,10 @@ Entire ``/api/auth/*`` prefix is EXEMPT from the ``require_role`` dependency
 family (see ``app.py`` registration) — you can't require auth to log in.
 Each handler resolves the caller itself where relevant.
 
-There are no sessions: logging in means putting a *token* in the HttpOnly
-``cairn_token`` cookie, and logging out means deleting that cookie. ``/login``
+There are no sessions: logging in means putting a *token* in this server's
+HttpOnly login cookie (``cairn_token_<server id>``, see ``auth.server_id``),
+and logging out means deleting that cookie — and only that one, so a browser
+logged into several servers on the same host stays logged into the others. ``/login``
 stores the token the user pasted; ``/otp`` and ``/ssh/verify`` mint a fresh
 per-browser token first, because a plaintext is never stored and neither an OTP
 nor a public key can recover one.
@@ -30,14 +32,16 @@ from ._common import get_data_dir, get_db
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
-def _set_auth_cookie(response: Response, db: Database, token_id: str, plaintext: str) -> None:
+def _set_auth_cookie(
+    request: Request, response: Response, db: Database, token_id: str, plaintext: str
+) -> None:
     """Log a browser in by handing it the token itself.
 
     ``HttpOnly`` keeps it away from page scripts; the cookie lives exactly as
     long as the token does, so there is no idle expiry and no renewal write.
     """
     response.set_cookie(
-        key=auth.AUTH_COOKIE,
+        key=auth.auth_cookie_name(request.app.state.server_id),
         value=plaintext,
         httponly=True,
         samesite="lax",
@@ -115,7 +119,7 @@ def login(body: LoginRequest, request: Request, response: Response) -> dict[str,
     principal = auth.verify_token(db, body.token)
     if principal is None:
         raise HTTPException(status_code=401, detail="invalid token")
-    _set_auth_cookie(response, db, principal.token_id, body.token)
+    _set_auth_cookie(request, response, db, principal.token_id, body.token)
     return {"name": principal.name, "role": principal.role}
 
 
@@ -133,15 +137,16 @@ def exchange_otp(body: OtpRequest, request: Request, response: Response) -> dict
     if principal is None:
         raise HTTPException(status_code=401, detail="invalid or expired login link")
     token_id, plaintext = _mint_browser_token(db, principal)
-    _set_auth_cookie(response, db, token_id, plaintext)
+    _set_auth_cookie(request, response, db, token_id, plaintext)
     return {"name": principal.name, "role": principal.role}
 
 
 @router.post("/logout")
-def logout(response: Response) -> dict[str, Any]:
-    """Clear this browser's cookie and nothing else. The token itself stays
-    valid everywhere it is used; ``cairn token revoke`` ends all access."""
-    response.delete_cookie(auth.AUTH_COOKIE, path="/")
+def logout(request: Request, response: Response) -> dict[str, Any]:
+    """Clear this server's login cookie and nothing else — logins to other
+    servers on the same host are untouched. The token itself stays valid
+    everywhere it is used; ``cairn token revoke`` ends all access."""
+    response.delete_cookie(auth.auth_cookie_name(request.app.state.server_id), path="/")
     return {"ok": True}
 
 
@@ -244,5 +249,5 @@ def ssh_verify(body: SSHVerifyRequest, request: Request, response: Response) -> 
     token_id, plaintext = auth.create_token(db, name=name, role=role)
     # The CLI reads the plaintext from the body; a browser doing the same call
     # is logged straight in with the token it just minted.
-    _set_auth_cookie(response, db, token_id, plaintext)
+    _set_auth_cookie(request, response, db, token_id, plaintext)
     return {"token": plaintext, "name": name, "role": role}

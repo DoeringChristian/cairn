@@ -106,7 +106,8 @@ def test_full_flow(env):
     viewer = TestClient(env["app"])
     r = viewer.post("/api/share/redeem", json={"secret": share["secret"]})
     cookie = r.headers["set-cookie"]
-    assert "cairn_share=" in cookie and "HttpOnly" in cookie and "samesite=lax" in cookie.lower()
+    share_cookie = auth_core.share_cookie_name(env["app"].state.server_id)
+    assert f"{share_cookie}=" in cookie and "HttpOnly" in cookie and "samesite=lax" in cookie.lower()
     assert r.headers["referrer-policy"] == "no-referrer"
 
     # The context: report, in-scope runs without env, their metric index.
@@ -358,5 +359,5 @@ def test_token_beats_share_cookie(env):
     viewer = _viewer(env, _create(env)["secret"])
     assert viewer.get("/api/runs").status_code == 403
     _id, read = auth_core.create_token(env["app"].state.db, name="r2", role="read")
-    viewer.cookies.set(auth_core.AUTH_COOKIE, read)
+    viewer.cookies.set(auth_core.auth_cookie_name(env["app"].state.server_id), read)
     assert viewer.get("/api/runs").status_code == 200

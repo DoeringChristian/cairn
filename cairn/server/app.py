@@ -175,6 +175,8 @@ def create_app(
             _db = db  # type: ignore[assignment]
             _blobs = blobs  # type: ignore[assignment]
         app.state.data_dir = dd
+        # Names this server's browser cookies (see auth.server_id).
+        app.state.server_id = auth_core.server_id(dd.root)
         app.state.db = _db
         app.state.blobs = _blobs
 

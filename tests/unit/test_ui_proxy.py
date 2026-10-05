@@ -15,6 +15,15 @@ def _json(data: dict, status: int = 200, headers=None) -> httpx.Response:
     return httpx.Response(status, json=data, headers=headers)
 
 
+#: The mocked upstream's server id, and so its cookie names.
+SID = "abcd1234"
+TOK = f"cairn_token_{SID}"
+
+
+def _health() -> httpx.Response:
+    return _json({"status": "ok", "server_id": SID})
+
+
 def test_proxy_keeps_configured_token_server_side_and_serves_spa():
     seen: list[httpx.Request] = []
 
@@ -43,7 +52,7 @@ def test_proxy_keeps_configured_token_server_side_and_serves_spa():
         assert response.json() == {"ok": True}
         assert client.post("/api/auth/logout").json() == {
             "ok": True,
-            "auth_source": "CAIRN_TOKEN",
+            "auth_source": "server_token",
         }
         assert client.get("/api/auth/session").json()["authenticated"] is True
         rejected = client.post(
@@ -62,7 +71,7 @@ def test_proxy_keeps_configured_token_server_side_and_serves_spa():
 def test_proxy_never_forwards_cookies_in_token_mode():
     """CAIRN_TOKEN is the only credential the remote may see.
 
-    Neither a browser's own ``cairn_token`` cookie nor one the remote sets on a
+    Neither a browser's own login cookie nor one the remote sets on a
     relayed response may reach upstream: the first would let a browser swap
     identities, the second would contaminate the process-wide HTTPX jar and
     ride along on every later relayed request.
@@ -77,7 +86,7 @@ def test_proxy_never_forwards_cookies_in_token_mode():
         if request.url.path == "/api/sets-cookie":
             return _json(
                 {"ok": True},
-                headers={"set-cookie": "cairn_token=upstream-admin; Path=/; HttpOnly"},
+                headers={"set-cookie": f"{TOK}=upstream-admin; Path=/; HttpOnly"},
             )
         return _json({"ok": True})
 
@@ -87,7 +96,7 @@ def test_proxy_never_forwards_cookies_in_token_mode():
         transport=httpx.MockTransport(upstream),
     )
     with TestClient(app) as client:
-        client.cookies.set("cairn_token", "browser-admin")
+        client.cookies.set(TOK, "browser-admin")
         assert client.get("/api/sets-cookie").json() == {"ok": True}
         assert client.get("/api/protected").json() == {"ok": True}
 
@@ -153,7 +162,7 @@ def test_proxy_rejects_configured_token_the_remote_refuses():
         token="stale",
         transport=httpx.MockTransport(upstream),
     )
-    with pytest.raises(RuntimeError, match="CAIRN_TOKEN"):
+    with pytest.raises(RuntimeError, match="rejected the configured token"):
         with TestClient(app):
             pass
 
@@ -165,26 +174,28 @@ def test_proxy_rejects_upstream_url_credentials():
 
 def test_proxy_browser_login_rebinds_cookie_and_logout():
     async def upstream(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/health":
+            return _health()
         if request.url.path == "/api/auth/login":
             assert json.loads((await request.aread()).decode()) == {"token": "pasted"}
             return _json(
                 {"name": "user", "role": "write"},
                 headers={
                     "set-cookie": (
-                        "cairn_token=browser-session; Domain=fermat; "
+                        f"{TOK}=browser-session; Domain=fermat; "
                         "Path=/; Secure; HttpOnly; SameSite=lax"
                     )
                 },
             )
         if request.url.path == "/api/auth/session":
-            authenticated = "cairn_token=browser-session" in request.headers.get("cookie", "")
+            authenticated = f"{TOK}=browser-session" in request.headers.get("cookie", "")
             return _json({"authenticated": authenticated, "auth_enabled": True})
         if request.url.path == "/api/auth/logout":
             return _json(
                 {"ok": True},
                 headers={
                     "set-cookie": (
-                        "cairn_token=; Domain=fermat; Path=/; Secure; "
+                        f"{TOK}=; Domain=fermat; Path=/; Secure; "
                         "Max-Age=0; HttpOnly"
                     )
                 },
@@ -236,6 +247,8 @@ def test_proxy_preserves_range_response_and_duplicate_cookies():
     payload = b"0123456789"
 
     async def upstream(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/health":
+            return _health()
         assert request.headers["range"] == "bytes=2-5"
         assert "x-internal" not in request.headers
         return httpx.Response(
@@ -271,3 +284,52 @@ def test_proxy_preserves_range_response_and_duplicate_cookies():
     assert response.headers["accept-ranges"] == "bytes"
     assert "x-upstream-internal" not in response.headers
     assert response.headers.get_list("set-cookie") == ["a=1; Path=/", "b=2; Path=/"]
+
+
+def test_proxy_relays_only_the_upstreams_own_cookies():
+    """A browser sends a loopback page every cookie of the host: the logins of
+    other Cairn servers and proxies on other ports too. Only the upstream's
+    own login and share cookies (named by its server id) may leave."""
+    seen: list[httpx.Request] = []
+
+    async def upstream(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.path == "/api/health":
+            assert "cookie" not in request.headers
+            return _health()
+        return _json({"ok": True})
+
+    app = create_proxy_app("http://fermat:4300", transport=httpx.MockTransport(upstream))
+    with TestClient(app) as client:
+        client.cookies.set(TOK, "mine")
+        client.cookies.set(f"cairn_share_{SID}", "my-share")
+        client.cookies.set("cairn_token_ffff0000", "another-servers-login")
+        client.cookies.set("unrelated", "x")
+        assert client.get("/api/protected").json() == {"ok": True}
+        assert client.get("/api/protected").json() == {"ok": True}
+
+    # The server id is learned once.
+    assert [r.url.path for r in seen] == ["/api/health", "/api/protected", "/api/protected"]
+    for request in seen[1:]:
+        sent = dict(
+            part.strip().split("=", 1) for part in request.headers["cookie"].split(";")
+        )
+        assert sent == {TOK: "mine", f"cairn_share_{SID}": "my-share"}
+
+
+def test_proxy_relays_no_cookie_while_upstream_id_is_unknown():
+    seen: list[httpx.Request] = []
+
+    async def upstream(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.path == "/api/health":
+            return _json({"detail": "down"}, 503)
+        return _json({"ok": True})
+
+    app = create_proxy_app("http://fermat:4300", transport=httpx.MockTransport(upstream))
+    with TestClient(app) as client:
+        client.cookies.set(TOK, "mine")
+        assert client.get("/api/protected").json() == {"ok": True}
+
+    protected = [r for r in seen if r.url.path == "/api/protected"]
+    assert protected and not protected[0].headers.get("cookie")

@@ -26,13 +26,15 @@ def test_reusable_local_access_token_is_printed_on_every_start(tmp_path, capsys)
     try:
         first = auth_core.ensure_local_token(db, dd.root)
         first_login_url = _print_access_banner(
-            db, token_plain=first, ui_url="http://localhost:4301"
+            db, token_plain=first, ui_url="http://localhost:4301",
+            api_url="http://localhost:4301",
         )
         first_output = capsys.readouterr().out
 
         second = auth_core.ensure_local_token(db, dd.root)
         second_login_url = _print_access_banner(
-            db, token_plain=second, ui_url="http://localhost:4301"
+            db, token_plain=second, ui_url="http://localhost:4301",
+            api_url="http://localhost:4301",
         )
         second_output = capsys.readouterr().out
 
@@ -40,7 +42,7 @@ def test_reusable_local_access_token_is_printed_on_every_start(tmp_path, capsys)
         assert first in first_output
         assert second in second_output
         assert "Reusable local access token" in first_output
-        assert "CAIRN_TOKEN=<token above>" in first_output
+        assert "cairn login http://localhost:4301" in first_output
         assert "http://localhost:4301/login?otp=" in first_output
         assert first_login_url is not None and first_login_url in first_output
         assert second_login_url is not None and second_login_url in second_output
@@ -76,13 +78,18 @@ def noauth_env(tmp_path):
         yield app, c
 
 
+def _tok(client) -> str:
+    """The app's login cookie name (``cairn_token_<server id>``)."""
+    return auth_core.auth_cookie_name(client.app.state.server_id)
+
+
 def _bearer(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
 def _authed_get(client, path, *, bearer=None, cookie=None):
     headers = {"Authorization": f"Bearer {bearer}"} if bearer else {}
-    cookies = {"cairn_token": cookie} if cookie else {}
+    cookies = {_tok(client): cookie} if cookie else {}
     return client.get(path, headers=headers, cookies=cookies)
 
 
@@ -167,7 +174,7 @@ def test_header_wins_over_cookie(auth_env):
     r = client.get(
         "/api/auth/session",
         headers={"Authorization": f"Bearer {tokens['admin']}"},
-        cookies={"cairn_token": tokens["read"]},
+        cookies={_tok(client): tokens["read"]},
     )
     assert r.json()["role"] == "admin"
 
@@ -333,7 +340,7 @@ def test_login_sets_token_cookie_and_logout_clears_it(auth_env):
     _app, client, tokens = auth_env
     r = client.post("/api/auth/login", json={"token": tokens["write"]})
     assert r.status_code == 200 and r.json() == {"name": "write-token", "role": "write"}
-    assert r.cookies.get("cairn_token") == tokens["write"]
+    assert r.cookies.get(_tok(client)) == tokens["write"]
     assert "cairn_session" not in r.cookies
     set_cookie = r.headers["set-cookie"].lower()
     assert "httponly" in set_cookie and "samesite=lax" in set_cookie
@@ -359,7 +366,7 @@ def test_session_route_reports_principal_from_either_carrier(auth_env):
         == "read"
     )
     assert (
-        client.get("/api/auth/session", cookies={"cairn_token": tokens["read"]}).json()[
+        client.get("/api/auth/session", cookies={_tok(client): tokens["read"]}).json()[
             "authenticated"
         ]
         is True
@@ -398,13 +405,13 @@ def test_otp_exchange_sets_token_cookie(auth_env):
     tid = auth_core.get_token(db, "read-token")["id"]
     otp = auth_core.create_otp(db, tid)
     r = client.post("/api/auth/otp", json={"otp": otp})
-    assert r.status_code == 200 and r.cookies.get("cairn_token")
+    assert r.status_code == 200 and r.cookies.get(_tok(client))
     assert r.json()["role"] == "read"
     assert client.get("/api/runs").status_code == 200
 
     # The cookie holds a *fresh* per-browser token, not the OTP's backing one:
     # a plaintext is never stored, and this is the per-browser revoke handle.
-    browser = auth_core.verify_token(db, r.cookies.get("cairn_token"))
+    browser = auth_core.verify_token(db, r.cookies.get(_tok(client)))
     assert browser is not None and browser.role == "read"
     assert browser.token_id != tid
     assert browser.name.startswith("read-token-browser-")
@@ -427,7 +434,7 @@ def test_otp_browser_token_inherits_parent_expiry(auth_env):
 
     r = client.post("/api/auth/otp", json={"otp": otp})
     assert r.status_code == 200
-    browser = auth_core.verify_token(db, r.cookies.get("cairn_token"))
+    browser = auth_core.verify_token(db, r.cookies.get(_tok(client)))
     assert browser is not None and browser.token_id != parent_id
     assert auth_core.get_token(db, browser.token_id)["expires_at"] == expires_at
     age = int(r.headers["set-cookie"].split("Max-Age=")[1].split(";")[0])
@@ -441,7 +448,7 @@ def test_revoking_a_parent_cascades_to_its_browser_tokens(auth_env):
     db = app.state.db
     parent_id, parent_plain = auth_core.create_token(db, name="laptop", role="write")
     otp = auth_core.create_otp(db, parent_id)
-    browser_plain = client.post("/api/auth/otp", json={"otp": otp}).cookies.get("cairn_token")
+    browser_plain = client.post("/api/auth/otp", json={"otp": otp}).cookies.get(_tok(client))
     client.cookies.clear()
     browser = auth_core.verify_token(db, browser_plain)
     assert browser is not None
@@ -461,7 +468,7 @@ def test_revoking_a_browser_token_leaves_its_parent_working(auth_env):
     db = app.state.db
     parent_id, parent_plain = auth_core.create_token(db, name="desktop", role="write")
     otp = auth_core.create_otp(db, parent_id)
-    browser_plain = client.post("/api/auth/otp", json={"otp": otp}).cookies.get("cairn_token")
+    browser_plain = client.post("/api/auth/otp", json={"otp": otp}).cookies.get(_tok(client))
     client.cookies.clear()
     browser = auth_core.verify_token(db, browser_plain)
 
@@ -652,7 +659,7 @@ def test_ssh_verify_sets_token_cookie(auth_env, tmp_path):
     )
     assert r.status_code == 200, r.text
     # The browser is logged in by the same plaintext the CLI receives in the body.
-    assert r.cookies.get("cairn_token") == r.json()["token"]
+    assert r.cookies.get(_tok(client)) == r.json()["token"]
     assert client.get("/api/runs").status_code == 200
 
 

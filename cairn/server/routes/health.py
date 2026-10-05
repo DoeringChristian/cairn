@@ -21,13 +21,16 @@ _STARTED_AT = time.time()
 
 
 @public_router.get("/health")
-def health() -> dict[str, Any]:
+def health(request: Request) -> dict[str, Any]:
     from cairn import __version__
 
     return {
         "status": "ok",
         "version": __version__,
         "uptime_sec": time.time() - _STARTED_AT,
+        # Names this server's browser cookies (auth.server_id); the remote UI
+        # proxy forwards only those upstream. Not a secret.
+        "server_id": getattr(request.app.state, "server_id", None),
     }
 
 
