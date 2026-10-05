@@ -295,7 +295,7 @@ def compute_scope(db: Database, report: dict[str, Any]) -> ShareScope:
             if isinstance(settings, dict) and isinstance(settings.get("viewer"), str):
                 version = settings.get("viewer_version")
                 viewer_refs.add((settings["viewer"], version if isinstance(version, (int, str)) else None))
-            elif isinstance(card.get("type"), str):
+            elif card.get("type") == "custom" or card.get("type") in BUILTIN_TYPES:
                 auto_viewers.add(card["type"])
             run_ids.update(named)
             if card.get("type") == CODE_DIFF_CARD:

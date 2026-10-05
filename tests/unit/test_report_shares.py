@@ -325,8 +325,8 @@ def test_public_routes_are_exactly_the_known_ones(env):
 def test_allowlisted_route_with_a_foreign_id_is_403(env):
     viewer = _viewer(env, _create(env)["secret"])
     for path in auth_core.SHARE_ALLOWED:
-        if path == "/api/share/context":
-            continue
+        if path == "/api/share/context" or path.startswith("/api/viewers/builtin/"):
+            continue  # not scoped: the built-in viewers ship with the app
         assert viewer.get(_fill(path)).status_code == 403, path
 
 
