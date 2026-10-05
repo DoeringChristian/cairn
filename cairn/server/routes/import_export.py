@@ -17,7 +17,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from ..run_archive import restore_archive, write_archive
-from ._common import get_blobs, get_data_dir, get_db, utc_now
+from ._common import get_blobs, get_data_dir, get_db, slugify, utc_now
 
 router = APIRouter(prefix="/api", tags=["import-export"])
 
@@ -51,8 +51,17 @@ def export_runs(body: ExportRequest, request: Request) -> StreamingResponse:
 
 
 @router.post("/import")
-async def import_runs(request: Request, file: UploadFile = File(...)) -> dict[str, Any]:
-    """Restore an export under NEW run ids; references between runs follow."""
+async def import_runs(
+    request: Request, file: UploadFile = File(...), project: str | None = None,
+) -> dict[str, Any]:
+    """Restore an export under NEW run ids; references between runs follow.
+    ``project`` puts the archive's runs (with their sweeps and artifact
+    registry entries) into that project instead of their own."""
+    if project is not None:
+        try:
+            project = slugify(project)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
     content = await file.read()
     try:
         zf = zipfile.ZipFile(io.BytesIO(content))
@@ -62,6 +71,7 @@ async def import_runs(request: Request, file: UploadFile = File(...)) -> dict[st
         imported = await run_in_threadpool(  # long and blocking: off the event loop
             restore_archive,
             get_db(request), get_blobs(request), get_data_dir(request), zf, keep_ids=False,
+            project=project,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None

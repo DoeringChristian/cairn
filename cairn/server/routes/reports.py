@@ -137,6 +137,50 @@ def list_reports(
     return {"reports": result, "total": total, "limit": limit, "offset": offset}
 
 
+@router.get("/reports")
+def list_all_reports(
+    request: Request,
+    project: str | None = None,
+    limit: int = Query(default=200, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+) -> dict[str, Any]:
+    """Reports of every project (or of ``project``), newest change first.
+    Rows as the per-project list's, plus ``project_id``."""
+    db = get_db(request)
+    where, params = ("WHERE project_id = ?", [project]) if project else ("", [])
+    rows = db.read_columns(
+        f"""SELECT id, project_id, name, created_at, updated_at, payload
+            FROM reports {where} ORDER BY updated_at DESC LIMIT ? OFFSET ?""",
+        [*params, limit, offset],
+    )
+    (total,) = db.read_one(f"SELECT COUNT(*) FROM reports {where}", params) or (0,)
+    return {
+        "reports": [
+            {
+                "id": r["id"],
+                "project_id": r["project_id"],
+                "name": r["name"],
+                "updated_at": r["updated_at"],
+                "block_count": _block_count(_parse_payload(r["payload"])),
+            }
+            for r in rows
+        ],
+        "total": total, "limit": limit, "offset": offset,
+    }
+
+
+@router.get("/reports/{report_id}")
+def get_report_by_id(report_id: str, request: Request) -> dict[str, Any]:
+    """One report by id alone (ids are unique across projects): the
+    per-project route's answer, which names the project."""
+    rows = get_db(request).read_columns(
+        "SELECT project_id FROM reports WHERE id = ?", [report_id],
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail=f"report {report_id} not found")
+    return get_report(rows[0]["project_id"], report_id, request)
+
+
 @router.get("/projects/{project_id}/reports/{report_id}")
 def get_report(project_id: str, report_id: str, request: Request) -> dict[str, Any]:
     db = get_db(request)

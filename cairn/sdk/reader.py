@@ -1445,6 +1445,8 @@ class _Backend(Protocol):
     def add_alias(self, version_id: str, alias: str) -> dict[str, Any]: ...
     def remove_alias(self, version_id: str, alias: str) -> dict[str, Any]: ...
     def get_lineage(self, project_id: str, family_id: str | None) -> dict[str, Any]: ...
+    def version_lineage(self, version_id: str, *, depth: int | None,
+                        direction: str) -> dict[str, Any]: ...
 
 
 def _edit(backend: Any, method: str, *args: Any) -> Any:
@@ -1709,6 +1711,13 @@ class _LocalBackend(_RegistryWrites):
     def get_lineage(self, project_id: str, family_id: str | None = None) -> dict[str, Any]:
         return self._ops().project_lineage(self._db, project_id, family_id=family_id)
 
+    def version_lineage(
+        self, version_id: str, *, depth: int | None = None, direction: str = "both",
+    ) -> dict[str, Any]:
+        return self._ops().lineage_graph(
+            self._db, version_id=version_id, depth=depth, direction=direction,
+        )
+
     def close(self) -> None:
         self._db.close()
 
@@ -1912,6 +1921,14 @@ class _HttpBackend(_RegistryWrites):
     def get_lineage(self, project_id: str, family_id: str | None = None) -> dict[str, Any]:
         params = {"family_id": family_id} if family_id else None
         return self._request("GET", f"/api/projects/{project_id}/lineage", params=params)
+
+    def version_lineage(
+        self, version_id: str, *, depth: int | None = None, direction: str = "both",
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"direction": direction}
+        if depth is not None:
+            params["depth"] = depth
+        return self._request("GET", f"/api/artifact-versions/{version_id}/lineage", params=params)
 
     def close(self) -> None:
         self._client.close()

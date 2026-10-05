@@ -774,6 +774,25 @@ class ArtifactVersion:
                 continue
         return out
 
+    def lineage(self, *, depth: int | None = None, direction: str = "both") -> dict[str, Any]:
+        """The lineage graph around this version, as the UI's lineage view
+        draws it.
+
+        Args:
+            depth: At most this many hops from this version (None: all).
+            direction: ``"upstream"`` (where it came from: its producing run,
+                that run's inputs, their producers, ...), ``"downstream"``
+                (what came of it: its consumers, their outputs, ...) or
+                ``"both"``.
+
+        Returns:
+            ``{"nodes", "edges", "groups", "center"}``: run and
+            artifact-version nodes, ``produced`` (run -> version) and
+            ``consumed`` (version -> run, with ``role``) edges; ``center`` is
+            this version's id.
+        """
+        return self._backend.version_lineage(self.id, depth=depth, direction=direction)
+
     # ---- aliases ----
 
     def add_alias(self, alias: str) -> None:

@@ -247,8 +247,12 @@ def restore_archive(
     zf: zipfile.ZipFile,
     *,
     keep_ids: bool,
+    project: str | None = None,
 ) -> list[dict[str, str]]:
     """Restore every run in ``zf``. Returns ``[{original_id, new_id, name}]``.
+
+    ``project`` (a project id) puts everything the archive holds into that
+    project: its runs, their alerts and sweeps, and its registry families.
 
     Raises ``ValueError`` when the archive has no readable manifest.
     """
@@ -301,6 +305,8 @@ def restore_archive(
     sweep_cols = _columns(db, "sweeps")
     for s in sweeps:
         sweep = dict(s["sweep"], id=sweep_map[s["sweep"]["id"]])
+        if project is not None:
+            sweep["project_id"] = project
         _ensure_project(db, sweep["project_id"])
         _insert(db, "sweeps", sweep_cols, sweep)
 
@@ -315,7 +321,7 @@ def restore_archive(
         prefix = f"{original_id}/"
         run_data = _read_json(zf, prefix + "run.json", {})
         run = dict(run_data["run"])
-        project_id = run.get("project_id") or "imported"
+        project_id = project or run.get("project_id") or "imported"
         _ensure_project(db, project_id)
 
         run.update(
@@ -370,7 +376,7 @@ def restore_archive(
 
     _restore_registry(
         db, _read_json(zf, "artifact_registry.json", {}), keep_ids=keep_ids,
-        remap_run=lambda ref: remap("runs", run_map, ref),
+        remap_run=lambda ref: remap("runs", run_map, ref), project=project,
     )
 
     # Trials last: their run references resolve against the restored runs.
@@ -393,11 +399,15 @@ def _restore_registry(
     *,
     keep_ids: bool,
     remap_run: Callable[[str | None], str | None],
+    project: str | None = None,
 ) -> None:
-    """Merge an archive's registry rows into ``db`` (see the module docstring)."""
+    """Merge an archive's registry rows into ``db`` (see the module docstring);
+    ``project`` moves every family into that project."""
     fam_cols = _columns(db, "artifact_families")
     fam_map: dict[str, str] = {}
     for fam in registry.get("families", []):
+        if project is not None:
+            fam = dict(fam, project_id=project)
         _ensure_project(db, fam["project_id"])
         existing = db.read_columns(
             "SELECT id FROM artifact_families WHERE project_id = ? AND name = ?",
