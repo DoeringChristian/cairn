@@ -54,6 +54,8 @@ def test_shim_injected_before_body_end(client):
     assert body.index(RESIZE_SHIM) < body.lower().index("</body>")
     assert "hi é" in body and "youtube.com/embed" in body
     assert '"cairn:resize"' in RESIZE_SHIM
+    # The card header's screenshot asks the document to picture itself.
+    assert '"cairn:snapshot"' in RESIZE_SHIM and "foreignObject" in RESIZE_SHIM
 
 
 @pytest.mark.parametrize(("html", "where"), [

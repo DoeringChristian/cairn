@@ -175,6 +175,15 @@ RESIZE_SHIM = (
     "window.addEventListener(\"load\",function(){post();[0,100,300,1000].forEach(function(d){setTimeout(post,d)})});"
     "post();})();</script>"
 )
+#: Answers the host's ``cairn:snapshot`` ``{id}`` (the card header's
+#: screenshot, the UI's lib/card-capture.ts) with ``{type, id, url}``: a PNG
+#: data URL of what the document shows, rasterized here through an SVG
+#: ``<foreignObject>`` with computed styles inlined (the host cannot read a
+#: sandboxed document). Images and canvases it may read are inlined;
+#: cross-origin ones stay blank; nested frames and media are left out.
+SNAPSHOT_SHIM = "<script>" + '(function(){function inl(s,d){var c=getComputedStyle(s),t="";for(var i=0;i<c.length;i++)t+=c[i]+":"+c.getPropertyValue(c[i])+";";d.setAttribute("style",t);for(var j=0;j<s.children.length;j++)if(d.children[j])inl(s.children[j],d.children[j])}function snap(id,src){function done(u){try{src.postMessage({type:"cairn:snapshot",id:id,url:u},"*")}catch(e){}}try{var b=document.body,w=innerWidth,h=innerHeight,c=b.cloneNode(true);inl(b,c);var oi=b.querySelectorAll("img"),ci=c.querySelectorAll("img");for(var k=0;k<oi.length;k++){try{var v=document.createElement("canvas");v.width=oi[k].naturalWidth;v.height=oi[k].naturalHeight;v.getContext("2d").drawImage(oi[k],0,0);ci[k].setAttribute("src",v.toDataURL())}catch(e){ci[k].removeAttribute("src")}}var oc=b.querySelectorAll("canvas"),cc=c.querySelectorAll("canvas");for(var n=0;n<oc.length;n++){try{var im=document.createElement("img");im.setAttribute("src",oc[n].toDataURL());im.setAttribute("style",cc[n].getAttribute("style")||"");cc[n].parentNode.replaceChild(im,cc[n])}catch(e){}}var q=c.querySelectorAll("script,iframe,video,audio");for(var m=0;m<q.length;m++)q[m].parentNode.removeChild(q[m]);var wrap=document.createElement("div");wrap.setAttribute("style",(c.getAttribute("style")||"")+";background-color:"+getComputedStyle(document.documentElement).backgroundColor);while(c.firstChild)wrap.appendChild(c.firstChild);var x=new XMLSerializer().serializeToString(wrap),H=Math.max(document.documentElement.scrollHeight,h);var svg=\'<svg xmlns="http://www.w3.org/2000/svg" width="\'+w+\'" height="\'+h+\'"><foreignObject x="0" y="\'+(-scrollY)+\'" width="\'+w+\'" height="\'+H+\'">\'+x+\'</foreignObject></svg>\';var img=new Image();img.onload=function(){try{var cv=document.createElement("canvas");cv.width=w*2;cv.height=h*2;var g=cv.getContext("2d");g.scale(2,2);g.fillStyle="#fff";g.fillRect(0,0,w,h);g.drawImage(img,0,0);done(cv.toDataURL("image/png"))}catch(e){done(null)}};img.onerror=function(){done(null)};img.src="data:image/svg+xml;charset=utf-8,"+encodeURIComponent(svg)}catch(e){done(null)}}window.addEventListener("message",function(e){var d=e.data;if(d&&d.type==="cairn:snapshot"&&e.source===parent)snap(d.id,e.source)})})();' + "</script>"
+RESIZE_SHIM += SNAPSHOT_SHIM
+
 #: Part of every HTML document's ETag: a new shim invalidates cached copies.
 _SHIM_TAG = hashlib.blake2b(f"{HTML_DOC_SANDBOX}\n{RESIZE_SHIM}".encode(), digest_size=4).hexdigest()
 
