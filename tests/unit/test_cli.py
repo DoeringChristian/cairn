@@ -295,3 +295,50 @@ def test_sync_scans_and_replays_orphaned_wals(live_server, monkeypatch, tmp_path
     with httpx.Client(base_url=live_server, timeout=5.0) as c:
         pts = c.get(f"/api/runs/{rid}/sequences/loss").json()["points"]
     assert len(pts) == 1 and pts[0]["scalar_value"] == 0.5
+
+
+def test_http_errors_are_one_line_not_tracebacks(live_server, monkeypatch):
+    """A 404 from the server is `Error: <detail>`, exit 1, for every client
+    command (open/rm used to dump an httpx traceback)."""
+    monkeypatch.setenv("CAIRN_SERVER", live_server)
+    for argv in (["open", "nope", "--no-browser"], ["rm", "nope"]):
+        result = CliRunner().invoke(cli.main, argv)
+        assert result.exit_code == 1, result.output
+        assert "Traceback" not in result.output
+        assert "run nope not found (HTTP 404)" in result.output
+
+
+def test_unreachable_server_is_one_line(monkeypatch):
+    monkeypatch.setenv("CAIRN_SERVER", "http://127.0.0.1:1")
+    result = CliRunner().invoke(cli.main, ["list"])
+    assert result.exit_code == 1
+    assert result.output.startswith("Error: cannot reach http://127.0.0.1:1")
+
+
+def test_unauthenticated_request_says_how_to_log_in(tmp_path, monkeypatch):
+    from cairn.server.app import create_app
+    from tests.conftest import _find_free_port
+    import threading, time, uvicorn
+
+    app = create_app(data_dir=tmp_path / "authrepo", mount_ui=False, auth_enabled=True)
+    port = _find_free_port()
+    server = uvicorn.Server(uvicorn.Config(app=app, host="127.0.0.1", port=port, log_level="warning"))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.time() + 10
+    while not server.started and time.time() < deadline:
+        time.sleep(0.02)
+    try:
+        url = f"http://127.0.0.1:{port}"
+        monkeypatch.setenv("CAIRN_SERVER", url)
+        monkeypatch.delenv("CAIRN_TOKEN", raising=False)
+        result = CliRunner().invoke(cli.main, ["list"])
+        assert result.exit_code == 1
+        assert f"Log in with `cairn login {url}`" in result.output
+        monkeypatch.setenv("CAIRN_TOKEN", "wrong")
+        result = CliRunner().invoke(cli.main, ["list"])
+        assert result.exit_code == 1
+        assert "rejected CAIRN_TOKEN" in result.output
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)

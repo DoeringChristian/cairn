@@ -60,7 +60,63 @@ def _default_repo() -> Path:
     return Path.cwd() / ".cairn"
 
 
-@click.group()
+def _server_of(request: Any) -> str:
+    url = request.url
+    return f"{url.scheme}://{url.netloc.decode()}"
+
+
+def _http_error_text(exc: Exception) -> str | None:
+    """A one-line message for an HTTP failure, or None for other errors.
+
+    A 4xx/5xx answer shows the server's ``detail``; 401 also says how to
+    log in. A connection failure names the server it could not reach.
+    """
+    import httpx
+
+    if isinstance(exc, httpx.HTTPStatusError):
+        resp = exc.response
+        base = _server_of(exc.request)
+        try:
+            detail = resp.json().get("detail")
+        except Exception:  # noqa: BLE001
+            detail = None
+        detail = detail if isinstance(detail, str) and detail else resp.reason_phrase
+        if resp.status_code == 401:
+            if "authorization" in exc.request.headers:
+                source = "CAIRN_TOKEN" if os.environ.get("CAIRN_TOKEN") else "the saved token"
+                return (
+                    f"{base}: {detail}; it rejected {source}. Log in again with "
+                    f"`cairn login {base}`."
+                )
+            return (
+                f"{base}: {detail}. Log in with `cairn login {base}` "
+                "(or set CAIRN_TOKEN)."
+            )
+        return f"{base}: {detail} (HTTP {resp.status_code})"
+    if isinstance(exc, httpx.TransportError):
+        try:
+            where = _server_of(exc.request)
+        except RuntimeError:  # no request attached
+            where = "the server"
+        return f"cannot reach {where}: {exc}"
+    return None
+
+
+class _CairnGroup(click.Group):
+    """Turns an HTTP or connection failure in any command into a one-line
+    ``Error: ...`` and exit code 1 instead of a traceback."""
+
+    def invoke(self, ctx: click.Context) -> Any:
+        try:
+            return super().invoke(ctx)
+        except Exception as exc:
+            text = _http_error_text(exc)
+            if text is None:
+                raise
+            raise click.ClickException(text) from None
+
+
+@click.group(cls=_CairnGroup)
 @click.version_option(package_name="cairn-track")
 def main() -> None:
     """Cairn — open-source ML experiment tracker."""
@@ -597,7 +653,9 @@ def ui_cmd(
 
 
 def _client() -> Transport:
-    return Transport(_config.resolve_server())
+    # One quick retry: an interactive command against a down server should
+    # say so in a second, not back off for half a minute like a training run.
+    return Transport(_config.resolve_server(), max_retries=2, backoff_base=0.2, backoff_cap=0.5)
 
 
 @main.command("ping")
@@ -605,11 +663,7 @@ def ping_cmd() -> None:
     """Check that the configured server is reachable."""
     t = _client()
     try:
-        resp = t.get("/api/health")
-        click.echo(json.dumps(resp.json(), indent=2))
-    except Exception as exc:  # noqa: BLE001
-        click.echo(f"ERROR: {exc}", err=True)
-        sys.exit(1)
+        click.echo(json.dumps(t.get("/api/health").json(), indent=2))
     finally:
         t.close()
 
@@ -875,9 +929,8 @@ def diff_cmd(run_id: str, repo: str | None, summary: bool) -> None:
     try:
         try:
             run = reader.run(run_id)
-        except Exception as exc:  # noqa: BLE001
-            click.echo(f"run not found: {exc}", err=True)
-            sys.exit(1)
+        except KeyError:
+            raise click.ClickException(f"run {run_id} not found") from None
 
         tree = run.source_tree()
         if tree is None:
