@@ -35,6 +35,15 @@ _SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 
 SETTING_TYPES = ("slider", "number", "select", "switch", "colormap", "text")
 INPUTS = ("single", "compare")
+#: Fields a setting of each type may have beside key/type/label/default.
+_SETTING_FIELDS = {
+    "slider": {"min", "max", "step"},
+    "number": {"min", "max", "step"},
+    "select": {"options"},
+    "switch": set(),
+    "colormap": {"options"},
+    "text": {"placeholder"},
+}
 
 #: Folder entries never published: dotfiles/dot-dirs and tool caches.
 _SKIP_DIRS = frozenset({"node_modules", "__pycache__"})
@@ -135,14 +144,15 @@ def _setting(i: int, s: Any, seen: set[str]) -> dict[str, Any]:
     typ = s.get("type")
     if typ not in SETTING_TYPES:
         raise ManifestError(f"{where}: type must be one of {', '.join(SETTING_TYPES)}, got {typ!r}")
+    extra = sorted(set(s) - {"key", "type", "label", "default"} - _SETTING_FIELDS[typ])
+    if extra:
+        raise ManifestError(f"{where}: {', '.join(extra)} do(es) not apply to a {typ}")
     label = s.get("label", key)
     if not isinstance(label, str):
         raise ManifestError(f"{where}: label must be a string")
     out: dict[str, Any] = {"key": key, "type": typ, "label": label}
     for k in ("min", "max", "step"):
         if k in s and s[k] is not None:
-            if typ not in ("slider", "number"):
-                raise ManifestError(f"{where}: {k} applies to slider/number only")
             if not _num(s[k]):
                 raise ManifestError(f"{where}: {k} must be a number")
             out[k] = s[k]
