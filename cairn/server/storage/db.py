@@ -26,6 +26,7 @@ queue, so they never wait behind a heavy one.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from collections import deque
 import threading
@@ -73,6 +74,46 @@ class _FifoLock:
                 self._held = False
 
 
+@contextmanager
+def _open_lock(db_path: Path) -> Iterator[None]:
+    """Serialize opening ``db_path`` across processes.
+
+    The first open of a new database switches it to WAL mode and creates the
+    schema. The journal-mode switch needs the database to itself, and SQLite
+    answers a concurrent one with an immediate "database is locked" (the busy
+    timeout does not apply to it), so eight sweep workers starting on a fresh
+    repo used to lose some of their number. Every open therefore takes an
+    exclusive lock on a sibling file for the switch and the migrations; it is
+    held for milliseconds, and only while opening.
+    """
+    lock_path = db_path.with_name(db_path.name + ".open-lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock_path, "a+b") as fh:
+        if os.name == "nt":
+            import msvcrt
+
+            fh.seek(0)
+            while True:
+                try:
+                    msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
+                    break
+                except OSError:  # LK_LOCK gives up after ~10 s; keep waiting
+                    continue
+            try:
+                yield
+            finally:
+                fh.seek(0)
+                msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+
 class Database:
     """Owns a SQLite writer connection and a pool of read connections."""
 
@@ -100,11 +141,20 @@ class Database:
 
     @classmethod
     def open(cls, path: Path) -> "Database":
-        """Open (or create) a database, run migrations, return it."""
-        db = cls(path)
-        with db._write_lock():
-            apply_migrations(db._conn)
-            backfill_metric_stats(db._conn)
+        """Open (or create) a database, run migrations, return it.
+
+        Safe to call from many processes at once on a database that does not
+        exist yet (see ``_open_lock``).
+        """
+        with _open_lock(Path(path)):
+            db = cls(path)
+            try:
+                with db._write_lock():
+                    apply_migrations(db._conn)
+                    backfill_metric_stats(db._conn)
+            except BaseException:
+                db.close()
+                raise
         return db
 
     def close(self) -> None:
