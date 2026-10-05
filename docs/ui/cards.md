@@ -42,7 +42,7 @@ See [Media and rich types](../guides/media.md) for the logging side. When a seri
 
 On the left of a card header: the chevron (collapse), the title (double-click or click the pencil to rename) and the card's own controls (log scale, badges, the interact hand on touch screens, **Comment** in reports). Right of the bar, every card has the same actions in the same order:
 
-1. **Screenshot** (camera): the card's body as a PNG — charts, tables, text, images, 3D views, custom viewers and logged HTML alike.
+1. **Screenshot** (camera): the card's body as a PNG, exactly as displayed — its size, zoom, camera, step and scroll, at your screen's pixel density. Two things the browser does not let a page picture are left blank: the native controls of audio and video players, and pages from other sites embedded in logged HTML.
 2. **Download data**: the card's data. Line charts: a CSV of the plotted series; value, bar, scatter, parallel coordinates, importance, tables and the run comparer: a CSV of what they show; code diff: the diff as a `.patch`; media (images, video, audio, HTML, markdown, text, figures, tensors, histograms, 3D, volumes, artifacts, custom data): the logged file(s) at the shown step, zipped when several panes or gallery items show.
 3. **Add to report:** see [Reports](reports.md).
 4. **Reset view:** back to the card's default view (zoom and pan, camera); nothing happens when nothing changed.
