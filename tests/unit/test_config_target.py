@@ -72,3 +72,16 @@ def test_config_file_repo_used(tmp_path):
 def test_explicit_kwarg_overrides_default(tmp_path):
     target = config.resolve_target(server="http://explicit")
     assert target.kind == "server"
+
+
+def test_bare_host_port_server_is_http(monkeypatch, tmp_path):
+    """``CAIRN_SERVER=host:port`` (no scheme) means http, as ``cairn login`` reads it."""
+    from cairn import config
+
+    monkeypatch.setattr(config, "config_file_path", lambda: tmp_path / "none.toml")
+    config.reset_configured()
+    monkeypatch.delenv("CAIRN_REPO", raising=False)
+    monkeypatch.setenv("CAIRN_SERVER", "localhost:4342")
+    assert config.resolve_server() == "http://localhost:4342"
+    target = config.resolve_target()
+    assert (target.kind, target.location) == ("server", "http://localhost:4342")

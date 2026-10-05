@@ -142,10 +142,14 @@ def _parse_repo(value: str) -> RunTarget:
 
 
 def _as_server_url(value: str) -> str:
-    """Accept ``http(s)://...`` or ``cairn://host:port`` server spellings."""
-    v = str(value)
+    """Accept ``http(s)://...``, ``cairn://host:port`` and bare ``host:port``
+    server spellings (a server is always reached over HTTP; a bare value is
+    ``http``, as ``cairn login`` already reads it)."""
+    v = str(value).strip()
     if v.startswith(CAIRN_SCHEME):
         return "http://" + v[len(CAIRN_SCHEME):]
+    if "://" not in v:
+        return "http://" + v
     return v
 
 
