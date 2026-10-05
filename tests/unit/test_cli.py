@@ -435,7 +435,7 @@ def test_export_fetches_sequences_in_series_batches(live_server, monkeypatch, tm
     200 names, not one per sequence), with the same point fields as before."""
     import httpx
 
-    from cairn.sdk.transport import Transport
+    from cairn.cli_target import Api
 
     monkeypatch.setenv("CAIRN_SERVER", live_server)
     with httpx.Client(base_url=live_server) as c:
@@ -446,8 +446,8 @@ def test_export_fetches_sequences_in_series_batches(live_server, monkeypatch, tm
             for i in range(201) for s in range(2)
         ]}).raise_for_status()
     paths: list[str] = []
-    real_get = Transport.get
-    monkeypatch.setattr(Transport, "get", lambda self, path, params=None: paths.append(path) or real_get(self, path, params))
+    real_get = Api.get
+    monkeypatch.setattr(Api, "get", lambda self, path, params=None: paths.append(path) or real_get(self, path, params))
     out = tmp_path / "run.json"
     result = CliRunner().invoke(cli.main, ["export", rid, "--out", str(out)])
     assert result.exit_code == 0, result.output
@@ -567,10 +567,13 @@ def test_token_list_shows_expiry_and_revoked(tmp_path):
     assert "revoked" in lines["dev"] and lines["dev"].endswith("never")
 
 
-def test_unconfigured_default_server_error_says_so(monkeypatch):
+def test_unconfigured_target_error_says_so(monkeypatch, tmp_path):
+    """With nothing configured the target is ./.cairn; a missing one is a
+    one-line error naming it and how to point elsewhere."""
     monkeypatch.delenv("CAIRN_SERVER", raising=False)
     monkeypatch.delenv("CAIRN_REPO", raising=False)
-    monkeypatch.setattr(config, "DEFAULT_SERVER", "http://127.0.0.1:1")
+    monkeypatch.chdir(tmp_path)
     result = CliRunner().invoke(cli.main, ["ping"])
     assert result.exit_code == 1
-    assert "No server is configured" in result.output
+    assert f"no Cairn repo at {(tmp_path / '.cairn').resolve()}" in result.output
+    assert "CAIRN_REPO/CAIRN_SERVER" in result.output
