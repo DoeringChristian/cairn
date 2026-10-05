@@ -135,14 +135,14 @@ def test_setting_placement_help_and_icon():
         **GOOD,
         "icon": "globe",
         "settings": [
-            {"key": "lobes", "type": "number", "tab": "data", "section": "Series", "help": "How many lobes."},
+            {"key": "lobes", "type": "number", "tab": "values", "section": "Series", "help": "How many lobes."},
             {"key": "exposure", "type": "slider", "min": 0, "max": 4},
         ],
     }
     m = validate_manifest(raw, FILES)
     assert m["icon"] == "globe"
     lobes, exposure = m["settings"]
-    assert (lobes["tab"], lobes["section"], lobes["help"]) == ("data", "Series", "How many lobes.")
+    assert (lobes["tab"], lobes["section"], lobes["help"]) == ("values", "Series", "How many lobes.")
     assert (exposure["tab"], exposure["section"], exposure["help"]) == ("display", "Appearance", None)
 
 
@@ -605,7 +605,7 @@ def test_cli_init_writes_the_minimal_example(tmp_path, monkeypatch):
     # A valid, publishable viewer: two settings, one on the Display tab and one on the Data tab.
     manifest, _ = load_folder(tmp_path / "hist")
     assert manifest["name"] == "hist" and manifest["accepts"] == ["custom:demo/hist"]
-    assert [(s["key"], s["tab"]) for s in manifest["settings"]] == [("color", "display"), ("normalize", "data")]
+    assert [(s["key"], s["tab"]) for s in manifest["settings"]] == [("color", "display"), ("normalize", "values")]
     # Never over an existing viewer.
     r = CliRunner().invoke(main, ["viewer", "init", "hist"])
     assert r.exit_code != 0 and "exists already" in r.output

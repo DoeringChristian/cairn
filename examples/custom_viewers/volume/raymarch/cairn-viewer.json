@@ -15,7 +15,7 @@
     {"key": "steps", "type": "slider", "label": "Steps", "min": 32, "max": 512, "step": 16, "default": 192,
      "tab": "display", "section": "Appearance", "help": "Samples along each ray: quality vs. speed."},
     {"key": "threshold", "type": "slider", "label": "Threshold", "min": 0, "max": 1, "step": 0.01, "default": 0.05,
-     "tab": "data", "section": "Outliers", "help": "Normalized values below it are transparent."},
+     "tab": "values", "section": "Outliers", "help": "Normalized values below it are transparent."},
     {"key": "slice", "type": "select", "label": "Slice plane",
      "options": [{"value": "none", "label": "None"}, {"value": "x", "label": "X (width)"}, {"value": "y", "label": "Y (height)"}, {"value": "z", "label": "Z (depth)"}],
      "default": "none", "tab": "display", "section": "Overlays", "help": "Cut the volume and show the cross-section."},

@@ -95,7 +95,7 @@ The dashed **Add card** card at the end of every section's grid adds cards to th
     - scalars also offer **Value** (one number: the last value, reduced across runs), **Bar chart**, **Scatter** (one or two series), **Parallel coordinates** and **Parameter importance**, which read the last value of each run (`last(loss)`); edit the expression in their settings for `min(loss)` and the like;
     - cards that need more runs than the workspace binds stay listed with **needs 2+ runs**: on the run page that is scatter, parallel coordinates, importance, run comparer and code diff. Add them in a [comparison](comparisons.md).
 
-    Click a type, in the list or on its tile. The card goes at the end of the section, and the same editor turns into that card's on its **Data** tab: the card takes the left side, its title the header, and its other settings tabs join **Data** and **Type**. With one card per group, every group's card is added and the first one opens.
+    Click a type, in the list or on its tile. The card goes at the end of the section, and the same editor turns into that card's, on its **Values** tab (else its first one): the card takes the left side, its title the header, and its settings tabs join **Data** and **Type**. With one card per group, every group's card is added and the first one opens.
 
 Nothing is written before you pick the type; ++escape++ or × leaves without adding anything.
 
@@ -212,8 +212,9 @@ The gear on a card opens the card full screen, with its settings panel beside it
 
 On the run page and in comparisons, the settings panel is the **card editor**, the one editor of a card, which also [adds cards](#adding-cards):
 
-- The header, which does not scroll, has ←/→, the card's title with ✎ (click to edit; ++enter++ or leaving the field saves, ++escape++ cancels, empty names the card by its data) and one row of tabs with ×: **Data**, **Type**, then the card's other tabs (**Grouping**, **Display**, **Expressions**, as the card has them).
-- **Data**: the same data picker as when adding (without one card per group, which makes several cards), then the card's own data settings.
+- The header, which does not scroll, has ←/→, the card's title with ✎ (click to edit; ++enter++ or leaving the field saves, ++escape++ cancels, empty names the card by its data) and one row of tabs with ×: **Data**, **Type**, then the card's own tabs (**Values**, **Grouping**, **Display**, **Expressions**, as the card has them).
+- **Data**: the same data picker as when adding (without one card per group, which makes several cards), and nothing else.
+- **Values**: the card's own settings of its values (x axis, ranges, smoothing, outliers, slider key, reference, …), where the card has them.
 - **Type**: the types that can show the data; the left side shows each as a live tile, the current one marked, in place of the card. Picking one (in the list or on its tile) changes the card and goes back to **Data**.
 
 Every change applies at once and can be undone. The section is not set here: drag the card to [move](#editing-the-layout) it. A card's series are its data: the line chart has no metrics picker of its own, its series chips have no ×, and a series chip dropped on a workspace card does nothing; change the **Data** instead. A read-only user gets the card and its own settings, without **Data**, **Type** and the title edit.
@@ -221,7 +222,7 @@ Every change applies at once and can be undone. The section is not set here: dra
 - Press ++arrow-left++ / ++arrow-right++, or use the arrow buttons next to the title, to step to the previous or next card in page order. Arrow keys that belong to a focused control, such as a slider or select, don't navigate.
 - Press ++escape++ or click × to close.
 
-The settings panel has up to four tabs: **Data**, **Grouping**, **Display** and **Expressions**. Tabs a card doesn't use are hidden, and a card with only one tab shows no tab bar. [Cards](cards.md) lists each card's settings.
+The settings panel has up to four tabs: **Values**, **Grouping**, **Display** and **Expressions**. Tabs a card doesn't use are hidden, and a card with only one tab shows no tab bar. [Cards](cards.md) lists each card's settings.
 
 ## Touch devices
 

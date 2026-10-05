@@ -2,7 +2,7 @@
 
 The smallest complete custom viewer: `hist/` draws a logged 1-D array as bars
 on a 2D canvas, with one setting on the gear's **Display** tab (bar colour)
-and one on its **Data** tab (normalize). It uses only `cairn:sdk` — no
+and one on its **Values** tab (normalize). It uses only `cairn:sdk` — no
 three.js, nothing vendored. `cairn viewer init hist --kind demo/hist` writes
 exactly this folder.
 

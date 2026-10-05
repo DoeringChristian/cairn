@@ -27,7 +27,7 @@
         }
       ],
       "default": "diff",
-      "tab": "data",
+      "tab": "values",
       "section": "Compare",
       "help": "Pick the reference series in the Compare section."
     },

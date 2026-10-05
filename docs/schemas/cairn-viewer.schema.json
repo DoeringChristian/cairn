@@ -55,7 +55,7 @@
   },
   "$defs": {
     "key": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$", "not": {"enum": ["viewer", "viewer_version"]}},
-    "tab": {"description": "The card settings tab the setting sits in.", "enum": ["data", "grouping", "display", "expressions"], "default": "display"},
+    "tab": {"description": "The card settings tab the setting sits in.", "enum": ["values", "grouping", "display", "expressions"], "default": "display"},
     "section": {
       "description": "The settings section the setting sits in.",
       "enum": ["Axes", "Smoothing", "Outliers", "Series", "Appearance", "Overlays", "Layout", "Playback", "Compare"],

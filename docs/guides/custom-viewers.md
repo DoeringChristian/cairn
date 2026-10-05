@@ -46,7 +46,7 @@ run.track(cairn.Data({"values": counts.astype(np.float32)}, kind="demo/hist"), "
 
 The `hist` card is drawn by the viewer. Every save of a file in `viewers/hist` reloads it in open
 cards. The viewer is also an entry of the **Type** tab in the card's gear editor (by its title and
-icon), and its two settings sit in the gear's **Display** and **Data** tabs.
+icon), and its two settings sit in the gear's **Display** and **Values** tabs.
 
 When you are done, publish the folder, or let the training script publish it whenever it changed:
 
@@ -160,7 +160,7 @@ Each setting is a control in the card's gear. Its value reaches the viewer as
 | `label` | Shown beside the control; default the key |
 | `help` | Help text under the control |
 | `default` | See below |
-| `tab` | `data`, `grouping`, `display` *(default)* or `expressions`: the gear tab it sits in |
+| `tab` | `values`, `grouping`, `display` *(default)* or `expressions`: the gear tab it sits in |
 | `section` | `Axes`, `Smoothing`, `Outliers`, `Series`, `Appearance` *(default)*, `Overlays`, `Layout`, `Playback` or `Compare`: the section of that tab |
 
 | Type | Extra fields | Default when omitted |
@@ -338,7 +338,7 @@ version's metadata. A new version is created only when the folder's content dige
 file's path and SHA-256) differs from `latest`'s, so `run.use_viewer` at the start of every
 training run is cheap. Aliases work as for any artifact.
 
-A card uses the viewer's `latest` unless it pins a version: the gear's **Version** control (Data ›
+A card uses the viewer's `latest` unless it pins a version: the gear's **Version** control (Values ›
 Series) stores `viewer_version: N` in the card's settings.
 
 ### Live development
@@ -421,8 +421,8 @@ which also adds cards). Its **Data** tab picks the series and its **Type** tab t
 list offers **Default (<name>)** (the kind's default viewer; a built-in type shows it as
 `Volume (default: …)`) and every viewer that accepts all of the card's data (by title, with its
 icon) next to the built-in types, each as a live tile, and the card changes at once. The
-viewer's own settings sit in the tabs and sections their manifest names; Data › Series has **Version** (latest or a published `vN`), and Data › Compare has the
-reference. (In reports and share links, which have no Card section, Data › Series also has
+viewer's own settings sit in the tabs and sections their manifest names; Values › Series has **Version** (latest or a published `vN`), and Values › Compare has the
+reference. (In reports and share links, which have no Data and Type tabs, Values › Series also has
 **Viewer**.)
 
 ## Galleries, comparisons and sync
@@ -430,7 +430,7 @@ reference. (In reports and share links, which have no Card section, Data › Ser
 - **Galleries**: one frame per item, each with its caption.
 - **Several runs** (a comparison, or a card with several series): one pane per run, like any
   media card, with the card's modes and **Max runs**.
-- **Reference pairing**: gear › Data › Compare › **Reference tag** picks another series of the
+- **Reference pairing**: gear › Values › Compare › **Reference tag** picks another series of the
   same run (with **Pin reference step**). A `compare` viewer gets each pane's value and the
   reference as `inputs[0]` and `inputs[1]`, and draws the comparison itself (side by side, a
   difference, …). A `single` viewer shows the reference as a second frame beside the value.

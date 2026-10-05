@@ -36,7 +36,7 @@ _SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 SETTING_TYPES = ("slider", "number", "select", "switch", "colormap", "text")
 INPUTS = ("single", "compare")
 #: The card settings tabs a setting can sit in (the UI's settings palette).
-SETTING_TABS = ("data", "grouping", "display", "expressions")
+SETTING_TABS = ("values", "grouping", "display", "expressions")
 #: The settings sections a setting can sit in (the UI's settings palette).
 SETTING_SECTIONS = (
     "Axes", "Smoothing", "Outliers", "Series", "Appearance", "Overlays", "Layout", "Playback", "Compare",

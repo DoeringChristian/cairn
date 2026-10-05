@@ -59,7 +59,7 @@
       "max": 256,
       "step": 1,
       "default": 64,
-      "tab": "data",
+      "tab": "values",
       "section": "Series",
       "help": "Evaluate only the heaviest lobes."
     }

@@ -35,7 +35,7 @@
       "type": "switch",
       "label": "Normalize",
       "default": false,
-      "tab": "data",
+      "tab": "values",
       "section": "Series",
       "help": "Show every bar as a fraction of the total."
     }

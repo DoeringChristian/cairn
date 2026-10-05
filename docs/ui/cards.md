@@ -2,7 +2,7 @@
 
 A card shows one logged series, or a set of runs, in the [workspace](workspace.md), in [comparisons](comparisons.md) and in [reports](reports.md). This page lists every card type, what data it shows, and its settings. For how settings inherit (card → section → workspace → built-in) and the ↺ reset, see [Defaults cascade](workspace.md#defaults-cascade).
 
-Settings are grouped into up to four tabs: **Data**, **Grouping**, **Display** and **Expressions**. A card shows only the tabs it uses. Some settings appear only when a card has more than one run. Settings marked *(default)* in the tables below can also be set as section or workspace defaults.
+Settings are grouped into up to four tabs: **Values**, **Grouping**, **Display** and **Expressions**. A card shows only the tabs it uses. Some settings appear only when a card has more than one run. Settings marked *(default)* in the tables below can also be set as section or workspace defaults.
 
 ## Card types
 
@@ -68,7 +68,7 @@ A scalar's curve, one line per run.
 
 | Tab | Settings |
 |---|---|
-| Data | **Metrics** (the series drawn; reports and share links only: in a workspace the card editor's **Data** picks them). **X axis**: `step`, `wall_time`, `relative_time` or a metric *(default)*. **X range** / **Y range**, **Log x** / **Log y** *(default)*. **Smoothing**: kind and amount *(default)*. **Outliers**: low/high percentile to clip the y range to *(default)*. **Max runs**: pinned runs come first *(default)*. |
+| Values | **Metrics** (the series drawn; reports and share links only: in a workspace the card editor's **Data** picks them). **X axis**: `step`, `wall_time`, `relative_time` or a metric *(default)*. **X range** / **Y range**, **Log x** / **Log y** *(default)*. **Smoothing**: kind and amount *(default)*. **Outliers**: low/high percentile to clip the y range to *(default)*. **Max runs**: pinned runs come first *(default)*. |
 | Grouping | **Group runs by**: None, Group, Job type or a Param. Runs that share the value draw as one centre **Line** (mean, median, min or max) with a **Band** (std, min–max or sem). **Hide member runs**, **Latest run per group** *(all default)*. Shown only when the card has several runs. |
 | Display | **Line type**: linear, monotone, step, step before, step after. **Stack**: none, stacked, percent. **Show original**: the faded raw line under a smoothed one. **Full fidelity**: per-pixel min/max, recomputed on zoom. Axis titles. **Legend** on/off, position and template. **Tooltip** template and wall time *(most default)*. Each series also has its own **Colour**, **Label** and **Style**. |
 | Expressions | **X expression**: any [expression](../reference/expressions.md) over the run, evaluated on each line's steps, e.g. `step * 32`, `epoch` or `relative_time / 60`. A metric is joined as of each step. **Add derived series**: an expression such as `loss / step`, drawn for every run. |
@@ -127,7 +127,7 @@ A step change swaps the whole gallery once all its items have loaded; until then
 
 ### Image
 
-The Data tab has the slider key and **Compare**. The Display tab has layout, **Show pane labels**, **Rendering**, and **Overlays**.
+The Values tab has the slider key and **Compare**. The Display tab has layout, **Show pane labels**, **Rendering**, and **Overlays**.
 
 Zoom and pan:
 
@@ -178,7 +178,7 @@ Video panes zoom, pan and compare exactly like [image](#image) panes:
 
 - Scroll to zoom around the cursor, drag to pan, double-click to reset. Every pane of the card zooms and pans together, and keeps its view through resizes and the settings view, as image panes do; the header's home button resets them all.
 - **Rendering** *(default)*, on the Display tab: `auto` switches to nearest-neighbour once a source pixel covers more than about 1.5 screen pixels, or force `smooth` or `pixelated`.
-- **Compare → Reference tag** (Data tab) picks another video tag. Each pane then splits its video against that tag *from its own run*: the **reference on the left**, the video on the right, with a draggable divider shared by every pane *(default)*, and ++arrow-left++ / ++arrow-right++ to show all of the video or all of the reference. **Pin reference step** freezes the reference at one step. In a gallery, a reference gallery pairs item by item; a single reference video serves every item.
+- **Compare → Reference tag** (Values tab) picks another video tag. Each pane then splits its video against that tag *from its own run*: the **reference on the left**, the video on the right, with a draggable divider shared by every pane *(default)*, and ++arrow-left++ / ++arrow-right++ to show all of the video or all of the reference. **Pin reference step** freezes the reference at one step. In a gallery, a reference gallery pairs item by item; a single reference video serves every item.
 
 Playback runs on a transport bar under the panes, not on each player's own controls, so zooming never covers them. The video and its reference always play on the same clock: they play, pause and seek together and show the same frame. When the slider changes step, the new videos load out of sight and every pane of the card switches once all of them show the clock's current frame. The previous step stays on screen until then, so stepping never blanks a pane or shows a poster frame.
 
@@ -209,7 +209,7 @@ Point clouds, meshes and boxes render in an orbitable 3D view, one pane per run.
     - meshes: colouring and wireframe
     - boxes: colouring
 
-Volume cards draw the volume with `cairn.volume`, the [built-in viewer](../guides/custom-viewers.md#built-in-viewers) cairn ships: WebGL2 ray marching with a colormap transfer function, density, step count, a threshold and a slice plane (gear › Display), drag to orbit and wheel to zoom. A project can make another viewer the default for volumes (Defaults › **Default viewer per type**), and a card can pin its own (in a workspace, the viewer's entry in the gear's **Type** tab; in a report, gear › Data › Series › **Viewer**). Without WebGL2, each pane offers the step's `.npz` for download.
+Volume cards draw the volume with `cairn.volume`, the [built-in viewer](../guides/custom-viewers.md#built-in-viewers) cairn ships: WebGL2 ray marching with a colormap transfer function, density, step count, a threshold and a slice plane (gear › Display), drag to orbit and wheel to zoom. A project can make another viewer the default for volumes (Defaults › **Default viewer per type**), and a card can pin its own (in a workspace, the viewer's entry in the gear's **Type** tab; in a report, gear › Values › Series › **Viewer**). Without WebGL2, each pane offers the step's `.npz` for download.
 
 Every kind of data has one [default viewer](../guides/custom-viewers.md#default-viewers): other built-in types show in their built-in card unless the project makes a custom viewer their default.
 
@@ -217,8 +217,8 @@ Every kind of data has one [default viewer](../guides/custom-viewers.md#default-
 
 A custom viewer card draws its data with one of the project's [custom viewers](../guides/custom-viewers.md#how-cards-pick-a-viewer), in a sandboxed frame per pane, with the step slider, galleries, the panel modes and the section slider of the other media cards. The gear's **Type** tab names each viewer that accepts the card's data by its title, after **Default (<name>)**.
 
-- **Viewer**: **Default (<name>)** (the project's [default viewer](../guides/custom-viewers.md#default-viewers) of the data's kind) or a named one. In a workspace it is the card type (gear › **Type**); in reports and share links, Data › Series › **Viewer**. **Version** (Data › Series): `latest` or a published `vN`.
-- **Reference tag** and **Pin reference step** (Data › Compare): a `compare` viewer gets the value and the reference together; any other viewer shows the reference as a second frame.
+- **Viewer**: **Default (<name>)** (the project's [default viewer](../guides/custom-viewers.md#default-viewers) of the data's kind) or a named one. In a workspace it is the card type (gear › **Type**); in reports and share links, Values › Series › **Viewer**. **Version** (Values › Series): `latest` or a published `vN`.
+- **Reference tag** and **Pin reference step** (Values › Compare): a `compare` viewer gets the value and the reference together; any other viewer shows the reference as a second frame.
 - The viewer's own settings, in the tabs and sections its manifest names. They cascade from section and workspace defaults per viewer.
 - **Reset view** in the header clears a viewer's stored camera (viewers with a shared view).
 
@@ -246,7 +246,7 @@ If the query has an error, it is reported and not applied.
 
 | Tab | Settings |
 |---|---|
-| Data | **Tables**: `None` shows one pane per series. `Concat` stacks the tables into one, with a leading `source` column. `Join` joins the first two sources on a **Key column** (inner, left or outer). By default the key is the shared id-like first column, or rows are matched by position. Clashing columns get `_1` / `_2` suffixes. Each source is a series at the slider's step or at a fixed step. |
+| Values | **Tables**: `None` shows one pane per series. `Concat` stacks the tables into one, with a leading `source` column. `Join` joins the first two sources on a **Key column** (inner, left or outer). By default the key is the shared id-like first column, or rows are matched by position. Clashing columns get `_1` / `_2` suffixes. Each source is a series at the slider's step or at a fixed step. |
 | Grouping | **Group by** key columns, with aggregates: `count`, `sum`, `mean`, `min`, `max`, `first`, `nunique`. |
 | Display | **Rows per page** *(default)*. **Columns**: show or hide. **Compare**: **Diff colors** colours numeric cells red/green against the other runs, and is on by default with exactly two runs. **Invert colors**. **Text diff** *(default)*: off, words, chars or lines. It marks what changed in text cells against the first table, or `x_2` against `x_1` in a join. |
 | Expressions | **Derived columns**: a name and an expression evaluated per row, e.g. `score * 100`. |
@@ -265,7 +265,7 @@ Each column is a scalar expression, and each polyline is a run. Lines are colour
 
 | Tab | Settings |
 |---|---|
-| Data | **X**, **Y** and optional **Colour**, a colour scale; unset uses each run's colour. |
+| Values | **X**, **Y** and optional **Colour**, a colour scale; unset uses each run's colour. |
 | Display | **X range** / **Y range**, with log. **Pareto front** *(default)*, with **better is** per axis. By default the direction comes from the metric's summary rule, else min. **Dim points off the front** *(default)*. **Running lines**: min, max or mean of y as x grows *(default)*. **Regression line**, fitted in log space on log axes *(default)*. Up to 5 **reference lines**. **Point label** template and **Tooltip fields**. |
 
 Click a point to open its run.
@@ -274,7 +274,7 @@ Click a point to open its run.
 
 | Tab | Settings |
 |---|---|
-| Data | **Value**, **Log value axis**. |
+| Values | **Value**, **Log value axis**. |
 | Grouping | **Group runs by**: an expression such as `run.group` or `config.optimizer`. **Plot** *(default)*: each group's mean as a bar (± std), or a box, violin or strip of its runs. |
 | Display | **Compare runs**: grouped, stacked or overlay. **Sort by** value or name, **Descending** *(default)*. |
 
