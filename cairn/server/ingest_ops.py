@@ -204,8 +204,9 @@ def run_docs(db: Database, run_id: str) -> dict[str, Any]:
 
 #: Points written per transaction. A transaction holds the process's write
 #: lock, so this bounds how long any other write (a comparison created from
-#: the UI, another run's batch) waits behind a large batch: ~20 ms.
-INGEST_CHUNK = 5000
+#: the UI, another run's batch) waits behind a large batch: ~5 ms. (Smaller
+#: transactions measured no slower: 1000 points ~190k points/s, 5000 ~145k.)
+INGEST_CHUNK = 1000
 
 
 def insert_batch(
