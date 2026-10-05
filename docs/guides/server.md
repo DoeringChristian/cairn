@@ -57,9 +57,11 @@ waits on a slow or unreachable server: metrics go out in batches of at most
 5000 points, and a backlog beyond 100,000 points waits in the log on disk,
 not in memory.
 
-`run.finish()` sends what is left for at most `timeout` seconds (the `Run`
-argument, 10 by default), riding out a short outage. Whatever is still
-unsent then stays in the log, and a warning says so. A write the server
+`run.finish()` sends what is left, riding out a short outage, and is bounded
+by `timeout` (the `Run` argument, 10 seconds by default). It sends buffered
+metrics for up to `timeout` seconds, then the backlog and the final status
+for up to `timeout` more. Whatever is still unsent then stays in the log, and
+a warning says so. A write the server
 rejects for good (a 4xx error other than 401, 403, 408, 425 or 429) is not
 retried. It is moved to `<run_id>.dead.jsonl` next to the log, so the writes
 behind it still go through, and it is kept there.

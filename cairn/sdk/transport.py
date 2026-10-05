@@ -130,6 +130,9 @@ class Transport:
         # until a replay has caught up.
         self._behind = False
         self._replay_lock = threading.Lock()  # one replay at a time
+        # Set by finish_run: every replay (a flush thread's catch_up too)
+        # stops by then, so finish() is not left waiting behind one.
+        self._finish_deadline: float | None = None
 
     def close(self) -> None:
         if self._owns_client:
@@ -272,6 +275,8 @@ class Transport:
         """Replay pending WAL events in order, once each, until one fails or
         ``deadline`` (``time.monotonic()``) passes -> (replayed, all done)."""
         assert self._wal is not None
+        if self._finish_deadline is not None:
+            deadline = min(deadline or self._finish_deadline, self._finish_deadline)
         replayed = 0
         for entry in self._wal.pending():
             if deadline is not None and time.monotonic() > deadline:
@@ -396,6 +401,7 @@ class Transport:
         if self._wal is None:
             self.post_json(f"/api/runs/{run_id}/finish", body)
             return True
+        self._finish_deadline = deadline
         self._wal.append("finish", {"run_id": run_id, **body})
         self._behind = True
         self.drain_wal(deadline=deadline, wait_backoff=True)
@@ -623,13 +629,18 @@ class Transport:
             return 0
         replayed = 0
         while True:
-            with self._replay_lock:
+            wait = -1 if deadline is None else max(0.0, deadline - time.monotonic())
+            if not self._replay_lock.acquire(timeout=wait):
+                return replayed  # another thread's replay ran past the deadline
+            try:
                 n, done = self._replay_pending(deadline)
+            finally:
+                self._replay_lock.release()
             replayed += n
             if done or not wait_backoff or deadline is None:
                 return replayed
             resume = self._down_until
-            if resume >= deadline:
+            if resume >= deadline or time.monotonic() >= deadline:
                 return replayed
             time.sleep(max(0.0, resume - time.monotonic()))
 
