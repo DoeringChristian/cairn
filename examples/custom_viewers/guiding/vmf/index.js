@@ -23,7 +23,8 @@ renderer.setScissorTest(true); // one viewport per pane
 document.body.append(renderer.domElement);
 
 const HOME = { position: [0, 0.8, 3.4], target: [0, 0, 0] };
-const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
+const FOV = 38; // vertical field of view (degrees) of a wide pane
+const camera = new THREE.PerspectiveCamera(FOV, 1, 0.1, 100);
 camera.position.fromArray(HOME.position);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enablePan = false;
@@ -103,7 +104,7 @@ function fillPane(pane, input, settings, theme) {
   pane.lobes.material.color.set(theme.fg);
   pane.lobes.visible = settings.pointSize > 0;
   pane.wire.visible = settings.wireframe;
-  pane.wire.material.color.set(theme.fg);
+  pane.wire.material.color.set(theme.bg); // light lines on the (mostly dark) colormap
   pane.scene.background = new THREE.Color(theme.bg);
   pane.label.textContent = `${input.label} · ${lobes.length} lobes`;
 }
@@ -114,6 +115,8 @@ let count = 1; // panes shown: 1, or 2 with a reference
 function draw() {
   const w = size.width / count;
   camera.aspect = w / Math.max(1, size.height);
+  // Keep the sphere in narrow panes too: widen the vertical field of view when the pane is taller than wide.
+  camera.fov = camera.aspect >= 1 ? FOV : (2 * Math.atan(Math.tan((FOV * Math.PI) / 360) / camera.aspect) * 180) / Math.PI;
   camera.updateProjectionMatrix();
   for (let i = 0; i < count; i++) {
     renderer.setViewport(i * w, 0, w, size.height);

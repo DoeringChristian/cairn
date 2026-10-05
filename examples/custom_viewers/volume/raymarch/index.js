@@ -38,14 +38,18 @@ uniform vec3 halfSize;        // the box: [-halfSize, halfSize], physical aspect
 uniform float density, threshold;
 uniform int steps;
 uniform int sliceAxis;        // -1: none; 0/1/2: x/y/z
-uniform float slicePos;       // where the cut is, 0..1 along that axis
+uniform float slicePos;       // where the cut is, 0..1 along that axis (the half nearer the eye is removed)
 uniform vec3 background;
 
 void main() {
   vec3 dir = normalize(forward + ndc.x * tanHalfFov * aspect * right + ndc.y * tanHalfFov * up);
-  // The box, cut by the slice plane: everything below slicePos on its axis is removed.
+  // The box, cut by the slice plane: the side facing the camera is removed, so the cut faces it.
   vec3 lo = -halfSize, hi = halfSize;
-  if (sliceAxis >= 0) lo[sliceAxis] = mix(-halfSize[sliceAxis], halfSize[sliceAxis], slicePos);
+  float cut = 0.0;
+  if (sliceAxis >= 0) {
+    cut = mix(-halfSize[sliceAxis], halfSize[sliceAxis], slicePos);
+    if (eye[sliceAxis] > cut) hi[sliceAxis] = cut; else lo[sliceAxis] = cut;
+  }
   vec3 t0 = (lo - eye) / dir, t1 = (hi - eye) / dir;
   vec3 tmin = min(t0, t1), tmax = max(t0, t1);
   float tNear = max(max(max(tmin.x, tmin.y), tmin.z), 0.0);
@@ -55,7 +59,7 @@ void main() {
   vec4 acc = vec4(0.0);
   // A ray entering through the cut face shows the cross-section, opaque.
   vec3 entry = eye + dir * tNear;
-  if (sliceAxis >= 0 && abs(entry[sliceAxis] - lo[sliceAxis]) < 1e-4) {
+  if (sliceAxis >= 0 && abs(entry[sliceAxis] - cut) < 1e-4) {
     float v = texture(volume, (entry + halfSize) / (2.0 * halfSize)).r;
     outColor = vec4(texture(transfer, vec2(v, 0.5)).rgb, 1.0);
     return;
