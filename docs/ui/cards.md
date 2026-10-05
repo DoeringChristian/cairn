@@ -46,11 +46,10 @@ A card header has these actions (which ones appear depends on the card and the p
 - **House:** reset the zoomed view. It only appears while you are zoomed.
 - **Save:** download the data.
 - **Screenshot**
-- **Edit card** (pencil on a box): open the [card builder](workspace.md#card-builder) on the card to change its data, type, settings or section. On the run page and comparisons only.
 - **Duplicate card** (two squares): copy the card — data, type and settings — right after itself, then change the copy's type or settings. On the run page and comparisons only.
 - **Add to report:** see [Reports](reports.md).
 - **Comment:** in reports only.
-- **Gear:** opens the card full screen with its settings (see [Full-screen card](workspace.md#full-screen-card-and-settings)).
+- **Gear:** opens the card full screen with its settings (see [Full-screen card](workspace.md#full-screen-card-and-settings)). On the run page and comparisons it also edits the card's data, type and title.
 - **×:** remove the card.
 
 Cards that plot several series show them as chips. Click a chip's × to remove that series. You can drag a chip onto another card to add the series there. In a comparison, a card that shows one metric for every run has no chip strip: its title names the metric.
