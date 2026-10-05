@@ -72,6 +72,11 @@ Replay what a run could not send (and list rejected writes) later:
 cairn sync     # replays every pending run log to the server it was meant for
 ```
 
+A log that names no server goes to the one you pass
+(`cairn sync --server URL`). For a local repo, `cairn sync --repo PATH`
+also ingests the logs of `local_wal=True` runs (see [WAL mode](#wal-mode))
+when no server is serving the repo to do it.
+
 ## `cairn ui` and `cairn server`
 
 There are two server commands:
@@ -385,22 +390,38 @@ something writes to it can give you an inconsistent copy. Either:
 To back up or move individual runs, export them as [run
 archives](import-export.md#run-archives).
 
-## Other client commands
+## Client commands
 
-These commands talk to a server over HTTP. They use `cairn configure --server`,
-`CAIRN_SERVER`, a `cairn://` value of `CAIRN_REPO` or the config file, and fall
-back to `http://localhost:4300`:
+Every command that reads or changes data works on a local repo as well as on
+a server, and finds its target the way `cairn.Run` does: `--repo PATH|URL` or
+`--server URL`, then `CAIRN_REPO`/`CAIRN_SERVER`, then the config file, then
+`./.cairn` (see [Configuration](../reference/configuration.md#resolution-order)).
+A local repo needs no server: the command runs the server's own code over it
+in-process. When a `cairn server` or `cairn ui` is serving that repo, the
+command goes through that server instead, as a `cairn.Run` does.
+
+```bash
+cairn list                                   # ./.cairn, or whatever is configured
+cairn list --repo /shared/nfs/.cairn         # a local repo, no server needed
+cairn list --server cairn://gpubox:4300      # a server
+```
 
 | Command | Does |
 |---|---|
-| `cairn ping` | Prints the server's `/api/health` response |
-| `cairn list` | Lists runs, newest first (see below) |
-| `cairn open RUN_ID [--no-browser]` | Prints the run's UI URL and opens it; against the ingest port of `cairn server --ui` the URL uses the UI port |
-| `cairn rm RUN_ID` | Deletes a run and its data |
-| `cairn configure [--server URL]` | Saves the server URL to the config file |
+| `cairn ping` | A server: its `/api/health` response. A local repo: its path, layout and schema versions, its project, run, series, point, artifact and report counts, its size, WAL logs not ingested yet, and the server serving it |
+| `cairn list` | Lists runs, newest first (see below); also reads a `.zip` run archive (`--repo runs.zip`) |
+| `cairn open RUN_ID [--no-browser]` | Prints the run's UI URL and opens it. Against the ingest port of `cairn server --ui` the URL uses the UI port. For a local repo it is the URL of the `cairn ui` serving it; with none running, it prints the URL the run will have and the `cairn ui --repo …` command to start one |
+| `cairn rm RUN_ID...` | Deletes runs and their data |
+| `cairn archive RUN_ID...`, `cairn unarchive RUN_ID...` | Archives runs (they leave the default run lists but keep their data), or brings them back |
+| `cairn export-runs RUN_ID... -o runs.zip`, `cairn import-runs runs.zip` | Moves whole runs between repos as [run archives](import-export.md#run-archives) |
+| `cairn export` | Writes metrics to JSON, CSV or Parquet ([Import and export](import-export.md#exporting-metrics)) |
+| `cairn artifact ...` | The [artifact registry](artifacts.md#from-the-command-line) |
+| `cairn report ...` | [Reports](../ui/reports.md#from-the-command-line) and their share links |
+| `cairn sync` | Replays run logs (see [above](#server-mode-and-connection-loss)) |
+| `cairn configure --server URL` or `--repo PATH` | Saves the default target to the config file (setting one removes the other) |
 
-A failed request prints one line, `Error: <server>: <reason>`, and exits 1; a
-401 says which `cairn login` to run.
+A failed request prints one line, `Error: <server or repo>: <reason>`, and
+exits 1; a 401 says which `cairn login` to run.
 
 ### Listing runs
 

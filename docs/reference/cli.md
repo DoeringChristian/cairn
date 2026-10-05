@@ -10,22 +10,28 @@ The `cairn` command is installed with `cairn-track`. Run `cairn --help`, or
 | `cairn server` | Run the tracking server (optionally with the UI) | [Server](../guides/server.md) |
 | `cairn token create\|list\|revoke` | Manage auth tokens on the server host | [Server](../guides/server.md#tokens-and-roles) |
 | `cairn login [URL]`, `cairn logout [URL]` | Save or forget a server's token (`--ssh`: get one with an SSH key; `--list`: show saved logins) | [Server](../guides/server.md#logging-in-from-the-sdk-and-cli) |
-| `cairn configure` | Save the server URL to the config file | [Configuration](configuration.md) |
+| `cairn configure` | Save the default server or repo to the config file | [Configuration](configuration.md) |
 | `cairn list` | List runs with filters, sorting, config and metric columns, as a table, JSON or CSV | [Server](../guides/server.md#listing-runs) |
-| `cairn ping`, `open`, `rm` | Check, open or delete on a running server | [Server](../guides/server.md#other-client-commands) |
-| `cairn sync` | Replay run logs that never reached their server | [Server](../guides/server.md#server-mode-and-connection-loss) |
+| `cairn ping`, `open` | Check a server or a local repo; open a run in the viewer | [Server](../guides/server.md#client-commands) |
+| `cairn rm`, `archive`, `unarchive` | Delete, archive or unarchive runs | [Server](../guides/server.md#client-commands) |
+| `cairn sync` | Replay run logs that never reached their server, or a local repo's WAL logs | [Server](../guides/server.md#server-mode-and-connection-loss) |
 | `cairn export` | Write a run's or a project's metrics to JSON, CSV or Parquet | [Import and export](../guides/import-export.md#exporting-metrics) |
+| `cairn export-runs`, `import-runs` | Move whole runs between repos as run archives (ZIP) | [Import and export](../guides/import-export.md#run-archives) |
 | `cairn import-tb` | Import TensorBoard event files | [Integrations](../guides/integrations.md#importing-tensorboard-logs) |
+| `cairn artifact ls\|versions\|get\|alias\|tag\|rm\|lineage` | Browse, download and curate the artifact registry | [Artifacts](../guides/artifacts.md#from-the-command-line) |
+| `cairn report ls\|show\|export\|rm\|share\|shares\|unshare` | Read, export, delete and share reports | [Reports](../ui/reports.md#from-the-command-line) |
 | `cairn diff` | Diff the working directory against a run's source snapshot | [Run lifecycle](../guides/runs.md) |
 | `cairn sweep create\|ls\|pause\|resume\|cancel` | Manage sweeps | [Sweeps](../guides/sweeps.md) |
 | `cairn agent` | Run a sweep's trials | [Sweeps](../guides/sweeps.md#quick-start-from-the-command-line) |
 | `cairn viewer init\|add\|dev\|publish\|ls` | Start a custom viewer, vendor libraries into it, develop it live, publish and list viewers | [Custom viewers](../guides/custom-viewers.md#commands) |
 
-Commands that take `--repo` accept a local `.cairn/` path or a
-`cairn://host:port` URL. The client commands `ping`, `list`, `open`, `rm`,
-`export` and `sync` always talk to a server; see
-[Configuration](configuration.md#which-server-the-cli-talks-to) for how they
-find it.
+Every command that reads or changes data takes `--repo` (a local `.cairn/`
+path, or a `cairn://host:port` / `http(s)://` URL) and `--server URL`, and
+works on a local repo without a server as well as on a server. Without
+either option the target is `CAIRN_REPO` or `CAIRN_SERVER`, then the config
+file, then `./.cairn`; see
+[Configuration](configuration.md#resolution-order). Listing commands take
+`--format table|json`. A failure prints one line, `Error: ...`, and exits 1.
 
 ## Commands
 

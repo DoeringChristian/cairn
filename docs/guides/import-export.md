@@ -4,7 +4,7 @@ cairn moves data in three ways:
 
 | You want to… | Use |
 |---|---|
-| Move runs, with everything they logged, to another cairn repo | A [run archive](#run-archives) (ZIP) |
+| Move runs, with everything they logged, to another cairn repo | A [run archive](#run-archives) (ZIP): `cairn export-runs` / `cairn import-runs` |
 | Analyse metrics in pandas, a spreadsheet, or another tool | [`cairn export`](#exporting-metrics) or `history()` |
 | Bring in TensorBoard logs | [`cairn import-tb`](integrations.md#importing-tensorboard-logs) |
 
@@ -24,6 +24,21 @@ metric rules and alerts. It also carries the runs' sweeps and the
 - **Import:** click **Import** on the projects page or in a runs table, and
   pick a `.zip`. The dialog lists the imported runs.
 
+### From the command line
+
+```bash
+cairn export-runs 40b0f87d6972... a2d74315818b... -o runs.zip
+cairn import-runs runs.zip                        # into the configured repo or server
+cairn import-runs runs.zip --repo ~/other/.cairn --project baselines
+```
+
+Both work on a local repo without a server, and on a server (`--server URL`;
+see [Client commands](server.md#client-commands)). `export-runs` writes the
+archive the UI's **Export** downloads. `import-runs` prints each run's new id,
+original id and name (`--format json` for a list). `--project P` puts the
+archive's runs, their sweeps and their artifact registry entries into project
+`P` instead of their own.
+
 ### Over the HTTP API
 
 ```bash
@@ -41,7 +56,8 @@ curl -X POST http://localhost:4300/api/import \
 ```
 
 Both endpoints need the `write` role when authentication is on (see
-[tokens and roles](server.md#tokens-and-roles)).
+[tokens and roles](server.md#tokens-and-roles)). `POST /api/import?project=P`
+imports into project `P`, as `--project` does.
 
 ### What an import does
 
@@ -87,18 +103,17 @@ artifacts/<hash>.meta.json     artifact metadata
 
 ### `cairn export`
 
-`cairn export` writes one run, or a whole project, to a local file. It talks to
-a **server** over HTTP: the one set by `cairn configure --server`,
-`CAIRN_SERVER`, a `cairn://` value of `CAIRN_REPO`, or the config file, falling
-back to `http://localhost:4300`. For a local repo without a server, use the
-[Python API](#from-python) instead.
+`cairn export` writes one run, or a whole project, to a local file. It reads a
+local repo or a server, found like every client command (`--repo`,
+`--server`, `CAIRN_REPO`/`CAIRN_SERVER`, the config file, `./.cairn`; see
+[Client commands](server.md#client-commands)).
 
 **One run:**
 
 ```bash
-cairn export 40b0f87d6972... --out run.json                  # the run and every point
-cairn export 40b0f87d6972... --format csv --out run.csv      # scalar points only
-cairn export 40b0f87d6972... --format parquet --out run.parquet
+cairn export 40b0f87d6972... -o run.json                  # the run and every point
+cairn export 40b0f87d6972... --format csv -o run.csv      # scalar points only
+cairn export 40b0f87d6972... --format parquet -o run.parquet
 ```
 
 | Format | Contents |
@@ -109,9 +124,9 @@ cairn export 40b0f87d6972... --format parquet --out run.parquet
 **A whole project:**
 
 ```bash
-cairn export --project mnist --format csv --out mnist.csv
+cairn export --project mnist --format csv -o mnist.csv
 cairn export --project mnist --filter status=completed --filter lr__gt=0.001 \
-             --format parquet --out mnist.parquet
+             --format parquet -o mnist.parquet
 ```
 
 This writes one table of every scalar point of every matching run:

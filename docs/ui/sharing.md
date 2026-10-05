@@ -39,6 +39,10 @@ The **Links** list in the same dialog shows each of the report's links:
 - who created it and when,
 - when it expires or expired.
 
+From the command line: `cairn report share ID [--expires 7d]` prints a new
+link, `cairn report shares ID` lists them and `cairn report unshare ID SHARE`
+revokes one (see [Reports](reports.md#from-the-command-line)).
+
 ### Revoke a link
 
 Click **Revoke** next to an active link. Every browser that opened the link loses access immediately. An expired link stops working in the same way. Neither can be reactivated: create a new link instead.

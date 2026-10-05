@@ -131,6 +131,10 @@ Tick a row's checkbox to select it; ++shift++-click another checkbox to select t
 | **Archive** / **Unarchive** | Archive or restore the selected runs. Archiving hides a run without changing its status; an archived run shows an `archived` mark beside it. |
 | **Delete** | Delete the selected runs permanently (asks first). |
 
+Export, Archive / Unarchive and Delete have command-line counterparts:
+`cairn export-runs`, `cairn archive` / `cairn unarchive` and `cairn rm` (see
+[Client commands](../guides/server.md#client-commands)).
+
 ### Tags on a row
 
 The Tags column lists each run's tags. Click **+** to add a tag, with suggestions from the tags already in the project (++enter++ adds, ++escape++ cancels). Click a tag's × to remove it.

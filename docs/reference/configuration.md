@@ -34,7 +34,7 @@ A token cannot be set through `configure`; use `CAIRN_TOKEN` or `cairn login`.
 | Variable | Used by | Meaning |
 |---|---|---|
 | `CAIRN_REPO` | SDK, `Reader`, CLI | Where runs are written and read: a path or a server URL |
-| `CAIRN_SERVER` | SDK, `Reader`, CLI | A server URL. For the SDK, used when `CAIRN_REPO` is not set. For the client commands (`list`, `export`, …) it takes precedence over `CAIRN_REPO`. |
+| `CAIRN_SERVER` | SDK, `Reader`, CLI | A server URL, used when `CAIRN_REPO` is not set |
 | `CAIRN_TOKEN` | SDK, `Reader`, CLI, `cairn ui` proxy | The bearer token sent to every server; overrides the per-server tokens `cairn login` saves |
 | `CAIRN_MODE` | SDK | `enabled` or `disabled` |
 | `CAIRN_ARTIFACT_DIR` | SDK, `Reader` | Where `ArtifactVersion.download()` and `.file()` write by default: `<dir>/<name>-v<N>/`. Default: `./artifacts`. |
@@ -73,8 +73,9 @@ mode = "enabled"
 
 Commands that write it:
 
-- `cairn configure [--server URL]` sets `server` (it prompts when you leave out
-  `--server`).
+- `cairn configure --server URL` sets `server`, and `cairn configure --repo
+  PATH` sets `repo`; each removes the other key (it prompts for a server when
+  you give neither).
 - `cairn login [URL]` (with `--token`, `--ssh` or a prompt) adds the server's
   entry to `[tokens]`, and sets `server` if neither `server` nor `repo` is set
   yet. `cairn logout [URL]` removes the entry.
@@ -107,11 +108,13 @@ deployment](../guides/server.md#where-runs-are-written).
 
 ### Where runs are written and read
 
-`cairn.Run`, `cairn.Reader`, `cairn.sweep`, `cairn.log_artifact`,
-`cairn import-tb`, `cairn sweep …` and `cairn agent` pick their target in this
-order. The first one that is set wins:
+`cairn.Run`, `cairn.Reader`, `cairn.sweep`, `cairn.log_artifact` and every
+CLI command that reads or changes data (`list`, `ping`, `open`, `rm`,
+`archive`, `export`, `export-runs`, `import-runs`, `sync`, `diff`,
+`import-tb`, `artifact …`, `report …`, `sweep …`, `agent`) pick their target
+in this order. The first one that is set wins:
 
-1. the explicit `repo=` argument (or `--repo`)
+1. the explicit `repo=` argument (or `--repo`, or `--server`)
 2. `cairn.configure(repo=...)`
 3. `cairn.configure(server=...)`
 4. `CAIRN_REPO`
@@ -120,23 +123,12 @@ order. The first one that is set wins:
 7. `server` in the config file
 8. `./.cairn` in the current directory
 
-`cairn diff` without `--repo` uses `./.cairn` if that directory exists, and
-the order above otherwise.
+A local target must be an existing repo for the CLI (`cairn init` creates
+one); `cairn.Run` creates it on first use.
 
-### Which server the CLI talks to
-
-`cairn ping`, `list`, `open`, `rm`, `export` and `sync` (and `cairn login`
-without a URL) only talk to servers. They pick one in this order:
-
-1. the command's URL argument or `--server`, where it has one
-2. `CAIRN_SERVER`
-3. `CAIRN_REPO`, if it is a server URL
-4. `server` in the config file
-5. `repo` in the config file, if it is a server URL
-6. `http://localhost:4300`
-
-A local path in `CAIRN_REPO` is skipped here. These commands cannot read a
-local repo without a server running on it.
+`cairn login` and `cairn logout` without a URL use the configured server:
+`CAIRN_SERVER`, a server URL in `CAIRN_REPO`, `server` (or a server URL in
+`repo`) in the config file, else `http://localhost:4300`.
 
 ### The token
 

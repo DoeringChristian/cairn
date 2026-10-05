@@ -38,6 +38,17 @@ Keyword arguments:
 `Reader` is a context manager. Use `with cairn.Reader(...) as reader:`, or call
 `reader.close()` when you are done.
 
+The CLI reads the same targets in the same order, with or without a server:
+
+```bash
+cairn list --project mnist -c metrics.val.loss      # the runs, as filter()/sort() select them
+cairn list --repo runs.zip                          # a run archive
+cairn export --project mnist --format csv -o mnist.csv   # history(), as a file
+cairn artifact versions mnist/ckpt                  # artifact_versions()
+```
+
+See [Client commands](server.md#client-commands).
+
 ## Projects and runs
 
 ```python
@@ -284,6 +295,7 @@ reader.artifact("denoise/base-ckpt:v3")                  # the project in the re
 reader.artifact_versions("base-ckpt", project="denoise") # oldest first
 reader.artifact_families("denoise", type="model")        # [ArtifactFamily]
 reader.lineage("denoise")                                # the graph
+reader.artifact("denoise/base-ckpt:v3").lineage(depth=2)  # the graph around one version
 ```
 
 `reader.artifact` records no consumption (that is `cairn.Run.use_artifact`).

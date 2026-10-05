@@ -211,6 +211,25 @@ reader.runs("sweep").where("last(val.acc) > 0.9 and config.opt == 'adam'").list(
 `RunQuery.history()` returns every scalar point as a pandas DataFrame, and
 `run.edit()` changes a finished run's config, summary, tags, name or notes.
 
+## Command line
+
+Every command that reads or changes data works on a local repo without a
+server and on a server alike, and finds its target like `cairn.Run`:
+`--repo PATH|URL` or `--server URL`, else `CAIRN_REPO`/`CAIRN_SERVER`, the
+config file, `./.cairn`.
+
+```bash
+cairn list --project sweep -c config.lr -c metrics.loss   # runs, as the UI's table selects them
+cairn ping                                # a server's health, or a local repo's state
+cairn open RUN_ID                         # the run's page in the viewer
+cairn archive RUN_ID ...                  # rm, archive, unarchive
+cairn export RUN_ID -o run.csv --format csv
+cairn export-runs RUN_ID ... -o runs.zip  # whole runs; cairn import-runs runs.zip
+cairn artifact versions sweep/model       # ls, versions, get, alias, tag, rm, lineage
+cairn report ls                           # ls, show, export, rm, share, shares, unshare
+cairn sync                                # replay run logs that never arrived
+```
+
 ## More
 
 - **Sweeps** — `cairn sweep create sweep.yaml` + `cairn agent <id>` on any number
@@ -221,7 +240,8 @@ reader.runs("sweep").where("last(val.acc) > 0.9 and config.opt == 'adam'").list(
   version (`.get()`, `.download()`).
 - **Integrations** — `cairn.integrations.{huggingface,lightning,keras,xgboost}`.
 - **Import/export** — `cairn import-tb LOGDIR`, `cairn export RUN_ID` or
-  `cairn export --project P --format csv|parquet`.
+  `cairn export --project P --format csv|parquet`, run archives with
+  `cairn export-runs` / `cairn import-runs`.
 - **Run lifecycle** — `resume=`, `fork_from=(id, step)`, stop from the UI
   (`run.should_stop`), `run.alert(...)` with `cairn server --alert-webhook`.
 

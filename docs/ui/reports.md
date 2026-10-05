@@ -185,6 +185,33 @@ Export LaTeX
     | `a.`, `i.`, … lists | `enumerate` with matching labels |
     | `[@key; @other]` | `\cite{key,other}` (add your own bibliography) |
 
+From the command line, `cairn report show ID` prints the markdown source and
+`cairn report export ID -o report.md` writes it to a file. LaTeX and PDF
+capture the rendered cards, which takes a browser, so they are only in the UI.
+
+## From the command line
+
+`cairn report` works on a server or on a local repo without one (see
+[Client commands](../guides/server.md#client-commands)). A report is named by
+its id alone (the last part of its URL, `/p/<project>/reports/<id>`).
+
+```bash
+cairn report ls                         # every project's reports; --project P for one
+cairn report show 3f2a9c1d0b7e6a55      # the markdown source, to stdout
+cairn report export 3f2a9c1d0b7e6a55 -o findings.md
+cairn report rm 3f2a9c1d0b7e6a55        # with its comments, images and share links
+
+cairn report share 3f2a9c1d0b7e6a55 --expires 7d   # prints the link, once
+cairn report shares 3f2a9c1d0b7e6a55               # the links' ids and state
+cairn report unshare 3f2a9c1d0b7e6a55 9c4e1f20a3b85d77
+```
+
+`ls` and `shares` take `--format table|json`. Share links need a server with
+authentication on and the write role (see [Sharing](sharing.md)): against a
+`--no-auth` server or a local repo the share commands stop with an error that
+says so. For a local repo, serve it with `cairn ui --repo PATH` (auth is on by
+default) and run them again; they then go through that server.
+
 ## Templates
 
 **Save as template** stores the report's cards (type, metrics, settings) as a report template. On the Reports page, pick a template, choose runs, and click **New from template**. This creates a new report whose cards are matched to those runs. A banner reports how many of the template's cards could be restored. If none match, no report is created.

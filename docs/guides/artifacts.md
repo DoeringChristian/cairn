@@ -226,6 +226,7 @@ r.artifact_versions("base-ckpt", project="denoise")    # v1 .. vN
 fam = r.artifact_families("denoise")[0]                # cairn.ArtifactFamily
 fam.aliases                                            # {"best": 37, "latest": 50}
 r.lineage("denoise")                                   # {"nodes": [...], "edges": [...], "groups": [...]}
+v.lineage(direction="upstream", depth=2)               # the graph around one version
 ```
 
 The graph's nodes are runs (`kind: "run"`, with name, status, tags, group and job type) and
@@ -235,3 +236,45 @@ used the same inputs, and versions of one name from the same producer, are sibli
 `group_key`, which is how the UI folds 50 runs that used one dataset into one expandable node.
 
 See [Reading data back](reading.md) for the reader.
+
+## From the command line
+
+`cairn artifact` reads and curates the registry of a server or of a local
+repo without one (see [Client commands](server.md#client-commands)). A ref is
+`[PROJECT/]NAME[:ALIAS|:vN]`, as in `Reader.artifact`; a bare name means
+`NAME:latest`, and `--project P` stands in for the `PROJECT/` part.
+
+```bash
+cairn artifact ls                               # every project; --project P, --type model
+cairn artifact versions denoise/base-ckpt       # v1 .. vN with aliases, tags, size, producer
+cairn artifact get denoise/base-ckpt:best       # downloads to ./artifacts/base-ckpt-v37/
+cairn artifact get denoise/base-ckpt:v3 -o ckpt/
+
+cairn artifact alias add denoise/base-ckpt:v37 prod    # moves "prod" here
+cairn artifact alias rm  denoise/base-ckpt:v37 prod
+cairn artifact tag add   denoise/base-ckpt:v37 reviewed
+cairn artifact tag rm    denoise/base-ckpt:v37 reviewed
+
+cairn artifact rm denoise/base-ckpt:v3          # refused while an alias names it; --force
+cairn artifact rm denoise/base-ckpt --force     # the whole artifact, every version
+
+cairn artifact lineage denoise/base-ckpt:v37    # where it came from, what came of it
+```
+
+`ls` and `versions` take `--format table|json`. `get` writes where
+`ArtifactVersion.download()` does (`-o DIR`, else
+`$CAIRN_ARTIFACT_DIR/NAME-vN`, else `./artifacts/NAME-vN`) and prints the
+directory. `lineage` prints two trees, upstream and downstream from the
+version; `--direction upstream|downstream` keeps one, `--depth N` stops after
+N hops, and `--format json` prints the graph (`ArtifactVersion.lineage()`):
+
+```text
+denoise/base-ckpt:v37 [model] (latest, best)
+upstream (where it came from):
+  └── produced by run residual (a1b2c3d4, completed)
+      └── used denoise/train-set:v2 [dataset] (latest) as dataset
+          └── produced by run prep (9f8e7d6c, completed)
+downstream (what came of it):
+  └── used by run eval-sweep (5e6f7a8b, completed) as input
+```
+
