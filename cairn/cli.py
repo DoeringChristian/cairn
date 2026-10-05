@@ -34,7 +34,9 @@ import click
 
 from . import config as _config
 from . import viewer as _viewer
-from .cli_target import Api, explicit, open_api, reader_location, require_repo, resolve, target_options
+from .cli_target import (
+    Api, explicit, is_repo, open_api, reader_location, require_repo, resolve, target_options,
+)
 from .sdk.transport import Transport, default_spill_dir
 
 from .server import auth as _auth
@@ -1451,7 +1453,7 @@ def sync_cmd(repo: str | None, server: str | None) -> None:
 
     # A local target without a repo only matters when it was named: with
     # nothing configured, sync still replays the server-mode logs.
-    if target.is_local and (explicit(repo, server) or Path(target.location, "cairn.db").is_file()):
+    if target.is_local and (explicit(repo, server) or is_repo(target.location)):
         root = require_repo(target.location)
         served = serving_url(root)
         if served is not None:
@@ -2071,3 +2073,10 @@ def agent_cmd(
 from .cli_viewer import viewer_group as _viewer_group  # noqa: E402
 
 main.add_command(_viewer_group)
+
+# `cairn artifact ...` and `cairn report ...` live in their own modules.
+from .cli_artifact import artifact_group as _artifact_group  # noqa: E402
+from .cli_report import report_group as _report_group  # noqa: E402
+
+main.add_command(_artifact_group)
+main.add_command(_report_group)

@@ -56,10 +56,17 @@ def resolve(repo: str | None, server: str | None) -> _config.RunTarget:
     return _config.resolve_target(repo=explicit(repo, server))
 
 
+def is_repo(path: str | Path) -> bool:
+    """Whether a Cairn repo exists at ``path``: its database, or (a repo only
+    WAL-mode runs have written so far) its layout marker."""
+    root = Path(path).expanduser()
+    return (root / "cairn.db").is_file() or (root / "version").is_file()
+
+
 def require_repo(path: str | Path) -> Path:
     """An existing local repo, or a one-line error saying how to name one."""
     root = Path(path).expanduser().resolve()
-    if not (root / "cairn.db").is_file():
+    if not is_repo(root):
         raise click.ClickException(
             f"no Cairn repo at {root}; create one with `cairn init`, or name "
             "yours with --repo/--server, CAIRN_REPO/CAIRN_SERVER or the config file"
@@ -146,11 +153,17 @@ class Api:
         from .server.storage.datadir import DataDir
         from .server.storage.db import Database
 
+        from .server.wal_ingest import ingest_all
+
         dd = DataDir(root)
         db = Database.open(dd.db_path)
         self._resources.append(db)
+        blobs = BlobStore(dd.artifacts_dir)
+        # What a server's background loop would have done by now (and what
+        # cairn.Reader does before reading): ingest WAL-mode runs' logs.
+        ingest_all(dd, db, blobs)
         app = create_app(
-            db=db, blobs=BlobStore(dd.artifacts_dir), data_dir_obj=dd,
+            db=db, blobs=blobs, data_dir_obj=dd,
             mount_ui=False, auth_enabled=False, background_tasks=False,
         )
         client = TestClient(app, base_url="http://cairn-local-repo")
