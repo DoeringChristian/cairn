@@ -1,27 +1,27 @@
-"""A density field that a (pretend) reconstruction refines over training, for
-the ``raymarch/`` custom viewer.
+"""A density field that a (pretend) reconstruction refines over training,
+drawn by cairn's built-in volume viewer.
 
 Every step logs the current reconstruction as a built-in ``cairn.Volume``
 (series ``density``) next to the ground truth (``density_target``). Nothing
-here is custom data. Volumes already show in cairn's built-in ray-marcher
-(``cairn.volume``, the same code as ``raymarch/``); publishing this copy with
-``default_for=["volume"]`` makes it the project's default viewer for volumes
-instead, the way you would ship your own renderer for a built-in type. Two
-runs: one converges faster than the other.
+here is custom data and nothing is published: volumes are drawn by the
+built-in ray-marcher ``cairn.volume``, the default viewer for ``volume`` in
+every project. Its source lives in ``vendor/cairn-ui/builtin-viewers/viewers/
+volume`` — copy that folder to start your own volume renderer and publish it
+with ``run.use_viewer(path, default_for=["volume"])``. Two runs: one
+converges faster than the other.
 
     cd examples/custom_viewers/volume
     cairn init /tmp/cairn-viewers && export CAIRN_REPO=/tmp/cairn-viewers/.cairn
-    python train_volume.py           # publishes ./raymarch (run.use_viewer)
+    python train_volume.py
     cairn ui --repo $CAIRN_REPO       # project "viewers-volume"
 
 Drag to orbit, wheel to zoom; the gear has the colormap, density, steps,
-threshold and a slice plane. Gear > Compare > reference ``density_target``
+threshold and a slice plane. Gear > Values > Compare > reference ``density_target``
 shows reconstruction and target side by side with one camera.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
 
 import numpy as np
 
@@ -54,8 +54,6 @@ def train(name: str, speed: float, seed: int) -> None:
     target = target_field()
     with cairn.Run(project=PROJECT, name=name) as run:
         run.config({"speed": speed, "shape": list(SHAPE)})
-        # Publish the viewer when it changed, as the project's default for volumes.
-        run.use_viewer(Path(__file__).parent / "raymarch", default_for=["volume"])
         for step in range(STEPS):
             progress = 1 - np.exp(-speed * (step + 1))
             # Early steps: blurry and noisy; later ones approach the target.
