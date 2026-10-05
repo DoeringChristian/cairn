@@ -24,6 +24,7 @@ PACKAGE = "cairn_ui"
 _ENV_OVERRIDE = "CAIRN_UI_DIST"
 _DIST_DIRNAME = "_dist"
 _ASSETS = "assets"
+_VIEWERS = "viewers"
 
 #: The separately-built HTML entries the viewer ships. Named here so no
 #: other module has to spell a filename — see the boundary test.
@@ -123,6 +124,16 @@ def assets_dir() -> Path | None:
     """The bundle's hashed-asset directory, or None when unavailable."""
     dist = dist_path()
     return None if dist is None else dist / _ASSETS
+
+
+def builtin_viewers_dir() -> Path | None:
+    """The built-in custom viewers shipped with the bundle (a folder per
+    viewer plus ``registry.json``), or None when the bundle has none."""
+    dist = dist_path()
+    if dist is None:
+        return None
+    path = dist / _VIEWERS
+    return path if (path / "registry.json").is_file() else None
 
 
 def shell(name: str) -> bytes | None:

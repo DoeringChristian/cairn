@@ -335,6 +335,18 @@ SCHEMA_SQL: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_alerts_project ON alerts(project_id, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_alerts_run ON alerts(run_id)",
     """
+    CREATE TABLE IF NOT EXISTS viewer_defaults (
+        project_id    TEXT NOT NULL REFERENCES projects(id),
+        -- What the default is for: a built-in type ('volume') or custom data
+        -- ('custom:<kind>', a glob allowed: 'custom:guiding/*').
+        kind          TEXT NOT NULL,
+        -- The custom viewer's name. No row: a built-in type's built-in renderer.
+        viewer        TEXT NOT NULL,
+        updated_at    TEXT NOT NULL,
+        PRIMARY KEY (project_id, kind)
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS metric_defs (
         run_id        TEXT NOT NULL REFERENCES runs(id),
         -- The metric's full name (exact; no globs).

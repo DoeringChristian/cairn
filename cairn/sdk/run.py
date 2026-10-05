@@ -833,7 +833,9 @@ class Run:
         self._transport.record_artifact_input(self._run_id, info["id"], role)
         return ArtifactVersion(info, self._reader_backend)
 
-    def use_viewer(self, path: str | Path, *, aliases: list[str] | None = None) -> ArtifactVersion:
+    def use_viewer(
+        self, path: str | Path, *, aliases: list[str] | None = None, default_for: list[str] | None = None,
+    ) -> ArtifactVersion:
         """Publish a custom viewer folder to this run's project if it changed,
         so a training script keeps its viewer in sync with its data.
 
@@ -844,6 +846,10 @@ class Run:
 
             run.use_viewer("viewers/vmf")
             run.track(cairn.Data(lobes, kind="guiding/vmf"), "guide", step)
+
+        ``default_for`` makes it the default viewer of those kinds (built-in
+        types like ``"volume"``, or custom kinds); without it, it becomes the
+        default only of the custom kinds it accepts that have none yet.
 
         Returns:
             The viewer's ``ArtifactVersion`` (new, or the unchanged ``latest``).
@@ -857,7 +863,7 @@ class Run:
             raise RuntimeError("Run has already been finished")
         return publish_folder(
             self._transport, self._registry, self._project_id, path, aliases=aliases,
-            created_by_run=self._run_id, backend=self._reader_backend,
+            created_by_run=self._run_id, backend=self._reader_backend, default_for=default_for,
         )
 
     # ---- params / metadata ------------------------------------------------

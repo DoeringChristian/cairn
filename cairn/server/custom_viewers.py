@@ -61,6 +61,7 @@ def _published_entry(version: dict[str, Any]) -> dict[str, Any]:
     entry["name"] = version["name"]
     entry.update({
         "dev": False,
+        "builtin": False,
         "version_id": version["id"],
         "version": version["version"],
         "digest": version["digest"],
@@ -115,6 +116,110 @@ def resolve_viewer_version(
     except (LookupError, ValueError):
         return None
     return v["id"] if v.get("type") == VIEWER_TYPE else None
+
+
+# ---------------------------------------------------------------------------
+# Built-in viewers
+# ---------------------------------------------------------------------------
+
+#: Built-in viewers are named ``cairn.<name>``; projects cannot publish or
+#: dev-serve a viewer of that namespace.
+BUILTIN_PREFIX = "cairn."
+
+
+@dataclass(frozen=True)
+class BuiltinViewer:
+    name: str
+    root: Path
+    manifest: dict[str, Any]
+    #: path -> sha256
+    files: dict[str, str]
+    digest: str
+    #: Keys (``volume``, ``custom:<kind>``) it is the default viewer of.
+    default_for: tuple[str, ...]
+
+    def entry(self) -> dict[str, Any]:
+        out: dict[str, Any] = {k: self.manifest.get(k) for k in _MANIFEST_KEYS}
+        out.update({
+            "name": self.name,
+            "dev": False,
+            "builtin": True,
+            "version_id": None,
+            "version": None,
+            "digest": None,
+            "content_digest": self.digest,
+            "updated_at": None,
+            "error": None,
+        })
+        return out
+
+    def file_list(self) -> list[dict[str, Any]]:
+        return [
+            {"path": p, "size": (self.root / p).stat().st_size, "digest": sha, "mime": mime_for(p)}
+            for p, sha in sorted(self.files.items())
+        ]
+
+    def read(self, path: str) -> bytes:
+        if path not in self.files:
+            raise DevError(404, f"built-in viewer {self.name!r} has no file {path!r}")
+        return (self.root / path).read_bytes()
+
+
+_BUILTINS: dict[str, tuple[float, dict[str, BuiltinViewer]]] = {}
+_BUILTINS_LOCK = threading.Lock()
+
+
+def _load_builtins(root: Path) -> dict[str, BuiltinViewer]:
+    import json
+    import logging
+
+    from .viewer_defaults import normalize_default_for
+    from .viewer_manifest import load_folder
+
+    out: dict[str, BuiltinViewer] = {}
+    registry = json.loads((root / "registry.json").read_text())
+    for item in registry.get("viewers") or []:
+        folder = root / str(item.get("folder", ""))
+        try:
+            manifest, files = load_folder(folder)
+            name = manifest["name"]
+            if not name.startswith(BUILTIN_PREFIX):
+                raise ManifestError(f"a built-in viewer's name must start with {BUILTIN_PREFIX!r}")
+            default_for = normalize_default_for(item.get("default_for"), manifest["accepts"], name)
+        except (ManifestError, ValueError, OSError) as exc:
+            logging.getLogger(__name__).warning("built-in viewer %s is broken: %s", folder, exc)
+            continue
+        shas = {rel: sha for rel, _p, sha, _n in files}
+        out[name] = BuiltinViewer(
+            name=name, root=folder, manifest=manifest, files=shas,
+            digest=content_digest(shas.items()), default_for=tuple(default_for),
+        )
+    return out
+
+
+def builtin_viewers() -> dict[str, BuiltinViewer]:
+    """The viewers shipped with the UI bundle, by name (read once per bundle
+    directory and registry change)."""
+    from .. import viewer
+
+    root = viewer.builtin_viewers_dir()
+    if root is None:
+        return {}
+    key = str(root)
+    mtime = (root / "registry.json").stat().st_mtime
+    with _BUILTINS_LOCK:
+        hit = _BUILTINS.get(key)
+        if hit is not None and hit[0] == mtime:
+            return hit[1]
+    loaded = _load_builtins(root)
+    with _BUILTINS_LOCK:
+        _BUILTINS[key] = (mtime, loaded)
+    return loaded
+
+
+def builtin_defaults() -> dict[str, str]:
+    """``{key: viewer}``: the kinds the built-in viewers are the default of."""
+    return {k: v.name for v in builtin_viewers().values() for k in v.default_for}
 
 
 # ---------------------------------------------------------------------------
@@ -176,6 +281,7 @@ class DevSource:
         out["name"] = self.name
         out.update({
             "dev": True,
+            "builtin": False,
             "version_id": None,
             "version": None,
             "digest": None,
@@ -225,6 +331,8 @@ class DevStore:
         """Declare (or heartbeat) the full file set -> ``{missing, revision}``."""
         if not NAME_RE.match(name):
             raise DevError(400, f"invalid viewer name {name!r}")
+        if name.startswith(BUILTIN_PREFIX):
+            raise DevError(400, f"viewer names starting with {BUILTIN_PREFIX!r} are reserved for built-in viewers")
         if not isinstance(session, str) or not 8 <= len(session) <= 128:
             raise DevError(400, "session must be a string of 8-128 characters")
         clean: dict[str, str] = {}

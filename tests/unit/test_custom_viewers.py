@@ -56,6 +56,11 @@ GOOD = {
 FILES = ["cairn-viewer.json", "index.js", "vendor/d3.js", "vendor/addons/x.js"]
 
 
+def own(viewers: list[dict]) -> list[dict]:
+    """The project's viewers (the built-in ones lead every list)."""
+    return [v for v in viewers if not v.get("builtin")]
+
+
 def make_viewer(root: Path, manifest: dict | None = None, *, index: str = "export {};\n") -> Path:
     root.mkdir(parents=True, exist_ok=True)
     (root / "cairn-viewer.json").write_text(json.dumps(manifest or GOOD))
@@ -263,15 +268,15 @@ def test_viewers_list_and_files(tmp_path):
     v2 = cairn.publish_viewer(root, project="p", repo=repo)
     cairn.log_artifact(b"x", "not-a-viewer", project="p", repo=repo)
     with TestClient(create_app(data_dir=repo, background_tasks=False)) as client:
-        (entry,) = client.get("/api/projects/p/viewers").json()["viewers"]
+        (entry,) = own(client.get("/api/projects/p/viewers").json()["viewers"])
         assert entry["version_id"] == v2.id and entry["version"] == 2 and entry["dev"] is False
         assert entry["accepts"] == GOOD["accepts"] and entry["inputs"] == "compare"
         assert entry["settings"][0]["default"] == 1 and entry["imports"]["d3"] == "./vendor/d3.js"
         assert entry["digest"] == v2.digest and entry["content_digest"] and entry["updated_at"]
         assert entry["error"] is None and entry["icon"] is None and entry["settings"][0]["tab"] == "display"
-        both = client.get("/api/projects/p/viewers", params={"all_versions": 1}).json()["viewers"]
+        both = own(client.get("/api/projects/p/viewers", params={"all_versions": 1}).json()["viewers"])
         assert [v["version"] for v in both] == [2, 1]
-        assert client.get("/api/projects/other/viewers").json() == {"viewers": []}
+        assert own(client.get("/api/projects/other/viewers").json()["viewers"]) == []
 
         r = client.get(f"/api/artifact-versions/{v2.id}/file", params={"path": "index.js"})
         assert r.status_code == 200 and r.text == "export const two = 2;\n"
@@ -376,7 +381,7 @@ def test_dev_routes_and_cli_sync(tmp_path):
 
         ro = TestClient(app)
         ro.headers.update({"Authorization": f"Bearer {reader}"})
-        (entry,) = ro.get("/api/projects/p/viewers").json()["viewers"]
+        (entry,) = own(ro.get("/api/projects/p/viewers").json()["viewers"])
         assert entry["dev"] is True and entry["name"] == "devv" and entry["revision"] == 2
         files = ro.get("/api/projects/p/viewers/dev/devv/files").json()
         assert files["revision"] == 2 and "index.js" in {f["path"] for f in files["files"]}
@@ -392,7 +397,7 @@ def test_dev_routes_and_cli_sync(tmp_path):
         assert r.status_code == 403
         # Stop removes it.
         sync.close()
-        assert ro.get("/api/projects/p/viewers").json()["viewers"] == []
+        assert own(ro.get("/api/projects/p/viewers").json()["viewers"]) == []
         assert ro.get("/api/projects/p/viewers/dev/devv/files").status_code == 404
 
 
@@ -436,7 +441,7 @@ def test_share_scope_includes_report_viewers_only(tmp_path):
         viewer = TestClient(app)
         assert viewer.post("/api/share/redeem", json={"secret": secret}).status_code == 200
 
-        listed = viewer.get("/api/projects/p/viewers").json()["viewers"]
+        listed = own(viewer.get("/api/projects/p/viewers").json()["viewers"])
         assert {v["version_id"] for v in listed} == {used_v2.id, pinned_v1.id}
         assert all(not v["dev"] for v in listed)
         for vid in (used_v2.id, pinned_v1.id):
@@ -624,9 +629,10 @@ def test_cli_init_three_and_defaults(tmp_path):
 
 
 def test_share_scope_includes_viewers_a_card_may_pick(tmp_path):
-    """A custom card without `viewer` (the UI picks the most specific accepting
-    viewer) and a volume card (a viewer accepting `volume` takes it over) put
-    the latest of the viewers they could pick in scope."""
+    """A custom card without `viewer` puts the viewers it may pick (its kind's
+    default, or one accepting custom data) in scope; a volume card's default
+    is the built-in viewer, which needs no scope, until the project names its
+    own (cairn.server.viewer_defaults)."""
     repo = tmp_path / ".cairn"
     kinds = make_viewer(tmp_path / "kinds", {"name": "kinds", "accepts": ["custom:k/*"]})
     vol = make_viewer(tmp_path / "vol", {"name": "vol", "accepts": ["volume"]})
@@ -648,10 +654,11 @@ def test_share_scope_includes_viewers_a_card_may_pick(tmp_path):
             secret = owner.post(f"/api/projects/p/reports/{rid}/shares", json={}).json()["secret"]
             viewer = TestClient(app)
             assert viewer.post("/api/share/redeem", json={"secret": secret}).status_code == 200
-            return {v["version_id"] for v in viewer.get("/api/projects/p/viewers").json()["viewers"]}
+            return {v["version_id"] for v in own(viewer.get("/api/projects/p/viewers").json()["viewers"])}
 
         assert listed("  - {metric: d, type: custom}\n") == {kinds_v1.id}
-        assert listed("  - {metric: blob, type: volume}\n") == {vol_v1.id}
+        assert listed("  - {metric: blob, type: volume}\n") == set()
         assert listed("  - {metric: d, type: scalar}\n") == set()
         assert img_v1.id not in listed("  - {metric: d, type: custom}\n  - {metric: blob, type: volume}\n")
-
+        owner.put("/api/projects/p/viewer-defaults", json={"kind": "volume", "viewer": "vol"})
+        assert listed("  - {metric: blob, type: volume}\n") == {vol_v1.id}

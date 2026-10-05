@@ -56,14 +56,23 @@ def viewer_init(folder: Path, kind: str | None, name: str | None, three: bool) -
 @click.argument("folder", type=_DIR)
 @click.option("--project", required=True, help="Project the viewer is available in.")
 @click.option("--alias", "aliases", multiple=True, help="Alias to move to the version (repeatable).")
+@click.option(
+    "--default-for", "default_for", multiple=True, metavar="KIND",
+    help="Make it the project's default viewer of KIND: a built-in type (volume) or a custom kind (repeatable).",
+)
 @click.option("--repo", "--server", "repo", default=None, help=_REPO_HELP)
-def viewer_publish(folder: Path, project: str, aliases: tuple[str, ...], repo: str | None) -> None:
+def viewer_publish(
+    folder: Path, project: str, aliases: tuple[str, ...], default_for: tuple[str, ...], repo: str | None,
+) -> None:
     """Publish FOLDER as a new version of its viewer (only if it changed)."""
     from .sdk.custom_viewers import publish_viewer
     from .server.viewer_manifest import ManifestError
 
     try:
-        version = publish_viewer(folder, project=project, aliases=list(aliases) or None, repo=repo)
+        version = publish_viewer(
+            folder, project=project, aliases=list(aliases) or None, repo=repo,
+            default_for=list(default_for) or None,
+        )
     except (ManifestError, ValueError, LookupError) as exc:
         raise click.ClickException(str(exc)) from None
     click.echo(f"{version.qualified_ref}  ({version.id})")

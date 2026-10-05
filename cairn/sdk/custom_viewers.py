@@ -31,13 +31,19 @@ from .artifacts import Artifact, ArtifactVersion
 def publish_folder(
     transport: Any, registry: Any, project_id: str, path: str | Path, *,
     aliases: list[str] | None = None, created_by_run: str | None = None, backend: Any = None,
+    default_for: list[str] | None = None,
 ) -> ArtifactVersion:
-    """Publish ``path`` unless ``latest`` already has its content (shared by
-    ``publish_viewer`` and ``Run.use_viewer``)."""
+    """Publish ``path`` unless ``latest`` already has its content and
+    declares the same ``default_for`` (shared by ``publish_viewer`` and
+    ``Run.use_viewer``)."""
+    from ..server.viewer_defaults import normalize_default_for
     from .run import log_draft
 
     manifest, files = load_folder(path)
     name = manifest["name"]
+    if name.startswith("cairn."):
+        raise ValueError(f"viewer names starting with 'cairn.' are reserved for built-in viewers: {name!r}")
+    declared = normalize_default_for(default_for, manifest["accepts"], name)
     digest = content_digest((rel, sha) for rel, _p, sha, _n in files)
     try:
         latest = transport.resolve_artifact(project_id, f"{name}:latest")
@@ -49,14 +55,20 @@ def publish_folder(
         raise ValueError(
             f"artifact {name!r} in project {project_id!r} is a {latest.get('type')!r}, not a viewer"
         )
-    if latest is not None and (latest.get("metadata") or {}).get("content_digest") == digest:
+    meta = (latest or {}).get("metadata") or {}
+    same_defaults = not declared or (meta.get("default_for") or []) == declared
+    if latest is not None and meta.get("content_digest") == digest and same_defaults:
         for alias in aliases or []:
             if alias not in (latest.get("aliases") or []):
                 latest = transport.add_artifact_alias(latest["id"], alias)
         return ArtifactVersion(latest, backend)
     draft = Artifact(
         name, type=VIEWER_TYPE, description=manifest["description"],
-        metadata={"manifest": manifest, "content_digest": digest},
+        metadata={
+            "manifest": manifest, "content_digest": digest,
+            # The server makes it the default viewer of these kinds (cairn.server.viewer_defaults).
+            **({"default_for": declared} if declared else {}),
+        },
     )
     for rel, p, _sha, _n in files:
         draft.add_file(p, rel)
@@ -72,17 +84,25 @@ def publish_viewer(
     project: str,
     aliases: list[str] | None = None,
     repo: str | Path | None = None,
+    default_for: list[str] | None = None,
 ) -> ArtifactVersion:
     """Publish a custom viewer folder to a project (if it changed).
 
     The folder holds ``cairn-viewer.json`` and the viewer's ES modules. It
     becomes a new version of the artifact ``<manifest name>`` (type
-    ``cairn-viewer``) only when its content differs from the ``latest``
-    version; otherwise that version is returned (with ``aliases`` added).
+    ``cairn-viewer``) only when its content (or its ``default_for``) differs
+    from the ``latest`` version; otherwise that version is returned (with
+    ``aliases`` added).
+
+    Every kind of data has one default viewer per project. Publishing with
+    ``default_for`` makes this viewer the default of those kinds; without it,
+    the viewer becomes the default only of the custom kinds it accepts that
+    have none yet (built-in types such as ``volume`` keep theirs).
 
     Example:
         ```python
         cairn.publish_viewer("viewers/vmf", project="guiding")
+        cairn.publish_viewer("viewers/raymarch", project="p", default_for=["volume"])
         ```
 
     Args:
@@ -90,6 +110,9 @@ def publish_viewer(
         project: The project the viewer is available in.
         aliases: User aliases moved to the version (``latest`` always is).
         repo: Where to write, resolved like ``cairn.Run(repo=...)``.
+        default_for: Kinds to make it the default viewer of: built-in types
+            (``"volume"``) or custom kinds (``"guiding/vmf"``, ``"custom:guiding/*"``);
+            each must be one its manifest ``accepts``.
 
     Returns:
         The viewer's ``ArtifactVersion`` (new, or the unchanged ``latest``).
@@ -97,6 +120,7 @@ def publish_viewer(
     Raises:
         ManifestError: The manifest or folder is invalid (missing entry or
             import target, over 50 MB, ...).
+        ValueError: A ``default_for`` kind the viewer does not accept.
     """
     from . import handlers as _handlers  # noqa: F401  (register built-ins)
     from ..server.routes._common import slugify
@@ -106,7 +130,9 @@ def publish_viewer(
 
     transport, _server = open_transport(repo)
     try:
-        version = publish_folder(transport, default_registry, slugify(project), path, aliases=aliases)
+        version = publish_folder(
+            transport, default_registry, slugify(project), path, aliases=aliases, default_for=default_for,
+        )
         version._backend_src = functools.partial(backend_for_transport, transport)
     finally:
         transport.close()

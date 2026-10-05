@@ -27,6 +27,8 @@ from typing import Any, Iterable
 from .routes._common import slugify, utc_now
 from .storage.blobs import BlobStore
 from .storage.db import Database
+from . import viewer_defaults
+from .viewer_manifest import VIEWER_TYPE
 
 _RESERVED_ALIAS = re.compile(r"^(latest|v\d+)$")
 
@@ -456,6 +458,13 @@ def create_version(
         con.execute(
             "UPDATE artifact_families SET updated_at = ? WHERE id = ?", [now, family_id],
         )
+        if type == VIEWER_TYPE and name.startswith("cairn."):
+            raise ValueError(f"viewer names starting with 'cairn.' are reserved for built-in viewers: {name!r}")
+        if type == VIEWER_TYPE and isinstance((metadata or {}).get("manifest"), dict):
+            # A viewer: the defaults it declares, and the custom kinds it is the first for.
+            viewer_defaults.apply_publish(
+                con, project_id, name, metadata["manifest"], metadata.get("default_for"),
+            )
     return get_version(db, version_id)
 
 

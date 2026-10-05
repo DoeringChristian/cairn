@@ -36,7 +36,7 @@ import yaml
 
 from .artifact_refs import reachable_hashes
 from .custom_viewers import published_viewers, resolve_viewer_version
-from .viewer_manifest import accepts_matches
+from .viewer_defaults import BUILTIN_TYPES, default_for_subject, list_defaults
 from .storage.blobs import BlobStore
 from .storage.db import Database
 
@@ -245,7 +245,7 @@ def compute_scope(db: Database, report: dict[str, Any]) -> ShareScope:
     source_run_ids: set[str] = set()
     pool: list[dict[str, Any]] | None = None
     viewer_refs: set[tuple[str, Any]] = set()
-    #: Cards whose viewer the UI picks: "custom" (custom data) and/or "volume".
+    #: Types of the cards whose viewer the UI picks (no ``settings.viewer``).
     auto_viewers: set[str] = set()
 
     for body in cairn_fence_bodies(source if isinstance(source, str) else ""):
@@ -295,7 +295,7 @@ def compute_scope(db: Database, report: dict[str, Any]) -> ShareScope:
             if isinstance(settings, dict) and isinstance(settings.get("viewer"), str):
                 version = settings.get("viewer_version")
                 viewer_refs.add((settings["viewer"], version if isinstance(version, (int, str)) else None))
-            elif card.get("type") in ("custom", "volume"):
+            elif isinstance(card.get("type"), str):
                 auto_viewers.add(card["type"])
             run_ids.update(named)
             if card.get("type") == CODE_DIFF_CARD:
@@ -308,12 +308,23 @@ def compute_scope(db: Database, report: dict[str, Any]) -> ShareScope:
         if (vid := resolve_viewer_version(db, project_id, name, version)) is not None
     }
     if auto_viewers:
+        # The default viewers of the report's kinds: a built-in type's project
+        # default (none: its built-in renderer), and for custom data every
+        # default of a custom kind plus, for kinds without one, the viewers
+        # accepting custom data (the UI's fallback).
+        defaults = list_defaults(db, project_id)
+        names = {
+            viewer for t in auto_viewers if t in BUILTIN_TYPES
+            if (viewer := default_for_subject(defaults, t)) is not None
+        }
+        if "custom" in auto_viewers:
+            names |= {viewer for key, viewer in defaults.items() if key.startswith("custom:")}
         for v in published_viewers(db, project_id):
             accepts = v.get("accepts") or []
             if v.get("error") or not isinstance(accepts, list):
                 continue
-            if ("custom" in auto_viewers and any(str(p).startswith("custom:") for p in accepts)) or (
-                "volume" in auto_viewers and any(accepts_matches(str(p), "volume") for p in accepts)
+            if v["name"] in names or (
+                "custom" in auto_viewers and any(str(p).startswith("custom:") for p in accepts)
             ):
                 viewer_versions.add(v["version_id"])
     return ShareScope(

@@ -568,6 +568,11 @@ SHARE_ALLOWED: dict[str, ShareChecker] = {
     "/api/runs/{run_id}/source/file": _source_in_scope,
     # Custom viewers the report's cards use (the list is filtered to them).
     "/api/projects/{project_id}/viewers": _the_project,
+    # Which viewer each kind defaults to (the report's cards without a pinned viewer).
+    "/api/projects/{project_id}/viewer-defaults": _the_project,
+    # The built-in viewers ship with the app.
+    "/api/viewers/builtin/{name}/files": lambda request, scope: True,
+    "/api/viewers/builtin/{name}/file": lambda request, scope: True,
     "/api/artifact-versions/{version_id}/files": _viewer_version_in_scope,
     "/api/artifact-versions/{version_id}/file": _viewer_version_in_scope,
 }
