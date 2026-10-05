@@ -172,7 +172,8 @@ class MediaRef:
         ``(samples, sample_rate)``; ``video`` -> ndarray (T, H, W, C);
         ``tensor`` -> ndarray; ``text`` -> str; ``table`` -> ``{"columns",
         "data"}`` with ``MediaRef`` media cells; ``histogram`` -> ``(counts,
-        edges)``; ``figure`` -> ``PIL.Image``.
+        edges)``; ``figure`` -> ``PIL.Image``; ``custom`` (``cairn.Data``) -> a
+        dict of arrays and JSON entries, the JSON value, or the bytes.
 
         Returns:
             The decoded value; the raw bytes when the kind has no decoder.

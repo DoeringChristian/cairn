@@ -437,6 +437,37 @@ float32.
     The viewer does not render volumes. The card shows a placeholder with the `.npz` file for
     download.
 
+## Custom data for your own viewers
+
+`cairn.Data` logs data that no built-in card shows, under a `kind` you choose, for a custom
+viewer (browser code you write and publish per project) to draw:
+
+```python
+run.use_viewer("viewers/vmf")    # publish the viewer folder if it changed
+run.track(cairn.Data({"mu": mu, "kappa": kappa, "weights": w},
+                     kind="guiding/vmf", meta={"lobes": 8}),
+          "guide", step)
+```
+
+- `kind` is lowercase segments separated by `/` (`guiding/vmf`, `field/2d`). Viewers declare
+  the kinds they accept, so several viewers can show one kind.
+- The payload is stored by its shape: a `dict` holding NumPy arrays (or torch tensors) is a
+  compressed `.npz` (its other entries, numbers or strings, are kept as JSON beside the arrays),
+  any other JSON-able value is JSON, and `bytes` are kept as is. Arrays must be numeric or bool.
+  Each value is limited to 128 MB.
+- `meta` is a JSON dict handed to the viewer with the data; `caption=` labels the point.
+- A list of `cairn.Data` of one kind is a [gallery](#captions-and-galleries). Mixing kinds raises
+  `ValueError`.
+- Reading it back, `run.media("guide", step).load()` returns the dict (arrays and JSON entries),
+  the JSON value, or the bytes.
+
+A viewer is a folder with a `cairn-viewer.json` manifest and ES modules. Publish it with
+`cairn viewer publish viewers/vmf --project P` (or `cairn.publish_viewer`, or `run.use_viewer`
+as above), develop it live with `cairn viewer dev viewers/vmf --project P`, and vendor libraries
+it imports with `cairn viewer add viewers/vmf d3@7`. Without a viewer for a kind, the card offers
+the value for download. The manifest's JSON schema is
+[`docs/schemas/cairn-viewer.schema.json`](../schemas/cairn-viewer.schema.json).
+
 ## Custom types
 
 `cairn.register_handler` adds a handler for your own types. A handler has an `object_type`
