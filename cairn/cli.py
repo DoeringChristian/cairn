@@ -1521,3 +1521,9 @@ def agent_cmd(sweep_id: str, count: int | None, repo: str | None, poll: float) -
             done += 1
     finally:
         t.close()
+
+
+# `cairn viewer ...` lives in its own module (cairn/cli_viewer.py).
+from .cli_viewer import viewer_group as _viewer_group  # noqa: E402
+
+main.add_command(_viewer_group)
