@@ -7,14 +7,14 @@ import gzip
 from fastapi.testclient import TestClient
 
 from cairn.server.app import create_app
-from cairn.server.ui_mount import IMMUTABLE, NO_CACHE
+from cairn.server.ui_mount import FRAME_CSP, IMMUTABLE, NO_CACHE
 
 JS = ("export const x = " + "'abcdefghij' + " * 400 + "'';\n").encode()
 
 
 def _client(tmp_path, monkeypatch) -> TestClient:
     dist = tmp_path / "dist"
-    (dist / "assets").mkdir(parents=True)
+    (dist / "assets").mkdir(parents=True, exist_ok=True)
     (dist / "index.html").write_text("<!doctype html><script src='/assets/main-abc.js'></script>")
     (dist / "assets" / "main-abc.js").write_bytes(JS)
     (dist / "assets" / "logo-abc.png").write_bytes(b"\x89PNG" + b"\0" * 4096)
@@ -52,3 +52,20 @@ def test_shells_are_no_cache(tmp_path, monkeypatch) -> None:
     for path in ("/", "/p/x/reports"):
         r = c.get(path)
         assert r.status_code == 200 and r.headers["cache-control"] == NO_CACHE
+
+
+def test_shells_restrict_frames(tmp_path, monkeypatch) -> None:
+    """A sandboxed viewer/HTML frame cannot navigate itself to an outside URL:
+    its navigation is checked against the shell's frame-src."""
+    (tmp_path / "dist").mkdir()
+    (tmp_path / "dist" / "embed.html").write_text("<!doctype html>")
+    c = _client(tmp_path, monkeypatch)
+    for path in ("/", "/p/x/runs", "/embed/card"):
+        r = c.get(path)
+        assert r.status_code == 200
+        assert r.headers["content-security-policy"] == FRAME_CSP == "frame-src 'self' blob:"
+    # Only frames are restricted: no script/style/connect/worker directive (child-src would cover workers).
+    for directive in ("script-src", "style-src", "connect-src", "default-src", "child-src", "worker-src"):
+        assert directive not in FRAME_CSP
+    # Assets and API responses keep their own headers.
+    assert "content-security-policy" not in c.get("/assets/main-abc.js").headers

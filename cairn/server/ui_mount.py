@@ -83,8 +83,25 @@ def _accepts_gzip(request: Request) -> bool:
     return "gzip" in request.headers.get("accept-encoding", "").lower()
 
 
+# The app's frames may only load the app itself (``'self'``, e.g. an
+# ``/embed/card``) and blobs; ``srcdoc``/``about:blank`` frames need no
+# source. The point is the sandboxed frames that run user code (custom
+# viewers, logged HTML): a frame's navigation is checked against its
+# PARENT's ``frame-src``, so a viewer that sets ``location`` to an outside URL
+# (data in the query string) is refused before any request leaves. srcdoc
+# frames inherit this policy too, so nested frames inside them are held to it
+# as well. Only ``frame-src`` (not ``child-src``, which would also govern
+# workers) and nothing else: scripts, styles, images and connections of the
+# app are unaffected.
+FRAME_CSP = "frame-src 'self' blob:"
+
+
 def _html(content: bytes | str) -> Response:
-    return Response(content=content, media_type="text/html", headers={"Cache-Control": NO_CACHE})
+    return Response(
+        content=content,
+        media_type="text/html",
+        headers={"Cache-Control": NO_CACHE, "Content-Security-Policy": FRAME_CSP},
+    )
 
 
 def mount_viewer(app: FastAPI) -> bool:
