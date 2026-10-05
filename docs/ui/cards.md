@@ -6,7 +6,7 @@ Settings are grouped into up to four tabs: **Data**, **Grouping**, **Display** a
 
 ## Card types
 
-Series cards show one logged name (plus any extra series you add), and the Python type you log decides which card you get. Multi-run cards show a set of runs rather than one series. You add them to [comparisons](comparisons.md) and reports with **Add card**.
+Series cards show one logged name (or several: in a workspace, the card's **Data** in the [card editor](workspace.md#full-screen-card-and-settings)), and the Python type you log decides which card you get. Multi-run cards show a set of runs rather than one series. You add them to [comparisons](comparisons.md) and reports with **Add card**.
 
 | Type | Card | Shows | Logged with |
 |---|---|---|---|
@@ -50,7 +50,7 @@ A card header has these actions (which ones appear depends on the card and the p
 - **Duplicate card** (two squares): copy the card — data, type and settings — right after itself, then change the copy's type or settings. On the run page and comparisons only.
 - **Add to report:** see [Reports](reports.md).
 - **Comment:** in reports only.
-- **Gear:** opens the card full screen with its settings (see [Full-screen card](workspace.md#full-screen-card-and-settings)). On the run page and comparisons it also edits the card's data, type and title.
+- **Gear:** opens the card full screen with its settings (see [Full-screen card](workspace.md#full-screen-card-and-settings)). On the run page and comparisons that is the card editor: the card's data, type and title above its settings.
 - **×:** remove the card.
 
 Cards that plot several series show them as chips. Click a chip's × to remove that series. You can drag a chip onto another card to add the series there. In a comparison, a card that shows one metric for every run has no chip strip: its title names the metric.
@@ -68,7 +68,7 @@ A scalar's curve, one line per run.
 
 | Tab | Settings |
 |---|---|
-| Data | **Metrics** (the series drawn). **X axis**: `step`, `wall_time`, `relative_time` or a metric *(default)*. **X range** / **Y range**, **Log x** / **Log y** *(default)*. **Smoothing**: kind and amount *(default)*. **Outliers**: low/high percentile to clip the y range to *(default)*. **Max runs**: pinned runs come first *(default)*. |
+| Data | **Metrics** (the series drawn; reports and share links only: in a workspace the card editor's **Data** picks them). **X axis**: `step`, `wall_time`, `relative_time` or a metric *(default)*. **X range** / **Y range**, **Log x** / **Log y** *(default)*. **Smoothing**: kind and amount *(default)*. **Outliers**: low/high percentile to clip the y range to *(default)*. **Max runs**: pinned runs come first *(default)*. |
 | Grouping | **Group runs by**: None, Group, Job type or a Param. Runs that share the value draw as one centre **Line** (mean, median, min or max) with a **Band** (std, min–max or sem). **Hide member runs**, **Latest run per group** *(all default)*. Shown only when the card has several runs. |
 | Display | **Line type**: linear, monotone, step, step before, step after. **Stack**: none, stacked, percent. **Show original**: the faded raw line under a smoothed one. **Full fidelity**: per-pixel min/max, recomputed on zoom. Axis titles. **Legend** on/off, position and template. **Tooltip** template and wall time *(most default)*. Each series also has its own **Colour**, **Label** and **Style**. |
 | Expressions | **X expression**: any [expression](../reference/expressions.md) over the run, evaluated on each line's steps, e.g. `step * 32`, `epoch` or `relative_time / 60`. A metric is joined as of each step. **Add derived series**: an expression such as `loss / step`, drawn for every run. |
@@ -209,15 +209,15 @@ Point clouds, meshes and boxes render in an orbitable 3D view, one pane per run.
     - meshes: colouring and wireframe
     - boxes: colouring
 
-Volume cards draw the volume with `cairn.volume`, the [built-in viewer](../guides/custom-viewers.md#built-in-viewers) cairn ships: WebGL2 ray marching with a colormap transfer function, density, step count, a threshold and a slice plane (gear › Display), drag to orbit and wheel to zoom. A project can make another viewer the default for volumes (Defaults › **Default viewer per type**), and a card can pin its own (gear › Data › Series › **Viewer**). Without WebGL2, each pane offers the step's `.npz` for download.
+Volume cards draw the volume with `cairn.volume`, the [built-in viewer](../guides/custom-viewers.md#built-in-viewers) cairn ships: WebGL2 ray marching with a colormap transfer function, density, step count, a threshold and a slice plane (gear › Display), drag to orbit and wheel to zoom. A project can make another viewer the default for volumes (Defaults › **Default viewer per type**), and a card can pin its own (in a workspace, the viewer's entry in the gear's **Card type**; in a report, gear › Data › Series › **Viewer**). Without WebGL2, each pane offers the step's `.npz` for download.
 
 Every kind of data has one [default viewer](../guides/custom-viewers.md#default-viewers): other built-in types show in their built-in card unless the project makes a custom viewer their default.
 
 ### Custom viewer
 
-A custom viewer card draws its data with one of the project's [custom viewers](../guides/custom-viewers.md#how-cards-pick-a-viewer), in a sandboxed frame per pane, with the step slider, galleries, the panel modes and the section slider of the other media cards. The gear's type list names each viewer that accepts the card's data by its title.
+A custom viewer card draws its data with one of the project's [custom viewers](../guides/custom-viewers.md#how-cards-pick-a-viewer), in a sandboxed frame per pane, with the step slider, galleries, the panel modes and the section slider of the other media cards. The gear's **Card type** list names each viewer that accepts the card's data by its title, after **Default (<name>)**.
 
-- **Viewer** (Data › Series): **Default (<name>)** (the project's [default viewer](../guides/custom-viewers.md#default-viewers) of the data's kind) or a named one; **Version**: `latest` or a published `vN`.
+- **Viewer**: **Default (<name>)** (the project's [default viewer](../guides/custom-viewers.md#default-viewers) of the data's kind) or a named one. In a workspace it is the card type (gear › **Card type**); in reports and share links, Data › Series › **Viewer**. **Version** (Data › Series): `latest` or a published `vN`.
 - **Reference tag** and **Pin reference step** (Data › Compare): a `compare` viewer gets the value and the reference together; any other viewer shows the reference as a second frame.
 - The viewer's own settings, in the tabs and sections its manifest names. They cascade from section and workspace defaults per viewer.
 - **Reset view** in the header clears a viewer's stored camera (viewers with a shared view).

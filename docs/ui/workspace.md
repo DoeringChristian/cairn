@@ -56,7 +56,7 @@ Every edit changes the workspace, so it applies to every run the workspace shows
 |---|---|
 | Remove a panel | × in its header. An automatic panel stays removed; [Manage cards](#manage-cards) lists removed panels so you can show them again. |
 | Add a card | The dashed **Add card** card at the end of a section: see [Adding cards](#adding-cards). It is the only way to add one. |
-| Change data, type, title or settings | The gear opens the card full screen with its [editor](#full-screen-card-and-settings). The title, collapse chevron and resize handle edit the panel too. |
+| Change data, type, title or settings | The gear opens the card full screen in the [card editor](#full-screen-card-and-settings). The title, collapse chevron and resize handle edit the panel too. |
 | Resize | Drag the bottom-right handle. Height changes freely; width snaps to a 6-column grid. |
 | Duplicate | **Duplicate card** (two squares) in the header copies the card — its data, type and settings — right after itself. Change the copy's type or settings afterwards to see the same data two ways. |
 | Move | Hover the header and drag the grip onto another panel, in the same section or another one: it takes that panel's place. Drop it on the **Add card** card or a gap of a section's grid to put it last there. On touch screens, use **Move up** / **Move down** in the ⋯ menu. [Manage cards](#manage-cards) moves cards and sections by drag & drop or the keyboard too. A card changes section only this way. |
@@ -81,7 +81,7 @@ A scalar series with a single point shows as a plain value card, not a one-dot c
 
 ### Adding cards
 
-The dashed **Add card** card at the end of every section's grid adds cards to that section. An empty section shows only it, and an empty workspace shows one section, **Charts**, with it. It opens the same full-screen view as a card's gear: a live preview on the left, the two steps on the right.
+The dashed **Add card** card at the end of every section's grid adds cards to that section. An empty section shows only it, and an empty workspace shows one section, **Charts**, with it. It opens the [card editor](#full-screen-card-and-settings), the same full-screen view as a card's gear, with only its **Card** section: **Data**, then **Card type**. The left side shows a live preview.
 
 1. **Data.** Every series the bound runs log, grouped like the automatic sections (Charts, prefixes, Media, system), each with its kind (`scalar`, `image`, …) and how many cards already show it (hover for their names). Pick:
     - **Series**: tick one or several; they show as chips above the list. The search box filters by name (a case-insensitive regex).
@@ -90,12 +90,12 @@ The dashed **Add card** card at the end of every section's grid adds cards to th
     - **Whole runs**: no series, for cards that compare runs (run comparer, code diff) or that you set up in their settings.
 
     The preview shows the data in the first card type that fits (every card, for one card per group).
-2. **Card type.** Only the types that can show the data are listed, and the preview shows each one live on the bound runs:
-    - a series of a kind gets that kind's card (image → image card, histogram → histogram card, …), and the [custom viewers](../guides/media.md#custom-data-for-your-own-viewers) that accept it;
+2. **Card type.** **Choose a card type** (or ++enter++ in the search or regex field) folds the data away and lists the types that can show it, while the left side shows each one as a live tile on the bound runs:
+    - a series of a kind gets that kind's card (image → image card, histogram → histogram card, …), and the [custom viewers](../guides/media.md#custom-data-for-your-own-viewers) that accept it. When a viewer is the [default viewer](../guides/custom-viewers.md#default-viewers) of that kind, the type says so (**Volume (default: Volume (ray marching))**) and the card follows the default; custom data lists **Default (<viewer>)** first, then each viewer to pin;
     - scalars also offer **Value** (one number: the last value, reduced across runs), **Bar chart**, **Scatter** (one or two series), **Parallel coordinates** and **Parameter importance**, which read the last value of each run (`last(loss)`); edit the expression in their settings for `min(loss)` and the like;
     - cards that need more runs than the workspace binds stay listed with **needs 2+ runs**: on the run page that is scatter, parallel coordinates, importance, run comparer and code diff. Add them in a [comparison](comparisons.md).
 
-    Click a type, in the list or on its preview. The card goes at the end of the section, and the view turns into that card's [editor](#full-screen-card-and-settings). With one card per group, every group's card is added and the first one opens.
+    Click a type, in the list or on its tile. The card goes at the end of the section, and the same editor turns into that card's: the card takes the left side, and its title and settings tabs appear under the **Card** section. With one card per group, every group's card is added and the first one opens.
 
 Nothing is written before you pick the type; ++escape++ or × leaves without adding anything.
 
@@ -208,9 +208,15 @@ Undoing a workspace edit restores only the parts of the workspace that edit chan
 
 ## Full-screen card and settings
 
-The gear on a card opens the card full screen, with its settings panel beside it. On a phone, the card and the settings are two tabs. [Adding cards](#adding-cards) uses the same view.
+The gear on a card opens the card full screen, with its settings panel beside it. On a phone, the card and the settings are two tabs.
 
-On the run page and in comparisons, the settings panel is the card's editor: its title on top, then its card type and data (the same choices as when [adding](#adding-cards)) first in the **Data** tab, then the card's own settings. Every change applies at once and can be undone. The section is not set here: drag the card to [move](#editing-the-layout) it.
+On the run page and in comparisons, the settings panel is the **card editor**, the one editor of a card, which also [adds cards](#adding-cards):
+
+1. **Card**: **Data**, then **Card type**, the same pickers as when adding (without one card per group, which makes several cards). Both start folded, showing the data and the type, so the settings are not pushed down. Opening **Card type** shows every type as a live tile on the left, in place of the card, until you pick one (in the list or on its tile) or fold it again.
+2. **Title**: blank names the card by its data.
+3. The card's own settings, in their tabs.
+
+Every change applies at once and can be undone. The section is not set here: drag the card to [move](#editing-the-layout) it. A card's series are its data: the line chart has no metrics picker of its own, its series chips have no ×, and a series chip dropped on a workspace card does nothing; change the **Data** instead. A read-only user gets the card and its settings without the **Card** section and the title.
 
 - Press ++arrow-left++ / ++arrow-right++, or use the arrow buttons next to the title, to step to the previous or next card in page order. Arrow keys that belong to a focused control, such as a slider or select, don't navigate.
 - Press ++escape++ or click × to close.
