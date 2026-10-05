@@ -16,7 +16,7 @@ Click a run in the [runs table](runs-table.md) to open its run page at `/p/<proj
 
 The **Metrics & Media** tab shows the project's **workspace**: a layout of named sections holding panels, bound to the run you are viewing. The layout is written in metric names, never in runs, so it is the same on every run of the project. Switching runs changes only the data.
 
-Every [comparison](comparisons.md) is a workspace too, with its own layout bound to its own runs. The run page and comparisons render the same page: the same toolbar, sections, panels and dialogs, including the [card builder](#card-builder).
+Every [comparison](comparisons.md) is a workspace too, with its own layout bound to its own runs. The run page and comparisons render the same page: the same toolbar, sections, panels and dialogs, including [adding cards](#adding-cards).
 
 A panel has a card type (see [Cards](cards.md)), a metric selector and its settings (title, size, smoothing, axes and so on). The selector is either:
 
@@ -36,7 +36,7 @@ You don't have to build a layout. Every metric that no panel shows gets an **aut
 - Media go into **Media**: images, audio, video, figures, histograms, tensors, tables, 3D objects, volumes, HTML, Markdown and presets.
 - Automatic sections appear in this order after the layout's own sections: **Charts**, your prefix sections A–Z, **Media**, and **system** last. When a layout section has the same name, the automatic panels join it after its own panels.
 
-A panel whose selector names exactly one metric stands in for that metric's automatic panel. Panels over several metrics or a regex are extra views: the metrics they show keep their own panels. So are the multi-run cards (value, bar chart, scatter, …) the card builder makes from a series: they read it through an expression in their settings, and the series keeps its own panel. Any number of panels may show the same series.
+A panel whose selector names exactly one metric stands in for that metric's automatic panel. Panels over several metrics or a regex are extra views: the metrics they show keep their own panels. So are the multi-run cards (value, bar chart, scatter, …) you [add](#adding-cards) from a series: they read it through an expression in their settings, and the series keeps its own panel. Any number of panels may show the same series.
 
 When you change an automatic panel in any way (a setting, its size, its type, its position, a duplicate), it becomes part of the layout. The panels before it in its section are written with it, so nothing on the page moves. From then on it is an ordinary panel.
 
@@ -55,14 +55,13 @@ Every edit changes the workspace, so it applies to every run the workspace shows
 | Edit | How |
 |---|---|
 | Remove a panel | × in its header. An automatic panel stays removed; [Manage cards](#manage-cards) lists removed panels so you can show them again. |
-| Change settings | The gear opens the card full screen with its settings (see below). The title, collapse chevron and resize handle edit the panel too. |
+| Add a card | The dashed **Add card** card at the end of a section: see [Adding cards](#adding-cards). It is the only way to add one. |
+| Change data, type, title or settings | The gear opens the card full screen with its [editor](#full-screen-card-and-settings). The title, collapse chevron and resize handle edit the panel too. |
 | Resize | Drag the bottom-right handle. Height changes freely; width snaps to a 6-column grid. |
-| Change data, type, settings or section | **Edit card** (pencil on a box) in the header opens the [card builder](#card-builder) on the card. |
 | Duplicate | **Duplicate card** (two squares) in the header copies the card — its data, type and settings — right after itself. Change the copy's type or settings afterwards to see the same data two ways. |
-| Reorder | Hover the header and drag the grip onto another panel, in the same section or another one. On touch screens, use **Move up** / **Move down** in the ⋯ menu. |
-| Add cards | **+** in a section header, or **Add cards** in the toolbar: the [card builder](#card-builder). |
-| Hide, show, move, delete | [Manage cards](#manage-cards). |
-| Add a section | **+ Section** in the toolbar. |
+| Move | Hover the header and drag the grip onto another panel, in the same section or another one: it takes that panel's place. Drop it on the **Add card** card or a gap of a section's grid to put it last there. On touch screens, use **Move up** / **Move down** in the ⋯ menu. [Manage cards](#manage-cards) moves cards and sections by drag & drop or the keyboard too. A card changes section only this way. |
+| Hide, show, delete | [Manage cards](#manage-cards). |
+| Add a section | **+ New section** below the last section. |
 
 A panel whose metrics the bound runs don't log shows an empty state ("This run does not log this metric") instead of disappearing, so the layout holds still while you switch runs. Multi-run panels (run comparer, code diff, scatter plot, parallel coordinates, parameter importance) need at least two runs: on the run page they say so, and they come alive in a comparison. Bar charts and scalar tiles work with one run.
 
@@ -72,7 +71,6 @@ Section header controls:
 |---|---|
 | ▼ (click the header) | Collapse or expand the section. |
 | Double-click the name | Rename the section. |
-| **+** | Add cards to this section (the [card builder](#card-builder)). |
 | Gear | Edit [section defaults](#defaults-cascade). The gear is highlighted when the section has defaults. |
 | A–Z | Show the section's panels sorted by title. This overrides the manual order and disables dragging. |
 | ↑ / ↓ | Move the section up or down. |
@@ -81,30 +79,29 @@ Section header controls:
 
 A scalar series with a single point shows as a plain value card, not a one-dot chart. It becomes a line plot once a second point arrives.
 
-### Card builder
+### Adding cards
 
-The card builder adds cards to a workspace, edits one, and manages them all. Open it with **+** on a section, **Add cards** or **Manage cards** in the toolbar, or **Edit card** on a card. The goal is to look at one piece of data through several cards: the same `loss` as a line chart, a value and a bar chart side by side, or two image cards of `samples` with different settings.
+The dashed **Add card** card at the end of every section's grid adds cards to that section. An empty section shows only it, and an empty workspace shows one section, **Charts**, with it. It opens the same full-screen view as a card's gear: a live preview on the left, the two steps on the right.
 
-Adding takes four steps. The step bar at the top goes back to any step you have reached.
-
-1. **Data.** Every series the bound runs log, grouped like the automatic sections (Charts, prefixes, Media, system), each with its kind (`scalar`, `image`, …), how many runs log it, and how many cards already show it (hover for their names). Pick:
+1. **Data.** Every series the bound runs log, grouped like the automatic sections (Charts, prefixes, Media, system), each with its kind (`scalar`, `image`, …) and how many cards already show it (hover for their names). Pick:
     - **Series**: tick one or several; they show as chips above the list. The search box filters by name (a case-insensitive regex).
     - **Regex**: a regular expression over the whole name, with the live list of what it matches. The card follows the pattern, so a matching series logged later joins it.
+    - **One card per group**: a regular expression whose capture groups split the matches into cards. Series whose capture groups have the same values share a card, titled by those values joined by `·`. `(train|val)\.loss` makes one card per split, `.*\.(loss)` one card with every loss, `.*\.(loss|acc)` one with the losses and one with the accuracies. Without capture groups, every match goes onto one card. The list shows the cards before you add them. The expression must match the whole name and is case-sensitive.
     - **Whole runs**: no series, for cards that compare runs (run comparer, code diff) or that you set up in their settings.
-2. **Card type.** Only the types that can show the data are listed:
-    - a series of a kind gets that kind's card (image → image card, histogram → histogram card, …);
+
+    The preview shows the data in the first card type that fits (every card, for one card per group).
+2. **Card type.** Only the types that can show the data are listed, and the preview shows each one live on the bound runs:
+    - a series of a kind gets that kind's card (image → image card, histogram → histogram card, …), and the [custom viewers](../guides/media.md#custom-data-for-your-own-viewers) that accept it;
     - scalars also offer **Value** (one number: the last value, reduced across runs), **Bar chart**, **Scatter** (one or two series), **Parallel coordinates** and **Parameter importance**, which read the last value of each run (`last(loss)`); edit the expression in their settings for `min(loss)` and the like;
     - cards that need more runs than the workspace binds stay listed with **needs 2+ runs**: on the run page that is scatter, parallel coordinates, importance, run comparer and code diff. Add them in a [comparison](comparisons.md).
 
-    Tick one or more types. The type under the pointer shows a live preview on the bound runs.
-3. **Configure.** One tab per new card: its live preview beside its own settings panel (the same panel its gear opens) and its title. The two-squares button on a tab adds another card of that type with its own settings; × drops one.
-4. **Place.** The section, an existing one or a new one, and every card's title. **Add N cards** writes them.
+    Click a type, in the list or on its preview. The card goes at the end of the section, and the view turns into that card's [editor](#full-screen-card-and-settings). With one card per group, every group's card is added and the first one opens.
 
-Editing a card opens the builder on **Configure** with the card's data, type and settings. Change its data or its type in the earlier steps (a type change keeps the title and size), then **Save card**. Nothing is written until you add or save.
+Nothing is written before you pick the type; ++escape++ or × leaves without adding anything.
 
 ### Manage cards
 
-**Manage cards** (in the toolbar, or the second tab of the card builder) lists every card of the workspace by section, with what it is:
+**Manage cards** in the toolbar lists every card of the workspace by section, with what it is:
 
 | Status | Meaning | Actions |
 |---|---|---|
@@ -114,7 +111,15 @@ Editing a card opens the builder on **Configure** with the card's data, type and
 | removed | An automatic panel you removed. | Show. |
 | not shown | With unlisted metrics off, a series no panel shows. | Show (adds its panel). |
 
-A **pattern** mark means a toolbar hide pattern hides the card. Filter the list by name or status; the **Include unlisted metrics** box is the toolbar toggle. Editing a card from the list returns to the list when you save.
+A **pattern** mark means a toolbar hide pattern hides the card. Filter the list by name or status; the **Include unlisted metrics** box is the toolbar toggle. **Edit** closes the list and opens the card's [editor](#full-screen-card-and-settings).
+
+Move cards and sections with their grips:
+
+- Drag a card's grip onto another card: it goes before it (upper half) or after it (lower half), in that card's section. Drop it on a section's heading or empty space to put it last in that section.
+- Drag a section's grip onto another section: it goes before or after it.
+- With the keyboard, focus a grip (Tab) and press ++alt+arrow-up++ / ++alt+arrow-down++. A card moves one place, and from the first or last place of its section into the end of the previous or the start of the next section. A section moves one place.
+
+Every move applies to the page at once and is one [undo](#undo-and-redo) step.
 
 !!! note "What is stored where"
     **In the workspace** (on the server, shared by everyone who uses the project): sections and their order, collapsed and sorted state; panels with their type, metrics, settings, size and hidden flag; removed automatic panels; whether unlisted metrics get automatic panels; hide patterns; workspace and section defaults; prefs (sync zoom, colour by). A comparison's workspace also holds its runs and their hide / pin / baseline toggles.
@@ -123,7 +128,7 @@ A **pattern** mark means a toolbar hide pattern hides the card. Filter the list 
 
     Two tabs or users can edit a workspace at the same time. If one write loses the race, it is replayed on top of the other one's changes, so neither edit is lost.
 
-    A user with a read-only token sees the same page but cannot change the layout: there is no card builder, **Manage cards**, **Edit card**, **Duplicate card** or unlisted-metrics toggle. Card settings they change (zoom, collapse, smoothing) last until they reload.
+    A user with a read-only token sees the same page but cannot change the layout: there is no **Add card** card, **+ New section**, **Manage cards**, **Duplicate card**, drag grip or unlisted-metrics toggle. Card settings they change (zoom, collapse, smoothing) last until they reload.
 
 ## Workspace toolbar
 
@@ -137,29 +142,13 @@ Press ++cmd+k++ (macOS) or ++ctrl+k++ to focus **Search panels**. The query is a
 
 While a search is active, **Hide N matching** saves the query as a hide pattern in the workspace. Matching panels then disappear for every run the workspace shows. Each pattern shows as a `/pattern/` chip; click its × to show the panels again.
 
-### Add cards and Manage cards
+### Manage cards
 
-**Add cards** opens the [card builder](#card-builder); its new cards go to a **Custom panels** section unless you pick another. **Manage cards** opens the [list of every card](#manage-cards).
+**Manage cards** opens the [list of every card](#manage-cards). Cards are added from the layout itself: see [Adding cards](#adding-cards).
 
 ### Unlisted metrics
 
 **Unlisted metrics: on / off** — see [Include unlisted metrics](#include-unlisted-metrics).
-
-### Build panels
-
-**Build panels** creates line plots from a regex over scalar metric names:
-
-- The regex must match the whole name and is case-sensitive.
-- Metrics whose capture groups have the same values share a panel. The panel's title is those values joined by `·`.
-- Without capture groups, every match goes onto one panel.
-
-Examples:
-
-- `(train|val)\.loss` builds one panel per split.
-- `.*\.(loss)` builds one panel with every loss.
-- `.*\.(loss|acc)` builds one panel with the losses and one with the accuracies.
-
-The popover lists the panels before you add them. They go into a **Custom panels** section at the top of the workspace (created when needed); from there they are ordinary panels.
 
 ### New comparison
 
@@ -219,7 +208,9 @@ Undoing a workspace edit restores only the parts of the workspace that edit chan
 
 ## Full-screen card and settings
 
-The gear on a card opens the card full screen, with its settings panel beside it. On a phone, the card and the settings are two tabs.
+The gear on a card opens the card full screen, with its settings panel beside it. On a phone, the card and the settings are two tabs. [Adding cards](#adding-cards) uses the same view.
+
+On the run page and in comparisons, the settings panel is the card's editor: its title on top, then its card type and data (the same choices as when [adding](#adding-cards)) first in the **Data** tab, then the card's own settings. Every change applies at once and can be undone. The section is not set here: drag the card to [move](#editing-the-layout) it.
 
 - Press ++arrow-left++ / ++arrow-right++, or use the arrow buttons next to the title, to step to the previous or next card in page order. Arrow keys that belong to a focused control, such as a slider or select, don't navigate.
 - Press ++escape++ or click × to close.
