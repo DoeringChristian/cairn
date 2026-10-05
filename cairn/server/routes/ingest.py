@@ -7,6 +7,7 @@ lives there so it can be reused by the local-mode SDK transport.
 from __future__ import annotations
 
 import json
+import sqlite3
 from typing import Any, Callable, TypeVar
 
 import anyio
@@ -218,10 +219,9 @@ async def post_batch(run_id: str, request: Request) -> dict[str, Any]:
         accepted = await _ingest_thread(request, work)
     except ingest_ops.RunNotFound as exc:
         raise _run_not_found(exc) from None
-    except (HTTPException, RequestValidationError):
-        raise
-    except Exception as exc:  # noqa: BLE001
-        # Duplicate (run_id, name, step) → 409.
+    except sqlite3.IntegrityError as exc:
+        # A constraint the batch violates: final, so 409. Anything else (a
+        # locked database, say) stays a 5xx, which a client may retry.
         raise HTTPException(status_code=409, detail=str(exc)) from None
     return {"accepted": accepted}
 
