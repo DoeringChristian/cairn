@@ -668,37 +668,198 @@ def ping_cmd() -> None:
         t.close()
 
 
+_FILTER_HELP = (
+    "Keep runs matching a Reader filter, e.g. status=completed, "
+    "optim__lr__gt=0.001, tags__contains=best, metrics__val/acc__gt=0.9. "
+    "VALUE is parsed as JSON when it can be. Repeatable."
+)
+
+
+def _parse_filters(filters: tuple[str, ...]) -> dict[str, Any]:
+    """``KEY=VALUE`` options as ``RunQuery.filter`` keywords (VALUE as JSON when it parses)."""
+    kwargs: dict[str, Any] = {}
+    for f in filters:
+        key, sep, raw = f.partition("=")
+        if not sep or not key:
+            raise click.UsageError(f"--filter expects KEY=VALUE, got {f!r}")
+        try:
+            kwargs[key] = json.loads(raw)
+        except json.JSONDecodeError:
+            kwargs[key] = raw
+    return kwargs
+
+
+#: ``cairn list`` run-field columns: key -> (header, getter). The default
+#: set mirrors the UI runs table's built-ins (name, status, created_at,
+#: duration, tags), plus the id and project a shell user needs.
+_LIST_FIELDS: dict[str, Any] = {
+    "id": lambda r: r.id,
+    "name": lambda r: r.name,
+    "project": lambda r: r.project,
+    "status": lambda r: r.status,
+    "created_at": lambda r: r.created_at,
+    "ended_at": lambda r: r.ended_at,
+    "duration": lambda r: r.duration,
+    "tags": lambda r: r.tags,
+    "group": lambda r: r.group,
+    "job_type": lambda r: r.job_type,
+    "hostname": lambda r: r.hostname,
+    "user": lambda r: r._raw.get("user"),
+    "notes": lambda r: r.notes,
+    "archived": lambda r: r.archived,
+}
+_LIST_PREFIXES = ("config.", "summary.", "metrics.")
+
+
+def _list_value(run: Any, key: str) -> Any:
+    from .server import config_doc
+
+    if key in _LIST_FIELDS:
+        return _LIST_FIELDS[key](run)
+    if key.startswith("config."):
+        return config_doc.get(run.config, key[len("config."):])
+    if key.startswith("summary."):
+        return config_doc.get(run.summary, key[len("summary."):])
+    return run.final.get(key[len("metrics."):])
+
+
+def _cell(value: Any) -> str:
+    """A value as table/CSV text: local times to the minute, durations as
+    H:MM:SS, floats to 6 significant digits, lists comma-joined, documents as JSON."""
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "yes" if value else ""
+    if isinstance(value, datetime):
+        return value.astimezone().strftime("%Y-%m-%d %H:%M")
+    if isinstance(value, timedelta):
+        secs = int(value.total_seconds())
+        return f"{secs // 3600}:{secs % 3600 // 60:02d}:{secs % 60:02d}"
+    if isinstance(value, float):
+        return f"{value:.6g}"
+    if isinstance(value, list) and all(isinstance(v, str) for v in value):
+        return ",".join(value)
+    if isinstance(value, (dict, list)):
+        return json.dumps(value)
+    return str(value)
+
+
+def _json_value(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, timedelta):
+        return value.total_seconds()
+    return value
+
+
+def _csv_cell(value: Any) -> str:
+    value = _json_value(value)
+    return repr(value) if isinstance(value, float) else _cell(value)
+
+
 @main.command("list")
-@click.option("--project", default=None)
-@click.option("--status", default=None)
-@click.option("--limit", default=50, type=int)
+@click.option("--project", default=None, help="Only runs of this project.")
+@click.option("--status", default=None, help="Only runs with this status (running, completed, failed, killed, stopped).")
+@click.option("--filter", "filters", multiple=True, metavar="KEY=VALUE", help=_FILTER_HELP)
+@click.option(
+    "--where", "wheres", multiple=True, metavar="EXPR",
+    help="Keep runs for which this cairn.expr expression is true, e.g. "
+         "'last(val.acc) > 0.9'. Repeatable.",
+)
+@click.option(
+    "--archived", type=click.Choice(["hide", "only", "all"]), default="hide", show_default=True,
+    help="Archived runs: leave them out, list only them, or list both (adds an ARCHIVED column).",
+)
+@click.option(
+    "--sort", "sort_key", default="created_at", show_default=True,
+    help="created_at, ended_at, duration, name, status, id, config.<path>, "
+         "summary.<path> or metrics.<name> (the final value, as in the UI). "
+         "Runs missing the key come last.",
+)
+@click.option("--asc/--desc", default=False, help="Sort order. Default: descending (newest first).")
+@click.option("--limit", default=50, show_default=True, type=click.IntRange(min=1), help="Show at most this many runs.")
+@click.option(
+    "-c", "--column", "columns", multiple=True, metavar="KEY",
+    help="Add a column: config.<path>, summary.<path>, metrics.<name> (final "
+         "value) or a run field (group, job_type, hostname, user, notes, "
+         "ended_at, archived). Repeatable.",
+)
+@click.option(
+    "--format", "fmt", type=click.Choice(["table", "json", "csv"]), default="table", show_default=True,
+    help="json: one object per run with the shown columns' raw values.",
+)
 def list_cmd(
-    project: str | None, status: str | None, limit: int
+    project: str | None, status: str | None, filters: tuple[str, ...], wheres: tuple[str, ...],
+    archived: str, sort_key: str, asc: bool, limit: int, columns: tuple[str, ...], fmt: str,
 ) -> None:
-    """List recent runs on the configured server."""
-    t = _client()
-    try:
-        # Newest first: the most recent runs.
-        params: dict[str, Any] = {"limit": limit, "sort": "created_at", "desc": "true"}
-        if project:
-            params["project"] = project
-        if status:
-            params["status"] = status
-        resp = t.get("/api/runs", params=params)
-        runs = resp.json().get("runs", [])
-        if not runs:
-            click.echo("(no runs)")
-            return
-        click.echo(
-            f"{'RUN_ID':<14} {'STATUS':<10} {'PROJECT':<20} NAME"
-        )
-        for r in runs:
-            click.echo(
-                f"{r['id']:<14} {r['status']:<10} {r['project_id']:<20} "
-                f"{r.get('display_name') or ''}"
+    """List runs on the configured server, newest first.
+
+    The runs and their order come from the same query evaluator as the UI's
+    runs table and ``cairn.Reader().runs()``.
+
+    \b
+        cairn list --project mnist -c config.optim.lr -c metrics.val/acc
+        cairn list --sort metrics.val/acc --filter tags__contains=best
+        cairn list --archived all --format json
+    """
+    from .expr import ExprError
+    from .sdk.reader import Reader
+
+    for key in columns:
+        if key not in _LIST_FIELDS and not (
+            key.startswith(_LIST_PREFIXES) and key not in _LIST_PREFIXES
+        ):
+            raise click.UsageError(
+                f"unknown column {key!r}; use config.<path>, summary.<path>, "
+                f"metrics.<name> or one of {', '.join(_LIST_FIELDS)}"
             )
-    finally:
-        t.close()
+    keys = ["id", "name"] + ([] if project else ["project"]) + [
+        "status", "created_at", "duration", "tags",
+    ] + (["archived"] if archived == "all" else [])
+    keys += [k for k in columns if k not in keys]
+
+    with Reader(_config.resolve_server()) as reader:
+        query = reader.runs(project, archived={"hide": False, "only": True, "all": None}[archived])
+        try:
+            if status:
+                query = query.filter(status=status)
+            query = query.filter(**_parse_filters(filters))
+            for expr in wheres:
+                query = query.where(expr)
+            query = query.sort(sort_key, desc=not asc).limit(limit)
+        except (ValueError, ExprError) as exc:
+            raise click.UsageError(str(exc)) from None
+        runs = query.list()
+        rows = [[_list_value(r, k) for k in keys] for r in runs]
+
+    if fmt == "json":
+        click.echo(json.dumps(
+            [{k: _json_value(v) for k, v in zip(keys, row)} for row in rows], indent=2, default=str,
+        ))
+        return
+    if fmt == "csv":
+        import csv
+        import io
+
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(keys)
+        # Machine-readable cells: ISO 8601 times, seconds, full-precision floats.
+        writer.writerows([[_csv_cell(v) for v in row] for row in rows])
+        click.echo(buf.getvalue(), nl=False)
+        return
+    if not rows:
+        click.echo("(no runs)")
+        return
+    headers = [k.upper() if k in _LIST_FIELDS else k for k in keys]
+    if "created_at" in keys:
+        headers[keys.index("created_at")] = "CREATED"
+    if "ended_at" in keys:
+        headers[keys.index("ended_at")] = "ENDED"
+    text = [[_cell(v) for v in row] for row in rows]
+    widths = [max(len(h), *(len(t[i]) for t in text)) for i, h in enumerate(headers)]
+    for line in [headers, *text]:
+        click.echo("  ".join(c.ljust(w) for c, w in zip(line, widths)).rstrip())
 
 
 def _server_lacks_viewer(t: Transport) -> bool:
@@ -838,15 +999,7 @@ def _export_project(project: str, filters: tuple[str, ...], fmt: str, out: Path)
     """Every (filtered) run of ``project`` through ``RunQuery.history``."""
     from .sdk.reader import Reader
 
-    kwargs: dict[str, Any] = {}
-    for f in filters:
-        key, sep, raw = f.partition("=")
-        if not sep or not key:
-            raise click.UsageError(f"--filter expects KEY=VALUE, got {f!r}")
-        try:
-            kwargs[key] = json.loads(raw)
-        except json.JSONDecodeError:
-            kwargs[key] = raw
+    kwargs = _parse_filters(filters)
     with Reader(_config.resolve_server()) as reader:
         try:
             df = reader.runs(project).filter(**kwargs).history()

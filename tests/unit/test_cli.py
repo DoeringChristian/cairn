@@ -342,3 +342,89 @@ def test_unauthenticated_request_says_how_to_log_in(tmp_path, monkeypatch):
     finally:
         server.should_exit = True
         thread.join(timeout=10)
+
+
+def _seed_list_runs(live_server, monkeypatch, tmp_path) -> dict[str, str]:
+    """Three runs of `p` (one archived, one failed) and one of `q`, with nested
+    config, a summary rule and tags, created a minute apart."""
+    import datetime as dt
+
+    import httpx
+
+    import cairn
+
+    monkeypatch.setenv("CAIRN_WAL_DIR", str(tmp_path / "wal"))
+    base = dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc)
+    ids = {}
+    for i, (name, project, lr, status, tags) in enumerate([
+        ("a", "p", 0.1, "completed", ["best"]),
+        ("b", "p", 0.01, "failed", []),
+        ("c", "p", 0.2, "completed", []),
+        ("d", "q", 0.3, "completed", []),
+    ]):
+        run = cairn.Run(
+            project, name=name, tags=tags, repo=live_server, created_at=base + dt.timedelta(minutes=i),
+            capture_source=False, capture_stdout=False, capture_env=False, capture_system_metrics=False,
+        )
+        run.config({"optim": {"lr": lr, "betas": [0.9, 0.99]}})
+        for step, v in enumerate([0.5, 0.9 - i * 0.1, 0.4]):
+            run.track(v, "val/acc", step, summary="max")
+        run.finish(status)
+        ids[name] = run.id
+    with httpx.Client(base_url=live_server) as c:
+        c.post(f"/api/runs/{ids['c']}/archive").raise_for_status()
+    return ids
+
+
+def _table(output: str) -> list[list[str]]:
+    return [line.split() for line in output.strip().splitlines()]
+
+
+def test_list_columns_order_archived_and_formats(live_server, monkeypatch, tmp_path):
+    """`cairn list`: full-width ids, newest first, archived runs hidden unless
+    asked for, nested-config and final-metric columns, json/csv output."""
+    monkeypatch.setenv("CAIRN_SERVER", live_server)
+    ids = _seed_list_runs(live_server, monkeypatch, tmp_path)
+    run = lambda *argv: CliRunner().invoke(cli.main, ["list", *argv])  # noqa: E731
+
+    result = run()
+    assert result.exit_code == 0, result.output
+    rows = _table(result.output)
+    assert rows[0][:4] == ["ID", "NAME", "PROJECT", "STATUS"]
+    # Newest first, archived `c` left out, every id printed whole.
+    assert [r[0] for r in rows[1:]] == [ids["d"], ids["b"], ids["a"]]
+
+    rows = _table(run("--archived", "only").output)
+    assert [r[0] for r in rows[1:]] == [ids["c"]]
+    result = run("--archived", "all", "--project", "p")
+    rows = _table(result.output)
+    assert "ARCHIVED" in rows[0] and "PROJECT" not in rows[0]
+    assert {r[0] for r in rows[1:]} == {ids["a"], ids["b"], ids["c"]}
+
+    # Final value = the max rule; sorted by it, best first.
+    result = run("--project", "p", "-c", "config.optim.lr", "-c", "metrics.val/acc",
+                 "--sort", "metrics.val/acc")
+    rows = _table(result.output)
+    assert rows[0][-2:] == ["config.optim.lr", "metrics.val/acc"]
+    assert [(r[1], r[-2], r[-1]) for r in rows[1:]] == [("a", "0.1", "0.9"), ("b", "0.01", "0.8")]
+
+    result = run("--filter", "optim__lr__lt=0.05", "--format", "json", "-c", "config.optim")
+    data = json.loads(result.output)
+    assert [r["id"] for r in data] == [ids["b"]]
+    assert data[0]["config.optim"] == {"lr": 0.01, "betas": [0.9, 0.99]}
+    assert data[0]["status"] == "failed" and data[0]["created_at"].startswith("2026-01-01T00:01")
+
+    result = run("--format", "csv", "--asc", "--status", "completed")
+    lines = result.output.strip().splitlines()
+    assert lines[0] == "id,name,project,status,created_at,duration,tags"
+    assert [line.split(",")[1] for line in lines[1:]] == ["a", "d"]
+
+    result = run("--where", "config.optim.lr > 0.2")
+    assert [r[0] for r in _table(result.output)[1:]] == [ids["d"]]
+
+
+def test_list_rejects_unknown_columns_and_sort_keys(live_server, monkeypatch):
+    monkeypatch.setenv("CAIRN_SERVER", live_server)
+    for argv in (["-c", "bogus"], ["--sort", "bogus"], ["--where", "last(("]):
+        result = CliRunner().invoke(cli.main, ["list", *argv])
+        assert result.exit_code == 2, result.output
