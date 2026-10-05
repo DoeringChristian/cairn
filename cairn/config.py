@@ -73,8 +73,8 @@ def load_config_file(path: Path | None = None) -> dict[str, Any]:
 def write_config_file(data: dict[str, Any], path: Path | None = None) -> None:
     """Write ``data`` as TOML, creating parent dirs as needed.
 
-    The config file may hold a plaintext bearer ``token`` (written by
-    ``cairn login --ssh`` — explicitly the multi-user-host scenario), so it
+    The config file may hold plaintext bearer tokens (the ``[tokens]`` table
+    ``cairn login`` writes — explicitly the multi-user-host scenario), so it
     is created 0o600 and its parent dir 0o700 unconditionally (regardless of
     whether a token is present right now) so a later token add is safe on a
     shared host. On Windows these POSIX modes are a no-op; document
@@ -185,12 +185,99 @@ def resolve_server(explicit: str | None = None) -> str:
     return DEFAULT_SERVER
 
 
-def resolve_token(explicit: str | None = None) -> str | None:
-    """Resolve the Bearer token per the auth spec's priority chain:
+def normalize_server_url(url: str) -> str:
+    """The canonical spelling of a server URL — the key of its saved token.
 
-        1. explicit arg (e.g. ``Transport(..., token=...)``, ``--token``)
-        2. ``CAIRN_TOKEN`` env var
-        3. config file ``token`` key
+    ``cairn://host:port`` becomes ``http://host:port``; a bare ``host:port``
+    is taken as ``http``. Scheme and host are lowercased, the scheme's default
+    port (80/443) is dropped, a path prefix (a server behind a reverse proxy)
+    is kept without its trailing slash, and query, fragment and credentials
+    are dropped. The loopback names ``127.0.0.1`` and ``::1`` become
+    ``localhost``: they reach the same server.
+
+        >>> normalize_server_url("cairn://GPUBOX:4300/")
+        'http://gpubox:4300'
+    """
+    from urllib.parse import urlsplit
+
+    raw = str(url).strip()
+    if raw.startswith(CAIRN_SCHEME):
+        raw = "http://" + raw[len(CAIRN_SCHEME):]
+    elif "://" not in raw:
+        raw = "http://" + raw
+    parts = urlsplit(raw)
+    scheme = parts.scheme.lower()
+    if scheme not in ("http", "https") or not parts.hostname:
+        raise ValueError(f"not a server URL: {url!r}")
+    host = parts.hostname.lower()
+    if host in ("127.0.0.1", "::1"):
+        host = "localhost"
+    if ":" in host:  # IPv6 literal
+        host = f"[{host}]"
+    try:
+        port = parts.port
+    except ValueError as exc:
+        raise ValueError(f"not a server URL: {url!r}") from exc
+    netloc = host if port is None or port == {"http": 80, "https": 443}[scheme] else f"{host}:{port}"
+    return f"{scheme}://{netloc}{parts.path.rstrip('/')}"
+
+
+def saved_tokens() -> dict[str, str]:
+    """The per-server tokens in the config file's ``[tokens]`` table,
+    keyed by normalized server URL."""
+    table = load_config_file().get("tokens")
+    if not isinstance(table, dict):
+        return {}
+    out: dict[str, str] = {}
+    for url, token in table.items():
+        if not token:
+            continue
+        try:
+            out[normalize_server_url(url)] = str(token)
+        except ValueError:
+            continue
+    return out
+
+
+def save_token(server_url: str, token: str | None) -> str:
+    """Save ``token`` for ``server_url`` in the config file's ``[tokens]``
+    table, or remove that server's entry when ``token`` is ``None``. Returns
+    the normalized URL used as the key."""
+    key = normalize_server_url(server_url)
+    data = load_config_file()
+    table = data.get("tokens")
+    table = dict(table) if isinstance(table, dict) else {}
+    # Re-key under the canonical spelling, so a hand-edited entry is replaced
+    # rather than shadowed.
+    table = {
+        k: v for k, v in table.items()
+        if _normalized_or_none(k) != key
+    }
+    if token is not None:
+        table[key] = token
+    if table:
+        data["tokens"] = table
+    else:
+        data.pop("tokens", None)
+    write_config_file(data)
+    return key
+
+
+def _normalized_or_none(url: str) -> str | None:
+    try:
+        return normalize_server_url(url)
+    except ValueError:
+        return None
+
+
+def resolve_token(server_url: str | None, explicit: str | None = None) -> str | None:
+    """Resolve the Bearer token for the server at ``server_url``:
+
+        1. explicit arg (e.g. ``Transport(..., token=...)``)
+        2. ``CAIRN_TOKEN`` env var — applies to every server
+        3. the config file's ``[tokens]`` entry for ``server_url``
+           (written by ``cairn login``), matched after
+           ``normalize_server_url``
 
     Returns ``None`` (not an error) when no token is configured — auth-off
     servers work with no token at all.
@@ -200,9 +287,10 @@ def resolve_token(explicit: str | None = None) -> str | None:
     env = os.environ.get("CAIRN_TOKEN")
     if env:
         return env
-    cfg = load_config_file()
-    token = cfg.get("token")
-    return str(token) if token else None
+    if server_url is None:
+        return None
+    key = _normalized_or_none(server_url)
+    return saved_tokens().get(key) if key is not None else None
 
 
 MODES = ("enabled", "disabled")

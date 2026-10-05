@@ -149,6 +149,7 @@ def _print_access_banner(
     *,
     token_plain: str,
     ui_url: str | None,
+    api_url: str,
 ) -> str | None:
     """Print the reusable same-user access token on every authenticated start.
 
@@ -167,7 +168,7 @@ def _print_access_banner(
         "  Auth is ON. Reusable local access token:",
         f"    {token_plain}",
         "",
-        "  SDK/CLI:  CAIRN_TOKEN=<token above>  (or `cairn configure` + config.toml)",
+        f"  SDK/CLI:  cairn login {api_url}  (paste the token), or CAIRN_TOKEN=<token>",
     ]
     browser_login_url = None
     if ui_url is not None:
@@ -351,7 +352,9 @@ def server_cmd(
     if auth_enabled:
         ui_url = f"http://localhost:{ui_port}" if ui_app is not None else None
         assert local_token is not None
-        browser_url = _print_access_banner(db, token_plain=local_token, ui_url=ui_url) or browser_url
+        browser_url = _print_access_banner(
+            db, token_plain=local_token, ui_url=ui_url, api_url=f"http://localhost:{port}",
+        ) or browser_url
 
     if open_browser and browser_url is not None and host in ("0.0.0.0", "127.0.0.1", "localhost"):
         _open_browser_soon(browser_url)
@@ -450,9 +453,9 @@ def ui_cmd(
     """Serve the Cairn viewer over a local repo or remote Cairn server.
 
     A remote ``--repo cairn://HOST:PORT`` keeps the page on loopback (a browser
-    secure context) while proxying relative API requests to the server. Set
-    ``CAIRN_TOKEN`` to authenticate server-side, or omit it and log in through
-    the browser. ``--no-auth`` applies only to local-repo mode.
+    secure context) while proxying relative API requests to the server. Its
+    token (``CAIRN_TOKEN``, else the one ``cairn login HOST:PORT`` saved)
+    authenticates server-side; without one, log in through the browser. ``--no-auth`` applies only to local-repo mode.
     """
     # First, before resolving the target, acquiring a repo lock or registering a
     # live server — so a missing viewer cannot leave any of that behind.
@@ -473,9 +476,11 @@ def ui_cmd(
             )
         if no_auth:
             raise click.ClickException("--no-auth is not valid for a remote UI proxy")
-        # Remote UI proxy credentials come only from the process environment;
-        # without one, authentication remains an explicit browser interaction.
-        token = os.environ.get("CAIRN_TOKEN") or None
+        # The token for this remote (CAIRN_TOKEN, else its `cairn login`
+        # entry) authenticates server-side; without one, authentication
+        # remains an explicit browser interaction.
+        token = _config.resolve_token(target.location)
+        token_source = "CAIRN_TOKEN" if os.environ.get("CAIRN_TOKEN") else "cairn login"
         try:
             app = create_proxy_app(
                 target.location,
@@ -488,7 +493,7 @@ def ui_cmd(
             f"\n  Cairn UI proxy:\n"
             f"    Local:   {ui_url}\n"
             f"    Remote:  {target.location}\n"
-            f"  Auth: {'CAIRN_TOKEN (server-side)' if token else 'browser login'}\n"
+            f"  Auth: {f'{token_source} token (server-side)' if token else 'browser login'}\n"
             f"  Press Ctrl+C to stop.\n"
         )
         if open_browser and host in ("0.0.0.0", "127.0.0.1", "localhost"):
@@ -564,7 +569,9 @@ def ui_cmd(
     browser_url = f"http://localhost:{port}/"
     if auth_enabled:
         assert local_token is not None
-        browser_url = _print_access_banner(db, token_plain=local_token, ui_url=ui_url) or browser_url
+        browser_url = _print_access_banner(
+            db, token_plain=local_token, ui_url=ui_url, api_url=ui_url,
+        ) or browser_url
     if open_browser and host in ("0.0.0.0", "127.0.0.1", "localhost"):
         _open_browser_soon(browser_url)
 
@@ -1164,20 +1171,9 @@ def _find_default_ssh_key() -> Path | None:
     return None
 
 
-@main.command("login")
-@click.option("--ssh", "use_ssh", is_flag=True, help="Authenticate via SSH key signature.")
-@click.option("--server", default=None, help="Server URL. Default: configured server.")
-@click.option(
-    "--key", "key_path", default=None,
-    type=click.Path(exists=True, dir_okay=False, path_type=Path),
-    help="Path to an SSH public key file. Default: auto-detect in ~/.ssh/.",
-)
-@click.option("--name", default=None, help="Name for the minted token (default: auto-generated).")
-def login_cmd(use_ssh: bool, server: str | None, key_path: Path | None, name: str | None) -> None:
-    """Log in and save a token to config.toml. Currently supports ``--ssh``."""
-    if not use_ssh:
-        raise click.ClickException("no login method selected; pass --ssh")
-
+def _ssh_login(server_url: str, key_path: Path | None, name: str | None) -> dict[str, Any]:
+    """Run the SSH challenge/response against ``server_url``; return the
+    server's ``{"token", "name", "role"}`` answer."""
     ssh_keygen = shutil.which("ssh-keygen")
     if not ssh_keygen:
         raise click.ClickException(
@@ -1191,7 +1187,6 @@ def login_cmd(use_ssh: bool, server: str | None, key_path: Path | None, name: st
         )
     pubkey_line = pub_path.read_text().strip()
 
-    server_url = _config.resolve_server(server)
     # /api/auth/ssh/* is exempt from auth (you're not logged in yet), so any
     # already-configured token is simply ignored by the server here.
     t = Transport(server_url)
@@ -1224,18 +1219,136 @@ def login_cmd(use_ssh: bool, server: str | None, key_path: Path | None, name: st
             )
         except Exception as exc:  # noqa: BLE001
             raise click.ClickException(f"login failed: {exc}") from None
-        result = resp.json()
+        return resp.json()
     finally:
         t.close()
 
+
+def _session(server_url: str, token: str, timeout: float = 10.0) -> dict[str, Any]:
+    """``/api/auth/session`` of ``server_url`` as seen with ``token``."""
+    import httpx
+
+    resp = httpx.get(
+        f"{server_url.rstrip('/')}/api/auth/session",
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=timeout,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _server_url_arg(url: str | None) -> str:
+    """A command's URL argument as a normalized server URL (default: the
+    configured server)."""
+    try:
+        return _config.normalize_server_url(_config.resolve_server(url))
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from None
+
+
+@main.command("login")
+@click.argument("url", required=False)
+@click.option("--ssh", "use_ssh", is_flag=True, help="Authenticate via SSH key signature.")
+@click.option(
+    "--token", "token", default=None,
+    help="Token to save (e.g. from the server's start-up banner). Prompted for when "
+    "neither --token nor --ssh is given.",
+)
+@click.option(
+    "--key", "key_path", default=None,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="With --ssh: path to an SSH public key file. Default: auto-detect in ~/.ssh/.",
+)
+@click.option("--name", default=None, help="With --ssh: name for the minted token (default: auto-generated).")
+@click.option("--list", "list_logins", is_flag=True, help="List the servers you are logged into and exit.")
+def login_cmd(
+    url: str | None,
+    use_ssh: bool,
+    token: str | None,
+    key_path: Path | None,
+    name: str | None,
+    list_logins: bool,
+) -> None:
+    """Log in to the server at URL and save its token to config.toml.
+
+    URL is ``cairn://host:port`` or ``http(s)://host:port[/prefix]``
+    (default: the configured server). Each server keeps its own token, so you
+    can stay logged into several at once; SDK and CLI calls pick the token of
+    the server they talk to. ``--ssh`` mints a token by signing a challenge
+    with your SSH key; otherwise paste a token (``--token`` or the prompt).
+    ``--list`` shows every saved login and who it is on its server.
+    """
+    if list_logins:
+        _list_logins()
+        return
+    if use_ssh and token is not None:
+        raise click.ClickException("pass either --ssh or --token, not both")
+    server_url = _server_url_arg(url)
+    if use_ssh:
+        result = _ssh_login(server_url, key_path, name)
+        token = result["token"]
+    else:
+        if token is None:
+            token = click.prompt(f"Token for {server_url}", hide_input=True).strip()
+        try:
+            session = _session(server_url, token)
+        except Exception as exc:  # noqa: BLE001
+            raise click.ClickException(f"could not reach {server_url}: {exc}") from None
+        if session.get("auth_enabled") and not session.get("authenticated"):
+            raise click.ClickException(f"{server_url} rejected that token")
+        result = {"name": session.get("name"), "role": session.get("role")}
+
+    _config.save_token(server_url, token)
+    # The first login also picks the default server; later ones never move it.
     existing = _config.load_config_file()
-    existing["server"] = server_url
-    existing["token"] = result["token"]
-    _config.write_config_file(existing)
+    if "server" not in existing and "repo" not in existing:
+        existing["server"] = server_url
+        _config.write_config_file(existing)
     click.echo(
-        f"Logged in as {result['name']!r} (role={result['role']}). "
+        f"Logged in to {server_url} as {result['name']!r} (role={result['role']}). "
         f"Token saved to {_config.config_file_path()}."
     )
+    if os.environ.get("CAIRN_TOKEN"):
+        click.echo(
+            "note: CAIRN_TOKEN is set and overrides saved tokens for every server.",
+            err=True,
+        )
+
+
+def _list_logins() -> None:
+    tokens = _config.saved_tokens()
+    if not tokens:
+        click.echo("(not logged into any server)")
+    else:
+        click.echo(f"{'SERVER':<40} {'NAME':<32} ROLE")
+        for server_url, tok in sorted(tokens.items()):
+            try:
+                session = _session(server_url, tok, timeout=3.0)
+            except Exception:  # noqa: BLE001
+                who, role = "(unreachable)", ""
+            else:
+                if session.get("auth_enabled") is False:
+                    who, role = "(auth off)", ""
+                elif session.get("authenticated"):
+                    who, role = str(session.get("name")), str(session.get("role"))
+                else:
+                    who, role = "(token rejected)", ""
+            click.echo(f"{server_url:<40} {who:<32} {role}")
+    if os.environ.get("CAIRN_TOKEN"):
+        click.echo("note: CAIRN_TOKEN is set and overrides these for every server.", err=True)
+
+
+@main.command("logout")
+@click.argument("url", required=False)
+def logout_cmd(url: str | None) -> None:
+    """Forget the saved token of the server at URL (default: the configured
+    server). Logins to other servers are kept; the token itself stays valid
+    on the server (``cairn token revoke`` ends it)."""
+    server_url = _server_url_arg(url)
+    if server_url not in _config.saved_tokens():
+        raise click.ClickException(f"not logged into {server_url}")
+    _config.save_token(server_url, None)
+    click.echo(f"Logged out of {server_url}.")
 
 
 # ---------------------------------------------------------------------------

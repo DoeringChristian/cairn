@@ -268,6 +268,36 @@ def test_cairn_ui_remote_repo_selects_local_proxy(monkeypatch):
     assert opened == [f"http://localhost:{captured_port}/"]
 
 
+def test_cairn_ui_remote_proxy_uses_the_remotes_saved_token(monkeypatch, tmp_path):
+    """Without CAIRN_TOKEN, the proxy authenticates with the token `cairn
+    login` saved for that remote — not another server's."""
+    import uvicorn
+    from cairn import config
+    from cairn.server import proxy
+
+    captured = {}
+    real_factory = proxy.create_proxy_app
+
+    def capture_factory(upstream, *, token=None, transport=None):
+        captured.update(upstream=upstream, token=token)
+        return real_factory(upstream, token=token, transport=transport)
+
+    monkeypatch.setattr(proxy, "create_proxy_app", capture_factory)
+    monkeypatch.setattr(uvicorn.Server, "run", lambda self: None)
+    monkeypatch.delenv("CAIRN_TOKEN", raising=False)
+    monkeypatch.setattr(config, "config_file_path", lambda: tmp_path / "config.toml")
+    config.save_token("cairn://fermat:4300", "fermat-token")
+    config.save_token("cairn://fermat:4400", "other-token")
+
+    result = CliRunner().invoke(
+        cli.main,
+        ["ui", "--repo", "cairn://fermat:4300", "--port", str(_free_port()), "--no-open-browser"],
+    )
+    assert result.exit_code == 0, result.output
+    assert captured == {"upstream": "http://fermat:4300", "token": "fermat-token"}
+    assert "cairn login token (server-side)" in result.output
+
+
 def test_cairn_ui_no_open_browser_opt_out(monkeypatch):
     import uvicorn
 

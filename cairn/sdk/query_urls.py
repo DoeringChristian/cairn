@@ -127,7 +127,7 @@ def query_url(
     # Baked: resolve once via format=json and return the immutable digest URL.
     import httpx
 
-    resolved_token = _config.resolve_token(token)
+    resolved_token = _config.resolve_token(base, token)
     headers = {"Authorization": f"Bearer {resolved_token}"} if resolved_token else {}
     params = _build_params(
         tag=tag, run=run, name=name, project=project, step=step, filters=filters

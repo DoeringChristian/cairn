@@ -1745,7 +1745,7 @@ class _HttpBackend(_RegistryWrites):
     ) -> None:
         import httpx
         self._base = server_url.rstrip("/")
-        resolved_token = _config.resolve_token(token)
+        resolved_token = _config.resolve_token(self._base, token)
         headers = {"Authorization": f"Bearer {resolved_token}"} if resolved_token else {}
         self._client = httpx.Client(base_url=self._base, timeout=30.0, headers=headers)
         self._cache_dir = _resolve_cache_dir(cache_dir) if cache else None

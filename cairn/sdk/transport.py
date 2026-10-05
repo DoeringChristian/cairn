@@ -81,10 +81,13 @@ class Transport:
         self.backoff_base = backoff_base
         self.backoff_cap = backoff_cap
         # Resolution order: explicit ctor arg > CAIRN_TOKEN env > config.toml
-        # `token` key (see cairn.config.resolve_token). No token configured
-        # -> no Authorization header, which is fine against an --no-auth
-        # server and correctly 401s against an auth-enabled one.
-        self.token = _config.resolve_token(token) if client is None else token
+        # `[tokens]` entry for this server (see cairn.config.resolve_token).
+        # No token configured -> no Authorization header, which is fine
+        # against an --no-auth server and correctly 401s against an
+        # auth-enabled one.
+        self.token = (
+            _config.resolve_token(self.server_url, token) if client is None else token
+        )
         headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
         self._client = client or httpx.Client(
             base_url=self.server_url, timeout=timeout, headers=headers

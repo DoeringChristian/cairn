@@ -62,7 +62,7 @@ def test_config_file_written_0600(tmp_path):
     import stat
 
     cfg = tmp_path / "cfgdir" / "config.toml"
-    config.write_config_file({"server": "http://x:4300", "token": "secret"}, path=cfg)
+    config.write_config_file({"server": "http://x:4300", "tokens": {"http://x:4300": "secret"}}, path=cfg)
     mode = stat.S_IMODE(os.stat(cfg).st_mode)
     assert mode == 0o600, oct(mode)
     parent_mode = stat.S_IMODE(os.stat(cfg.parent).st_mode)
@@ -78,7 +78,7 @@ def test_config_file_rewrite_tightens_existing_loose_perms(tmp_path):
     cfg = tmp_path / "config.toml"
     cfg.write_text("server = 'http://old'\n")
     os.chmod(cfg, 0o644)
-    config.write_config_file({"server": "http://new", "token": "secret"}, path=cfg)
+    config.write_config_file({"server": "http://new", "tokens": {"http://x:4300": "secret"}}, path=cfg)
     mode = stat.S_IMODE(os.stat(cfg).st_mode)
     assert mode == 0o600, oct(mode)
 
@@ -104,3 +104,70 @@ def test_reset_configured():
     config.configure(server="http://a.local")
     config.reset_configured()
     assert config.resolve_server() == config.DEFAULT_SERVER
+
+
+# ---------------------------------------------------------------------------
+# Per-server tokens
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "spelling,canonical",
+    [
+        ("http://gpubox:4300", "http://gpubox:4300"),
+        ("http://gpubox:4300/", "http://gpubox:4300"),
+        ("cairn://gpubox:4300", "http://gpubox:4300"),
+        ("cairn://GPUBox:4300//", "http://gpubox:4300"),
+        ("HTTP://gpubox:4300", "http://gpubox:4300"),
+        ("gpubox:4300", "http://gpubox:4300"),
+        ("http://gpubox:80", "http://gpubox"),
+        ("https://gpubox:443/", "https://gpubox"),
+        ("https://gpubox:4300", "https://gpubox:4300"),
+        ("http://127.0.0.1:4301", "http://localhost:4301"),
+        ("http://[::1]:4301", "http://localhost:4301"),
+        ("http://[fe80::1]:4301/", "http://[fe80::1]:4301"),
+        ("https://lab.example/cairn/a/", "https://lab.example/cairn/a"),
+        ("http://user:pw@gpubox:4300/?x=1#y", "http://gpubox:4300"),
+    ],
+)
+def test_normalize_server_url(spelling, canonical):
+    assert config.normalize_server_url(spelling) == canonical
+
+
+@pytest.mark.parametrize("bad", ["ftp://gpubox", "http://", "http://gpubox:notaport"])
+def test_normalize_server_url_rejects_non_servers(bad):
+    with pytest.raises(ValueError):
+        config.normalize_server_url(bad)
+
+
+def test_resolve_token_picks_the_target_servers_entry(monkeypatch):
+    monkeypatch.delenv("CAIRN_TOKEN", raising=False)
+    config.save_token("cairn://a.local:4300", "tok-a")
+    config.save_token("http://b.local:4300/", "tok-b")
+    assert config.resolve_token("http://a.local:4300") == "tok-a"
+    assert config.resolve_token("cairn://b.local:4300") == "tok-b"
+    # Another port on the same host is another server.
+    assert config.resolve_token("http://a.local:4301") is None
+    assert config.resolve_token(None) is None
+    # CAIRN_TOKEN applies to every server; an explicit token beats both.
+    monkeypatch.setenv("CAIRN_TOKEN", "env")
+    assert config.resolve_token("http://a.local:4300") == "env"
+    assert config.resolve_token("http://a.local:4300", "explicit") == "explicit"
+
+
+def test_save_token_rekeys_and_removes(monkeypatch):
+    config.write_config_file(
+        {"server": "http://a.local:4300", "tokens": {"cairn://A.local:4300/": "old"}}
+    )
+    assert config.save_token("http://a.local:4300", "new") == "http://a.local:4300"
+    data = config.load_config_file()
+    assert data["tokens"] == {"http://a.local:4300": "new"}
+    assert data["server"] == "http://a.local:4300"
+    config.save_token("a.local:4300", None)
+    assert "tokens" not in config.load_config_file()
+
+
+def test_single_token_key_is_not_read(monkeypatch):
+    monkeypatch.delenv("CAIRN_TOKEN", raising=False)
+    config.write_config_file({"token": "legacy"})
+    assert config.resolve_token("http://localhost:4300") is None
