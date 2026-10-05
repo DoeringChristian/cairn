@@ -190,7 +190,7 @@ Video settings, under **Playback** *(default)*:
 
 ### HTML and Markdown
 
-- **HTML** runs in a sandboxed iframe with scripts enabled but no access to cairn. Settings: **Auto height** to fit the content, or a fixed height *(default)*.
+- **HTML** is its own page in a sandboxed iframe, as with `wandb.Html`: its scripts run, and it can load anything from the web, such as scripts from a CDN, images and embedded pages. It has no access to cairn: it runs under an opaque origin with no cookies, no storage of cairn's and no API, and it cannot navigate the app away. Links can open in a new tab. Embedded YouTube players stay black, because YouTube needs an origin of its own and the sandbox is inherited by the frames it embeds. Settings: **Auto height** to fit the content, or a fixed height *(default)*.
 - **Markdown** renders GitHub-flavoured Markdown plus Pandoc's extensions, math included (see [Logging media › Markdown](../guides/media.md#markdown)). Raw HTML in the source is shown as text. Setting: **Font size** *(default)*.
 
 ### Histogram and tensor

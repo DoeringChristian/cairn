@@ -230,7 +230,9 @@ run.track(cairn.Html("<h1>Report</h1>…"), "report", step)
 run.track(cairn.Markdown("# Notes\n\n- [x] done"), "notes", step)
 ```
 
-- HTML is rendered only inside a sandboxed iframe, never inline in the page.
+- HTML is rendered only inside a sandboxed iframe, never inline in the page. Like
+  `wandb.Html` it may load scripts, images and pages from the web, but it gets no access to
+  cairn (see [Cards › HTML and Markdown](../ui/cards.md#html-and-markdown)).
 - Markdown is rendered as GitHub-flavoured Markdown plus most of Pandoc's Markdown, math
   included (see [Markdown](#markdown) below). Raw HTML is escaped.
 - HTML and Markdown are limited to 10 MB each.
