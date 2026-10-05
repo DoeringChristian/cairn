@@ -3,9 +3,11 @@ the ``raymarch/`` custom viewer.
 
 Every step logs the current reconstruction as a built-in ``cairn.Volume``
 (series ``density``) next to the ground truth (``density_target``). Nothing
-here is custom data: the viewer's manifest accepts ``volume``, so once it is
-published every volume card of the project is drawn by it. Two runs: one
-converges faster than the other.
+here is custom data. Volumes already show in cairn's built-in ray-marcher
+(``cairn.volume``, the same code as ``raymarch/``); publishing this copy with
+``default_for=["volume"]`` makes it the project's default viewer for volumes
+instead, the way you would ship your own renderer for a built-in type. Two
+runs: one converges faster than the other.
 
     cd examples/custom_viewers/volume
     cairn init /tmp/cairn-viewers && export CAIRN_REPO=/tmp/cairn-viewers/.cairn
@@ -52,7 +54,8 @@ def train(name: str, speed: float, seed: int) -> None:
     target = target_field()
     with cairn.Run(project=PROJECT, name=name) as run:
         run.config({"speed": speed, "shape": list(SHAPE)})
-        run.use_viewer(Path(__file__).parent / "raymarch")  # publish the viewer when it changed
+        # Publish the viewer when it changed, as the project's default for volumes.
+        run.use_viewer(Path(__file__).parent / "raymarch", default_for=["volume"])
         for step in range(STEPS):
             progress = 1 - np.exp(-speed * (step + 1))
             # Early steps: blurry and noisy; later ones approach the target.

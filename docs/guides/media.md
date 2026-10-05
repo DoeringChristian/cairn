@@ -434,10 +434,10 @@ bounds. `spacing` and `origin` follow the `[D, H, W]` axis order. Volumes may be
 float32.
 
 !!! note
-    The built-in volume card shows a placeholder with the `.npz` file for download. A
-    [custom viewer](custom-viewers.md) that accepts `volume` draws volumes instead: with one
-    published in the project (for example the WebGL2 ray marcher in
-    `examples/custom_viewers/volume`), every volume card uses it.
+    Volume cards draw with `cairn.volume`, the WebGL2 ray-marcher cairn ships as a
+    [built-in viewer](custom-viewers.md#built-in-viewers). A project can make its own viewer the
+    default for volumes ([default viewers](custom-viewers.md#default-viewers)); without WebGL2 the
+    card offers the `.npz` file for download.
 
 ## Custom data for your own viewers
 

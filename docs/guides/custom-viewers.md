@@ -9,7 +9,9 @@ working as for built-in cards.
 
 Viewer code runs only in the browser, in a sandboxed frame with no network and no access to the
 app (see [Security model](#security-model)). Several viewers can accept the same kind, and a
-viewer can also take over a built-in kind such as `volume`.
+viewer can also accept a built-in kind such as `volume`; every kind has one
+[default viewer](#default-viewers) per project. Cairn ships one viewer itself: `cairn.volume`,
+the ray-marcher that draws every `cairn.Volume` (see [Built-in viewers](#built-in-viewers)).
 
 ## Quick start
 
@@ -143,8 +145,8 @@ Patterns are whole-string globs: `*` matches any run of characters including `/`
 character, everything else is literal. `custom:guiding/*` matches `custom:guiding/vmf` and
 `custom:guiding/a/b`.
 
-When several viewers accept a series, the most specific wins: a pattern without wildcards beats
-any glob, and among globs the one with more literal characters wins (ties: by title).
+Accepting a kind does not make a viewer show it: which viewer draws a card is the kind's
+[default viewer](#default-viewers) (or the one the card names).
 
 ### Settings
 
@@ -350,18 +352,67 @@ wins over the published viewer of the same name in every card that does not pin 
 in use. Ctrl-C removes the source; otherwise it expires 30 s after the command stops. Dev sources
 are never part of reports or share links.
 
+## Default viewers
+
+Every kind of data has exactly one **default viewer** per project, and every card without a
+viewer of its own shows its data in it:
+
+- A **built-in type** (`image`, `mesh`, `volume`, …) shows in its built-in card, or in the
+  [built-in viewer](#built-in-viewers) cairn ships for it (`cairn.volume` for volumes), until the
+  project picks another. Publishing a viewer that accepts the type never changes that by itself.
+- A **custom kind** gets its default when a viewer declares it, and otherwise from the first
+  viewer ever published that accepts it while it has none. Publishing more viewers for it later
+  does not change it.
+
+Declare defaults when publishing (each kind must be one the viewer's `accepts` match; a bare name
+that is not a built-in type is a custom kind):
+
+```python
+run.use_viewer("viewers/raymarch", default_for=["volume"])
+cairn.publish_viewer("viewers/vmf", project="guiding", default_for=["guiding/vmf"])
+```
+
+```bash
+cairn viewer publish viewers/raymarch --project P --default-for volume
+```
+
+A publish that declares `default_for` makes a new version when the declaration differs from
+`latest`'s, and sets those defaults again then; republishing an unchanged folder with the same
+declaration changes nothing, so a default changed on the Defaults page stays.
+
+The project's **Defaults** page lists them under **Default viewer per type**: one row per built-in
+type some viewer accepts and per custom kind, each with the viewers that accept it (for a
+built-in type, also its built-in card or viewer). The API is
+`GET /api/projects/{p}/viewer-defaults` (`{defaults: {kind: viewer}, builtin: {kind: viewer}}`)
+and `PUT` with `{kind, viewer}` (`viewer: null` goes back to the built-in card or viewer). Keys are
+built-in types or `custom:<kind>` patterns; a series takes the most specific key matching it.
+
+### Built-in viewers
+
+Cairn ships viewers with the UI, named `cairn.<name>`, in every project without publishing:
+
+| Viewer | Accepts | Default for |
+|---|---|---|
+| `cairn.volume` (Volume (ray marching)) | `volume` | `volume` |
+
+They are listed with the project's viewers (marked built-in), show in the type list, the
+**Viewer** setting and the Defaults page like any viewer, and are always available to reports and
+share links. Viewer names starting with `cairn.` are reserved. In a browser without WebGL2 a
+volume card falls back to offering each step's `.npz` for download.
+
 ## How cards pick a viewer
 
 - A card of type `custom` (shown as the viewer's title in the type list) names its viewer in
-  `settings.viewer`, optionally pinned by `viewer_version`. Without `viewer` (**Automatic** in
-  the gear), it uses the project's most specific accepting viewer, so a newly published, more
-  specific viewer takes over such cards.
+  `settings.viewer`, optionally pinned by `viewer_version`. Without `viewer` (**Default** in the
+  gear), it uses the default viewer of its data's kind; for a custom kind with no default (only
+  dev sources accept it), the most specific accepting viewer: a pattern without wildcards beats
+  any glob, and among globs the one with more literal characters wins.
 - A series of custom data gets a `custom` card in the run page's workspace; without an accepting
   viewer it says so and offers the value for download.
-- A **volume** card is drawn by the project's most specific viewer accepting `volume` when there
-  is one (see `examples/custom_viewers/volume`); otherwise it shows the placeholder.
-- The [artifact explorer](../ui/artifacts.md) opens custom data in the most specific accepting
-  viewer, else as arrays, a JSON tree or a download.
+- A card of a **built-in type** shows in its type's default viewer when that is a custom viewer
+  (`volume` → `cairn.volume`), else in its built-in card.
+- The [artifact explorer](../ui/artifacts.md) opens custom data in its kind's default viewer, else
+  as arrays, a JSON tree or a download.
 
 ### The gear editor
 
@@ -369,8 +420,8 @@ The gear is the card's only editor. Its header sets the title and section; the *
 **Card** section picks the card type and the series. The type list offers every viewer that
 accepts all of the card's data (by title, with its icon) next to the built-in types, and the card
 changes at once. The viewer's own settings sit in
-the tabs and sections their manifest names; Data › Series also has **Viewer** (Automatic or a
-named viewer) and **Version** (latest or a published `vN`), and Data › Compare has the
+the tabs and sections their manifest names; Data › Series also has **Viewer** (**Default (<name>)**, the
+kind's default viewer, or a named viewer) and **Version** (latest or a published `vN`), and Data › Compare has the
 reference.
 
 ## Galleries, comparisons and sync
@@ -411,9 +462,10 @@ as its `snapshot()` (a frame's own WebGL canvas may print blank), and **Export L
 custom card's snapshot as its figure; both wait until the frames have rendered.
 
 A [share link](../ui/sharing.md) of a report can load the viewers its cards use: the version a
-card names (`viewer`, pinned or `latest`), and for cards whose viewer the UI picks (a `custom`
-card without `viewer`, or a `volume` card) the `latest` of every viewer that could be picked.
-Share principals can list and fetch only those versions, and never dev sources.
+card names (`viewer`, pinned or `latest`), and for cards without one the `latest` of their kinds'
+default viewers (a `custom` card: also every viewer accepting custom data). Built-in viewers are
+part of the app and always load. Share principals can list and fetch only those versions, and
+never dev sources.
 
 ## Security model
 
