@@ -1,0 +1,83 @@
+{
+  "name": "field-diff",
+  "title": "2D field diff",
+  "description": "A 2D scalar field (kind field/2d) on a symmetric diverging colormap; with a reference, A - B or A | B. Hover for values.",
+  "accepts": [
+    "custom:field/2d"
+  ],
+  "inputs": "compare",
+  "icon": "table-cells",
+  "settings": [
+    {
+      "key": "mode",
+      "type": "select",
+      "label": "With a reference",
+      "options": [
+        {
+          "value": "diff",
+          "label": "A \u2212 B"
+        },
+        {
+          "value": "side",
+          "label": "A | B"
+        },
+        {
+          "value": "a",
+          "label": "A only"
+        }
+      ],
+      "default": "diff",
+      "tab": "data",
+      "section": "Compare",
+      "help": "Pick the reference series in the Compare section."
+    },
+    {
+      "key": "palette",
+      "type": "select",
+      "label": "Palette",
+      "options": [
+        {
+          "value": "RdBu",
+          "label": "Red-blue"
+        },
+        {
+          "value": "PuOr",
+          "label": "Purple-orange"
+        },
+        {
+          "value": "BrBG",
+          "label": "Brown-teal"
+        }
+      ],
+      "default": "RdBu",
+      "tab": "display",
+      "section": "Appearance"
+    },
+    {
+      "key": "range",
+      "type": "number",
+      "label": "Range (\u00b1)",
+      "min": 0,
+      "step": 0.1,
+      "default": 0,
+      "tab": "display",
+      "section": "Axes",
+      "help": "The colormap spans [-range, range]; 0 = the largest |value| shown."
+    },
+    {
+      "key": "threshold",
+      "type": "slider",
+      "label": "Threshold",
+      "min": 0,
+      "max": 1,
+      "step": 0.01,
+      "default": 0,
+      "tab": "display",
+      "section": "Appearance",
+      "help": "Values with |value| below this fraction of the range show as neutral."
+    }
+  ],
+  "imports": {
+    "d3-scale": "./vendor/d3-scale.js"
+  }
+}
