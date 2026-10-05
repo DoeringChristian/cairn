@@ -1079,8 +1079,8 @@ def _export_project(project: str, filters: tuple[str, ...], fmt: str, out: Path)
         except ImportError as exc:
             raise click.ClickException(str(exc)) from exc
         if df.empty:
-            what = "the matching runs have" if len(query) else f"no run of project {project!r} matches, so it has"
-            click.echo(f"warning: {what} no scalar points; the export is empty", err=True)
+            why = "the matching runs have no scalar points" if len(query) else f"no run of project {project!r} matches"
+            click.echo(f"warning: {why}; the export is empty", err=True)
     # Times as ISO strings: the single-run export's shape.
     columns = list(df.columns)
     rows = [
