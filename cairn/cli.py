@@ -1340,6 +1340,16 @@ def configure_cmd(server: str | None) -> None:
 # ---------- token management (operator, direct-DB, local host only) --------
 
 
+def _parse_iso(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
 def _parse_expiry(value: str) -> str:
     """Accept a relative duration (``30d``, ``12h``, ``90m``, ``60s``) or a
     full ISO8601 timestamp; return an ISO8601 UTC string."""
@@ -1361,8 +1371,13 @@ def _parse_expiry(value: str) -> str:
 
 def _token_db(repo: Path | None) -> tuple[DataDir, Database]:
     """Open the token DB directly (operator on the server host — no remote
-    admin API in v1)."""
-    resolved = _ensure_repo(repo or _default_repo())
+    admin API in v1). The repo must exist: a token for a repo nobody serves
+    is a typo, not a request to create one."""
+    resolved = (repo or _default_repo()).expanduser().resolve()
+    if not (resolved / "cairn.db").exists():
+        raise click.ClickException(
+            f"no Cairn repo at {resolved}; pass --repo PATH/.cairn (or run `cairn init`)"
+        )
     dd = DataDir(resolved)
     return dd, Database.open(dd.db_path)
 
@@ -1425,12 +1440,14 @@ def token_list_cmd(repo: Path | None) -> None:
         # characters, so a long parent name still overflows the column.
         # PARENT is the short id of the token a browser login derived from;
         # revoking that parent revokes this row with it.
-        click.echo(f"{'NAME':<40} {'ROLE':<8} {'STATUS':<10} {'PARENT':<10} CREATED")
+        click.echo(f"{'NAME':<40} {'ROLE':<8} {'STATUS':<8} {'PARENT':<9} {'CREATED':<17} EXPIRES")
+        now = datetime.now(timezone.utc).isoformat()
         for r in rows:
-            status = "disabled" if r["disabled"] else ("expired" if r["expires_at"] and r["expires_at"] <= datetime.now(timezone.utc).isoformat() else "active")
+            status = "revoked" if r["disabled"] else ("expired" if r["expires_at"] and r["expires_at"] <= now else "active")
             parent = (r["parent_id"] or "")[:8]
             click.echo(
-                f"{r['name']:<40} {r['role']:<8} {status:<10} {parent:<10} {r['created_at']}"
+                f"{r['name']:<40} {r['role']:<8} {status:<8} {parent:<9} "
+                f"{_cell(_parse_iso(r['created_at'])):<17} {_cell(_parse_iso(r['expires_at'])) or 'never'}"
             )
     finally:
         db.close()

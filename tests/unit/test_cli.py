@@ -542,3 +542,26 @@ def test_open_points_at_the_paired_ui_port(app, monkeypatch):
     finally:
         server.should_exit = True
         thread.join(timeout=10)
+
+
+def test_token_commands_need_an_existing_repo(tmp_path):
+    """`cairn token list` in a directory without a repo used to create one."""
+    missing = tmp_path / "nowhere" / ".cairn"
+    for argv in (["list"], ["create", "--name", "x"], ["revoke", "x"]):
+        result = CliRunner().invoke(cli.main, ["token", *argv, "--repo", str(missing)])
+        assert result.exit_code == 1, result.output
+        assert "no Cairn repo at" in result.output
+    assert not missing.exists()
+
+
+def test_token_list_shows_expiry_and_revoked(tmp_path):
+    repo = tmp_path / ".cairn"
+    assert CliRunner().invoke(cli.main, ["init", str(tmp_path)]).exit_code == 0
+    runner = CliRunner()
+    assert runner.invoke(cli.main, ["token", "create", "--name", "ci", "--expires", "2099-01-01T00:00:00", "--repo", str(repo)]).exit_code == 0
+    assert runner.invoke(cli.main, ["token", "create", "--name", "dev", "--repo", str(repo)]).exit_code == 0
+    assert runner.invoke(cli.main, ["token", "revoke", "dev", "--repo", str(repo)]).exit_code == 0
+    out = runner.invoke(cli.main, ["token", "list", "--repo", str(repo)]).output
+    lines = {line.split()[0]: line for line in out.splitlines()[1:]}
+    assert "active" in lines["ci"] and "2099-01-01" in lines["ci"]
+    assert "revoked" in lines["dev"] and lines["dev"].endswith("never")
