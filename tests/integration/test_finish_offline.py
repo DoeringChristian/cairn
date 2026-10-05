@@ -11,7 +11,6 @@ from click.testing import CliRunner
 
 import cairn
 from cairn import cli
-from cairn.sdk import transport as transport_mod
 
 
 class Switch(httpx.BaseTransport):
@@ -31,22 +30,14 @@ class Switch(httpx.BaseTransport):
 def test_finish_while_server_down_then_sync(live_server, monkeypatch, tmp_path):
     monkeypatch.setenv("CAIRN_WAL_DIR", str(tmp_path / "wal"))
     monkeypatch.setenv("CAIRN_SERVER", live_server)
-    real_init = transport_mod.Transport.__init__
-
-    def init(self, url, **kw):
-        if kw.get("client") is None:
-            token = kw.get("token")
-            headers = {"Authorization": f"Bearer {token}"} if token else {}
-            kw["client"] = httpx.Client(
-                base_url=url.rstrip("/"), transport=Switch(), headers=headers,
-                timeout=kw.get("timeout", 10.0),
-            )
-        real_init(self, url, **kw)
-
-    monkeypatch.setattr(transport_mod.Transport, "__init__", init)
     Switch.down = False
+    # The class Run checks against (a unit test reloads the module).
+    from cairn.sdk.run import Transport as RunTransport
 
-    run = cairn.Run(project="p", repo=live_server, timeout=1.0, capture_source=False,
+    transport = RunTransport(live_server, timeout=1.0, client=httpx.Client(
+        base_url=live_server, transport=Switch(), timeout=1.0,
+    ))
+    run = cairn.Run(project="p", transport=transport, timeout=1.0, capture_source=False,
                     capture_stdout=False, capture_env=False, capture_system_metrics=False)
     run.track(1.0, "loss", step=0)
     run.config(lr=0.1)

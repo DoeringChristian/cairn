@@ -175,7 +175,8 @@ def test_run_finish_is_bounded_when_the_server_hangs(tmp_path, monkeypatch):
     """End to end: a server that stops answering mid-run costs finish()
     about ``timeout``, and the data waits in the WAL."""
     import cairn
-    from cairn.sdk import transport as transport_mod
+    # The class Run checks against (a test elsewhere reloads the module).
+    from cairn.sdk.run import Transport as RunTransport
 
     monkeypatch.setenv("CAIRN_WAL_DIR", str(tmp_path / "wal"))
     server = Server()
@@ -185,15 +186,11 @@ def test_run_finish_is_bounded_when_the_server_hangs(tmp_path, monkeypatch):
             return httpx.Response(200, json={"run_id": "r1", "project_id": "p"})
         return server(request)
 
-    real_init = transport_mod.Transport.__init__
-
-    def init(self, url, **kw):
-        kw["client"] = httpx.Client(base_url=url, transport=httpx.MockTransport(handler))
-        real_init(self, url, **kw)
-
-    monkeypatch.setattr(transport_mod.Transport, "__init__", init)
-    monkeypatch.setattr("cairn.sdk.connect._probe_server", lambda url: None)
-    run = cairn.Run(project="p", repo="http://test.local", timeout=1.0,
+    transport = RunTransport(
+        "http://test.local", timeout=1.0,
+        client=httpx.Client(base_url="http://test.local", transport=httpx.MockTransport(handler)),
+    )
+    run = cairn.Run(project="p", transport=transport, timeout=1.0,
                     capture_source=False, capture_stdout=False, capture_env=False,
                     capture_system_metrics=False)
     server.mode = "timeout"
