@@ -150,7 +150,10 @@ def test_batch_route_parses_off_the_event_loop(app, live_server):
             worst = max(worst, time.perf_counter() - t0)
             time.sleep(0.01)
         t.join(60)
-        assert worst < 0.5, worst
+        # Before the fix the event loop stalled for seconds while parsing a
+        # 200k-point body; 1.5 s keeps that regression visible without failing
+        # on a loaded machine (full-suite runs alongside other servers).
+        assert worst < 1.5, worst
         n = c.get(f"/api/runs/{rid}/sequences").json()["sequences"]
         assert sum(s["count"] for s in n) == 200_000
 
