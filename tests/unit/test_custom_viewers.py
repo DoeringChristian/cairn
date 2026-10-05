@@ -268,7 +268,7 @@ def test_viewers_list_and_files(tmp_path):
         assert entry["accepts"] == GOOD["accepts"] and entry["inputs"] == "compare"
         assert entry["settings"][0]["default"] == 1 and entry["imports"]["d3"] == "./vendor/d3.js"
         assert entry["digest"] == v2.digest and entry["content_digest"] and entry["updated_at"]
-        assert entry["error"] is None
+        assert entry["error"] is None and entry["icon"] is None and entry["settings"][0]["tab"] == "display"
         both = client.get("/api/projects/p/viewers", params={"all_versions": 1}).json()["viewers"]
         assert [v["version"] for v in both] == [2, 1]
         assert client.get("/api/projects/other/viewers").json() == {"viewers": []}

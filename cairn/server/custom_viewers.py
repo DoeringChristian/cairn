@@ -41,7 +41,7 @@ DEV_TTL_S = 30.0
 MAX_DEV_SOURCES = 32
 
 _MANIFEST_KEYS = (
-    "name", "title", "description", "entry", "accepts", "inputs", "webgl",
+    "name", "title", "description", "icon", "entry", "accepts", "inputs", "webgl",
     "view", "settings", "imports",
 )
 
