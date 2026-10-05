@@ -170,7 +170,7 @@ def test_sdk_and_cli_use_each_servers_own_token(two_servers, isolated_config):
         finally:
             t.close()
         reader = Reader(repo=s["url"].replace("http://", "cairn://"))
-        reader.runs()  # authenticated: an HTTP 401 would raise
+        assert list(reader.runs()) == []  # authenticated: a 401 would raise
 
     from click.testing import CliRunner
 
@@ -182,6 +182,8 @@ def test_sdk_and_cli_use_each_servers_own_token(two_servers, isolated_config):
 
     # Forgetting one login keeps the other.
     config.save_token(a["url"], None)
+    with pytest.raises(Exception, match="authentication required"):
+        list(Reader(repo=a["url"]).runs())
     with pytest.raises(httpx.HTTPStatusError):
         Transport(a["url"], max_retries=1).get("/api/runs")
     assert Transport(b["url"], max_retries=1).get("/api/runs").status_code == 200
