@@ -12,8 +12,8 @@ many concurrent writers on shared storage, or over HTTP to `cairn server`
 - **Logging**: scalars with `summary=`/`x=` metric rules, config and summary,
   images (boxes, masks, galleries, colormaps, EXR/npy encodings), figures,
   audio, video, histograms, tensors, tables with media cells, text, HTML,
-  Markdown, point clouds, meshes, box hierarchies, volumes (download only),
-  confusion matrices and PR/ROC curves; components that log themselves through
+  Markdown, point clouds, meshes, box hierarchies, volumes (the built-in
+  `cairn.volume` viewer), confusion matrices and PR/ROC curves; components that log themselves through
   `__cairn_track__` and `cairn.Scope`.
 - **Run lifecycle**: resume, rewind, fork with lineage, group/job type, tags and
   notes, stop from the UI, alerts with webhooks, model watching, git, source,
@@ -29,7 +29,8 @@ many concurrent writers on shared storage, or over HTTP to `cairn server`
 - **Web UI** (cairn-ui): runs table with filter trees, multi-sort, computed and
   frozen columns, nested group-by and baseline deltas; synced workspaces, saved
   views and a defaults cascade; comparisons and templates; a lineage page;
-  reports with notebook cells, math, comments, PDF/LaTeX export and share links.
+  reports with notebook cells, math, comments, PDF/LaTeX export and share links;
+  custom viewers (`cairn viewer`) for data logged with `cairn.Data`.
 - **Notebooks**: `cairn.ui` card embeds.
 
 ## Ideas
@@ -65,16 +66,12 @@ compatible views (a 2-D tensor as stats, histogram, heatmap, image or surface):
 
 ### UI
 
-- **Server-side downsampling of scalar series** — a series is fetched with
-  every point, which gets slow for runs with millions of points.
 - **Configurable WAL ingestion latency** — live preview of WAL-mode runs lags
   by the ingestion poll interval (about 2 s), with no setting in the UI.
 
 ### Server / deployment
 
 - **Per-project access control** — token roles apply to the whole server.
-- **TLS / reverse-proxy recipe** — running `cairn server --ui` behind nginx
-  or Caddy for a shared team server.
 
 ### Performance
 

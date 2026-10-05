@@ -18,9 +18,13 @@ preview it locally with `uv run --extra docs mkdocs serve`.
 
 ## Install
 
+cairn is not on PyPI; install it from this repository (Python 3.10+):
+
 ```bash
-pip install cairn-track          # tracking, the CLI and the HTTP API
-pip install 'cairn-track[ui]'    # ...plus the browser viewer
+# tracking, the CLI and the HTTP API
+pip install "cairn-track @ git+https://github.com/DoeringChristian/cairn"
+# ...plus the browser viewer
+pip install "cairn-track[ui] @ git+https://github.com/DoeringChristian/cairn"
 ```
 
 The base install carries no browser assets and needs no Node — which is the
@@ -37,6 +41,8 @@ Optional extras:
 - `cairn-track[tb]` — `cairn import-tb` for TensorBoard event files
 - `cairn-track[discovery]` — zeroconf/mDNS server discovery on the LAN
 - `cairn-track[docs]` — MkDocs, to build the documentation site
+
+Combine extras as usual: `"cairn-track[ui,media,export] @ git+https://github.com/DoeringChristian/cairn"`.
 
 ## Quick start — local mode
 
@@ -227,7 +233,10 @@ cairn export RUN_ID -o run.csv --format csv
 cairn export-runs RUN_ID ... -o runs.zip  # whole runs; cairn import-runs runs.zip
 cairn artifact versions sweep/model       # ls, versions, get, alias, tag, rm, lineage
 cairn report ls                           # ls, show, export, rm, share, shares, unshare
+cairn diff RUN_ID                         # the working directory vs. a run's source snapshot
+cairn viewer ls --project P               # custom viewers: init, add, dev, publish, ls
 cairn sync                                # replay run logs that never arrived
+cairn configure --server URL              # save the default server (or --repo) to the config file
 ```
 
 ## More
