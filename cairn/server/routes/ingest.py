@@ -7,15 +7,18 @@ lives there so it can be reused by the local-mode SDK transport.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Callable, TypeVar
 
+import anyio
+import anyio.to_thread
 from fastapi import (
     APIRouter,
     HTTPException,
     Request,
     Response,
 )
-from pydantic import BaseModel, Field
+from fastapi.exceptions import RequestValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from .. import ingest_ops
 from ._common import get_blobs, get_data_dir, get_db
@@ -121,6 +124,44 @@ class AlertRequest(BaseModel):
 
 # ---------- Helpers ---------------------------------------------------------
 
+T = TypeVar("T")
+M = TypeVar("M", bound=BaseModel)
+
+#: Threads that do the bulk ingest work (points, logs, uploads). It all
+#: queues on the database's one write lock anyway, so more threads would
+#: only wait there -- while holding threads of the shared pool that every
+#: page load needs. A request beyond these waits on the event loop instead.
+INGEST_THREADS = 4
+
+
+def _ingest_limiter(request: Request) -> anyio.CapacityLimiter:
+    state = request.app.state
+    limiter = getattr(state, "ingest_limiter", None)
+    if limiter is None:  # created on first use, inside the app's event loop
+        limiter = state.ingest_limiter = anyio.CapacityLimiter(INGEST_THREADS)
+    return limiter
+
+
+async def _ingest_thread(request: Request, fn: Callable[[], T]) -> T:
+    """Run ``fn`` on an ingest thread: never on the event loop, where a wait
+    for the write lock (or a large body's parse) would stall every request."""
+    return await anyio.to_thread.run_sync(fn, limiter=_ingest_limiter(request))
+
+
+def _parse(model: type[M], body: bytes) -> M:
+    """``body`` as ``model``, or the 422 FastAPI gives a declared body."""
+    try:
+        return model.model_validate_json(body)
+    except ValidationError as exc:
+        raise RequestValidationError(exc.errors(include_url=False)) from None
+
+
+def _json_body(model: type[BaseModel]) -> dict[str, Any]:
+    """OpenAPI for a route that parses its JSON body itself (``_parse``)."""
+    return {"requestBody": {"required": True, "content": {
+        "application/json": {"schema": model.model_json_schema()},
+    }}}
+
 
 def _run_not_found(exc: ingest_ops.RunNotFound) -> HTTPException:
     return HTTPException(status_code=404, detail=str(exc))
@@ -162,27 +203,41 @@ def set_summary(run_id: str, body: SummaryRequest, request: Request) -> dict[str
     return {"updated": updated}
 
 
-@router.post("/runs/{run_id}/batch")
-def post_batch(run_id: str, body: BatchRequest, request: Request) -> dict[str, Any]:
+@router.post("/runs/{run_id}/batch", openapi_extra=_json_body(BatchRequest))
+async def post_batch(run_id: str, request: Request) -> dict[str, Any]:
+    # The body is parsed on the ingest thread too: a large batch's JSON and
+    # validation would otherwise hold the event loop.
+    body = await request.body()
     db = get_db(request)
-    points = [p.model_dump() for p in body.points]
+
+    def work() -> int:
+        points = [p.model_dump() for p in _parse(BatchRequest, body).points]
+        return ingest_ops.insert_batch(db, run_id, points)
+
     try:
-        accepted = ingest_ops.insert_batch(db, run_id, points)
+        accepted = await _ingest_thread(request, work)
     except ingest_ops.RunNotFound as exc:
         raise _run_not_found(exc) from None
+    except (HTTPException, RequestValidationError):
+        raise
     except Exception as exc:  # noqa: BLE001
         # Duplicate (run_id, name, step) → 409.
         raise HTTPException(status_code=409, detail=str(exc)) from None
     return {"accepted": accepted}
 
 
-@router.post("/runs/{run_id}/logs")
-def post_logs(run_id: str, body: LogsRequest, request: Request) -> dict[str, Any]:
+@router.post("/runs/{run_id}/logs", openapi_extra=_json_body(LogsRequest))
+async def post_logs(run_id: str, request: Request) -> dict[str, Any]:
+    body = await request.body()
     db = get_db(request)
     dd = get_data_dir(request)
-    lines = [line.model_dump() for line in body.lines]
+
+    def work() -> int:
+        lines = [line.model_dump() for line in _parse(LogsRequest, body).lines]
+        return ingest_ops.insert_logs(db, dd, run_id, lines)
+
     try:
-        accepted = ingest_ops.insert_logs(db, dd, run_id, lines)
+        accepted = await _ingest_thread(request, work)
     except ingest_ops.RunNotFound as exc:
         raise _run_not_found(exc) from None
     return {"accepted": accepted}
@@ -226,7 +281,11 @@ async def post_artifact(request: Request) -> dict[str, Any]:
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="metadata must be JSON") from None
     obj_type = object_type if isinstance(object_type, str) else None
-    return ingest_ops.put_artifact(db, blobs, data, mime_type, meta_dict, object_type=obj_type)
+    # Hashing, the blob write and the row insert (which waits for the write
+    # lock) all block: off the event loop.
+    return await _ingest_thread(request, lambda: ingest_ops.put_artifact(
+        db, blobs, data, mime_type, meta_dict, object_type=obj_type,
+    ))
 
 
 @router.post("/runs/{run_id}/source")
@@ -249,7 +308,9 @@ async def post_source(run_id: str, request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="manifest must be JSON") from None
     data = await archive.read()
     try:
-        return ingest_ops.save_source(db, dd, run_id, data, manifest_dict)
+        return await _ingest_thread(
+            request, lambda: ingest_ops.save_source(db, dd, run_id, data, manifest_dict),
+        )
     except ingest_ops.RunNotFound as exc:
         raise _run_not_found(exc) from None
 
