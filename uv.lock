@@ -270,7 +270,7 @@ wheels = [
 
 [[package]]
 name = "cairn-track"
-version = "0.3.0"
+version = "0.3.1"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
@@ -422,7 +422,7 @@ provides-extras = ["ui", "media", "hf", "discovery", "export", "tb", "lightning"
 
 [[package]]
 name = "cairn-ui"
-version = "0.3.0"
+version = "0.3.1"
 source = { editable = "vendor/cairn-ui" }
 dependencies = [
     { name = "cairn-track" },

@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.3.1 — 2026-10-06
+
+### Breaking
+
+- **Workspace views replace saved views.** The run page is always in one of
+  the project's views (the current view is stored on the server); edits save
+  into it. The project workspace became the view "Default" and saved views
+  became views. Switching views clears the undo history.
+- **Sweeps use wandb's lifecycle terms.** `cairn sweep stop` takes over the old
+  `cancel` (no new trials, running trials finish); `cairn sweep cancel` now also
+  ends the running trials (through the run Stop mechanism). Repeating an action
+  (pausing a paused sweep) is an error.
+- **Sweep commands.** `program:` and `command:` (list or string) with wandb's
+  macros (`${env}`, `${interpreter}`, `${program}`, `${args}`,
+  `${args_no_hyphens}`, `${args_no_boolean_flags}`, `${args_json}`,
+  `${args_json_file}`) and wandb's default command. Params are no longer
+  appended automatically: they appear where an args macro is. Unknown keys in
+  a sweep file are an error.
+- `BlobStore.put(data)` / `get(digest)` take and return bytes only.
+
+### Added
+
+- `run.project`.
+- Sweeps: `run_cap`; Python `Sweep.run()` waits while the sweep is paused;
+  `Sweep.stop()`; the sweep page shows Pause/Resume, Stop and Cancel.
+- Workspace view switcher with layout previews, + New view (copy or empty),
+  rename, duplicate, delete.
+
+### Fixed
+
+- Card resize: a grey preview shows the new size; the section resizes on
+  release instead of reflowing (and moving the card) during the drag.
+- A step slider at the last position follows new steps as they arrive.
+- The runs list shows new and deleted runs even when no run is running.
+- Media cards: setting Max runs no longer hides the Max runs control.
+- Unknown URLs show a not-found page instead of `[object Object]`.
+- Blob store: a writer killed right after writing a blob, or a read in that
+  moment, no longer leaves the bytes unreadable (`meta.json` is gone; the
+  database row describes the bytes).
+
 ## 0.3.0 — 2026-10-06
 
 The first tagged release. cairn-track and cairn-ui are released together at
