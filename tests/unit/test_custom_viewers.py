@@ -14,6 +14,7 @@ import cairn
 from cairn.server import auth as auth_core
 from cairn.server.app import create_app
 from cairn.server.custom_viewers import DevStore
+from tests.conftest import ingest_repo
 from cairn.server.viewer_manifest import (
     MAX_FOLDER_BYTES,
     ManifestError,
@@ -250,7 +251,7 @@ def test_publish_dedupes_by_content(tmp_path):
         assert same.id == v2.id
         (root / "index.js").write_text("export const again = 1;\n")
         v3 = run.use_viewer(root)
-    assert v3.version == 3
+    assert v3.wait(timeout=30).version == 3
     assert v3.logged_by().id == run.id
 
     # Another type under the viewer's name is refused.
@@ -267,6 +268,7 @@ def test_viewers_list_and_files(tmp_path):
     (root / "index.js").write_text("export const two = 2;\n")
     v2 = cairn.publish_viewer(root, project="p", repo=repo)
     cairn.log_artifact(b"x", "not-a-viewer", project="p", repo=repo)
+    ingest_repo(repo)
     with TestClient(create_app(data_dir=repo, background_tasks=False)) as client:
         (entry,) = own(client.get("/api/projects/p/viewers").json()["viewers"])
         assert entry["version_id"] == v2.id and entry["version"] == 2 and entry["dev"] is False
@@ -293,6 +295,7 @@ def test_blob_headers_and_media_still_served(tmp_path):
     repo = tmp_path / ".cairn"
     with cairn.Run(project="p", repo=repo, **QUIET) as run:
         run.track(cairn.Image(np.zeros((4, 4, 3), np.uint8)), "img", 0)
+    ingest_repo(repo)
     with TestClient(create_app(data_dir=repo, background_tasks=False)) as client:
         (seq,) = client.get(f"/api/runs/{run.id}/sequences/img").json()["points"]
         r = client.get(f"/api/artifacts/{seq['artifact_hash']}")
@@ -367,6 +370,7 @@ def _dev_folder(tmp_path) -> Path:
 def test_dev_routes_and_cli_sync(tmp_path):
     from cairn.sdk.custom_viewers import DevSync
 
+    ingest_repo(tmp_path)
     app = create_app(data_dir=tmp_path / "cairn", auth_enabled=True, background_tasks=False)
     with TestClient(app) as client:
         _id, writer = auth_core.create_token(app.state.db, name="w", role="write")
@@ -427,6 +431,7 @@ def test_share_scope_includes_report_viewers_only(tmp_path):
     with cairn.Run(project="p", repo=repo, **QUIET) as run:
         run.track(cairn.Data([1], kind="k"), "d", 0)
 
+    ingest_repo(repo)
     app = create_app(data_dir=repo, auth_enabled=True, background_tasks=False)
     with TestClient(app) as owner:
         _id, token = auth_core.create_token(app.state.db, name="w", role="write")
@@ -643,6 +648,7 @@ def test_share_scope_includes_viewers_a_card_may_pick(tmp_path):
     with cairn.Run(project="p", repo=repo, **QUIET) as run:
         run.track(cairn.Data([1], kind="k/a"), "d", 0)
 
+    ingest_repo(repo)
     app = create_app(data_dir=repo, auth_enabled=True, background_tasks=False)
     with TestClient(app) as owner:
         _id, token = auth_core.create_token(app.state.db, name="w", role="write")

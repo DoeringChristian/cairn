@@ -50,13 +50,13 @@ def test_flat_index_and_collisions():
     }
 
 
-@pytest.fixture(params=["local", "http", "wal"])
+@pytest.fixture(params=["local", "http"])
 def target(request, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     if request.param == "http":
         monkeypatch.setenv("CAIRN_WAL_DIR", str(tmp_path / "wal"))
         return request.getfixturevalue("live_server").replace("http://", "cairn://"), {}
-    return str(tmp_path / ".cairn"), {"local_wal": request.param == "wal"}
+    return str(tmp_path / ".cairn"), {}
 
 
 def test_exact_round_trip_and_merge_on_every_backend(target):

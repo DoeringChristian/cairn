@@ -21,6 +21,7 @@ from cairn.server.storage.blobs import BlobStore
 from cairn.server.storage.datadir import DataDir
 from cairn.server.storage.db import Database
 from cairn.server.wal_ingest import ingest_all
+from tests.conftest import ingest_repo
 
 
 def _alerts(db, run_id=None):
@@ -93,30 +94,17 @@ def _alert(title, alert_id, level="info"):
             "created_at": "2024-01-01T00:00:00+00:00"}
 
 
-def test_local_direct(tmp_path):
-    t = LocalTransport(tmp_path / ".cairn")
-    try:
-        rid = t.create_run({"project": "p"})["run_id"]
-        t.alert(rid, _alert("hi", "a1", "error"))
-        t.finish_run(rid, "failed", exit_code=1)
-        rows = _alerts(t.db, rid)
-    finally:
-        t.close()
-    assert [(a["id"], a["level"]) for a in rows if a["id"] == "a1"] == [("a1", "error")]
-    assert len(rows) == 2
-
-
-def test_local_wal_replays_once_after_incremental_and_full_drain(tmp_path):
+def test_local_run_log_alerts_apply_once(tmp_path):
     repo = tmp_path / ".cairn"
     dd = DataDir(repo)
-    t = LocalTransport(repo, use_wal=True)
+    t = LocalTransport(repo)
     rid = t.create_run({"project": "p", "run_id": "b" * 32})["run_id"]
     t.alert(rid, _alert("hi", "a1"))
-    t.finish_run(rid, "failed", exit_code=1)
     db = Database.open(dd.db_path)
-    ingest_all(dd, db, BlobStore(dd.artifacts_dir))  # incremental (lock held)
+    ingest_all(dd, db, BlobStore(dd.artifacts_dir))  # the run is still live
+    t.finish_run(rid, "failed", exit_code=1)
     t.close()
-    ingest_all(dd, db, BlobStore(dd.artifacts_dir))  # full drain replays everything
+    ingest_all(dd, db, BlobStore(dd.artifacts_dir))  # only the rest
     rows = _alerts(db, rid)
     db.close()
     assert sorted(a["level"] for a in rows) == ["error", "info"]
@@ -139,6 +127,7 @@ def test_sdk_run_alert_and_failure(tmp_path):
                 run.alert("x", level="critical")
             rid = run.id
             raise RuntimeError("boom")
+    ingest_repo(repo)
     db = Database.open(DataDir(repo).db_path)
     try:
         rows = _alerts(db, rid)
@@ -166,17 +155,17 @@ def test_reap_stale_runs_kills_and_alerts_once(tmp_path):
         ingest_ops.create_run(db, project="p", run_id="stale", name="old")
         ingest_ops.create_run(db, project="p", run_id="fresh")
         db.write("UPDATE runs SET last_heartbeat = '2000-01-01T00:00:00+00:00' WHERE id = 'stale'")
-        (dd.root / "wals").mkdir(exist_ok=True)
-        lock = dd.root / "wals" / "stale.lock"
-        lock.write_text("x")
+        ingest_ops.create_run(db, project="p", run_id="logged")
+        # A local run's log decides its liveness, not its heartbeat.
+        db.write("UPDATE runs SET last_heartbeat = '2000-01-01T00:00:00+00:00' WHERE id = 'logged'")
+        db.write("INSERT INTO wal_progress VALUES ('logged.wal.jsonl', 'logged', 0, 0, 'x')")
 
-        assert alerts_core.reap_stale_runs(db, dd) == ["stale"]
-        assert alerts_core.reap_stale_runs(db, dd) == []
+        assert alerts_core.reap_stale_runs(db) == ["stale"]
+        assert alerts_core.reap_stale_runs(db) == []
         status = {r["id"]: r["status"] for r in db.read_columns("SELECT id, status FROM runs")}
-        assert status == {"stale": "killed", "fresh": "running"}
+        assert status == {"stale": "killed", "fresh": "running", "logged": "running"}
         (alert,) = _alerts(db)
         assert (alert["run_id"], alert["level"], alert["title"]) == ("stale", "warn", "Run old killed")
-        assert not lock.exists()
     finally:
         db.close()
 
@@ -254,9 +243,9 @@ def test_maintenance_cycle_delivers_each_alert_once(tmp_path, sink):
         ingest_ops.create_run(db, project="vision", run_id="r1", name="train")
         ingest_ops.finish_run(db, "r1", "failed", exit_code=1)
         # No webhook: nothing is claimed, the alert waits for one.
-        assert alerts_core.maintenance_cycle(db, dd, None) == 0
-        assert alerts_core.maintenance_cycle(db, dd, sink.url) == 1
-        assert alerts_core.maintenance_cycle(db, dd, sink.url) == 0
+        assert alerts_core.maintenance_cycle(db, None) == 0
+        assert alerts_core.maintenance_cycle(db, sink.url) == 1
+        assert alerts_core.maintenance_cycle(db, sink.url) == 0
         (alert,) = _alerts(db)
         assert alert["delivered_at"] is not None
     finally:
@@ -274,7 +263,7 @@ def test_unreachable_webhook_is_logged_not_raised(tmp_path):
     try:
         ingest_ops.create_run(db, project="p", run_id="r1")
         ingest_ops.insert_alert(db, "r1", "t")
-        assert alerts_core.maintenance_cycle(db, dd, "http://127.0.0.1:9/nothing") == 1
+        assert alerts_core.maintenance_cycle(db, "http://127.0.0.1:9/nothing") == 1
     finally:
         db.close()
 

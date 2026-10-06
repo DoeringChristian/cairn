@@ -100,3 +100,16 @@ def live_server(app):
     finally:
         server.should_exit = True
         thread.join(timeout=10)
+
+
+def ingest_repo(repo) -> None:
+    """Apply a local repo's pending run logs now, under its ingest lease (what
+    a server's background loop, a Reader or a CLI command does)."""
+    from cairn.sdk.local import RepoTransport
+    from cairn.server.wal_ingest import ingest_all
+
+    rt = RepoTransport(repo)
+    try:
+        rt.under_lease(lambda db: ingest_all(rt.data_dir, db, rt.blobs), catch_up_first=False)
+    finally:
+        rt.close()

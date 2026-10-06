@@ -15,6 +15,7 @@ from cairn.server import auth as auth_core
 from cairn.server.app import create_app
 from cairn.server.custom_viewers import builtin_defaults, builtin_viewers
 from cairn.server.viewer_defaults import default_for_subject, normalize_kind, resolve
+from tests.conftest import ingest_repo
 
 QUIET = dict(capture_source=False, capture_stdout=False, capture_env=False, capture_system_metrics=False)
 
@@ -71,6 +72,7 @@ def test_builtin_volume_viewer_ships_and_is_listed(tmp_path):
     assert vol.manifest["accepts"] == ["volume"] and vol.manifest["webgl"] is True
     assert builtin_defaults() == {"volume": "cairn.volume"}
     repo = tmp_path / ".cairn"
+    ingest_repo(repo)
     with TestClient(create_app(data_dir=repo, background_tasks=False)) as client:
         listed = client.get("/api/projects/fresh/viewers").json()["viewers"]
         (entry,) = [v for v in listed if v["builtin"]]
@@ -99,6 +101,7 @@ def test_first_published_viewer_of_a_custom_kind_becomes_its_default(tmp_path):
     repo = tmp_path / ".cairn"
     cairn.publish_viewer(viewer(tmp_path / "a", "a", ["custom:k/*", "volume"]), project="p", repo=repo)
     cairn.publish_viewer(viewer(tmp_path / "b", "b", ["custom:k/x", "custom:other"]), project="p", repo=repo)
+    ingest_repo(repo)
     with TestClient(create_app(data_dir=repo, background_tasks=False)) as client:
         # `a` is first for k/*; `b`'s k/x falls under it, `other` is new. Volume
         # (a built-in type) never changes implicitly.
@@ -116,6 +119,7 @@ def test_default_for_declares_and_republishes_only_on_change(tmp_path):
     assert v1.version == 1
     with pytest.raises(ValueError, match="cannot be the default"):
         cairn.publish_viewer(root, project="p", repo=repo, default_for=["image"])
+    ingest_repo(repo)
     with TestClient(create_app(data_dir=repo, background_tasks=False)) as client:
         assert defaults(client)["defaults"] == {"volume": "ray"}
 
@@ -131,6 +135,7 @@ def test_run_use_viewer_and_cli_default_for(tmp_path):
         "--repo", str(repo), "--default-for", "k",
     ])
     assert r.exit_code == 0, r.output
+    ingest_repo(repo)
     with TestClient(create_app(data_dir=repo, background_tasks=False)) as client:
         assert defaults(client)["defaults"] == {"image": "a", "custom:k": "b"}
 
@@ -142,6 +147,7 @@ def test_run_use_viewer_and_cli_default_for(tmp_path):
 def test_put_sets_and_clears_defaults(tmp_path):
     repo = tmp_path / ".cairn"
     cairn.publish_viewer(viewer(tmp_path / "a", "a", ["custom:k", "volume", "image"]), project="p", repo=repo)
+    ingest_repo(repo)
     app = create_app(data_dir=repo, auth_enabled=True, background_tasks=False)
     with TestClient(app) as client:
         _id, token = auth_core.create_token(app.state.db, name="w", role="write")
@@ -171,6 +177,7 @@ def test_share_scope_has_the_default_viewers_of_its_kinds(tmp_path):
     with cairn.Run(project="p", repo=repo, **QUIET) as run:
         run.track(1.0, "x", 0)
 
+    ingest_repo(repo)
     app = create_app(data_dir=repo, auth_enabled=True, background_tasks=False)
     with TestClient(app) as owner:
         _id, token = auth_core.create_token(app.state.db, name="w", role="write")
