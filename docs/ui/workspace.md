@@ -29,7 +29,7 @@ The view switcher is the first item of the [toolbar](#workspace-toolbar). On the
 - The top of a tile is a sketch of the view's layout for the run you are viewing: each section as its name over a rule, each card as a box as wide as its card on the 6-column grid, with its card type's icon. With unlisted metrics on, the automatic panels of the run's metrics are drawn too. A collapsed section shows only its rule; a long layout shows its top part.
 - Below it: the view's name (with ✓ before the current view), then **✎** to rename it in place (++enter++ or leaving the field saves, ++escape++ cancels), **⧉** to duplicate it as **<name> copy**, and **×** to delete it. The last view cannot be deleted. Deleting the current view first switches to the first remaining one.
 - The second line counts the view's cards and says **unlisted on** or **listed only**.
-- Click a tile to switch to its view. The panel closes. Switching is not an edit: ++cmd+z++ never switches back, and edits inside a view undo as usual.
+- Click a tile to switch to its view. The panel closes. Switching is not an edit: ++cmd+z++ never switches back. Switching also clears the undo history, so ++cmd+z++ never changes a view you have left; edits inside the view you are in undo as usual.
 - **+ New view** turns into a name field with **Copy of current view** (the default) or **Empty (automatic panels only)**. ++enter++ creates the view and switches to it; ++escape++ cancels.
 
 In a [comparison](comparisons.md), the switcher reads **Views** and opens the same panel, without a ✓. A comparison keeps its own layout: clicking a tile copies that view's layout into the comparison, replacing its layout and keeping its runs (++cmd+z++ undoes it). **+ New view** asks only for a name and saves the comparison's current layout as a new view. ✎, ⧉ and × work as on the run page.
@@ -221,7 +221,7 @@ Each project has one undo stack. It records every workspace edit, on the run pag
 - section edits, hide patterns, defaults, colour by
 - copying a view's layout into a comparison
 
-Switching views on the run page is not an edit and is not recorded. Undo with ++cmd+z++ / ++ctrl+z++ and redo with ++cmd+shift+z++ / ++ctrl+shift+z++. These shortcuts do nothing while a text field has focus, because the field keeps its own typing undo. The stack holds 200 steps.
+Switching views on the run page is not an edit and is not recorded; it clears the undo history. Undo with ++cmd+z++ / ++ctrl+z++ and redo with ++cmd+shift+z++ / ++ctrl+shift+z++. These shortcuts do nothing while a text field has focus, because the field keeps its own typing undo. The stack holds 200 steps.
 
 Undoing a workspace edit restores only the parts of the workspace that edit changed (its sections and panels, removed panels, the unlisted-metrics setting, hide patterns, defaults, prefs or runs), so changes another tab made to the other parts in the meantime survive. See also [Keyboard shortcuts](shortcuts.md).
 
