@@ -11,12 +11,12 @@ import pytest
 
 import cairn
 
-_RUN_KW = dict(
-    capture_source=False,
-    capture_stdout=False,
-    capture_env=False,
-    capture_system_metrics=False,
-)
+_RUN_KW = {
+    "capture_source": False,
+    "capture_stdout": False,
+    "capture_env": False,
+    "capture_system_metrics": False,
+}
 
 
 @pytest.fixture(autouse=True)
@@ -225,7 +225,7 @@ def test_ultralytics_train(tmp_path, monkeypatch):
         model.train(data="coco8.yaml", epochs=1, imgsz=64, device="cpu", workers=0,
                     project=str(tmp_path / "runs"), name="train", exist_ok=True, verbose=False,
                     amp=False, pretrained=False)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         if "download" in str(exc).lower() or "dataset" in str(exc).lower():
             pytest.skip(f"coco8 unavailable: {exc}")
         raise

@@ -135,9 +135,9 @@ class CairnModelCheckpoint(keras.callbacks.ModelCheckpoint):
     ``fit``, else ``run``.
 
     Args:
-        filepath, monitor, verbose, save_best_only, save_weights_only, mode,
-            save_freq, initial_value_threshold: As for
-            ``keras.callbacks.ModelCheckpoint``.
+        filepath: As for ``keras.callbacks.ModelCheckpoint``, like every
+            other argument but ``run`` (``monitor``, ``save_best_only``,
+            ``mode``, ``save_freq``, ...).
         run: The run to log into when the fit has no ``CairnCallback``.
 
     Raises:

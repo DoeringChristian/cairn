@@ -15,12 +15,12 @@ import pytest
 
 import cairn
 
-_RUN_KW = dict(
-    capture_source=False,
-    capture_stdout=False,
-    capture_env=False,
-    capture_system_metrics=False,
-)
+_RUN_KW = {
+    "capture_source": False,
+    "capture_stdout": False,
+    "capture_env": False,
+    "capture_system_metrics": False,
+}
 
 
 @pytest.fixture(autouse=True)
@@ -170,7 +170,7 @@ def test_lightning_watch_and_bad_log_model():
 
 
 def _hf_args(tmp_path: Path, **kw) -> SimpleNamespace:
-    return SimpleNamespace(output_dir=str(tmp_path / "out"), to_dict=lambda: {}, deepspeed=None,
+    return SimpleNamespace(output_dir=str(tmp_path / "out"), to_dict=dict, deepspeed=None,
                            load_best_model_at_end=False, metric_for_best_model=None, **kw)
 
 

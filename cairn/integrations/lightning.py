@@ -22,7 +22,10 @@ from pathlib import Path
 from typing import Any, Literal
 
 try:
-    from lightning.fabric.utilities.logger import _convert_params, _sanitize_callable_params
+    from lightning.fabric.utilities.logger import (
+        _convert_params,
+        _sanitize_callable_params,
+    )
     from lightning.pytorch.callbacks import ModelCheckpoint
     from lightning.pytorch.loggers.logger import Logger, rank_zero_experiment
     from lightning.pytorch.loggers.utilities import _scan_checkpoints
