@@ -179,9 +179,15 @@ def _hf_state(step: int, zero: bool = True) -> SimpleNamespace:
                            best_metric=0.25, best_model_checkpoint=None)
 
 
-def test_hf_log_model_checkpoint(tmp_path):
+def test_hf_log_model_checkpoint(tmp_path, monkeypatch):
     _importorskip("transformers")
+    from cairn.integrations import huggingface
     from cairn.integrations.huggingface import CairnCallback
+
+    def fake_save(args, model, processing_class, out):
+        Path(out, "model.safetensors").write_bytes(b"final")
+
+    monkeypatch.setattr(huggingface, "_save_model", fake_save)
 
     repo = tmp_path / ".cairn"
     args = _hf_args(tmp_path)
@@ -202,8 +208,9 @@ def test_hf_log_model_checkpoint(tmp_path):
     assert got[1]["files"] == ["model.safetensors", "trainer_state.json"]
     assert got[1]["bytes"]["model.safetensors"] == b"w4"
     assert got[1]["step"] == 4 and got[1]["type"] == "model"
-    with cairn.Reader(repo) as reader, pytest.raises(LookupError):  # "end" only
-        reader.artifact_versions(f"model-{run_id}", project="hf")
+    # The final model too, as wandb logs it in both modes.
+    final = _versions(repo, "hf", f"model-{run_id}")
+    assert len(final) == 1 and final[0]["bytes"]["model.safetensors"] == b"final"
 
 
 @pytest.mark.parametrize("best", [False, True])

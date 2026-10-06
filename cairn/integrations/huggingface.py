@@ -17,9 +17,10 @@ Evaluation metrics (``eval_<metric>`` in the Trainer) are tracked once, as
 also passes them to ``on_log``, which therefore skips them; training metrics
 keep their Trainer names.
 
-``log_model="checkpoint"`` logs every checkpoint directory the Trainer saves as
-a version of ``checkpoint-<run id>``; ``log_model="end"`` logs the final model
-as ``model-<run id>`` when training ends (both of type ``model``).
+``log_model="end"`` logs the final model as ``model-<run id>`` when training
+ends; ``log_model="checkpoint"`` does that too and also logs every checkpoint
+directory the Trainer saves as a version of ``checkpoint-<run id>`` (all of
+type ``model``), as wandb's ``WANDB_LOG_MODEL`` does.
 """
 
 from __future__ import annotations
@@ -55,11 +56,12 @@ class CairnCallback(TrainerCallback):
     Args:
         run: An existing run to write into; it is left open. Default: a new
             run created from ``run_kwargs`` and finished when training ends.
-        log_model: ``"checkpoint"``: log each checkpoint directory the Trainer
-            saves as a version of ``checkpoint-<run id>``, aliased
-            ``checkpoint-<step>``. ``"end"``: log the final model (saved as
+        log_model: ``"end"``: log the final model (saved as
             ``Trainer.save_model`` does) as ``model-<run id>``, aliased ``best``
-            too when ``load_best_model_at_end`` is set. ``False``: neither.
+            too when ``load_best_model_at_end`` is set. ``"checkpoint"``: the
+            same, and each checkpoint directory the Trainer saves as a version
+            of ``checkpoint-<run id>``, aliased ``checkpoint-<step>``.
+            ``False``: neither.
         **run_kwargs: Passed to ``cairn.Run`` for the new run (``project``
             defaults to the last component of ``TrainingArguments.output_dir``, else ``"hf"``).
     """
@@ -165,7 +167,7 @@ class CairnCallback(TrainerCallback):
     ) -> None:
         if self._run is None:
             return
-        if self._log_model == "end" and state.is_world_process_zero:
+        if self._log_model in ("end", "checkpoint") and state.is_world_process_zero:
             self._log_final_model(args, state, kwargs.get("model"),
                                   kwargs.get("processing_class", kwargs.get("tokenizer")))
         if self._owns_run:

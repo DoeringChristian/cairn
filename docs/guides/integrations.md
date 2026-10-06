@@ -46,8 +46,8 @@ new version of one artifact of type `model`, named after the run.
 | Integration | Turned on by | Artifact | Aliases |
 |---|---|---|---|
 | Lightning | `CairnLogger(log_model=True)` or `"all"` | `model-<run id>` | `latest`, `best` |
-| HuggingFace | `CairnCallback(log_model="checkpoint")` | `checkpoint-<run id>` | `latest`, `checkpoint-<step>` |
-| HuggingFace | `CairnCallback(log_model="end")` | `model-<run id>` | `latest`, `best` |
+| HuggingFace | `CairnCallback(log_model="checkpoint")` | `checkpoint-<run id>`, plus `model-<run id>` at the end | `latest`, `checkpoint-<step>` |
+| HuggingFace | `CairnCallback(log_model="end")` or `"checkpoint"` | `model-<run id>` | `latest`, `best` |
 | Keras | `CairnModelCheckpoint(...)` in place of `ModelCheckpoint` | `model-<run id>` | `latest`, `best` |
 | Ultralytics | always | `model-<run id>` | `latest` (`last.pt`), `best` (`best.pt`) |
 
@@ -76,7 +76,7 @@ trainer.train()
 | Every Trainer log (`on_log`) | Each numeric value under its Trainer name (`loss`, `learning_rate`, `grad_norm`, `epoch`, …) at the logged `step`, else `global_step`. `eval_*` keys are skipped here. |
 | Every evaluation (`on_evaluate`) | Each metric `eval_<m>` as `eval.<m>` at `global_step`. `epoch` is skipped. |
 | Every checkpoint (`on_save`) | Only with `log_model="checkpoint"`: the checkpoint directory (`<output_dir>/checkpoint-<step>`, every file in it) as a version of `checkpoint-<run id>`, aliased `checkpoint-<step>`, at `step=<step>`. |
-| Training ends | With `log_model="end"`: the final model, saved as `Trainer.save_model` saves it (weights, config, tokenizer or processor), as a version of `model-<run id>`, at `step=global_step`. With `load_best_model_at_end=True` that model is the best checkpoint's: the version is also aliased `best`, and its metadata holds `best_metric`, `metric_for_best_model` and `best_model_checkpoint`. Then the run is finished as `completed`, if the callback created it. |
+| Training ends | With `log_model="end"` or `"checkpoint"` (as in wandb): the final model, saved as `Trainer.save_model` saves it (weights, config, tokenizer or processor), as a version of `model-<run id>`, at `step=global_step`. With `load_best_model_at_end=True` that model is the best checkpoint's: the version is also aliased `best`, and its metadata holds `best_metric`, `metric_for_best_model` and `best_model_checkpoint`. Then the run is finished as `completed`, if the callback created it. |
 
 The callback exposes the run as `callback.run`. Checkpoints and models are
 logged by the main process only.
