@@ -4,6 +4,8 @@ The runs table (`/p/<project>`) lists a project's runs, newest first. Use it to 
 
 Runs load 100 at a time as you scroll. While a filter or a group-by is active, the table loads every page, so matches outside the first page are not missed. The header shows `<shown> of <total> runs`.
 
+The table updates live: new and deleted runs appear within a few seconds, and running runs' status and values refresh every 3 seconds.
+
 ## Toolbar
 
 | Control | What it does |

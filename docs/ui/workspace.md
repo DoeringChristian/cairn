@@ -57,7 +57,7 @@ Every edit changes the workspace, so it applies to every run the workspace shows
 | Remove a panel | × in its header. An automatic panel stays removed; [Manage cards](#manage-cards) lists removed panels so you can show them again. |
 | Add a card | The dashed **Add card** card at the end of a section: see [Adding cards](#adding-cards). It is the only way to add one. |
 | Change data, type, title or settings | The gear opens the card full screen in the [card editor](#full-screen-card-and-settings). The title, collapse chevron and resize handle edit the panel too. |
-| Resize | Drag the bottom-right handle. Height changes freely; width snaps to a 6-column grid. |
+| Resize | Drag the bottom-right handle. A grey preview shows the size the card will take (height freely, width snapped to the 6-column grid); the cards resize when you let go. Every card in the section takes the new width, the cards in its row the new height. |
 | Duplicate | **Duplicate card** (two squares) in the header copies the card — its data, type and settings — right after itself (in reports too). Change the copy's type or settings afterwards to see the same data two ways. |
 | Move | Hover the header and drag the grip onto another panel, in the same section or another one: it takes that panel's place. Drop it on the **Add card** card or a gap of a section's grid to put it last there. On touch screens, use **Move up** / **Move down** in the ⋯ menu. [Manage cards](#manage-cards) moves cards and sections by drag & drop or the keyboard too. A card changes section only this way. |
 | Hide, show, delete | [Manage cards](#manage-cards). |
