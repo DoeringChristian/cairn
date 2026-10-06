@@ -89,7 +89,7 @@ While a run is running, the UI polls the server for its new points and appends t
 
 | Setting | Stored |
 |---|---|
-| Workspaces (the run page's and each comparison's): sections, panels, card settings, defaults, colour-by; saved views | Server-side, per project ([Run page and workspace](workspace.md)). |
+| Workspaces (the run page's views and the current view, each comparison's): sections, panels, card settings, defaults, colour-by | Server-side, per project ([Run page and workspace](workspace.md)). |
 | Runs table view: filter, sort, group-by, columns, computed columns | Your browser (`localStorage`), per project. |
 | Project run view: hidden, pinned and baseline runs | Your browser (`localStorage`), per project. |
 

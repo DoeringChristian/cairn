@@ -19,7 +19,7 @@ The table updates live: new and deleted runs appear within a few seconds, and ru
 | Sort summary | With more than one sort key, lists them; × removes one. |
 | Run view summary | With runs hidden or pinned, or a baseline set, shows e.g. `2 hidden · 1 pinned · baseline <name>`; **reset** clears all three. |
 | **Archive old** / **Delete old** | For each run name with several runs, archive or delete all but the newest (archived runs are left out). Both ask first. |
-| **New comparison** | Create a comparison with no runs (and a copy of the project workspace's layout) and open it. |
+| **New comparison** | Create a comparison with no runs (and a copy of the current workspace view's layout) and open it. |
 | **Import** | Upload a `.zip` export ([Import and export](../guides/import-export.md)). |
 
 When several runs share a name, the newest of them gets an accent bar on its left edge.
@@ -127,7 +127,7 @@ Tick a row's checkbox to select it; ++shift++-click another checkbox to select t
 |---|---|
 | **Clear** | Deselect all. |
 | **Tag** | The bulk tag editor: add a tag to every selected run, or remove a tag from all runs that have it. |
-| **Compare** | Create a comparison of the selected runs, starting from a copy of the project workspace's layout, and open it. See [Comparisons](comparisons.md). |
+| **Compare** | Create a comparison of the selected runs, starting from a copy of the current workspace view's layout, and open it. See [Comparisons](comparisons.md). |
 | **Export** | Download the selected runs as `cairn_export_<date>.zip`. |
 | **Stop** | Ask the selected *running* runs to stop (asks first). See [Run lifecycle](../guides/runs.md). |
 | **Archive** / **Unarchive** | Archive or restore the selected runs. Archiving hides a run without changing its status; an archived run shows an `archived` mark beside it. |
@@ -170,4 +170,4 @@ The dot before each name is the run's colour. The colour is derived from the run
 
 ## Where the table's state is kept
 
-The filter tree, group-by levels, sort keys, column order, hidden and pinned columns, *better* overrides and computed columns are saved in your browser per project, and restored when you come back. The status filter, search and **Latest only** are not saved. None of this is part of the server-side workspace or its saved views. Table edits are not on the [undo](shortcuts.md) stack.
+The filter tree, group-by levels, sort keys, column order, hidden and pinned columns, *better* overrides and computed columns are saved in your browser per project, and restored when you come back. The status filter, search and **Latest only** are not saved. None of this is part of the server-side workspace views. Table edits are not on the [undo](shortcuts.md) stack.

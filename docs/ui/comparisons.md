@@ -12,7 +12,7 @@ Comparisons are stored per project on the server. Open **Compare** in the projec
 
 ## Creating a comparison
 
-A new comparison starts with a **copy of the project workspace's layout** (the run page's sections, panels and their settings, hidden and removed panels, whether [unlisted metrics](workspace.md#include-unlisted-metrics) get automatic panels, hide patterns, defaults and prefs). After that the two are independent: editing the comparison never changes the run page, and editing the run page never changes the comparison. To bring a later layout over, save it as a [view](workspace.md#views) and apply it in the comparison.
+A new comparison starts with a **copy of the current [workspace view](workspace.md#workspace-views)'s layout** (the run page's sections, panels and their settings, hidden and removed panels, whether [unlisted metrics](workspace.md#include-unlisted-metrics) get automatic panels, hide patterns, defaults and prefs). After that the two are independent: editing the comparison never changes the view, and editing the view never changes the comparison. To bring a view's layout over later, open the comparison's **Views** switcher and click the view's tile: its layout replaces the comparison's (the runs stay), and ++cmd+z++ undoes it. **+ New view** there saves the comparison's layout as a new view.
 
 | From | Runs |
 | --- | --- |

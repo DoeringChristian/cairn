@@ -7,16 +7,34 @@ Click a run in the [runs table](runs-table.md) to open its run page at `/p/<proj
 | Tab | What it shows |
 |---|---|
 | **Overview** | Details (status, exit code, host, user), Git (remote, branch, commit, dirty flag, a link to the captured diff), tags and notes (rendered as [Markdown](../guides/media.md#markdown); hover them and click **edit** to change them), the config as logged (a collapsible tree), CLI args, the environment snapshot, the final value of every metric (system metrics hidden behind a toggle), and artifacts. |
-| **Metrics & Media** | The project [workspace](#workspaces), bound to this run: sections of panels, one per logged series and named artifact unless you arrange them otherwise. |
+| **Metrics & Media** | The project's current [workspace view](#workspace-views), bound to this run: sections of panels, one per logged series and named artifact unless you arrange them otherwise. |
 | **Logs** | Captured stdout/stderr. You can search and filter by stream. While the run is running, the view follows new lines. |
 | **Source** | The source snapshot, when the run captured one. |
 | **Environment** | The environment snapshot and `pip freeze`. |
 
 ## Workspaces
 
-The **Metrics & Media** tab shows the project's **workspace**: a layout of named sections holding panels, bound to the run you are viewing. The layout is written in metric names, never in runs, so it is the same on every run of the project. Switching runs changes only the data.
+The **Metrics & Media** tab shows a **workspace**: a layout of named sections holding panels, bound to the run you are viewing. The layout is written in metric names, never in runs, so it is the same on every run of the project. Switching runs changes only the data.
 
-Every [comparison](comparisons.md) is a workspace too, with its own layout bound to its own runs. The run page and comparisons render the same page: the same toolbar, sections, panels and dialogs, including [adding cards](#adding-cards).
+On the run page the workspace is one of the project's [workspace views](#workspace-views). Every [comparison](comparisons.md) is a workspace too, with its own layout bound to its own runs. The run page and comparisons render the same page: the same toolbar, sections, panels and dialogs, including [adding cards](#adding-cards).
+
+### Workspace views
+
+A project has a list of **views**, each a complete layout: sections, panels and their settings, hidden and removed panels, hide patterns, defaults, prefs and whether [unlisted metrics](#include-unlisted-metrics) get automatic panels. A project starts with one view, **Default**.
+
+On the run page you are always in exactly one view, the project's **current view**. Every edit you make there is saved into it; there is nothing to save or apply. The current view is stored on the server, so it is the same in every browser and on every device.
+
+The view switcher is the first item of the [toolbar](#workspace-toolbar). On the run page it shows the current view's name. Click it to open **Workspace views**: one tile per view, oldest first, then a dashed **+ New view** tile. ×, ++escape++ or a click outside closes it.
+
+- The top of a tile is a sketch of the view's layout for the run you are viewing: each section as its name over a rule, each card as a box as wide as its card on the 6-column grid, with its card type's icon. With unlisted metrics on, the automatic panels of the run's metrics are drawn too. A collapsed section shows only its rule; a long layout shows its top part.
+- Below it: the view's name (with ✓ before the current view), then **✎** to rename it in place (++enter++ or leaving the field saves, ++escape++ cancels), **⧉** to duplicate it as **<name> copy**, and **×** to delete it. The last view cannot be deleted. Deleting the current view first switches to the first remaining one.
+- The second line counts the view's cards and says **unlisted on** or **listed only**.
+- Click a tile to switch to its view. The panel closes. Switching is not an edit: ++cmd+z++ never switches back, and edits inside a view undo as usual.
+- **+ New view** turns into a name field with **Copy of current view** (the default) or **Empty (automatic panels only)**. ++enter++ creates the view and switches to it; ++escape++ cancels.
+
+In a [comparison](comparisons.md), the switcher reads **Views** and opens the same panel, without a ✓. A comparison keeps its own layout: clicking a tile copies that view's layout into the comparison, replacing its layout and keeping its runs (++cmd+z++ undoes it). **+ New view** asks only for a name and saves the comparison's current layout as a new view. ✎, ⧉ and × work as on the run page.
+
+On a phone the panel spans the full width, with one or two tiles per row.
 
 A panel has a card type (see [Cards](cards.md)), a metric selector and its settings (title, size, smoothing, axes and so on). The selector is either:
 
@@ -42,7 +60,7 @@ When you change an automatic panel in any way (a setting, its size, its type, it
 
 ### Include unlisted metrics
 
-**Unlisted metrics: on / off** in the toolbar decides whether metrics no panel shows get automatic panels. It is a setting of each workspace: the run page and every comparison have their own (a new comparison copies the run page's along with the rest of the layout), and a saved [view](#views) stores it.
+**Unlisted metrics: on / off** in the toolbar decides whether metrics no panel shows get automatic panels. It is a setting of each workspace: every [view](#workspace-views) and every comparison has its own (a new comparison copies the current view's along with the rest of the layout).
 
 - **On** (the default): every metric gets a panel, as described above.
 - **Off**: only the layout's own panels show. Turning it off first writes every automatic panel on screen into the layout, so nothing disappears; what changes is that metrics logged afterwards don't get a panel. **N series without a card · manage** above the sections counts them, and [Manage cards](#manage-cards) lists them, each with a **Show** button that adds its panel. Panels a hide pattern hides at that moment are not written, so they behave like a metric logged later.
@@ -122,17 +140,21 @@ Move cards and sections with their grips:
 Every move applies to the page at once and is one [undo](#undo-and-redo) step.
 
 !!! note "What is stored where"
-    **In the workspace** (on the server, shared by everyone who uses the project): sections and their order, collapsed and sorted state; panels with their type, metrics, settings, size and hidden flag; removed automatic panels; whether unlisted metrics get automatic panels; hide patterns; workspace and section defaults; prefs (sync zoom, colour by). A comparison's workspace also holds its runs and their hide / pin / baseline toggles.
+    **In the workspace** (each view, and each comparison, on the server, shared by everyone who uses the project): sections and their order, collapsed and sorted state; panels with their type, metrics, settings, size and hidden flag; removed automatic panels; whether unlisted metrics get automatic panels; hide patterns; workspace and section defaults; prefs (sync zoom, colour by). A comparison's workspace also holds its runs and their hide / pin / baseline toggles. Which view is current is stored on the server too.
 
     **In this browser only:** the run page's and runs table's hidden, pinned and baseline runs.
 
     Two tabs or users can edit a workspace at the same time. If one write loses the race, it is replayed on top of the other one's changes, so neither edit is lost.
 
-    A user with a read-only token sees the same page but cannot change the layout: there is no **Add card** card, **+ New section**, **Manage cards**, **Duplicate card**, drag grip or unlisted-metrics toggle. Card settings they change (zoom, collapse, smoothing) last until they reload.
+    A user with a read-only token sees the same page but cannot change the layout: there is no view switcher, **Add card** card, **+ New section**, **Manage cards**, **Duplicate card**, drag grip or unlisted-metrics toggle. Card settings they change (zoom, collapse, smoothing) last until they reload.
 
 ## Workspace toolbar
 
 The toolbar appears above the sections on the run page and on [comparisons](comparisons.md).
+
+### View switcher
+
+The first item: the current view's name on the run page, **Views** in a comparison. See [Workspace views](#workspace-views).
 
 ### Search
 
@@ -152,7 +174,7 @@ While a search is active, **Hide N matching** saves the query as a hide pattern 
 
 ### New comparison
 
-On the run page, **New comparison** creates a [comparison](comparisons.md) of this run, starting from a copy of the workspace's layout, and opens it.
+On the run page, **New comparison** creates a [comparison](comparisons.md) of this run, starting from a copy of the current view's layout, and opens it.
 
 ### Colour by
 
@@ -167,10 +189,6 @@ Pick the Turbo, Viridis or Magma palette. A legend next to the search box shows 
 
 The link toggle makes charts that share an x-axis zoom together.
 
-### Views
-
-**Views** saves the current layout under a name: sections, panels and their settings, hidden and removed panels, hide patterns, defaults, prefs, and whether unlisted metrics get automatic panels. The **Include unlisted metrics** box in the save form starts at the workspace's setting; untick it to save a view of only listed cards (the automatic cards shown now are saved as cards, as when you turn the toggle off). The list marks each view **+ unlisted** or **listed only**, and applying a view applies its setting too. Views belong to the project and work in any workspace: applying one on the run page or in a comparison replaces that workspace's layout. A comparison keeps its runs. You can undo it with ++cmd+z++. The trash icon deletes a view.
-
 On read-only surfaces, such as report viewers and share links, the toolbar shows only the search box.
 
 ## Defaults cascade
@@ -180,7 +198,7 @@ Each card setting resolves through these layers, highest first:
 1. **Card:** the card's own override.
 2. **Instance:** what the card was created with. This is its metric, or the x-axis you gave with `run.track(..., x=...)`.
 3. **Section:** set with the section's gear.
-4. **Workspace:** for the run page, set on the **Defaults** page (`/p/<project>/defaults`, the **Defaults** link in the project navigation). A comparison copies these when it is created and keeps its own afterwards; edit them through its section gears.
+4. **Workspace:** for the run page's current view, set on the **Defaults** page (`/p/<project>/defaults`, the **Defaults** link in the project navigation). A comparison copies these when it is created and keeps its own afterwards; edit them through its section gears.
 5. **Built-in:** the card type's default value.
 
 Only some settings take section and workspace defaults: smoothing, axis scales, the legend, the slider key, and similar per-type settings. Other settings (the metrics shown, title, size, zoom) resolve card → instance → built-in. In a defaults editor, pick a card type to get that type's settings panel, limited to the settings that take defaults. The card types are listed in [Cards](cards.md).
@@ -200,9 +218,10 @@ Each project has one undo stack. It records every workspace edit, on the run pag
 - resizes (one drag is one step)
 - card adds, duplicates, moves, hides, removals and edits
 - turning unlisted metrics on or off
-- section edits, hide patterns, defaults, colour by, views
+- section edits, hide patterns, defaults, colour by
+- copying a view's layout into a comparison
 
-Undo with ++cmd+z++ / ++ctrl+z++ and redo with ++cmd+shift+z++ / ++ctrl+shift+z++. These shortcuts do nothing while a text field has focus, because the field keeps its own typing undo. The stack holds 200 steps.
+Switching views on the run page is not an edit and is not recorded. Undo with ++cmd+z++ / ++ctrl+z++ and redo with ++cmd+shift+z++ / ++ctrl+shift+z++. These shortcuts do nothing while a text field has focus, because the field keeps its own typing undo. The stack holds 200 steps.
 
 Undoing a workspace edit restores only the parts of the workspace that edit changed (its sections and panels, removed panels, the unlisted-metrics setting, hide patterns, defaults, prefs or runs), so changes another tab made to the other parts in the meantime survive. See also [Keyboard shortcuts](shortcuts.md).
 
