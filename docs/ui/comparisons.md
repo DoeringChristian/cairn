@@ -77,7 +77,7 @@ The run view is saved in the comparison's workspace, so it is shared with everyo
 
 - A summary card per run.
 - **Metrics**: each run's final values side by side, as the runs table shows them. The best value is green and the worst red. A metric whose summary rule is `min` counts lower as better and is marked ↓. `system.*` metrics are left out. A filter box narrows the rows.
-- **Parameters**: the runs' configs side by side.
+- **Parameters**: the runs' configs side by side. A long value is cut to one line of its column; **more** shows it in full. The run columns share the width; with many runs the table scrolls sideways and the keys stay in view.
 - **Environment**: Python, platform, CUDA and GPUs side by side.
 
 **Only show differences**, on by default, hides rows that are identical across all runs.
