@@ -61,32 +61,74 @@ def test_old_registry_and_run_attachments_are_dropped(conn):
     assert "file_count" in {r[1] for r in conn.execute("PRAGMA table_info(artifact_versions)")}
 
 
-def test_old_comparison_tables_dropped_and_project_docs_rebuilt(conn):
-    """Comparisons became project_docs rows: old tables go, old docs stay."""
-    conn.execute("CREATE TABLE comparisons (id TEXT PRIMARY KEY, payload TEXT)")
-    conn.execute("CREATE TABLE comparison_templates (id TEXT PRIMARY KEY, payload TEXT)")
+def _old_project_docs(conn, kinds="'workspace','view'"):
     conn.execute("CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL, description TEXT, tags TEXT)")
     conn.execute(
-        """CREATE TABLE project_docs (
+        f"""CREATE TABLE project_docs (
             id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
-            kind TEXT NOT NULL CHECK(kind IN ('workspace','view')),
+            kind TEXT NOT NULL CHECK(kind IN ({kinds})),
             name TEXT NOT NULL DEFAULT '', rev INTEGER NOT NULL,
             created_at TEXT NOT NULL, updated_at TEXT NOT NULL, payload TEXT NOT NULL)"""
     )
+    conn.execute(
+        "CREATE UNIQUE INDEX idx_project_docs_workspace ON project_docs(project_id) WHERE kind = 'workspace'"
+    )
+
+
+def test_old_comparison_tables_dropped_and_project_docs_rebuilt(conn):
+    """Comparisons became project_docs rows: old tables go, comparisons stay."""
+    conn.execute("CREATE TABLE comparisons (id TEXT PRIMARY KEY, payload TEXT)")
+    conn.execute("CREATE TABLE comparison_templates (id TEXT PRIMARY KEY, payload TEXT)")
+    _old_project_docs(conn, "'workspace','comparison','view'")
     conn.execute("INSERT INTO projects VALUES ('p', 'p', 't', NULL, NULL)")
-    conn.execute("INSERT INTO project_docs VALUES ('v1', 'p', 'view', 'mine', 3, 't', 't', '{}')")
+    conn.execute("INSERT INTO project_docs VALUES ('c1', 'p', 'comparison', 'c', 4, 't', 't', '{\"runs\": {}}')")
     apply_migrations(conn)
     tables = _tables(conn)
     assert "comparisons" not in tables
     assert "comparison_templates" not in tables
-    assert conn.execute("SELECT id, kind, name, rev FROM project_docs").fetchall() == [("v1", "view", "mine", 3)]
-    conn.execute(
-        "INSERT INTO project_docs VALUES ('c1', 'p', 'comparison', 'c', 1, 't', 't', '{}')"
-    )
+    assert conn.execute("SELECT id, kind, name, rev, payload FROM project_docs").fetchall() == [
+        ("c1", "comparison", "c", 4, '{"runs": {}}'),
+    ]
     apply_migrations(conn)  # idempotent
-    assert len(conn.execute("SELECT * FROM project_docs").fetchall()) == 2
+    assert len(conn.execute("SELECT * FROM project_docs").fetchall()) == 1
 
 
+def test_project_workspace_becomes_the_default_view(conn):
+    """The run page's workspace is the first view, "Default", and current;
+    saved views ({layout}) become views holding their layout."""
+    _old_project_docs(conn)
+    conn.execute("INSERT INTO projects VALUES ('p', 'p', 't', NULL, NULL)")
+    conn.execute("INSERT INTO projects VALUES ('q', 'q', 't', NULL, NULL)")
+    conn.execute(
+        "INSERT INTO project_docs VALUES ('w1', 'p', 'workspace', '', 7, '2025-02', '2025-03', '{\"sections\": [1]}')"
+    )
+    conn.execute(
+        "INSERT INTO project_docs VALUES ('v1', 'p', 'view', 'Media', 2, '2025-01', '2025-01', '{\"layout\": {\"autoPanels\": false}}')"
+    )
+    conn.execute(
+        "INSERT INTO project_docs VALUES ('v2', 'q', 'view', 'Only', 1, '2025-05', '2025-05', '{\"layout\": {\"a\": 1}}')"
+    )
+    apply_migrations(conn)
+    rows = conn.execute(
+        "SELECT project_id, id, kind, name, rev, payload FROM project_docs ORDER BY project_id, created_at, rowid"
+    ).fetchall()
+    assert rows[:2] == [
+        ("p", "w1", "view", "Default", 7, '{"sections": [1]}'),
+        ("p", "v1", "view", "Media", 2, '{"autoPanels": false}'),
+    ]
+    # A project with saved views but no workspace gets an empty Default first.
+    (_, q_default, _, q_name, _, q_payload), q_saved = rows[2], rows[3]
+    assert (q_name, q_payload) == ("Default", "{}")
+    assert q_saved[1:] == ("v2", "view", "Only", 1, '{"a": 1}')
+    assert dict(conn.execute("SELECT project_id, view_id FROM project_view_state").fetchall()) == {
+        "p": "w1", "q": q_default,
+    }
+    sql = conn.execute("SELECT sql FROM sqlite_master WHERE name = 'project_docs'").fetchone()[0]
+    assert "'workspace'" not in sql
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("INSERT INTO project_docs VALUES ('x', 'p', 'workspace', '', 1, 't', 't', '{}')")
+    apply_migrations(conn)  # idempotent
+    assert len(conn.execute("SELECT * FROM project_docs").fetchall()) == 4
 def test_report_templates_table_created(conn):
     apply_migrations(conn)
     assert "report_templates" in _tables(conn)

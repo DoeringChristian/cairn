@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import secrets
 import sqlite3
 
 SCHEMA_VERSION = 2  # Bumped from 1 (DuckDB) to 2 (SQLite). Breaking change.
@@ -217,16 +219,17 @@ SCHEMA_SQL: list[str] = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_report_shares_report ON report_shares(report_id)",
-    # A project's shared UI documents: its one workspace (the run page's
-    # layout), its comparisons (each a workspace document with a run set;
-    # ``name`` is the comparison's name) and any number of saved views.
+    # A project's shared UI documents: its workspace views (named layouts;
+    # the run page shows the project's current one, ``project_view_state``)
+    # and its comparisons (each a workspace document with a run set; ``name``
+    # is the comparison's name).
     # ``rev`` counts writes so a client can PUT against the revision it last
     # saw and be told when another tab or user wrote in between.
     """
     CREATE TABLE IF NOT EXISTS project_docs (
         id            TEXT PRIMARY KEY,
         project_id    TEXT NOT NULL REFERENCES projects(id),
-        kind          TEXT NOT NULL CHECK(kind IN ('workspace','comparison','view')),
+        kind          TEXT NOT NULL CHECK(kind IN ('comparison','view')),
         name          TEXT NOT NULL DEFAULT '',
         rev           INTEGER NOT NULL,
         created_at    TEXT NOT NULL,
@@ -235,8 +238,13 @@ SCHEMA_SQL: list[str] = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_project_docs_project ON project_docs(project_id, kind)",
-    "CREATE UNIQUE INDEX IF NOT EXISTS idx_project_docs_workspace "
-    "ON project_docs(project_id) WHERE kind = 'workspace'",
+    # The view the run page shows, per project (routes/project_docs.py).
+    """
+    CREATE TABLE IF NOT EXISTS project_view_state (
+        project_id    TEXT PRIMARY KEY REFERENCES projects(id),
+        view_id       TEXT NOT NULL
+    )
+    """,
     # ── Artifact registry tables ──────────────────────────────────────
     # A family is every version of one name in a project; it keeps one type.
     """
@@ -457,35 +465,72 @@ def _add_column_if_missing(
         con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
 
 
-def _migrate_workspaces(con: sqlite3.Connection) -> None:
-    """Comparisons became workspace documents (``project_docs`` kind 'comparison').
+def _migrate_project_docs(con: sqlite3.Connection) -> None:
+    """Bring ``project_docs`` to its current kinds: comparisons and views.
 
-    Destructive by design (a user ruling, no conversion): the old
-    ``comparisons`` / ``comparison_templates`` tables held card lists that no
-    longer exist in the UI, so they are dropped. A ``project_docs`` table
-    whose CHECK predates the 'comparison' kind is rebuilt with its rows (the
-    project workspaces and saved views) kept; their payloads are coerced by
-    the UI, which treats an old-shaped workspace as an empty layout.
+    Destructive by design (user rulings, no conversion kept afterwards):
+
+    * The old ``comparisons`` / ``comparison_templates`` tables held card
+      lists that no longer exist in the UI, so they are dropped.
+    * The run page's one project workspace (kind 'workspace') became the
+      first of the project's workspace views, named "Default", and the
+      project's current view. Saved views (kind 'view', payload
+      ``{"layout": …}``) became views holding that layout. A project with
+      saved views but no workspace gets an empty "Default" first.
+
+    A table whose CHECK still allows 'workspace' (or predates 'comparison')
+    is rebuilt with its rows converted.
     """
     con.execute("DROP INDEX IF EXISTS idx_comparisons_project")
     con.execute("DROP TABLE IF EXISTS comparisons")
     con.execute("DROP INDEX IF EXISTS idx_comparison_templates_project")
     con.execute("DROP TABLE IF EXISTS comparison_templates")
+    con.execute("DROP INDEX IF EXISTS idx_project_docs_workspace")
     row = con.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='project_docs'"
     ).fetchone()
-    if row is None or "'comparison'" in (row[0] or ""):
+    if row is None or "'workspace'" not in (row[0] or ""):
         return
     con.execute("ALTER TABLE project_docs RENAME TO project_docs_old")
     con.execute("DROP INDEX IF EXISTS idx_project_docs_project")
-    con.execute("DROP INDEX IF EXISTS idx_project_docs_workspace")
     for stmt in SCHEMA_SQL:
         if "project_docs" in stmt:
             con.execute(stmt)
-    con.execute(
-        "INSERT INTO project_docs (id, project_id, kind, name, rev, created_at, updated_at, payload) "
-        "SELECT id, project_id, kind, name, rev, created_at, updated_at, payload FROM project_docs_old"
-    )
+    names = ["id", "project_id", "kind", "name", "rev", "created_at", "updated_at", "payload"]
+    cols = ", ".join(names)
+    old = [
+        dict(zip(names, r))
+        for r in con.execute(f"SELECT {cols} FROM project_docs_old ORDER BY created_at, rowid")
+    ]
+    insert = f"INSERT INTO project_docs ({cols}) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    for d in old:
+        if d["kind"] == "comparison":
+            con.execute(insert, [d[c] for c in names])
+    views = [d for d in old if d["kind"] == "view"]
+    workspaces = {d["project_id"]: d for d in old if d["kind"] == "workspace"}
+    for pid in dict.fromkeys([*workspaces, *(v["project_id"] for v in views)]):
+        ws = workspaces.get(pid)
+        stamps = [d["created_at"] for d in views if d["project_id"] == pid]
+        first = min(stamps + ([ws["created_at"]] if ws else []))
+        vid = ws["id"] if ws else secrets.token_hex(8)
+        con.execute(insert, [
+            vid, pid, "view", "Default", ws["rev"] if ws else 1, first,
+            ws["updated_at"] if ws else first, ws["payload"] if ws else "{}",
+        ])
+        con.execute(
+            "INSERT OR REPLACE INTO project_view_state (project_id, view_id) VALUES (?, ?)",
+            [pid, vid],
+        )
+    for v in views:
+        try:
+            payload = json.loads(v["payload"])
+        except (TypeError, ValueError):
+            payload = {}
+        layout = payload.get("layout") if isinstance(payload, dict) else None
+        con.execute(insert, [
+            v["id"], v["project_id"], "view", v["name"], v["rev"], v["created_at"],
+            v["updated_at"], json.dumps(layout if isinstance(layout, dict) else {}),
+        ])
     con.execute("DROP TABLE project_docs_old")
 
 
@@ -526,7 +571,7 @@ def apply_migrations(con: sqlite3.Connection) -> int:
     for stmt in _ADDED_COLUMN_INDEXES:
         con.execute(stmt)
 
-    # Destructive statement (the other: _migrate_workspaces). Auth is token-only: the
+    # Destructive statement (the other: _migrate_project_docs). Auth is token-only: the
     # browser carries the token itself in the ``cairn_token`` cookie, so
     # sessions no longer exist. Dropping the table is safe because its rows
     # were ephemeral by construction (every one carried an expiry) and
@@ -536,7 +581,7 @@ def apply_migrations(con: sqlite3.Connection) -> int:
     con.execute("DROP INDEX IF EXISTS idx_sessions_token")
     con.execute("DROP TABLE IF EXISTS sessions")
 
-    _migrate_workspaces(con)
+    _migrate_project_docs(con)
 
     existing = con.execute("SELECT version FROM schema_version").fetchall()
     if not existing:

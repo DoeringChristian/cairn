@@ -1,4 +1,4 @@
-"""Health/info/workspace endpoints."""
+"""Health/info endpoints."""
 
 from __future__ import annotations
 

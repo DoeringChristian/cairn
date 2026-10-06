@@ -79,7 +79,7 @@ def test_api_reads_return_during_a_write_transaction(app, live_server):
         t = _hold_write(db, entered, release)
         try:
             for path in ("/api/projects", "/api/runs?project=p&include=params,stats",
-                         f"/api/runs/{rid}", "/api/projects/p/workspace", "/api/health"):
+                         f"/api/runs/{rid}", "/api/projects/p/views", "/api/health"):
                 t0 = time.perf_counter()
                 assert c.get(path).status_code == 200, path
                 assert time.perf_counter() - t0 < 1.0, path
