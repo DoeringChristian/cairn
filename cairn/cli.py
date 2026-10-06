@@ -1880,22 +1880,35 @@ def sweep_create(config_file: Path, project: str | None, repo: str | None, serve
 
     \b
         project: mnist
+        program: train.py
         method: bayes            # grid | random | bayes
         metric: {name: val_loss, goal: minimize}
-        command: python train.py
         parameters:
           lr: {min: 0.0001, max: 0.1, distribution: log_uniform}
           layers: {values: [2, 4, 8]}
+
+    Without `command:`, each trial runs
+    `${env} ${interpreter} ${program} ${args}`.
     """
     import yaml
+
+    from .server.sweep_ops import check_keys
 
     repo = explicit(repo, server)
     cfg = yaml.safe_load(config_file.read_text()) or {}
     if not isinstance(cfg, dict):
         raise click.ClickException(f"{config_file}: expected a mapping")
+    try:
+        check_keys(cfg)
+    except ValueError as exc:
+        raise click.ClickException(f"{config_file}: {exc}") from None
     project = project or cfg.get("project")
     if not project:
         raise click.ClickException("no project: set `project:` in the file or pass --project")
+    if not cfg.get("command") and not cfg.get("program"):
+        raise click.ClickException(
+            f"{config_file}: set `program:` (run with the default command) or `command:`"
+        )
     metric = cfg.get("metric")
     goal = cfg.get("goal")
     if isinstance(metric, dict):
@@ -1903,7 +1916,8 @@ def sweep_create(config_file: Path, project: str | None, repo: str | None, serve
         metric = metric.get("name")
     info = _sweep_call(repo, "create_sweep", {
         "project": project, "parameters": cfg.get("parameters"), "method": cfg.get("method", "random"),
-        "metric": metric, "goal": goal, "command": cfg.get("command"), "name": cfg.get("name"),
+        "metric": metric, "goal": goal, "command": cfg.get("command"), "program": cfg.get("program"),
+        "run_cap": cfg.get("run_cap"), "description": cfg.get("description"), "name": cfg.get("name"),
     })
     click.echo(f"created sweep {info['id']} ({info['method']}, project {info['project_id']})")
     click.echo(f"run it with:  cairn agent {info['id']}" + (f" --repo {repo}" if repo else ""))
@@ -1927,8 +1941,8 @@ def sweep_ls(project: str | None, repo: str | None, server: str | None) -> None:
         )
 
 
-def _sweep_action_cmd(action: str) -> None:
-    @sweep_group.command(action, help=f"{action.capitalize()} a sweep.")
+def _sweep_action_cmd(action: str, help: str) -> None:
+    @sweep_group.command(action, help=help)
     @click.argument("sweep_id")
     @target_options
     def cmd(sweep_id: str, repo: str | None, server: str | None) -> None:
@@ -1936,15 +1950,13 @@ def _sweep_action_cmd(action: str) -> None:
         click.echo(f"sweep {sweep_id}: {info['status']}")
 
 
-for _action in ("pause", "resume", "cancel"):
-    _sweep_action_cmd(_action)
-
-
-def _cli_value(value: Any) -> str:
-    """A param as a command-line value: scalars as Python prints them, the rest as JSON."""
-    if isinstance(value, (str, int, float, bool)) or value is None:
-        return str(value)
-    return json.dumps(value)
+for _action, _help in (
+    ("pause", "Pause a sweep: no new runs until it is resumed; running runs continue."),
+    ("resume", "Resume a paused sweep."),
+    ("stop", "Stop a sweep: no new runs; running runs finish."),
+    ("cancel", "Cancel a sweep: end its running runs and create no new ones."),
+):
+    _sweep_action_cmd(_action, _help)
 
 
 @main.command("agent")
@@ -1956,11 +1968,16 @@ def _cli_value(value: Any) -> str:
 def agent_cmd(
     sweep_id: str, count: int | None, poll: float, repo: str | None, server: str | None,
 ) -> None:
-    """Run a sweep's trials: claim one, run the sweep's command with the
-    params as `--key=value` args (and CAIRN_SWEEP_ID / CAIRN_TRIAL_ID set, so
-    `cairn.Run()` joins the trial), report the outcome, repeat."""
+    """Run a sweep's trials: claim one, run the sweep's command with its
+    macros expanded (`${args}` gives the params as `--key=value` args) and
+    CAIRN_SWEEP_ID / CAIRN_TRIAL_ID set, so `cairn.Run()` joins the trial;
+    report the outcome, repeat. Waits while the sweep is paused; exits once
+    it is stopped, cancelled or finished."""
     import shlex
+    import tempfile
     import time
+
+    from .sdk.sweep import expand_command, uses_json_file
 
     repo = explicit(repo, server)
     t = _sweep_transport(repo)
@@ -1974,7 +1991,7 @@ def agent_cmd(
                 f"sweep {sweep_id} has no command; run it from Python with "
                 "cairn.Sweep(id).run(fn) instead"
             )
-        base = shlex.split(info["command"])
+        command = info["command"]
         env = dict(os.environ)
         if repo:
             # The command's cairn.Run() must write where this agent reads.
@@ -1989,7 +2006,14 @@ def agent_cmd(
                     continue
                 click.echo(f"sweep {sweep_id} is {claim['status']}; stopping")
                 break
-            argv = base + [f"--{k}={_cli_value(v)}" for k, v in trial["params"].items()]
+            json_file = None
+            if uses_json_file(command):
+                fd, json_file = tempfile.mkstemp(prefix="cairn-trial-", suffix=".json")
+                with os.fdopen(fd, "w") as fh:
+                    json.dump(trial["params"], fh)
+            argv = expand_command(
+                command, program=info.get("program"), params=trial["params"], json_file=json_file,
+            )
             click.echo(f"[trial {trial['id']}] {shlex.join(argv)}")
             trial_env = {**env, "CAIRN_SWEEP_ID": sweep_id, "CAIRN_TRIAL_ID": trial["id"]}
             try:
@@ -2001,8 +2025,13 @@ def agent_cmd(
             except OSError as exc:
                 t.report_trial(sweep_id, trial["id"], status="failed")
                 raise click.ClickException(f"cannot run {argv[0]!r}: {exc}") from None
-            status = "completed" if code == 0 else "failed"
-            reported = t.report_trial(sweep_id, trial["id"], status=status)
+            finally:
+                if json_file:
+                    Path(json_file).unlink(missing_ok=True)
+            reported = t.report_trial(
+                sweep_id, trial["id"], status="completed" if code == 0 else "failed",
+            )
+            status = reported["status"]
             value = reported.get("value")
             click.echo(
                 f"[trial {trial['id']}] {status}"

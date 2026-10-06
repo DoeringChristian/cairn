@@ -22,6 +22,13 @@ seed:   7                                               # constant (shorthand)
 * ``random`` samples every parameter independently, forever.
 * ``bayes`` asks Optuna's TPE sampler, rebuilding the study from the
   completed trials on every call (the ``[sweep]`` extra).
+
+A ``run_cap`` finishes any sweep, the way an exhausted grid does, once that
+many trials have been claimed.
+
+The lifecycle follows wandb's: ``pause`` / ``resume``; ``stop`` (no new
+trials, running ones finish); ``cancel`` (like stop, and every running trial
+is marked killed and its run asked to stop).
 """
 
 from __future__ import annotations
@@ -31,6 +38,7 @@ import json
 import math
 import random
 import secrets
+import shlex
 import sqlite3
 from typing import Any
 
@@ -39,10 +47,23 @@ from .storage.db import Database
 
 METHODS = ("grid", "random", "bayes")
 GOALS = ("minimize", "maximize")
-#: Sweep lifecycle. Only ``running`` hands out trials.
-STATUSES = ("running", "paused", "cancelled", "finished")
-#: The pause/resume/cancel actions and the status each sets.
-ACTIONS = {"pause": "paused", "resume": "running", "cancel": "cancelled"}
+#: Sweep lifecycle (wandb's). Only ``running`` hands out trials.
+STATUSES = ("running", "paused", "stopped", "cancelled", "finished")
+#: The actions and the status each sets.
+ACTIONS = {"pause": "paused", "resume": "running", "stop": "stopped", "cancel": "cancelled"}
+#: The actions each status allows; ``cancelled`` and ``finished`` allow none.
+TRANSITIONS = {
+    "running": ("pause", "stop", "cancel"),
+    "paused": ("resume", "stop", "cancel"),
+    "stopped": ("cancel",),
+}
+#: The top-level keys of a sweep config (a sweep.yaml, or the create body).
+CONFIG_KEYS = (
+    "name", "project", "method", "metric", "goal", "parameters", "program", "command",
+    "run_cap", "description",
+)
+#: wandb's command when a sweep has a ``program`` but no ``command``.
+DEFAULT_COMMAND = ["${env}", "${interpreter}", "${program}", "${args}"]
 DISTRIBUTIONS = ("uniform", "log_uniform", "int_uniform", "categorical", "constant")
 
 
@@ -56,6 +77,16 @@ class TrialNotFound(LookupError):
 
 def _now() -> str:
     return utc_now().isoformat()
+
+
+def check_keys(keys: Any, allowed: tuple[str, ...] = CONFIG_KEYS) -> None:
+    """Raise ValueError naming the first key of ``keys`` not in ``allowed``."""
+    for key in keys:
+        if key in allowed:
+            continue
+        if key == "early_terminate":
+            raise ValueError("sweep key 'early_terminate' is not supported yet")
+        raise ValueError(f"unknown sweep key {key!r} (supported: {', '.join(allowed)})")
 
 
 # ---- the space ---------------------------------------------------------------
@@ -169,7 +200,11 @@ def _bayes(
 
 
 def _sweep_row(row: dict[str, Any]) -> dict[str, Any]:
-    return {**row, "space": json.loads(row["space"])}
+    command = row["command"]
+    return {
+        **row, "space": json.loads(row["space"]),
+        "command": None if command is None else json.loads(command),
+    }
 
 
 def trial_name(sweep: dict[str, Any], index: int) -> str:
@@ -223,9 +258,15 @@ def create_sweep(
     metric: str | None = None,
     goal: str | None = None,
     command: str | list[str] | None = None,
+    program: str | None = None,
+    run_cap: int | None = None,
+    description: str | None = None,
     name: str | None = None,
     sweep_id: str | None = None,
 ) -> dict[str, Any]:
+    """Create a sweep. ``command`` is wandb's argument list (a string is split
+    like a shell would); with a ``program`` and no ``command`` it is
+    ``DEFAULT_COMMAND``."""
     if method not in METHODS:
         raise ValueError(f"method must be one of {', '.join(METHODS)}")
     goal = goal or "minimize"
@@ -236,9 +277,20 @@ def create_sweep(
         _grid(normalized)  # rejects ranges up front
     if method == "bayes" and not metric:
         raise ValueError("method 'bayes' needs a metric to optimize")
-    if isinstance(command, list):
-        import shlex
-        command = shlex.join(str(c) for c in command)
+    if isinstance(command, str):
+        command = shlex.split(command)
+    if command is None and program:
+        command = list(DEFAULT_COMMAND)
+    if command is not None:
+        if not isinstance(command, list) or not command:
+            raise ValueError("command must be a non-empty list or string")
+        command = [str(c) for c in command]
+        if not program and any("${program}" in c for c in command):
+            raise ValueError("command uses ${program} but the sweep has no program")
+    if run_cap is not None and (
+        isinstance(run_cap, bool) or not isinstance(run_cap, int) or run_cap < 1
+    ):
+        raise ValueError("run_cap must be a positive integer")
     project_id = slugify(project)
     sweep_id = sweep_id or secrets.token_hex(8)
     now = _now()
@@ -250,9 +302,10 @@ def create_sweep(
         )
         con.execute(
             """INSERT INTO sweeps (id, project_id, name, method, space, metric, goal,
-                                   command, status, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'running', ?)""",
-            [sweep_id, project_id, name, method, json.dumps(space), metric, goal, command, now],
+                                   command, program, run_cap, description, status, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?)""",
+            [sweep_id, project_id, name, method, json.dumps(space), metric, goal,
+             None if command is None else json.dumps(command), program, run_cap, description, now],
         )
     return get_sweep(db, sweep_id)
 
@@ -282,21 +335,40 @@ def get_sweep(db: Database, sweep_id: str) -> dict[str, Any]:
 
 
 def set_status(db: Database, sweep_id: str, action: str) -> dict[str, Any]:
-    """Apply ``pause`` / ``resume`` / ``cancel``. A cancelled or finished sweep stays so."""
+    """Apply ``pause`` / ``resume`` / ``stop`` / ``cancel`` (see ``TRANSITIONS``).
+
+    ``cancel`` also marks every running trial ``killed`` and asks its run to
+    stop, the way the UI's Stop button does (``stop_requested``, which the
+    run sees on its next heartbeat).
+    """
     if action not in ACTIONS:
         raise ValueError(f"action must be one of {', '.join(ACTIONS)}")
-    sweep = _require_sweep(db, sweep_id)
-    if sweep["status"] in ("cancelled", "finished") and action != "cancel":
-        raise ValueError(f"sweep is {sweep['status']}")
-    if sweep["status"] != "finished":
-        db.write("UPDATE sweeps SET status = ? WHERE id = ?", [ACTIONS[action], sweep_id])
+    with db.transaction(immediate=True) as con:
+        row = con.execute("SELECT status FROM sweeps WHERE id = ?", [sweep_id]).fetchone()
+        if row is None:
+            raise SweepNotFound(f"sweep {sweep_id} not found")
+        if action not in TRANSITIONS.get(row[0], ()):
+            raise ValueError(f"cannot {action} a {row[0]} sweep")
+        con.execute("UPDATE sweeps SET status = ? WHERE id = ?", [ACTIONS[action], sweep_id])
+        if action == "cancel":
+            con.execute(
+                "UPDATE runs SET stop_requested = COALESCE(stop_requested, ?) "
+                "WHERE status = 'running' AND id IN (SELECT run_id FROM sweep_trials "
+                "WHERE sweep_id = ? AND status = 'running' AND run_id IS NOT NULL)",
+                [_now(), sweep_id],
+            )
+            con.execute(
+                "UPDATE sweep_trials SET status = 'killed' "
+                "WHERE sweep_id = ? AND status = 'running'", [sweep_id],
+            )
     return get_sweep(db, sweep_id)
 
 
 def next_trial(db: Database, sweep_id: str) -> dict[str, Any]:
     """Claim the next trial atomically: ``{"status", "trial"}``, where
-    ``trial`` is None once the sweep is not running (paused, cancelled, or a
-    grid that just ran out — which marks it finished)."""
+    ``trial`` is None once the sweep is not running (paused, stopped,
+    cancelled, or a grid or ``run_cap`` that just ran out — which marks it
+    finished)."""
     with db.transaction(immediate=True) as con:
         con.row_factory = sqlite3.Row
         try:
@@ -311,11 +383,12 @@ def next_trial(db: Database, sweep_id: str) -> dict[str, Any]:
             (claimed,) = con.execute(
                 "SELECT COUNT(*) FROM sweep_trials WHERE sweep_id = ?", [sweep_id],
             ).fetchone()
-            if method == "grid":
-                grid = _grid(space)
-                if claimed >= len(grid):
-                    con.execute("UPDATE sweeps SET status = 'finished' WHERE id = ?", [sweep_id])
-                    return {"status": "finished", "trial": None}
+            grid = _grid(space) if method == "grid" else None
+            cap = sweep["run_cap"]
+            if (grid is not None and claimed >= len(grid)) or (cap is not None and claimed >= cap):
+                con.execute("UPDATE sweeps SET status = 'finished' WHERE id = ?", [sweep_id])
+                return {"status": "finished", "trial": None}
+            if grid is not None:
                 params = grid[claimed]
             elif method == "random":
                 params = _sample(space, random.Random(secrets.randbits(64)))
@@ -366,6 +439,9 @@ def report_trial(
     A trial keeps the FIRST run linked to it (a script that opens a second
     run doesn't steal the trial). With no ``value``, a finished trial's value
     is read from its run's ``metric`` (summary, else last point).
+
+    A trial the sweep's ``cancel`` killed stays ``killed``; a run that joins
+    it afterwards is asked to stop at once.
     """
     sweep = _require_sweep(db, sweep_id)
     rows = db.read_columns(
@@ -377,13 +453,20 @@ def report_trial(
     linked = trial["run_id"] or run_id
     if value is None and status not in (None, "running") and linked and sweep["metric"]:
         value = run_metric_value(db, linked, sweep["metric"])
-    db.write(
-        """UPDATE sweep_trials SET run_id = COALESCE(run_id, ?),
-                                   status = COALESCE(?, status),
-                                   value = COALESCE(?, value)
-           WHERE id = ?""",
-        [run_id, status, value, trial_id],
-    )
+    killed = trial["status"] == "killed"
+    with db.transaction() as con:
+        con.execute(
+            """UPDATE sweep_trials SET run_id = COALESCE(run_id, ?),
+                                       status = COALESCE(?, status),
+                                       value = COALESCE(?, value)
+               WHERE id = ?""",
+            [run_id, None if killed else status, value, trial_id],
+        )
+        if killed and run_id and trial["run_id"] is None:
+            con.execute(
+                "UPDATE runs SET stop_requested = COALESCE(stop_requested, ?) "
+                "WHERE id = ? AND status = 'running'", [_now(), run_id],
+            )
     row = db.read_columns("SELECT * FROM sweep_trials WHERE id = ?", [trial_id])[0]
     (index,) = db.read_columns(
         "SELECT COUNT(*) AS n FROM sweep_trials WHERE sweep_id = ? "

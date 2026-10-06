@@ -1,4 +1,4 @@
-"""Hyperparameter sweeps: create/list/get, pause/resume/cancel, and the
+"""Hyperparameter sweeps: create/list/get, pause/resume/stop/cancel, and the
 worker protocol (``/next`` claims a trial, ``/report`` records its outcome).
 The logic lives in ``sweep_ops``; every mutation needs the write role."""
 
@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from .. import auth, sweep_ops
 from ._common import get_db, slugify
@@ -17,6 +17,9 @@ _write = Depends(auth.require_role("write"))
 
 
 class SweepCreate(BaseModel):
+    #: Unknown keys are kept so ``create_sweep`` can name them in its error.
+    model_config = ConfigDict(extra="allow")
+
     project: str
     #: The search space (wandb's ``parameters`` block).
     parameters: dict[str, Any]
@@ -24,10 +27,11 @@ class SweepCreate(BaseModel):
     metric: str | None = None
     goal: str | None = None
     command: str | list[str] | None = None
+    program: str | None = None
+    run_cap: int | None = None
+    description: str | None = None
     name: str | None = None
     sweep_id: str | None = None
-
-
 class TrialReport(BaseModel):
     run_id: str | None = None
     value: float | None = None
@@ -45,10 +49,12 @@ def _call(fn: Any, *args: Any, **kwargs: Any) -> Any:
 
 @router.post("/sweeps", dependencies=[_write])
 def create_sweep(body: SweepCreate, request: Request) -> dict[str, Any]:
+    _call(sweep_ops.check_keys, body.model_extra or {})
     return _call(
         sweep_ops.create_sweep, get_db(request),
         project=body.project, space=body.parameters, method=body.method,
-        metric=body.metric, goal=body.goal, command=body.command, name=body.name,
+        metric=body.metric, goal=body.goal, command=body.command, program=body.program,
+        run_cap=body.run_cap, description=body.description, name=body.name,
         sweep_id=body.sweep_id,
     )
 
@@ -71,7 +77,7 @@ def next_trial(sweep_id: str, request: Request) -> dict[str, Any]:
 
 @router.post("/sweeps/{sweep_id}/{action}", dependencies=[_write])
 def sweep_action(sweep_id: str, action: str, request: Request) -> dict[str, Any]:
-    """``pause`` / ``resume`` / ``cancel``."""
+    """``pause`` / ``resume`` / ``stop`` / ``cancel``."""
     if action not in sweep_ops.ACTIONS:
         raise HTTPException(status_code=404, detail=f"unknown sweep action {action!r}")
     return _call(sweep_ops.set_status, get_db(request), sweep_id, action)

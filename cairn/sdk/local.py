@@ -453,6 +453,7 @@ class LocalTransport:
     def create_sweep(self, body: dict[str, Any]) -> dict[str, Any]:
         from ..server import sweep_ops
         body = dict(body)
+        sweep_ops.check_keys(body, (*sweep_ops.CONFIG_KEYS, "sweep_id"))
         return sweep_ops.create_sweep(self._sweep_db(), space=body.pop("parameters"), **body)
 
     def list_sweeps(self, project: str | None = None) -> list[dict[str, Any]]:

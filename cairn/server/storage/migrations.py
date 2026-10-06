@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import secrets
+import shlex
 import sqlite3
 
 SCHEMA_VERSION = 2  # Bumped from 1 (DuckDB) to 2 (SQLite). Breaking change.
@@ -374,7 +375,11 @@ SCHEMA_SQL: list[str] = [
         space         TEXT NOT NULL,
         metric        TEXT,
         goal          TEXT,
+        -- JSON argument list (wandb's ``command``), macros unexpanded.
         command       TEXT,
+        program       TEXT,
+        run_cap       INTEGER,
+        description   TEXT,
         status        TEXT NOT NULL,
         created_at    TEXT NOT NULL
     )
@@ -539,6 +544,27 @@ _REGISTRY_TABLES = ("run_inputs", "artifact_aliases", "artifact_entries",
                     "artifact_versions", "artifact_families")
 
 
+def _migrate_sweeps(con: sqlite3.Connection) -> None:
+    """Add wandb's ``program`` / ``run_cap`` / ``description`` to ``sweeps``.
+
+    A table without ``program`` predates them and stores ``command`` as a
+    shell string the agent appended the params to; it becomes the JSON
+    argument list ending in ``${args}``, which the agent now expands.
+    """
+    cols = {row[1] for row in con.execute("PRAGMA table_info(sweeps)").fetchall()}
+    if "program" in cols:
+        return
+    for column, col_type in (("program", "TEXT"), ("run_cap", "INTEGER"), ("description", "TEXT")):
+        con.execute(f"ALTER TABLE sweeps ADD COLUMN {column} {col_type}")
+    for sweep_id, command in con.execute(
+        "SELECT id, command FROM sweeps WHERE command IS NOT NULL"
+    ).fetchall():
+        con.execute(
+            "UPDATE sweeps SET command = ? WHERE id = ?",
+            [json.dumps(shlex.split(command) + ["${args}"]), sweep_id],
+        )
+
+
 def _drop_old_registry(con: sqlite3.Connection) -> None:
     """Artifacts became versioned manifests (a user ruling, no conversion):
     a registry from before that (``artifact_versions`` without ``file_count``)
@@ -582,6 +608,7 @@ def apply_migrations(con: sqlite3.Connection) -> int:
     con.execute("DROP TABLE IF EXISTS sessions")
 
     _migrate_project_docs(con)
+    _migrate_sweeps(con)
 
     existing = con.execute("SELECT version FROM schema_version").fetchall()
     if not existing:

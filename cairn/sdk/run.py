@@ -471,6 +471,12 @@ class Run:
         return self._run_id
 
     @property
+    def project(self) -> str:
+        """The project's id: the normalised name the server returned (e.g.
+        ``"My Project"`` becomes ``"my-project"``)."""
+        return self._project_id
+
+    @property
     def url(self) -> str:
         """The run's page in the viewer, the URL ``cairn open`` prints.
 
@@ -1258,6 +1264,8 @@ class _DisabledRun(Run):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         self._run_id = secrets.token_hex(16)
         self._project = kwargs.get("project", args[0] if args else None)
+        # Nothing to ask for the normalised id: ``project`` is what was given.
+        self._project_id = self._project
         self._tags = list(kwargs.get("tags") or [])
         self._finished = False
         self._stop_requested = False

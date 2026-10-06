@@ -23,9 +23,12 @@ format is documented in ``cairn.server.sweep_ops``.
 from __future__ import annotations
 
 import inspect
+import json
 import logging
 import multiprocessing
 import numbers
+import sys
+import time
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any, Callable
@@ -33,6 +36,72 @@ from typing import Any, Callable
 from .connect import open_transport
 
 log = logging.getLogger(__name__)
+
+#: Seconds between checks while a sweep is paused (``cairn agent --poll``'s default).
+_PAUSE_POLL = 5.0
+
+
+def _cli_value(value: Any) -> str:
+    """A param as a command-line value: scalars as Python prints them, the rest as JSON."""
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return str(value)
+    return json.dumps(value)
+
+
+def expand_command(
+    command: list[str],
+    *,
+    program: str | None,
+    params: dict[str, Any],
+    json_file: str | None = None,
+) -> list[str]:
+    """A trial's argv: wandb's sweep ``command`` with its macros expanded.
+
+    An item that is exactly one macro is replaced by the macro's arguments
+    (none, one, or one per param): ``${env}`` (``/usr/bin/env``; nothing on
+    Windows), ``${interpreter}`` (this Python, ``sys.executable``),
+    ``${program}``, ``${args}`` (``--key=value``), ``${args_no_hyphens}``
+    (``key=value``), ``${args_no_boolean_flags}`` (like ``${args}``, but
+    ``--key`` for True and nothing for False), ``${args_json}`` (the params
+    as one JSON argument) and ``${args_json_file}`` (``json_file``, a file
+    holding that JSON). Inside a longer item, the single-argument macros
+    (``env``, ``interpreter``, ``program``, ``args_json``,
+    ``args_json_file``) are substituted as text; everything else is kept
+    as written.
+    """
+    hyphens = [f"--{k}={_cli_value(v)}" for k, v in params.items()]
+    no_booleans = [
+        f"--{k}" if v is True else f"--{k}={_cli_value(v)}"
+        for k, v in params.items() if v is not False
+    ]
+    single = {
+        "env": "" if sys.platform == "win32" else "/usr/bin/env",
+        "interpreter": sys.executable,
+        "program": program or "",
+        "args_json": json.dumps(params),
+        "args_json_file": json_file or "",
+    }
+    whole: dict[str, list[str]] = {
+        **{k: [v] for k, v in single.items()},
+        "env": [] if sys.platform == "win32" else ["/usr/bin/env"],
+        "args": hyphens,
+        "args_no_hyphens": [f"{k}={_cli_value(v)}" for k, v in params.items()],
+        "args_no_boolean_flags": no_booleans,
+    }
+    argv: list[str] = []
+    for item in command:
+        if item.startswith("${") and item.endswith("}") and item[2:-1] in whole:
+            argv += whole[item[2:-1]]
+            continue
+        for name, value in single.items():
+            item = item.replace("${" + name + "}", value)
+        argv.append(item)
+    return argv
+
+
+def uses_json_file(command: list[str]) -> bool:
+    """Whether ``command`` needs ``expand_command``'s ``json_file``."""
+    return any("${args_json_file}" in c for c in command)
 
 
 def sweep(
@@ -78,7 +147,9 @@ def sweep(
             needs the ``[sweep]`` extra).
         name: Display name of the sweep.
         command: The command ``cairn agent`` runs per trial, as a string or
-            an argument list; the params are appended as ``--key=value``.
+            an argument list (wandb's ``command``). The params appear only
+            where an args macro such as ``${args}`` is; see
+            ``expand_command``.
         repo: Where the sweep lives, resolved like ``cairn.Run(repo=...)``.
 
     Returns:
@@ -141,15 +212,24 @@ class Sweep:
 
     def pause(self) -> None:
         """Stop handing out new trials until ``resume``; running trials go on.
-        ``cairn agent`` waits for the resume; ``Sweep.run`` returns."""
+        ``cairn agent`` and ``Sweep.run`` wait for the resume."""
         self._call("sweep_action", self.id, "pause")
 
     def resume(self) -> None:
         """Hand out trials again after ``pause``."""
         self._call("sweep_action", self.id, "resume")
 
+    def stop(self) -> None:
+        """Stop the sweep: no new trials, ever; running trials finish
+        normally. Agents and ``Sweep.run`` return once they have no trial."""
+        self._call("sweep_action", self.id, "stop")
+
     def cancel(self) -> None:
-        """End the sweep for good: no more trials are handed out."""
+        """Cancel the sweep: no new trials, and every running trial ends.
+
+        Each running trial is marked ``killed`` and its run is asked to stop,
+        as the UI's Stop button does (``Run.should_stop``, ``on_stop``, and
+        the interrupt unless the run uses ``stop_mode="flag"``)."""
         self._call("sweep_action", self.id, "cancel")
 
     def run(
@@ -160,15 +240,18 @@ class Sweep:
         workers: int = 1,
         **run_kwargs: Any,
     ) -> list[dict[str, Any]]:
-        """Run up to ``count`` trials (all of a grid, or until the sweep is
-        paused/cancelled when None) and return them as reported.
+        """Run up to ``count`` trials (when None, until the sweep is stopped,
+        cancelled or finished) and return them as reported. While the sweep
+        is paused, the workers wait for it to resume.
 
         ``fn(config)`` or ``fn(config, run)`` trains one trial; ``config`` is
         the trial's params (also recorded as the run's config). A number it
         returns is the trial's value; otherwise the value is the run's final
         ``metric`` value as the runs table shows it (last point, summary rule,
         explicit summary key). An exception fails the trial and the sweep
-        moves on; ``KeyboardInterrupt`` marks the trial killed and propagates.
+        moves on; ``KeyboardInterrupt`` marks the trial killed and propagates,
+        unless it is the run's stop request (from ``cancel``): then the run
+        ends ``stopped`` and the worker goes on to its next claim.
 
         Args:
             fn: The trial function.
@@ -228,8 +311,12 @@ def _work(
     done: list[dict[str, Any]] = []
     try:
         while count is None or len(done) < count:
-            trial = transport.next_trial(sweep_id)["trial"]
+            claim = transport.next_trial(sweep_id)
+            trial = claim["trial"]
             if trial is None:
+                if claim["status"] == "paused":
+                    time.sleep(_PAUSE_POLL)
+                    continue
                 break
             params = trial["params"]
             run = Run(project, sweep_id=sweep_id, transport=transport, **{
@@ -244,15 +331,18 @@ def _work(
             try:
                 result = fn(params, run) if _takes_run(fn) else fn(params)
             except KeyboardInterrupt:
-                run.finish(status="killed")
-                transport.report_trial(sweep_id, trial["id"], status="killed")
-                raise
+                if not run.should_stop:
+                    run.finish(status="killed")
+                    transport.report_trial(sweep_id, trial["id"], status="killed")
+                    raise
+                run.finish(status="stopped")
+                status = "killed"
             except Exception:  # noqa: BLE001 - one failed trial doesn't end the sweep
                 log.exception("sweep %s: trial %s failed", sweep_id, trial["id"])
                 run.finish(status="failed")
                 status = "failed"
             else:
-                run.finish()
+                run.finish("stopped" if run.should_stop else "completed")
                 status = "completed"
                 if isinstance(result, numbers.Real) and not isinstance(result, bool):
                     value = float(result)
