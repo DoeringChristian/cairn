@@ -1,25 +1,73 @@
-"""WAL ingestion — drains per-run WAL files into the central SQLite DB.
+"""Run-log ingestion: applies the runs' append-only logs to the SQLite DB.
 
-Called by:
-- The server's background ingestion thread (every 2s)
-- ``cairn.Reader`` before queries (for no-server use)
+Every local ``cairn.Run`` appends its writes to ``.cairn/wals/<run_id>.wal.jsonl``
+(one JSON record per line) and stores blobs in the content-addressed store;
+it never writes the database. Only the holder of the repo's ingest lease
+(``storage/lease.py``) calls ``ingest_all``: the server's background loop
+every ~2 s, or a Reader / CLI command / run catching up while no server
+holds the lease.
 
-SDK runs NEVER call this. They only write WAL files + blobs.
+Exactly once. Each log's ``wal_progress`` row holds the byte offset just
+past the last complete line applied. A batch (up to ``MAX_BATCH_BYTES`` of
+complete lines) is applied in ONE write transaction that first reads the
+offset and finally stores the new one: a crash anywhere before the commit
+leaves neither the ops nor the offset, so the batch is applied again from
+the same offset, and an applied batch is never re-read (also not after a
+restart, and not by a second ingester racing this one). A torn last line (a
+writer mid-append, or killed there) has no newline yet and waits for the
+next cycle.
+
+Completion. A run's log ends with its ``finish`` record; once that is
+ingested (and nothing follows it), the log file is deleted, then its
+progress row. A log whose run is still ``running`` and that has had no new
+record (heartbeats included, every 10 s) for ``STALE_SECONDS`` marks the run
+``crashed``; any later record of it makes the run ``running`` again.
+
+Logs of earlier versions (no progress row) are read once from the start;
+their ``.done`` copies (already ingested) and ``.lock`` files are deleted.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import re
+import sqlite3
+import threading
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from . import ingest_ops
 from .storage.blobs import BlobStore
 from .storage.datadir import DataDir
 from .storage.db import Database
-from . import ingest_ops
 
 log = logging.getLogger(__name__)
+
+#: Most bytes of complete lines applied in one transaction. A transaction
+#: holds the process's write lock, so this bounds how long an API write waits
+#: behind ingestion.
+MAX_BATCH_BYTES = 1 << 20
+
+#: A running run whose log got no new record for this long is ``crashed``.
+#: The SDK writes a heartbeat record every 10 s.
+STALE_SECONDS = 300.0
+
+LOG_SUFFIX = ".wal.jsonl"
+
+
+def wal_dir(data_dir: DataDir) -> Path:
+    return data_dir.root / "wals"
+
+
+def log_path(data_dir: DataDir, run_id: str) -> Path:
+    return wal_dir(data_dir) / f"{run_id}{LOG_SUFFIX}"
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _safe_json(line: str) -> dict[str, Any] | None:
@@ -28,20 +76,20 @@ def _safe_json(line: str) -> dict[str, Any] | None:
     if not line:
         return None
     try:
-        return json.loads(line)
+        record = json.loads(line)
     except json.JSONDecodeError:
-        log.warning("skipping malformed WAL line: %s", line[:120])
+        log.warning("skipping malformed log line: %s", line[:120])
         return None
+    return record if isinstance(record, dict) else None
 
 
 def _ensure_run_exists(db: Database, p: dict[str, Any]) -> None:
     """Create the run + project rows if they don't exist yet.
 
-    The payload's ``created_at`` is the client's clock at creation, so a WAL
-    drained long after the run started still dates the run correctly.
+    The payload's ``created_at`` is the client's clock at creation, so a log
+    ingested long after the run started still dates the run correctly.
     """
     run_id = p["run_id"]
-    # Check if already ingested.
     rows = db.read_columns("SELECT id FROM runs WHERE id = ?", [run_id])
     if rows:
         return
@@ -83,20 +131,19 @@ def _apply_op(
     payload: dict[str, Any],
     run_id: str | None,
 ) -> str | None:
-    """Apply one WAL record to the DB. Returns the WAL's run id (updated by
+    """Apply one log record to the DB. Returns the log's run id (updated by
     ``create_run``) so later records without a ``run_id`` resolve to it.
 
-    The single dispatcher for both the full and the incremental drain: a new
-    WAL op is one branch here. Every branch must be idempotent, because a WAL
-    that was drained incrementally while its run was live is drained again in
-    full once the run's lock goes away.
+    The single dispatcher of ingestion: a new log op is one branch here. It
+    runs inside the batch's transaction (see the module docstring), so a
+    branch is applied exactly once.
     """
     if op == "create_run":
         _ensure_run_exists(db, payload)
         return payload["run_id"]
 
     if op == "fork_run":
-        # A forked run's WAL opens with this instead of ``create_run``.
+        # A forked run's log opens with this instead of ``create_run``.
         try:
             ingest_ops.fork_run(
                 db, parent_id=payload["parent_id"], step=payload["step"],
@@ -104,7 +151,7 @@ def _apply_op(
                 **{k: payload.get(k) for k in ingest_ops.CREATE_RUN_FIELDS if k != "run_id"},
             )
         except ingest_ops.RunNotFound:
-            log.warning("WAL fork of unknown run %s — skipping", payload["parent_id"])
+            log.warning("log fork of unknown run %s — skipping", payload["parent_id"])
         return payload["new_id"]
 
     if op == "artifact_meta":
@@ -126,15 +173,16 @@ def _apply_op(
                 step=payload.get("step"),
                 created_by_run=payload.get("created_by_run"),
                 aliases=payload.get("aliases"),
+                tags=payload.get("tags"),
                 version_id=payload.get("version_id"),
             )
         except (LookupError, ValueError) as exc:
-            log.warning("WAL artifact version %s failed: %s", payload.get("name"), exc)
+            log.warning("log artifact version %s failed: %s", payload.get("name"), exc)
         return run_id
 
     rid = payload.get("run_id", run_id)
     if not rid:
-        log.debug("WAL op %r without a run id — skipping", op)
+        log.debug("log op %r without a run id — skipping", op)
         return run_id
 
     try:
@@ -195,102 +243,244 @@ def _apply_op(
         elif op == "resume_run":
             ingest_ops.resume_run(db, rid)
         elif op == "rewind_run":
-            # Not idempotent on its own, but a full re-drain replays it between
-            # the same batches as the first drain, so the rows converge (the
-            # epoch just bumps once more).
             ingest_ops.rewind_run(db, rid, payload["step"])
         else:
-            log.debug("unknown WAL op %r — skipping", op)
+            log.debug("unknown log op %r — skipping", op)
     except ingest_ops.RunNotFound:
-        log.warning("WAL %s for unknown run %s — skipping", op, rid)
+        log.warning("log %s for unknown run %s — skipping", op, rid)
     except (TypeError, ValueError) as exc:
         # A config write the document rejects (a flat-key collision).
-        log.warning("WAL %s for run %s failed: %s", op, rid, exc)
+        log.warning("log %s for run %s failed: %s", op, rid, exc)
     return run_id
 
 
-def _drain_lines(
-    db: Database, data_dir: DataDir, blobs: BlobStore, lines: Any,
-) -> int:
-    count = 0
-    run_id: str | None = None
-    for line in lines:
-        record = _safe_json(line)
-        if not record:
-            continue
-        count += 1
-        run_id = _apply_op(
-            db, data_dir, blobs, record.get("op", ""), record.get("payload", {}), run_id,
-        )
-    return count
-
-
-def ingest_wal(db: Database, data_dir: DataDir, blobs: BlobStore, wal_path: Path) -> int:
-    """Drain a single WAL file into the central DB. Returns number of ops processed."""
-    with open(wal_path, encoding="utf-8") as f:
-        return _drain_lines(db, data_dir, blobs, f)
-
-
-# Tracks how far we've read into each active WAL (by file path → byte offset).
-_wal_offsets: dict[str, int] = {}
-
-
-def _ingest_wal_incremental(
-    db: Database, data_dir: DataDir, blobs: BlobStore, wal_path: Path,
-) -> int:
-    """Read new lines from an active (locked) WAL without waiting for it to close.
-
-    Since the WAL is append-only JSONL, we can safely read up to the current
-    EOF, ingest those lines, and remember the offset for next time.
-    """
-    key = str(wal_path)
+def _apply_record(
+    db: Database, data_dir: DataDir, blobs: BlobStore, record: dict[str, Any],
+    run_id: str | None,
+) -> str | None:
+    """One record in its own savepoint: an op that fails is rolled back and
+    skipped (logged) instead of blocking its log forever. Database errors
+    (a locked database) abort the batch, which is retried from its offset."""
+    op = record.get("op", "")
+    payload = record.get("payload")
+    if not isinstance(payload, dict):
+        payload = {}
     try:
-        with open(wal_path, "rb") as f:
-            f.seek(_wal_offsets.get(key, 0))
-            chunk = f.read()
-    except OSError:
-        return 0
-    # Only complete lines: the writer may be mid-append, and a torn last line
-    # must be read again next cycle rather than skipped.
-    complete = chunk[: chunk.rfind(b"\n") + 1]
-    _wal_offsets[key] = _wal_offsets.get(key, 0) + len(complete)
-    lines = complete.decode("utf-8").splitlines()
-    return _drain_lines(db, data_dir, blobs, lines)
+        with db.transaction():
+            return _apply_op(db, data_dir, blobs, op, payload, run_id)
+    except sqlite3.OperationalError:
+        raise
+    except Exception:  # noqa: BLE001
+        log.exception("log op %r failed; skipped", op)
+        return run_id
+
+
+#: One ingestion at a time per repo in this process (the lease already makes
+#: it one process); concurrent ones would only redo each other's scans.
+_locks: dict[str, threading.Lock] = {}
+_locks_guard = threading.Lock()
+
+
+def _repo_lock(data_dir: DataDir) -> threading.Lock:
+    with _locks_guard:
+        return _locks.setdefault(str(data_dir.root), threading.Lock())
+
+
+def ingest_log(db: Database, data_dir: DataDir, blobs: BlobStore, path: Path) -> int:
+    """Apply everything new in one run log (see the module docstring);
+    delete the log once its run's ``finish`` is applied. Returns the number
+    of records applied."""
+    name = path.name
+    file_run_id = name.removesuffix(LOG_SUFFIX)
+    total = 0
+    offset, finished, size = 0, 0, 0
+    while True:
+        with db.transaction(immediate=True) as con:
+            row = con.execute(
+                'SELECT "offset", finished FROM wal_progress WHERE path = ?', [name],
+            ).fetchone()
+            offset, finished = (row[0], row[1]) if row else (0, 0)
+            try:
+                with open(path, "rb") as fh:
+                    fh.seek(offset)
+                    chunk = fh.read(MAX_BATCH_BYTES)
+                    end = chunk.rfind(b"\n")
+                    if end < 0 and len(chunk) == MAX_BATCH_BYTES:
+                        # One line longer than a batch: read on to its end.
+                        chunk += fh.readline()
+                        end = chunk.rfind(b"\n")
+                    size = fh.seek(0, 2)
+            except FileNotFoundError:
+                con.execute("DELETE FROM wal_progress WHERE path = ?", [name])
+                return total
+            if end < 0:
+                break
+            complete = chunk[: end + 1]
+            run_id: str | None = file_run_id
+            applied = 0
+            for raw in complete.split(b"\n")[:-1]:
+                record = _safe_json(raw.decode("utf-8", errors="replace"))
+                if not record:
+                    continue
+                run_id = _apply_record(db, data_dir, blobs, record, run_id)
+                applied += 1
+                finished = 1 if record.get("op") == "finish" else 0
+            offset += len(complete)
+            con.execute(
+                """INSERT INTO wal_progress (path, run_id, "offset", finished, updated_at)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT (path) DO UPDATE SET "offset" = excluded."offset",
+                       finished = excluded.finished, updated_at = excluded.updated_at""",
+                [name, file_run_id, offset, finished, _now()],
+            )
+            if applied and not finished:
+                # A crashed run that logs again is running again.
+                con.execute(
+                    "UPDATE runs SET status = 'running', ended_at = NULL "
+                    "WHERE id = ? AND status = 'crashed'",
+                    [file_run_id],
+                )
+            total += applied
+        if offset >= size:
+            break
+    if finished and offset >= size:
+        _delete_log(db, path)
+    return total
+
+
+def _delete_log(db: Database, path: Path) -> None:
+    """A finished, fully ingested log: the file first, then its row (a crash
+    in between leaves a row without a file, dropped by the next cycle)."""
+    path.unlink(missing_ok=True)
+    db.write("DELETE FROM wal_progress WHERE path = ?", [path.name])
+
+
+
+def _cleanup_legacy(data_dir: DataDir) -> None:
+    """Files of the logs before 0.4: ``.done`` copies were fully ingested
+    already, and ``.lock`` files no longer mean anything."""
+    for pattern in ("*.done", "*.lock"):
+        for p in wal_dir(data_dir).glob(pattern):
+            p.unlink(missing_ok=True)
+
+
+def mark_crashed(db: Database, data_dir: DataDir, now: float | None = None) -> list[str]:
+    """Mark ``crashed`` every running run whose log (not finished) has had no
+    new record for ``STALE_SECONDS``; alert on each. Returns their ids."""
+    now = time.time() if now is None else now
+    rows = db.read_columns(
+        "SELECT w.path, w.run_id FROM wal_progress w JOIN runs r ON r.id = w.run_id "
+        "WHERE r.status = 'running' AND w.finished = 0",
+    )
+    crashed = []
+    for row in rows:
+        try:
+            mtime = (wal_dir(data_dir) / row["path"]).stat().st_mtime
+        except FileNotFoundError:
+            continue
+        if now - mtime <= STALE_SECONDS:
+            continue
+        ended = datetime.fromtimestamp(mtime, timezone.utc).isoformat()
+        with db.transaction() as con:
+            hit = con.execute(
+                "UPDATE runs SET status = 'crashed', ended_at = ? "
+                "WHERE id = ? AND status = 'running' RETURNING display_name",
+                [ended, row["run_id"]],
+            ).fetchone()
+        if hit is None:
+            continue
+        crashed.append(row["run_id"])
+        ingest_ops.insert_alert(
+            db, row["run_id"],
+            title=f"Run {hit[0] or row['run_id'][:8]} crashed",
+            text=f"no log record for {int(STALE_SECONDS // 60)} min",
+            level="error",
+        )
+    return crashed
 
 
 def ingest_all(data_dir: DataDir, db: Database, blobs: BlobStore) -> int:
-    """Scan the WAL directory and ingest all WAL files — both active and completed.
+    """Ingest every run log of the repo, then mark stale runs crashed.
 
-    Active WALs (with lock file) are read incrementally from the last offset.
-    Completed WALs (no lock) are fully ingested and renamed to .done.
-
-    Returns total number of ops ingested.
-    """
-    wal_dir = data_dir.root / "wals"
-    if not wal_dir.exists():
+    Only the ingest-lease holder may call this. Returns the number of
+    records applied."""
+    directory = wal_dir(data_dir)
+    if not directory.exists():
         return 0
-
-    total = 0
-    for wal_path in sorted(wal_dir.glob("*.wal.jsonl")):
-        lock_path = wal_path.with_suffix("").with_suffix(".lock")
-        is_active = lock_path.exists()
-
-        try:
-            if is_active:
-                # Incremental read — WAL is still being written.
-                count = _ingest_wal_incremental(db, data_dir, blobs, wal_path)
-            else:
-                # Full ingest — run has finished, WAL is complete.
-                count = ingest_wal(db, data_dir, blobs, wal_path)
-                # Clean up offset tracking.
-                _wal_offsets.pop(str(wal_path), None)
-                # Rename to .done.
-                done_path = wal_path.with_suffix(".done")
-                wal_path.rename(done_path)
-                log.debug("ingested WAL %s (%d ops)", wal_path.name, count)
-
-            total += count
-        except Exception:  # noqa: BLE001
-            log.exception("failed to ingest WAL %s", wal_path.name)
-
+    with _repo_lock(data_dir):
+        _cleanup_legacy(data_dir)
+        total = 0
+        present = set()
+        for path in sorted(directory.glob(f"*{LOG_SUFFIX}")):
+            present.add(path.name)
+            try:
+                total += ingest_log(db, data_dir, blobs, path)
+            except sqlite3.OperationalError:
+                log.warning("ingesting %s failed; retried next cycle", path.name, exc_info=True)
+        for r in db.read_columns("SELECT path FROM wal_progress"):
+            if r["path"] not in present and not (directory / r["path"]).exists():
+                db.write("DELETE FROM wal_progress WHERE path = ?", [r["path"]])
+        mark_crashed(db, data_dir)
     return total
+
+
+def has_pending(data_dir: DataDir, db: Database | None) -> bool:
+    """Whether ``ingest_all`` has anything to do: a log with unread bytes or
+    not seen yet, a finished log still to delete, a running run's log gone
+    stale, or files of the old layout. A cheap check (directory listing,
+    file sizes, one query) that lets a reader skip taking the lease."""
+    directory = wal_dir(data_dir)
+    if not directory.exists():
+        return False
+    names = [p.name for p in directory.iterdir()]
+    if any(n.endswith((".done", ".lock")) for n in names):
+        return True
+    logs = [n for n in names if n.endswith(LOG_SUFFIX)]
+    if not logs:
+        return False
+    if db is None:
+        return True
+    try:
+        rows = {
+            r["path"]: r for r in db.read_columns(
+                'SELECT w.path, w."offset" AS "offset", w.finished, r.status '
+                "FROM wal_progress w LEFT JOIN runs r ON r.id = w.run_id"
+            )
+        }
+    except sqlite3.OperationalError:  # no such table yet: an old database
+        return True
+    now = time.time()
+    for name in logs:
+        row = rows.get(name)
+        try:
+            st = (directory / name).stat()
+        except FileNotFoundError:
+            continue
+        if row is None or st.st_size != row["offset"] or row["finished"]:
+            return True
+        if row["status"] == "running" and now - st.st_mtime > STALE_SECONDS:
+            return True
+    return False
+
+
+_HASH = re.compile(rb"[0-9a-f]{64}")
+
+
+def pending_hashes(data_dir: DataDir, db: Database) -> set[str]:
+    """Every sha256-looking string in the not-yet-ingested part of every log:
+    garbage collection keeps the blobs those records will reference."""
+    directory = wal_dir(data_dir)
+    if not directory.exists():
+        return set()
+    offsets = {r["path"]: r["offset"] for r in db.read_columns(
+        'SELECT path, "offset" AS "offset" FROM wal_progress'
+    )}
+    found: set[str] = set()
+    for path in directory.glob(f"*{LOG_SUFFIX}"):
+        try:
+            with open(path, "rb") as fh:
+                fh.seek(offsets.get(path.name, 0))
+                found.update(m.decode() for m in _HASH.findall(fh.read()))
+        except FileNotFoundError:
+            continue
+    return found

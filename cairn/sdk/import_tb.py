@@ -19,7 +19,7 @@ from typing import Any
 import numpy as np
 from PIL import Image as PILImage
 
-from .connect import open_transport
+from .connect import open_writer
 from .handlers.histogram import HistogramHandler
 from .handlers.registry import default_registry, resolve_mime_type
 
@@ -49,7 +49,7 @@ def import_tensorboard(
     project = project or root.name
     event_dirs = sorted({p.parent for p in root.rglob("*tfevents*") if p.is_file()})
 
-    transport, _ = open_transport(repo)
+    transport, _ = open_writer(repo)
     run_ids: list[str] = []
     try:
         for d in event_dirs:

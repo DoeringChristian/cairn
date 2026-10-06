@@ -18,6 +18,8 @@ print(run.config, run.sequence("loss").values[-1])
 from __future__ import annotations
 
 import json
+import logging
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -28,6 +30,8 @@ from .. import expr as _expr
 from ..server import config_doc as _config_doc
 from .artifacts import ArtifactFamily, ArtifactVersion
 from .gallery import GALLERY_MIME
+
+_log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -814,9 +818,9 @@ class Run:
 class RunEditor:
     """Write access to one existing run, from ``Run.edit``.
 
-    Writes go through the same transport resolution as ``cairn.Run``: the
-    repo DB directly, or the server that holds the repo (or the ``cairn://``
-    server the Reader reads). Each call writes immediately. The ``Run``
+    Writes go to the repo's ingest-lease holder: the server that serves the
+    repo, or this process under the lease (or the ``cairn://`` server the
+    Reader reads). Each call writes immediately. The ``Run``
     it came from sees the edits. Use it as a context manager, or call
     ``close`` when done.
 
@@ -826,10 +830,10 @@ class RunEditor:
     """
 
     def __init__(self, run: Run, target: str) -> None:
-        from .connect import open_transport
+        from .connect import open_writer
 
         self._run = run
-        self._transport, _ = open_transport(target)
+        self._transport, _ = open_writer(target)
 
     def set_config(self, *args: Any, **kwargs: Any) -> None:
         """Merge keys into the run's config (like ``cairn.Run.config``).
@@ -1451,10 +1455,11 @@ class _Backend(Protocol):
 
 def _edit(backend: Any, method: str, *args: Any) -> Any:
     """Call a registry write on a writer transport for the backend's target
-    (``open_transport``: the repo DB, or the server holding it)."""
-    from .connect import open_transport
+    (``open_writer``: the server holding the repo, or the repo under its
+    ingest lease)."""
+    from .connect import open_writer
 
-    t = open_transport(backend.edit_target)[0]
+    t = open_writer(backend.edit_target)[0]
     try:
         return getattr(t, method)(*args)
     finally:
@@ -1504,21 +1509,34 @@ def _api_run_row(row: dict[str, Any]) -> dict[str, Any]:
 
 
 class _LocalBackend(_RegistryWrites):
+    """Reads a local repo's database.
+
+    Only the repo's ingest-lease holder writes it (``storage/lease.py``).
+    While a live ``cairn ui``/``cairn server`` holds the lease, this reads
+    only (what the server has ingested, at most ~2 s behind). Otherwise it
+    catches up itself before reading: takes the lease briefly, ingests the
+    pending run logs, releases it.
+    """
+
     def __init__(self, repo: str | Path, *, zip_source: str | None = None) -> None:
         from ..server.storage.blobs import BlobStore
         from ..server.storage.datadir import DataDir
-        from ..server.storage.db import Database
-        from ..server.wal_ingest import ingest_all as _ingest_all
 
         self._dd = DataDir(Path(repo))
-        self._db = Database.open(self._dd.db_path)
         self._blobs = BlobStore(self._dd.artifacts_dir)
-        self._ingest_all = _ingest_all
         self._zip_source = zip_source
+        self._db_obj: Any = None
+        self._db_lock = threading.Lock()
+
+    @property
+    def _db(self) -> Any:
+        if self._db_obj is None:
+            self._drain_wals()
+        return self._db_obj
 
     @property
     def edit_target(self) -> str:
-        """Where edits go: the repo dir, through ``open_transport`` (which
+        """Where edits go: the repo dir, through ``open_writer`` (which
         reaches a server holding the repo over HTTP)."""
         if self._zip_source is not None:
             raise ValueError(f"runs read from an exported archive ({self._zip_source}) can't be edited")
@@ -1533,11 +1551,54 @@ class _LocalBackend(_RegistryWrites):
         return str(self._dd.root)
 
     def _drain_wals(self) -> None:
-        """Ingest any pending WAL files before reading."""
+        """Catch up on pending run logs before reading (see the class
+        docstring); opens the database on first use."""
+        from ..server.storage import lease as lease_mod
+        from ..server.storage.db import Database
+        from ..server.wal_ingest import has_pending, ingest_all
+
+        with self._db_lock:
+            if self._zip_source is not None:
+                # A private copy restored from an archive: no logs, no lease.
+                if self._db_obj is None:
+                    self._db_obj = Database.open(self._dd.db_path)
+                return
+            served = lease_mod.serving_holder(self._dd.root) is not None
+            if not served:
+                if self._db_obj is not None and not self._db_obj._readonly and not has_pending(
+                    self._dd, self._db_obj,
+                ):
+                    return
+                try:
+                    with lease_mod.acquire(self._dd.root, mode="reader", wait=_CATCH_UP_WAIT):
+                        if self._db_obj is None or self._db_obj._readonly:
+                            if self._db_obj is not None:
+                                self._db_obj.close()
+                            self._db_obj = Database.open(self._dd.db_path)
+                        ingest_all(self._dd, self._db_obj, self._blobs)
+                    return
+                except lease_mod.ServedByServer:
+                    pass
+                except lease_mod.LeaseBusy as exc:
+                    # Someone else is catching up: read what is there.
+                    _log.warning("not catching up on run logs: %s", exc)
+            if self._db_obj is None:
+                if self._dd.db_path.exists():
+                    self._db_obj = Database.open_readonly(self._dd.db_path)
+                else:
+                    with lease_mod.acquire(self._dd.root, mode="reader", wait=_CATCH_UP_WAIT,
+                                           defer_to_server=False):
+                        self._db_obj = Database.open(self._dd.db_path)
+
+    def artifact_version(self, version_id: str) -> dict[str, Any] | None:
+        """The version with this id, or None while it is not ingested yet."""
+        from ..server import artifact_registry_ops
+
+        self._drain_wals()
         try:
-            self._ingest_all(self._dd, self._db, self._blobs)
-        except Exception:  # noqa: BLE001
-            pass
+            return artifact_registry_ops.get_version(self._db, version_id)
+        except LookupError:
+            return None
 
     def list_projects(self) -> list[dict[str, Any]]:
         self._drain_wals()
@@ -1719,7 +1780,13 @@ class _LocalBackend(_RegistryWrites):
         )
 
     def close(self) -> None:
-        self._db.close()
+        if self._db_obj is not None:
+            self._db_obj.close()
+            self._db_obj = None
+
+
+#: Seconds a Reader waits for another process's brief catch-up to end.
+_CATCH_UP_WAIT = 30.0
 
 
 # ---------------------------------------------------------------------------
@@ -1894,6 +1961,17 @@ class _HttpBackend(_RegistryWrites):
         return self._request(
             "GET", f"/api/projects/{project_id}/artifact-families/by-name/{quote(name, safe='')}",
         )["versions"]
+
+    def artifact_version(self, version_id: str) -> dict[str, Any] | None:
+        """The version with this id, or None when there is none (yet)."""
+        import httpx
+
+        try:
+            return self._get(f"/api/artifact-versions/{version_id}")
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                return None
+            raise
 
     def resolve_artifact_ref(self, project_id: str | None, ref: str) -> dict[str, Any]:
         if project_id is None:

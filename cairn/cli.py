@@ -42,7 +42,7 @@ from .sdk.transport import Transport, default_spill_dir
 from .server import auth as _auth
 from .server.app import create_app
 from .server.storage.blobs import BlobStore
-from .server.storage.datadir import DataDir, RepoLockedError, default_data_dir
+from .server.storage.datadir import DataDir, default_data_dir
 from .server.storage.db import Database
 
 
@@ -181,13 +181,19 @@ def init_cmd(path: Path) -> None:
     After `cairn init` you can log runs with `cairn.Run(project=...)`
     or start the viewer with `cairn ui`.
     """
+    from .server.storage import lease as lease_mod
+
     repo = (path / ".cairn").resolve()
     already = repo.exists() and (repo / "cairn.db").exists()
     dd = DataDir(repo)
     # `Database.open` runs migrations idempotently, so init is safe to
-    # re-run on an existing repo.
-    db = Database.open(dd.db_path)
-    db.close()
+    # re-run on an existing repo. Only the ingest-lease holder writes the
+    # database: a repo a server serves is initialized already.
+    try:
+        with lease_mod.acquire(dd.root, mode="cli"):
+            Database.open(dd.db_path).close()
+    except lease_mod.ServedByServer:
+        pass
     if already:
         click.echo(f"Cairn repo already initialized at {repo}")
     else:
@@ -195,6 +201,28 @@ def init_cmd(path: Path) -> None:
 
 
 # ---------- server (ingest by default; optional paired UI) -----------------
+
+
+def _hold_lease(dd: DataDir, mode: str, url: str) -> Any:
+    """Take the repo's ingest lease for this server's lifetime, or exit when
+    another live server holds it (waits for a brief holder: a CLI command or
+    Reader catching up)."""
+    from .server.storage import lease as lease_mod
+
+    try:
+        return lease_mod.acquire(dd.root, mode=mode, url=url, wait=60.0)
+    except lease_mod.ServedByServer as exc:
+        holder = exc.holder
+        click.echo(
+            f"ERROR: the repo {dd.root} is already served by `cairn {holder.get('mode')}` "
+            f"(pid {holder.get('pid')} on {holder.get('host')}) at "
+            f"{lease_mod.server_url(holder)}: open that instead of starting another one.",
+            err=True,
+        )
+        sys.exit(1)
+    except lease_mod.LeaseBusy as exc:
+        click.echo(f"ERROR: {exc}; try again in a moment.", err=True)
+        sys.exit(1)
 
 
 def _find_free_port(host: str, start: int, max_attempts: int = 20) -> int:
@@ -373,17 +401,10 @@ def server_cmd(
     ui_port = _find_free_port(host, ui_port or port + 1) if ui else (ui_port or port + 1)
 
     dd = DataDir(repo)
-    # Record the UI port (if present, else the ingest port) in the lock
-    # file so a concurrent SDK `Run(repo=...)` on the same repo can
-    # transparently switch to HTTP mode. We store 127.0.0.1 as the host
-    # even when --host is 0.0.0.0 because the SDK that detects the lock
-    # will always be on the same machine.
-    lock_port = ui_port if ui else port
-    try:
-        dd.acquire_lock("server", host="127.0.0.1", port=lock_port)
-    except RepoLockedError as exc:
-        click.echo(f"ERROR: {exc}", err=True)
-        sys.exit(1)
+    # Hold the repo's ingest lease for our lifetime: this process is the
+    # repo's one writer. The URL in it (the UI port if any, else the ingest
+    # port) is where readers and CLI commands on the repo send their writes.
+    lease = _hold_lease(dd, "server", f"http://127.0.0.1:{ui_port if ui else port}")
 
     # One Database, shared by both apps (single shared SQLite connection
     # per file in this process, so both FastAPI apps must share the same one.
@@ -502,7 +523,7 @@ def server_cmd(
         if advertiser is not None:
             advertiser.stop()
         db.close()
-        dd.release_lock()
+        lease.release()
 
 
 # ---------- ui (standalone UI over a local repo) ----------------------------
@@ -614,32 +635,12 @@ def ui_cmd(
 
     repo_path = _ensure_repo(Path(target.location))
     dd = DataDir(repo_path)
-    has_lock = False
-    try:
-        dd.acquire_lock("ui", host="127.0.0.1", port=port)
-        has_lock = True
-    except RepoLockedError as exc:
-        holder = exc.holder
-        if holder.get("mode") == "server":
-            click.echo(
-                "ERROR: A `cairn server` is already running on this repo. "
-                "Open its UI URL in your browser instead of starting another one.",
-                err=True,
-            )
-            sys.exit(1)
-        # SQLite WAL allows concurrent access — no need to block.
-        click.echo(
-            f"  Note: repo is also in use by {holder.get('mode', '?')} "
-            f"(pid={holder.get('pid', '?')}). Running concurrently.\n",
-            err=True,
-        )
+    lease = _hold_lease(dd, "ui", f"http://127.0.0.1:{port}")
 
     # Best-effort: advertise our actual URL in the repo dir (`servers.json`)
     # so notebook-side `CardElement._resolve_server()` can auto-discover us
     # regardless of which port we landed on (this port may have
-    # auto-incremented past the CLI default). Independent of the write-lock
-    # above — concurrent `ui` processes on the same repo are all valid
-    # discovery targets.
+    # auto-incremented past the CLI default).
     dd.add_live_server("ui", host="127.0.0.1", port=port)
 
     db = Database.open(dd.db_path)
@@ -691,8 +692,7 @@ def ui_cmd(
     finally:
         db.close()
         dd.remove_live_server()
-        if has_lock:
-            dd.release_lock()
+        lease.release()
 
 
 # ---------- client commands -------------------------------------------------
@@ -704,8 +704,13 @@ def _repo_health(root: Path) -> dict[str, Any]:
     from . import __version__
     from .cli_target import serving_url
 
+    from .sdk.reader import _LocalBackend
+
     dd = DataDir(root)
-    db = Database.open(dd.db_path)
+    # As a Reader opens it: caught up on pending run logs, unless a server
+    # serves the repo (then read-only).
+    backend = _LocalBackend(dd.root)
+    db = backend._db
     try:
         def count(sql: str) -> int:
             return int((db.read_one(sql) or (0,))[0])
@@ -720,6 +725,7 @@ def _repo_health(root: Path) -> dict[str, Any]:
             "projects": count("SELECT COUNT(*) FROM projects"),
             "runs": count("SELECT COUNT(*) FROM runs"),
             "running_runs": count("SELECT COUNT(*) FROM runs WHERE status = 'running'"),
+            "crashed_runs": count("SELECT COUNT(*) FROM runs WHERE status = 'crashed'"),
             "archived_runs": count("SELECT COUNT(*) FROM runs WHERE archived_at IS NOT NULL"),
             "series": count("SELECT COUNT(*) FROM (SELECT 1 FROM sequences GROUP BY run_id, name)"),
             "points": count("SELECT COUNT(*) FROM sequences"),
@@ -728,7 +734,7 @@ def _repo_health(root: Path) -> dict[str, Any]:
             "reports": count("SELECT COUNT(*) FROM reports"),
         }
     finally:
-        db.close()
+        backend.close()
     size = dd.db_path.stat().st_size
     for f in dd.artifacts_dir.rglob("*"):
         if f.is_file():
@@ -1384,8 +1390,8 @@ def sync_cmd(repo: str | None, server: str | None) -> None:
     * Server-mode runs keep a write-ahead log on this machine (CAIRN_WAL_DIR).
       Each log not fully delivered is replayed, in order, to the server
       recorded in it (a log without one goes to the target server).
-    * A local target: the WAL logs of `cairn.Run(local_wal=True)` runs in
-      the repo's wals/ directory are ingested into it, unless a server is
+    * A local target: the run logs in the repo's wals/ directory are
+      ingested now (under the repo's ingest lease), unless a server is
       serving the repo (it ingests them itself).
     * A server target: requests the SDK spilled to disk are sent to it.
     """
@@ -1402,19 +1408,20 @@ def sync_cmd(repo: str | None, server: str | None) -> None:
         root = require_repo(target.location)
         served = serving_url(root)
         if served is not None:
-            click.echo(f"{root}: served by {served[0]}, which ingests its WAL logs itself")
+            click.echo(f"{root}: served by {served[0]}, which ingests its run logs itself")
         else:
-            from .server.storage.blobs import BlobStore
+            from .sdk.local import RepoTransport
             from .server.wal_ingest import ingest_all
 
-            dd = DataDir(root)
-            db = Database.open(dd.db_path)
+            rt = RepoTransport(root)
             try:
-                n = ingest_all(dd, db, BlobStore(dd.artifacts_dir))
+                n = rt.under_lease(
+                    lambda db: ingest_all(rt.data_dir, db, rt.blobs), catch_up_first=False,
+                )
             finally:
-                db.close()
+                rt.close()
             if n:
-                click.echo(f"{root}: ingested {n} op(s) from its WAL logs")
+                click.echo(f"{root}: ingested {n} op(s) from its run logs")
             replayed += n
 
     wal_dir = default_wal_dir()
@@ -1849,9 +1856,9 @@ def logout_cmd(url: str | None) -> None:
 # ---------------------------------------------------------------------------
 
 def _sweep_transport(repo: str | None) -> Any:
-    from .sdk.connect import open_transport
+    from .sdk.connect import open_writer
 
-    transport, _ = open_transport(repo)
+    transport, _ = open_writer(repo)
     return transport
 
 

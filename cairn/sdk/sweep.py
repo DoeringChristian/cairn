@@ -33,7 +33,7 @@ from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any, Callable
 
-from .connect import open_transport
+from .connect import open_writer
 
 log = logging.getLogger(__name__)
 
@@ -158,7 +158,7 @@ def sweep(
     Raises:
         ValueError: For an invalid space, method or goal.
     """
-    transport, _ = open_transport(repo)
+    transport, _ = open_writer(repo)
     try:
         info = transport.create_sweep({
             "project": project, "parameters": space, "method": method,
@@ -190,7 +190,7 @@ class Sweep:
         self._project = project
 
     def _call(self, method: str, *args: Any) -> Any:
-        transport, _ = open_transport(self._repo)
+        transport, _ = open_writer(self._repo)
         try:
             return getattr(transport, method)(*args)
         finally:
@@ -307,7 +307,7 @@ def _work(
     """One worker's loop: claim → run → report, ``count`` times at most."""
     from .run import Run
 
-    transport, _ = open_transport(repo)
+    transport, _ = open_writer(repo)
     done: list[dict[str, Any]] = []
     try:
         while count is None or len(done) < count:

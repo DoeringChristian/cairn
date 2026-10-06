@@ -1,17 +1,20 @@
-"""Local transport — direct-DB or WAL mode for server-less SDK use.
+"""Writing to a local repo (a ``.cairn/`` directory) without a server URL.
 
-When a ``Run`` is constructed with ``repo=`` pointing at a ``.cairn/``
-directory, it uses ``LocalTransport`` instead of the HTTP ``Transport``.
+Two transports, one rule: only the holder of the repo's ingest lease writes
+SQLite (see ``cairn/server/storage/lease.py``).
 
-Two modes controlled by ``use_wal``:
-
-* **Direct DB** (default, ``use_wal=False``): writes go straight to SQLite
-  via ``ingest_ops``. Simple, immediate. Fine for single-machine use.
-
-* **WAL mode** (``use_wal=True``): writes go to a per-run append-only
-  JSONL file (``.cairn/wals/{run_id}.wal.jsonl``). The SDK never touches
-  the SQLite database. The UI server ingests WAL files in the background.
-  Use this for NFS / multi-node / Slurm setups.
+* ``LocalTransport`` — a ``cairn.Run``'s writer. Every write is a record
+  appended to the run's own log, ``.cairn/wals/<run_id>.wal.jsonl``, plus
+  content-addressed blobs; the lease holder ingests the log (a running
+  ``cairn ui``/``cairn server`` within ~2 s, else the next Reader or CLI
+  command). Many processes, on many hosts of a shared filesystem, can log
+  at once without contending for the database. What needs an answer now
+  (``use_artifact``, resume / fork / rewind, sweep claims) goes through
+  ``RepoTransport``.
+* ``RepoTransport`` — every other write (Reader and CLI edits, sweeps,
+  registry edits, ``cairn.log_artifact``, imports). Each call goes to the
+  live server holding the lease over HTTP, or else takes the lease briefly,
+  catches up on pending logs and writes the database itself.
 """
 
 from __future__ import annotations
@@ -20,118 +23,434 @@ import hashlib
 import json
 import logging
 import os
-import secrets
-import sqlite3
 import threading
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
-
-import psutil
+from typing import Any, TypeVar
 
 from ..server import ingest_ops
+from ..server.storage import lease as lease_mod
 from ..server.storage.blobs import BlobStore
 from ..server.storage.datadir import DataDir
 from ..server.storage.db import Database
 
 log = logging.getLogger(__name__)
 
-# Max artifact size to inline in WAL (base64).
-_INLINE_ARTIFACT_MAX = 1 * 1024 * 1024  # 1 MB
+T = TypeVar("T")
+
+#: Seconds a writer waits for a brief lease holder (another CLI command or
+#: Reader catching up) before giving up.
+LEASE_WAIT = 300.0
 
 
-class _RepoServedByOtherError(Exception):
-    """Internal signal: a server is already serving this repo."""
+class ServerUnreachable(RuntimeError):
+    """The live server holding a repo's lease does not answer."""
 
-    def __init__(self, holder: dict[str, Any]):
-        self.holder = holder
-        super().__init__(
-            f"repo is being served by {holder.get('mode')!r} on "
-            f"{holder.get('host')!r}:{holder.get('port')!r}"
+
+def server_transport(holder: dict[str, Any], root: Path, timeout: float = 10.0) -> Any:
+    """An HTTP ``Transport`` to the server ``holder`` (a lease's contents),
+    authenticated with the repo's ``auth/local.token`` (same-user trust:
+    the serving process leaves it in the repo for exactly this)."""
+    import httpx
+
+    from .transport import Transport
+
+    url = lease_mod.server_url(holder)
+    try:
+        resp = httpx.get(f"{url}/api/health", timeout=2.0)
+        if resp.status_code != 200:
+            raise RuntimeError(f"status {resp.status_code}")
+    except Exception as exc:  # noqa: BLE001
+        raise ServerUnreachable(
+            f"the repo {root} is served by {holder.get('mode', 'a server')} "
+            f"(pid {holder.get('pid')} on {holder.get('host')}) at {url}, which does not "
+            f"answer ({exc}). Pass that server's reachable URL with --server/repo=, or "
+            "stop it."
+        ) from exc
+    tok_path = root / "auth" / "local.token"
+    token = tok_path.read_text().strip() if tok_path.exists() else None
+    return Transport(url, timeout=timeout, token=token)
+
+
+class RepoTransport:
+    """Writes to a local repo through its ingest-lease holder.
+
+    Every method runs on the live server that holds the lease (over HTTP,
+    the same calls as ``Transport``), or else in this process under the
+    lease, after catching up on pending run logs. Mirrors the public surface
+    of ``cairn.sdk.transport.Transport`` for everything that is not a run's
+    own logging.
+    """
+
+    def __init__(self, repo: str | Path, *, timeout: float = 10.0) -> None:
+        self.data_dir = DataDir(Path(repo))
+        self.blobs = BlobStore(self.data_dir.artifacts_dir)
+        self.server_url = f"file://{self.data_dir.root}"
+        self._timeout = timeout
+        self._db: Database | None = None
+        self._remote: Any = None
+        self._remote_holder: dict[str, Any] | None = None
+        self._lock = threading.Lock()
+
+    # ---- plumbing --------------------------------------------------------
+
+    def _server(self, holder: dict[str, Any]) -> Any:
+        if self._remote is None or self._remote_holder != holder:
+            if self._remote is not None:
+                self._remote.close()
+            self._remote = server_transport(holder, self.data_dir.root, self._timeout)
+            self._remote_holder = holder
+        return self._remote
+
+    def database(self) -> Database:
+        """The repo's database; open it (migrations included) only under the lease."""
+        if self._db is None:
+            self._db = Database.open(self.data_dir.db_path)
+        return self._db
+
+    def served_by(self) -> Any:
+        """An HTTP ``Transport`` to the live server holding the repo's lease
+        (in another process), or None when there is none."""
+        holder = lease_mod.serving_holder(self.data_dir.root)
+        return None if holder is None else self._server(holder)
+
+    def under_lease(self, fn: Callable[[Database], T], *, catch_up_first: bool = True) -> T:
+        """``fn(db)`` in this process under the lease, after catching up on
+        pending run logs (unless not ``catch_up_first``).
+
+        Raises:
+            lease.ServedByServer: A live server holds the lease.
+        """
+        with lease_mod.acquire(self.data_dir.root, mode="client", wait=LEASE_WAIT):
+            with self._lock:
+                db = self.database()
+                if catch_up_first:
+                    catch_up(self.data_dir, db, self.blobs)
+                return fn(db)
+
+    def _call(self, name: str, local: Callable[[Database], T], *args: Any, **kwargs: Any) -> T:
+        """``local(db)`` under the lease, or ``Transport.<name>(*args)`` on
+        the server holding it."""
+        holder = lease_mod.serving_holder(self.data_dir.root)
+        if holder is None:
+            try:
+                return self.under_lease(local)
+            except lease_mod.ServedByServer as exc:
+                holder = exc.holder
+        return getattr(self._server(holder), name)(*args, **kwargs)
+
+    def ingest_pending(self) -> int:
+        """Apply every pending run log now (on the server, or here)."""
+        return self._call("ingest_pending", lambda db: 0)
+
+    def close(self) -> None:
+        if self._remote is not None:
+            self._remote.close()
+            self._remote = None
+        if self._db is not None:
+            self._db.close()
+            self._db = None
+
+    # ---- runs --------------------------------------------------------------
+
+    def create_run(self, body: dict[str, Any]) -> dict[str, Any]:
+        fields = {k: body.get(k) for k in ingest_ops.CREATE_RUN_FIELDS}
+        return self._call(
+            "create_run",
+            lambda db: ingest_ops.create_run(db, project=body["project"], **fields),
+            body,
+        )
+
+    def post_batch(self, run_id: str, points: list[dict[str, Any]]) -> bool:
+        def local(db: Database) -> bool:
+            ingest_ops.insert_batch(db, run_id, points)
+            return True
+        return self._call("post_batch", local, run_id, points)
+
+    def post_params(self, run_id: str, params: dict[str, Any]) -> None:
+        self._call("post_params", lambda db: ingest_ops.set_params(db, run_id, params), run_id, params)
+
+    def post_summary(self, run_id: str, summary: dict[str, Any]) -> None:
+        self._call(
+            "post_summary", lambda db: ingest_ops.set_summary(db, run_id, summary), run_id, summary,
+        )
+
+    def post_logs(self, run_id: str, lines: list[dict[str, Any]]) -> bool:
+        def local(db: Database) -> bool:
+            ingest_ops.insert_logs(db, self.data_dir, run_id, lines)
+            return True
+        return self._call("post_logs", local, run_id, lines)
+
+    def finish_run(
+        self, run_id: str, status: str, exit_code: int | None = None,
+        ended_at: str | None = None,
+    ) -> None:
+        self._call(
+            "finish_run",
+            lambda db: ingest_ops.finish_run(db, run_id, status, exit_code, ended_at),
+            run_id, status, exit_code, ended_at=ended_at,
+        )
+
+    def set_tags(self, run_id: str, tags: list[str]) -> None:
+        self._call("set_tags", lambda db: ingest_ops.set_tags(db, run_id, tags), run_id, tags)
+
+    def set_notes(self, run_id: str, notes: str) -> None:
+        self._call("set_notes", lambda db: ingest_ops.set_notes(db, run_id, notes), run_id, notes)
+
+    def rename_run(self, run_id: str, name: str) -> None:
+        self._call("rename_run", lambda db: ingest_ops.rename_run(db, run_id, name), run_id, name)
+
+    def delete_keys(self, run_id: str, table: str, keys: list[str]) -> None:
+        self._call(
+            "delete_keys", lambda db: ingest_ops.delete_keys(db, run_id, table, keys),
+            run_id, table, keys,
+        )
+
+    def set_metric_rule(
+        self, run_id: str, name: str, x: str | None, summary: str | None,
+    ) -> None:
+        self._call(
+            "set_metric_rule",
+            lambda db: ingest_ops.set_metric_rule(db, run_id, name, x, summary),
+            run_id, name, x, summary,
+        )
+
+    def upload_source(self, run_id: str, archive: bytes, manifest: dict[str, Any]) -> None:
+        self._call(
+            "upload_source",
+            lambda db: ingest_ops.save_source(db, self.data_dir, run_id, archive, manifest),
+            run_id, archive, manifest,
+        )
+
+    def upload_artifact(
+        self, data: bytes, mime_type: str, metadata: dict[str, Any] | None = None,
+        object_type: str | None = None,
+    ) -> str:
+        return self._call(
+            "upload_artifact",
+            lambda db: ingest_ops.put_artifact(
+                db, self.blobs, data, mime_type, metadata, object_type=object_type,
+            )["hash"],
+            data, mime_type, metadata, object_type,
+        )
+
+    def download_artifact_bytes(self, digest: str) -> bytes:
+        return self.blobs.get(digest)
+
+    def drain_spill(self, run_id: str | None = None) -> int:
+        return 0
+
+    # ---- versioned artifact registry ------------------------------------------
+
+    def create_artifact_version(self, project_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        from ..server import artifact_registry_ops as ops
+
+        return self._call(
+            "create_artifact_version",
+            lambda db: ops.create_version(db, self.blobs, project_id=project_id, **body),
+            project_id, body,
+        )
+
+    def resolve_artifact(self, project_id: str, ref: str) -> dict[str, Any]:
+        """``[project/]name[:alias|:vN]`` -> the version dict."""
+        from ..server import artifact_registry_ops as ops
+
+        return self._call(
+            "resolve_artifact", lambda db: ops.resolve_ref(db, project_id, ref), project_id, ref,
+        )
+
+    def record_artifact_input(self, run_id: str, artifact_version_id: str, role: str) -> None:
+        from ..server import artifact_registry_ops as ops
+
+        self._call(
+            "record_artifact_input",
+            lambda db: ops.record_input(
+                db, run_id=run_id, artifact_version_id=artifact_version_id, role=role,
+            ),
+            run_id, artifact_version_id, role,
+        )
+
+    def add_artifact_alias(self, version_id: str, alias: str) -> dict[str, Any]:
+        from ..server import artifact_registry_ops as ops
+        return self._call(
+            "add_artifact_alias", lambda db: ops.add_alias(db, version_id, alias), version_id, alias,
+        )
+
+    def remove_artifact_alias(self, version_id: str, alias: str) -> dict[str, Any]:
+        from ..server import artifact_registry_ops as ops
+        return self._call(
+            "remove_artifact_alias", lambda db: ops.remove_alias(db, version_id, alias),
+            version_id, alias,
+        )
+
+    def add_artifact_tag(self, version_id: str, tag: str) -> dict[str, Any]:
+        from ..server import artifact_registry_ops as ops
+        return self._call(
+            "add_artifact_tag", lambda db: ops.add_tag(db, version_id, tag), version_id, tag,
+        )
+
+    def remove_artifact_tag(self, version_id: str, tag: str) -> dict[str, Any]:
+        from ..server import artifact_registry_ops as ops
+        return self._call(
+            "remove_artifact_tag", lambda db: ops.remove_tag(db, version_id, tag), version_id, tag,
+        )
+
+    def update_artifact_version(self, version_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        from ..server import artifact_registry_ops as ops
+        return self._call(
+            "update_artifact_version", lambda db: ops.update_version(db, version_id, **body),
+            version_id, body,
+        )
+
+    def delete_artifact_version(self, version_id: str, force: bool) -> None:
+        from ..server import artifact_registry_ops as ops
+        self._call(
+            "delete_artifact_version", lambda db: ops.delete_version(db, version_id, force=force),
+            version_id, force,
+        )
+
+    def delete_artifact_family(self, project_id: str, name: str) -> None:
+        from ..server import artifact_registry_ops as ops
+
+        def local(db: Database) -> None:
+            fam = ops.get_family_by_name(db, project_id, name)
+            if fam is None:
+                raise LookupError(f"no artifact {name!r} in project {project_id!r}")
+            ops.delete_family(db, fam["id"])
+        self._call("delete_artifact_family", local, project_id, name)
+
+    # ---- sweeps ----------------------------------------------------------------
+
+    def create_sweep(self, body: dict[str, Any]) -> dict[str, Any]:
+        from ..server import sweep_ops
+
+        def local(db: Database) -> dict[str, Any]:
+            b = dict(body)
+            sweep_ops.check_keys(b, (*sweep_ops.CONFIG_KEYS, "sweep_id"))
+            return sweep_ops.create_sweep(db, space=b.pop("parameters"), **b)
+        return self._call("create_sweep", local, body)
+
+    def list_sweeps(self, project: str | None = None) -> list[dict[str, Any]]:
+        from ..server import sweep_ops
+        from ..server.routes._common import slugify
+        return self._call(
+            "list_sweeps",
+            lambda db: sweep_ops.list_sweeps(db, slugify(project) if project else None),
+            project,
+        )
+
+    def get_sweep(self, sweep_id: str) -> dict[str, Any]:
+        from ..server import sweep_ops
+        return self._call("get_sweep", lambda db: sweep_ops.get_sweep(db, sweep_id), sweep_id)
+
+    def sweep_action(self, sweep_id: str, action: str) -> dict[str, Any]:
+        from ..server import sweep_ops
+        return self._call(
+            "sweep_action", lambda db: sweep_ops.set_status(db, sweep_id, action), sweep_id, action,
+        )
+
+    def next_trial(self, sweep_id: str) -> dict[str, Any]:
+        from ..server import sweep_ops
+        return self._call("next_trial", lambda db: sweep_ops.next_trial(db, sweep_id), sweep_id)
+
+    def report_trial(self, sweep_id: str, trial_id: str, **body: Any) -> dict[str, Any]:
+        from ..server import sweep_ops
+        return self._call(
+            "report_trial",
+            lambda db: sweep_ops.report_trial(db, sweep_id, trial_id, **body),
+            sweep_id, trial_id, **body,
         )
 
 
-def _holder_is_live(holder: dict[str, Any] | None) -> bool:
-    if not holder:
-        return False
-    pid = holder.get("pid")
-    return isinstance(pid, int) and psutil.pid_exists(pid)
+def catch_up(data_dir: DataDir, db: Database, blobs: BlobStore) -> int:
+    """Ingest pending run logs; the caller holds the lease."""
+    from ..server.wal_ingest import has_pending, ingest_all
+
+    if not has_pending(data_dir, db):
+        return 0
+    return ingest_all(data_dir, db, blobs)
 
 
 class LocalTransport:
-    """Mirrors the public surface of ``cairn.sdk.transport.Transport`` but
-    writes to the local repo — either directly to SQLite or via WAL files.
+    """A ``cairn.Run``'s writer on a local repo: appends to the run's log.
+
+    Mirrors the public surface of ``cairn.sdk.transport.Transport``. Never
+    writes SQLite; reads (``should_stop``, a resumed run's steps) use a
+    read-only connection and see what the lease holder ingested so far.
     """
 
-    def __init__(self, repo: str | Path, *, use_wal: bool = False):
+    def __init__(self, repo: str | Path, *, timeout: float = 10.0):
         self.data_dir = DataDir(Path(repo))
-        holder = self.data_dir.read_lock()
-        if (
-            _holder_is_live(holder)
-            and holder is not None
-            and holder.get("mode") in ("server", "ui")
-            and holder.get("host")
-            and holder.get("port")
-        ):
-            raise _RepoServedByOtherError(holder)
-
-        self._use_wal = use_wal
         self.blobs = BlobStore(self.data_dir.artifacts_dir)
         self.server_url = f"file://{self.data_dir.root}"
         self._closed = False
+        self._repo = RepoTransport(self.data_dir.root, timeout=timeout)
+        self._ro: Database | None = None
+        self._ro_lock = threading.Lock()
+        self._wal_dir = self.data_dir.root / "wals"
+        self._wal_dir.mkdir(parents=True, exist_ok=True)
+        self._wal_fh: Any = None
+        self._wal_lock = threading.Lock()
+        self._wal_seq = 0
+        self._log_finished = False
 
-        if use_wal:
-            # WAL mode: every write goes to the WAL; reads (read_columns) use
-            # a read-only connection opened on first use.
-            self.db = None  # type: ignore[assignment]
-            self._ro_conn: sqlite3.Connection | None = None
-            self._ro_lock = threading.Lock()
-            self._wal_dir = self.data_dir.root / "wals"
-            self._wal_dir.mkdir(parents=True, exist_ok=True)
-            self._wal_path: Path | None = None
-            self._lock_path: Path | None = None
-            self._wal_fh: Any = None
-            self._wal_seq = 0
-        else:
-            # Direct DB mode.
-            self.db = Database.open(self.data_dir.db_path)
+    @property
+    def repo(self) -> RepoTransport:
+        """Where writes that need an answer go (the lease holder)."""
+        return self._repo
 
-    # ---- WAL I/O (only used when use_wal=True) -------------------------------
+    # ---- the run's log ---------------------------------------------------------
+
+    def _open_log(self, run_id: str) -> None:
+        """Start (or, for a resumed run, continue) the run's log."""
+        path = self._wal_dir / f"{run_id}.wal.jsonl"
+        fh = open(path, "ab")  # noqa: SIM115
+        if fh.tell() > 0:
+            # A writer killed mid-append left a torn last line: end it, so the
+            # next record is a line of its own.
+            with open(path, "rb") as rd:
+                rd.seek(-1, 2)
+                if rd.read(1) != b"\n":
+                    fh.write(b"\n")
+        self._wal_fh = fh
+        self._log_finished = False
 
     def _wal_write(self, op: str, payload: dict[str, Any]) -> int:
-        self._wal_seq += 1
-        entry = {"seq": self._wal_seq, "op": op, "payload": payload}
-        line = json.dumps(entry, separators=(",", ":"))
-        self._wal_fh.write(line + "\n")
-        self._wal_fh.flush()
-        os.fsync(self._wal_fh.fileno())
-        return self._wal_seq
+        with self._wal_lock:
+            if self._wal_fh is None or self._log_finished:
+                log.warning("run log closed; dropped a %r record", op)
+                return self._wal_seq
+            self._wal_seq += 1
+            entry = {"seq": self._wal_seq, "op": op, "payload": payload}
+            line = json.dumps(entry, separators=(",", ":")) + "\n"
+            self._wal_fh.write(line.encode("utf-8"))
+            self._wal_fh.flush()
+            os.fsync(self._wal_fh.fileno())
+            if op == "finish":
+                # The last record: the ingester deletes the log once it has
+                # applied it, so nothing may follow.
+                self._log_finished = True
+                self._wal_fh.close()
+                self._wal_fh = None
+            return self._wal_seq
 
-    # ---- synchronous reads ----------------------------------------------------
+    # ---- reads ---------------------------------------------------------------
 
     def read_columns(self, sql: str, params: list[Any] | None = None) -> list[dict[str, Any]]:
-        """Run a read query against the repo DB; rows as dicts.
-
-        Direct mode reads through the transport's own connection. WAL mode
-        never writes the DB, so it reads through a separate READ-ONLY
-        connection (``mode=ro``) and sees only what the ingester has drained
-        so far — this process's own un-drained WAL ops are not visible. A
-        repo whose DB does not exist yet reads as empty.
-        """
-        if not self._use_wal:
-            return self.db.read_columns(sql, params)
+        """A read query on the repo DB (read-only; what has been ingested so
+        far). A repo without a database yet reads as empty."""
         with self._ro_lock:
-            if self._ro_conn is None:
-                path = self.data_dir.db_path
-                if not path.exists():
+            if self._ro is None:
+                if not self.data_dir.db_path.exists():
                     return []
-                self._ro_conn = sqlite3.connect(
-                    f"{path.resolve().as_uri()}?mode=ro", uri=True,
-                    check_same_thread=False, timeout=10.0,
-                )
-            cur = self._ro_conn.execute(sql, params or [])
-            cols = [d[0] for d in cur.description]
-            return [dict(zip(cols, row)) for row in cur.fetchall()]
+                self._ro = Database.open_readonly(self.data_dir.db_path)
+            ro = self._ro
+        return ro.read_columns(sql, params)
+
+    def readonly_db(self) -> Database | None:
+        self.read_columns("SELECT 1")
+        return self._ro
 
     # ---- lifecycle -----------------------------------------------------------
 
@@ -139,32 +458,28 @@ class LocalTransport:
         if self._closed:
             return
         self._closed = True
-        if self._use_wal:
-            if self._wal_fh:
+        with self._wal_lock:
+            if self._wal_fh is not None:
                 try:
                     self._wal_fh.close()
                 except OSError:
                     pass
-            if self._lock_path and self._lock_path.exists():
-                self._lock_path.unlink(missing_ok=True)
-            with self._ro_lock:
-                if self._ro_conn is not None:
-                    self._ro_conn.close()
-                    self._ro_conn = None
-        else:
-            self.db.close()
+                self._wal_fh = None
+        with self._ro_lock:
+            if self._ro is not None:
+                self._ro.close()
+                self._ro = None
+        self._repo.close()
 
-    # ---- high-level ops ------------------------------------------------------
+    # ---- run lifecycle ---------------------------------------------------------
 
     def create_run(self, body: dict[str, Any]) -> dict[str, Any]:
         """Create a run from a create body (the ``POST /api/runs`` shape)."""
         fields = {k: body.get(k) for k in ingest_ops.CREATE_RUN_FIELDS}
-        if not self._use_wal:
-            return ingest_ops.create_run(self.db, project=body["project"], **fields)
         run_id = body["run_id"]
         project = body["project"]
         project_id = ingest_ops.slugify(project)
-        self._open_run_wal(run_id)
+        self._open_log(run_id)
         self._wal_write("create_run", {
             **fields,
             "project": project,
@@ -173,65 +488,60 @@ class LocalTransport:
         })
         return {"run_id": run_id, "project_id": project_id, "url": f"/p/{project_id}/r/{run_id}"}
 
-    def _open_run_wal(self, run_id: str) -> None:
-        """Start (or, for a resumed run, continue) the run's WAL file."""
-        self._wal_path = self._wal_dir / f"{run_id}.wal.jsonl"
-        self._lock_path = self._wal_dir / f"{run_id}.lock"
-        self._lock_path.write_text(str(os.getpid()))
-        self._wal_fh = open(self._wal_path, "a")  # noqa: SIM115
-
-    def _require_ingested(self, run_id: str) -> dict[str, Any]:
-        """WAL mode: the run as the ingester has drained it so far."""
+    def _ingested_run(self, run_id: str) -> dict[str, Any]:
+        """The run as stored, after the lease holder caught up on every log
+        (this run's earlier one included)."""
+        self._repo.ingest_pending()
         rows = self.read_columns("SELECT * FROM runs WHERE id = ?", [run_id])
         if not rows:
-            raise ingest_ops.RunNotFound(
-                f"run {run_id} not found (in WAL mode a run must be ingested "
-                "before it can be resumed or forked)"
-            )
+            raise ingest_ops.RunNotFound(f"run {run_id} not found")
         return rows[0]
-
-    def resume_run(self, run_id: str) -> dict[str, Any]:
-        if not self._use_wal:
-            return ingest_ops.resume_run(self.db, run_id)
-        row = self._require_ingested(run_id)
-        self._open_run_wal(run_id)
-        self._wal_write("resume_run", {"run_id": run_id})
-        return self._reopened(row)
-
-    def rewind_run(self, run_id: str, step: int) -> dict[str, Any]:
-        if not self._use_wal:
-            return ingest_ops.rewind_run(self.db, run_id, step)
-        row = self._require_ingested(run_id)
-        self._open_run_wal(run_id)
-        self._wal_write("rewind_run", {"run_id": run_id, "step": step})
-        return self._reopened(row)
 
     @staticmethod
     def _reopened(row: dict[str, Any]) -> dict[str, Any]:
+        from ..server import config_doc
+
         pid, rid = row["project_id"], row["id"]
         return {
             "run_id": rid, "project_id": pid, "url": f"/p/{pid}/r/{rid}",
             "tags": json.loads(row["tags"]) if row.get("tags") else [],
+            "config": config_doc.loads(row.get("config")),
+            "summary": config_doc.loads(row.get("summary")),
         }
+
+    def resume_run(self, run_id: str) -> dict[str, Any]:
+        row = self._ingested_run(run_id)
+        self._open_log(run_id)
+        self._wal_write("resume_run", {"run_id": run_id})
+        return self._reopened(row)
+
+    def rewind_run(self, run_id: str, step: int) -> dict[str, Any]:
+        row = self._ingested_run(run_id)
+        self._open_log(run_id)
+        self._wal_write("rewind_run", {"run_id": run_id, "step": step})
+        return self._reopened(row)
 
     def fork_run(
         self, parent_id: str, new_id: str, step: int, body: dict[str, Any],
     ) -> dict[str, Any]:
         """``body`` is the child's create body (the ``create_run`` shape)."""
+        from ..server import config_doc
+
         fields = {
             k: body.get(k) for k in ingest_ops.CREATE_RUN_FIELDS
             if k not in ("run_id", "parent_run_id", "fork_step")
         }
-        if not self._use_wal:
-            return ingest_ops.fork_run(
-                self.db, parent_id=parent_id, step=step, run_id=new_id, **fields,
-            )
-        pid = self._require_ingested(parent_id)["project_id"]
-        self._open_run_wal(new_id)
+        parent = self._ingested_run(parent_id)
+        pid = parent["project_id"]
+        self._open_log(new_id)
         self._wal_write("fork_run", {
             **fields, "parent_id": parent_id, "new_id": new_id, "step": step,
         })
-        return {"run_id": new_id, "project_id": pid, "url": f"/p/{pid}/r/{new_id}"}
+        return {
+            "run_id": new_id, "project_id": pid, "url": f"/p/{pid}/r/{new_id}",
+            "config": config_doc.loads(parent.get("config")),
+            "summary": config_doc.loads(parent.get("summary")),
+        }
 
     def sequence_steps(self, run_id: str) -> list[dict[str, Any]]:
         """Each of the run's series as ``{name, max_step}``."""
@@ -243,33 +553,21 @@ class LocalTransport:
 
     def post_batch(self, run_id: str, points: list[dict[str, Any]]) -> bool:
         try:
-            if self._use_wal:
-                self._wal_write("batch", {"run_id": run_id, "points": points})
-            else:
-                ingest_ops.insert_batch(self.db, run_id, points)
+            self._wal_write("batch", {"run_id": run_id, "points": points})
             return True
         except Exception:  # noqa: BLE001
             log.exception("post_batch failed for run %s", run_id)
             return False
 
     def post_params(self, run_id: str, params: dict[str, Any]) -> None:
-        if self._use_wal:
-            self._wal_write("params", {"run_id": run_id, "params": params})
-        else:
-            ingest_ops.set_params(self.db, run_id, params)
+        self._wal_write("params", {"run_id": run_id, "params": params})
 
     def post_summary(self, run_id: str, summary: dict[str, Any]) -> None:
-        if self._use_wal:
-            self._wal_write("summary", {"run_id": run_id, "summary": summary})
-        else:
-            ingest_ops.set_summary(self.db, run_id, summary)
+        self._wal_write("summary", {"run_id": run_id, "summary": summary})
 
     def post_logs(self, run_id: str, lines: list[dict[str, Any]]) -> bool:
         try:
-            if self._use_wal:
-                self._wal_write("logs", {"run_id": run_id, "lines": lines})
-            else:
-                ingest_ops.insert_logs(self.db, self.data_dir, run_id, lines)
+            self._wal_write("logs", {"run_id": run_id, "lines": lines})
             return True
         except Exception:  # noqa: BLE001
             log.exception("post_logs failed for run %s", run_id)
@@ -279,64 +577,37 @@ class LocalTransport:
         self, run_id: str, status: str, exit_code: int | None = None,
         ended_at: str | None = None,
     ) -> None:
-        if self._use_wal:
-            ended_at = ended_at or datetime.now(timezone.utc).isoformat()
-            self._wal_write("finish", {"run_id": run_id, "status": status, "exit_code": exit_code, "ended_at": ended_at})
-        else:
-            ingest_ops.finish_run(self.db, run_id, status, exit_code, ended_at)
+        ended_at = ended_at or datetime.now(timezone.utc).isoformat()
+        self._wal_write("finish", {
+            "run_id": run_id, "status": status, "exit_code": exit_code, "ended_at": ended_at,
+        })
 
     def set_tags(self, run_id: str, tags: list[str]) -> None:
-        if self._use_wal:
-            self._wal_write("set_tags", {"run_id": run_id, "tags": tags})
-        else:
-            ingest_ops.set_tags(self.db, run_id, tags)
+        self._wal_write("set_tags", {"run_id": run_id, "tags": tags})
 
     def set_notes(self, run_id: str, notes: str) -> None:
-        if self._use_wal:
-            self._wal_write("set_notes", {"run_id": run_id, "notes": notes})
-        else:
-            ingest_ops.set_notes(self.db, run_id, notes)
+        self._wal_write("set_notes", {"run_id": run_id, "notes": notes})
 
     def rename_run(self, run_id: str, name: str) -> None:
-        if self._use_wal:
-            self._wal_write("rename_run", {"run_id": run_id, "name": name})
-        else:
-            ingest_ops.rename_run(self.db, run_id, name)
+        self._wal_write("rename_run", {"run_id": run_id, "name": name})
 
     def delete_keys(self, run_id: str, table: str, keys: list[str]) -> None:
-        if self._use_wal:
-            self._wal_write("delete_keys", {"run_id": run_id, "table": table, "keys": keys})
-        else:
-            ingest_ops.delete_keys(self.db, run_id, table, keys)
+        self._wal_write("delete_keys", {"run_id": run_id, "table": table, "keys": keys})
 
     def alert(self, run_id: str, alert: dict[str, Any]) -> None:
         """``alert``: alert_id, title, text, level, created_at."""
-        if self._use_wal:
-            self._wal_write("alert", {"run_id": run_id, **alert})
-        else:
-            ingest_ops.insert_alert(
-                self.db, run_id, alert["title"], alert.get("text", ""),
-                alert.get("level", "info"),
-                alert_id=alert["alert_id"], created_at=alert.get("created_at"),
-            )
+        self._wal_write("alert", {"run_id": run_id, **alert})
 
     def set_metric_rule(
         self, run_id: str, name: str, x: str | None, summary: str | None,
     ) -> None:
-        if self._use_wal:
-            self._wal_write("set_metric_rule", {
-                "run_id": run_id, "name": name, "x": x, "summary": summary,
-            })
-        else:
-            ingest_ops.set_metric_rule(self.db, run_id, name, x, summary)
+        self._wal_write("set_metric_rule", {
+            "run_id": run_id, "name": name, "x": x, "summary": summary,
+        })
 
     def upload_source(self, run_id: str, archive: bytes, manifest: dict[str, Any]) -> None:
-        if self._use_wal:
-            digest = hashlib.sha256(archive).hexdigest()
-            self.blobs.put(archive)
-            self._wal_write("source", {"run_id": run_id, "hash": digest, "manifest": manifest})
-        else:
-            ingest_ops.save_source(self.db, self.data_dir, run_id, archive, manifest)
+        digest, _ = self.blobs.put(archive)
+        self._wal_write("source", {"run_id": run_id, "hash": digest, "manifest": manifest})
 
     def upload_artifact(
         self,
@@ -345,142 +616,93 @@ class LocalTransport:
         metadata: dict[str, Any] | None = None,
         object_type: str | None = None,
     ) -> str:
-        if self._use_wal:
-            digest = hashlib.sha256(data).hexdigest()
-            self.blobs.put(data)
-            self._wal_write("artifact_meta", {
-                "hash": digest, "mime_type": mime_type,
-                "size_bytes": len(data), "metadata": metadata or {},
-                "object_type": object_type,
-            })
-            return digest
-        else:
-            result = ingest_ops.put_artifact(
-                self.db, self.blobs, data, mime_type, metadata, object_type=object_type,
-            )
-            return result["hash"]
+        digest, _ = self.blobs.put(data)
+        self._wal_write("artifact_meta", {
+            "hash": digest, "mime_type": mime_type,
+            "size_bytes": len(data), "metadata": metadata or {},
+            "object_type": object_type,
+        })
+        return digest
 
     def heartbeat(self, run_id: str) -> str | None:
-        """Returns the run's ``stop_requested`` timestamp, if any."""
-        if self._use_wal:
-            now = datetime.now(timezone.utc).isoformat()
-            self._wal_write("heartbeat", {"run_id": run_id, "wall_time": now})
-            rows = self.read_columns("SELECT stop_requested FROM runs WHERE id = ?", [run_id])
-            return rows[0]["stop_requested"] if rows else None
-        return ingest_ops.heartbeat(self.db, run_id)
+        """Log a heartbeat; return the run's ``stop_requested`` timestamp, if
+        any (read-only, as far as the holder has ingested)."""
+        now = datetime.now(timezone.utc).isoformat()
+        self._wal_write("heartbeat", {"run_id": run_id, "wall_time": now})
+        rows = self.read_columns("SELECT stop_requested FROM runs WHERE id = ?", [run_id])
+        return rows[0]["stop_requested"] if rows else None
 
     # ---- versioned artifact registry ------------------------------------------
 
     def create_artifact_version(self, project_id: str, body: dict[str, Any]) -> dict[str, Any] | None:
-        """Register an uploaded manifest as a new version (``body``: the
-        ``POST /api/projects/{id}/artifact-versions`` shape). WAL mode cannot
-        answer now: the op is logged with a client-generated ``version_id``
-        and None is returned."""
+        """Log a new version (``body``: the ``POST
+        /api/projects/{id}/artifact-versions`` shape, with a client-generated
+        ``version_id``). Its number is assigned at ingestion, so this returns
+        None (``ArtifactVersion.wait`` blocks until it is)."""
         from ..server import artifact_registry_ops
 
-        if self._use_wal:
-            artifact_registry_ops.validate_name(body["name"])
-            for alias in body.get("aliases") or []:
-                artifact_registry_ops.validate_user_alias(alias)
-            artifact_registry_ops.validate_tags(body.get("tags"))
-            self._wal_write("create_artifact_version", {"project_id": project_id, **body})
-            return None
-        return artifact_registry_ops.create_version(
-            self.db, self.blobs, project_id=project_id, **body,
-        )
+        artifact_registry_ops.validate_name(body["name"])
+        for alias in body.get("aliases") or []:
+            artifact_registry_ops.validate_user_alias(alias)
+        artifact_registry_ops.validate_tags(body.get("tags"))
+        self._wal_write("create_artifact_version", {"project_id": project_id, **body})
+        return None
 
     def resolve_artifact(self, project_id: str, ref: str) -> dict[str, Any]:
-        """``[project/]name[:alias|:vN]`` -> the version dict."""
-        if self._use_wal:
-            raise RuntimeError("use_artifact is not supported in WAL mode (it needs an answer now)")
-        from ..server import artifact_registry_ops
-        return artifact_registry_ops.resolve_ref(self.db, project_id, ref)
+        """``[project/]name[:alias|:vN]`` -> the version dict, after the lease
+        holder caught up on every pending log."""
+        return self._repo.resolve_artifact(project_id, ref)
 
     def record_artifact_input(self, run_id: str, artifact_version_id: str, role: str) -> None:
-        """Record that a run consumed an artifact version."""
-        if self._use_wal:
-            self._wal_write("record_artifact_input", {
-                "run_id": run_id, "artifact_version_id": artifact_version_id, "role": role,
-            })
-        else:
-            from ..server import artifact_registry_ops
-            artifact_registry_ops.record_input(
-                self.db, run_id=run_id, artifact_version_id=artifact_version_id, role=role,
-            )
+        """Record (in the run's log) that the run consumed an artifact version."""
+        self._wal_write("record_artifact_input", {
+            "run_id": run_id, "artifact_version_id": artifact_version_id, "role": role,
+        })
 
     def add_artifact_alias(self, version_id: str, alias: str) -> dict[str, Any]:
-        from ..server import artifact_registry_ops
-        return artifact_registry_ops.add_alias(self._sweep_db(), version_id, alias)
+        return self._repo.add_artifact_alias(version_id, alias)
 
     def remove_artifact_alias(self, version_id: str, alias: str) -> dict[str, Any]:
-        from ..server import artifact_registry_ops
-        return artifact_registry_ops.remove_alias(self._sweep_db(), version_id, alias)
+        return self._repo.remove_artifact_alias(version_id, alias)
 
     def add_artifact_tag(self, version_id: str, tag: str) -> dict[str, Any]:
-        from ..server import artifact_registry_ops
-        return artifact_registry_ops.add_tag(self._sweep_db(), version_id, tag)
+        return self._repo.add_artifact_tag(version_id, tag)
 
     def remove_artifact_tag(self, version_id: str, tag: str) -> dict[str, Any]:
-        from ..server import artifact_registry_ops
-        return artifact_registry_ops.remove_tag(self._sweep_db(), version_id, tag)
+        return self._repo.remove_artifact_tag(version_id, tag)
 
     def update_artifact_version(self, version_id: str, body: dict[str, Any]) -> dict[str, Any]:
-        from ..server import artifact_registry_ops
-        return artifact_registry_ops.update_version(self._sweep_db(), version_id, **body)
+        return self._repo.update_artifact_version(version_id, body)
 
     def delete_artifact_version(self, version_id: str, force: bool) -> None:
-        from ..server import artifact_registry_ops
-        artifact_registry_ops.delete_version(self._sweep_db(), version_id, force=force)
+        self._repo.delete_artifact_version(version_id, force)
 
     def delete_artifact_family(self, project_id: str, name: str) -> None:
-        from ..server import artifact_registry_ops
-        db = self._sweep_db()
-        fam = artifact_registry_ops.get_family_by_name(db, project_id, name)
-        if fam is None:
-            raise LookupError(f"no artifact {name!r} in project {project_id!r}")
-        artifact_registry_ops.delete_family(db, fam["id"])
+        self._repo.delete_artifact_family(project_id, name)
 
-    # ---- sweeps (direct mode only: a trial claim needs an answer now) ---------
-
-    def _sweep_db(self) -> Database:
-        if self._use_wal:
-            raise RuntimeError(
-                "this needs a server or a direct-mode repo: WAL mode never writes the "
-                "database. Drop local_wal=True, or start `cairn server` on the repo."
-            )
-        return self.db
+    # ---- sweeps (through the lease holder: a claim needs an answer now) ---------
 
     def create_sweep(self, body: dict[str, Any]) -> dict[str, Any]:
-        from ..server import sweep_ops
-        body = dict(body)
-        sweep_ops.check_keys(body, (*sweep_ops.CONFIG_KEYS, "sweep_id"))
-        return sweep_ops.create_sweep(self._sweep_db(), space=body.pop("parameters"), **body)
+        return self._repo.create_sweep(body)
 
     def list_sweeps(self, project: str | None = None) -> list[dict[str, Any]]:
-        from ..server import sweep_ops
-        from ..server.routes._common import slugify
-        return sweep_ops.list_sweeps(self._sweep_db(), slugify(project) if project else None)
+        return self._repo.list_sweeps(project)
 
     def get_sweep(self, sweep_id: str) -> dict[str, Any]:
-        from ..server import sweep_ops
-        return sweep_ops.get_sweep(self._sweep_db(), sweep_id)
+        return self._repo.get_sweep(sweep_id)
 
     def sweep_action(self, sweep_id: str, action: str) -> dict[str, Any]:
-        from ..server import sweep_ops
-        return sweep_ops.set_status(self._sweep_db(), sweep_id, action)
+        return self._repo.sweep_action(sweep_id, action)
 
     def next_trial(self, sweep_id: str) -> dict[str, Any]:
-        from ..server import sweep_ops
-        return sweep_ops.next_trial(self._sweep_db(), sweep_id)
+        return self._repo.next_trial(sweep_id)
 
     def report_trial(self, sweep_id: str, trial_id: str, **body: Any) -> dict[str, Any]:
-        from ..server import sweep_ops
-        return sweep_ops.report_trial(self._sweep_db(), sweep_id, trial_id, **body)
+        return self._repo.report_trial(sweep_id, trial_id, **body)
 
     def download_artifact_bytes(self, digest: str) -> bytes:
-        """Download raw artifact bytes by hash from the local blob store."""
-        data = self.blobs.get(digest)
-        return data
+        """Raw artifact bytes by hash, from the local blob store."""
+        return self.blobs.get(digest)
 
     def drain_spill(self, run_id: str | None = None) -> int:
         """Local mode never spills; nothing to drain."""

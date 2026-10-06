@@ -145,6 +145,35 @@ class Database:
         # SQL text -> seconds its last run took (bounded; see _note_duration).
         self._read_cost: dict[str, float] = {}
         self._closed = False
+        # Nesting depth of ``transaction()`` on the writer connection (only
+        # touched under ``self._lock``): a nested one is a SAVEPOINT, and
+        # ``write``/``executemany`` inside one do not commit. Callbacks
+        # registered with ``after_commit`` run once the outermost commits.
+        self._tx_depth = 0
+        self._after_commit: list[Any] = []
+        self._readonly = False
+
+    @classmethod
+    def open_readonly(cls, path: Path) -> "Database":
+        """Open an existing database for reading only: no migrations, and
+        the writer connection refuses writes (``query_only``). For a process
+        that is not the repo's ingest-lease holder (see ``storage.lease``)."""
+        db = cls.__new__(cls)
+        db.path = Path(path)
+        db._lock = threading.RLock()
+        db._writing = threading.local()
+        db._conn = sqlite3.connect(str(db.path), check_same_thread=False, timeout=10.0)
+        db._conn.execute("PRAGMA busy_timeout=5000")
+        db._conn.execute("PRAGMA query_only=ON")
+        db._pool = []
+        db._pool_lock = threading.Lock()
+        db._heavy_gate = _FifoLock()
+        db._read_cost = {}
+        db._closed = False
+        db._tx_depth = 0
+        db._after_commit = []
+        db._readonly = True
+        return db
 
     @classmethod
     def open(cls, path: Path) -> "Database":
@@ -232,12 +261,14 @@ class Database:
     def write(self, sql: str, params: Sequence[Any] | None = None) -> None:
         with self._write_lock() as con:
             con.execute(sql, params or [])
-            con.commit()
+            if not self._tx_depth:
+                con.commit()
 
     def executemany(self, sql: str, seq: Sequence[Sequence[Any]]) -> None:
         with self._write_lock() as con:
             con.executemany(sql, list(seq))
-            con.commit()
+            if not self._tx_depth:
+                con.commit()
 
     @contextmanager
     def transaction(self, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:
@@ -248,16 +279,54 @@ class Database:
         upgrade fail at once with "database is locked" (no busy wait).
         Keep the body to database work: every other writer in this process
         waits for it (readers do not).
+
+        Nested in another transaction of this thread it is a SAVEPOINT: an
+        error rolls back only its own part, and nothing commits before the
+        outermost transaction does (WAL ingestion applies a batch of ops and
+        its read offset in one transaction this way).
         """
         with self._write_lock() as con:
+            if self._tx_depth:
+                name = f"sp{self._tx_depth}"
+                con.execute(f"SAVEPOINT {name}")
+                self._tx_depth += 1
+                try:
+                    yield con
+                except BaseException:
+                    con.execute(f"ROLLBACK TO {name}")
+                    con.execute(f"RELEASE {name}")
+                    raise
+                else:
+                    con.execute(f"RELEASE {name}")
+                finally:
+                    self._tx_depth -= 1
+                return
             con.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
+            self._tx_depth = 1
             try:
                 yield con
             except BaseException:
+                self._tx_depth = 0
+                self._after_commit.clear()
                 con.rollback()
                 raise
             else:
+                self._tx_depth = 0
                 con.commit()
+                hooks, self._after_commit = self._after_commit, []
+                for fn in hooks:
+                    fn()
+
+    def after_commit(self, fn: Any) -> None:
+        """Run ``fn()`` once this thread's open transaction commits (dropped
+        if it rolls back), or now when none is open. For side effects outside
+        the database that must not happen twice when a transaction is
+        retried (the on-disk log files of ``insert_logs``)."""
+        with self._write_lock():
+            if self._tx_depth:
+                self._after_commit.append(fn)
+                return
+        fn()
 
     # --- reads -------------------------------------------------------------
 

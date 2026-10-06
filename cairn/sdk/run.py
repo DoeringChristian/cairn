@@ -42,7 +42,7 @@ from .artifacts import Artifact, ArtifactVersion, draft_from_shorthand
 from .buffer import MetricBuffer
 from .connect import open_transport
 from .gallery import GALLERY_MIME, GalleryItem, resolve_gallery
-from .local import LocalTransport
+from .local import LocalTransport, RepoTransport
 from .scope import Scope
 from .transport import Transport
 from .uploads import upload_value
@@ -116,13 +116,11 @@ class Run:
         repo: Where to write: a ``.cairn/`` directory or a
             ``cairn://host:port`` server. Default: ``cairn.configure``,
             then ``CAIRN_REPO``, ``CAIRN_SERVER``, the config file, then
-            ``./.cairn``. A local repo held by a running ``cairn server`` or
-            ``cairn ui`` is written over HTTP to that server.
-        local_wal: With a local repo: append to a per-run log file
-            (``.cairn/wals/<run_id>.wal.jsonl``) instead of writing the
-            database; a server or ``cairn.Reader`` on that repo ingests it.
-            Use it for many concurrent writers on shared storage (NFS,
-            Slurm, Ray).
+            ``./.cairn``. A local repo is written as the run's own append-only
+            log (``.cairn/wals/<run_id>.wal.jsonl``) plus blobs: the run never
+            writes the database. A ``cairn ui``/``cairn server`` on the repo
+            ingests the log within ~2 s, else the next ``cairn.Reader`` or
+            CLI command does.
         capture_source: Upload a snapshot of the project's source files
             (and, in a git checkout with uncommitted changes, the
             ``git diff HEAD``, stored with the snapshot).
@@ -184,7 +182,6 @@ class Run:
         rewind_to: int | None = None,
         fork_from: tuple[str, int] | None = None,
         repo: str | Path | None = None,
-        local_wal: bool = False,
         capture_source: bool = True,
         capture_stdout: bool = True,
         capture_env: bool = True,
@@ -222,9 +219,7 @@ class Run:
             self._owns_transport = False
             self._server = getattr(transport, "server_url", "")
         else:
-            self._transport, self._server = open_transport(
-                repo, local_wal=local_wal, timeout=timeout,
-            )
+            self._transport, self._server = open_transport(repo, timeout=timeout)
             self._owns_transport = True
         self._project = project
         self._name = name
@@ -235,7 +230,7 @@ class Run:
             trial_id = os.environ.get("CAIRN_TRIAL_ID") or None
         self._timeout = timeout
         # The run's tag list, kept client-side: the ``set_tags`` op replaces
-        # the whole list, and WAL-mode LocalTransport has no DB to read it back.
+        # the whole list, and a local run's LocalTransport has no DB to read it back.
         self._tags: list[str] = list(tags or [])
 
         # Bookkeeping
@@ -771,8 +766,9 @@ class Run:
         ``step`` places it on the run's timeline.
 
         Returns:
-            The new ``ArtifactVersion``. In WAL mode a PENDING one (version
-            None; readable once the repo has ingested it).
+            The new ``ArtifactVersion``. On a local repo the version number
+            is assigned when the log is ingested: until then it is pending
+            (``version`` None); ``.wait()`` blocks until it is assigned.
 
         Raises:
             TypeError: A draft together with name/type/metadata/description,
@@ -837,15 +833,18 @@ class Run:
             The ``ArtifactVersion`` (``.get()`` for a logged object,
             ``.download()`` for files).
 
+        On a local repo the repo first catches up on every pending log (on
+        the server that serves it, or here), so a version logged by another
+        run that has finished logging is found.
+
         Raises:
             LookupError: No such artifact, alias or version.
-            RuntimeError: In WAL mode (it needs an answer now).
         """
         if self._finished:
             raise RuntimeError("Run has already been finished")
         if isinstance(ref, ArtifactVersion):
             if ref.pending:
-                raise RuntimeError("cannot use a pending (WAL-mode) artifact version")
+                ref.wait()
             ref = ref.qualified_ref
         info = self._transport.resolve_artifact(self._project_id, ref)
         self._transport.record_artifact_input(self._run_id, info["id"], role)
@@ -1352,11 +1351,11 @@ def log_draft(
         "created_by_run": created_by_run,
         "aliases": list(dict.fromkeys(aliases or [])),
         "tags": all_tags,
-        # Client-generated: a WAL replay of the op stays one version.
+        # Client-generated: a local run logs it and the version is known by it.
         "version_id": secrets.token_hex(8),
     }
     info = transport.create_artifact_version(project_id, body)
-    if info is None:  # WAL mode: registered when the repo ingests the log
+    if info is None:  # a local run: registered when the repo ingests its log
         info = {
             "id": body["version_id"], "name": draft.name, "type": draft.type,
             "project_id": project_id, "version": None, "aliases": [], "tags": all_tags,
@@ -1370,7 +1369,7 @@ def backend_for_transport(transport: Any) -> Any:
     """A Reader backend over the same target as a writer transport."""
     from .reader import _HttpBackend, _LocalBackend
 
-    if isinstance(transport, LocalTransport):
+    if isinstance(transport, (LocalTransport, RepoTransport)):
         return _LocalBackend(transport.data_dir.root)
     return _HttpBackend(transport.server_url, token=getattr(transport, "token", None))
 

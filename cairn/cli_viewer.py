@@ -102,18 +102,23 @@ def viewer_ls(project: str, all_versions: bool, repo: str | None) -> None:
 
 
 def _list(project: str, all_versions: bool, repo: str | None) -> list[dict[str, Any]]:
-    from .sdk.connect import open_transport
-    from .sdk.local import LocalTransport
+    from .sdk.connect import open_writer
+    from .sdk.local import RepoTransport
     from .server.custom_viewers import builtin_viewers, published_viewers
     from .server.routes._common import slugify
 
-    transport, _url = open_transport(repo)
+    transport, _url = open_writer(repo)
     try:
-        if isinstance(transport, LocalTransport):
-            # The same list a server answers with: built-ins first.
-            builtins = [v.entry() for v in builtin_viewers().values()]
-            return builtins + published_viewers(transport.db, slugify(project), all_versions=all_versions)
-        resp = transport.get(
+        http: Any = transport
+        if isinstance(transport, RepoTransport):
+            http = transport.served_by()
+            if http is None:
+                # The same list a server answers with: built-ins first.
+                builtins = [v.entry() for v in builtin_viewers().values()]
+                return builtins + transport.under_lease(
+                    lambda db: published_viewers(db, slugify(project), all_versions=all_versions),
+                )
+        resp = http.get(
             f"/api/projects/{slugify(project)}/viewers",
             params={"all_versions": "1"} if all_versions else None,
         )
@@ -135,20 +140,24 @@ def viewer_dev(folder: Path, project: str, repo: str | None, interval: float) ->
     report or share link."""
     import httpx
 
-    from .sdk.connect import open_transport
+    from .sdk.connect import open_writer
     from .sdk.custom_viewers import DevSync
-    from .sdk.local import LocalTransport
+    from .sdk.local import RepoTransport
     from .server.routes._common import slugify
     from .server.viewer_manifest import ManifestError
 
-    transport, url = open_transport(repo)
-    if isinstance(transport, LocalTransport):
-        # (A local repo that a `cairn ui` serves opens as that server already.)
-        transport.close()
-        raise click.ClickException(
-            "`cairn viewer dev` needs a running server: start `cairn ui` on this repo (or pass --server URL)"
-        )
-    token = getattr(transport, "token", None)
+    transport, url = open_writer(repo)
+    if isinstance(transport, RepoTransport):
+        served = transport.served_by()
+        if served is None:
+            transport.close()
+            raise click.ClickException(
+                "`cairn viewer dev` needs a running server: start `cairn ui` on this repo (or pass --server URL)"
+            )
+        url = served.server_url
+        token = served.token
+    else:
+        token = getattr(transport, "token", None)
     transport.close()
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     client = httpx.Client(base_url=url, headers=headers, timeout=30.0)

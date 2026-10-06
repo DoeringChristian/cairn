@@ -23,13 +23,12 @@ from urllib.parse import urlsplit
 
 from . import ingest_ops
 from .routes._common import utc_now
-from .storage.datadir import DataDir
 from .storage.db import Database
 
 _log = logging.getLogger(__name__)
 
-#: A running run with no heartbeat for this long is marked killed. The SDK
-#: heartbeats every 10 s.
+#: A running run logged over HTTP with no heartbeat for this long is marked
+#: killed. The SDK heartbeats every 10 s.
 STALE_HEARTBEAT_SECONDS = 120
 
 WEBHOOK_TIMEOUT = 5.0
@@ -38,12 +37,13 @@ _NTFY_PRIORITY = {"info": "default", "warn": "high", "error": "urgent"}
 _EMOJI = {"info": "ℹ️", "warn": "⚠️", "error": "🚨"}
 
 
-def reap_stale_runs(db: Database, data_dir: DataDir | None = None) -> list[str]:
+def reap_stale_runs(db: Database) -> list[str]:
     """Mark running runs whose heartbeat is too old as killed; alert on each.
 
-    Claims with ``UPDATE … RETURNING`` so two callers never reap (and alert)
-    the same run twice. Also removes the reaped runs' WAL lock files so the
-    ingester can do the final full drain. Returns the reaped run ids.
+    Only runs logged to a server over HTTP: a local run's log decides its
+    liveness (``wal_ingest.mark_crashed``). Claims with ``UPDATE …
+    RETURNING`` so two callers never reap (and alert) the same run twice.
+    Returns the reaped run ids.
     """
     now = utc_now()
     with db.transaction() as con:
@@ -53,6 +53,7 @@ def reap_stale_runs(db: Database, data_dir: DataDir | None = None) -> list[str]:
             WHERE status = 'running'
               AND julianday('now') - julianday(COALESCE(last_heartbeat, created_at))
                   > ? / 86400.0
+              AND id NOT IN (SELECT run_id FROM wal_progress)
             RETURNING id, display_name
             """,
             [now, STALE_HEARTBEAT_SECONDS],
@@ -64,11 +65,6 @@ def reap_stale_runs(db: Database, data_dir: DataDir | None = None) -> list[str]:
             text=f"no heartbeat for {STALE_HEARTBEAT_SECONDS} s",
             level="warn",
         )
-        if data_dir is not None:
-            lock_path = data_dir.root / "wals" / f"{run_id}.lock"
-            if lock_path.exists():
-                lock_path.unlink(missing_ok=True)
-                _log.info("removed stale WAL lock for killed run %s", run_id[:8])
     return [r[0] for r in rows]
 
 
@@ -143,11 +139,11 @@ def post_alert(url: str, alert: dict[str, Any]) -> None:
         _log.warning("alert webhook delivery failed for %s: %s", alert["id"], exc)
 
 
-def maintenance_cycle(db: Database, data_dir: DataDir, webhook: str | None) -> int:
+def maintenance_cycle(db: Database, webhook: str | None) -> int:
     """Reap stale runs, then deliver pending alerts. Blocking; run it off the
     event loop. Returns the number of alerts posted. Without a webhook the
     alerts stay undelivered (shown in the UI only)."""
-    reap_stale_runs(db, data_dir)
+    reap_stale_runs(db)
     if not webhook:
         return 0
     alerts = claim_undelivered(db)

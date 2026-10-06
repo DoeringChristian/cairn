@@ -8,11 +8,13 @@ and ``cairn.Reader`` use): an explicit ``--repo``/``--server``, then
 ``open_api`` hands a command one HTTP-shaped client for either target:
 
 * a server: an ``httpx.Client`` on its URL, with its token;
-* a local repo that a live ``cairn server``/``cairn ui`` holds: that server,
-  with the repo's ``auth/local.token`` (as ``cairn.Run`` reaches it);
+* a local repo whose ingest lease a live ``cairn server``/``cairn ui``
+  holds: that server, with the repo's ``auth/local.token``;
 * any other local repo: the server's own routes, run in-process over the
   repo (no port is opened), so a local command does exactly what the same
-  command against a server does, through the same code.
+  command against a server does, through the same code. The command holds
+  the repo's ingest lease meanwhile (it is the repo's one writer) and first
+  catches up on pending run logs.
 """
 
 from __future__ import annotations
@@ -58,7 +60,7 @@ def resolve(repo: str | None, server: str | None) -> _config.RunTarget:
 
 def is_repo(path: str | Path) -> bool:
     """Whether a Cairn repo exists at ``path``: its database, or (a repo only
-    WAL-mode runs have written so far) its layout marker."""
+    runs have written so far, nothing ingested yet) its layout marker."""
     root = Path(path).expanduser()
     return (root / "cairn.db").is_file() or (root / "version").is_file()
 
@@ -89,24 +91,20 @@ def reader_location(repo: str | None, server: str | None) -> tuple[str, str]:
 
 def serving_url(root: Path) -> tuple[str, str | None] | None:
     """``(url, token)`` of the live ``cairn server``/``cairn ui`` holding the
-    repo's write lock, or None when no live process holds it. A holder that
-    does not answer is an error (``RepoLockedError``), as for ``cairn.Run``."""
-    from .sdk.connect import _url_from_holder, _verify_reachable
-    from .sdk.local import _holder_is_live
-    from .server.storage.datadir import DataDir, RepoLockedError
+    repo's ingest lease, or None when none does. A holder that does not
+    answer is an error, as for ``cairn.Run``."""
+    from .sdk.local import ServerUnreachable, server_transport
+    from .server.storage import lease as lease_mod
 
-    holder = DataDir(root).read_lock()
-    if not (_holder_is_live(holder) and holder and holder.get("mode") in ("server", "ui")):
-        return None
-    url = _url_from_holder(holder)
-    if url is None:
+    holder = lease_mod.serving_holder(root)
+    if holder is None:
         return None
     try:
-        _verify_reachable(url, root)
-    except RepoLockedError as exc:
-        raise click.ClickException(str(exc.holder.get("hint") or exc)) from None
-    tok_path = root / "auth" / "local.token"
-    return url, (tok_path.read_text().strip() if tok_path.exists() else None)
+        t = server_transport(holder, root)
+    except ServerUnreachable as exc:
+        raise click.ClickException(str(exc)) from None
+    t.close()
+    return t.server_url, t.token
 
 
 class Api:
@@ -127,10 +125,21 @@ class Api:
         if target.is_local:
             self.local_root = require_repo(target.location)
             served = serving_url(self.local_root)
+            lease = None
+            if served is None:
+                from .server.storage import lease as lease_mod
+
+                try:
+                    lease = lease_mod.acquire(self.local_root, mode="cli")
+                except lease_mod.ServedByServer:
+                    served = serving_url(self.local_root)
+                except lease_mod.LeaseBusy as exc:
+                    raise click.ClickException(str(exc)) from None
             if served is not None:
                 self.base, token = served
                 self._client = self._http_client(self.base, token)
             else:
+                self._resources.append(lease)
                 self.base = str(self.local_root)
                 self.in_process = True
                 self._client = self._local_client(self.local_root)
@@ -157,10 +166,10 @@ class Api:
 
         dd = DataDir(root)
         db = Database.open(dd.db_path)
-        self._resources.append(db)
+        self._resources.insert(0, db)
         blobs = BlobStore(dd.artifacts_dir)
         # What a server's background loop would have done by now (and what
-        # cairn.Reader does before reading): ingest WAL-mode runs' logs.
+        # cairn.Reader does before reading): ingest the runs' pending logs.
         ingest_all(dd, db, blobs)
         app = create_app(
             db=db, blobs=blobs, data_dir_obj=dd,
@@ -207,8 +216,11 @@ class Api:
             self._client.__exit__(None, None, None)
         else:
             self._client.close()
-        for r in self._resources:
-            r.close()
+        for r in self._resources:  # the database, then the lease
+            if hasattr(r, "release"):
+                r.release()
+            else:
+                r.close()
 
     def __enter__(self) -> Api:
         return self
