@@ -333,7 +333,7 @@ class LocalTransport:
     def upload_source(self, run_id: str, archive: bytes, manifest: dict[str, Any]) -> None:
         if self._use_wal:
             digest = hashlib.sha256(archive).hexdigest()
-            self.blobs.put(archive, "application/zip", {"manifest": manifest})
+            self.blobs.put(archive)
             self._wal_write("source", {"run_id": run_id, "hash": digest, "manifest": manifest})
         else:
             ingest_ops.save_source(self.db, self.data_dir, run_id, archive, manifest)
@@ -347,7 +347,7 @@ class LocalTransport:
     ) -> str:
         if self._use_wal:
             digest = hashlib.sha256(data).hexdigest()
-            self.blobs.put(data, mime_type, metadata)
+            self.blobs.put(data)
             self._wal_write("artifact_meta", {
                 "hash": digest, "mime_type": mime_type,
                 "size_bytes": len(data), "metadata": metadata or {},
@@ -479,7 +479,7 @@ class LocalTransport:
 
     def download_artifact_bytes(self, digest: str) -> bytes:
         """Download raw artifact bytes by hash from the local blob store."""
-        data, _ = self.blobs.get(digest)
+        data = self.blobs.get(digest)
         return data
 
     def drain_spill(self, run_id: str | None = None) -> int:

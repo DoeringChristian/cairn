@@ -39,10 +39,10 @@ def referenced_hashes(blobs: BlobStore, h: str, row: dict[str, Any] | None) -> l
     if isinstance(meta, dict):
         refs += list(meta.get("media_hashes") or [])
     if row.get("mime_type") == GALLERY_MIME:
-        data, _ = blobs.get(h)
+        data = blobs.get(h)
         refs += [item["hash"] for item in json.loads(data)["items"]]
     if row.get("mime_type") == MANIFEST_MIME:
-        data, _ = blobs.get(h)
+        data = blobs.get(h)
         refs += [f["hash"] for f in json.loads(data)["files"] if f.get("hash")]
     return refs
 

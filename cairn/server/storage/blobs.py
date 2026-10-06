@@ -7,15 +7,19 @@ artifacts/
   ab/
     abcd1234…ef/
       blob          # raw bytes
-      meta.json     # mime_type, size, original metadata
 ```
+
+The store holds bytes only. What they are (mime type, size, metadata) is the
+database's `artifacts` row for the same hash: a second file written after the
+blob could go missing (a writer killed in between) or be read before it
+exists, leaving bytes that could not be read.
 """
 
 from __future__ import annotations
 
 import hashlib
-import json
 import os
+import shutil
 import tempfile
 from pathlib import Path
 from typing import Any, BinaryIO
@@ -38,23 +42,17 @@ class BlobStore:
     def path_for(self, digest: str) -> Path:
         return self.dir_for(digest) / "blob"
 
-    def meta_path_for(self, digest: str) -> Path:
-        return self.dir_for(digest) / "meta.json"
-
     def exists(self, digest: str) -> bool:
         return self.path_for(digest).exists()
 
     def size(self, digest: str) -> int:
         return self.path_for(digest).stat().st_size
 
-    def put(
-        self, data: bytes, mime_type: str, metadata: dict[str, Any] | None = None
-    ) -> tuple[str, int]:
+    def put(self, data: bytes) -> tuple[str, int]:
         """Write ``data`` atomically; return ``(hash, size)``. Idempotent."""
         digest = self.hash_bytes(data)
         blob_dir = self.dir_for(digest)
         blob_path = self.path_for(digest)
-        meta_path = self.meta_path_for(digest)
 
         if blob_path.exists():
             return digest, blob_path.stat().st_size
@@ -67,27 +65,16 @@ class BlobStore:
             with os.fdopen(tmp_fd, "wb") as fh:
                 fh.write(data)
             os.replace(tmp_name, blob_path)
-        except Exception:
+        except BaseException:
             try:
                 os.unlink(tmp_name)
             except OSError:
                 pass
             raise
-
-        meta = {
-            "mime_type": mime_type,
-            "size_bytes": len(data),
-            "metadata": metadata or {},
-        }
-        # Meta is informational; non-atomic write is acceptable — it's
-        # regenerable from the DB `artifacts` row if lost.
-        meta_path.write_text(json.dumps(meta))
         return digest, len(data)
 
-    def get(self, digest: str) -> tuple[bytes, dict[str, Any]]:
-        data = self.path_for(digest).read_bytes()
-        meta = json.loads(self.meta_path_for(digest).read_text())
-        return data, meta
+    def get(self, digest: str) -> bytes:
+        return self.path_for(digest).read_bytes()
 
     def open_stream(self, digest: str) -> BinaryIO:
         """Open the blob for reading. Caller is responsible for closing."""
@@ -95,14 +82,9 @@ class BlobStore:
 
     def delete(self, digest: str) -> None:
         """Best-effort removal (used by ``cairn rm``)."""
-        blob = self.path_for(digest)
-        meta = self.meta_path_for(digest)
-        for p in (blob, meta):
-            if p.exists():
-                p.unlink()
+        shutil.rmtree(self.dir_for(digest), ignore_errors=True)
         try:
-            blob.parent.rmdir()
-            blob.parent.parent.rmdir()
+            self.dir_for(digest).parent.rmdir()
         except OSError:
             # Not empty or already gone — fine.
             pass

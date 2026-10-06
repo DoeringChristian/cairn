@@ -1623,7 +1623,7 @@ class _LocalBackend(_RegistryWrites):
         return scalar_series(self._db, run_ids, names)
 
     def get_artifact_bytes(self, digest: str) -> bytes:
-        data, _ = self._blobs.get(digest)
+        data = self._blobs.get(digest)
         return data
 
     def get_logs(

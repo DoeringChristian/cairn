@@ -176,7 +176,7 @@ def _apply_op(
             manifest = payload.get("manifest", {})
             blob_hash = payload.get("hash")
             if blob_hash and blobs.exists(blob_hash):
-                archive_data = blobs.get(blob_hash)[0]
+                archive_data = blobs.get(blob_hash)
                 (src_dir / "tree.tar.zst").write_bytes(archive_data)
                 (src_dir / "manifest.json").write_text(json.dumps(manifest))
         elif op == "heartbeat":

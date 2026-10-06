@@ -216,7 +216,7 @@ def read_manifest(blobs: BlobStore, digest: str) -> list[dict[str, Any]]:
     """The entries of the manifest blob ``digest`` (validated)."""
     if not blobs.exists(digest):
         raise LookupError(f"manifest blob {digest} not found; upload it first")
-    data, _ = blobs.get(digest)
+    data = blobs.get(digest)
     try:
         files = json.loads(data)["files"]
     except (ValueError, KeyError, TypeError) as exc:

@@ -275,7 +275,7 @@ def put_artifact(
     metadata: dict[str, Any] | None = None,
     object_type: str | None = None,
 ) -> dict[str, Any]:
-    digest, size = blobs.put(data, mime_type, metadata or {})
+    digest, size = blobs.put(data)
     db.write(
         """
         INSERT INTO artifacts (hash, mime_type, size_bytes, metadata, object_type, created_at)

@@ -99,7 +99,7 @@ def write_archive(
             pending.extend(referenced_hashes(blobs, h, meta_rows[0] if meta_rows else None))
             mime = meta_rows[0]["mime_type"] if meta_rows else "application/octet-stream"
             ext = mimetypes.guess_extension(mime) or ""
-            data, _ = blobs.get(h)
+            data = blobs.get(h)
             zf.writestr(f"artifacts/{h}{ext}", data)
             if meta_rows:
                 zf.writestr(f"artifacts/{h}.meta.json", json.dumps(meta_rows[0], default=str))
@@ -278,7 +278,7 @@ def restore_archive(
                 metadata = json.loads(metadata)
             except json.JSONDecodeError:
                 metadata = None
-        digest, size = blobs.put(zf.read(name), mime, metadata)
+        digest, size = blobs.put(zf.read(name))
         db.write(
             """INSERT OR IGNORE INTO artifacts
                (hash, mime_type, size_bytes, metadata, object_type, created_at)

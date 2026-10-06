@@ -69,7 +69,7 @@ async def upload_report_asset(
     blobs = get_blobs(request)
 
     def store() -> tuple[str, int]:  # blocking: blob write + the write lock
-        digest, size = blobs.put(data, mime_type)
+        digest, size = blobs.put(data)
         db.write(
             """INSERT OR IGNORE INTO report_assets
                    (report_id, hash, mime_type, size_bytes, created_at)

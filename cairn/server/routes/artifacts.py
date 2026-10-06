@@ -125,7 +125,7 @@ def serve_blob(
         )
 
     # Full body
-    data, _meta = blobs.get(digest)
+    data = blobs.get(digest)
     headers = {
         "Accept-Ranges": "bytes",
         "Content-Length": str(len(data)),
@@ -235,7 +235,7 @@ def get_artifact_html(
         with blobs.open_stream(digest) as fh:
             data = fh.read(max_bytes)
     else:
-        data, _meta = blobs.get(digest)
+        data = blobs.get(digest)
     # A cut may split a multi-byte character: drop the partial tail.
     text = data.decode("utf-8", errors="ignore" if cut else "replace")
     return Response(content=inject_resize_shim(text), media_type="text/html; charset=utf-8", headers=headers)
