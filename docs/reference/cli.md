@@ -21,7 +21,7 @@ The `cairn` command is installed with `cairn-track`. Run `cairn --help`, or
 | `cairn artifact ls\|versions\|get\|alias\|tag\|rm\|lineage` | Browse, download and curate the artifact registry | [Artifacts](../guides/artifacts.md#from-the-command-line) |
 | `cairn report ls\|show\|export\|rm\|share\|shares\|unshare` | Read, export, delete and share reports | [Reports](../ui/reports.md#from-the-command-line) |
 | `cairn diff` | Diff the working directory against a run's source snapshot | [Run lifecycle](../guides/runs.md) |
-| `cairn sweep create\|ls\|pause\|resume\|cancel` | Manage sweeps | [Sweeps](../guides/sweeps.md) |
+| `cairn sweep create\|ls\|pause\|resume\|stop\|cancel` | Manage sweeps | [Sweeps](../guides/sweeps.md) |
 | `cairn agent` | Run a sweep's trials | [Sweeps](../guides/sweeps.md#quick-start-from-the-command-line) |
 | `cairn viewer init\|add\|dev\|publish\|ls` | Start a custom viewer, vendor libraries into it, develop it live, publish and list viewers | [Custom viewers](../guides/custom-viewers.md#commands) |
 

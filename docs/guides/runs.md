@@ -17,7 +17,9 @@ run = cairn.Run(
 )
 ```
 
-The project is the only positional argument. Everything else is a keyword:
+The project is the only positional argument; `run.project` returns its id,
+the normalised name (`"My Project"` becomes `"my-project"`). Everything else is
+a keyword:
 
 | Keyword | Default | Purpose |
 |---|---|---|
