@@ -282,3 +282,28 @@ def test_fresh_schema_matches_migrated_schema(tmp_path):
     finally:
         fresh.close()
         old.close()
+
+
+def test_old_sweeps_gain_program_and_their_command_becomes_an_argv(conn):
+    """A sweep's shell-string command (params appended by the agent) becomes
+    the JSON argv ending in ``${args}``, which the agent expands the same way."""
+    conn.execute("CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, "
+                 "created_at TEXT NOT NULL, description TEXT, tags TEXT)")
+    conn.execute(
+        "CREATE TABLE sweeps (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, name TEXT, "
+        "method TEXT NOT NULL, space TEXT NOT NULL, metric TEXT, goal TEXT, command TEXT, "
+        "status TEXT NOT NULL, created_at TEXT NOT NULL)"
+    )
+    conn.execute("INSERT INTO sweeps VALUES ('a', 'p', NULL, 'grid', '{}', NULL, NULL, "
+                 "'python \"my train.py\"', 'running', '2025-01-01')")
+    conn.execute("INSERT INTO sweeps VALUES ('b', 'p', NULL, 'grid', '{}', NULL, NULL, "
+                 "NULL, 'cancelled', '2025-01-01')")
+    conn.commit()
+    apply_migrations(conn)
+    assert {"program", "run_cap", "description"} <= _columns(conn, "sweeps")
+    converted = '["python", "my train.py", "${args}"]'
+    assert conn.execute("SELECT id, command FROM sweeps ORDER BY id").fetchall() == [
+        ("a", converted), ("b", None),
+    ]
+    apply_migrations(conn)  # a second pass leaves the converted command alone
+    assert conn.execute("SELECT command FROM sweeps WHERE id = 'a'").fetchone() == (converted,)

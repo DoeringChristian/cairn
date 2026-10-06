@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import textwrap
+import time
 
 import pytest
 
@@ -54,7 +55,7 @@ def test_agent_runs_the_command_per_trial(repo, tmp_path):
         name: toy grid
         method: grid
         metric: {{name: loss, goal: minimize}}
-        command: {sys.executable} {script}
+        program: {script}
         parameters:
           lr: {{values: [0.1, 0.2]}}
           layers: {{values: [1, 3]}}
@@ -106,3 +107,73 @@ def test_agent_refuses_a_sweep_without_command(tmp_path):
     sw = cairn.sweep({"a": 1}, project="toy", repo=repo)
     out = _cli("agent", sw.id, "--repo", repo)
     assert out.returncode != 0 and "has no command" in out.stderr
+
+
+def test_create_checks_the_file(tmp_path):
+    repo = str(tmp_path / ".cairn")
+    cases = {
+        "project: p\nprogram: t.py\nparameters: {a: 1}\nearly_terminate: {type: hyperband}\n":
+            "'early_terminate' is not supported yet",
+        "project: p\nprogram: t.py\nparameters: {a: 1}\nentity: me\n": "unknown sweep key 'entity'",
+        "project: p\nparameters: {a: 1}\n": "set `program:`",
+        "program: t.py\nparameters: {a: 1}\n": "no project",
+    }
+    for text, error in cases.items():
+        (tmp_path / "sweep.yaml").write_text(text)
+        out = _cli("sweep", "create", str(tmp_path / "sweep.yaml"), "--repo", repo)
+        assert out.returncode != 0 and error in out.stderr, (text, out.stderr)
+
+
+# Loops until its run is asked to stop, then exits cleanly.
+LOOPER = textwrap.dedent("""
+    import time
+
+    import cairn
+
+    cairn.Run._HEARTBEAT_INTERVAL = 0.1
+    with cairn.Run(project="toy", stop_mode="flag", capture_source=False, capture_stdout=False,
+                   capture_env=False, capture_system_metrics=False) as run:
+        while not run.should_stop:
+            time.sleep(0.05)
+""")
+
+
+def test_cancel_ends_the_running_trial(repo, tmp_path):
+    script = tmp_path / "looper.py"
+    script.write_text(LOOPER)
+    (tmp_path / "sweep.yaml").write_text(textwrap.dedent(f"""
+        project: toy
+        program: {script}
+        parameters:
+          x: {{min: 0.0, max: 1.0}}
+    """))
+    created = _cli("sweep", "create", str(tmp_path / "sweep.yaml"), "--repo", repo)
+    assert created.returncode == 0, created.stderr
+    sweep_id = created.stdout.split()[2]
+    sw = cairn.Sweep(sweep_id, repo=repo)
+
+    agent = subprocess.Popen(
+        [sys.executable, "-m", "cairn", "agent", sweep_id, "--repo", repo],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        env={**os.environ, "CAIRN_REPO": "", "CAIRN_SERVER": ""},
+    )
+    try:
+        deadline = time.monotonic() + 60
+        while not any(t["run_id"] for t in sw.trials):
+            assert time.monotonic() < deadline and agent.poll() is None
+            time.sleep(0.1)
+        cancelled = _cli("sweep", "cancel", sweep_id, "--repo", repo)
+        assert cancelled.returncode == 0 and "cancelled" in cancelled.stdout, cancelled.stderr
+        out, err = agent.communicate(timeout=60)
+    finally:
+        agent.kill()
+    assert agent.returncode == 0, err
+    assert "killed" in out and f"sweep {sweep_id} is cancelled; stopping" in out
+
+    (trial,) = sw.trials
+    assert trial["status"] == "killed"
+    reader = cairn.Reader(repo=repo)
+    try:
+        assert reader.run(trial["run_id"]).status == "stopped"
+    finally:
+        reader.close()

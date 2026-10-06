@@ -3,12 +3,18 @@ SDK's env pickup, and cairn.sweep(...).run."""
 
 from __future__ import annotations
 
+import json
 import math
+import sys
+import threading
+import time
 
 import pytest
 
 import cairn
+from cairn.sdk import sweep as sweep_mod
 from cairn.sdk.local import LocalTransport
+from cairn.sdk.sweep import expand_command
 from cairn.server import sweep_ops
 from cairn.server.storage.db import Database
 
@@ -117,6 +123,121 @@ def test_pause_resume_cancel(db):
         sweep_ops.next_trial(db, "missing")
 
 
+#: The actions each status allows (wandb's lifecycle); the rest are errors.
+ALLOWED = {
+    "running": {"pause": "paused", "stop": "stopped", "cancel": "cancelled"},
+    "paused": {"resume": "running", "stop": "stopped", "cancel": "cancelled"},
+    "stopped": {"cancel": "cancelled"},
+    "cancelled": {},
+    "finished": {},
+}
+
+
+def _sweep_in(db, status):
+    sw = sweep_ops.create_sweep(db, project="p", space={"a": {"values": [1]}}, method="grid")
+    if status == "finished":
+        sweep_ops.next_trial(db, sw["id"])
+        sweep_ops.next_trial(db, sw["id"])
+    action = {"paused": "pause", "stopped": "stop", "cancelled": "cancel"}.get(status)
+    if action:
+        sweep_ops.set_status(db, sw["id"], action)
+    assert sweep_ops.get_sweep(db, sw["id"])["status"] == status
+    return sw["id"]
+
+
+@pytest.mark.parametrize("status", list(ALLOWED))
+@pytest.mark.parametrize("action", ["pause", "resume", "stop", "cancel"])
+def test_lifecycle_transitions(db, status, action):
+    sid = _sweep_in(db, status)
+    if action in ALLOWED[status]:
+        assert sweep_ops.set_status(db, sid, action)["status"] == ALLOWED[status][action]
+    else:
+        with pytest.raises(ValueError, match=f"cannot {action} a {status} sweep"):
+            sweep_ops.set_status(db, sid, action)
+        assert sweep_ops.get_sweep(db, sid)["status"] == status
+
+
+def test_stop_lets_running_trials_finish(db):
+    from cairn.server import ingest_ops
+
+    sw = sweep_ops.create_sweep(db, project="p", space={"a": {"min": 0.0, "max": 1.0}})
+    t = sweep_ops.next_trial(db, sw["id"])["trial"]
+    rid = ingest_ops.create_run(db, project="p", sweep_id=sw["id"])["run_id"]
+    sweep_ops.report_trial(db, sw["id"], t["id"], run_id=rid, status="running")
+    assert sweep_ops.set_status(db, sw["id"], "stop")["status"] == "stopped"
+    assert sweep_ops.next_trial(db, sw["id"]) == {"status": "stopped", "trial": None}
+    assert ingest_ops.heartbeat(db, rid) is None  # nobody asked the run to stop
+    assert sweep_ops.report_trial(db, sw["id"], t["id"], status="completed")["status"] == "completed"
+
+
+def test_cancel_kills_running_trials_and_stops_their_runs(db):
+    from cairn.server import ingest_ops
+
+    sw = sweep_ops.create_sweep(db, project="p", space={"a": {"min": 0.0, "max": 1.0}})
+    done, running, unjoined = (sweep_ops.next_trial(db, sw["id"])["trial"] for _ in range(3))
+    done_run = ingest_ops.create_run(db, project="p", sweep_id=sw["id"])["run_id"]
+    run = ingest_ops.create_run(db, project="p", sweep_id=sw["id"])["run_id"]
+    sweep_ops.report_trial(db, sw["id"], done["id"], run_id=done_run, status="completed")
+    sweep_ops.report_trial(db, sw["id"], running["id"], run_id=run, status="running")
+    # A stopped sweep can still be cancelled to end its running trials.
+    sweep_ops.set_status(db, sw["id"], "stop")
+    info = sweep_ops.set_status(db, sw["id"], "cancel")
+    assert info["status"] == "cancelled"
+    assert [t["status"] for t in info["trials"]] == ["completed", "killed", "killed"]
+    assert ingest_ops.heartbeat(db, run) is not None
+    assert ingest_ops.heartbeat(db, done_run) is None
+    # The trial stays killed however its process ends.
+    assert sweep_ops.report_trial(db, sw["id"], running["id"], status="failed")["status"] == "killed"
+    # A run joining a killed trial is asked to stop at once.
+    late = ingest_ops.create_run(db, project="p", sweep_id=sw["id"])["run_id"]
+    joined = sweep_ops.report_trial(db, sw["id"], unjoined["id"], run_id=late, status="running")
+    assert (joined["status"], joined["run_id"]) == ("killed", late)
+    assert ingest_ops.heartbeat(db, late) is not None
+
+
+def test_run_cap_finishes_the_sweep(db):
+    sw = sweep_ops.create_sweep(db, project="p", space={"a": {"min": 0.0, "max": 1.0}}, run_cap=2)
+    assert sw["run_cap"] == 2
+    trials = [sweep_ops.next_trial(db, sw["id"])["trial"] for _ in range(2)]
+    sweep_ops.report_trial(db, sw["id"], trials[0]["id"], status="failed")
+    assert sweep_ops.next_trial(db, sw["id"]) == {"status": "finished", "trial": None}
+    assert sweep_ops.get_sweep(db, sw["id"])["trial_count"] == 2
+    # A cap above a grid's size: the grid runs out first.
+    grid = sweep_ops.create_sweep(db, project="p", space={"a": {"values": [1, 2]}}, method="grid",
+                                  run_cap=5)
+    assert [sweep_ops.next_trial(db, grid["id"])["status"] for _ in range(3)] == [
+        "running", "running", "finished",
+    ]
+    for bad in (0, -1, 1.5, True, "3"):
+        with pytest.raises(ValueError, match="run_cap"):
+            sweep_ops.create_sweep(db, project="p", space={"a": 1}, run_cap=bad)
+
+
+def test_command_program_and_description(db):
+    sw = sweep_ops.create_sweep(db, project="p", space={"a": 1}, program="train.py",
+                                description="lr scan")
+    assert sw["command"] == ["${env}", "${interpreter}", "${program}", "${args}"]
+    assert (sw["program"], sw["description"]) == ("train.py", "lr scan")
+    as_string = sweep_ops.create_sweep(db, project="p", space={"a": 1},
+                                       command="python 'my train.py' ${args_no_hyphens}")
+    assert as_string["command"] == ["python", "my train.py", "${args_no_hyphens}"]
+    assert as_string["program"] is None
+    # A Python-only sweep needs neither.
+    assert sweep_ops.create_sweep(db, project="p", space={"a": 1})["command"] is None
+    with pytest.raises(ValueError, match="no program"):
+        sweep_ops.create_sweep(db, project="p", space={"a": 1}, command=["python", "${program}"])
+
+
+def test_check_keys():
+    sweep_ops.check_keys({"name": 1, "project": 1, "method": 1, "metric": 1, "goal": 1,
+                          "parameters": 1, "program": 1, "command": 1, "run_cap": 1,
+                          "description": 1})
+    with pytest.raises(ValueError, match="unknown sweep key 'entity'"):
+        sweep_ops.check_keys({"project": "p", "entity": "me"})
+    with pytest.raises(ValueError, match="'early_terminate' is not supported yet"):
+        sweep_ops.check_keys({"early_terminate": {"type": "hyperband"}})
+
+
 def test_report_links_the_first_run_and_reads_the_metric(db):
     from cairn.server import ingest_ops
 
@@ -148,7 +269,7 @@ def test_routes(client):
     body = {"project": "p", "parameters": {"a": {"values": [1, 2]}}, "method": "grid",
             "metric": "loss", "command": ["python", "train.py"], "name": "first"}
     sw = client.post("/api/sweeps", json=body).json()
-    assert sw["command"] == "python train.py" and sw["space"] == body["parameters"]
+    assert sw["command"] == ["python", "train.py"] and sw["space"] == body["parameters"]
     sid = sw["id"]
     assert [s["id"] for s in client.get("/api/sweeps", params={"project": "p"}).json()["sweeps"]] == [sid]
     assert client.get("/api/sweeps", params={"project": "other"}).json()["sweeps"] == []
@@ -164,11 +285,19 @@ def test_routes(client):
     assert client.post(f"/api/sweeps/{sid}/pause").json()["status"] == "paused"
     assert client.post(f"/api/sweeps/{sid}/next").json() == {"status": "paused", "trial": None}
     assert client.post(f"/api/sweeps/{sid}/resume").json()["status"] == "running"
+    assert client.post(f"/api/sweeps/{sid}/stop").json()["status"] == "stopped"
+    assert client.post(f"/api/sweeps/{sid}/resume").status_code == 400
     assert client.post(f"/api/sweeps/{sid}/cancel").json()["status"] == "cancelled"
 
     assert client.post(f"/api/sweeps/{sid}/explode").status_code == 404
     assert client.get("/api/sweeps/missing").status_code == 404
     assert client.post("/api/sweeps", json={**body, "method": "nope"}).status_code == 400
+    unknown = client.post("/api/sweeps", json={**body, "early_terminate": {"type": "hyperband"}})
+    assert unknown.status_code == 400 and "not supported yet" in unknown.json()["detail"]
+    unknown = client.post("/api/sweeps", json={**body, "entity": "me"})
+    assert unknown.status_code == 400 and "'entity'" in unknown.json()["detail"]
+    capped = client.post("/api/sweeps", json={**body, "program": "t.py", "run_cap": 3}).json()
+    assert (capped["program"], capped["run_cap"]) == ("t.py", 3)
     assert client.post(f"/api/sweeps/{sid}/trials/nope/report", json={}).status_code == 404
 
 
@@ -190,7 +319,10 @@ def test_local_direct_transport(tmp_path):
         trial = t.next_trial(sw["id"])["trial"]
         assert t.report_trial(sw["id"], trial["id"], status="completed", value=1.0)["value"] == 1.0
         assert t.next_trial(sw["id"])["status"] == "finished"
-        assert t.sweep_action(sw["id"], "cancel")["status"] == "finished"
+        with pytest.raises(ValueError, match="cannot cancel a finished sweep"):
+            t.sweep_action(sw["id"], "cancel")
+        with pytest.raises(ValueError, match="unknown sweep key 'entity'"):
+            t.create_sweep({"project": "P", "parameters": {"a": 1}, "entity": "me"})
         assert t.get_sweep(sw["id"])["trial_count"] == 1
     finally:
         t.close()
@@ -302,3 +434,108 @@ def test_python_sweep_with_worker_processes(tmp_path):
     trials = sw.run(_quadratic, count=4, workers=2, **QUIET)
     assert sorted(t["params"]["x"] for t in trials) == [0, 1, 2, 3]
     assert all(t["status"] == "completed" and t["run_id"] for t in trials)
+
+
+def _run_in_thread(sw, fn, **kwargs):
+    out: dict = {}
+    thread = threading.Thread(target=lambda: out.setdefault("trials", sw.run(fn, **kwargs)))
+    thread.start()
+    return thread, out
+
+
+def test_python_sweep_waits_while_paused(tmp_path, monkeypatch):
+    monkeypatch.setattr(sweep_mod, "_PAUSE_POLL", 0.02)
+    repo = tmp_path / ".cairn"
+    sw = cairn.sweep({"x": {"min": 0.0, "max": 1.0}}, project="p", repo=repo)
+    sw.pause()
+    thread, out = _run_in_thread(sw, lambda c: c["x"], count=2, **QUIET)
+    time.sleep(0.3)
+    assert thread.is_alive() and sw.info()["trial_count"] == 0
+    sw.resume()
+    thread.join(timeout=30)
+    assert not thread.is_alive()
+    assert [t["status"] for t in out["trials"]] == ["completed", "completed"]
+
+    # Stopped while waiting: the worker returns without a trial.
+    sw.pause()
+    thread, out = _run_in_thread(sw, lambda c: c["x"], **QUIET)
+    time.sleep(0.2)
+    assert thread.is_alive()
+    sw.stop()
+    thread.join(timeout=30)
+    assert not thread.is_alive() and out["trials"] == []
+    assert sw.info()["status"] == "stopped"
+
+
+def test_python_sweep_cancel_stops_the_running_trial(tmp_path, monkeypatch):
+    monkeypatch.setattr(cairn.Run, "_HEARTBEAT_INTERVAL", 0.02)
+    repo = tmp_path / ".cairn"
+    sw = cairn.sweep({"x": {"min": 0.0, "max": 1.0}}, project="p", repo=repo)
+    started = threading.Event()
+
+    def train(config, run):
+        started.set()
+        while not run.should_stop:
+            time.sleep(0.01)
+
+    thread, out = _run_in_thread(sw, train, stop_mode="flag", **QUIET)
+    assert started.wait(30)
+    sw.cancel()
+    thread.join(timeout=30)
+    assert not thread.is_alive()
+    (trial,) = out["trials"]
+    assert trial["status"] == "killed"
+    reader = cairn.Reader(repo=repo)
+    try:
+        assert reader.run(trial["run_id"]).status == "stopped"
+    finally:
+        reader.close()
+
+
+# ---- the agent's command ------------------------------------------------------------------
+
+PARAMS = {"lr": 0.1, "opt": "adam", "dims": [1, 2], "aug": True, "ema": False}
+ENV = [] if sys.platform == "win32" else ["/usr/bin/env"]
+
+
+@pytest.mark.parametrize(("command", "argv"), [
+    # wandb's default command.
+    (["${env}", "${interpreter}", "${program}", "${args}"],
+     [*ENV, sys.executable, "train.py",
+      "--lr=0.1", "--opt=adam", "--dims=[1, 2]", "--aug=True", "--ema=False"]),
+    (["python", "${program}", "${args_no_hyphens}"],
+     ["python", "train.py", "lr=0.1", "opt=adam", "dims=[1, 2]", "aug=True", "ema=False"]),
+    (["python", "${program}", "${args_no_boolean_flags}"],
+     ["python", "train.py", "--lr=0.1", "--opt=adam", "--dims=[1, 2]", "--aug"]),
+    (["python", "${program}", "${args_json}"], ["python", "train.py", json.dumps(PARAMS)]),
+    (["python", "${program}", "--params", "${args_json_file}"],
+     ["python", "train.py", "--params", "/tmp/p.json"]),
+    # Single-argument macros inside a longer item are substituted as text.
+    (["python", "./${program}", "--config=${args_json_file}", "--x=${args}"],
+     ["python", "./train.py", "--config=/tmp/p.json", "--x=${args}"]),
+    # No args macro, no params.
+    (["python", "train.py"], ["python", "train.py"]),
+])
+def test_expand_command(command, argv):
+    assert expand_command(command, program="train.py", params=PARAMS, json_file="/tmp/p.json") == argv
+
+
+def test_expand_command_drops_env_on_windows(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert expand_command(["${env}", "python", "${program}"], program="t.py", params={}) == [
+        "python", "t.py",
+    ]
+
+
+def test_dotted_params_keep_their_dotted_names():
+    assert expand_command(["${args_no_hyphens}"], program=None, params={"optim.lr": 0.1}) == [
+        "optim.lr=0.1",
+    ]
+
+
+# ---- Run.project ----------------------------------------------------------------------------
+
+
+def test_run_project_is_the_normalised_id(tmp_path):
+    with cairn.Run(project="My Project", repo=tmp_path / ".cairn", **QUIET) as run:
+        assert run.project == "my-project"

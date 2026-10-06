@@ -56,6 +56,7 @@ def test_disabled_run_writes_nothing_and_starts_no_thread(tmp_path):
     with cairn.Run(project="p", repo=repo, mode="disabled") as run:
         assert isinstance(run, cairn.Run) and isinstance(run, _DisabledRun)
         assert isinstance(run.id, str) and run.url is None
+        assert run.project == "p"
         _exercise(run)
     run.finish()
     assert set(threading.enumerate()) == threads
