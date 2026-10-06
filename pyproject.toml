@@ -61,10 +61,6 @@ media = [
     "imageio-ffmpeg>=0.4.9",
     "soundfile>=0.12",
 ]
-hf = [
-    "transformers>=4.40",
-    "datasets>=2.18",
-]
 discovery = [
     "zeroconf>=0.132",
 ]
@@ -76,6 +72,11 @@ export = [
 tb = [
     "tensorboard>=2.14",
 ]
+# The HuggingFace Trainer callback. Brings transformers only: the model
+# backend (torch, usually) is the user's choice.
+huggingface = [
+    "transformers>=4.40",
+]
 lightning = [
     "lightning>=2.0",
 ]
@@ -84,6 +85,9 @@ keras = [
 ]
 xgboost = [
     "xgboost>=2.0",
+]
+ultralytics = [
+    "ultralytics>=8.0",
 ]
 # Bayesian search for sweeps (method: bayes); grid and random need nothing.
 sweep = [

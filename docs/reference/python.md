@@ -190,10 +190,21 @@ installed. See [Integrations](../guides/integrations.md).
       heading: "keras.CairnCallback"
       toc_label: "keras.CairnCallback"
 
+::: cairn.integrations.keras.CairnModelCheckpoint
+    options:
+      heading: "keras.CairnModelCheckpoint"
+      toc_label: "keras.CairnModelCheckpoint"
+      members: false
+
 ::: cairn.integrations.lightning.CairnLogger
     options:
       heading: "lightning.CairnLogger"
       toc_label: "lightning.CairnLogger"
+
+::: cairn.integrations.ultralytics.add_cairn_callbacks
+    options:
+      heading: "ultralytics.add_cairn_callbacks"
+      toc_label: "ultralytics.add_cairn_callbacks"
 
 ::: cairn.integrations.xgboost.CairnCallback
     options:

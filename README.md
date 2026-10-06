@@ -37,7 +37,7 @@ Optional extras:
 - `cairn-track[media]` — matplotlib, plotly, kaleido, imageio, soundfile for richer media handlers
 - `cairn-track[export]` — pandas + pyarrow for `cairn export --project`, Parquet and `RunQuery.history()`
 - `cairn-track[sweep]` — Optuna, for `method: bayes` sweeps (grid and random need nothing)
-- `cairn-track[hf]` / `[lightning]` / `[keras]` / `[xgboost]` — framework callbacks in `cairn.integrations`
+- `cairn-track[huggingface]` / `[lightning]` / `[keras]` / `[xgboost]` / `[ultralytics]` — framework callbacks in `cairn.integrations`
 - `cairn-track[tb]` — `cairn import-tb` for TensorBoard event files
 - `cairn-track[discovery]` — zeroconf/mDNS server discovery on the LAN
 - `cairn-track[docs]` — MkDocs, to build the documentation site
@@ -247,7 +247,7 @@ cairn configure --server URL              # save the default server (or --repo) 
   logs a new version (`cairn.Artifact` builds multi-file ones: directories, references,
   generated files); `run.use_artifact("model:best")` records lineage and returns the
   version (`.get()`, `.download()`).
-- **Integrations** — `cairn.integrations.{huggingface,lightning,keras,xgboost}`.
+- **Integrations** — `cairn.integrations.{huggingface,lightning,keras,xgboost,ultralytics}`.
 - **Import/export** — `cairn import-tb LOGDIR`, `cairn export RUN_ID` or
   `cairn export --project P --format csv|parquet`, run archives with
   `cairn export-runs` / `cairn import-runs`.
