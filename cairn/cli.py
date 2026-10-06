@@ -855,7 +855,7 @@ def _csv_cell(value: Any) -> str:
 
 @main.command("list")
 @click.option("--project", default=None, help="Only runs of this project.")
-@click.option("--status", default=None, help="Only runs with this status (running, completed, failed, killed, stopped).")
+@click.option("--status", default=None, help="Only runs with this status (running, completed, failed, killed, stopped, crashed).")
 @click.option("--filter", "filters", multiple=True, metavar="KEY=VALUE", help=_FILTER_HELP)
 @click.option(
     "--where", "wheres", multiple=True, metavar="EXPR",

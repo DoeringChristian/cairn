@@ -488,7 +488,9 @@ class Run:
     @property
     def status(self) -> str:
         """The run status: ``"running"``, ``"completed"``, ``"failed"``,
-        ``"killed"`` or ``"stopped"``."""
+        ``"killed"``, ``"stopped"``, or ``"crashed"`` (its log got no record
+        for 5 minutes and no finish: the process died without finishing;
+        it is ``"running"`` again if records arrive later)."""
         return self._raw.get("status", "")
 
     @property
