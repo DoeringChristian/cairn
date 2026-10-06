@@ -174,30 +174,34 @@ class CairnCallback(TrainerCallback):
     def _log_final_model(
         self, args: TrainingArguments, state: TrainerState, model: Any, processing_class: Any,
     ) -> None:
-        """Save the model as ``Trainer.save_model`` does (through a throwaway
-        Trainer, as the wandb callback does: the callback never sees the
-        real one) and log the files as ``model-<run id>``."""
-        from transformers import Trainer
-
-        fake_args = copy.deepcopy(args)
-        fake_args.deepspeed = None
-        if hasattr(fake_args, "deepspeed_plugin"):
-            fake_args.deepspeed_plugin = None
-        processing_kw = (
-            "processing_class" if "processing_class" in inspect.signature(Trainer.__init__).parameters
-            else "tokenizer"
-        )
-        trainer = Trainer(args=fake_args, model=model, eval_dataset=["fake"],
-                          **{processing_kw: processing_class})
+        """Log the final model as ``model-<run id>``."""
         metadata: dict[str, Any] = {"global_step": state.global_step}
         if args.load_best_model_at_end:
             metadata.update(best_metric=state.best_metric,
                             metric_for_best_model=args.metric_for_best_model,
                             best_model_checkpoint=state.best_model_checkpoint)
         with tempfile.TemporaryDirectory() as tmp:
-            trainer.save_model(tmp)
+            _save_model(args, model, processing_class, tmp)
             art = Artifact(f"model-{self._run.id}", type="model", metadata=metadata)
             art.add_dir(tmp)
             # Files are read when the draft is logged: inside the block.
             self._run.log_artifact(art, aliases=["best"] if args.load_best_model_at_end else None,
                                    step=state.global_step)
+
+
+def _save_model(args: TrainingArguments, model: Any, processing_class: Any, out_dir: str) -> None:
+    """Save ``model`` (and its tokenizer/processor) as ``Trainer.save_model``
+    does, through a throwaway Trainer, as the wandb callback does: the callback
+    never sees the real one."""
+    from transformers import Trainer
+
+    fake_args = copy.deepcopy(args)
+    fake_args.deepspeed = None
+    if hasattr(fake_args, "deepspeed_plugin"):
+        fake_args.deepspeed_plugin = None
+    processing_kw = (
+        "processing_class" if "processing_class" in inspect.signature(Trainer.__init__).parameters
+        else "tokenizer"
+    )
+    trainer = Trainer(args=fake_args, model=model, eval_dataset=["fake"], **{processing_kw: processing_class})
+    trainer.save_model(out_dir)
