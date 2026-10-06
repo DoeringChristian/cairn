@@ -5,7 +5,6 @@ tests/integration/test_integration_smoke.py."""
 
 from __future__ import annotations
 
-import importlib.util
 import os
 import sys
 import types
@@ -343,14 +342,14 @@ def test_keras_model_checkpoint_without_a_run_says_so(tmp_path):
 @pytest.fixture
 def ultralytics_integration(monkeypatch):
     """cairn.integrations.ultralytics, against a stand-in ``ultralytics.utils``
-    (it only reads RANK) when the package is not installed."""
+    (it only reads RANK): importing the real one writes Ultralytics' settings
+    file into the home directory."""
     monkeypatch.delitem(sys.modules, "cairn.integrations.ultralytics", raising=False)
-    if importlib.util.find_spec("ultralytics") is None:
-        pkg, utils = types.ModuleType("ultralytics"), types.ModuleType("ultralytics.utils")
-        utils.RANK = -1
-        pkg.utils = utils
-        monkeypatch.setitem(sys.modules, "ultralytics", pkg)
-        monkeypatch.setitem(sys.modules, "ultralytics.utils", utils)
+    pkg, utils = types.ModuleType("ultralytics"), types.ModuleType("ultralytics.utils")
+    utils.RANK = -1
+    pkg.utils = utils
+    monkeypatch.setitem(sys.modules, "ultralytics", pkg)
+    monkeypatch.setitem(sys.modules, "ultralytics.utils", utils)
     import cairn.integrations.ultralytics as mod
 
     yield mod
