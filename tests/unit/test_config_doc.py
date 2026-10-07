@@ -135,3 +135,31 @@ def test_wal_replay_applies_writes_in_order(fresh_db):
             ingest_ops.set_params(db, rid, o)
         assert ingest_ops.run_docs(db, rid)["config"] == {"model": {"width": 8}}
     assert db.read_columns("SELECT key FROM params WHERE run_id = ?", [rid]) == [{"key": "model.width"}]
+
+
+def _marker(h: str) -> dict:
+    return {"$media": {"hash": h * 64, "object_type": "image", "mime_type": "image/png"}}
+
+
+def test_media_markers_are_leaves():
+    doc = {"a": {"fig": _marker("1"), "x": 1}, "top": _marker("2")}
+    # A marker over a marker replaces it whole (no key-wise merge).
+    merged = config_doc.merge(doc, {"a": {"fig": _marker("3")}})
+    assert merged["a"]["fig"] == _marker("3") and merged["a"]["x"] == 1
+    assert config_doc.flatten(merged) == {"a.x": 1}
+    assert set(config_doc.media_leaves(merged)) == {"a.fig", "top"}
+    assert config_doc.media_leaves(merged)["top"]["hash"] == "2" * 64
+    assert config_doc.without_media(merged) == {"a": {"x": 1}}
+    assert config_doc.without_media({"s": {"only": _marker("4")}, "e": {}}) == {"e": {}}
+    assert config_doc.delete(merged, "a.fig") == {"a": {"x": 1}, "top": _marker("2")}
+    assert config_doc.delete(merged, "top.$media") == merged
+
+
+def test_normalize_names_the_document_and_checks_markers():
+    with pytest.raises(TypeError, match=r"^summary values must be JSON .* or cairn media"):
+        config_doc.normalize({"x": object()}, what="summary")
+    with pytest.raises(TypeError, match=r"^config values must be JSON \(dict"):
+        config_doc.normalize({"x": object()})
+    with pytest.raises(ValueError, match="reserved key"):
+        config_doc.normalize({"x": {"$media": {"hash": 1}}}, what="summary")
+    assert config_doc.normalize({"x": _marker("5")}, what="summary") == {"x": _marker("5")}

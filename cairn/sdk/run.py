@@ -1115,9 +1115,9 @@ class Run:
         Each is ONE value with no step, named by its key's dotted path
         (``showcase.loss_landscape``): cards show it like a tracked series
         (without a step slider), writing the key again REPLACES it, and
-        deleting the key removes it. The Overview's summary lists only the
-        JSON values. A name is either a tracked series or a summary media
-        value.
+        deleting the key removes it. The Overview's summary shows a thumbnail
+        of it; the runs table has no column for it. A name is either a
+        tracked series or a summary media value.
 
         Raises:
             TypeError: A value is neither JSON nor cairn media.

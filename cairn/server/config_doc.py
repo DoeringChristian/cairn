@@ -172,8 +172,8 @@ def media_leaves(doc: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 
 def without_media(doc: Any) -> Any:
-    """``doc`` without its media markers (the Overview's summary: media is
-    shown by cards). A dict left empty only by that is dropped too."""
+    """``doc`` without its media markers (the runs table's summary: media
+    is not a table value). A dict left empty only by that is dropped too."""
     if not isinstance(doc, dict):
         return doc
     out: dict[str, Any] = {}

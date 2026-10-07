@@ -38,7 +38,8 @@ def _decorate(db: Database, rows: list[dict[str, Any]], extras: set[str]) -> Non
         if docs is not None:
             d = docs.get(row["id"], {})
             row["config_doc"] = config_doc.json_safe(d.get("config", {}))
-            # Media values are cards' to show, not the table's (see get_run).
+            # Summary MEDIA values are not table values: left out here (the
+            # run's own page, get_run, shows them).
             row["summary_doc"] = config_doc.json_safe(config_doc.without_media(d.get("summary", {})))
 
 
@@ -208,11 +209,12 @@ def get_run(run_id: str, request: Request) -> dict[str, Any]:
     return {
         "run": run, "params": params, "summary": summary, "metric_defs": metric_defs,
         # The nested documents as logged; ``params`` / ``summary`` are their
-        # flat index. Summary MEDIA values are left out: they are series of
-        # the run (``/sequences``, ``"summary": true``) that cards show, and
-        # ``/documents`` keeps them for exact readers.
+        # flat index. A summary MEDIA value is its marker leaf
+        # ``{"$media": {hash, object_type, mime_type, caption?}}`` (the
+        # Overview shows a thumbnail of it); it has no flat row, and it is
+        # also a series of the run (``/sequences``, ``"summary": true``).
         "config_doc": config_doc.json_safe(docs.get("config", {})),
-        "summary_doc": config_doc.json_safe(config_doc.without_media(docs.get("summary", {}))),
+        "summary_doc": config_doc.json_safe(docs.get("summary", {})),
     }
 
 
