@@ -790,6 +790,7 @@ def _parse_filters(filters: tuple[str, ...]) -> dict[str, Any]:
 _LIST_FIELDS: dict[str, Any] = {
     "id": lambda r: r.id,
     "name": lambda r: r.name,
+    "version": lambda r: r.version,
     "project": lambda r: r.project,
     "status": lambda r: r.status,
     "created_at": lambda r: r.created_at,
@@ -867,7 +868,7 @@ def _csv_cell(value: Any) -> str:
 )
 @click.option(
     "--sort", "sort_key", default="created_at", show_default=True,
-    help="created_at, ended_at, duration, name, status, id, config.<path>, "
+    help="created_at, ended_at, duration, name, version, status, id, config.<path>, "
          "summary.<path> or metrics.<name> (the final value, as in the UI). "
          "Runs missing the key come last.",
 )
@@ -910,7 +911,7 @@ def list_cmd(
                 f"unknown column {key!r}; use config.<path>, summary.<path>, "
                 f"metrics.<name> or one of {', '.join(_LIST_FIELDS)}"
             )
-    keys = ["id", "name"] + ([] if project else ["project"]) + [
+    keys = ["id", "name", "version"] + ([] if project else ["project"]) + [
         "status", "created_at", "duration", "tags",
     ] + (["archived"] if archived == "all" else [])
     keys += [k for k in columns if k not in keys]

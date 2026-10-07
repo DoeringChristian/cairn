@@ -202,8 +202,11 @@ class RepoTransport:
     def set_notes(self, run_id: str, notes: str) -> None:
         self._call("set_notes", lambda db: ingest_ops.set_notes(db, run_id, notes), run_id, notes)
 
-    def rename_run(self, run_id: str, name: str) -> None:
-        self._call("rename_run", lambda db: ingest_ops.rename_run(db, run_id, name), run_id, name)
+    def rename_run(self, run_id: str, name: str) -> dict[str, Any]:
+        """-> ``{"display_name", "version"}`` (the run's number in its new series)."""
+        return self._call(
+            "rename_run", lambda db: ingest_ops.rename_run(db, run_id, name), run_id, name,
+        )
 
     def delete_keys(self, run_id: str, table: str, keys: list[str]) -> None:
         self._call(
@@ -575,6 +578,7 @@ class LocalTransport:
             "summary": config_doc.loads(row.get("summary")) if row else {},
             "status": row["status"] if row else None,
             "stop_requested": row.get("stop_requested") if row else None,
+            **({"version": row.get("version")} if row else {}),
         }
 
     def detach_run(self, run_id: str) -> None:
@@ -598,9 +602,17 @@ class LocalTransport:
         return {
             "run_id": rid, "project_id": pid, "url": f"/p/{pid}/r/{rid}",
             "tags": json.loads(row["tags"]) if row.get("tags") else [],
+            "version": row.get("version"),
             "config": config_doc.loads(row.get("config")),
             "summary": config_doc.loads(row.get("summary")),
         }
+
+    def run_version(self, run_id: str) -> dict[str, Any] | None:
+        """``{"version": n}`` once the run's creation is ingested (the lease
+        holder catches up on every log first), else None."""
+        self._repo.ingest_pending()
+        rows = self.read_columns("SELECT version FROM runs WHERE id = ?", [run_id])
+        return rows[0] if rows else None
 
     def resume_run(self, run_id: str) -> dict[str, Any]:
         row = self._ingested_run(run_id)

@@ -367,6 +367,11 @@ class Run:
             resp = self._transport.create_run(create_body)
         self._run_id: str = resp["run_id"]
         self._project_id: str = resp["project_id"]
+        # The run's version when the answer carried it (the server assigns
+        # it); else ``version`` looks it up on first use.
+        self._version_info: dict[str, Any] | None = (
+            {"version": resp["version"]} if "version" in resp else None
+        )
         # This run's copy of its config / summary documents, so a write that
         # the merge rules reject raises here, on both backends.
         self._docs: dict[str, dict[str, Any]] = {
@@ -536,8 +541,13 @@ class Run:
                 sweep_id, trial_id, run_id=self._run_id, status="running",
             )
             if self._name is None and trial.get("name"):
-                self._transport.rename_run(self._run_id, trial["name"])
+                renamed = self._transport.rename_run(self._run_id, trial["name"])
                 self._name = trial["name"]
+                # A new name is a new series: a new version.
+                self._version_info = (
+                    {"version": renamed["version"]}
+                    if isinstance(renamed, dict) and "version" in renamed else None
+                )
         except Exception:
             self.finish(status="failed")
             raise
@@ -552,6 +562,23 @@ class Run:
     def id(self) -> str:
         """The run's id: 32 hex characters, generated client-side."""
         return self._run_id
+
+    @property
+    def version(self) -> int | None:
+        """The run's number in its series (project, group, name), assigned by
+        the server: 1, 2, ... in creation order, never reused. A resumed run
+        or a process joining a shared run keeps it; a fork is a new run, with
+        the series' next number. None for an unnamed run.
+
+        Over HTTP the server answers it on creation. On a local repo the
+        number exists once the run's creation is ingested: the first read
+        catches up on the repo's logs (like ``ArtifactVersion.wait``), so it
+        is known from then on. None also while a worker's run is not created
+        yet.
+        """
+        if self._version_info is None:
+            self._version_info = self._transport.run_version(self._run_id)
+        return None if self._version_info is None else self._version_info["version"]
 
     @property
     def project(self) -> str:
@@ -1546,6 +1573,7 @@ class _DisabledRun(Run):
         self._project = kwargs.get("project", args[0] if args else None)
         # Nothing to ask for the normalised id: ``project`` is what was given.
         self._project_id = self._project
+        self._version_info = {"version": None}
         self._tags = list(kwargs.get("tags") or [])
         self._finished = False
         self._stop_requested = False

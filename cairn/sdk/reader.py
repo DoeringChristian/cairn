@@ -487,6 +487,13 @@ class Run:
         return self._raw.get("display_name")
 
     @property
+    def version(self) -> int | None:
+        """The run's number in its series (project, group, name), assigned by
+        the server: 1, 2, ... in creation order, never reused. None for an
+        unnamed run."""
+        return self._raw.get("version")
+
+    @property
     def project(self) -> str:
         """The id of the run's project."""
         return self._raw.get("project_id", "")
@@ -970,8 +977,9 @@ class RunEditor:
         Args:
             name: The new name.
         """
-        self._transport.rename_run(self._run.id, name)
+        resp = self._transport.rename_run(self._run.id, name)
         self._run._raw["display_name"] = name
+        self._run._raw["version"] = resp.get("version")
 
     def set_notes(self, notes: str) -> None:
         """Replace the run's notes.

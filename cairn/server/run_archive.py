@@ -333,6 +333,12 @@ def restore_archive(
             parent_run_id=remap("runs", run_map, run.get("parent_run_id")),
             sweep_id=remap("sweeps", sweep_map, run.get("sweep_id")),
         )
+        # The run takes the next number of its series here; the exported
+        # number is not kept.
+        with db.transaction() as con:
+            run["version"] = ingest_ops.next_version(
+                con, project_id, run.get("run_group"), run["display_name"],
+            )
         _insert(db, "runs", run_cols, run)
 
         with db.transaction() as con:

@@ -126,6 +126,8 @@ class NotesRequest(BaseModel):
 class RunPatchRequest(BaseModel):
     display_name: str | None = None
     notes: str | None = None
+    #: The run's group; an explicit null ungroups it.
+    group: str | None = None
 
 
 class DeleteKeysRequest(BaseModel):
@@ -406,16 +408,21 @@ def set_notes(run_id: str, body: NotesRequest, request: Request) -> dict[str, An
 
 @router.patch("/runs/{run_id}")
 def patch_run(run_id: str, body: RunPatchRequest, request: Request) -> dict[str, Any]:
-    """Edit a run's name and/or notes; omitted fields stay as they are."""
+    """Edit a run's name, group and/or notes; omitted fields stay as they
+    are. A new name or group moves the run to that series: the response's
+    ``version`` is its number there."""
     db = get_db(request)
+    out: dict[str, Any] = {"run_id": run_id, **body.model_dump(exclude_none=True)}
     try:
         if body.display_name is not None:
-            ingest_ops.rename_run(db, run_id, body.display_name)
+            out.update(ingest_ops.rename_run(db, run_id, body.display_name))
+        if "group" in body.model_fields_set:
+            out.update(ingest_ops.set_group(db, run_id, body.group))
         if body.notes is not None:
             ingest_ops.set_notes(db, run_id, body.notes)
     except ingest_ops.RunNotFound as exc:
         raise _run_not_found(exc) from None
-    return {"run_id": run_id, **body.model_dump(exclude_none=True)}
+    return out
 
 
 @router.delete("/runs/{run_id}/params")

@@ -42,6 +42,29 @@ def _require_run(db: Database, run_id: str) -> dict[str, Any]:
     return rows[0]
 
 
+def next_version(con: Any, project_id: str, group: str | None, name: str | None) -> int | None:
+    """Take the next version of the series (``project_id``, ``group``,
+    ``name``) from its counter; None for an unnamed run (no series).
+
+    Numbers are never reused: the counter only grows (a deleted or renamed
+    run keeps its number taken). Call it inside the write that stores the
+    number, so a replayed log op never takes two.
+    """
+    if not name:
+        return None
+    row = con.execute(
+        """
+        INSERT INTO run_series (project_id, grouped, run_group, name, last_version)
+        VALUES (?, ?, ?, ?, 1)
+        ON CONFLICT (project_id, grouped, run_group, name)
+        DO UPDATE SET last_version = last_version + 1
+        RETURNING last_version
+        """,
+        [project_id, int(group is not None), group or "", name],
+    ).fetchone()
+    return int(row[0])
+
+
 #: Every optional ``create_run`` field, as the create body / WAL payload
 #: spells it. LocalTransport and the WAL replay forward exactly these keys, so
 #: a new field is added here, to ``create_run``'s signature, and to
@@ -78,6 +101,9 @@ def create_run(
     ``created_at`` backdates the run (imports, WAL replay); default now.
     ``group`` is stored in the ``run_group`` column.
 
+    The server numbers the run in its series (project, group, name): the
+    returned ``version`` (None for an unnamed run).
+
     Raises:
         RunExists: A run with ``run_id`` exists already.
     """
@@ -90,6 +116,7 @@ def create_run(
     created = parse_timestamp(created_at) or now
 
     with db.transaction() as con:
+        version = next_version(con, project_id, group, name)
         con.execute(
             """
             INSERT INTO projects (id, name, created_at, description, tags)
@@ -105,9 +132,9 @@ def create_run(
                 status, exit_code, git_sha, git_dirty, git_branch, git_remote,
                 cli_args, env_snapshot, hostname, "user", tags, notes,
                 last_heartbeat, parent_run_id, fork_step, run_group, job_type,
-                sweep_id
+                sweep_id, version
             ) VALUES (?, ?, ?, ?, NULL, 'running', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                      ?, ?, ?, ?, ?, ?)
+                      ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 run_id,
@@ -130,6 +157,7 @@ def create_run(
                 group,
                 job_type,
                 sweep_id,
+                version,
             ],
         )
 
@@ -137,6 +165,7 @@ def create_run(
         "run_id": run_id,
         "project_id": project_id,
         "url": f"/p/{project_id}/r/{run_id}",
+        "version": version,
     }
 
 
@@ -544,9 +573,41 @@ def set_notes(db: Database, run_id: str, notes: str) -> None:
     db.write("UPDATE runs SET notes = ? WHERE id = ?", [notes, run_id])
 
 
-def rename_run(db: Database, run_id: str, display_name: str) -> None:
-    _require_run(db, run_id)
-    db.write("UPDATE runs SET display_name = ? WHERE id = ?", [display_name, run_id])
+def _move_series(
+    db: Database, run_id: str, *, name: str | None, group: str | None,
+) -> int | None:
+    """Store the run's display name and group; a run whose series changes
+    takes the next version of its new series (its old number stays taken in
+    the old one). Returns the run's version."""
+    with db.transaction() as con:
+        row = con.execute(
+            "SELECT project_id, display_name, run_group, version FROM runs WHERE id = ?",
+            [run_id],
+        ).fetchone()
+        if row is None:
+            raise RunNotFound(f"run {run_id} not found")
+        project_id, old_name, old_group, version = row
+        if (name, group) != (old_name, old_group):
+            version = next_version(con, project_id, group, name)
+            con.execute(
+                "UPDATE runs SET display_name = ?, run_group = ?, version = ? WHERE id = ?",
+                [name, group, version, run_id],
+            )
+    return version
+
+
+def rename_run(db: Database, run_id: str, display_name: str) -> dict[str, Any]:
+    """Set the display name -> ``{"display_name", "version"}``."""
+    group = _require_run(db, run_id)["run_group"]
+    version = _move_series(db, run_id, name=display_name, group=group)
+    return {"display_name": display_name, "version": version}
+
+
+def set_group(db: Database, run_id: str, group: str | None) -> dict[str, Any]:
+    """Set (None: clear) the run's group -> ``{"group", "version"}``."""
+    name = _require_run(db, run_id)["display_name"]
+    version = _move_series(db, run_id, name=name, group=group)
+    return {"group": group, "version": version}
 
 
 def delete_keys(db: Database, run_id: str, table: str, keys: list[str]) -> None:
@@ -615,6 +676,7 @@ def join_run(db: Database, run_id: str) -> dict[str, Any]:
         "summary": config_doc.loads(row.get("summary")),
         "status": row["status"],
         "stop_requested": row.get("stop_requested"),
+        "version": row.get("version"),
     }
 
 
@@ -716,6 +778,7 @@ def resume_run(db: Database, run_id: str) -> dict[str, Any]:
         "project_id": row["project_id"],
         "url": f"/p/{row['project_id']}/r/{run_id}",
         "tags": json.loads(row["tags"]) if row.get("tags") else [],
+        "version": row.get("version"),
         # The stored documents, so the SDK can check later writes against them.
         "config": config_doc.loads(row.get("config")),
         "summary": config_doc.loads(row.get("summary")),
@@ -792,9 +855,10 @@ def fork_run(
             [run_id, parent_id],
         )
     project_id = parent["project_id"]
+    (version,) = db.read_one("SELECT version FROM runs WHERE id = ?", [run_id]) or (None,)
     return {
         "run_id": run_id, "project_id": project_id, "url": f"/p/{project_id}/r/{run_id}",
-        **run_docs(db, run_id),
+        "version": version, **run_docs(db, run_id),
     }
 
 

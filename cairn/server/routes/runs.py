@@ -73,7 +73,7 @@ def list_runs(
     ),
     sort: str = Query(
         default="created_at",
-        description="created_at | ended_at | duration | name | status | id | "
+        description="created_at | ended_at | duration | name | version | status | id | "
                     "config.<path> | summary.<path> | metrics.<name>",
     ),
     desc: bool = Query(default=False),

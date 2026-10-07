@@ -496,8 +496,9 @@ class Transport:
     def set_notes(self, run_id: str, notes: str) -> None:
         self.post_json(f"/api/runs/{run_id}/notes", {"notes": notes})
 
-    def rename_run(self, run_id: str, name: str) -> None:
-        self._request("PATCH", f"/api/runs/{run_id}", json={"display_name": name})
+    def rename_run(self, run_id: str, name: str) -> dict[str, Any]:
+        """-> ``{"display_name", "version"}`` (the run's number in its new series)."""
+        return self._request("PATCH", f"/api/runs/{run_id}", json={"display_name": name}).json()
 
     def delete_keys(self, run_id: str, table: str, keys: list[str]) -> None:
         self._request("DELETE", f"/api/runs/{run_id}/{table}", json={"keys": keys})
@@ -519,6 +520,11 @@ class Transport:
             f"/api/runs/{run_id}/metric-rules",
             {"name": name, "x": x, "summary": summary},
         )
+
+    def run_version(self, run_id: str) -> dict[str, Any] | None:
+        """``{"version": n}`` (the run as the server has it)."""
+        with _run_not_found(run_id):
+            return {"version": self.get(f"/api/runs/{run_id}").json()["run"].get("version")}
 
     def resume_run(self, run_id: str) -> dict[str, Any]:
         with _run_not_found(run_id):

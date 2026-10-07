@@ -390,7 +390,7 @@ def test_list_columns_order_archived_and_formats(live_server, monkeypatch, tmp_p
     result = run()
     assert result.exit_code == 0, result.output
     rows = _table(result.output)
-    assert rows[0][:4] == ["ID", "NAME", "PROJECT", "STATUS"]
+    assert rows[0][:5] == ["ID", "NAME", "VERSION", "PROJECT", "STATUS"]
     # Newest first, archived `c` left out, every id printed whole.
     assert [r[0] for r in rows[1:]] == [ids["d"], ids["b"], ids["a"]]
 
@@ -416,7 +416,7 @@ def test_list_columns_order_archived_and_formats(live_server, monkeypatch, tmp_p
 
     result = run("--format", "csv", "--asc", "--status", "completed")
     lines = result.output.strip().splitlines()
-    assert lines[0] == "id,name,project,status,created_at,duration,tags"
+    assert lines[0] == "id,name,version,project,status,created_at,duration,tags"
     assert [line.split(",")[1] for line in lines[1:]] == ["a", "d"]
 
     result = run("--where", "config.optim.lr > 0.2")

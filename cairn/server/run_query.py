@@ -49,7 +49,8 @@ RUN_LIST_COLUMNS = """id, project_id, display_name, created_at, ended_at, status
                    hostname, "user", tags, notes, last_heartbeat,
                    parent_run_id, fork_step, data_epoch, run_group, job_type,
                    sweep_id, stop_requested, archived_at, total_steps, max_step,
-                   step_samples, progress_value, progress_total, progress_samples"""
+                   step_samples, progress_value, progress_total, progress_samples,
+                   version"""
 
 #: Filterable run fields and their column.
 RUN_FIELDS = {
@@ -59,7 +60,7 @@ RUN_FIELDS = {
 }
 
 #: Sort keys that are run columns (``duration`` is derived).
-SORT_COLUMNS = ("created_at", "ended_at", "duration", "name", "status", "id")
+SORT_COLUMNS = ("created_at", "ended_at", "duration", "name", "version", "status", "id")
 SORT_PREFIXES = ("config.", "summary.", "metrics.")
 
 
@@ -230,7 +231,7 @@ def _sort_value(run: _Run, key: str) -> Any:
         return (end - start).total_seconds() if start and end else None
     if key == "name":
         return run.row.get("display_name")
-    if key in ("status", "id"):
+    if key in ("status", "id", "version"):
         return run.row.get(key)
     root, _, rest = key.partition(".")
     if root == "metrics":

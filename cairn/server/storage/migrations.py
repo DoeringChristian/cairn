@@ -75,7 +75,23 @@ SCHEMA_SQL: list[str] = [
         step_samples  TEXT,
         progress_value REAL,
         progress_total REAL,
-        progress_samples TEXT
+        progress_samples TEXT,
+        -- The run's number in its series (project, group, display name),
+        -- assigned by the server from ``run_series``; NULL for an unnamed run.
+        version       INTEGER
+    )
+    """,
+    # A run series' counter: the highest version ever given in it, so a
+    # number is never reused, also after its run is deleted or renamed away.
+    # ``grouped`` = 0 is the ungrouped series (``run_group`` then '').
+    """
+    CREATE TABLE IF NOT EXISTS run_series (
+        project_id    TEXT NOT NULL,
+        grouped       INTEGER NOT NULL,
+        run_group     TEXT NOT NULL,
+        name          TEXT NOT NULL,
+        last_version  INTEGER NOT NULL,
+        PRIMARY KEY (project_id, grouped, run_group, name)
     )
     """,
     """
@@ -624,6 +640,39 @@ def _drop_old_registry(con: sqlite3.Connection) -> None:
             con.execute(f"DROP TABLE IF EXISTS {table}")
 
 
+def _number_existing_runs(con: sqlite3.Connection) -> None:
+    """Add ``runs.version`` to a database from before run versions: number
+    every named run within its series by ``created_at`` (ties by id) and
+    start each series' counter at its highest number."""
+    cols = {row[1] for row in con.execute("PRAGMA table_info(runs)").fetchall()}
+    if "version" in cols:
+        return
+    con.execute("ALTER TABLE runs ADD COLUMN version INTEGER")
+    con.execute(
+        """
+        UPDATE runs SET version = (
+            SELECT n FROM (
+                SELECT id, ROW_NUMBER() OVER (
+                    PARTITION BY project_id, run_group IS NOT NULL,
+                                 IFNULL(run_group, ''), display_name
+                    ORDER BY created_at, id
+                ) AS n
+                FROM runs WHERE display_name IS NOT NULL AND display_name != ''
+            ) AS numbered WHERE numbered.id = runs.id
+        )
+        """
+    )
+    con.execute(
+        """
+        INSERT OR REPLACE INTO run_series (project_id, grouped, run_group, name, last_version)
+        SELECT project_id, run_group IS NOT NULL, IFNULL(run_group, ''), display_name,
+               MAX(version)
+          FROM runs WHERE version IS NOT NULL
+         GROUP BY project_id, run_group IS NOT NULL, IFNULL(run_group, ''), display_name
+        """
+    )
+
+
 def apply_migrations(con: sqlite3.Connection) -> int:
     """Run schema DDL idempotently; return current schema version."""
     _drop_old_registry(con)
@@ -632,6 +681,7 @@ def apply_migrations(con: sqlite3.Connection) -> int:
 
     # Incremental column migrations for existing databases.
     _add_column_if_missing(con, "runs", "last_heartbeat", "TEXT")
+    _number_existing_runs(con)
     _add_column_if_missing(con, "artifacts", "object_type", "TEXT")
     _add_column_if_missing(con, "tokens", "parent_id", "TEXT")
     for column, col_type in _ADDED_RUN_COLUMNS:
