@@ -21,7 +21,7 @@ import cairn
 from cairn import cli, config
 from cairn.server.app import create_app
 from cairn.server.storage.datadir import DataDir
-from tests.conftest import _find_free_port
+from tests.conftest import _find_free_port, ingest_repo
 
 QUIET = dict(capture_source=False, capture_stdout=False, capture_env=False,
              capture_system_metrics=False)
@@ -456,18 +456,31 @@ def test_missing_local_repo_is_one_line(tmp_path):
         assert not missing.exists()
 
 
-def test_a_served_local_repo_is_reached_through_its_server(tmp_path, ui_app):
-    """Writes to a repo a live `cairn ui` holds go to that server; `open`
-    finds its viewer."""
-    from cairn.cli_target import open_api
+def test_a_served_local_repo_is_reached_through_its_server(tmp_path):
+    """Writes to a repo whose ingest lease a live `cairn ui` holds go to that
+    server; `open` finds its viewer."""
+    import os
+    import time
 
-    root = tmp_path / "cairn"  # the ui_app fixture's repo
+    from cairn import viewer
+    from cairn.cli_target import open_api
+    from cairn.server.storage import lease as lease_mod
+
+    if not viewer.is_available():
+        pytest.skip("cairn-ui viewer not installed")
+    root = tmp_path / "cairn"
     with cairn.Run("proj", name="r", repo=str(root), **QUIET) as run:
         rid = run.id
-    with _serve(ui_app) as url:
+    ingest_repo(root)
+    app = create_app(data_dir=root, mount_ui=True, background_tasks=False)
+    with _serve(app) as url:
         port = int(url.rsplit(":", 1)[1])
         dd = DataDir(root)
-        dd.acquire_lock("ui", host="127.0.0.1", port=port)
+        # The lease as `cairn ui` in another process holds it.
+        lease_mod.lease_path(dd.root).write_text(json.dumps({
+            "host": lease_mod.hostname(), "pid": os.getppid(), "token": "t" * 32,
+            "mode": "ui", "url": url, "expires_at": time.time() + 120,
+        }))
         dd.add_live_server("ui", host="127.0.0.1", port=port)
         try:
             with open_api(str(root), None) as api:
@@ -481,12 +494,12 @@ def test_a_served_local_repo_is_reached_through_its_server(tmp_path, ui_app):
             assert health["served_by"] == url and health["archived_runs"] == 1
         finally:
             dd.remove_live_server()
-            dd.release_lock()
+            lease_mod.lease_path(dd.root).unlink()
 
 
-def test_sync_ingests_a_local_repos_wal_logs(tmp_path):
+def test_sync_ingests_a_local_repos_run_logs(tmp_path):
     root = tmp_path / "walrepo" / ".cairn"
-    with cairn.Run("proj", name="w", repo=str(root), local_wal=True, **QUIET) as run:
+    with cairn.Run("proj", name="w", repo=str(root), **QUIET) as run:
         run.track(1.0, name="loss", step=0)
     assert list((root / "wals").glob("*.wal.jsonl"))
     result = CliRunner().invoke(cli.main, ["sync", "--repo", str(root)])
@@ -530,10 +543,10 @@ def test_configure_sets_one_target(tmp_path):
     assert config.load_config_file() == {"server": "http://gpu:4300"}
 
 
-def test_local_commands_see_wal_mode_runs_without_a_sync(tmp_path):
-    """As cairn.Reader does, a local command ingests WAL-mode logs first."""
+def test_local_commands_see_logged_runs_without_a_sync(tmp_path):
+    """As cairn.Reader does, a local command ingests pending run logs first."""
     root = tmp_path / "walrepo" / ".cairn"
-    with cairn.Run("proj", name="w", repo=str(root), local_wal=True, **QUIET) as run:
+    with cairn.Run("proj", name="w", repo=str(root), **QUIET) as run:
         rid = run.id
     result = CliRunner().invoke(cli.main, ["archive", rid, "--repo", str(root)])
     assert result.exit_code == 0, result.output

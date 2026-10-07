@@ -33,7 +33,8 @@ from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any, Callable
 
-from .connect import open_transport
+from .connect import open_writer
+from .local import RepoTransport
 
 log = logging.getLogger(__name__)
 
@@ -158,7 +159,7 @@ def sweep(
     Raises:
         ValueError: For an invalid space, method or goal.
     """
-    transport, _ = open_transport(repo)
+    transport, _ = open_writer(repo)
     try:
         info = transport.create_sweep({
             "project": project, "parameters": space, "method": method,
@@ -190,7 +191,7 @@ class Sweep:
         self._project = project
 
     def _call(self, method: str, *args: Any) -> Any:
-        transport, _ = open_transport(self._repo)
+        transport, _ = open_writer(self._repo)
         try:
             return getattr(transport, method)(*args)
         finally:
@@ -307,7 +308,7 @@ def _work(
     """One worker's loop: claim → run → report, ``count`` times at most."""
     from .run import Run
 
-    transport, _ = open_transport(repo)
+    transport, _ = open_writer(repo)
     done: list[dict[str, Any]] = []
     try:
         while count is None or len(done) < count:
@@ -319,7 +320,13 @@ def _work(
                     continue
                 break
             params = trial["params"]
-            run = Run(project, sweep_id=sweep_id, transport=transport, **{
+            # Over HTTP the run shares the worker's client; on a local repo it
+            # writes its own log, like any run there.
+            where: dict[str, Any] = (
+                {"repo": transport.data_dir.root} if isinstance(transport, RepoTransport)
+                else {"transport": transport}
+            )
+            run = Run(project, sweep_id=sweep_id, **where, **{
                 **run_kwargs, "name": run_kwargs.get("name") or trial["name"],
             })
             transport.report_trial(sweep_id, trial["id"], run_id=run.id, status="running")

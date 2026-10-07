@@ -1,12 +1,8 @@
-"""Many processes opening the same FRESH local repo at once.
+"""Many processes logging to, then reading, the same FRESH local repo at once.
 
-The first open of a new database switches it to WAL mode
-(``PRAGMA journal_mode=WAL``) and creates the schema. Both need the database to
-themselves, and SQLite answers a concurrent journal-mode switch with an
-immediate "database is locked" rather than waiting out the busy timeout — so a
-sweep launching eight workers against a brand-new repo used to lose some of
-them at ``cairn.Run(...)``. ``Database.open`` now serializes that first open
-across processes.
+Runs only append to their logs; each process's Reader then takes the ingest
+lease in turn, and the first one creates the database (switches it to WAL
+mode, creates the schema). Every run must end up ingested exactly once.
 """
 
 from __future__ import annotations
@@ -40,6 +36,8 @@ def _open_and_write(repo: str, start_at: float, index: int, out) -> None:
         ) as run:
             for step in range(3):
                 run.track(float(step), name="loss", step=step)
+        with cairn.Reader(repo) as reader:
+            reader.runs("concurrent-open").list()
         out.put((index, None))
     except BaseException as exc:  # report every failure, not just the first
         out.put((index, f"{type(exc).__name__}: {exc}"))
@@ -68,8 +66,9 @@ def test_processes_open_a_fresh_repo_concurrently(tmp_path: Path):
     con = sqlite3.connect(repo / "cairn.db")
     try:
         assert con.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
-        names = {r[0] for r in con.execute("SELECT display_name FROM runs")}
+        names = [r[0] for r in con.execute("SELECT display_name FROM runs")]
+        assert con.execute("SELECT COUNT(*) FROM sequences").fetchone()[0] == 3 * N_PROCS
         assert con.execute("SELECT COUNT(*) FROM schema_version").fetchone()[0] == 1
     finally:
         con.close()
-    assert names == {f"w{i}" for i in range(N_PROCS)}
+    assert sorted(names) == sorted(f"w{i}" for i in range(N_PROCS))

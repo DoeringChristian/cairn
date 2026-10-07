@@ -244,12 +244,13 @@ def log_artifact(
         repo: Where to write, resolved like ``cairn.Run(repo=...)``.
 
     Returns:
-        The new ``ArtifactVersion`` (pending in WAL mode).
+        The new ``ArtifactVersion`` (registered at once: written through the
+        repo's ingest-lease holder).
     """
     import functools
 
     from .sdk import handlers as _handlers  # noqa: F401  (register built-ins)
-    from .sdk.connect import open_transport
+    from .sdk.connect import open_writer
     from .sdk.artifacts import Artifact as _Artifact
     from .sdk.artifacts import draft_from_shorthand
     from .sdk.handlers.registry import default_registry
@@ -272,7 +273,7 @@ def log_artifact(
         draft.metadata = dict(metadata or {})
         draft.description = description
 
-    transport, _server = open_transport(repo)
+    transport, _server = open_writer(repo)
     try:
         version = log_draft(
             transport, default_registry, slugify(project), draft, aliases, None,

@@ -157,7 +157,7 @@ Any other value raises `ValueError`.
 
 ## Per-run settings
 
-Settings that apply to one run, such as source capture, system metrics,
-`local_wal` and stop behaviour, are keyword arguments of `cairn.Run`. See
+Settings that apply to one run, such as source capture, system metrics
+and stop behaviour, are keyword arguments of `cairn.Run`. See
 [Run lifecycle](../guides/runs.md) and the [Python API
 reference](python.md#run-and-scope).

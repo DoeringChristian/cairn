@@ -1,16 +1,16 @@
 """Cairn + Ray Tune: grid-search hyperparameter sweep.
 
 Each Ray Tune trial creates its own cairn.Run.  Uses tune.Tuner with a
-grid_search over learning rates.  After the sweep, WALs are ingested and
-results verified via cairn.Reader.
+grid_search over learning rates.  After the sweep, results are verified via
+cairn.Reader (which ingests the runs' logs first).
 
-**Single machine** (default): all workers share the filesystem. WAL mode
-works out of the box.
+**Single machine** (default): all workers share the filesystem; each run
+writes its own log, so this works out of the box.
 
 **Multi-machine Ray cluster**: workers run on different nodes.
 
   - With shared filesystem (NFS): pass the NFS-mounted .cairn/ path as
-    ``repo=``. Workers write WALs to the shared directory.
+    ``repo=``. Workers write their run logs to the shared directory.
 
   - Without shared filesystem: use Cairn's HTTP transport instead::
 
@@ -114,17 +114,7 @@ def main() -> None:
 
     print(f"\nRay Tune finished {len(results)} trials")
 
-    # --- Ingest WALs and verify -------------------------------------------
-    from cairn.server.storage.datadir import DataDir
-    from cairn.server.storage.db import Database
-    from cairn.server.storage.blobs import BlobStore
-    from cairn.server.wal_ingest import ingest_all
-
-    dd = DataDir(repo_path)
-    db = Database.open(dd.db_path)
-    blobs = BlobStore(dd.artifacts_dir)
-    ingest_all(dd, db, blobs)
-    db.close()
+    # --- Verify (the Reader ingests the run logs first) ---------------
 
     from cairn.sdk.reader import Reader
 

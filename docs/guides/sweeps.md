@@ -355,6 +355,5 @@ Resume, Stop and Cancel while paused; Cancel when stopped.
 If a scheduler already picks the parameters for you (Ray Tune, submitit/Slurm,
 Dask, Kubernetes Jobs, Fabric), you do not need a cairn sweep. Open one
 `cairn.Run` per job and point every job at the same repo: either a shared
-directory (use `local_wal=True` there, see
-[Server, auth and deployment](server.md#wal-mode)) or a `cairn://` server. The
+directory (see [Clusters / SLURM](server.md#clusters-slurm)) or a `cairn://` server. The
 [examples](../examples.md#distributed-and-parallel-training) show each setup.

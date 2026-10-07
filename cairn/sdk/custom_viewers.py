@@ -124,11 +124,11 @@ def publish_viewer(
     """
     from . import handlers as _handlers  # noqa: F401  (register built-ins)
     from ..server.routes._common import slugify
-    from .connect import open_transport
+    from .connect import open_writer
     from .handlers.registry import default_registry
     from .run import backend_for_transport
 
-    transport, _server = open_transport(repo)
+    transport, _server = open_writer(repo)
     try:
         version = publish_folder(
             transport, default_registry, slugify(project), path, aliases=aliases, default_for=default_for,

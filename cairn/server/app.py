@@ -58,9 +58,13 @@ from .ui_mount import mount_viewer
 from .storage.blobs import BlobStore
 from .storage.datadir import DataDir, default_data_dir
 from .storage.db import Database
+from .storage import lease as lease_mod
 from .wal_ingest import ingest_all
 
 _log = logging.getLogger(__name__)
+
+#: Seconds between two background ingestion cycles.
+INGEST_INTERVAL = 2.0
 
 
 class _JsonGZipResponder(GZipResponder):
@@ -149,10 +153,12 @@ def create_app(
             False so existing test fixtures (``tests/conftest.py``) and
             library callers of ``create_app()`` are unaffected; the CLI
             (``cairn server`` / ``cairn ui``) opts in unless ``--no-auth``.
-        background_tasks: Run the lifespan's background loops (WAL
-            ingestion, and any other periodic repo maintenance). Exactly one
-            app per repo may run them: ``cairn server --ui`` builds a second
-            app on the same DB and passes False for it.
+        background_tasks: Hold the repo's ingest lease and run the
+            lifespan's background loops (log ingestion, stale-run reaping,
+            alert delivery). Exactly one app per repo may run them: ``cairn
+            server --ui`` builds a second app on the same DB and passes
+            False for it. An app without them must only be used by a
+            process that holds the lease itself (the CLI's in-process API).
         alert_webhook: URL the background task posts alerts to (ntfy, Slack,
             Discord, or any JSON webhook; see ``cairn/server/alerts.py``).
             None keeps alerts in the UI only.
@@ -166,13 +172,19 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        dd = DataDir(resolved_dir) if owns_db else data_dir_obj
+        assert dd is not None
+        # The ingest lease (storage/lease.py): the app that runs the
+        # background loops is the repo's one writer. ``cairn ui``/``cairn
+        # server`` took it already (with their URL); this shares it.
+        lease = None
+        if background_tasks:
+            lease = lease_mod.acquire(dd.root, mode="server", wait=60.0)
+        app.state.lease = lease
         if owns_db:
-            dd = DataDir(resolved_dir)
             _db = Database.open(dd.db_path)
             _blobs = BlobStore(dd.artifacts_dir)
         else:
-            assert data_dir_obj is not None
-            dd = data_dir_obj
             _db = db  # type: ignore[assignment]
             _blobs = blobs  # type: ignore[assignment]
         app.state.data_dir = dd
@@ -180,23 +192,40 @@ def create_app(
         app.state.server_id = auth_core.server_id(dd.root)
         app.state.db = _db
         app.state.blobs = _blobs
-
-        # Background WAL ingestion — polls every 2s for new per-run WAL files.
         _stop = asyncio.Event()
 
+        def _ingest_cycle() -> int:
+            nonlocal lease
+            assert lease is not None
+            if not lease.valid():
+                # Lost it (stalled past its expiry): stop writing until it
+                # is ours again.
+                try:
+                    fresh = lease_mod.acquire(dd.root, mode="server", wait=0.0)
+                except (lease_mod.LeaseBusy, lease_mod.ServedByServer):
+                    _log.error("not ingesting: the repo's ingest lease is held elsewhere")
+                    return 0
+                info = lease.info
+                lease.release()
+                lease = app.state.lease = fresh
+                if info.get("url"):
+                    lease.set_url(info["url"], info.get("mode", "server"))
+            return ingest_all(dd, _db, _blobs)
+
+        # Background log ingestion — every 2 s.
         async def _wal_ingestion_loop():
             while not _stop.is_set():
                 try:
                     # Off the event loop: ingestion is blocking file +
                     # SQLite work, and running it inline stalls every
                     # in-flight request for the length of a cycle.
-                    count = await asyncio.to_thread(ingest_all, dd, _db, _blobs)
+                    count = await asyncio.to_thread(_ingest_cycle)
                     if count > 0:
-                        _log.debug("WAL ingestion: %d ops", count)
+                        _log.debug("log ingestion: %d ops", count)
                 except Exception:  # noqa: BLE001
-                    _log.exception("WAL ingestion cycle failed")
+                    _log.exception("log ingestion cycle failed")
                 try:
-                    await asyncio.wait_for(_stop.wait(), timeout=2.0)
+                    await asyncio.wait_for(_stop.wait(), timeout=INGEST_INTERVAL)
                     break  # stop was set
                 except asyncio.TimeoutError:
                     pass  # normal — loop again
@@ -206,7 +235,7 @@ def create_app(
             while not _stop.is_set():
                 try:
                     await asyncio.to_thread(
-                        alerts_core.maintenance_cycle, _db, dd, alert_webhook,
+                        alerts_core.maintenance_cycle, _db, alert_webhook,
                     )
                 except Exception:  # noqa: BLE001
                     _log.exception("maintenance cycle failed")
@@ -227,6 +256,8 @@ def create_app(
             _stop.set()
             for task in tasks:
                 task.cancel()
+            if app.state.lease is not None:
+                app.state.lease.release()
             if owns_db:
                 _db.close()
 

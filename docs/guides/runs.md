@@ -28,7 +28,6 @@ a keyword:
 | `group` | `None` | Groups related runs, such as the seeds of one configuration or the workers of one job. |
 | `job_type` | `None` | What kind of work the run does, such as `"train"` or `"eval"`. |
 | `repo` | resolved | Where to log. See [how cairn picks a destination](../getting-started.md#how-cairn-picks-a-destination). |
-| `local_wal` | `False` | WAL mode for many concurrent writers. See [WAL mode](../getting-started.md#wal-mode-many-writers-on-a-shared-filesystem). |
 | `mode` | resolved | `"disabled"` makes the run a no-op. See [disabled runs](#disabled-runs). |
 | `resume`, `rewind_to`, `fork_from` | `None` | [Continue or branch an existing run](#resume-rewind-and-fork). |
 | `stop_mode`, `on_stop` | `"interrupt"`, `None` | [Stopping from the UI](#stopping-a-run-from-the-ui). |
@@ -51,7 +50,8 @@ A run is `running` until it finishes. It ends with one of these statuses:
 |---|---|
 | `completed` | `run.finish()`, leaving a `with` block normally, or a normal interpreter exit |
 | `failed` | an exception leaves the `with` block, or an unhandled exception ends the script |
-| `killed` | the process receives SIGINT (Ctrl+C) or SIGTERM, or the run stops sending heartbeats |
+| `killed` | the process receives SIGINT (Ctrl+C) or SIGTERM, or a run logged to a server stops sending heartbeats |
+| `crashed` | a run on a local repo whose log got no new record for 5 minutes without finishing (the process died, e.g. `kill -9` or a node failure); it is `running` again if records arrive later |
 | `stopped` | a stop was requested from the UI (see below) |
 
 ```python
@@ -66,8 +66,10 @@ finally:
 ```
 
 If you never call `finish()`, cairn finishes the run when the interpreter exits. The run sends a
-heartbeat every 10 seconds. A server running on the repo (`cairn ui` or `cairn server`) marks a
-run `killed` when it hasn't heard from it for 2 minutes, which covers crashes and `kill -9`.
+heartbeat every 10 seconds. On a local repo the ingester marks a run `crashed` when its log has had
+no new record for 5 minutes and no finish, which covers `kill -9` and lost nodes; a later record
+makes it `running` again. A `cairn server` that runs log to over HTTP marks one `killed` when it
+hasn't heard from it for 2 minutes.
 
 After `finish()` the run is closed. Tracking into it raises `RuntimeError`, so to add data later,
 [resume it](#resume-rewind-and-fork).
@@ -109,8 +111,9 @@ run = cairn.Run("cifar10", resume=ckpt["cairn_run"], rewind_to=ckpt["step"])
 ```
 
 !!! note
-    In WAL mode, a resumed or forked run must already be ingested into the database. Let a
-    `cairn ui`/`cairn server` or a `cairn.Reader` drain the WAL first.
+    On a local repo, resuming, rewinding or forking first catches up on the run's log (through
+    the `cairn ui`/`cairn server` serving the repo, or by itself), so a run that just finished
+    in another process can be continued at once.
 
 ## Stopping a run from the UI
 

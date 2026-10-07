@@ -325,6 +325,22 @@ SCHEMA_SQL: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_artifact_versions_family ON artifact_versions(family_id, version DESC)",
     "CREATE INDEX IF NOT EXISTS idx_artifact_versions_producer ON artifact_versions(created_by_run)",
     "CREATE INDEX IF NOT EXISTS idx_run_inputs_artifact ON run_inputs(artifact_version_id)",
+    # ── Run-log ingestion ───────────────────────────────────────────────
+    # How far each run log in ``wals/`` has been applied: the byte offset
+    # just past the last complete line ingested, committed in the same
+    # transaction as that line's ops (exactly once, restart-safe; see
+    # wal_ingest.py). ``path`` is the file name inside ``wals/``.
+    # ``finished`` = the last record applied was the run's ``finish``.
+    """
+    CREATE TABLE IF NOT EXISTS wal_progress (
+        path          TEXT PRIMARY KEY,
+        run_id        TEXT NOT NULL,
+        "offset"      INTEGER NOT NULL,
+        finished      INTEGER NOT NULL DEFAULT 0,
+        updated_at    TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_wal_progress_run ON wal_progress(run_id)",
     # ── Alerts, metric definitions, sweeps ─────────────────────────────
     # Ids are client-generated TEXT everywhere so a replayed WAL op is an
     # INSERT OR IGNORE, never a duplicate row.

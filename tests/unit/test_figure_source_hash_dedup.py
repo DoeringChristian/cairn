@@ -12,7 +12,7 @@ so all figure cards in a run without kaleido would render the *same*
 interactive source.
 
 This test drives the exact path that broke: ``FigureHandler.serialize``
--> ``LocalTransport.upload_artifact`` (source blob, then primary PNG) for
+-> ``RepoTransport.upload_artifact`` (source blob, then primary PNG) for
 two distinct figures, then asserts both the primary-artifact hashes and
 their stored ``source_hash`` metadata stay distinct.
 """
@@ -24,10 +24,10 @@ import json
 import pytest
 
 from cairn.sdk.handlers.figure import FigureHandler
-from cairn.sdk.local import LocalTransport
+from cairn.sdk.local import RepoTransport
 
 
-def _log_figure(transport: LocalTransport, handler: FigureHandler, fig) -> dict:
+def _log_figure(transport: RepoTransport, handler: FigureHandler, fig) -> dict:
     """Mirror cairn.sdk.run.Run.track's figure dual-storage path."""
     blob, meta = handler.serialize(fig)
     source_blob = meta.pop("_source_blob", None)
@@ -53,7 +53,7 @@ def test_two_distinct_figures_without_kaleido_stay_distinct(tmp_path):
     if _kaleido_available():
         pytest.skip("kaleido installed — degraded no-kaleido path not exercised")
 
-    transport = LocalTransport(tmp_path / ".cairn")
+    transport = RepoTransport(tmp_path / ".cairn")
     try:
         rid = transport.create_run({"project": "p"})["run_id"]
         handler = FigureHandler()
@@ -76,10 +76,10 @@ def test_two_distinct_figures_without_kaleido_stay_distinct(tmp_path):
 
         # And each artifacts-table row must keep *its own* source_hash, not
         # silently inherit the first figure's via ON CONFLICT DO UPDATE.
-        row1 = transport.db.read_columns(
+        row1 = transport.database().read_columns(
             "SELECT metadata FROM artifacts WHERE hash = ?", [r1["digest"]]
         )[0]
-        row2 = transport.db.read_columns(
+        row2 = transport.database().read_columns(
             "SELECT metadata FROM artifacts WHERE hash = ?", [r2["digest"]]
         )[0]
         meta1 = json.loads(row1["metadata"])

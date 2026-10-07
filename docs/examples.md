@@ -99,13 +99,7 @@ series and an `hparams` config each), then reads the runs back with
 | `fabric_remote.py` | Fabric over SSH; simulated locally by default, `--hosts gpu1 gpu2 …` for real hosts | `pip install fabric` | Real hosts need a shared filesystem, or a `cairn://` server |
 | `kubernetes_jobs.py` | Prints a worker `train.py` and a `jobs.yaml` with one Kubernetes Job per configuration, then simulates the jobs locally | — | The generated jobs read the repo from `CAIRN_REPO` on a shared volume |
 
-Across machines, point every job at one repo: a shared directory (with
-`cairn.Run(..., local_wal=True)`, so concurrent writers never contend for the
+Across machines, point every job at one repo: a shared directory (each run
+appends to its own log, so concurrent writers never contend for the
 database) or a `cairn://host:4300` server. See [Server, auth and
 deployment](guides/server.md#where-runs-are-written).
-
-## Internals
-
-| Script | What it does |
-|---|---|
-| `test_wal.py` | An end-to-end check of WAL mode: three simulated runs write WAL files concurrently, the files are ingested into the database, the data is read back and verified, and ingesting an active WAL incrementally is tested. It uses a temporary repo. |

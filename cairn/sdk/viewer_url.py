@@ -43,21 +43,19 @@ def viewer_base(t: Any, server: str) -> str | None:
 def local_viewer(root: Path) -> str | None:
     """The base URL of a running viewer over the local repo at `root`: a
     `cairn ui` listed in its `servers.json`, or the `cairn server --ui`
-    holding its lock. None when none is running (or none answers)."""
+    holding its ingest lease. None when none is running (or none answers)."""
     import httpx
 
-    from ..server.storage.datadir import DataDir, read_live_servers
+    from ..server.storage import lease as lease_mod
+    from ..server.storage.datadir import read_live_servers
 
     candidates = [
         f"http://{e['host']}:{e['port']}" for e in read_live_servers(root)
         if e.get("host") and isinstance(e.get("port"), int)
     ]
-    holder = DataDir(root).read_lock() or {}
-    if holder.get("mode") in ("server", "ui") and holder.get("host") and isinstance(holder.get("port"), int):
-        from .local import _holder_is_live
-
-        if _holder_is_live(holder):
-            candidates.append(f"http://{holder['host']}:{holder['port']}")
+    holder = lease_mod.read_lease(root)
+    if holder and holder.get("url") and lease_mod.is_live(holder):
+        candidates.append(lease_mod.server_url(holder))
     for url in dict.fromkeys(candidates):
         try:
             with httpx.Client(base_url=url, timeout=2.0) as c:

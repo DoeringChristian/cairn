@@ -11,6 +11,7 @@ import pytest
 
 import cairn
 from cairn.sdk.handlers.custom import CustomHandler
+from tests.conftest import ingest_repo
 
 QUIET = dict(capture_source=False, capture_stdout=False, capture_env=False, capture_system_metrics=False)
 
@@ -147,6 +148,7 @@ def test_catalogue_reports_the_kind(tmp_path):
         run.track([cairn.Data([1], kind="g/x"), cairn.Data([2], kind="g/x")], "gal", 0)
         run.track(cairn.Tensor(np.ones(2)), "t", 0)
         run.track(0.5, "loss", 0)
+    ingest_repo(repo)
     with TestClient(create_app(data_dir=repo, background_tasks=False)) as client:
         seqs = {s["name"]: s for s in client.get(f"/api/runs/{run.id}/sequences").json()["sequences"]}
         assert seqs["guide"]["object_type"] == "custom"

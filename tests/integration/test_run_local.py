@@ -1,6 +1,7 @@
 """End-to-end Run tests in LOCAL mode — no server involved.
 
-The SDK writes straight to ./.cairn/cairn.db via LocalTransport.
+The SDK appends to the run's log in ./.cairn/wals/ (LocalTransport); the
+tests ingest it the way a server or Reader does before inspecting the DB.
 """
 
 from __future__ import annotations
@@ -12,8 +13,9 @@ from PIL import Image as PILImage
 
 import cairn
 from cairn.server.storage.blobs import BlobStore
-from cairn.server.storage.datadir import DataDir, RepoLockedError
+from cairn.server.storage.datadir import DataDir
 from cairn.server.storage.db import Database
+from tests.conftest import ingest_repo
 
 
 @pytest.fixture(autouse=True)
@@ -26,8 +28,8 @@ def _reset_capture_state():
 
 
 def _inspect(repo: Path):
-    """Open the repo read-only-ish to verify what was written, after the Run is closed."""
-    # Repo must be unlocked at this point.
+    """Ingest the repo's logs, then open it to verify what was written."""
+    ingest_repo(repo)
     db = Database.open(DataDir(repo).db_path)
     blobs = BlobStore(DataDir(repo).artifacts_dir)
     return db, blobs
@@ -92,7 +94,7 @@ def test_local_run_full_lifecycle(tmp_path):
         db.close()
 
 
-def test_local_run_releases_lock_on_finish(tmp_path):
+def test_local_runs_one_after_another(tmp_path):
     repo = tmp_path / ".cairn"
     with cairn.Run(
         project="x", repo=repo,
@@ -100,7 +102,6 @@ def test_local_run_releases_lock_on_finish(tmp_path):
         capture_env=False, capture_system_metrics=False,
     ):
         pass
-    # Lock file should be gone, and a fresh run can be started.
     with cairn.Run(
         project="x", repo=repo,
         capture_source=False, capture_stdout=False,
@@ -117,9 +118,8 @@ def test_second_run_while_first_active_raises(tmp_path):
         capture_env=False, capture_system_metrics=False,
     )
     try:
-        # Note: nested-run guard in stdout_capture triggers first even before
-        # lock contention would. Either error is acceptable for the user.
-        with pytest.raises((RepoLockedError, RuntimeError)):
+        # The nested-run guard (one active run per process).
+        with pytest.raises(RuntimeError, match="Nested"):
             cairn.Run(
                 project="x", repo=repo,
                 capture_source=False, capture_stdout=False,

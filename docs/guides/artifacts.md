@@ -149,9 +149,8 @@ model.load_state_dict(ckpt.get())
 The reference is resolved **now**, and the exact version (not the alias) is recorded as an input of
 the run, with a `role` (default `"input"`). Using the same version again records nothing new.
 `use_artifact` returns the `ArtifactVersion`; call `.get()` for a logged object or `.download()`
-for files. It is not available in
-[WAL mode](../getting-started.md#wal-mode-many-writers-on-a-shared-filesystem), which cannot
-answer immediately.
+for files. On a local repo it first catches up on pending run logs (yours included), so a
+version another run logged before it finished is found.
 
 ## Reading a version: `cairn.ArtifactVersion`
 
@@ -197,12 +196,21 @@ cairn.log_artifact("model.onnx", "exported", type="model", project="cifar10",
                    aliases=["production"])
 ```
 
-## WAL mode
+## Pending versions on a local repo
 
-In [WAL mode](../getting-started.md#wal-mode-many-writers-on-a-shared-filesystem) the version
-number is decided when the repo ingests the log, so `log_artifact` returns a **pending**
-`ArtifactVersion`: `version` is None and the read methods raise until it is ingested. Read it back
-later with `cairn.Reader().artifact(...)`.
+A run on a [local repo](../getting-started.md#local-mode-default) only logs the new version; its
+number (and `latest`) is assigned when the repo ingests the run's log. So `log_artifact` returns a
+**pending** `ArtifactVersion` at once: `version` is None and the read methods raise. `wait()` blocks
+until it is registered (within ~2 seconds under a running `cairn ui`/`cairn server`; without one
+it catches up itself) and fills in `version`, `aliases` and the rest:
+
+```python
+v = run.log_artifact(model.state_dict(), "ckpt").wait()
+print(v.ref)          # ckpt:v3
+```
+
+`wait(timeout=...)` raises `TimeoutError` when it takes longer. Against a server the version is
+registered at once and `wait()` returns immediately.
 
 ## Lineage
 

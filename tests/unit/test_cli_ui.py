@@ -223,7 +223,7 @@ def test_cairn_ui_errors_when_server_running(fresh_repo: Path):
         )
         assert r.returncode != 0
         combined = (r.stdout or "") + (r.stderr or "")
-        assert "already running" in combined or "in use" in combined
+        assert "already served" in combined
     finally:
         server_proc.send_signal(signal.SIGINT)
         server_proc.wait(timeout=10)

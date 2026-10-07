@@ -2,9 +2,9 @@
 
 Uses multiprocessing.Pool(processes=4) with pool.starmap to run 4 training
 configurations in parallel.  Each worker creates its own
-``cairn.Run(local_wal=True)`` against a shared local .cairn repo, so it appends
-to its own WAL file rather than the shared database.  After the pool finishes,
-the WALs are ingested and the runs are verified through cairn.Reader.
+``cairn.Run`` against a shared local .cairn repo, which appends to its own
+run log rather than the shared database.  After the pool finishes, the runs
+are verified through cairn.Reader (which ingests their logs first).
 
 Usage::
 
@@ -39,9 +39,6 @@ def train(repo_path_str: str, config: dict) -> str:
         capture_stdout=False,
         capture_env=False,
         capture_system_metrics=False,
-        # Append to a per-run WAL file instead of the shared SQLite DB; the
-        # parent ingests every worker's WAL once they are done.
-        local_wal=True,
     )
     run.config({"hparams": {
         "lr": config["lr"],
@@ -85,17 +82,7 @@ def main() -> None:
     for cfg, rid in zip(configs, run_ids):
         print(f"  {cfg['name']} finished  (run_id={rid})")
 
-    # --- Ingest WALs and verify -------------------------------------------
-    from cairn.server.storage.datadir import DataDir
-    from cairn.server.storage.db import Database
-    from cairn.server.storage.blobs import BlobStore
-    from cairn.server.wal_ingest import ingest_all
-
-    dd = DataDir(repo_path)
-    db = Database.open(dd.db_path)
-    blobs = BlobStore(dd.artifacts_dir)
-    ingest_all(dd, db, blobs)
-    db.close()
+    # --- Verify (the Reader ingests the run logs first) ---------------
 
     from cairn.sdk.reader import Reader
 

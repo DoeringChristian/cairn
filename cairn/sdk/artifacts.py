@@ -37,6 +37,7 @@ import os
 import secrets
 import shutil
 import tempfile
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path, PurePosixPath
@@ -496,9 +497,11 @@ class ArtifactVersion:
     ``cairn.log_artifact``, ``Reader.artifact``, ``Reader.artifact_versions``
     and the lineage methods. Not constructed by hand.
 
-    In WAL mode (``Run(local_wal=True)``) ``log_artifact`` returns a PENDING
-    version: ``version`` is None until the repo ingests it, and the read and
-    lineage methods raise ``RuntimeError``.
+    On a local repo ``log_artifact`` returns a PENDING version: the run only
+    logs it, and the version number (and ``latest``) is assigned when the
+    repo ingests the run's log. Until then ``version`` is None and the read
+    and lineage methods raise ``RuntimeError``; ``wait()`` blocks until it
+    is assigned. Against a server the version is registered at once.
     """
 
     def __init__(self, info: dict[str, Any], backend: Callable[[], Any] | Any | None) -> None:
@@ -513,19 +516,48 @@ class ArtifactVersion:
     def _backend(self) -> Any:
         if self.pending:
             raise RuntimeError(
-                f"artifact version {self.name!r} is pending (logged in WAL mode); it can be "
-                "read once the repo has ingested it: cairn.Reader().artifact(...)"
+                f"artifact version {self.name!r} is pending (its run's log is not ingested "
+                "yet); call .wait() first"
             )
+        return self._resolved_backend()
+
+    def _resolved_backend(self) -> Any:
         if self._backend_obj is None:
             src = self._backend_src
             self._backend_obj = src() if callable(src) else src
         return self._backend_obj
 
+    def wait(self, timeout: float | None = None) -> ArtifactVersion:
+        """Block until the repo has registered this version (its run's log
+        is ingested: within ~2 s under a running ``cairn ui``/``cairn
+        server``, else this process catches up itself), then fill in
+        ``version``, ``aliases`` and the rest. Returns at once for a version
+        that is not pending. Returns ``self``.
+
+        Raises:
+            TimeoutError: Still not registered after ``timeout`` seconds.
+        """
+        if not self.pending:
+            return self
+        deadline = None if timeout is None else time.monotonic() + timeout
+        backend = self._resolved_backend()
+        while True:
+            info = backend.artifact_version(self.id)
+            if info is not None:
+                self._info = info
+                self._files = None
+                return self
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"artifact version {self.name!r} was not registered within {timeout} s"
+                )
+            time.sleep(0.1)
+
     # ---- identity ----
 
     @property
     def pending(self) -> bool:
-        """True for a WAL-mode version not ingested yet."""
+        """True for a version logged by a local run and not ingested yet."""
         return self._info.get("version") is None
 
     @property

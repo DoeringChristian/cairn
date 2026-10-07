@@ -1,4 +1,4 @@
-"""LocalTransport full lifecycle + edge cases."""
+"""LocalTransport full lifecycle: each op logged, applied by the ingester."""
 
 from __future__ import annotations
 
@@ -13,9 +13,41 @@ def _iso(i: int = 0) -> str:
     return f"2026-01-01T00:00:{i:02d}Z"
 
 
+class _Logged:
+    """A run's LocalTransport plus ``db``: the repo DB, caught up on the
+    log at every access (what the lease holder does in the background)."""
+
+    def __init__(self, repo):
+        from cairn.server.storage.blobs import BlobStore
+        from cairn.server.storage.db import Database
+
+        self.t = LocalTransport(repo)
+        self._db = Database.open(self.t.data_dir.db_path)
+        self._blobs = BlobStore(self.t.data_dir.artifacts_dir)
+
+    @property
+    def db(self):
+        from cairn.server.wal_ingest import ingest_all
+
+        ingest_all(self.t.data_dir, self._db, self._blobs)
+        return self._db
+
+    def create_run(self, body):
+        import secrets
+
+        return self.t.create_run({"run_id": secrets.token_hex(16), **body})
+
+    def __getattr__(self, name):
+        return getattr(self.t, name)
+
+    def close(self):
+        self.t.close()
+        self._db.close()
+
+
 @pytest.fixture
 def transport(tmp_path):
-    t = LocalTransport(tmp_path / ".cairn")
+    t = _Logged(tmp_path / ".cairn")
     yield t
     t.close()
 
@@ -64,6 +96,7 @@ def test_batch_and_sequence_readback(transport):
 
 
 def test_upload_artifact_is_idempotent(transport):
+    transport.create_run({"project": "p"})
     digest1 = transport.upload_artifact(b"xyz", "application/octet-stream", {"k": 1})
     digest2 = transport.upload_artifact(b"xyz", "application/octet-stream", {"k": 1})
     assert digest1 == digest2 == hashlib.sha256(b"xyz").hexdigest()
@@ -117,94 +150,18 @@ def test_drain_spill_is_noop(transport):
     assert transport.drain_spill() == 0
 
 
-def test_concurrent_transports_on_same_repo(tmp_path):
-    """SQLite WAL allows multiple concurrent connections."""
-    t1 = LocalTransport(tmp_path / ".cairn")
+def test_concurrent_writers_on_same_repo(tmp_path):
+    """Runs never contend: each appends to its own log."""
+    t1 = _Logged(tmp_path / ".cairn")
     t2 = LocalTransport(tmp_path / ".cairn")
     try:
-        # Both can create runs
         r1 = t1.create_run({"project": "p"})
-        r2 = t2.create_run({"project": "p"})
-        assert r1["run_id"] != r2["run_id"]
-        # Both can write batches
-        t1.post_batch(r1["run_id"], [{"name": "loss", "step": 0, "scalar_value": 1.0,
-                                       "wall_time": "2025-01-01T00:00:00", "object_type": "scalar"}])
-        t2.post_batch(r2["run_id"], [{"name": "loss", "step": 0, "scalar_value": 2.0,
-                                       "wall_time": "2025-01-01T00:00:00", "object_type": "scalar"}])
+        r2 = t2.create_run({"project": "p", "run_id": "b" * 32})
+        point = {"name": "loss", "step": 0, "scalar_value": 1.0,
+                 "wall_time": "2025-01-01T00:00:00", "object_type": "scalar"}
+        t1.post_batch(r1["run_id"], [point])
+        t2.post_batch(r2["run_id"], [point])
+        assert t1.db.read_one("SELECT COUNT(*) FROM sequences") == (2,)
     finally:
         t1.close()
         t2.close()
-
-
-def test_raises_served_by_server_holder(tmp_path):
-    """A server holding the lock triggers _RepoServedByOtherError so SDK
-    can auto-switch to HTTP mode.
-    """
-    import json
-    import os
-
-    from cairn.sdk.local import _RepoServedByOtherError
-    from cairn.server.storage.datadir import DataDir
-
-    dd = DataDir(tmp_path / ".cairn")
-    dd.lock_path.write_text(
-        json.dumps(
-            {
-                "pid": os.getpid(),
-                "mode": "server",
-                "host": "127.0.0.1",
-                "port": 9999,
-                "started_at": "2026-01-01T00:00:00Z",
-            }
-        )
-    )
-    with pytest.raises(_RepoServedByOtherError) as exc:
-        LocalTransport(tmp_path / ".cairn")
-    assert exc.value.holder["mode"] == "server"
-
-
-def test_ui_holder_redirects_sdk_to_http(tmp_path):
-    """A live UI holder makes LocalTransport raise _RepoServedByOtherError —
-    Run catches it and UPGRADES to the UI's HTTP endpoint (the
-    old direct-DB-beside-a-live-UI mode is retired: one writer, one path)."""
-    import json
-    import os
-
-    import pytest as _pytest
-
-    from cairn.sdk.local import _RepoServedByOtherError
-    from cairn.server.storage.datadir import DataDir
-
-    dd = DataDir(tmp_path / ".cairn")
-    dd.lock_path.write_text(
-        json.dumps(
-            {
-                "pid": os.getpid(),
-                "mode": "ui",
-                "host": "127.0.0.1",
-                "port": 9999,
-                "started_at": "2026-01-01T00:00:00Z",
-            }
-        )
-    )
-    with _pytest.raises(_RepoServedByOtherError):
-        LocalTransport(tmp_path / ".cairn")
-
-def test_lock_released_if_db_open_fails(tmp_path, monkeypatch):
-    """If Database.open raises, we must not leak the lock."""
-    from cairn.sdk import local as local_mod
-
-    class Boom:
-        @classmethod
-        def open(cls, path):
-            raise RuntimeError("boom")
-
-    monkeypatch.setattr(local_mod, "Database", Boom)
-    with pytest.raises(RuntimeError, match="boom"):
-        LocalTransport(tmp_path / ".cairn")
-    # Should be possible to acquire again — lock was released in the except.
-    from cairn.server.storage.datadir import DataDir
-
-    dd = DataDir(tmp_path / ".cairn")
-    dd.acquire_lock("sdk")
-    dd.release_lock()

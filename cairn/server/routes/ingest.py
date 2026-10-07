@@ -7,13 +7,16 @@ lives there so it can be reused by the local-mode SDK transport.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
+import threading
 from typing import Any, Callable, TypeVar
 
 import anyio
 import anyio.to_thread
 from fastapi import (
     APIRouter,
+    BackgroundTasks,
     HTTPException,
     Request,
     Response,
@@ -245,10 +248,32 @@ async def post_logs(run_id: str, request: Request) -> dict[str, Any]:
 
 @router.head("/artifacts/{digest}")
 def head_artifact(digest: str, request: Request) -> Response:
+    """200 if the blob is stored. A client that gets 200 skips the upload and
+    names the hash later, so this refreshes the blob's mtime like a ``put``:
+    garbage collection spares it for its grace period."""
     blobs = get_blobs(request)
-    if blobs.exists(digest):
+    if blobs.touch(digest):
         return Response(status_code=200)
     return Response(status_code=404)
+
+
+@router.post("/ingest/pending")
+async def ingest_pending(request: Request) -> dict[str, Any]:
+    """Apply every pending run log now (``wal_ingest.ingest_all``), for a
+    local run that needs an answer that depends on its own log (resume,
+    ``use_artifact``). Only the lease-holding app ingests."""
+    from ..wal_ingest import has_pending, ingest_all
+
+    lease = getattr(request.app.state, "lease", None)
+    if lease is None:
+        raise HTTPException(status_code=409, detail="this app does not ingest run logs")
+    db = get_db(request)
+    dd = get_data_dir(request)
+    blobs = get_blobs(request)
+    ops = await anyio.to_thread.run_sync(
+        lambda: ingest_all(dd, db, blobs) if has_pending(dd, db) else 0,
+    )
+    return {"ops": ops}
 
 
 #: Largest permitted multipart-part size. Starlette's default is 1 MiB,
@@ -508,12 +533,52 @@ def unarchive_run(run_id: str, request: Request) -> dict[str, Any]:
 
 
 @router.delete("/runs/{run_id}")
-def delete_run(run_id: str, request: Request) -> dict[str, Any]:
-    """Delete a run. Shared artifact blobs are not reference-counted."""
+def delete_run(run_id: str, request: Request, background: BackgroundTasks) -> dict[str, Any]:
+    """Delete a run. Its blobs may be shared: the server collects the ones
+    nothing references any more in the background (``gc.collect``)."""
     db = get_db(request)
     dd = get_data_dir(request)
     try:
         ingest_ops.delete_run(db, dd, run_id)
     except ingest_ops.RunNotFound as exc:
         raise _run_not_found(exc) from None
+    if getattr(request.app.state, "lease", None) is not None:
+        background.add_task(_collect_garbage, request.app)
     return {"deleted": run_id}
+
+
+_gc_lock = threading.Lock()
+_gc_again = threading.Event()
+
+
+def _collect_garbage(app: Any) -> None:
+    """Background GC after run deletions: one at a time; deletions during a
+    collection make it run once more."""
+    from .. import gc
+
+    _gc_again.set()
+    if not _gc_lock.acquire(blocking=False):
+        return
+    try:
+        while _gc_again.is_set():
+            _gc_again.clear()
+            lease = getattr(app.state, "lease", None)
+            if lease is None or not lease.valid():
+                return
+            gc.collect(app.state.db, app.state.data_dir, app.state.blobs)
+    except Exception:
+        logging.getLogger(__name__).exception("garbage collection failed")
+    finally:
+        _gc_lock.release()
+
+
+@router.post("/gc")
+async def collect_garbage(request: Request, dry_run: bool = False) -> dict[str, Any]:
+    """Delete blobs nothing references that are older than a day (``cairn gc``).
+    Returns the count and bytes freed (what would be, with ``dry_run``)."""
+    from .. import gc
+
+    db = get_db(request)
+    dd = get_data_dir(request)
+    blobs = get_blobs(request)
+    return await anyio.to_thread.run_sync(lambda: gc.collect(db, dd, blobs, dry_run=dry_run))

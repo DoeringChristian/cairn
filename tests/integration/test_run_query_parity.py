@@ -8,7 +8,7 @@ from __future__ import annotations
 import pytest
 
 import cairn
-from cairn.sdk.local import LocalTransport
+from cairn.sdk.local import RepoTransport
 from cairn.sdk.transport import Transport
 from cairn.server import ingest_ops
 from cairn.server.query_resolver import parse_query_params, resolve
@@ -59,8 +59,8 @@ def backend(request, tmp_path_factory):
     tmp = tmp_path_factory.mktemp(request.param)
     if request.param == "local":
         repo = tmp / ".cairn"
-        t = LocalTransport(repo)
-        _seed(t, lambda rid: ingest_ops.set_archived(t.db, rid, True))
+        t = RepoTransport(repo)
+        _seed(t, lambda rid: ingest_ops.set_archived(t.database(), rid, True))
         t.close()
         db = Database.open(repo / "cairn.db")
         reader = cairn.Reader(repo)

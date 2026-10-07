@@ -573,6 +573,10 @@ class Transport:
         )
         self._registry_request("DELETE", f"/api/artifact-families/{fam['id']}")
 
+    def ingest_pending(self) -> int:
+        """Have the server apply every pending run log of its repo now."""
+        return int(self._request("POST", "/api/ingest/pending").json().get("ops", 0))
+
     def download_artifact_bytes(self, digest: str) -> bytes:
         """Download raw artifact bytes by hash."""
         resp = self._client.get(f"/api/artifacts/{digest}")

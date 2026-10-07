@@ -23,7 +23,7 @@ cairn.Reader("runs.zip")                  # a run archive exported from the UI
 
 | Target | How it reads |
 |---|---|
-| Local `.cairn/` directory | Opens the SQLite database directly. It first ingests any pending [WAL files](server.md#wal-mode), so runs logged with `local_wal=True` show up without a running server. |
+| Local `.cairn/` directory | Opens the SQLite database directly. Without a server on the repo it first ingests the pending [run logs](server.md#local-repos-run-logs-and-the-ingest-lease) (taking the repo's ingest lease for a moment), so runs show up without a running server. With a `cairn ui`/`cairn server` on the repo it only reads, at most ~2 seconds behind. |
 | Server | Reads over HTTP. Sends `CAIRN_TOKEN`, else the token `cairn login` saved for that server, if there is one. Downloaded artifact bytes are cached by hash (see `cache` and `cache_dir` below). |
 | `.zip` archive | Unpacks the archive into a temporary repo, which is deleted by `close()`. Runs read this way cannot be edited. |
 

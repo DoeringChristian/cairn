@@ -6,9 +6,9 @@ against a shared .cairn repo.
 
 **On a real Slurm cluster**: change ``cluster="local"`` to ``cluster="slurm"``
 and point ``repo=`` to an NFS-mounted directory visible to all nodes. Each
-Slurm job writes its own WAL file — no SQLite contention even with hundreds
+Slurm job writes its own run log — no SQLite contention even with hundreds
 of concurrent jobs.  Run ``cairn server --repo <nfs path>/.cairn --ui`` on the
-login/head node to ingest WALs and serve the UI (ingest on :4300, UI on :4301).
+login/head node to ingest the logs and serve the UI (ingest on :4300, UI on :4301).
 
 If your cluster does NOT have a shared filesystem, use Cairn's HTTP transport
 instead — point jobs at the server's ingest port (default 4300; auth is on by
@@ -108,17 +108,7 @@ def main() -> None:
         run_ids.append(rid)
         print(f"  {cfg['name']} finished  (run_id={rid})")
 
-    # --- Ingest WALs and verify -------------------------------------------
-    from cairn.server.storage.datadir import DataDir
-    from cairn.server.storage.db import Database
-    from cairn.server.storage.blobs import BlobStore
-    from cairn.server.wal_ingest import ingest_all
-
-    dd = DataDir(repo_path)
-    db = Database.open(dd.db_path)
-    blobs = BlobStore(dd.artifacts_dir)
-    ingest_all(dd, db, blobs)
-    db.close()
+    # --- Verify (the Reader ingests the run logs first) ---------------
 
     from cairn.sdk.reader import Reader
 

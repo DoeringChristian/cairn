@@ -259,9 +259,10 @@ def test_matches_point_scans(tmp_path, seed):
 
 
 class _DD:
-    """The two DataDir paths delete_run touches."""
+    """The DataDir paths delete_run touches."""
 
     def __init__(self, root):
+        self.root = root
         self.logs_dir = root / "logs"
         self.sources_dir = root / "sources"
 

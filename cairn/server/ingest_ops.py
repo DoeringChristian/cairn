@@ -249,21 +249,27 @@ def insert_logs(
         for line in lines
     ]
     db.executemany("INSERT OR IGNORE INTO log_lines VALUES (?, ?, ?, ?, ?)", rows)
-    # Append to on-disk log files, preserving ANSI if provided.
-    log_dir = data_dir.run_log_dir(run_id)
-    combined_path = log_dir / "combined.log"
-    stream_paths = {
-        "stdout": log_dir / "stdout.log",
-        "stderr": log_dir / "stderr.log",
-    }
-    with combined_path.open("a", encoding="utf-8") as comb_fh:
-        for line in lines:
-            raw = line.get("content_raw") or line["content"]
-            stream_path = stream_paths.get(line["stream"])
-            if stream_path is not None:
-                with stream_path.open("a", encoding="utf-8") as fh:
-                    fh.write(raw + "\n")
-            comb_fh.write(f"[{line['stream']}] {raw}\n")
+
+    def append_files() -> None:
+        # Append to on-disk log files, preserving ANSI if provided.
+        log_dir = data_dir.run_log_dir(run_id)
+        combined_path = log_dir / "combined.log"
+        stream_paths = {
+            "stdout": log_dir / "stdout.log",
+            "stderr": log_dir / "stderr.log",
+        }
+        with combined_path.open("a", encoding="utf-8") as comb_fh:
+            for line in lines:
+                raw = line.get("content_raw") or line["content"]
+                stream_path = stream_paths.get(line["stream"])
+                if stream_path is not None:
+                    with stream_path.open("a", encoding="utf-8") as fh:
+                        fh.write(raw + "\n")
+                comb_fh.write(f"[{line['stream']}] {raw}\n")
+
+    # Only once the rows are committed: a log batch whose transaction rolls
+    # back is applied again, and must not append its lines twice.
+    db.after_commit(append_files)
     return len(rows)
 
 
@@ -322,7 +328,7 @@ def finish_run(
     )
     # Alert only on a real transition, so a WAL replayed a second time (or a
     # repeated finish) doesn't alert twice.
-    if run["status"] == "running" and status in _ALERT_ON_STATUS:
+    if run["status"] in ("running", "crashed") and status in _ALERT_ON_STATUS:
         name = run.get("display_name") or run_id[:8]
         insert_alert(
             db, run_id,
@@ -411,11 +417,13 @@ def set_archived(db: Database, run_id: str, archived: bool) -> str | None:
 
 
 def heartbeat(db: Database, run_id: str) -> str | None:
-    """Update the heartbeat timestamp for a running run; return its
-    ``stop_requested`` timestamp (None unless someone asked it to stop)."""
+    """Update the heartbeat timestamp for a running run (a ``crashed`` one is
+    running again); return its ``stop_requested`` timestamp (None unless
+    someone asked it to stop)."""
     with db.transaction() as con:
         row = con.execute(
-            "UPDATE runs SET last_heartbeat = ? WHERE id = ? AND status = 'running' "
+            "UPDATE runs SET last_heartbeat = ?, status = 'running', ended_at = NULL "
+            "WHERE id = ? AND status IN ('running', 'crashed') "
             "RETURNING stop_requested",
             [utc_now().isoformat(), run_id],
         ).fetchone()
@@ -600,6 +608,10 @@ def delete_run(db: Database, data_dir: DataDir, run_id: str) -> None:
     # Trials and forks outlive the run; they just lose the link.
     db.write("UPDATE sweep_trials SET run_id = NULL WHERE run_id = ?", [run_id])
     db.write("DELETE FROM runs WHERE id = ?", [run_id])
+    # The run's log, if not ingested to its end yet: its later records have
+    # no run to go to (a writer still appending writes to the unlinked file).
+    (data_dir.root / "wals" / f"{run_id}.wal.jsonl").unlink(missing_ok=True)
+    db.write("DELETE FROM wal_progress WHERE run_id = ?", [run_id])
     for d in (data_dir.logs_dir / run_id, data_dir.sources_dir / run_id):
         if d.exists():
             shutil.rmtree(d, ignore_errors=True)

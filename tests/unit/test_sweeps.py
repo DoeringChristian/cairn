@@ -328,15 +328,6 @@ def test_local_direct_transport(tmp_path):
         t.close()
 
 
-def test_local_wal_transport_refuses_with_a_hint(tmp_path):
-    t = LocalTransport(tmp_path / ".cairn", use_wal=True)
-    try:
-        with pytest.raises(RuntimeError, match="server or a direct-mode repo"):
-            t.next_trial("x")
-    finally:
-        t.close()
-
-
 # ---- SDK --------------------------------------------------------------------------------
 
 

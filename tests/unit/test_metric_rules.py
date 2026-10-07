@@ -117,15 +117,14 @@ def test_sdk_over_http(client):
     assert values["val.f1"] == 0.5
 
 
-@pytest.mark.parametrize("local_wal", [False, True])
-def test_sdk_local(tmp_path, local_wal):
+def test_sdk_local(tmp_path):
     repo = tmp_path / ".cairn"
-    with cairn.Run(project="p", repo=repo, local_wal=local_wal, **QUIET) as run:
+    with cairn.Run(project="p", repo=repo, **QUIET) as run:
         assert _scenario(run) == SENT
     dd = DataDir(repo)
     db = Database.open(dd.db_path)
     try:
-        ingest_all(dd, db, BlobStore(dd.artifacts_dir))  # replays the WAL
+        ingest_all(dd, db, BlobStore(dd.artifacts_dir))  # applies the run's log
         assert _rules(db, run.id) == EXPECTED
     finally:
         db.close()

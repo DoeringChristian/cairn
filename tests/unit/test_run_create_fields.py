@@ -7,8 +7,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-import pytest
-
 import cairn
 from cairn.sdk.local import LocalTransport
 from cairn.server.storage.blobs import BlobStore
@@ -102,19 +100,9 @@ def test_list_include_params(client):
     assert "params" not in client.get("/api/runs").json()["runs"][0]
 
 
-def test_local_direct(tmp_path):
-    t = LocalTransport(tmp_path / ".cairn")
-    try:
-        rid = t.create_run(FIELDS)["run_id"]
-        t.finish_run(rid, "completed", ended_at=ENDED)
-        _check_row(t.read_columns("SELECT * FROM runs WHERE id = ?", [rid])[0], ended=True)
-    finally:
-        t.close()
-
-
-def test_local_wal_replayed(tmp_path):
+def test_local_log_replayed(tmp_path):
     repo = tmp_path / ".cairn"
-    t = LocalTransport(repo, use_wal=True)
+    t = LocalTransport(repo)
     rid = t.create_run({**FIELDS, "run_id": "f" * 32})["run_id"]
     t.finish_run(rid, "completed", ended_at=ENDED)
     t.close()
@@ -128,11 +116,11 @@ def test_local_wal_replayed(tmp_path):
         db.close()
 
 
-def test_local_wal_dates_the_run_by_the_client_clock(tmp_path):
-    """Without an explicit created_at the WAL still carries the client's
-    creation time, and replay uses it instead of the (later) ingest time."""
+def test_local_log_dates_the_run_by_the_client_clock(tmp_path):
+    """Without an explicit created_at the log still carries the client's
+    creation time, and ingestion uses it instead of the (later) ingest time."""
     repo = tmp_path / ".cairn"
-    t = LocalTransport(repo, use_wal=True)
+    t = LocalTransport(repo)
     before = datetime.now(timezone.utc)
     rid = t.create_run({"project": "p", "run_id": "e" * 32})["run_id"]
     t.close()
@@ -146,11 +134,10 @@ def test_local_wal_dates_the_run_by_the_client_clock(tmp_path):
     assert before <= _ts(created) <= datetime.now(timezone.utc)
 
 
-@pytest.mark.parametrize("local_wal", [False, True])
-def test_sdk_run_kwargs(tmp_path, local_wal):
+def test_sdk_run_kwargs(tmp_path):
     repo = tmp_path / ".cairn"
     with cairn.Run(
-        project="p", repo=repo, local_wal=local_wal,
+        project="p", repo=repo,
         group="ablation-A", job_type="train", sweep_id="sw1",
         parent_run_id="parent01", fork_step=7,
         created_at=datetime.fromisoformat(CREATED),

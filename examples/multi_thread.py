@@ -6,8 +6,8 @@ per process (to prevent interleaved stdout capture).  Each thread runs its
 training loop and finishes before the next is started.  All runs write to a
 shared local .cairn repo.
 
-After all threads complete, WALs are ingested and runs are verified through
-cairn.Reader.
+After all threads complete, the runs are verified through cairn.Reader (which
+ingests their logs first).
 
 Usage::
 
@@ -79,17 +79,7 @@ def main() -> None:
     for name, rid in results.items():
         print(f"  {name} finished  (run_id={rid})")
 
-    # --- Ingest WALs and verify -------------------------------------------
-    from cairn.server.storage.datadir import DataDir
-    from cairn.server.storage.db import Database
-    from cairn.server.storage.blobs import BlobStore
-    from cairn.server.wal_ingest import ingest_all
-
-    dd = DataDir(repo_path)
-    db = Database.open(dd.db_path)
-    blobs = BlobStore(dd.artifacts_dir)
-    ingest_all(dd, db, blobs)
-    db.close()
+    # --- Verify (the Reader ingests the run logs first) ---------------
 
     from cairn.sdk.reader import Reader
 
