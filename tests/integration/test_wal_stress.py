@@ -225,9 +225,9 @@ def test_server_restart_mid_run_does_not_reread(tmp_path, monkeypatch):
     applied = []
     real = wal_ingest._apply_record
 
-    def counting(db, data_dir, blobs, record, run_id):
+    def counting(db, data_dir, blobs, record, run_id, **kw):
         applied.append(record["seq"])
-        return real(db, data_dir, blobs, record, run_id)
+        return real(db, data_dir, blobs, record, run_id, **kw)
 
     monkeypatch.setattr(wal_ingest, "_apply_record", counting)
     repo = tmp_path / ".cairn"

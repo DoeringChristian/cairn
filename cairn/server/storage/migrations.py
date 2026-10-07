@@ -126,7 +126,10 @@ SCHEMA_SQL: list[str] = [
         stream        TEXT NOT NULL,
         wall_time     TEXT NOT NULL,
         line_no       INTEGER NOT NULL,
-        content       TEXT NOT NULL
+        content       TEXT NOT NULL,
+        -- The label of the process that printed the line (several processes
+        -- can log into one run); NULL for an unlabelled one.
+        label         TEXT
     )
     """,
     # A derived index over sequences' scalar points (count, sum, min, max,
@@ -340,14 +343,18 @@ SCHEMA_SQL: list[str] = [
     # just past the last complete line ingested, committed in the same
     # transaction as that line's ops (exactly once, restart-safe; see
     # wal_ingest.py). ``path`` is the file name inside ``wals/``.
-    # ``finished`` = the last record applied was the run's ``finish``.
+    # ``finished`` = the last record applied was the run's ``finish`` (a
+    # worker's log: its ``detach``).
     """
     CREATE TABLE IF NOT EXISTS wal_progress (
         path          TEXT PRIMARY KEY,
         run_id        TEXT NOT NULL,
         "offset"      INTEGER NOT NULL,
         finished      INTEGER NOT NULL DEFAULT 0,
-        updated_at    TEXT NOT NULL
+        updated_at    TEXT NOT NULL,
+        -- 1: a worker's log (``cairn.Run(primary=False)``), which never
+        -- changes its run's status.
+        worker        INTEGER NOT NULL DEFAULT 0
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_wal_progress_run ON wal_progress(run_id)",
@@ -622,6 +629,8 @@ def apply_migrations(con: sqlite3.Connection) -> int:
     for column, col_type in _ADDED_RUN_COLUMNS:
         _add_column_if_missing(con, "runs", column, col_type)
     _add_column_if_missing(con, "sequences", "metadata", "TEXT")
+    _add_column_if_missing(con, "log_lines", "label", "TEXT")
+    _add_column_if_missing(con, "wal_progress", "worker", "INTEGER NOT NULL DEFAULT 0")
     _add_column_if_missing(con, "artifact_versions", "tags", "TEXT")
     _add_column_if_missing(con, "artifact_families", "last_version", "INTEGER NOT NULL DEFAULT 0")
     # Indexes on added columns run after the ALTERs: in SCHEMA_SQL they would

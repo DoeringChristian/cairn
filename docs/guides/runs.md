@@ -30,6 +30,8 @@ a keyword:
 | `repo` | resolved | Where to log. See [how cairn picks a destination](../getting-started.md#how-cairn-picks-a-destination). |
 | `mode` | resolved | `"disabled"` makes the run a no-op. See [disabled runs](#disabled-runs). |
 | `resume`, `rewind_to`, `fork_from` | `None` | [Continue or branch an existing run](#resume-rewind-and-fork). |
+| `run_id` | `CAIRN_RUN_ID`, else fresh | The new run's ID. See [several processes, one run](#several-processes-one-run). |
+| `label`, `primary` | `None`, `True` | This process's name within a shared run, and whether it creates the run or joins it. See [several processes, one run](#several-processes-one-run). |
 | `total_steps` | `None` | The steps the run will take; shown as [progress](#progress-and-eta). |
 | `stop_mode`, `on_stop` | `"interrupt"`, `None` | [Stopping from the UI](#stopping-a-run-from-the-ui). |
 | `capture_source`, `capture_stdout`, `capture_env`, `capture_system_metrics` | `True` | [Automatic capture](#system-metrics-logs-and-code). |
@@ -115,6 +117,120 @@ run = cairn.Run("cifar10", resume=ckpt["cairn_run"], rewind_to=ckpt["step"])
     On a local repo, resuming, rewinding or forking first catches up on the run's log (through
     the `cairn ui`/`cairn server` serving the repo, or by itself), so a run that just finished
     in another process can be continued at once.
+
+## Several processes, one run
+
+A distributed job (one process per GPU or node) can log into a single run, like wandb's
+"shared" mode. Every process gets the same run ID. One process, the **primary**, creates the
+run; the others are **workers** that join it with `primary=False` and a `label`:
+
+```python
+run = cairn.Run("llm", label="rank0")                          # primary: creates the run
+run = cairn.Run("llm", label=f"rank{rank}", primary=False)     # workers: join it
+run = cairn.attach(run_id, label="rank1")                      # the same as the line above
+```
+
+The ID comes from `run_id=` or the `CAIRN_RUN_ID` environment variable. Make one with
+`cairn.new_run_id()` (32 hex characters; a hand-picked ID may use `A-Z a-z 0-9 _ -`, up to 64
+characters). For the primary it is the ID of a new run: a run with that ID must not exist yet
+(continue an existing one with [`resume`](#resume-rewind-and-fork) as usual). Workers require an
+ID and a label.
+
+What each process may do:
+
+- **Everything a worker records lands in the run**: metrics and media, `config` and `summary`,
+  artifacts it logs or uses, alerts.
+- **Only the primary sets the status.** A worker's `finish()`, its exception or its exit only
+  detaches it; the run stays `running` until the primary finishes, then has the primary's
+  status (`completed`, `failed`, `killed`, `stopped`), whatever the workers do before or after.
+- **Only the primary keeps the run alive.** A run whose primary went silent becomes `crashed`
+  (or `killed`, over HTTP), however busy its workers are; a silent worker changes nothing.
+- **A stop request reaches every process**: `run.should_stop`, `on_stop` callbacks and
+  `stop_mode` work in workers as in the primary.
+- **Labels name the processes.** A labelled process's [system metrics](#system-metrics-logs-and-code)
+  are `system.<label>.*` (e.g. `system.rank1.gpu.0.util_percent`); an unlabelled primary keeps
+  `system.*`.
+  Each captured console line carries its process's label, and line numbers count per process.
+  Labels use `A-Z a-z 0-9 _ -` and must be unique among the run's live processes: on a local repo
+  a second live process with a taken label raises `ValueError` (checked with a file lock, so it
+  is reliable on one machine but not on every network filesystem); over HTTP they are not checked.
+- **Two processes logging the same series at the same step**: the point that is stored first
+  wins and the other is dropped. Give per-process metrics their own names (`rank1.loss`) and log
+  run-wide metrics from rank 0 only; synchronising them is up to your code.
+- Workers do not upload a source snapshot or record their environment: those are the primary's.
+  Integrations log from rank 0 only, as before.
+
+`label="auto"` takes the label and the role from the launcher's rank, read from the first of
+these variables that is set:
+
+| Variable | Set by |
+|---|---|
+| `RANK` | `torchrun`, `accelerate`, DeepSpeed |
+| `SLURM_PROCID` | SLURM (`srun`) |
+| `SKYPILOT_NODE_RANK` | SkyPilot |
+| `OMPI_COMM_WORLD_RANK` | Open MPI (`mpirun`) |
+| `PMI_RANK` | MPICH, Intel MPI |
+
+Rank 0 becomes the primary labelled `rank0`, rank N a worker labelled `rankN`. With none of them
+set, the process is an ordinary primary without a label. An explicit `primary=` still wins over
+the detected role.
+
+**Launch with `CAIRN_RUN_ID`.** Make the ID before launching and let every process read it:
+
+```bash
+export CAIRN_RUN_ID=$(python -c "import cairn; print(cairn.new_run_id())")
+srun python train.py        # or: torchrun --nproc-per-node 8 train.py
+```
+
+```python
+with cairn.Run("llm", label="auto") as run:     # rank 0 creates, the others join
+    for step in range(steps):
+        loss = train_step()
+        run.track(loss, f"rank{rank}.loss", step)
+        if rank == 0:
+            run.track(lr, "lr", step)
+```
+
+**Broadcast the ID with `torch.distributed`.** Rank 0 creates the run and sends its ID to the
+other ranks:
+
+```python
+import torch.distributed as dist
+
+ids = [None]
+if dist.get_rank() == 0:
+    run = cairn.Run("llm", label="rank0")
+    ids = [run.id]
+dist.broadcast_object_list(ids, src=0)
+if dist.get_rank() != 0:
+    run = cairn.attach(ids[0], label=f"rank{dist.get_rank()}")
+```
+
+**Add to a finished run from a later job.** An evaluation job can attach to a run that has
+already finished; its status stays what the primary left:
+
+```python
+with cairn.attach(train_run_id, label="eval") as run:
+    run.track(evaluate(model), "test.acc", last_step)
+    run.summary(test_fid=fid)
+```
+
+A worker may start before its primary. On a local repo it starts logging at once; its records
+wait until the primary's run exists, then apply in order. Over HTTP, and on a local repo when
+you leave out `project`, a worker waits up to two minutes for the run to appear, then raises
+`LookupError`.
+
+On a local repo every process writes its own log: `.cairn/wals/<run_id>.wal.jsonl` for an
+unlabelled process and `.cairn/wals/<run_id>~<label>.wal.jsonl` for a labelled one. A worker's
+log ends with a *detach* record instead of a finish, and is deleted once ingested.
+
+| wandb | cairn |
+|---|---|
+| `WANDB_RUN_ID` / `wandb.init(id=...)` | `CAIRN_RUN_ID` / `cairn.Run(run_id=...)` |
+| `Settings(mode="shared")` | nothing to set: every run can be shared |
+| `Settings(x_label="rank1")` | `label="rank1"` |
+| `Settings(x_primary=False, x_update_finish_state=False)` | `primary=False`, or `cairn.attach(run_id, label)` |
+| `Settings(x_primary=True)` | the default (`primary=True`) |
 
 ## Progress and ETA
 

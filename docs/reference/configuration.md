@@ -37,6 +37,7 @@ A token cannot be set through `configure`; use `CAIRN_TOKEN` or `cairn login`.
 | `CAIRN_SERVER` | SDK, `Reader`, CLI | A server URL, used when `CAIRN_REPO` is not set |
 | `CAIRN_TOKEN` | SDK, `Reader`, CLI, `cairn ui` proxy | The bearer token sent to every server; overrides the per-server tokens `cairn login` saves |
 | `CAIRN_MODE` | SDK | `enabled` or `disabled` |
+| `CAIRN_RUN_ID` | SDK | The ID of the run a `cairn.Run()` creates (or, with `primary=False`, joins) when `run_id=` is not passed: give every process of a distributed job the same one (see [Several processes, one run](../guides/runs.md#several-processes-one-run)). Make one with `cairn.new_run_id()`. |
 | `CAIRN_ARTIFACT_DIR` | SDK, `Reader` | Where `ArtifactVersion.download()` and `.file()` write by default: `<dir>/<name>-v<N>/`. Default: `./artifacts`. |
 | `CAIRN_WAL_DIR` | SDK | Where server-mode runs keep their local write-ahead log. Default: `<CAIRN_CACHE_DIR>/wal`, i.e. `<user cache dir>/cairn/wal` (e.g. `~/.cache/cairn/wal` on Linux, `~/Library/Caches/cairn/wal` on macOS). Point it at node-local scratch on a cluster. |
 | `CAIRN_CACHE_DIR` | SDK | Root of cairn's per-user caches: server-mode runs' local logs (`wal/`, unless `CAIRN_WAL_DIR` is set), unsent data (`pending/`) and the Reader's blob cache (`reader/`). Default: `<user cache dir>/cairn`. |

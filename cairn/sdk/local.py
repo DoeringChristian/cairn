@@ -8,7 +8,9 @@ SQLite (see ``cairn/server/storage/lease.py``).
   content-addressed blobs; the lease holder ingests the log (a running
   ``cairn ui``/``cairn server`` within ~2 s, else the next Reader or CLI
   command). Many processes, on many hosts of a shared filesystem, can log
-  at once without contending for the database. What needs an answer now
+  at once without contending for the database; the processes of one shared
+  run (``cairn.Run(label=..., primary=False)``) each append to their own
+  ``<run_id>~<label>.wal.jsonl``. What needs an answer now
   (``use_artifact``, resume / fork / rewind, sweep claims) goes through
   ``RepoTransport``.
 * ``RepoTransport`` — every other write (Reader and CLI edits, sweeps,
@@ -380,7 +382,15 @@ class LocalTransport:
     Mirrors the public surface of ``cairn.sdk.transport.Transport``. Never
     writes SQLite; reads (``should_stop``, a resumed run's steps) use a
     read-only connection and see what the lease holder ingested so far.
+
+    ``label`` and ``primary`` describe the process (set by ``cairn.Run``
+    before it creates or joins the run): a labelled process writes
+    ``<run_id>~<label>.wal.jsonl``; a worker (not ``primary``) opens its log
+    with ``join``, ends it with ``detach`` and writes no heartbeats.
     """
+
+    #: Seconds ``join_run`` waits for a run whose project it must look up.
+    JOIN_WAIT = 120.0
 
     def __init__(self, repo: str | Path, *, timeout: float = 10.0):
         self.data_dir = DataDir(Path(repo))
@@ -396,6 +406,8 @@ class LocalTransport:
         self._wal_lock = threading.Lock()
         self._wal_seq = 0
         self._log_finished = False
+        self.label: str | None = None
+        self.primary = True
 
     @property
     def repo(self) -> RepoTransport:
@@ -405,9 +417,21 @@ class LocalTransport:
     # ---- the run's log ---------------------------------------------------------
 
     def _open_log(self, run_id: str) -> None:
-        """Start (or, for a resumed run, continue) the run's log."""
-        path = self._wal_dir / f"{run_id}.wal.jsonl"
+        """Start (or, for a resumed run or a worker joining again, continue)
+        this process's log of the run."""
+        from ..server.wal_ingest import log_name
+
+        path = self._wal_dir / log_name(run_id, self.label)
+        if not self.primary and _last_op(path) == "detach":
+            # An earlier process with this label detached: let the lease
+            # holder finish (and delete) its log before this one continues it.
+            self._repo.ingest_pending()
         fh = open(path, "ab")  # noqa: SIM115
+        if self.label is not None and not _try_lock(fh):
+            fh.close()
+            raise ValueError(
+                f"label {self.label!r} is in use by another live process of run {run_id}"
+            )
         if fh.tell() > 0:
             # A writer killed mid-append left a torn last line: end it, so the
             # next record is a line of its own.
@@ -429,7 +453,7 @@ class LocalTransport:
             self._wal_fh.write(line.encode("utf-8"))
             self._wal_fh.flush()
             os.fsync(self._wal_fh.fileno())
-            if op == "finish":
+            if op in ("finish", "detach"):
                 # The last record: the ingester deletes the log once it has
                 # applied it, so nothing may follow.
                 self._log_finished = True
@@ -481,6 +505,10 @@ class LocalTransport:
         run_id = body["run_id"]
         project = body["project"]
         project_id = ingest_ops.slugify(project)
+        if self.read_columns("SELECT id FROM runs WHERE id = ?", [run_id]) or (
+            self._primary_log(run_id) is not None
+        ):
+            raise ingest_ops.RunExists(f"a run with id {run_id} exists already")
         self._open_log(run_id)
         self._wal_write("create_run", {
             **fields,
@@ -489,6 +517,69 @@ class LocalTransport:
             "created_at": fields["created_at"] or datetime.now(timezone.utc).isoformat(),
         })
         return {"run_id": run_id, "project_id": project_id, "url": f"/p/{project_id}/r/{run_id}"}
+
+    def _primary_log(self, run_id: str) -> Path | None:
+        """A primary's log of ``run_id`` not ingested to its end yet (one
+        opening with ``create_run``/``fork_run``), if any."""
+        from ..server.wal_ingest import LABEL_SEP, LOG_SUFFIX
+
+        candidates = [self._wal_dir / f"{run_id}{LOG_SUFFIX}",
+                      *self._wal_dir.glob(f"{run_id}{LABEL_SEP}*{LOG_SUFFIX}")]
+        for path in candidates:
+            if _first_record(path).get("op") in ("create_run", "fork_run"):
+                return path
+        return None
+
+    def join_run(self, run_id: str, project: str | None) -> dict[str, Any]:
+        """Join ``run_id`` as a worker: open this process's log with a
+        ``join`` record; its records wait at the ingester until the run
+        exists. Returns the run's ``project_id``/``url`` and, if it is
+        ingested already, its tags, documents, status and stop request.
+
+        The project is the ingested run's, else ``project``, else the one
+        its primary's log names, waiting up to ``JOIN_WAIT`` seconds for
+        either to appear.
+
+        Raises:
+            ValueError: ``project`` is not the run's project.
+            ingest_ops.RunNotFound: No such run appeared in time.
+        """
+        import time
+
+        from ..server import config_doc
+
+        deadline = time.monotonic() + self.JOIN_WAIT
+        while True:
+            rows = self.read_columns("SELECT * FROM runs WHERE id = ?", [run_id])
+            row = rows[0] if rows else None
+            project_id = row["project_id"] if row else None
+            if project_id is None and project is not None:
+                project_id = ingest_ops.slugify(project)
+            if project_id is None:
+                path = self._primary_log(run_id)
+                if path is not None:
+                    project_id = _first_record(path)["payload"].get("project_id")
+            if project_id is not None or time.monotonic() > deadline:
+                break
+            time.sleep(0.25)
+        if project_id is None:
+            raise ingest_ops.RunNotFound(f"run {run_id} not found")
+        if row is not None and project is not None and ingest_ops.slugify(project) != project_id:
+            raise ValueError(f"run {run_id} is in project {project_id!r}, not {project!r}")
+        self._open_log(run_id)
+        self._wal_write("join", {"run_id": run_id, "label": self.label})
+        return {
+            "run_id": run_id, "project_id": project_id, "url": f"/p/{project_id}/r/{run_id}",
+            "tags": json.loads(row["tags"]) if row and row.get("tags") else [],
+            "config": config_doc.loads(row.get("config")) if row else {},
+            "summary": config_doc.loads(row.get("summary")) if row else {},
+            "status": row["status"] if row else None,
+            "stop_requested": row.get("stop_requested") if row else None,
+        }
+
+    def detach_run(self, run_id: str) -> None:
+        """End a worker's log: the run's status is its primary's to set."""
+        self._wal_write("detach", {"run_id": run_id})
 
     def _ingested_run(self, run_id: str) -> dict[str, Any]:
         """The run as stored, after the lease holder caught up on every log
@@ -535,6 +626,10 @@ class LocalTransport:
         }
         parent = self._ingested_run(parent_id)
         pid = parent["project_id"]
+        if self.read_columns("SELECT id FROM runs WHERE id = ?", [new_id]) or (
+            self._primary_log(new_id) is not None
+        ):
+            raise ingest_ops.RunExists(f"a run with id {new_id} exists already")
         self._open_log(new_id)
         self._wal_write("fork_run", {
             **fields, "parent_id": parent_id, "new_id": new_id, "step": step,
@@ -635,9 +730,11 @@ class LocalTransport:
 
     def heartbeat(self, run_id: str) -> str | None:
         """Log a heartbeat; return the run's ``stop_requested`` timestamp, if
-        any (read-only, as far as the holder has ingested)."""
-        now = datetime.now(timezone.utc).isoformat()
-        self._wal_write("heartbeat", {"run_id": run_id, "wall_time": now})
+        any (read-only, as far as the holder has ingested). A worker writes
+        no heartbeat: the run's liveness is its primary's."""
+        if self.primary:
+            now = datetime.now(timezone.utc).isoformat()
+            self._wal_write("heartbeat", {"run_id": run_id, "wall_time": now})
         rows = self.read_columns("SELECT stop_requested FROM runs WHERE id = ?", [run_id])
         return rows[0]["stop_requested"] if rows else None
 
@@ -728,3 +825,55 @@ class LocalTransport:
     def drain_spill(self, run_id: str | None = None) -> int:
         """Local mode never spills; nothing to drain."""
         return 0
+
+
+def _first_record(path: Path) -> dict[str, Any]:
+    """A log's first complete record ({} if none, or no such file)."""
+    try:
+        with open(path, "rb") as fh:
+            line = fh.readline()
+    except FileNotFoundError:
+        return {}
+    if not line.endswith(b"\n"):
+        return {}
+    try:
+        record = json.loads(line)
+    except json.JSONDecodeError:
+        return {}
+    return record if isinstance(record, dict) else {}
+
+
+def _last_op(path: Path) -> str | None:
+    """The op of a log's last complete record (None if none, or no file)."""
+    try:
+        with open(path, "rb") as fh:
+            size = fh.seek(0, 2)
+            fh.seek(max(0, size - 4096))
+            tail = fh.read()
+    except FileNotFoundError:
+        return None
+    lines = tail.rstrip(b"\n").rsplit(b"\n", 1)
+    if not tail.endswith(b"\n") or not lines[-1]:
+        return None
+    try:
+        return json.loads(lines[-1]).get("op")
+    except (json.JSONDecodeError, AttributeError):
+        return None
+
+
+def _try_lock(fh: Any) -> bool:
+    """Hold an exclusive advisory lock on a labelled process's log while it
+    is open: False when another live process holds it. Best effort: where
+    the platform or filesystem has no such locks (Windows, some network
+    filesystems) the label is not checked."""
+    try:
+        import fcntl
+    except ImportError:
+        return True
+    try:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return False
+    except OSError:
+        return True
+    return True

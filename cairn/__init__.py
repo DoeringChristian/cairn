@@ -33,6 +33,8 @@ from .config import configure  # noqa: E402
 
 _LAZY_ATTRS: dict[str, str] = {
     "Run": ".sdk.run",
+    "attach": ".sdk.run",
+    "new_run_id": ".sdk.run_ids",
     "Scope": ".sdk.scope",
     "Artifact": ".sdk.artifacts",
     "ArtifactVersion": ".sdk.artifacts",
@@ -74,7 +76,8 @@ if TYPE_CHECKING:  # static-analysis only — never executed, never eager at run
     from .sdk.artifacts import Artifact, ArtifactEntry, ArtifactFamily, ArtifactVersion
     from .sdk.query_urls import query_url
     from .sdk.reader import MediaRef, Reader
-    from .sdk.run import Run
+    from .sdk.run import Run, attach
+    from .sdk.run_ids import new_run_id
     from .sdk.sweep import Sweep, sweep
     from .sdk.custom_viewers import publish_viewer
     from .sdk.handlers.registry import register_handler
@@ -168,6 +171,8 @@ def __dir__() -> list[str]:
 __all__ = [
     "__version__",
     "Run",
+    "attach",
+    "new_run_id",
     "Scope",
     "configure",
     "register_handler",

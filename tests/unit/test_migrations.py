@@ -268,6 +268,32 @@ def test_old_database_gains_new_columns_and_tables(conn):
     apply_migrations(conn)
 
 
+def test_log_lines_gain_label_and_wal_progress_worker(conn):
+    """Shared runs: a console line's process label, a worker's log."""
+    conn.execute(
+        "CREATE TABLE log_lines (run_id TEXT NOT NULL, stream TEXT NOT NULL, "
+        "wall_time TEXT NOT NULL, line_no INTEGER NOT NULL, content TEXT NOT NULL)"
+    )
+    conn.execute("INSERT INTO log_lines VALUES ('r', 'stdout', 't', 1, 'hi')")
+    conn.execute(
+        'CREATE TABLE wal_progress (path TEXT PRIMARY KEY, run_id TEXT NOT NULL, '
+        '"offset" INTEGER NOT NULL, finished INTEGER NOT NULL DEFAULT 0, '
+        "updated_at TEXT NOT NULL)"
+    )
+    conn.execute("INSERT INTO wal_progress VALUES ('r.wal.jsonl', 'r', 10, 0, 't')")
+    conn.commit()
+    apply_migrations(conn)
+    assert conn.execute("SELECT content, label FROM log_lines").fetchone() == ("hi", None)
+    assert conn.execute("SELECT worker FROM wal_progress").fetchone() == (0,)
+    fresh = sqlite3.connect(":memory:")
+    try:
+        apply_migrations(fresh)
+        for table in ("log_lines", "wal_progress"):
+            assert _columns(fresh, table) == _columns(conn, table)
+    finally:
+        fresh.close()
+
+
 def test_fresh_schema_matches_migrated_schema(tmp_path):
     """SCHEMA_SQL and the column migrations describe the same runs/sequences."""
     fresh = sqlite3.connect(str(tmp_path / "fresh.db"))

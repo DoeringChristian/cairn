@@ -41,7 +41,7 @@ def reap_stale_runs(db: Database) -> list[str]:
     """Mark running runs whose heartbeat is too old as killed; alert on each.
 
     Only runs logged to a server over HTTP: a local run's log decides its
-    liveness (``wal_ingest.mark_crashed``). Claims with ``UPDATE …
+    liveness (``wal_ingest.mark_crashed``; a worker's log never does). Claims with ``UPDATE …
     RETURNING`` so two callers never reap (and alert) the same run twice.
     Returns the reaped run ids.
     """
@@ -53,7 +53,7 @@ def reap_stale_runs(db: Database) -> list[str]:
             WHERE status = 'running'
               AND julianday('now') - julianday(COALESCE(last_heartbeat, created_at))
                   > ? / 86400.0
-              AND id NOT IN (SELECT run_id FROM wal_progress)
+              AND id NOT IN (SELECT run_id FROM wal_progress WHERE worker = 0)
             RETURNING id, display_name
             """,
             [now, STALE_HEARTBEAT_SECONDS],

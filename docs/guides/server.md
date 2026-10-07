@@ -73,6 +73,10 @@ run = cairn.Run(project="sweep", repo="/shared/nfs/.cairn")
   server (`repo="cairn://login-node:4300"`).
 - Without any server, `cairn.Reader` or a CLI command catches up on the logs
   when you read.
+- For one run across many processes (every rank of a distributed job), give
+  them all the same `CAIRN_RUN_ID` and use `label="auto"`: rank 0 creates
+  the run, the other ranks join it and write logs of their own. See
+  [Several processes, one run](runs.md#several-processes-one-run).
 
 ### Server mode and connection loss
 

@@ -221,14 +221,17 @@ class LogLine:
     Attributes:
         stream: The stream it was written to (``"stdout"`` or ``"stderr"``).
         wall_time: When it was written, as an ISO 8601 string.
-        line_no: Line number.
+        line_no: Line number, counted per process.
         content: The line's text.
+        label: The label of the process that printed it (several processes
+            can log into one run); None for an unlabelled one.
     """
 
     stream: str
     wall_time: str
     line_no: int
     content: str
+    label: str | None = None
 
     def __repr__(self) -> str:
         return f"LogLine({self.stream}:{self.line_no} {self.content[:60]!r})"
@@ -1703,7 +1706,7 @@ class _LocalBackend(_RegistryWrites):
             params.append(f"%{search}%")
         where = " AND ".join(clauses)
         rows = self._db.read_columns(
-            f"SELECT stream, wall_time, line_no, content FROM log_lines WHERE {where} ORDER BY wall_time, line_no LIMIT ? OFFSET ?",
+            f"SELECT stream, wall_time, line_no, content, label FROM log_lines WHERE {where} ORDER BY wall_time, label, line_no LIMIT ? OFFSET ?",
             [*params, limit, offset],
         )
         (total,) = self._db.read_one(f"SELECT COUNT(*) FROM log_lines WHERE {where}", params) or (0,)
