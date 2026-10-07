@@ -103,3 +103,23 @@ Across machines, point every job at one repo: a shared directory (each run
 appends to its own log, so concurrent writers never contend for the
 database) or a `cairn://host:4300` server. See [Server, auth and
 deployment](guides/server.md#where-runs-are-written).
+
+## Distributed runners
+
+These examples log every process of ONE job into one run
+([Several processes, one run](guides/runs.md#several-processes-one-run)):
+rank 0 creates the run, the other ranks join it with a label. They log to
+the repo in `CAIRN_REPO`; the cloud ones log over HTTP to a server. The
+[runner table](guides/server.md#distributed-runners) compares them.
+
+| Script | Launcher | Needs | Notes |
+|---|---|---|---|
+| `torchrun_ddp.py` | `torchrun --nproc_per_node=2`, CPU DDP (`gloo`) with a `DistributedSampler` | `torch` | Run id from `CAIRN_RUN_ID`, `label="auto"` from `RANK`. Rank 0 logs `train.loss`, every rank its own `rank<N>.samples_per_sec` |
+| `torchrun_attach.py` | `torchrun --nproc_per_node=2` | `torch` | No `CAIRN_RUN_ID`: rank 0 creates the run and broadcasts its id with `dist.broadcast_object_list`; the others `cairn.attach` it |
+| `accelerate_ddp.py` | `accelerate launch --multi_gpu --num_processes 2` (prefix `ACCELERATE_USE_CPU=1` without GPUs) | `torch`, `accelerate` | `label="auto"` from `RANK`; the main process logs `train.loss` |
+| `deepspeed_ddp.py` + `deepspeed_config.json` | `deepspeed --num_gpus 2` | `torch`, `deepspeed`, CUDA GPUs | `label="auto"` from `RANK`; ZeRO stage 1 config |
+| `skypilot/` (`train.py`, `task.yaml`, `task_multinode.yaml`, `task_spot.yaml`, `README.md`) | `sky launch`, `sky jobs launch` | `skypilot`, a reachable `cairn server` | HTTP mode. `label="auto"` from `SKYPILOT_NODE_RANK`; the managed spot job keeps one `CAIRN_RUN_ID` and resumes the run, rewound to its last checkpoint, after a preemption |
+| `modal_app.py` | `modal run` | `modal`, a reachable `cairn server` | HTTP mode through a Modal Secret holding `CAIRN_REPO`/`CAIRN_TOKEN`; one run per function call |
+| `sagemaker_job.py` | `python examples/sagemaker_job.py --role <ARN>` submits a 2-instance job running the same file | `sagemaker<3`, a reachable `cairn server` | HTTP mode through the estimator's `environment=`; ranks from `SM_HOSTS` |
+| `azureml_job.yml` | `az ml job create -f examples/azureml_job.yml` | Azure CLI `ml` extension, a reachable `cairn server` | HTTP mode through `environment_variables`; runs `torchrun_ddp.py` with `distribution: pytorch` |
+| `cluster_eval_attach.py` | `python examples/cluster_eval_attach.py --demo`, or `<run id>` as a later job | — | An evaluation job joins a FINISHED run with `cairn.attach(run_id, label="eval")`, takes its model with `run.use_model` and logs `eval.*`; the run stays `completed` |

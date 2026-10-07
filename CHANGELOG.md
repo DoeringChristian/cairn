@@ -65,6 +65,10 @@
   (`log_lines.label`); `GET /api/runs/{id}/logs` returns it per line, takes
   `label=` (empty: unlabelled lines) and lists the run's `labels`.
   `Reader` log lines have `label`.
+- Distributed-runner examples: `torchrun_ddp.py`, `torchrun_attach.py`,
+  `accelerate_ddp.py`, `deepspeed_ddp.py`, `skypilot/` (one node, multinode,
+  managed spot job), `modal_app.py`, `sagemaker_job.py`, `azureml_job.yml`
+  and `cluster_eval_attach.py`, with a runner table in the server guide.
 - Over HTTP, `POST /api/runs` with `primary: false` joins an existing run
   (404 while it does not exist), and a finish or heartbeat with
   `primary: false` changes nothing; creating a run (or a fork) with a taken
