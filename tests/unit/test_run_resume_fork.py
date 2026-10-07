@@ -324,3 +324,12 @@ def test_sdk_argument_checks(tmp_path):
 def test_resume_of_an_unknown_run_raises(tmp_path):
     with pytest.raises(LookupError, match="not found"):
         cairn.Run(project="p", repo=tmp_path / ".cairn", resume="f" * 32, **QUIET)
+
+
+def test_resume_or_fork_a_missing_run_is_a_lookup_error(backend):
+    """The same error on both backends (over HTTP a 404, locally RunNotFound)."""
+    missing = "f" * 32
+    with pytest.raises(LookupError, match="not found"):
+        backend.run(resume=missing)
+    with pytest.raises(LookupError, match="not found"):
+        backend.run(fork_from=(missing, 3))

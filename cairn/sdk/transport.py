@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import json
 import logging
@@ -11,7 +12,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Callable, TypeVar
+from typing import Any, Callable, Iterator, TypeVar
 
 import httpx
 
@@ -63,6 +64,17 @@ def default_spill_dir() -> Path:
     from ..config import cache_dir
 
     return cache_dir() / "pending"
+
+
+@contextlib.contextmanager
+def _run_not_found(run_id: str) -> Iterator[None]:
+    """A 404 for a run is ``LookupError``, as on a local repo (``RunNotFound``)."""
+    try:
+        yield
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            raise LookupError(f"run {run_id} not found") from None
+        raise
 
 
 class Transport:
@@ -509,10 +521,12 @@ class Transport:
         )
 
     def resume_run(self, run_id: str) -> dict[str, Any]:
-        return self.post_json(f"/api/runs/{run_id}/resume", {}).json()
+        with _run_not_found(run_id):
+            return self.post_json(f"/api/runs/{run_id}/resume", {}).json()
 
     def rewind_run(self, run_id: str, step: int) -> dict[str, Any]:
-        return self.post_json(f"/api/runs/{run_id}/rewind", {"step": step}).json()
+        with _run_not_found(run_id):
+            return self.post_json(f"/api/runs/{run_id}/rewind", {"step": step}).json()
 
     def fork_run(
         self, parent_id: str, new_id: str, step: int, body: dict[str, Any],
@@ -521,9 +535,10 @@ class Transport:
         fields = {k: v for k, v in body.items() if k not in ("project", "run_id", "created_at",
                                                             "parent_run_id", "fork_step")}
         try:
-            return self.post_json(
-                f"/api/runs/{parent_id}/fork", {**fields, "new_id": new_id, "step": step},
-            ).json()
+            with _run_not_found(parent_id):
+                return self.post_json(
+                    f"/api/runs/{parent_id}/fork", {**fields, "new_id": new_id, "step": step},
+                ).json()
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 409:  # new_id is taken
                 raise ValueError(exc.response.json().get("detail", exc.response.text)) from None
