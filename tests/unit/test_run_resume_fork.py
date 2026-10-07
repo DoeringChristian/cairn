@@ -211,21 +211,20 @@ class _Http:
 
 
 class _Local:
-    def __init__(self, repo, wal):
-        self.repo, self.wal = repo, wal
+    def __init__(self, repo):
+        self.repo = repo
         self._db = None
 
     def run(self, **kw):
-        return cairn.Run(project="p", repo=self.repo, local_wal=self.wal, **QUIET, **kw)
+        return cairn.Run(project="p", repo=self.repo, **QUIET, **kw)
 
     def drain(self):
-        if self.wal:
-            dd = DataDir(self.repo)
-            db = Database.open(dd.db_path)
-            try:
-                ingest_all(dd, db, BlobStore(dd.artifacts_dir))
-            finally:
-                db.close()
+        dd = DataDir(self.repo)
+        db = Database.open(dd.db_path)
+        try:
+            ingest_all(dd, db, BlobStore(dd.artifacts_dir))
+        finally:
+            db.close()
 
     def rows(self, sql, params=()):
         db = Database.open(DataDir(self.repo).db_path)
@@ -238,11 +237,11 @@ class _Local:
         pass
 
 
-@pytest.fixture(params=["http", "direct", "wal"])
+@pytest.fixture(params=["http", "local"])
 def backend(request, tmp_path):
     if request.param == "http":
         return _Http(request.getfixturevalue("client"))
-    return _Local(tmp_path / ".cairn", wal=request.param == "wal")
+    return _Local(tmp_path / ".cairn")
 
 
 def _parent_run(backend) -> str:
@@ -253,7 +252,7 @@ def _parent_run(backend) -> str:
         run._track_sample("system.cpu", 1.0)
     run.config(lr=0.1)
     run.finish("killed")
-    backend.drain()
+    # Not ingested yet: resume / fork / rewind catch up on the log themselves.
     return run.id
 
 
@@ -322,6 +321,6 @@ def test_sdk_argument_checks(tmp_path):
         cairn.Run(project="p", repo=tmp_path, resume="a", fork_from=("b", 1), **QUIET)
 
 
-def test_wal_resume_needs_an_ingested_run(tmp_path):
-    with pytest.raises(LookupError, match="ingested"):
-        cairn.Run(project="p", repo=tmp_path / ".cairn", local_wal=True, resume="f" * 32, **QUIET)
+def test_resume_of_an_unknown_run_raises(tmp_path):
+    with pytest.raises(LookupError, match="not found"):
+        cairn.Run(project="p", repo=tmp_path / ".cairn", resume="f" * 32, **QUIET)
