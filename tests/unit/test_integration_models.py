@@ -393,7 +393,7 @@ def test_ultralytics_callbacks(tmp_path, ultralytics_integration):
 
     trainer = SimpleNamespace(
         args=SimpleNamespace(name="train", data="coco8.yaml", imgsz=64, save_dir=save_dir),
-        save_dir=save_dir, epoch=0, tloss=[1.0, 2.0],
+        save_dir=save_dir, epoch=0, epochs=2, tloss=[1.0, 2.0],
         label_loss_items=lambda tloss, prefix: {f"{prefix}/box_loss": tloss[0], f"{prefix}/cls_loss": tloss[1]},
         lr={"lr/pg0": 0.01}, metrics={"metrics/mAP50(B)": 0.1, "val/box_loss": 1.5},
         best=save_dir / "weights" / "best.pt", last=save_dir / "weights" / "last.pt",

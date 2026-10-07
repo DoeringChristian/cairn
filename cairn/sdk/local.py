@@ -584,6 +584,13 @@ class LocalTransport:
             "run_id": run_id, "status": status, "exit_code": exit_code, "ended_at": ended_at,
         })
 
+    def set_total_steps(self, run_id: str, total_steps: int | None) -> None:
+        self._wal_write("total_steps", {"run_id": run_id, "total_steps": total_steps})
+
+    def post_progress(self, run_id: str, body: dict[str, Any]) -> None:
+        """``body``: value, total, wall_time."""
+        self._wal_write("progress", {"run_id": run_id, **body})
+
     def set_tags(self, run_id: str, tags: list[str]) -> None:
         self._wal_write("set_tags", {"run_id": run_id, "tags": tags})
 

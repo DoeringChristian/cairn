@@ -17,6 +17,7 @@ version is ``latest``; the best by the callback's monitored score is ``best``.
 
 from __future__ import annotations
 
+import math
 from argparse import Namespace
 from pathlib import Path
 from typing import Any, Literal
@@ -118,6 +119,21 @@ class CairnLogger(Logger):
             except (TypeError, ValueError):
                 continue
             self.experiment.track(value, name=k, step=step)
+
+    @rank_zero_only
+    def log_graph(self, model: Any, input_array: Any = None) -> None:
+        """Called by the trainer when fitting starts: the run's ``total_steps``
+        becomes ``trainer.estimated_stepping_batches`` (the optimizer steps,
+        which ``global_step`` counts), when that is finite."""
+        trainer = getattr(model, "_trainer", None)
+        if trainer is None or getattr(getattr(trainer, "state", None), "fn", None) != "fit":
+            return
+        try:
+            total = trainer.estimated_stepping_batches
+        except Exception:  # noqa: BLE001 - no progress rather than a failed fit
+            return
+        if isinstance(total, (int, float)) and math.isfinite(total) and total > 0:
+            self.experiment.total_steps = int(total)
 
     @rank_zero_only
     def watch(self, model: Any, log: str = "gradients", log_freq: int = 100) -> None:

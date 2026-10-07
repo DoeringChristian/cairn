@@ -389,6 +389,28 @@ class Transport:
             self._spill(run_id, path, {"lines": lines})
             return False
 
+    def set_total_steps(self, run_id: str, total_steps: int | None) -> None:
+        path = f"/api/runs/{run_id}/total-steps"
+        body = {"total_steps": total_steps}
+        if self._wal is not None:
+            self._logged("total_steps", {"run_id": run_id, **body}, path, body, catch_up=False)
+            return
+        try:
+            self.post_json(path, body)
+        except (httpx.HTTPError, OSError) as exc:
+            log.warning("total_steps POST failed for %s: %s", run_id, exc)
+
+    def post_progress(self, run_id: str, body: dict[str, Any]) -> None:
+        """``body``: value, total, wall_time."""
+        path = f"/api/runs/{run_id}/progress"
+        if self._wal is not None:
+            self._logged("progress", {"run_id": run_id, **body}, path, body, catch_up=False)
+            return
+        try:
+            self.post_json(path, body)
+        except (httpx.HTTPError, OSError) as exc:
+            log.warning("progress POST failed for %s: %s", run_id, exc)
+
     def finish_run(
         self, run_id: str, status: str, exit_code: int | None = None,
         ended_at: str | None = None, *, deadline: float | None = None,
@@ -684,6 +706,12 @@ class Transport:
                     files={"file": ("blob", data, mime_type)},
                     data=form, retry=False,
                 )
+        elif e.op == "total_steps":
+            self.post_json(f"/api/runs/{p['run_id']}/total-steps",
+                           {"total_steps": p.get("total_steps")}, retry=False)
+        elif e.op == "progress":
+            self.post_json(f"/api/runs/{p['run_id']}/progress",
+                           {k: p.get(k) for k in ("value", "total", "wall_time")}, retry=False)
         elif e.op == "finish":
             self.post_json(
                 f"/api/runs/{p['run_id']}/finish",
