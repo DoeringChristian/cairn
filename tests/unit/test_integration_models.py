@@ -175,7 +175,7 @@ def _hf_args(tmp_path: Path, **kw) -> SimpleNamespace:
 
 
 def _hf_state(step: int, zero: bool = True) -> SimpleNamespace:
-    return SimpleNamespace(global_step=step, epoch=step / 4, is_world_process_zero=zero,
+    return SimpleNamespace(global_step=step, max_steps=8, epoch=step / 4, is_world_process_zero=zero,
                            best_metric=0.25, best_model_checkpoint=None)
 
 

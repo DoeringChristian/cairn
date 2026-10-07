@@ -93,10 +93,12 @@ def test_on_train_end_finishes_when_owned(monkeypatch):
     args = MagicMock()
     args.output_dir = "/tmp/out"
     state = MagicMock()
+    state.max_steps = 100
     control = MagicMock()
     # Emulate TrainingArguments.to_dict
     args.to_dict = lambda: {"lr": 0.1}
     cb.on_train_begin(args, state, control)
+    assert mock_run.total_steps == 100
     cb.on_train_end(args, state, control)
     mock_run.finish.assert_called_once_with("completed")
 
