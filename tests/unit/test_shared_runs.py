@@ -355,6 +355,9 @@ def test_logs_route_label_filter_and_labels(client):
     assert one["total"] == 2 and one["labels"] == [None, "rank1", "rank2"]
     unlabelled = client.get(f"/api/runs/{rid}/logs", params={"label": ""}).json()
     assert [ln["content"] for ln in unlabelled["lines"]] == ["l1"]
+    # Search matches the label too (as in wandb's console search).
+    by_label = client.get(f"/api/runs/{rid}/logs", params={"search": "rank2"}).json()
+    assert [ln["content"] for ln in by_label["lines"]] == ["l3"]
 
 
 # ---- the ingester ----------------------------------------------------------

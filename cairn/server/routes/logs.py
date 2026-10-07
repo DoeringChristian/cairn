@@ -46,9 +46,9 @@ def list_logs(
     if since:
         clauses.append("wall_time >= ?")
         params.append(since)
-    if search:
-        clauses.append("content LIKE ?")
-        params.append(f"%{search}%")
+    if search:  # the content or the process label
+        clauses.append("(content LIKE ? OR label LIKE ?)")
+        params += [f"%{search}%", f"%{search}%"]
     where = " AND ".join(clauses)
     rows = db.read_columns(
         f"""
