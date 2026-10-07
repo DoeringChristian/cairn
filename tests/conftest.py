@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import socket
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -22,6 +23,11 @@ from cairn.server.storage.db import Database
 # import, so every subprocess a test starts (a real `cairn ui`, `cairn open`)
 # inherits it too.
 os.environ["BROWSER"] = "true"
+
+# Nor write into the developer's real cairn cache (unsent run data of the
+# HTTP client, the Reader's blob cache): one temp dir for the whole session,
+# inherited by subprocesses too.
+os.environ["CAIRN_CACHE_DIR"] = tempfile.mkdtemp(prefix="cairn-test-cache-")
 
 
 @pytest.fixture

@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any, Callable, TypeVar
 
 import httpx
-import platformdirs
 
 from .. import config as _config
 from .wal import WALEntry, WriteAheadLog
@@ -61,7 +60,9 @@ def _rejected(exc: Exception) -> bool:
 
 
 def default_spill_dir() -> Path:
-    return Path(platformdirs.user_cache_dir("cairn")) / "pending"
+    from ..config import cache_dir
+
+    return cache_dir() / "pending"
 
 
 class Transport:

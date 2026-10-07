@@ -38,7 +38,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
 
-import platformdirs
 
 log = logging.getLogger(__name__)
 
@@ -50,7 +49,9 @@ def default_wal_dir() -> Path:
     env = os.environ.get("CAIRN_WAL_DIR")
     if env:
         return Path(env)
-    return Path(platformdirs.user_cache_dir("cairn")) / "wal"
+    from ..config import cache_dir
+
+    return cache_dir() / "wal"
 
 
 @dataclass

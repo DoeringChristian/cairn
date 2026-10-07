@@ -1809,8 +1809,9 @@ def _resolve_cache_dir(explicit: Path | None) -> Path:
         candidate = parent / ".cairn"
         if candidate.is_dir():
             return candidate / "cache" / "blobs"
-    import platformdirs
-    return Path(platformdirs.user_cache_dir("cairn")) / "reader" / "blobs"
+    from ..config import cache_dir
+
+    return cache_dir() / "reader" / "blobs"
 
 
 class _HttpBackend(_RegistryWrites):
