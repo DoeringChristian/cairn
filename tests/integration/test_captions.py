@@ -12,7 +12,7 @@ import cairn
 from cairn.sdk.transport import Transport
 
 
-@pytest.fixture(params=["http", "direct", "wal"])
+@pytest.fixture(params=["http", "local"])
 def backend(request, tmp_path, monkeypatch):
     """Yields ``(run_kwargs, reader_repo)``."""
     if request.param == "http":
@@ -23,7 +23,7 @@ def backend(request, tmp_path, monkeypatch):
         t.close()
     else:
         repo = tmp_path / ".cairn"
-        yield {"repo": repo, "local_wal": request.param == "wal"}, repo
+        yield {"repo": repo}, repo
 
 
 def _run(kwargs):
