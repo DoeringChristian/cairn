@@ -34,9 +34,9 @@ def _log(run):
     run.log_artifact(cairn.Table(columns=["img"], data=[[cairn.Image(a)]]), name="named")
 
 
-@pytest.fixture(params=["http", "local", "wal"])
+@pytest.fixture(params=["http", "local"])
 def backend(request, tmp_path, monkeypatch):
-    """Yields ``(transport, reader_repo, finish)`` for the three write paths."""
+    """Yields ``(transport, reader_repo, finish)`` for the two write paths."""
     if request.param == "http":
         live = request.getfixturevalue("live_server")
         monkeypatch.setenv("CAIRN_WAL_DIR", str(tmp_path / "wal"))
@@ -44,17 +44,16 @@ def backend(request, tmp_path, monkeypatch):
         yield t, live.replace("http://", "cairn://"), t.close
         return
     repo = tmp_path / ".cairn"
-    t = LocalTransport(repo, use_wal=request.param == "wal")
+    t = LocalTransport(repo)
 
     def finish():
         t.close()
-        if request.param == "wal":
-            dd = DataDir(repo)
-            db = Database.open(dd.db_path)
-            try:
-                ingest_all(dd, db, BlobStore(dd.artifacts_dir))
-            finally:
-                db.close()
+        dd = DataDir(repo)
+        db = Database.open(dd.db_path)
+        try:
+            ingest_all(dd, db, BlobStore(dd.artifacts_dir))
+        finally:
+            db.close()
 
     yield t, repo, finish
 
