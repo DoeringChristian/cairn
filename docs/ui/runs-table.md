@@ -10,7 +10,7 @@ The table updates live: new and deleted runs appear within a few seconds, and ru
 
 | Control | What it does |
 |---|---|
-| **Status** | Show only runs with one status (`running`, `completed`, `failed`, `killed`, `stopped`), or only the **archived** runs. Every other choice hides archived runs. |
+| **Status** | Show only runs with one status (`running`, `completed`, `failed`, `killed`, `stopped`, `crashed`), or only the **archived** runs. Every other choice hides archived runs. |
 | **Search** | A case-insensitive regex over each run's name, id, status and tags. An invalid regex turns the box red. |
 | Filter chips, **Filter** | The [filter tree](#filters). |
 | **Group** | [Nested group-by](#group-by). |

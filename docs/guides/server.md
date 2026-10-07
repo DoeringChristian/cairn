@@ -410,10 +410,10 @@ A repo is one directory:
 | `cairn.db` (+ `cairn.db-wal`, `cairn.db-shm`) | The SQLite database: runs, metrics, config, reports, tokens |
 | `artifacts/` | Artifact bytes, stored by content hash |
 | `sources/`, `logs/` | Source snapshots and captured output, per run |
-| `wals/` | WAL-mode run logs not yet ingested |
+| `wals/` | Logs of local runs not fully ingested yet (a finished run's log is deleted once ingested) |
 | `auth/` | `local.token` and `authorized_keys` |
 | `cache/` | Artifacts a `cairn.Reader` downloaded from a server; safe to delete |
-| `version`, `repo.lock`, `servers.json` | Layout version and bookkeeping for running processes |
+| `version`, `ingest.lease`, `servers.json` | Layout version, the [ingest lease](#local-repos-run-logs-and-the-ingest-lease) and running viewers |
 
 The database runs in SQLite's WAL journal mode, so copying `cairn.db` while
 something writes to it can give you an inconsistent copy. Either:
@@ -427,15 +427,37 @@ something writes to it can give you an inconsistent copy. Either:
 To back up or move individual runs, export them as [run
 archives](import-export.md#run-archives).
 
+## Garbage collection
+
+Images, files and artifact entries are stored once per content hash and
+shared, so deleting a run, a report or an artifact version never deletes
+their bytes on the spot. `cairn gc` does:
+
+```bash
+cairn gc --dry-run      # what would be freed
+cairn gc                # delete it
+cairn gc --server cairn://host:4300
+```
+
+It runs as the repo's ingest-lease holder (on the server serving the repo,
+or in the command itself). It deletes a blob only when nothing names it — no
+run's series, artifact version or entry, report image, source snapshot diff,
+nor a run log record not ingested yet, also not through a gallery, table,
+figure or artifact manifest that is itself kept — and its file is older than
+24 hours, so blobs a running job just stored are never touched. It prints
+the number of blobs and bytes freed. A server also runs it in the background
+after runs are deleted.
+
 ## Client commands
 
 Every command that reads or changes data works on a local repo as well as on
 a server, and finds its target the way `cairn.Run` does: `--repo PATH|URL` or
 `--server URL`, then `CAIRN_REPO`/`CAIRN_SERVER`, then the config file, then
 `./.cairn` (see [Configuration](../reference/configuration.md#resolution-order)).
-A local repo needs no server: the command runs the server's own code over it
-in-process. When a `cairn server` or `cairn ui` is serving that repo, the
-command goes through that server instead, as a `cairn.Run` does.
+A local repo needs no server: the command takes the repo's ingest lease,
+catches up on pending run logs and runs the server's own code over it
+in-process. When a `cairn server` or `cairn ui` is serving that repo (it
+holds the lease), the command goes through that server instead.
 
 ```bash
 cairn list                                   # ./.cairn, or whatever is configured
@@ -445,7 +467,7 @@ cairn list --server cairn://gpubox:4300      # a server
 
 | Command | Does |
 |---|---|
-| `cairn ping` | A server: its `/api/health` response. A local repo: its path, layout and schema versions, its project, run, series, point, artifact and report counts, its size, WAL logs not ingested yet, and the server serving it |
+| `cairn ping` | A server: its `/api/health` response. A local repo: its path, layout and schema versions, its project, run, series, point, artifact and report counts, its size, run logs not fully ingested yet, and the server serving it |
 | `cairn list` | Lists runs, newest first (see below); also reads a `.zip` run archive (`--repo runs.zip`) |
 | `cairn open RUN_ID [--no-browser]` | Prints the run's UI URL and opens it. Against the ingest port of `cairn server --ui` the URL uses the UI port. For a local repo it is the URL of the `cairn ui` serving it; with none running, it prints the URL the run will have and the `cairn ui --repo …` command to start one |
 | `cairn rm RUN_ID...` | Deletes runs and their data |
@@ -455,6 +477,7 @@ cairn list --server cairn://gpubox:4300      # a server
 | `cairn artifact ...` | The [artifact registry](artifacts.md#from-the-command-line) |
 | `cairn report ...` | [Reports](../ui/reports.md#from-the-command-line) and their share links |
 | `cairn sync` | Replays run logs (see [above](#server-mode-and-connection-loss)) |
+| `cairn gc [--dry-run]` | Deletes stored blobs nothing references (see [Garbage collection](#garbage-collection)) |
 | `cairn configure --server URL` or `--repo PATH` | Saves the default target to the config file (setting one removes the other) |
 
 A failed request prints one line, `Error: <server or repo>: <reason>`, and

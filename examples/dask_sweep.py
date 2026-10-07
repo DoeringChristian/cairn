@@ -3,11 +3,11 @@
 Demonstrates two deployment modes:
 
 1. **LocalCluster** (default): 4 workers on the same machine.
-   All workers share the filesystem — WAL files just work.
+   All workers share the filesystem — every run writes its own log.
 
 2. **SSHCluster** (multi-machine): workers on remote hosts.
    Requires a shared filesystem (NFS) mounted at the same path on all
-   nodes. Workers write WAL files to the shared .cairn/ directory.
+   nodes. Workers write their run logs to the shared .cairn/ directory.
 
    If you don't have a shared filesystem, use Cairn's HTTP transport
    instead — run ``cairn server --ui`` on the head node and point workers at
@@ -134,17 +134,7 @@ def main() -> None:
     client.close()
     cluster.close()
 
-    # --- Ingest WALs and verify -----------------------------------------------
-    from cairn.server.storage.datadir import DataDir
-    from cairn.server.storage.db import Database
-    from cairn.server.storage.blobs import BlobStore
-    from cairn.server.wal_ingest import ingest_all
-
-    dd = DataDir(repo_path)
-    db = Database.open(dd.db_path)
-    blobs = BlobStore(dd.artifacts_dir)
-    ingest_all(dd, db, blobs)
-    db.close()
+    # --- Verify (the Reader ingests the run logs first) ---------------
 
     from cairn.sdk.reader import Reader
 

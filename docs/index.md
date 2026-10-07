@@ -27,7 +27,7 @@ cairn ui      # opens the viewer on http://localhost:4301
 - **Local-first.** A repo is a directory with a SQLite database and a content-addressed blob
   store. You don't need a server to log, and a repo you log to locally can be served later
   without migration.
-- **Cluster-safe.** WAL mode (`local_wal=True`) gives each run its own append-only log file.
+- **Cluster-safe.** Every local run writes its own append-only log file; one ingester applies them.
   Hundreds of jobs can write to one repo on NFS without contending for the database.
 - **Cross-device.** Run `cairn server` on one machine and log to it from others with
   `repo="cairn://host:4300"`.

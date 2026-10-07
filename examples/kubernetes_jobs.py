@@ -10,7 +10,7 @@ Both are printed to stdout so you can pipe them into files::
     python examples/kubernetes_jobs.py > /dev/null  # just prints
 
 **With shared PVC (recommended)**: All Jobs mount the same PersistentVolumeClaim
-at ``/mnt/cairn``. Workers write WAL files to the shared ``.cairn/`` directory.
+at ``/mnt/cairn``. Workers write their run logs to the shared ``.cairn/`` directory.
 Run ``cairn server --repo /mnt/cairn/.cairn --ui`` on a node with PVC access
 to ingest and serve the UI (ingest on :4300, UI on :4301).
 
@@ -173,17 +173,7 @@ def simulate_locally() -> None:
         run_ids.append(run.id)
         print(f"  {cfg['name']} finished  (run_id={run.id})")
 
-    # --- Ingest WALs and verify -------------------------------------------
-    from cairn.server.storage.datadir import DataDir
-    from cairn.server.storage.db import Database
-    from cairn.server.storage.blobs import BlobStore
-    from cairn.server.wal_ingest import ingest_all
-
-    dd = DataDir(repo_path)
-    db = Database.open(dd.db_path)
-    blobs = BlobStore(dd.artifacts_dir)
-    ingest_all(dd, db, blobs)
-    db.close()
+    # --- Verify (the Reader ingests the run logs first) ---------------
 
     from cairn.sdk.reader import Reader
 
@@ -248,24 +238,12 @@ def main() -> None:
           # Watch progress
           kubectl get jobs -l app=cairn-sweep --watch
 
-          # After all Jobs complete, ingest WALs locally:
-          #   (mount or copy the PVC contents, then run)
+          # After all Jobs complete, read the results (the Reader ingests
+          #   the run logs first; mount or copy the PVC contents, then run)
           python -c "
-          from cairn.server.storage.datadir import DataDir
-          from cairn.server.storage.db import Database
-          from cairn.server.storage.blobs import BlobStore
-          from cairn.server.wal_ingest import ingest_all
           from cairn.sdk.reader import Reader
-          import pathlib
 
-          repo = pathlib.Path('/mnt/cairn/.cairn')
-          dd = DataDir(repo)
-          db = Database.open(dd.db_path)
-          blobs = BlobStore(dd.artifacts_dir)
-          ingest_all(dd, db, blobs)
-          db.close()
-
-          reader = Reader(repo=str(repo))
+          reader = Reader(repo='/mnt/cairn/.cairn')
           for r in reader.runs(project='k8s-sweep').list():
               seq = r.sequence('loss')
               print(f'{r.name}  status={r.status}  steps={len(seq)}')

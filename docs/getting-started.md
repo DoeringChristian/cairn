@@ -95,31 +95,25 @@ All three modes write the same on-disk format, so you can switch between them wi
 
 ### Local mode (default)
 
-The run writes directly into the repo's SQLite database. This is the simplest option and works
-well on a single machine.
+The run appends everything it logs to its own file in the repo,
+`.cairn/wals/<run_id>.wal.jsonl`, and never writes the SQLite database
+itself. This works the same on one machine and on a cluster (Slurm, Ray,
+Dask, many processes on NFS): concurrent jobs never contend for the
+database.
 
 ```python
 run = cairn.Run("my-project", repo="./.cairn")
+run = cairn.Run("sweep", repo="/shared/nfs/.cairn")   # many jobs, one repo
 ```
 
-### WAL mode: many writers on a shared filesystem
-
-On a cluster (Slurm, Ray, Dask, many processes on NFS), use `local_wal=True`. Each run appends to
-its own `.cairn/wals/<run_id>.wal.jsonl` file instead of writing to the database, so concurrent
-jobs never contend for the SQLite lock:
-
-```python
-run = cairn.Run("sweep", repo="/shared/nfs/.cairn", local_wal=True)
-```
-
-The WAL files are ingested into the database by a `cairn ui` or `cairn server` running on the
-repo (every 2 seconds, so you get a live view) and by `cairn.Reader` before it reads.
-
-!!! note
-    Because a WAL-mode run never touches the database, anything that needs an immediate answer
-    from it is unavailable: `use_artifact` raises, and `log_artifact` returns a *pending* version
-    (its number is decided when the repo ingests the log). Sweeps need a direct-mode repo or a
-    server.
+The logs are applied to the database by the repo's one ingester: a
+`cairn ui` or `cairn server` running on the repo (every 2 seconds, so you get
+a live view), else `cairn.Reader` or a CLI command when you read. What needs
+an answer at once — `use_artifact`, resuming or forking a run, sweep claims —
+catches up first, through that server or by itself. `log_artifact` returns
+right away; its version number is assigned when the log is ingested, and
+`.wait()` blocks until it is. See
+[Server, auth and deployment](guides/server.md#local-repos-run-logs-and-the-ingest-lease).
 
 ### Server mode: log across machines
 

@@ -1,14 +1,12 @@
 # Cairn
 
-An open-source ML experiment tracker. Three ways to use it:
+An open-source ML experiment tracker. Two ways to use it:
 
-**Local mode** (default): log directly to `./.cairn/`. No server required. Run `cairn ui` later to browse results.
-
-**WAL mode** (cluster-safe): `local_wal=True` writes per-run append-only log files instead of touching the database. Safe for NFS/Slurm/Ray with hundreds of concurrent writers. The UI server ingests WAL files in the background.
+**Local mode** (default): log to `./.cairn/`. No server required. Each run appends to its own log file and never touches the database, so it is safe for NFS/Slurm/Ray with hundreds of concurrent writers. A `cairn ui` on the repo ingests the logs every 2 s (live view); without one, `cairn.Reader` and the CLI catch up when you read.
 
 **Server mode** (cross-device): run `cairn server` on one machine, point SDK clients at it via `repo="cairn://host:port"`.
 
-All modes share the same on-disk format — a repo created locally can later be served without any migration.
+Both modes share the same on-disk format — a repo created locally can later be served without any migration.
 
 **Documentation:** the full guide lives in [`docs/`](docs/index.md) — start with
 [Getting started](docs/getting-started.md), then the [guides](docs/guides/index.md),
@@ -77,7 +75,7 @@ turns authentication off for local debugging. `cairn login URL` saves a token
 for the SDK and CLI. Logins are per server, in the browser and in the config
 file, so you can be logged into several servers on one host at once.
 
-## WAL mode — concurrent / distributed training
+## Concurrent / distributed training
 
 For Slurm clusters, Ray, Dask, or any setup with multiple concurrent writers on a shared filesystem:
 
@@ -87,12 +85,11 @@ import cairn
 run = cairn.Run(
     project="sweep",
     name="lr-search",
-    repo="/shared/nfs/.cairn",
-    local_wal=True,           # per-run WAL, no SQLite contention
+    repo="/shared/nfs/.cairn",   # every run writes its own log: no SQLite contention
 )
 ```
 
-Each run writes to its own `.cairn/wals/{run_id}.wal.jsonl` file. The UI server's background thread ingests WAL files every 2s for live preview. See `examples/` for integration with ProcessPoolExecutor, submitit, Ray Tune, Dask, Fabric, and Kubernetes.
+Each run writes to its own `.cairn/wals/{run_id}.wal.jsonl` file. Exactly one process (the holder of `.cairn/ingest.lease`, normally `cairn ui`/`cairn server`) applies the logs to the database; the server does it every 2s for live preview. See `examples/` for integration with ProcessPoolExecutor, submitit, Ray Tune, Dask, Fabric, and Kubernetes.
 
 ## Server mode — cross-device logging
 

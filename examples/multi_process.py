@@ -2,8 +2,9 @@
 
 Launches 4 workers via concurrent.futures.ProcessPoolExecutor, each training
 with a different learning rate.  Every worker creates its own
-``cairn.Run(local_wal=True)`` against a shared local .cairn repo, appending to
-its own WAL file.  After all workers finish, the WALs are ingested and the runs are verified through cairn.Reader.
+``cairn.Run`` against a shared local .cairn repo, appending to its own run
+log.  After all workers finish, the runs are verified through cairn.Reader
+(which ingests their logs first).
 
 Usage::
 
@@ -39,9 +40,6 @@ def train(repo_path_str: str, config: dict) -> str:
         capture_stdout=False,
         capture_env=False,
         capture_system_metrics=False,
-        # Append to a per-run WAL file instead of the shared SQLite DB; the
-        # parent ingests every worker's WAL once they are done.
-        local_wal=True,
     )
     run.config({"hparams": {
         "lr": config["lr"],
@@ -87,17 +85,7 @@ def main() -> None:
             run_ids.append(rid)
             print(f"  {name} finished  (run_id={rid})")
 
-    # --- Ingest WALs and verify -------------------------------------------
-    from cairn.server.storage.datadir import DataDir
-    from cairn.server.storage.db import Database
-    from cairn.server.storage.blobs import BlobStore
-    from cairn.server.wal_ingest import ingest_all
-
-    dd = DataDir(repo_path)
-    db = Database.open(dd.db_path)
-    blobs = BlobStore(dd.artifacts_dir)
-    ingest_all(dd, db, blobs)
-    db.close()
+    # --- Verify (the Reader ingests the run logs first) ---------------
 
     from cairn.sdk.reader import Reader
 

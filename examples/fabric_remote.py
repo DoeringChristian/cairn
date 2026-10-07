@@ -139,17 +139,7 @@ def main() -> None:
             rid = train(str(repo_path), cfg)
             print(f"  {cfg['name']} finished  (run_id={rid})")
 
-    # --- Ingest WALs and verify -----------------------------------------------
-    from cairn.server.storage.datadir import DataDir
-    from cairn.server.storage.db import Database
-    from cairn.server.storage.blobs import BlobStore
-    from cairn.server.wal_ingest import ingest_all
-
-    dd = DataDir(repo_path)
-    db = Database.open(dd.db_path)
-    blobs = BlobStore(dd.artifacts_dir)
-    ingest_all(dd, db, blobs)
-    db.close()
+    # --- Verify (the Reader ingests the run logs first) ---------------
 
     from cairn.sdk.reader import Reader
 
