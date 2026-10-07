@@ -9,36 +9,70 @@ the repo, authentication, and running cairn for a team.
 
 | Mode | How you select it | What happens | Use it for |
 |---|---|---|---|
-| Local | `repo="./.cairn"` (or any path), or nothing: `./.cairn` is the default | The SDK writes to the repo's SQLite database directly | One machine |
-| WAL | a local path plus `cairn.Run(..., local_wal=True)` | Each run appends to its own log file in `.cairn/wals/`; a server or reader ingests it later | Many concurrent writers on a shared filesystem (NFS, Slurm, Ray) |
+| Local | `repo="./.cairn"` (or any path), or nothing: `./.cairn` is the default | Each run appends to its own log in `.cairn/wals/`; the repo's one ingester applies the logs to the database | One machine, or many processes and nodes on a shared filesystem (Slurm, Ray, NFS) |
 | Server | `repo="cairn://host:4300"` | The SDK sends everything over HTTP to a `cairn server` | Logging from other machines |
 
-All three share one on-disk format, so a repo written locally can be served
+Both share one on-disk format, so a repo written locally can be served
 later without migration. How `repo` is resolved when you don't pass it
 (`cairn.configure`, `CAIRN_REPO`, the config file) is described in
 [Configuration](../reference/configuration.md).
 
-!!! tip "Logging while the viewer is open"
-    If a `cairn server` or `cairn ui` is serving a local repo, a
-    `cairn.Run(repo=<that path>)` on the same machine notices and sends its
-    data to that server over HTTP instead of opening the database. It
-    authenticates with the token the server leaves in `.cairn/auth/local.token`.
-    You don't need to change anything.
-
-### WAL mode
+### Local repos: run logs and the ingest lease
 
 ```python
-run = cairn.Run(project="sweep", repo="/shared/nfs/.cairn", local_wal=True)
+run = cairn.Run(project="sweep", repo="/shared/nfs/.cairn")
 ```
 
-With `local_wal=True`, the run never touches SQLite. It writes
-`.cairn/wals/<run_id>.wal.jsonl`, so hundreds of processes can log to one repo
-on a shared filesystem without contending for the database. The logs are
-ingested into the database:
+A run on a local repo never touches SQLite. It appends every write to its
+own log, `.cairn/wals/<run_id>.wal.jsonl` (one JSON record per line, synced
+to disk), and stores images, files and other blobs in the repo's
+content-addressed store. Hundreds of processes can log to one repo at once
+without contending for the database.
 
-- every 2 seconds by a running `cairn server` or `cairn ui` on that repo
-  (which gives you a live view while jobs run), and
-- whenever a `cairn.Reader` opens the repo.
+Exactly one process at a time writes the database: the holder of the repo's
+**ingest lease**, the file `.cairn/ingest.lease`. It applies the logs and
+makes every other write (edits from the UI or the CLI, sweep claims, garbage
+collection):
+
+- `cairn ui` and `cairn server` hold the lease for as long as they run, and
+  ingest the logs every 2 seconds. The lease names their URL, so readers and
+  CLI commands on the repo send their writes to them.
+- Without a server, a `cairn.Reader`, a CLI command, a sweep agent or a run
+  that needs an answer takes the lease for a moment, ingests what is
+  pending, does its writes and releases it.
+
+A record is applied exactly once: each log's read position is stored in the
+database in the same transaction as the records it covers, so a crash or a
+restart of the ingester continues where it stopped. Once a run's final
+record (its finish) is ingested, its log file is deleted.
+
+A run whose log gets no new record (heartbeats included, every 10 seconds)
+for 5 minutes without having finished is marked `crashed`, and an alert is
+raised. If records arrive later (the process was only paused, or a node's
+filesystem caught up), it is `running` again.
+
+The lease is a plain file, so it works on NFS: it is created atomically,
+renewed every few seconds, and taken over when its holder stops renewing it
+(at once when the holder was a process on the same machine that died).
+
+### Clusters / SLURM
+
+Point every job at the same repo on the shared filesystem:
+
+```python
+run = cairn.Run(project="sweep", repo="/shared/nfs/.cairn")
+```
+
+- Each process writes its own run log; nothing is locked while training.
+- For a live view while jobs run, start `cairn ui --repo /shared/nfs/.cairn`
+  (or `cairn server --ui`) on one machine, e.g. the login node. It holds the
+  lease and ingests the logs every 2 seconds.
+- Sweeps need someone to hand out trials: with a server, every
+  `cairn agent` claims trials from it. Without one, agents take the lease in
+  turn for each claim, which is fine on one machine; across nodes, prefer a
+  server (`repo="cairn://login-node:4300"`).
+- Without any server, `cairn.Reader` or a CLI command catches up on the logs
+  when you read.
 
 ### Server mode and connection loss
 
@@ -74,8 +108,9 @@ cairn sync     # replays every pending run log to the server it was meant for
 
 A log that names no server goes to the one you pass
 (`cairn sync --server URL`). For a local repo, `cairn sync --repo PATH`
-also ingests the logs of `local_wal=True` runs (see [WAL mode](#wal-mode))
-when no server is serving the repo to do it.
+also ingests its pending run logs (see
+[Local repos](#local-repos-run-logs-and-the-ingest-lease)) when no server is
+serving the repo to do it.
 
 ## `cairn ui` and `cairn server`
 
@@ -101,17 +136,19 @@ cairn server --ui                         # ...and serve the UI on :4301
 cairn server --repo /data/.cairn --port 5000 --ui --ui-port 8080
 ```
 
-`cairn server` needs the repo to itself: it refuses to start while another
-`cairn server` or a `cairn ui` is running on it. `cairn ui` refuses to start on
-a repo that a `cairn server` holds (open that server's UI URL instead), but
-several `cairn ui` processes can share a repo.
+Both hold the repo's ingest lease while they run, so one repo has one
+server: a second `cairn ui` or `cairn server` on it refuses to start and
+names the one that runs (open that one's URL instead).
 
 While running, the server:
 
-- ingests WAL files every 2 seconds;
-- marks a `running` run as `killed` when it has sent no heartbeat for 120
-  seconds (the SDK sends one every 10 seconds), and raises an alert for it;
-- delivers alerts to the webhook, if one is set.
+- ingests the runs' logs every 2 seconds, and marks a local run `crashed`
+  when its log has had no new record for 5 minutes;
+- marks a run logged over HTTP as `killed` when it has sent no heartbeat
+  for 120 seconds (the SDK sends one every 10 seconds);
+- raises an alert for each, and delivers alerts to the webhook, if one is set;
+- collects unreferenced blobs in the background after runs are deleted
+  (see [Garbage collection](#garbage-collection)).
 
 The runs table reads each metric's count, min, max, mean and first/last
 value from a per-metric index that ingest keeps up to date, so a page of runs
