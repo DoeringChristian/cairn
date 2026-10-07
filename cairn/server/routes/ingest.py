@@ -460,6 +460,43 @@ def set_metric_rule(run_id: str, body: MetricRuleRequest, request: Request) -> d
     return {"run_id": run_id, **body.model_dump()}
 
 
+class TotalStepsRequest(BaseModel):
+    total_steps: int | None = None
+
+
+@router.post("/runs/{run_id}/total-steps")
+def set_total_steps(run_id: str, body: TotalStepsRequest, request: Request) -> dict[str, Any]:
+    """``run.total_steps = N``: the run's declared number of steps (null clears)."""
+    try:
+        ingest_ops.set_total_steps(get_db(request), run_id, body.total_steps)
+    except ingest_ops.RunNotFound as exc:
+        raise _run_not_found(exc) from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    return {"run_id": run_id, "total_steps": body.total_steps}
+
+
+class ProgressRequest(BaseModel):
+    value: float
+    total: float | None = None
+    #: The client's time of the call (ISO 8601); the ETA's clock.
+    wall_time: str | None = None
+
+
+@router.post("/runs/{run_id}/progress")
+def set_progress(run_id: str, body: ProgressRequest, request: Request) -> dict[str, Any]:
+    """``run.progress(value, total)``: explicit progress, winning over steps."""
+    try:
+        ingest_ops.set_progress(
+            get_db(request), run_id, body.value, body.total, body.wall_time,
+        )
+    except ingest_ops.RunNotFound as exc:
+        raise _run_not_found(exc) from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    return {"run_id": run_id, **body.model_dump()}
+
+
 class RewindRequest(BaseModel):
     step: int
 

@@ -107,7 +107,14 @@ class CairnCallback(keras.callbacks.Callback):
                 continue
 
     def on_epoch_end(self, epoch: int, logs: dict[str, Any] | None = None) -> None:
-        if self._run is None or not logs:
+        if self._run is None:
+            return
+        epochs = (getattr(self, "params", None) or {}).get("epochs")
+        if epochs:
+            # Steps are epoch indices here (batch indices only with
+            # log_every_n_batches), so progress is counted in epochs.
+            self._run.progress(epoch + 1, total=epochs)
+        if not logs:
             return
         for k, v in logs.items():
             try:

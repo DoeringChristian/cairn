@@ -8,6 +8,8 @@ from typing import Any
 
 from fastapi import HTTPException, Request
 
+from ..progress import COLUMNS as PROGRESS_COLUMNS
+from ..progress import run_progress
 from ..storage.blobs import BlobStore
 from ..storage.datadir import DataDir
 from ..storage.db import Database
@@ -37,7 +39,8 @@ def get_blobs(request: Request) -> BlobStore:
 
 def api_run_row(row: dict[str, Any]) -> dict[str, Any]:
     """A ``runs`` row in API shape: the ``run_group`` column is the ``group``
-    field (GROUP is a reserved word in SQL, so only the column is renamed)."""
+    field (GROUP is a reserved word in SQL, so only the column is renamed).
+    The progress columns become the one ``progress`` field (``progress.py``)."""
     if "run_group" in row:
         row["group"] = row.pop("run_group")
     if "archived_at" in row:
@@ -46,6 +49,10 @@ def api_run_row(row: dict[str, Any]) -> dict[str, Any]:
     # / ``summary_doc``), only where asked for; never as raw columns.
     row.pop("config", None)
     row.pop("summary", None)
+    if "total_steps" in row:
+        row["progress"] = run_progress(row)
+        for col in PROGRESS_COLUMNS:
+            row.pop(col, None)
     return row
 
 

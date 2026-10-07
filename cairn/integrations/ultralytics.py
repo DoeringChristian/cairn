@@ -66,6 +66,7 @@ class CairnCallbacks:
             return
         self._track(trainer.label_loss_items(trainer.tloss, prefix="train"), trainer.epoch)
         self._track(trainer.lr, trainer.epoch)
+        self.run.progress(trainer.epoch + 1, total=trainer.epochs)
 
     def on_fit_epoch_end(self, trainer: Any) -> None:
         """Validation metrics (``metrics/mAP50(B)``, ``val/box_loss``, ...) at

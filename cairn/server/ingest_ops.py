@@ -14,7 +14,7 @@ import shutil
 from datetime import datetime
 from typing import Any
 
-from . import config_doc
+from . import config_doc, progress
 from .routes._common import parse_timestamp, slugify, utc_now, value_type
 from .storage.blobs import BlobStore
 from .storage.datadir import DataDir
@@ -234,6 +234,7 @@ def insert_batch(
     for i in range(0, len(rows), INGEST_CHUNK):
         with db.transaction(immediate=True) as con:
             insert_points(con, run_id, rows[i:i + INGEST_CHUNK])
+            progress.fold_points(con, run_id, rows[i:i + INGEST_CHUNK])
     return len(rows)
 
 
@@ -445,6 +446,21 @@ def request_stop(db: Database, run_id: str) -> str | None:
     return row[0] if row else None
 
 
+def set_total_steps(db: Database, run_id: str, total_steps: int | None) -> None:
+    """The run's declared number of steps (None clears it); see ``progress``."""
+    with db.transaction(immediate=True) as con:
+        progress.set_total_steps(con, run_id, total_steps)
+
+
+def set_progress(
+    db: Database, run_id: str, value: float, total: float | None = None,
+    wall_time: str | None = None,
+) -> None:
+    """An explicit ``run.progress(value, total)`` made at ``wall_time``."""
+    with db.transaction(immediate=True) as con:
+        progress.set_progress(con, run_id, value, total, wall_time)
+
+
 def set_metric_rule(
     db: Database,
     run_id: str,
@@ -533,6 +549,7 @@ def rewind_run(db: Database, run_id: str, step: int) -> dict[str, Any]:
             [run_id, *keep],
         )
         rebuild_metric_stats(con, [run_id])
+        progress.recompute_max_step(con, run_id)
         con.execute(
             "UPDATE runs SET data_epoch = COALESCE(data_epoch, 0) + 1 WHERE id = ?",
             [run_id],
@@ -575,6 +592,7 @@ def fork_run(
             [run_id, parent_id, *keep],
         )
         rebuild_metric_stats(con, [run_id])
+        progress.recompute_max_step(con, run_id)
         for table in KEY_TABLES:
             # The child's own writes (a replayed WAL) merge over the parent's.
             doc = config_doc.merge(

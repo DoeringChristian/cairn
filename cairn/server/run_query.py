@@ -48,7 +48,8 @@ RUN_LIST_COLUMNS = """id, project_id, display_name, created_at, ended_at, status
                    exit_code, git_sha, git_dirty, git_branch, git_remote, cli_args,
                    hostname, "user", tags, notes, last_heartbeat,
                    parent_run_id, fork_step, data_epoch, run_group, job_type,
-                   sweep_id, stop_requested, archived_at"""
+                   sweep_id, stop_requested, archived_at, total_steps, max_step,
+                   step_samples, progress_value, progress_total, progress_samples"""
 
 #: Filterable run fields and their column.
 RUN_FIELDS = {

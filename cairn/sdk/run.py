@@ -38,6 +38,7 @@ from ..sdk.handlers.registry import HandlerRegistry, default_registry
 from ..sdk.wrappers import _TypeWrapper
 from ..server import artifact_registry_ops as _registry_rules
 from ..server import config_doc
+from ..server import progress as _progress_rules
 from .artifacts import Artifact, ArtifactVersion, draft_from_shorthand
 from .buffer import MetricBuffer
 from .connect import open_transport
@@ -153,6 +154,10 @@ class Run:
             callbacks: ``"interrupt"`` (default) raises ``KeyboardInterrupt``
             in the main thread and the run finishes as ``stopped``;
             ``"flag"`` only sets ``should_stop`` for the training loop to poll.
+        total_steps: The number of steps the run will take. Its progress is
+            then the highest step it logged (any series but ``system.*``)
+            divided by this, shown as a bar with an ETA in the UI. Settable
+            later as ``run.total_steps``; ``progress()`` overrides it.
 
     Raises:
         ValueError: For an unknown ``stop_mode``, ``rewind_to`` without
@@ -198,6 +203,7 @@ class Run:
         mode: str | None = None,
         on_stop: Callable[["Run"], Any] | None = None,
         stop_mode: str = "interrupt",
+        total_steps: int | None = None,
     ):
         if stop_mode not in ("interrupt", "flag"):
             raise ValueError(f"stop_mode must be 'interrupt' or 'flag', not {stop_mode!r}")
@@ -207,6 +213,7 @@ class Run:
             raise ValueError("pass resume or fork_from, not both")
         if fork_from is not None and (parent_run_id is not None or fork_step is not None):
             raise ValueError("fork_from sets parent_run_id and fork_step itself")
+        _progress_rules.check_total_steps(total_steps)
         self._registry = registry or default_registry
         # Stop requests (from the UI) arrive on the heartbeat.
         self._stop_requested = False
@@ -245,6 +252,12 @@ class Run:
         # The highest explicit step tracked so far; run.watch histograms use it.
         self._last_step: int | None = None
         self._watchers: list[Watcher] = []
+        self._total_steps: int | None = None
+        # run.progress(): the last value sent (monotonic time, body) and the
+        # newest one held back by the throttle (sent by the heartbeat/finish).
+        self._progress_lock = threading.Lock()
+        self._progress_sent_at: float | None = None
+        self._progress_pending: dict[str, Any] | None = None
 
         # Env + git captured synchronously so we can send them on create.
         env_snapshot: dict[str, Any] | None = _capture_env() if capture_env else None
@@ -315,6 +328,9 @@ class Run:
                 self._transport._wal = self._wal
             except OSError:
                 log.warning("failed to create WAL for run %s", self._run_id, exc_info=True)
+
+        if total_steps is not None:
+            self.total_steps = total_steps
 
         # Guard against nested runs.
         stdout_capture.set_active_run(self._run_id)
@@ -501,6 +517,70 @@ class Run:
         the main thread is interrupted (unless ``stop_mode="flag"``)."""
         self._on_stop.append(fn)
         return fn
+
+    # ---- progress ---------------------------------------------------------
+
+    @property
+    def total_steps(self) -> int | None:
+        """The number of steps the run will take (None: not declared).
+
+        Setting it at any time (``None`` clears it) makes the run's progress
+        the highest step logged so far (any series but ``system.*``) divided
+        by it. The UI shows it as a bar with an ETA from the step rate over
+        the last few minutes."""
+        return self._total_steps
+
+    @total_steps.setter
+    def total_steps(self, value: int | None) -> None:
+        _progress_rules.check_total_steps(value)
+        self._total_steps = value
+        self._transport.set_total_steps(self._run_id, value)
+
+    #: Seconds between two ``progress()`` values sent; a newer one in between
+    #: is held and sent by the next call after that, the heartbeat or finish.
+    _PROGRESS_INTERVAL = 1.0
+
+    def progress(self, i: float, total: float | None = None) -> None:
+        """Report explicit progress: ``i`` of ``total`` (e.g. epochs done).
+
+        ``total`` defaults to ``total_steps``. Once called, this value wins
+        over the step-based progress for this run. Cheap to call every
+        iteration: at most one value per second is sent (always the newest).
+
+            for epoch in range(epochs):
+                ...
+                run.progress(epoch + 1, total=epochs)
+
+        Raises:
+            ValueError: ``i`` is negative or not a finite number, or
+                ``total`` is not > 0.
+        """
+        if self._finished:
+            raise RuntimeError("Run has already been finished")
+        _progress_rules.check_progress(i, total)
+        body = {"value": i, "total": total, "wall_time": _now_iso()}
+        now = time.monotonic()
+        with self._progress_lock:
+            due = (
+                self._progress_sent_at is None
+                or now - self._progress_sent_at >= self._PROGRESS_INTERVAL
+                or (total is not None and i >= total)
+            )
+            if not due:
+                self._progress_pending = body
+                return
+            self._progress_pending = None
+            self._progress_sent_at = now
+        self._transport.post_progress(self._run_id, body)
+
+    def _flush_progress(self) -> None:
+        """Send the value ``progress()`` held back, if any."""
+        with self._progress_lock:
+            body, self._progress_pending = self._progress_pending, None
+            if body is None:
+                return
+            self._progress_sent_at = time.monotonic()
+        self._transport.post_progress(self._run_id, body)
 
     # ---- tracking ---------------------------------------------------------
 
@@ -1052,6 +1132,10 @@ class Run:
                 self._stdout_capture.stop()
             # Drain both buffers before posting finish.
             self._heartbeat_stop.set()
+            try:
+                self._flush_progress()
+            except Exception:
+                log.warning("progress flush failed during finish", exc_info=True)
             self._metric_buffer.stop(timeout=self._timeout)
             self._log_buffer.stop(timeout=self._timeout)
             # Wait for source upload to finish before closing the transport/DB.
@@ -1120,6 +1204,10 @@ class Run:
         while not self._heartbeat_stop.wait(self._HEARTBEAT_INTERVAL):
             if self._finished:
                 return
+            try:
+                self._flush_progress()
+            except Exception:
+                log.debug("progress flush failed", exc_info=True)
             try:
                 stop_requested = self._transport.heartbeat(self._run_id)
             except Exception:  # noqa: BLE001
@@ -1268,10 +1356,22 @@ class _DisabledRun(Run):
         self._tags = list(kwargs.get("tags") or [])
         self._finished = False
         self._stop_requested = False
+        self._total_steps = kwargs.get("total_steps")
 
     @property
     def url(self) -> None:  # type: ignore[override]
         return None
+
+    @property
+    def total_steps(self) -> int | None:  # type: ignore[override]
+        return self._total_steps
+
+    @total_steps.setter
+    def total_steps(self, value: int | None) -> None:
+        self._total_steps = value
+
+    def progress(self, *args: Any, **kwargs: Any) -> None:
+        pass
 
     def track(self, *args: Any, **kwargs: Any) -> None:
         pass

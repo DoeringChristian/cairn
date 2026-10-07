@@ -37,6 +37,20 @@ Where the run is written is resolved as usual: `repo=` in `run_kwargs`, else
 Ultralytics is the exception: `add_cairn_callbacks(model, project=..., **run_kwargs)`
 creates a new run for every `model.train()` and always finishes it.
 
+## Progress
+
+The integrations give their runs a total, so the UI shows [progress and an ETA](runs.md#progress-and-eta):
+
+| Integration | Total | How |
+|---|---|---|
+| Lightning | `trainer.estimated_stepping_batches` | `run.total_steps`, when fitting starts (if finite). Lightning logs at `global_step`, which counts the same optimizer steps. |
+| HuggingFace | `state.max_steps` | `run.total_steps`, at training start. The Trainer logs at `global_step`. |
+| Keras | `epochs` | `run.progress(epoch + 1, total=epochs)` after each epoch: the integration's steps are epoch indices (batch indices only with `log_every_n_batches`), so progress counts epochs. |
+| Ultralytics | `epochs` | `run.progress(epoch + 1, total=epochs)` after each epoch's training. |
+
+XGBoost, sweeps (`Sweep.run`, `cairn agent`) and TensorBoard imports set none: a trial's script
+sets its own run's total.
+
 ## Model checkpoints
 
 The Lightning, HuggingFace, Keras and Ultralytics integrations can log the

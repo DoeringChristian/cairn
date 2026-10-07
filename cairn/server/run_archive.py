@@ -43,7 +43,7 @@ import secrets
 import zipfile
 from typing import Any, Callable
 
-from . import config_doc, ingest_ops
+from . import config_doc, ingest_ops, progress
 from .artifact_refs import referenced_hashes
 from .routes._common import utc_now
 from .storage.blobs import BlobStore
@@ -346,6 +346,7 @@ def restore_archive(
             _insert(db, "sequences", seq_cols, dict(row, run_id=new_id))
         with db.transaction() as con:
             rebuild_metric_stats(con, [new_id])
+            progress.recompute_max_step(con, new_id)
 
         for md in _read_json(zf, prefix + "metric_defs.json", []):
             _insert(db, "metric_defs", md_cols, dict(md, run_id=new_id))

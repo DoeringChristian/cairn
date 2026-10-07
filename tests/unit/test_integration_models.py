@@ -175,7 +175,7 @@ def _hf_args(tmp_path: Path, **kw) -> SimpleNamespace:
 
 
 def _hf_state(step: int, zero: bool = True) -> SimpleNamespace:
-    return SimpleNamespace(global_step=step, epoch=step / 4, is_world_process_zero=zero,
+    return SimpleNamespace(global_step=step, max_steps=8, epoch=step / 4, is_world_process_zero=zero,
                            best_metric=0.25, best_model_checkpoint=None)
 
 
@@ -393,7 +393,7 @@ def test_ultralytics_callbacks(tmp_path, ultralytics_integration):
 
     trainer = SimpleNamespace(
         args=SimpleNamespace(name="train", data="coco8.yaml", imgsz=64, save_dir=save_dir),
-        save_dir=save_dir, epoch=0, tloss=[1.0, 2.0],
+        save_dir=save_dir, epoch=0, epochs=2, tloss=[1.0, 2.0],
         label_loss_items=lambda tloss, prefix: {f"{prefix}/box_loss": tloss[0], f"{prefix}/cls_loss": tloss[1]},
         lr={"lr/pg0": 0.01}, metrics={"metrics/mAP50(B)": 0.1, "val/box_loss": 1.5},
         best=save_dir / "weights" / "best.pt", last=save_dir / "weights" / "last.pt",

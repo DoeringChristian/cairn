@@ -97,6 +97,8 @@ class CairnCallback(TrainerCallback):
             kw = dict(self._run_kwargs)
             kw.setdefault("project", args.output_dir.split("/")[-1] if args.output_dir else "hf")
             self._run = Run(**kw)
+        if state.max_steps and state.max_steps > 0:
+            self._run.total_steps = int(state.max_steps)
         # Log the TrainingArguments as params (flat dict).
         try:
             self._run.config(training_args=args.to_dict())
