@@ -134,6 +134,10 @@ class Transport:
         # Set by finish_run: every replay (a flush thread's catch_up too)
         # stops by then, so finish() is not left waiting behind one.
         self._finish_deadline: float | None = None
+        # The process (set by cairn.Run): a worker's heartbeat only reads
+        # the stop request (see join_run).
+        self.label: str | None = None
+        self.primary = True
 
     def close(self) -> None:
         if self._owns_client:
@@ -327,8 +331,38 @@ class Transport:
 
     # ---- high-level ops ----------------------------------------------------
 
+    #: Seconds ``join_run`` waits for the run to exist on the server.
+    JOIN_WAIT = 120.0
+
     def create_run(self, body: dict[str, Any]) -> dict[str, Any]:
-        return self.post_json("/api/runs", body).json()
+        """Create a run. Raises ValueError when its id is taken (409)."""
+        try:
+            return self.post_json("/api/runs", body).json()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 409:
+                raise ValueError(exc.response.json().get("detail", exc.response.text)) from None
+            raise
+
+    def join_run(self, run_id: str, project: str | None) -> dict[str, Any]:
+        """Join ``run_id`` as a worker process (``create`` with ``primary:
+        false``): its project, tags, documents, status and stop request.
+        Waits up to ``JOIN_WAIT`` seconds for the primary to create it.
+
+        Raises:
+            LookupError: The run did not appear in time.
+        """
+        body = {"project": project or "", "run_id": run_id, "primary": False,
+                "label": self.label}
+        deadline = time.monotonic() + self.JOIN_WAIT
+        while True:
+            try:
+                return self.post_json("/api/runs", body).json()
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code != 404:
+                    raise
+                if time.monotonic() > deadline:
+                    raise LookupError(f"run {run_id} not found on {self.server_url}") from None
+            time.sleep(0.25)
 
     def post_batch(self, run_id: str, points: list[dict[str, Any]]) -> bool:
         """Post a sequence batch (from a flush thread). With a WAL, the batch
@@ -430,6 +464,20 @@ class Transport:
         self.drain_wal(deadline=deadline, wait_backoff=True)
         return not self._behind
 
+    def detach_run(self, run_id: str, *, deadline: float | None = None) -> bool:
+        """A worker's ``finish``: send everything pending, then tell the
+        server it is done (a finish with ``primary: false``, which leaves the
+        run's status alone). Same WAL handling as ``finish_run``."""
+        body = {"primary": False}
+        if self._wal is None:
+            self.post_json(f"/api/runs/{run_id}/finish", body)
+            return True
+        self._finish_deadline = deadline
+        self._wal.append("detach", {"run_id": run_id})
+        self._behind = True
+        self.drain_wal(deadline=deadline, wait_backoff=True)
+        return not self._behind
+
     def set_tags(self, run_id: str, tags: list[str]) -> None:
         self.post_json(f"/api/runs/{run_id}/tags", {"tags": tags})
 
@@ -447,8 +495,10 @@ class Transport:
         self.post_json(f"/api/runs/{run_id}/alerts", alert)
 
     def heartbeat(self, run_id: str) -> str | None:
-        """Returns the run's ``stop_requested`` timestamp, if any."""
-        return self.post_json(f"/api/runs/{run_id}/heartbeat", {}).json().get("stop_requested")
+        """Returns the run's ``stop_requested`` timestamp, if any. A
+        worker's heartbeat only reads it (the run's liveness is its primary's)."""
+        body = {} if self.primary else {"primary": False}
+        return self.post_json(f"/api/runs/{run_id}/heartbeat", body).json().get("stop_requested")
 
     def set_metric_rule(
         self, run_id: str, name: str, x: str | None, summary: str | None,
@@ -470,9 +520,14 @@ class Transport:
         """``body`` is the child's create body (the ``create_run`` shape)."""
         fields = {k: v for k, v in body.items() if k not in ("project", "run_id", "created_at",
                                                             "parent_run_id", "fork_step")}
-        return self.post_json(
-            f"/api/runs/{parent_id}/fork", {**fields, "new_id": new_id, "step": step},
-        ).json()
+        try:
+            return self.post_json(
+                f"/api/runs/{parent_id}/fork", {**fields, "new_id": new_id, "step": step},
+            ).json()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 409:  # new_id is taken
+                raise ValueError(exc.response.json().get("detail", exc.response.text)) from None
+            raise
 
     def sequence_steps(self, run_id: str) -> list[dict[str, Any]]:
         """Each of the run's series as ``{name, max_step}``."""
@@ -720,6 +775,8 @@ class Transport:
                  "ended_at": p.get("ended_at")},
                 retry=False,
             )
+        elif e.op == "detach":
+            self.post_json(f"/api/runs/{p['run_id']}/finish", {"primary": False}, retry=False)
         else:
             log.warning("unknown WAL op %r at seq %d", e.op, e.seq)
 

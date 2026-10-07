@@ -44,6 +44,7 @@ from .buffer import MetricBuffer
 from .connect import open_transport
 from .gallery import GALLERY_MIME, GalleryItem, resolve_gallery
 from .local import LocalTransport, RepoTransport
+from .run_ids import auto_label, check_label, check_run_id, env_run_id, new_run_id
 from .scope import Scope
 from .transport import Transport
 from .uploads import upload_value
@@ -83,6 +84,15 @@ class Run:
     an exception, ``stopped`` after a stop request), when ``finish()`` is
     called, or at interpreter exit. SIGTERM/SIGINT finish it as ``killed``.
 
+    Several processes can log into one run (wandb's "shared" mode): every
+    process gets the same id (``run_id=`` or ``CAIRN_RUN_ID``), one PRIMARY
+    creates the run and the others join it with ``primary=False`` (or
+    ``cairn.attach``) and a ``label``. Everything a worker records lands in
+    the run, but only the primary sets its status and keeps it alive: a
+    worker's finish, exception or silence never changes it. A stop request
+    reaches every process. A labelled process's system metrics are
+    ``system.<label>.*`` and its console lines carry its label.
+
     Example:
         ```python
         with cairn.Run("mnist", name="baseline", tags=["cnn"]) as run:
@@ -93,7 +103,8 @@ class Run:
 
     Args:
         project: Project name. Normalised to an id (lowercase, spaces become
-            dashes); created on first use.
+            dashes); created on first use. Required, except for a worker
+            (``primary=False``), which joins the run's project.
         name: Display name. Default: none (the UI shows the id); a run
             launched by ``cairn agent`` takes its trial's name.
         tags: Initial tags. Edit later with ``set_tag``/``remove_tag``/``set_tags``.
@@ -114,6 +125,20 @@ class Run:
             first.
         fork_from: ``(run_id, step)``: start a new run holding a copy of
             that run's history up to ``step`` (see above).
+        run_id: The id of a new run (default: ``CAIRN_RUN_ID``, else a fresh
+            one; see ``cairn.new_run_id``), 1-64 characters of ``A-Z a-z
+            0-9 _ -``. A run with this id must not exist yet. For a worker:
+            the run to join (required, here or in ``CAIRN_RUN_ID``).
+        label: This process's name within the run (e.g. ``"rank1"``):
+            required for a worker, optional for the primary; unique among
+            the run's live processes. ``"auto"`` takes it from the
+            launcher's rank (``RANK``, ``SLURM_PROCID``,
+            ``SKYPILOT_NODE_RANK``, ``OMPI_COMM_WORLD_RANK``, ``PMI_RANK``,
+            first set wins): rank 0 is the primary ``"rank0"``, rank N a
+            worker ``"rankN"``; with none set, an unlabelled primary.
+        primary: False: join the existing run as a worker (see above)
+            instead of creating one. Default: True, or what
+            ``label="auto"`` detected.
         repo: Where to write: a ``.cairn/`` directory or a
             ``cairn://host:port`` server. Default: ``cairn.configure``,
             then ``CAIRN_REPO``, ``CAIRN_SERVER``, the config file, then
@@ -162,7 +187,14 @@ class Run:
     Raises:
         ValueError: For an unknown ``stop_mode``, ``rewind_to`` without
             ``resume``, both ``resume`` and ``fork_from``, or ``fork_from``
-            together with ``parent_run_id``/``fork_step``.
+            together with ``parent_run_id``/``fork_step``; a ``run_id`` that
+            is taken, malformed, or differs from ``resume``; a worker without
+            an id or a label, or with ``resume``/``fork_from``; a label in
+            use by another live process of the run.
+        TypeError: No ``project`` for a primary.
+        LookupError: A worker's run did not appear within two minutes
+            (only waited for where the project must be looked up: over
+            HTTP, or ``project`` not given).
     """
 
     def __new__(cls, *args: Any, mode: str | None = None, **kwargs: Any) -> Run:
@@ -172,7 +204,7 @@ class Run:
 
     def __init__(
         self,
-        project: str,
+        project: str | None = None,
         *,
         name: str | None = None,
         tags: list[str] | None = None,
@@ -186,6 +218,9 @@ class Run:
         resume: str | None = None,
         rewind_to: int | None = None,
         fork_from: tuple[str, int] | None = None,
+        run_id: str | None = None,
+        label: str | None = None,
+        primary: bool | None = None,
         repo: str | Path | None = None,
         capture_source: bool = True,
         capture_stdout: bool = True,
@@ -213,7 +248,14 @@ class Run:
             raise ValueError("pass resume or fork_from, not both")
         if fork_from is not None and (parent_run_id is not None or fork_step is not None):
             raise ValueError("fork_from sets parent_run_id and fork_step itself")
+        label, primary, given_id = _resolve_process(label, primary, run_id, resume)
+        if not primary and (resume is not None or fork_from is not None):
+            raise ValueError("a worker (primary=False) joins a run: it cannot resume or fork one")
+        if primary and project is None:
+            raise TypeError("cairn.Run() needs a project")
         _progress_rules.check_total_steps(total_steps)
+        self._label = label
+        self._primary = primary
         self._registry = registry or default_registry
         # Stop requests (from the UI) arrive on the heartbeat.
         self._stop_requested = False
@@ -228,11 +270,13 @@ class Run:
         else:
             self._transport, self._server = open_transport(repo, timeout=timeout)
             self._owns_transport = True
+        self._transport.label = label
+        self._transport.primary = primary
         self._project = project
         self._name = name
         # Launched by `cairn agent`: join its sweep and take the trial's params.
         trial_id = None
-        if sweep_id is None and os.environ.get("CAIRN_SWEEP_ID"):
+        if primary and sweep_id is None and os.environ.get("CAIRN_SWEEP_ID"):
             sweep_id = os.environ["CAIRN_SWEEP_ID"]
             trial_id = os.environ.get("CAIRN_TRIAL_ID") or None
         self._timeout = timeout
@@ -259,12 +303,16 @@ class Run:
         self._progress_sent_at: float | None = None
         self._progress_pending: dict[str, Any] | None = None
 
-        # Env + git captured synchronously so we can send them on create.
+        # Env + git captured synchronously so we can send them on create. A
+        # worker creates nothing, and the run's source snapshot is its
+        # primary's.
+        if not primary:
+            capture_env = capture_source = False
         env_snapshot: dict[str, Any] | None = _capture_env() if capture_env else None
         git_info = capture_git(Path.cwd()) if capture_source or capture_env else None
 
         # Generate ID client-side (128-bit, collision-proof).
-        client_run_id = secrets.token_hex(16)
+        client_run_id = given_id or new_run_id()
 
         create_body: dict[str, Any] = {
             "project": project,
@@ -295,7 +343,13 @@ class Run:
                 created_at.isoformat() if isinstance(created_at, datetime) else created_at
             ),
         }
-        if resume is not None:
+        if not primary:
+            resp = self._transport.join_run(client_run_id, project)
+            self._tags = list(resp.get("tags") or [])
+            # Its system.<label>.* counters continue past an earlier
+            # process of the same label (a requeued job, a later eval).
+            self._seed_step_counters(client_run_id)
+        elif resume is not None:
             resp = (
                 self._transport.rewind_run(resume, int(rewind_to))
                 if rewind_to is not None
@@ -320,11 +374,19 @@ class Run:
         }
         self._backend_cache: Any = None
         self._url_path: str = resp.get("url", f"/p/{self._project_id}/r/{self._run_id}")
+        # A run that had ended when this worker joined keeps the stop request
+        # it ended with: that one is not for this process.
+        self._stale_stop: str | None = (
+            resp.get("stop_requested")
+            if not primary and resp.get("status") not in (None, "running", "crashed")
+            else None
+        )
 
         # Attach WAL for HTTP transports (local mode writes the repo-dir WAL itself).
         if isinstance(self._transport, Transport):
             try:
-                self._wal = WriteAheadLog(self._run_id, target=self._server)
+                wal_key = self._run_id if label is None else f"{self._run_id}~{label}"
+                self._wal = WriteAheadLog(wal_key, target=self._server)
                 self._transport._wal = self._wal
             except OSError:
                 log.warning("failed to create WAL for run %s", self._run_id, exc_info=True)
@@ -367,8 +429,12 @@ class Run:
         # System metrics collector.
         self._sys_collector: SystemMetricsCollector | None = None
         if capture_system_metrics:
+            prefix = "system." if label is None else f"system.{label}."
             self._sys_collector = SystemMetricsCollector(
-                track=lambda n, v: self._track_sample(n, v),
+                # system.<label>.*: each process's own series.
+                track=lambda n, v: self._track_sample(
+                    prefix + n.removeprefix("system."), v,
+                ),
                 interval=system_metrics_interval,
                 include_per_core=system_metrics_include_per_core,
             )
@@ -454,7 +520,7 @@ class Run:
             self._prev_excepthook = None  # type: ignore[assignment]
 
         if trial_id:
-            self._join_trial(sweep_id, trial_id)
+            self._join_trial(sweep_id, trial_id)  # primary only (see above)
 
     def _join_trial(self, sweep_id: str, trial_id: str) -> None:
         """Link this run to its sweep trial and record the trial's params as
@@ -1106,6 +1172,9 @@ class Run:
     def finish(self, status: str = "completed", exit_code: int | None = None) -> None:
         """End the run: flush everything it buffered and record its status.
 
+        A worker (``primary=False``) only detaches: it flushes everything
+        and stops logging, and the run's status stays its primary's to set.
+
         Stops model watching, system-metric sampling and stdout capture,
         drains the metric and log buffers, waits (up to two minutes) for the
         source snapshot upload, then marks the run finished. Calling it again
@@ -1146,9 +1215,11 @@ class Run:
                 # Everything pending replays in order, ending with the finish
                 # itself, for at most ``timeout`` seconds: a slow or dead
                 # server leaves the rest in the WAL for ``cairn sync``.
-                delivered = self._transport.finish_run(
-                    self._run_id, status, exit_code,
-                    deadline=time.monotonic() + self._timeout,
+                deadline = time.monotonic() + self._timeout
+                delivered = (
+                    self._transport.finish_run(self._run_id, status, exit_code, deadline=deadline)
+                    if self._primary
+                    else self._transport.detach_run(self._run_id, deadline=deadline)
                 )
                 try:
                     if delivered and not self._wal.has_pending:
@@ -1167,7 +1238,10 @@ class Run:
                     self._transport.drain_spill(self._run_id)
                 except Exception:  # noqa: BLE001
                     log.warning("drain_spill failed during finish", exc_info=True)
-                self._transport.finish_run(self._run_id, status, exit_code)
+                if self._primary:
+                    self._transport.finish_run(self._run_id, status, exit_code)
+                else:
+                    self._transport.detach_run(self._run_id)
         finally:
             self._finished = True
             stdout_capture.clear_active_run(self._run_id)
@@ -1212,7 +1286,7 @@ class Run:
                 stop_requested = self._transport.heartbeat(self._run_id)
             except Exception:  # noqa: BLE001
                 continue  # Best effort — don't crash the heartbeat thread.
-            if stop_requested and not self._stop_requested:
+            if stop_requested and stop_requested != self._stale_stop and not self._stop_requested:
                 self._handle_stop_request()
 
     def _handle_stop_request(self) -> None:
@@ -1288,9 +1362,11 @@ class Run:
             return cur
 
     def _on_captured_line(self, event: dict[str, Any]) -> None:
+        # line_no counts per process: (label, line_no) identifies a line.
         with self._line_lock:
             self._line_counter += 1
             event["line_no"] = self._line_counter
+        event["label"] = self._label
         self._log_buffer.append(event)
 
     def _flush_logs(self, batch: list[dict[str, Any]]) -> bool:
@@ -1341,6 +1417,85 @@ def _rule_on_non_scalar(name: str, kind: str | None) -> str:
     )
 
 
+def _resolve_process(
+    label: str | None, primary: bool | None, run_id: str | None, resume: str | None,
+) -> tuple[str | None, bool, str | None]:
+    """``cairn.Run``'s process arguments -> ``(label, primary, run id)``: the
+    label (``"auto"`` resolved), the role (an explicit ``primary`` wins over
+    the detected one) and the id given by ``run_id`` or ``CAIRN_RUN_ID``."""
+    detected = True
+    if label == "auto":
+        label, detected = auto_label()
+    if label is not None:
+        check_label(label)
+    primary = detected if primary is None else bool(primary)
+    if run_id is not None and resume is not None:
+        raise ValueError("pass resume or run_id, not both: resume names the run")
+    given = check_run_id(run_id) if run_id is not None else None
+    env = env_run_id()
+    if given is None and env is not None:
+        given = check_run_id(env)
+        if resume is not None and resume != given:
+            raise ValueError(
+                f"resume={resume!r} is not the run CAIRN_RUN_ID names ({given!r})"
+            )
+    if not primary:
+        if given is None:
+            raise ValueError(
+                "a worker (primary=False) needs the run's id: run_id= or CAIRN_RUN_ID"
+            )
+        if label is None:
+            raise ValueError("a worker (primary=False) needs a label")
+    return label, primary, None if resume is not None else given
+
+
+def attach(
+    run_id: str,
+    label: str,
+    *,
+    repo: str | Path | None = None,
+    project: str | None = None,
+    system_metrics: bool = True,
+    capture_output: bool = True,
+) -> Run:
+    """Join the existing run ``run_id`` from another process, as a worker.
+
+    The same as ``cairn.Run(project, run_id=run_id, label=label,
+    primary=False, ...)``: everything this process records lands in that
+    run, but it never changes the run's status; ``finish()`` (or leaving a
+    ``with`` block, or exiting) only detaches it. The run may still be
+    being created (its primary started at the same time) or may have
+    finished (a later job adding evaluation metrics).
+
+        run = cairn.attach(run_id, label=f"rank{rank}")
+
+    Args:
+        run_id: The run to join (its primary's ``run.id``).
+        label: This process's name within the run, e.g. ``"rank1"``
+            (``"auto"``: from the launcher's rank, see ``cairn.Run``). Its
+            system metrics are ``system.<label>.*`` and its console lines
+            carry it.
+        repo: Where the run lives (as for ``cairn.Run``).
+        project: The run's project; looked up when not given.
+        system_metrics: Sample this process's CPU, memory, disk and GPU
+            usage as ``system.<label>.*``.
+        capture_output: Record this process's stdout/stderr lines.
+
+    Returns:
+        The joined ``cairn.Run``.
+
+    Raises:
+        ValueError: A malformed id or label, or a label in use by another
+            live process of the run.
+        LookupError: The run did not appear within two minutes (only
+            waited for where its project must be looked up).
+    """
+    return Run(
+        project, run_id=run_id, label=label, primary=False, repo=repo,
+        capture_system_metrics=system_metrics, capture_stdout=capture_output,
+    )
+
+
 class _DisabledRun(Run):
     """What ``cairn.Run`` returns in disabled mode: every method is a no-op.
 
@@ -1349,7 +1504,7 @@ class _DisabledRun(Run):
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
-        self._run_id = secrets.token_hex(16)
+        self._run_id = kwargs.get("run_id") or env_run_id() or new_run_id()
         self._project = kwargs.get("project", args[0] if args else None)
         # Nothing to ask for the normalised id: ``project`` is what was given.
         self._project_id = self._project

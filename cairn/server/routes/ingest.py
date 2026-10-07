@@ -58,6 +58,11 @@ class CreateRunRequest(BaseModel):
     sweep_id: str | None = None
     parent_run_id: str | None = None
     fork_step: int | None = None
+    #: False: a worker process joining the existing run ``run_id`` (see
+    #: ``cairn.Run(primary=False)``); the other fields are ignored then.
+    primary: bool = True
+    #: The joining process's label (informational).
+    label: str | None = None
 
 
 class ParamsRequest(BaseModel):
@@ -88,6 +93,8 @@ class LogLine(BaseModel):
     line_no: int
     content: str
     content_raw: str | None = None  # optional ANSI-preserved for on-disk file
+    #: The label of the process that printed it (None: unlabelled).
+    label: str | None = None
 
 
 class LogsRequest(BaseModel):
@@ -99,6 +106,13 @@ class FinishRequest(BaseModel):
     exit_code: int | None = None
     #: ISO-8601; when the run actually ended (imports). Default: now.
     ended_at: str | None = None
+    #: False: a worker process detaching; the run's status is unchanged.
+    primary: bool = True
+
+
+class HeartbeatRequest(BaseModel):
+    #: False: a worker's heartbeat, which only reads ``stop_requested``.
+    primary: bool = True
 
 
 class TagsRequest(BaseModel):
@@ -176,9 +190,20 @@ def _run_not_found(exc: ingest_ops.RunNotFound) -> HTTPException:
 
 @router.post("/runs")
 def create_run(body: CreateRunRequest, request: Request) -> dict[str, Any]:
+    """Create a run, or (``primary: false``) join the existing run
+    ``run_id`` as a worker process: 404 while it does not exist."""
     db = get_db(request)
+    if not body.primary:
+        if not body.run_id:
+            raise HTTPException(status_code=400, detail="joining a run needs its run_id")
+        try:
+            return ingest_ops.join_run(db, body.run_id)
+        except ingest_ops.RunNotFound as exc:
+            raise _run_not_found(exc) from None
     try:
-        return ingest_ops.create_run(db, **body.model_dump())
+        return ingest_ops.create_run(db, **body.model_dump(exclude={"primary", "label"}))
+    except ingest_ops.RunExists as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
 
@@ -344,8 +369,13 @@ async def post_source(run_id: str, request: Request) -> dict[str, Any]:
 def finish_run(
     run_id: str, body: FinishRequest, request: Request
 ) -> dict[str, Any]:
+    """End a run with ``status``. A worker's finish (``primary: false``) is
+    its detach: only the primary sets the run's status, so it changes
+    nothing and returns the run's current status."""
     db = get_db(request)
     try:
+        if not body.primary:
+            return {"run_id": run_id, "status": ingest_ops.join_run(db, run_id)["status"]}
         ingest_ops.finish_run(db, run_id, body.status, body.exit_code, body.ended_at)
     except ingest_ops.RunNotFound as exc:
         raise _run_not_found(exc) from None
@@ -407,9 +437,17 @@ def _delete_keys(request: Request, run_id: str, table: str, keys: list[str]) -> 
 
 
 @router.post("/runs/{run_id}/heartbeat")
-def run_heartbeat(run_id: str, request: Request) -> dict[str, Any]:
+def run_heartbeat(
+    run_id: str, request: Request, body: HeartbeatRequest | None = None,
+) -> dict[str, Any]:
+    """Keep a running run alive; return its pending stop request. A
+    worker's heartbeat (``primary: false``) only reads the stop request."""
     db = get_db(request)
-    return {"run_id": run_id, "stop_requested": ingest_ops.heartbeat(db, run_id)}
+    primary = body.primary if body is not None else True
+    return {
+        "run_id": run_id,
+        "stop_requested": ingest_ops.heartbeat(db, run_id, primary=primary),
+    }
 
 
 @router.post("/runs/{run_id}/alerts")
@@ -538,6 +576,9 @@ def rewind_run(run_id: str, body: RewindRequest, request: Request) -> dict[str, 
 @router.post("/runs/{run_id}/fork")
 def fork_run(run_id: str, body: ForkRequest, request: Request) -> dict[str, Any]:
     fields = body.model_dump(exclude={"step", "new_id"})
+    db = get_db(request)
+    if body.new_id and db.read_columns("SELECT id FROM runs WHERE id = ?", [body.new_id]):
+        raise HTTPException(status_code=409, detail=f"a run with id {body.new_id} exists already")
     try:
         return ingest_ops.fork_run(
             get_db(request), parent_id=run_id, step=body.step, run_id=body.new_id,

@@ -26,6 +26,10 @@ class RunNotFound(LookupError):
     """Raised when an operation targets a run id that doesn't exist."""
 
 
+class RunExists(ValueError):
+    """Raised when a new run is created with the id of an existing one."""
+
+
 def _require_run(db: Database, run_id: str) -> dict[str, Any]:
     rows = db.read_columns("SELECT * FROM runs WHERE id = ?", [run_id])
     if not rows:
@@ -68,10 +72,15 @@ def create_run(
 
     ``created_at`` backdates the run (imports, WAL replay); default now.
     ``group`` is stored in the ``run_group`` column.
+
+    Raises:
+        RunExists: A run with ``run_id`` exists already.
     """
     project_id = slugify(project)
     if not run_id:
         run_id = secrets.token_hex(16)
+    elif db.read_columns("SELECT id FROM runs WHERE id = ?", [run_id]):
+        raise RunExists(f"a run with id {run_id} exists already")
     now = utc_now()
     created = parse_timestamp(created_at) or now
 
@@ -244,12 +253,20 @@ def insert_logs(
     run_id: str,
     lines: list[dict[str, Any]],
 ) -> int:
+    """Store captured console lines. A line's ``label`` names the process
+    that printed it (None: an unlabelled one); ``line_no`` counts per
+    process, so ``(label, line_no)`` identifies a line within its run."""
     _require_run(db, run_id)
     rows = [
-        (run_id, line["stream"], line["wall_time"], line["line_no"], line["content"])
+        (run_id, line["stream"], line["wall_time"], line["line_no"], line["content"],
+         line.get("label"))
         for line in lines
     ]
-    db.executemany("INSERT OR IGNORE INTO log_lines VALUES (?, ?, ?, ?, ?)", rows)
+    db.executemany(
+        "INSERT OR IGNORE INTO log_lines (run_id, stream, wall_time, line_no, content, label) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        rows,
+    )
 
     def append_files() -> None:
         # Append to on-disk log files, preserving ANSI if provided.
@@ -266,7 +283,8 @@ def insert_logs(
                 if stream_path is not None:
                     with stream_path.open("a", encoding="utf-8") as fh:
                         fh.write(raw + "\n")
-                comb_fh.write(f"[{line['stream']}] {raw}\n")
+                who = f"{line['label']} " if line.get("label") else ""
+                comb_fh.write(f"[{who}{line['stream']}] {raw}\n")
 
     # Only once the rows are committed: a log batch whose transaction rolls
     # back is applied again, and must not append its lines twice.
@@ -417,10 +435,16 @@ def set_archived(db: Database, run_id: str, archived: bool) -> str | None:
     return archived_at
 
 
-def heartbeat(db: Database, run_id: str) -> str | None:
+def heartbeat(db: Database, run_id: str, *, primary: bool = True) -> str | None:
     """Update the heartbeat timestamp for a running run (a ``crashed`` one is
     running again); return its ``stop_requested`` timestamp (None unless
-    someone asked it to stop)."""
+    someone asked it to stop).
+
+    A worker's heartbeat (``primary=False``) only reads ``stop_requested``:
+    the run's liveness is its primary's."""
+    if not primary:
+        row = db.read_one("SELECT stop_requested FROM runs WHERE id = ?", [run_id])
+        return row[0] if row else None
     with db.transaction() as con:
         row = con.execute(
             "UPDATE runs SET last_heartbeat = ?, status = 'running', ended_at = NULL "
@@ -429,6 +453,27 @@ def heartbeat(db: Database, run_id: str) -> str | None:
             [utc_now().isoformat(), run_id],
         ).fetchone()
     return row[0] if row else None
+
+
+def join_run(db: Database, run_id: str) -> dict[str, Any]:
+    """What a worker process (``cairn.Run(primary=False)``) joining the run
+    needs: its project, tags, documents, status and pending stop request.
+    Changes nothing.
+
+    Raises:
+        RunNotFound: No such run (yet).
+    """
+    row = _require_run(db, run_id)
+    return {
+        "run_id": run_id,
+        "project_id": row["project_id"],
+        "url": f"/p/{row['project_id']}/r/{run_id}",
+        "tags": json.loads(row["tags"]) if row.get("tags") else [],
+        "config": config_doc.loads(row.get("config")),
+        "summary": config_doc.loads(row.get("summary")),
+        "status": row["status"],
+        "stop_requested": row.get("stop_requested"),
+    }
 
 
 def request_stop(db: Database, run_id: str) -> str | None:
@@ -626,9 +671,13 @@ def delete_run(db: Database, data_dir: DataDir, run_id: str) -> None:
     # Trials and forks outlive the run; they just lose the link.
     db.write("UPDATE sweep_trials SET run_id = NULL WHERE run_id = ?", [run_id])
     db.write("DELETE FROM runs WHERE id = ?", [run_id])
-    # The run's log, if not ingested to its end yet: its later records have
-    # no run to go to (a writer still appending writes to the unlinked file).
-    (data_dir.root / "wals" / f"{run_id}.wal.jsonl").unlink(missing_ok=True)
+    # The run's logs (its primary's, its labelled processes'), if not
+    # ingested to their end yet: their later records have no run to go to (a
+    # writer still appending writes to the unlinked file).
+    wals = data_dir.root / "wals"
+    (wals / f"{run_id}.wal.jsonl").unlink(missing_ok=True)
+    for path in wals.glob(f"{run_id}~*.wal.jsonl"):
+        path.unlink(missing_ok=True)
     db.write("DELETE FROM wal_progress WHERE run_id = ?", [run_id])
     for d in (data_dir.logs_dir / run_id, data_dir.sources_dir / run_id):
         if d.exists():

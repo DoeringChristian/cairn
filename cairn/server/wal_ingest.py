@@ -23,6 +23,16 @@ progress row. A log whose run is still ``running`` and that has had no new
 record (heartbeats included, every 10 s) for ``STALE_SECONDS`` marks the run
 ``crashed``; any later record of it makes the run ``running`` again.
 
+Several processes, one run. Every process of a shared run appends to its
+own log: ``<run_id>.wal.jsonl`` for an unlabelled one, ``<run_id>~<label>
+.wal.jsonl`` for a labelled one. A worker's log (``cairn.Run(primary=False)``)
+opens with a ``join`` record and ends with ``detach`` instead of ``finish``;
+it never changes the run's status: its lifecycle records (create, resume,
+finish, heartbeat, ...) are skipped, its silence never makes the run
+``crashed`` and its records never revive a crashed one. A worker's log waits,
+untouched, until its run exists (its primary's ``create_run`` is ingested),
+then applies in order; it is deleted once its ``detach`` is ingested.
+
 Logs of earlier versions (no progress row) are read once from the start;
 their ``.done`` copies (already ingested) and ``.lock`` files are deleted.
 """
@@ -62,8 +72,43 @@ def wal_dir(data_dir: DataDir) -> Path:
     return data_dir.root / "wals"
 
 
-def log_path(data_dir: DataDir, run_id: str) -> Path:
-    return wal_dir(data_dir) / f"{run_id}{LOG_SUFFIX}"
+#: Between a run id and a process label in a labelled process's log name.
+LABEL_SEP = "~"
+
+
+def log_name(run_id: str, label: str | None = None) -> str:
+    """The file name of a process's log: ``<run_id>[~<label>].wal.jsonl``."""
+    return f"{run_id}{LABEL_SEP}{label}{LOG_SUFFIX}" if label else f"{run_id}{LOG_SUFFIX}"
+
+
+def log_path(data_dir: DataDir, run_id: str, label: str | None = None) -> Path:
+    return wal_dir(data_dir) / log_name(run_id, label)
+
+
+def run_id_of(name: str) -> str:
+    """The run id a log file name belongs to."""
+    return name.removesuffix(LOG_SUFFIX).split(LABEL_SEP, 1)[0]
+
+
+#: Records a worker's log may not apply: the run's lifecycle and liveness
+#: are its primary's.
+_PRIMARY_ONLY = frozenset({
+    "create_run", "fork_run", "resume_run", "rewind_run", "finish", "heartbeat",
+})
+
+
+def _first_op(path: Path) -> str | None:
+    """The op of a log's first record; None while that line is incomplete.
+
+    Raises:
+        FileNotFoundError: The log is gone.
+    """
+    with open(path, "rb") as fh:
+        line = fh.readline()
+    if not line.endswith(b"\n"):
+        return None
+    record = _safe_json(line.decode("utf-8", errors="replace"))
+    return record.get("op") if record else ""
 
 
 def _now() -> str:
@@ -130,14 +175,24 @@ def _apply_op(
     op: str,
     payload: dict[str, Any],
     run_id: str | None,
+    *,
+    worker: bool = False,
 ) -> str | None:
     """Apply one log record to the DB. Returns the log's run id (updated by
     ``create_run``) so later records without a ``run_id`` resolve to it.
+    ``worker``: the record is from a worker's log (see the module docstring).
 
     The single dispatcher of ingestion: a new log op is one branch here. It
     runs inside the batch's transaction (see the module docstring), so a
     branch is applied exactly once.
     """
+    if op in ("join", "detach"):
+        # A worker's log opens and ends with these; they change nothing.
+        return run_id
+    if worker and op in _PRIMARY_ONLY:
+        log.warning("worker log record %r for run %s — skipping", op, run_id)
+        return run_id
+
     if op == "create_run":
         _ensure_run_exists(db, payload)
         return payload["run_id"]
@@ -262,7 +317,7 @@ def _apply_op(
 
 def _apply_record(
     db: Database, data_dir: DataDir, blobs: BlobStore, record: dict[str, Any],
-    run_id: str | None,
+    run_id: str | None, *, worker: bool = False,
 ) -> str | None:
     """One record in its own savepoint: an op that fails is rolled back and
     skipped (logged) instead of blocking its log forever. Database errors
@@ -273,7 +328,7 @@ def _apply_record(
         payload = {}
     try:
         with db.transaction():
-            return _apply_op(db, data_dir, blobs, op, payload, run_id)
+            return _apply_op(db, data_dir, blobs, op, payload, run_id, worker=worker)
     except sqlite3.OperationalError:
         raise
     except Exception:  # noqa: BLE001
@@ -294,19 +349,28 @@ def _repo_lock(data_dir: DataDir) -> threading.Lock:
 
 def ingest_log(db: Database, data_dir: DataDir, blobs: BlobStore, path: Path) -> int:
     """Apply everything new in one run log (see the module docstring);
-    delete the log once its run's ``finish`` is applied. Returns the number
-    of records applied."""
+    delete the log once its run's ``finish`` (a worker's: its ``detach``)
+    is applied. Returns the number of records applied."""
     name = path.name
-    file_run_id = name.removesuffix(LOG_SUFFIX)
+    file_run_id = run_id_of(name)
     total = 0
     offset, finished, size = 0, 0, 0
     while True:
         with db.transaction(immediate=True) as con:
             row = con.execute(
-                'SELECT "offset", finished FROM wal_progress WHERE path = ?', [name],
+                'SELECT "offset", finished, worker FROM wal_progress WHERE path = ?', [name],
             ).fetchone()
-            offset, finished = (row[0], row[1]) if row else (0, 0)
+            offset, finished, worker = (row[0], row[1], bool(row[2])) if row else (0, 0, False)
             try:
+                if row is None:
+                    first = _first_op(path)
+                    if first is None:
+                        break  # its first record is still being written
+                    worker = first == "join"
+                if worker and con.execute(
+                    "SELECT 1 FROM runs WHERE id = ?", [file_run_id],
+                ).fetchone() is None:
+                    break  # waits for its run (its primary's create_run)
                 with open(path, "rb") as fh:
                     fh.seek(offset)
                     chunk = fh.read(MAX_BATCH_BYTES)
@@ -324,22 +388,23 @@ def ingest_log(db: Database, data_dir: DataDir, blobs: BlobStore, path: Path) ->
             complete = chunk[: end + 1]
             run_id: str | None = file_run_id
             applied = 0
+            last_op = "detach" if worker else "finish"
             for raw in complete.split(b"\n")[:-1]:
                 record = _safe_json(raw.decode("utf-8", errors="replace"))
                 if not record:
                     continue
-                run_id = _apply_record(db, data_dir, blobs, record, run_id)
+                run_id = _apply_record(db, data_dir, blobs, record, run_id, worker=worker)
                 applied += 1
-                finished = 1 if record.get("op") == "finish" else 0
+                finished = 1 if record.get("op") == last_op else 0
             offset += len(complete)
             con.execute(
-                """INSERT INTO wal_progress (path, run_id, "offset", finished, updated_at)
-                   VALUES (?, ?, ?, ?, ?)
+                """INSERT INTO wal_progress (path, run_id, "offset", finished, updated_at, worker)
+                   VALUES (?, ?, ?, ?, ?, ?)
                    ON CONFLICT (path) DO UPDATE SET "offset" = excluded."offset",
                        finished = excluded.finished, updated_at = excluded.updated_at""",
-                [name, file_run_id, offset, finished, _now()],
+                [name, file_run_id, offset, finished, _now(), int(worker)],
             )
-            if applied and not finished:
+            if applied and not finished and not worker:
                 # A crashed run that logs again is running again.
                 con.execute(
                     "UPDATE runs SET status = 'running', ended_at = NULL "
@@ -370,20 +435,35 @@ def _cleanup_legacy(data_dir: DataDir) -> None:
             p.unlink(missing_ok=True)
 
 
-def mark_crashed(db: Database, data_dir: DataDir, now: float | None = None) -> list[str]:
-    """Mark ``crashed`` every running run whose log (not finished) has had no
-    new record for ``STALE_SECONDS``; alert on each. Returns their ids."""
-    now = time.time() if now is None else now
+def _primary_log_mtimes(
+    db: Database, data_dir: DataDir, names: set[str] | None = None,
+) -> dict[str, float]:
+    """Each running run's newest record time over its primary's unfinished
+    logs (a worker's log never counts: the run's liveness is its primary's).
+    ``names``: the log files present, when the caller listed them already."""
     rows = db.read_columns(
         "SELECT w.path, w.run_id FROM wal_progress w JOIN runs r ON r.id = w.run_id "
-        "WHERE r.status = 'running' AND w.finished = 0",
+        "WHERE r.status = 'running' AND w.finished = 0 AND w.worker = 0",
     )
-    crashed = []
+    latest: dict[str, float] = {}
     for row in rows:
+        if names is not None and row["path"] not in names:
+            continue
         try:
             mtime = (wal_dir(data_dir) / row["path"]).stat().st_mtime
         except FileNotFoundError:
             continue
+        latest[row["run_id"]] = max(mtime, latest.get(row["run_id"], mtime))
+    return latest
+
+
+def mark_crashed(db: Database, data_dir: DataDir, now: float | None = None) -> list[str]:
+    """Mark ``crashed`` every running run whose primary's log (not finished)
+    has had no new record for ``STALE_SECONDS``; alert on each. Returns
+    their ids."""
+    now = time.time() if now is None else now
+    crashed = []
+    for run_id, mtime in _primary_log_mtimes(db, data_dir).items():
         if now - mtime <= STALE_SECONDS:
             continue
         ended = datetime.fromtimestamp(mtime, timezone.utc).isoformat()
@@ -391,14 +471,14 @@ def mark_crashed(db: Database, data_dir: DataDir, now: float | None = None) -> l
             hit = con.execute(
                 "UPDATE runs SET status = 'crashed', ended_at = ? "
                 "WHERE id = ? AND status = 'running' RETURNING display_name",
-                [ended, row["run_id"]],
+                [ended, run_id],
             ).fetchone()
         if hit is None:
             continue
-        crashed.append(row["run_id"])
+        crashed.append(run_id)
         ingest_ops.insert_alert(
-            db, row["run_id"],
-            title=f"Run {hit[0] or row['run_id'][:8]} crashed",
+            db, run_id,
+            title=f"Run {hit[0] or run_id[:8]} crashed",
             text=f"no log record for {int(STALE_SECONDS // 60)} min",
             level="error",
         )
@@ -449,24 +529,42 @@ def has_pending(data_dir: DataDir, db: Database | None) -> bool:
     try:
         rows = {
             r["path"]: r for r in db.read_columns(
-                'SELECT w.path, w."offset" AS "offset", w.finished, r.status '
-                "FROM wal_progress w LEFT JOIN runs r ON r.id = w.run_id"
+                'SELECT w.path, w."offset" AS "offset", w.finished '
+                "FROM wal_progress w"
             )
         }
     except sqlite3.OperationalError:  # no such table yet: an old database
         return True
-    now = time.time()
     for name in logs:
         row = rows.get(name)
         try:
             st = (directory / name).stat()
         except FileNotFoundError:
             continue
-        if row is None or st.st_size != row["offset"] or row["finished"]:
+        if row is None:
+            if not _waiting_worker_log(db, directory / name):
+                return True
+        elif st.st_size != row["offset"] or row["finished"]:
             return True
-        if row["status"] == "running" and now - st.st_mtime > STALE_SECONDS:
-            return True
-    return False
+    now = time.time()
+    try:
+        latest = _primary_log_mtimes(db, data_dir, set(logs))
+    except sqlite3.OperationalError:  # an old database
+        return True
+    return any(now - mtime > STALE_SECONDS for mtime in latest.values())
+
+
+def _waiting_worker_log(db: Database, path: Path) -> bool:
+    """A worker's log not started yet whose run does not exist yet: nothing
+    to do until its primary's log (pending by itself) creates the run."""
+    if LABEL_SEP not in path.name:
+        return False
+    try:
+        if _first_op(path) != "join":
+            return False
+    except FileNotFoundError:
+        return True
+    return not db.read_columns("SELECT 1 FROM runs WHERE id = ?", [run_id_of(path.name)])
 
 
 _HASH = re.compile(rb"[0-9a-f]{64}")
