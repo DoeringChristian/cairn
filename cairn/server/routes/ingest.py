@@ -566,7 +566,7 @@ def _collect_garbage(app: Any) -> None:
             if lease is None or not lease.valid():
                 return
             gc.collect(app.state.db, app.state.data_dir, app.state.blobs)
-    except Exception:  # noqa: BLE001
+    except Exception:
         logging.getLogger(__name__).exception("garbage collection failed")
     finally:
         _gc_lock.release()

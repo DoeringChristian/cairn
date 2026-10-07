@@ -19,8 +19,8 @@ from cairn.server.storage.datadir import DataDir
 from cairn.server.storage.db import Database
 from cairn.server.wal_ingest import ingest_all
 
-QUIET = dict(capture_source=False, capture_stdout=False, capture_env=False,
-             capture_system_metrics=False)
+QUIET = {"capture_source": False, "capture_stdout": False, "capture_env": False,
+         "capture_system_metrics": False}
 
 
 def _quiet_run(repo, **kw) -> cairn.Run:

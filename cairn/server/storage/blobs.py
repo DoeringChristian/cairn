@@ -23,8 +23,9 @@ import os
 import secrets
 import shutil
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, BinaryIO, Iterator
+from typing import Any, BinaryIO
 
 
 class BlobStore:

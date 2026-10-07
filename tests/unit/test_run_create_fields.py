@@ -7,8 +7,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-import pytest
-
 import cairn
 from cairn.sdk.local import LocalTransport
 from cairn.server.storage.blobs import BlobStore

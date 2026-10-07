@@ -10,8 +10,8 @@ import time
 import pytest
 
 import cairn
-from cairn.server.storage.datadir import DataDir
 from cairn.server.storage import lease as lease_mod
+from cairn.server.storage.datadir import DataDir
 
 _RUN_KW = dict(
     capture_source=False,

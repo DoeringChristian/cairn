@@ -703,7 +703,6 @@ def _repo_health(root: Path) -> dict[str, Any]:
     it holds, and whether a server is serving it."""
     from . import __version__
     from .cli_target import serving_url
-
     from .sdk.reader import _LocalBackend
 
     dd = DataDir(root)

@@ -154,7 +154,7 @@ class Database:
         self._readonly = False
 
     @classmethod
-    def open_readonly(cls, path: Path) -> "Database":
+    def open_readonly(cls, path: Path) -> Database:
         """Open an existing database for reading only: no migrations, and
         the writer connection refuses writes (``query_only``). For a process
         that is not the repo's ingest-lease holder (see ``storage.lease``)."""

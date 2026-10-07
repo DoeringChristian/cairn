@@ -14,7 +14,6 @@ import cairn
 from cairn.server import auth as auth_core
 from cairn.server.app import create_app
 from cairn.server.custom_viewers import DevStore
-from tests.conftest import ingest_repo
 from cairn.server.viewer_manifest import (
     MAX_FOLDER_BYTES,
     ManifestError,
@@ -23,6 +22,7 @@ from cairn.server.viewer_manifest import (
     mime_for,
     validate_manifest,
 )
+from tests.conftest import ingest_repo
 
 QUIET = dict(capture_source=False, capture_stdout=False, capture_env=False, capture_system_metrics=False)
 SCHEMA = Path(__file__).resolve().parents[2] / "docs" / "schemas" / "cairn-viewer.schema.json"

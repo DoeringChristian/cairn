@@ -22,8 +22,8 @@ from cairn.server.storage.datadir import DataDir
 from cairn.server.storage.db import Database
 from tests.conftest import ingest_repo
 
-QUIET = dict(capture_source=False, capture_stdout=False, capture_env=False,
-             capture_system_metrics=False)
+QUIET = {"capture_source": False, "capture_stdout": False, "capture_env": False,
+         "capture_system_metrics": False}
 OLD = time.time() - gc.GRACE_SECONDS - 3600
 
 

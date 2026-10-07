@@ -4,7 +4,6 @@ ingesters killed with SIGKILL, a server ingesting while runs log."""
 from __future__ import annotations
 
 import multiprocessing as mp
-import os
 import signal
 import subprocess
 import sys
@@ -23,8 +22,8 @@ from cairn.server.storage.datadir import DataDir
 from cairn.server.storage.db import Database
 from tests.conftest import ingest_repo
 
-QUIET = dict(capture_source=False, capture_stdout=False, capture_env=False,
-             capture_system_metrics=False)
+QUIET = {"capture_source": False, "capture_stdout": False, "capture_env": False,
+         "capture_system_metrics": False}
 N_PROCS = 8
 RUNS_PER_PROC = 3
 STEPS = 150
@@ -198,7 +197,7 @@ def test_ingester_killed_before_committing(tmp_path):
             if s % 100 == 0:
                 run.alert(f"a{s}")
         rid = run.id
-    r = subprocess.run([sys.executable, "-c", _KILLED_INGESTER, str(repo), "4"], timeout=60)
+    r = subprocess.run([sys.executable, "-c", _KILLED_INGESTER, str(repo), "4"], timeout=60, check=False)
     assert r.returncode == -9
     db = Database.open(DataDir(repo).db_path)
     try:
@@ -270,5 +269,5 @@ def test_latency_from_log_to_ingested(tmp_path):
                     assert time.monotonic() - t0 < 5, "not ingested within 5 s"
                     time.sleep(0.01)
                 lat.append(time.monotonic() - t0)
-    print(f"log -> ingested latency: {['%.2f' % x for x in lat]}")
+    print(f"log -> ingested latency: {[f'{x:.2f}' for x in lat]}")
     assert max(lat) < 2.6

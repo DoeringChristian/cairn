@@ -64,7 +64,10 @@ import socket
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from typing_extensions import Self
 
 import psutil
 
@@ -312,10 +315,10 @@ class Lease:
                 _registry.pop(held.root, None)
         held.drop()
 
-    def __enter__(self) -> Lease:
+    def __enter__(self) -> Self:
         return self
 
-    def __exit__(self, *exc: Any) -> None:
+    def __exit__(self, *exc: object) -> None:
         self.release()
 
 
@@ -436,5 +439,5 @@ def _release_all() -> None:
     for held in leases:
         try:
             held.drop()
-        except Exception:  # noqa: BLE001 - interpreter shutdown
-            pass
+        except Exception:  # interpreter shutdown: nothing left to tell
+            log.debug("releasing the ingest lease at exit failed", exc_info=True)

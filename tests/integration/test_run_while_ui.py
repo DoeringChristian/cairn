@@ -101,8 +101,8 @@ def _client(repo, port):
     )
 
 
-QUIET = dict(capture_source=False, capture_stdout=False, capture_env=False,
-             capture_system_metrics=False)
+QUIET = {"capture_source": False, "capture_stdout": False, "capture_env": False,
+         "capture_system_metrics": False}
 
 
 @pytest.mark.slow
@@ -146,7 +146,7 @@ def test_run_logs_while_ui_ingests(ui_subprocess):
 def test_answers_now_go_through_the_ui(ui_subprocess):
     """use_artifact, log_artifact(...).wait(), resume, fork and sweep claims
     on a served repo: the UI answers (this process never writes SQLite)."""
-    repo, port = ui_subprocess
+    repo, _port = ui_subprocess
     with cairn.Run(project="ans", repo=repo, **QUIET) as run:
         v = run.log_artifact(b"weights", "ckpt", aliases=["best"])
         assert v.pending

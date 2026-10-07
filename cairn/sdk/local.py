@@ -61,7 +61,7 @@ def server_transport(holder: dict[str, Any], root: Path, timeout: float = 10.0) 
         resp = httpx.get(f"{url}/api/health", timeout=2.0)
         if resp.status_code != 200:
             raise RuntimeError(f"status {resp.status_code}")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise ServerUnreachable(
             f"the repo {root} is served by {holder.get('mode', 'a server')} "
             f"(pid {holder.get('pid')} on {holder.get('host')}) at {url}, which does not "
@@ -122,12 +122,14 @@ class RepoTransport:
         Raises:
             lease.ServedByServer: A live server holds the lease.
         """
-        with lease_mod.acquire(self.data_dir.root, mode="client", wait=LEASE_WAIT):
-            with self._lock:
-                db = self.database()
-                if catch_up_first:
-                    catch_up(self.data_dir, db, self.blobs)
-                return fn(db)
+        with (
+            lease_mod.acquire(self.data_dir.root, mode="client", wait=LEASE_WAIT),
+            self._lock,
+        ):
+            db = self.database()
+            if catch_up_first:
+                catch_up(self.data_dir, db, self.blobs)
+            return fn(db)
 
     def _call(self, name: str, local: Callable[[Database], T], *args: Any, **kwargs: Any) -> T:
         """``local(db)`` under the lease, or ``Transport.<name>(*args)`` on
