@@ -73,8 +73,27 @@
   (404 while it does not exist), and a finish or heartbeat with
   `primary: false` changes nothing; creating a run (or a fork) with a taken
   id is a 409.
+- **Media in the summary** (wandb's `run.summary["fig"] = wandb.Image(...)`):
+  `run.summary`, `cairn.attach(...).summary` and `RunEditor.set_summary`
+  take any cairn media wrapper or a gallery list of them, at any depth,
+  next to JSON values. Each is one stepless value under its dotted key: a
+  later write replaces it, `delete_keys` removes it, `cairn gc` frees the
+  replaced bytes. Re-run a showcase script with `cairn.attach` to replace
+  its figures without re-training. The catalogue lists it as a series with
+  `"summary": true` (one point at step 0), so automatic panels, the add-card
+  flow, comparisons and reports show it with its kind's card, without a
+  step slider; the Overview's summary tree shows a thumbnail with an "open"
+  link; the runs table has no column for it. `Reader` returns `MediaRef`s
+  for it (`run.summary`, `run.media(key)`; `SequenceInfo.summary`). A name
+  is either a tracked series or a summary media value (`ValueError`).
+- A dropped point is no longer silent: a point at a step its series already
+  has (the first one written is kept) raises a `warn` run alert naming the
+  series and step, once per run and series, and a log warning at ingestion.
 
 ### Fixed
+
+- `run.summary` with a non-JSON value said "config values must be JSON"; it
+  names the summary now (and mentions cairn media).
 
 - Log read offsets were kept in memory: a server restart re-read active logs
   from the start. They are now stored (`wal_progress`) in the same
