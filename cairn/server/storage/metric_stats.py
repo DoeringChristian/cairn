@@ -29,6 +29,7 @@ import logging
 import math
 import sqlite3
 import time
+from collections import Counter
 from collections.abc import Iterable, Sequence
 from typing import Any
 
@@ -154,7 +155,7 @@ def backfill_metric_stats(con: sqlite3.Connection) -> None:
 
 def insert_points(
     con: sqlite3.Connection, run_id: str, rows: Sequence[Sequence[Any]],
-) -> None:
+) -> list[Sequence[Any]]:
     """``INSERT OR IGNORE`` sequence rows ``(name, step, wall_time,
     object_type, scalar_value, artifact_hash, metadata)`` for ``run_id`` and
     fold the ones actually inserted into ``metric_stats``. Run it inside the
@@ -165,9 +166,11 @@ def insert_points(
     for free: then the inserted rows are exactly ``rows`` (numbers as SQLite
     stores them in a REAL column). Otherwise they are read back by rowid: ``sequences`` has no AUTOINCREMENT, so a new row's
     rowid is above every rowid present when the insert began.
+
+    Returns the rows NOT inserted (their step was taken), in batch order.
     """
     if not rows:
-        return
+        return []
     (top,) = con.execute("SELECT COALESCE(MAX(rowid), 0) FROM sequences").fetchone()
     before = con.total_changes
     con.executemany(
@@ -182,14 +185,20 @@ def insert_points(
     if con.total_changes - before == len(rows) and all(
         r[4] is None or isinstance(r[4], (int, float)) for r in rows
     ):
-        inserted: Iterable[Sequence[Any]] = (
-            (r[0], r[1], _stored(r[4])) for r in rows
-        )
-    else:
-        inserted = con.execute(
-            "SELECT name, step, scalar_value FROM sequences WHERE rowid > ?", [top],
-        ).fetchall()
+        apply_inserted(con, run_id, ((r[0], r[1], _stored(r[4])) for r in rows))
+        return []
+    inserted = con.execute(
+        "SELECT name, step, scalar_value FROM sequences WHERE rowid > ?", [top],
+    ).fetchall()
     apply_inserted(con, run_id, inserted)
+    fresh = Counter((name, step) for name, step, _ in inserted)
+    ignored: list[Sequence[Any]] = []
+    for r in rows:
+        if fresh[(r[0], r[1])] > 0:
+            fresh[(r[0], r[1])] -= 1
+        else:
+            ignored.append(r)
+    return ignored
 
 
 def _stored(value: Any) -> float | None:

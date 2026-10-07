@@ -93,6 +93,8 @@ class SequenceInfo:
         min_step: Lowest step logged.
         max_step: Highest step logged.
         count: Number of points.
+        summary: A summary media value (``run.summary(key=cairn.Image(...))``):
+            one point at step 0, no steps of its own.
     """
 
     name: str
@@ -100,6 +102,7 @@ class SequenceInfo:
     min_step: int
     max_step: int
     count: int
+    summary: bool = False
 
     def __repr__(self) -> str:
         return f"SequenceInfo({self.name!r}, type={self.object_type!r}, steps={self.min_step}..{self.max_step}, n={self.count})"
@@ -543,8 +546,25 @@ class Run:
 
     @property
     def summary(self) -> dict[str, Any]:
-        """The run's summary (``run.summary(...)``), nested like ``config``."""
-        return self._doc("summary")
+        """The run's summary (``run.summary(...)``), nested like ``config``.
+        A media value is its ``MediaRef`` (a gallery: the list of its
+        items' ``MediaRef``s), as ``media(key)`` returns it."""
+        doc = self._doc("summary")
+        if not _config_doc.media_leaves(doc):
+            return doc
+        return self._with_media_refs(doc, "")
+
+    def _with_media_refs(self, doc: dict[str, Any], prefix: str) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        for k, v in doc.items():
+            path = f"{prefix}.{k}" if prefix else k
+            if _config_doc.is_media(v):
+                out[k] = self.media(path)
+            elif isinstance(v, dict):
+                out[k] = self._with_media_refs(v, path)
+            else:
+                out[k] = v
+        return out
 
     @property
     def final(self) -> dict[str, Any]:
@@ -616,7 +636,11 @@ class Run:
             One ``SequenceInfo`` per sequence name, sorted by name.
         """
         rows = self._backend.list_sequences(self.id)
-        return [SequenceInfo(**r) for r in rows]
+        return [
+            SequenceInfo(r["name"], r["object_type"], r["min_step"], r["max_step"], r["count"],
+                         bool(r.get("summary")))
+            for r in rows
+        ]
 
     def sequence(
         self, name: str, *,
@@ -859,17 +883,29 @@ class RunEditor:
             self._run._docs = None
 
     def set_summary(self, *args: Any, **kwargs: Any) -> None:
-        """Merge keys into the run's summary (like ``cairn.Run.summary``).
+        """Merge keys into the run's summary (like ``cairn.Run.summary``):
+        JSON values, and media values (``cairn`` wrappers and galleries of
+        them) that REPLACE the media stored under their key.
 
         Args:
             *args: Mappings of keys to values, merged in order.
             **kwargs: More keys, applied last.
 
         Raises:
-            TypeError: A positional argument is not a mapping.
+            TypeError: A positional argument is not a mapping, or a value is
+                neither JSON nor cairn media.
+            ValueError: A media value's name is a tracked series of the run.
         """
+        from . import handlers as _handlers  # noqa: F401  (register built-ins)
+        from .handlers.registry import default_registry
+        from .summary_media import check_summary_names, media_paths, upload_media
+
         values = _merge_mappings("set_summary", args, kwargs)
         if values:
+            names = media_paths(values)
+            if names:
+                check_summary_names(names, self._run._backend.list_sequences(self._run.id))
+                values = upload_media(self._transport, default_registry, values)
             values = self._checked("summary", values)
             self._transport.post_summary(self._run.id, values)
             self._run._docs = None
@@ -878,8 +914,8 @@ class RunEditor:
     def _checked(self, kind: str, values: dict[str, Any]) -> dict[str, Any]:
         """``values`` validated, and its merge into the stored document
         checked, before anything is sent (``cairn.server.config_doc``)."""
-        values = _config_doc.normalize(values)
-        current = self._run.config if kind == "config" else self._run.summary
+        values = _config_doc.normalize(values, what=kind)
+        current = self._run.config if kind == "config" else self._run._doc("summary")
         _config_doc.nodes(_config_doc.merge(current, values))
         return values
 
@@ -1650,7 +1686,8 @@ class _LocalBackend(_RegistryWrites):
     def list_sequences(self, run_id: str) -> list[dict[str, Any]]:
         return self._db.read_columns(
             """SELECT name, MAX(object_type) AS object_type,
-                      MIN(step) AS min_step, MAX(step) AS max_step, COUNT(*) AS count
+                      MIN(step) AS min_step, MAX(step) AS max_step, COUNT(*) AS count,
+                      MAX(summary) AS summary
                FROM sequences WHERE run_id = ?
                GROUP BY name
                ORDER BY name""",

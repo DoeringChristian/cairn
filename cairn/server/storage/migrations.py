@@ -107,6 +107,11 @@ SCHEMA_SQL: list[str] = [
         artifact_hash TEXT,
         -- Per-point JSON (e.g. a media caption); NULL when there is none.
         metadata      TEXT,
+        -- 1: a SUMMARY media value (``run.summary(fig=cairn.Figure(f))``),
+        -- the one point of its series, at step 0. These rows are a derived
+        -- index of the run's summary document, rebuilt with it
+        -- (ingest_ops.write_doc); 0: a tracked point.
+        summary       INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (run_id, name, step)
     )
     """,
@@ -497,6 +502,9 @@ _ADDED_RUN_COLUMNS: list[tuple[str, str]] = [
 _ADDED_COLUMN_INDEXES: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_runs_parent ON runs(parent_run_id)",
     "CREATE INDEX IF NOT EXISTS idx_runs_sweep ON runs(sweep_id)",
+    # A run's summary media series (tiny): what every point batch checks its
+    # names against, and what the summary write rebuilds.
+    "CREATE INDEX IF NOT EXISTS idx_sequences_summary ON sequences(run_id, name) WHERE summary = 1",
 ]
 
 
@@ -629,6 +637,7 @@ def apply_migrations(con: sqlite3.Connection) -> int:
     for column, col_type in _ADDED_RUN_COLUMNS:
         _add_column_if_missing(con, "runs", column, col_type)
     _add_column_if_missing(con, "sequences", "metadata", "TEXT")
+    _add_column_if_missing(con, "sequences", "summary", "INTEGER NOT NULL DEFAULT 0")
     _add_column_if_missing(con, "log_lines", "label", "TEXT")
     _add_column_if_missing(con, "wal_progress", "worker", "INTEGER NOT NULL DEFAULT 0")
     _add_column_if_missing(con, "artifact_versions", "tags", "TEXT")

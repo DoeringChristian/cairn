@@ -641,9 +641,10 @@ class LocalTransport:
         }
 
     def sequence_steps(self, run_id: str) -> list[dict[str, Any]]:
-        """Each of the run's series as ``{name, max_step}``."""
+        """Each of the run's series as ``{name, max_step, summary}``
+        (``summary``: a summary media value, as in the catalogue)."""
         return self.read_columns(
-            "SELECT name, MAX(step) AS max_step FROM sequences "
+            "SELECT name, MAX(step) AS max_step, MAX(summary) AS summary FROM sequences "
             "WHERE run_id = ? GROUP BY name",
             [run_id],
         )

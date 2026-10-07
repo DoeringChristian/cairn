@@ -8,7 +8,10 @@ callers translate those to HTTP status codes.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
+import math
 import secrets
 import shutil
 from datetime import datetime
@@ -20,6 +23,8 @@ from .storage.blobs import BlobStore
 from .storage.datadir import DataDir
 from .storage.db import Database
 from .storage.metric_stats import insert_points, rebuild_metric_stats
+
+log = logging.getLogger(__name__)
 
 
 class RunNotFound(LookupError):
@@ -147,6 +152,8 @@ def write_doc(con: Any, table: str, run_id: str, doc: dict[str, Any]) -> int:
     share a flat key.
     """
     flat = config_doc.flatten(doc)
+    if table == "summary":
+        _sync_summary_media(con, run_id, config_doc.media_leaves(doc))
     con.execute(
         f"UPDATE runs SET {DOC_COLUMN[table]} = ? WHERE id = ?",
         [config_doc.dumps(doc), run_id],
@@ -157,6 +164,78 @@ def write_doc(con: Any, table: str, run_id: str, doc: dict[str, Any]) -> int:
         [(run_id, k, json.dumps(v), value_type(v)) for k, v in flat.items()],
     )
     return len(flat)
+
+
+#: The step of a summary media value's one point.
+SUMMARY_STEP = 0
+
+
+def stepped_conflict(name: str) -> str:
+    """Rule: a name is either a tracked series or a summary media value."""
+    return (
+        f"{name!r} is a tracked series (it has points from run.track); a summary "
+        "media value cannot use its name. Pick another summary key, or track it "
+        "as a series instead"
+    )
+
+
+def summary_conflict(name: str) -> str:
+    """The other direction of ``stepped_conflict``."""
+    return (
+        f"{name!r} is a summary media value (run.summary); it cannot also be a "
+        "tracked series. Track it under another name, or delete the summary key first"
+    )
+
+
+def _sync_summary_media(con: Any, run_id: str, media: dict[str, dict[str, Any]]) -> None:
+    """Make the run's summary media rows in ``sequences`` (``summary = 1``,
+    one point at ``SUMMARY_STEP`` per dotted key) match ``media``, the
+    summary document's media markers: a new key is inserted, a key whose
+    value changed is REPLACED, a key no longer in the document is deleted.
+    Any change bumps ``data_epoch`` (a point changed under its rowid: a live
+    client refetches the run's series).
+
+    Raises:
+        ValueError: A new key names a series that has tracked points.
+    """
+    current = {
+        r[0]: (r[1], r[2], r[3])
+        for r in con.execute(
+            "SELECT name, artifact_hash, object_type, metadata FROM sequences "
+            "WHERE run_id = ? AND summary = 1",
+            [run_id],
+        )
+    }
+    for name in media:
+        if name not in current and con.execute(
+            "SELECT 1 FROM sequences WHERE run_id = ? AND name = ? AND summary = 0 LIMIT 1",
+            [run_id, name],
+        ).fetchone():
+            raise ValueError(stepped_conflict(name))
+    changed = False
+    for name in current.keys() - media.keys():
+        con.execute(
+            "DELETE FROM sequences WHERE run_id = ? AND name = ? AND summary = 1", [run_id, name],
+        )
+        changed = True
+    now = utc_now().isoformat()
+    for name, m in media.items():
+        caption = m.get("caption")
+        meta = json.dumps({"caption": str(caption)}) if caption is not None else None
+        if current.get(name) == (m["hash"], m["object_type"], meta):
+            continue
+        con.execute(
+            """INSERT OR REPLACE INTO sequences (
+                   run_id, name, step, wall_time, object_type, scalar_value,
+                   artifact_hash, metadata, summary
+               ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, 1)""",
+            [run_id, name, SUMMARY_STEP, now, m["object_type"], m["hash"], meta],
+        )
+        changed = True
+    if changed:
+        con.execute(
+            "UPDATE runs SET data_epoch = COALESCE(data_epoch, 0) + 1 WHERE id = ?", [run_id],
+        )
 
 
 def _read_doc(con: Any, table: str, run_id: str) -> dict[str, Any]:
@@ -179,7 +258,7 @@ def _merge_doc(db: Database, table: str, run_id: str, values: dict[str, Any]) ->
         TypeError: A value is not JSON.
         ValueError: The merged document has two paths with one flat key.
     """
-    update = config_doc.normalize(values)
+    update = config_doc.normalize(values, what=DOC_COLUMN[table])
     # Read-modify-write: take the write lock up front, or a concurrent writer
     # (sweep workers, other processes) makes the lock upgrade fail at once.
     with db.transaction(immediate=True) as con:
@@ -224,8 +303,14 @@ def insert_batch(
     """Insert points (a point already stored at its step is kept) and fold
     the inserted ones into ``metric_stats``, in transactions of at most
     ``INGEST_CHUNK`` points (each consistent on its own: the points it
-    inserted and their stats)."""
-    _require_run(db, run_id)
+    inserted and their stats).
+
+    Two kinds of points are dropped, each reported ONCE per run and series
+    as a ``warn`` run alert (and a log warning): a point whose step the
+    series already has with another point (a re-sent copy of the stored
+    point, same wall time and value, is not reported), and a point of a
+    series that is a summary media value (see ``summary_conflict``)."""
+    run = _require_run(db, run_id)
     rows = [
         (
             p["name"],
@@ -242,9 +327,66 @@ def insert_batch(
     # deferred read lock cannot be upgraded while another process writes.
     for i in range(0, len(rows), INGEST_CHUNK):
         with db.transaction(immediate=True) as con:
-            insert_points(con, run_id, rows[i:i + INGEST_CHUNK])
-            progress.fold_points(con, run_id, rows[i:i + INGEST_CHUNK])
+            chunk = _drop_summary_names(con, run, rows[i:i + INGEST_CHUNK])
+            ignored = insert_points(con, run_id, chunk)
+            progress.fold_points(con, run_id, chunk)
+            if ignored:
+                _report_duplicates(con, run, ignored)
     return len(rows)
+
+
+def _once_alert(con: Any, run: dict[str, Any], kind: str, name: str, title: str, text: str) -> None:
+    """A ``warn`` alert at most once per (run, ``kind``, series): its id is
+    derived from them, so a repeat is an ``INSERT OR IGNORE`` no-op. Also
+    logged, the first time."""
+    alert_id = hashlib.sha256(f"{kind}\0{run['id']}\0{name}".encode()).hexdigest()[:32]
+    cur = con.execute(
+        """INSERT OR IGNORE INTO alerts (id, run_id, project_id, level, title, text, created_at)
+           VALUES (?, ?, ?, 'warn', ?, ?, ?)""",
+        [alert_id, run["id"], run["project_id"], title, text, utc_now().isoformat()],
+    )
+    if cur.rowcount:
+        log.warning("cairn: run %s: %s", run["id"], text)
+
+
+def _drop_summary_names(con: Any, run: dict[str, Any], rows: list[tuple[Any, ...]]) -> list[tuple[Any, ...]]:
+    """``rows`` without the points of series that are summary media values
+    (the SDK refuses them up front; this catches another process's)."""
+    taken = {r[0] for r in con.execute(
+        "SELECT name FROM sequences WHERE run_id = ? AND summary = 1", [run["id"]],
+    )}
+    if not taken or not taken.intersection(r[0] for r in rows):
+        return rows
+    for name in sorted(taken.intersection(r[0] for r in rows)):
+        _once_alert(
+            con, run, "summary-name", name, f"Points of {name!r} dropped",
+            f"Tracked points of {name!r} were dropped: {summary_conflict(name)}.",
+        )
+    return [r for r in rows if r[0] not in taken]
+
+
+def _report_duplicates(con: Any, run: dict[str, Any], ignored: list[Any]) -> None:
+    """Alert on the points ``insert_points`` dropped because their step was
+    taken by a DIFFERENT point (not a re-sent copy of the stored one)."""
+    first: dict[str, int] = {}
+    for name, step, wall_time, _otype, value, digest, _meta in ignored:
+        stored = con.execute(
+            "SELECT wall_time, scalar_value, artifact_hash FROM sequences "
+            "WHERE run_id = ? AND name = ? AND step = ?",
+            [run["id"], name, step],
+        ).fetchone()
+        resent = stored is not None and stored[0] == wall_time and stored[2] == digest and (
+            stored[1] == value or (stored[1] is None and (value is None or (isinstance(value, float) and math.isnan(value))))
+        )
+        if not resent and name not in first:
+            first[name] = step
+    for name, step in first.items():
+        _once_alert(
+            con, run, "duplicate-step", name, f"Duplicate step in {name!r}",
+            f"A point of {name!r} at step {step} was dropped: the series already has a "
+            "point at that step, and the first one written is kept. Later duplicate "
+            "steps of this series are not reported again.",
+        )
 
 
 def insert_logs(
@@ -554,7 +696,7 @@ def _history_params(db: Database, run_id: str, step: int) -> list[Any]:
     """The two parameters of ``_HISTORY_KEEP`` for ``run_id`` at ``step``."""
     (cutoff,) = db.read_one(
         "SELECT MAX(wall_time) FROM sequences WHERE run_id = ? "
-        "AND substr(name, 1, 7) != 'system.' AND step <= ?",
+        "AND summary = 0 AND substr(name, 1, 7) != 'system.' AND step <= ?",
         [run_id, step],
     ) or (None,)
     return [step, cutoff]
@@ -590,7 +732,7 @@ def rewind_run(db: Database, run_id: str, step: int) -> dict[str, Any]:
     keep = _history_params(db, run_id, step)
     with db.transaction() as con:
         con.execute(
-            f"DELETE FROM sequences WHERE run_id = ? AND NOT {_HISTORY_KEEP}",
+            f"DELETE FROM sequences WHERE run_id = ? AND summary = 0 AND NOT {_HISTORY_KEEP}",
             [run_id, *keep],
         )
         rebuild_metric_stats(con, [run_id])
@@ -633,7 +775,7 @@ def fork_run(
         con.execute(
             f"""INSERT OR IGNORE INTO sequences (run_id, {_SEQUENCE_COLUMNS})
                 SELECT ?, {_SEQUENCE_COLUMNS} FROM sequences
-                 WHERE run_id = ? AND {_HISTORY_KEEP}""",
+                 WHERE run_id = ? AND summary = 0 AND {_HISTORY_KEEP}""",
             [run_id, parent_id, *keep],
         )
         rebuild_metric_stats(con, [run_id])

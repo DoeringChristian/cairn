@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import atexit
 import inspect
-import json
 import logging
 import os
 import secrets
@@ -39,15 +38,17 @@ from ..sdk.wrappers import _TypeWrapper
 from ..server import artifact_registry_ops as _registry_rules
 from ..server import config_doc
 from ..server import progress as _progress_rules
+from ..server.ingest_ops import summary_conflict
 from .artifacts import Artifact, ArtifactVersion, draft_from_shorthand
 from .buffer import MetricBuffer
 from .connect import open_transport
-from .gallery import GALLERY_MIME, GalleryItem, resolve_gallery
+from .gallery import GalleryItem, resolve_gallery
 from .local import LocalTransport, RepoTransport
 from .run_ids import auto_label, check_label, check_run_id, env_run_id, new_run_id
 from .scope import Scope
+from .summary_media import check_summary_names, media_paths, upload_media
 from .transport import Transport
-from .uploads import upload_value
+from .uploads import upload_gallery, upload_value
 from .wal import WriteAheadLog
 from .watch import Watcher
 
@@ -372,6 +373,11 @@ class Run:
             "config": dict(resp.get("config") or {}),
             "summary": dict(resp.get("summary") or {}),
         }
+        # A name is a tracked series or a summary media value, never both:
+        # the summary's media keys (refused by track) and the names this
+        # process tracked (refused by summary, beside the stored series).
+        self._summary_media: set[str] = set(config_doc.media_leaves(self._docs["summary"]))
+        self._tracked_names: set[str] = set()
         self._backend_cache: Any = None
         self._url_path: str = resp.get("url", f"/p/{self._project_id}/r/{self._run_id}")
         # A run that had ended when this worker joined keeps the stop request
@@ -757,6 +763,8 @@ class Run:
         ``summary`` / ``x`` set the metric's rule (see ``track``)."""
         if self._finished:
             raise RuntimeError("Run has already been finished")
+        if name in self._summary_media:
+            raise ValueError(f"cairn: run.track: {summary_conflict(name)}")
         has_rule = summary is not None or x is not None
         if summary is not None and summary not in SUMMARY_KINDS:
             raise ValueError(
@@ -819,6 +827,7 @@ class Run:
             point["artifact_hash"] = digest
 
         self._metric_buffer.append(point)
+        self._tracked_names.add(name)
 
     def _set_metric_rule(self, name: str, summary: str | None, x: str | None) -> None:
         """Send ``name``'s rule unless nothing in it changed. A keyword left
@@ -850,25 +859,7 @@ class Run:
         own artifact, and the point's artifact is a manifest listing them
         (``GALLERY_MIME``, see ``cairn.sdk.gallery``). Keywords apply to every
         item under the item's own; ``caption`` labels the point."""
-        kwargs = dict(kwargs)
-        caption = kwargs.pop("caption", None)
-        entries: list[dict[str, Any]] = []
-        for item in items:
-            merged = {**item.kwargs, **kwargs}
-            item_caption = merged.pop("caption", None)
-            digest, mime, meta = self._upload_value(item.handler, item.payload, merged)
-            entry: dict[str, Any] = {"hash": digest, "mime_type": mime, "metadata": meta}
-            if item_caption is not None:
-                entry["caption"] = str(item_caption)
-            entries.append(entry)
-        manifest = json.dumps({"items": entries}).encode()
-        meta: dict[str, Any] = {"gallery": len(entries)}
-        if object_type == "custom":
-            meta["kind"] = entries[0]["metadata"].get("kind")
-        preview = entries[0]["metadata"].get("preview")
-        if preview is not None:
-            meta["preview"] = preview
-        digest = self._transport.upload_artifact(manifest, GALLERY_MIME, meta, object_type=object_type)
+        digest, caption = upload_gallery(self._transport, self._registry, object_type, items, kwargs)
         if step is not None:
             self._last_step = step if self._last_step is None else max(self._last_step, step)
         point: dict[str, Any] = {
@@ -881,6 +872,7 @@ class Run:
         if caption is not None:
             point["metadata"] = {"caption": str(caption)}
         self._metric_buffer.append(point)
+        self._tracked_names.add(name)
 
     def log_artifact(
         self,
@@ -1065,7 +1057,7 @@ class Run:
     def _merge_doc(self, kind: str, update: dict[str, Any]) -> dict[str, Any]:
         """Validate ``update`` and merge it into this run's copy of the
         document, raising before anything is sent (see ``config_doc``)."""
-        update = config_doc.normalize(update)
+        update = config_doc.normalize(update, what=kind)
         merged = config_doc.merge(self._docs[kind], update)
         config_doc.nodes(merged)  # raises ValueError on a flat-key collision
         self._docs[kind] = merged
@@ -1112,12 +1104,37 @@ class Run:
         replaced by its ``track(..., summary=)`` rule, replaced by an explicit
         summary key of the same dotted name — so a number appears here only
         because you said so, and "who claimed this" stays answerable.
+
+        A value may also be MEDIA: any ``cairn`` wrapper (``cairn.Image``,
+        ``cairn.Figure``, ``cairn.Table``, ...) or a list of them (a gallery,
+        as in ``track``), at any depth::
+
+            run.summary(showcase={"loss_landscape": cairn.Figure(fig),
+                                  "samples": [cairn.Image(x) for x in xs]})
+
+        Each is ONE value with no step, named by its key's dotted path
+        (``showcase.loss_landscape``): cards show it like a tracked series
+        (without a step slider), writing the key again REPLACES it, and
+        deleting the key removes it. The Overview's summary lists only the
+        JSON values. A name is either a tracked series or a summary media
+        value.
+
+        Raises:
+            TypeError: A value is neither JSON nor cairn media.
+            ValueError: A media value's name is a tracked series, or two
+                paths flatten to the same dotted key.
         """
         if self._finished:
             raise RuntimeError("Run has already been finished")
         merged = self._merge_mapping("run.summary", args, kwargs)
-        if merged:
-            self._transport.post_summary(self._run_id, self._merge_doc("summary", merged))
+        if not merged:
+            return
+        names = media_paths(merged)
+        if names:
+            check_summary_names(names, self._transport.sequence_steps(self._run_id), self._tracked_names)
+            merged = upload_media(self._transport, self._registry, merged)
+        self._transport.post_summary(self._run_id, self._merge_doc("summary", merged))
+        self._summary_media = set(config_doc.media_leaves(self._docs["summary"]))
 
     def set_tag(self, tag: str) -> None:
         """Add one tag, keeping the ones the run already has."""

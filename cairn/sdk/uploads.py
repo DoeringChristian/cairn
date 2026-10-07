@@ -4,6 +4,7 @@ their own)."""
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from .handlers.registry import HandlerRegistry, resolve_mime_type
@@ -60,3 +61,35 @@ def upload_value(
     mime = resolve_mime_type(handler, payload, kwargs)
     digest = transport.upload_artifact(blob, mime, meta, object_type=handler.object_type)
     return digest, mime, meta, len(blob)
+
+
+def upload_gallery(
+    transport: Any, registry: HandlerRegistry, object_type: str, items: list[Any],
+    kwargs: dict[str, Any],
+) -> tuple[str, Any]:
+    """Upload a gallery (``cairn.sdk.gallery``): each item as its own
+    artifact, then the manifest naming them. ``kwargs`` apply to every item
+    under the item's own; their ``caption`` labels the whole gallery.
+    Returns the manifest's hash and that caption."""
+    from .gallery import GALLERY_MIME
+
+    kwargs = dict(kwargs)
+    caption = kwargs.pop("caption", None)
+    entries: list[dict[str, Any]] = []
+    for item in items:
+        merged = {**item.kwargs, **kwargs}
+        item_caption = merged.pop("caption", None)
+        digest, mime, meta, _size = upload_value(transport, registry, item.handler, item.payload, merged)
+        entry: dict[str, Any] = {"hash": digest, "mime_type": mime, "metadata": meta}
+        if item_caption is not None:
+            entry["caption"] = str(item_caption)
+        entries.append(entry)
+    manifest = json.dumps({"items": entries}).encode()
+    meta_out: dict[str, Any] = {"gallery": len(entries)}
+    if object_type == "custom":
+        meta_out["kind"] = entries[0]["metadata"].get("kind")
+    preview = entries[0]["metadata"].get("preview")
+    if preview is not None:
+        meta_out["preview"] = preview
+    digest = transport.upload_artifact(manifest, GALLERY_MIME, meta_out, object_type=object_type)
+    return digest, caption

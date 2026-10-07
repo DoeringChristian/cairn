@@ -25,7 +25,9 @@ UPDATES_LIMIT = 5000
 # sequence read hands back as its starting point. The one exception is a
 # rewind, which deletes rows (their rowids get reused, there's no
 # AUTOINCREMENT) and bumps the run's ``data_epoch``: both endpoints return
-# it, and a client holding a cursor from another epoch starts over.
+# it, and a client holding a cursor from another epoch starts over. The
+# other: a summary media value (``summary = 1``) is replaced or deleted when
+# its summary key is, which bumps ``data_epoch`` the same way.
 _POINT_COLUMNS = """s.rowid AS _rowid,
                s.step, s.wall_time, s.scalar_value, s.artifact_hash,
                s.object_type, s.metadata,
@@ -93,7 +95,11 @@ def get_updates(
 def list_sequences(run_id: str, request: Request) -> dict[str, Any]:
     """Every sequence of the run: name, object type (the greatest one, if a
     series mixes them), first and last step, and point count. A ``custom``
-    series also has its data ``kind`` (that of its latest point).
+    series also has its data ``kind`` (that of its latest point). A summary
+    media value (``run.summary(fig=cairn.Figure(f))``) is a series of ONE
+    point at step 0 marked ``"summary": true`` (no other series has the key):
+    its name is the summary key's dotted path, and every series read
+    (``/series``, ``/sequences/{name}``, ``/updates``) returns that point.
 
     Read from ``metric_stats`` (the run's scalar points, any object type)
     plus the partial index ``idx_sequences_unsummarized`` (every point that
@@ -109,7 +115,8 @@ def list_sequences(run_id: str, request: Request) -> dict[str, Any]:
     )
     rest = db.read(
         """
-        SELECT name, MAX(object_type), MIN(step), MAX(step), COUNT(*), COUNT(scalar_value)
+        SELECT name, MAX(object_type), MIN(step), MAX(step), COUNT(*), COUNT(scalar_value),
+               MAX(summary)
         FROM sequences
         WHERE run_id = ? AND (object_type != 'scalar' OR scalar_value IS NULL)
         GROUP BY name
@@ -119,10 +126,12 @@ def list_sequences(run_id: str, request: Request) -> dict[str, Any]:
     out: dict[str, dict[str, Any]] = {}
     for name, count, first, last in stats:
         out[name] = {"name": name, "object_type": "scalar", "min_step": first, "max_step": last, "count": count}
-    for name, otype, lo, hi, count, valued in rest:
+    for name, otype, lo, hi, count, valued, summary in rest:
         seq = out.get(name)
         if seq is None:
             out[name] = {"name": name, "object_type": otype, "min_step": lo, "max_step": hi, "count": count}
+            if summary:
+                out[name]["summary"] = True
             continue
         # ``valued`` points carry a scalar under another object type: already
         # counted by metric_stats. Only when every summarized point is one of

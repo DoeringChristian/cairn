@@ -143,7 +143,7 @@ def recompute_max_step(con: Any, run_id: str) -> None:
     run's history was rewritten (rewind, fork, import)."""
     (top,) = con.execute(
         "SELECT MAX(step) FROM sequences WHERE run_id = ? "
-        "AND substr(name, 1, 7) != 'system.'",
+        "AND summary = 0 AND substr(name, 1, 7) != 'system.'",
         [run_id],
     ).fetchone()
     con.execute(
@@ -185,7 +185,7 @@ def set_total_steps(con: Any, run_id: str, total: int | None) -> None:
     if row[0] is None and total is not None:
         (top,) = con.execute(
             "SELECT MAX(step) FROM sequences WHERE run_id = ? "
-            "AND substr(name, 1, 7) != 'system.'",
+            "AND summary = 0 AND substr(name, 1, 7) != 'system.'",
             [run_id],
         ).fetchone()
         if top is not None:
