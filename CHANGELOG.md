@@ -25,6 +25,10 @@
 
 ### Added
 
+- Artifacts: `add_file` / `add_dir` take wandb's `policy`: `"mutable"`
+  (default) copies the files when added, `"immutable"` reads them at log
+  time (the old behaviour). `run.log_model(path, name=None, aliases=None)`
+  and `run.use_model(ref)` as in wandb.
 - `cairn gc [--dry-run]` (and `POST /api/gc`): deletes blobs nothing
   references that are older than 24 h, and their `artifacts` rows; reports
   the count and bytes freed. A server runs it in the background after runs

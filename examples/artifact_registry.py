@@ -1,7 +1,7 @@
 """Demo: versioned artifacts with lineage.
 
-A data-prep run logs a dataset (a directory, a reference and a generated
-file), a training run consumes it and logs a checkpoint per epoch with a
+A data-prep run logs a dataset (files written straight into the artifact
+and a reference), a training run consumes it and logs a checkpoint per epoch with a
 moving ``best`` alias, an evaluation run consumes the best checkpoint, and a
 reader walks the lineage back.
 
@@ -26,8 +26,6 @@ from __future__ import annotations
 import json
 import math
 import random
-import tempfile
-from pathlib import Path
 
 import numpy as np
 
@@ -36,30 +34,35 @@ import cairn
 PROJECT = "artifact-demo"
 
 
-def write_dataset(root: Path, seed: int, n: int) -> None:
-    """A tiny on-disk dataset: one .npy shard per split plus a label map."""
+def add_dataset(art: cairn.Artifact, seed: int, n: int) -> None:
+    """A tiny dataset written straight into the artifact: one .npy shard per
+    split plus a label map (``new_file`` stages each file; no temp dir)."""
     rng = np.random.default_rng(seed)
     for split, size in (("train", n), ("val", n // 5)):
-        (root / split).mkdir(parents=True, exist_ok=True)
-        np.save(root / split / "x.npy", rng.normal(size=(size, 10)).astype(np.float32))
-        np.save(root / split / "y.npy", rng.normal(size=size).astype(np.float32))
-    (root / "labels.json").write_text(json.dumps({"target": "y"}))
+        with art.new_file(f"{split}/x.npy", mode="wb") as f:
+            np.save(f, rng.normal(size=(size, 10)).astype(np.float32))
+        with art.new_file(f"{split}/y.npy", mode="wb") as f:
+            np.save(f, rng.normal(size=size).astype(np.float32))
+    with art.new_file("labels.json") as f:
+        json.dump({"target": "y"}, f)
 
 
 def prepare(seed: int, n: int) -> cairn.ArtifactVersion:
     with cairn.Run(PROJECT, name=f"data-prep-{seed}", tags=["data-prep"]) as run:
         run.config(data={"seed": seed, "n_samples": n})
-        with tempfile.TemporaryDirectory() as tmp:
-            write_dataset(Path(tmp), seed, n)
-            art = cairn.Artifact("training-data", type="dataset",
-                                 description=f"{n} samples, seed {seed}",
-                                 metadata={"n_samples": n, "seed": seed})
-            art.add_dir(tmp)
-            # A file that stays where it is: recorded, never uploaded.
-            art.add_reference("s3://example-bucket/raw/dump.tar", size=170_498_071)
-            with art.new_file("stats.json") as f:
-                json.dump({"mean": 0.0, "std": 1.0}, f)
-            version = run.log_artifact(art)  # files are read now, while tmp exists
+        art = cairn.Artifact("training-data", type="dataset",
+                             description=f"{n} samples, seed {seed}",
+                             metadata={"n_samples": n, "seed": seed})
+        add_dataset(art, seed, n)
+        # A file that stays where it is: recorded, never uploaded.
+        art.add_reference("s3://example-bucket/raw/dump.tar", size=170_498_071)
+        with art.new_file("stats.json") as f:
+            json.dump({"mean": 0.0, "std": 1.0}, f)
+        # A folder already on disk would be `art.add_dir("data/")` (copied when
+        # added, wandb's default policy) or `run.log_artifact("data/", ...)`.
+        # On a local repo the version number is assigned when the run's log
+        # is ingested; wait() returns once it is.
+        version = run.log_artifact(art).wait()
     print(f"  -> {version.qualified_ref}  aliases={version.aliases}")
     return version
 

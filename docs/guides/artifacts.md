@@ -72,18 +72,36 @@ v = run.log_artifact(art, aliases=["normalised"])
 
 | Method | What it adds |
 |---|---|
-| `add_file(path, name=None)` | One file, at `name` (default: its basename). |
-| `add_dir(path, name=None)` | Every file under `path` (recursive, sorted, symlinks followed, hidden files included), under the prefix `name`. |
+| `add_file(path, name=None, *, policy="mutable")` | One file, at `name` (default: its basename). |
+| `add_dir(path, name=None, *, policy="mutable")` | Every file under `path` (recursive, sorted, symlinks followed, hidden files included), under the prefix `name`. |
 | `add_reference(uri, name=None, *, size=None, etag=None)` | An external file, recorded by URI and never uploaded. A local path or `file://` URI gets its size filled in. |
 | `add(value, name)` | A Python value, serialized like the shorthand above. |
 | `new_file(name, mode="w", encoding="utf-8")` | A file to write into (`"w"` or `"wb"`); added when the block exits. |
 | `remove(name)` | A staged entry, or every entry under a directory prefix. |
 | `files()` | The staged entries. |
 
-Files are read when the draft is **logged**, not when they are added. Two entries at the same path
+`policy` works as in wandb. `"mutable"` (the default) copies the files when they are added, so
+changing or deleting them afterwards does not affect the version. `"immutable"` skips the copy and
+reads the files when the draft is **logged**: use it for large files you will not touch until
+then. Passing a path straight to `log_artifact` (below) reads the files at once and never copies.
+Two entries at the same path
 raise `ValueError`. Passing `name`, `type`, `metadata` or `description` to `log_artifact` together
 with a draft is a `TypeError`: they belong on the draft. `aliases`, `tags` and `step` are given at
 log time.
+
+### Models: `log_model` / `use_model`
+
+As in wandb, two shorthands for artifacts of type `model`:
+
+```python
+run.log_model("checkpoints/", aliases=["best"])   # = log_artifact(path, "run-<run id>-checkpoints", type="model")
+path = run.use_model("run-3a5aa792…-checkpoints:best")   # use_artifact(..., role="model").download()
+```
+
+`log_model(path, name=None, aliases=None)` logs a file or directory; `name` defaults to
+`run-<run id>-<basename>`, so logging the same path again adds a version to the same artifact.
+`use_model(ref)` records the version as an input of the run and returns the local folder it was
+downloaded to.
 
 ## Aliases and tags
 

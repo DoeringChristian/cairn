@@ -434,3 +434,55 @@ def test_delete_versions_and_artifacts(repo, reader):
     assert [f.name for f in reader.artifact_families("p")] == []
     with pytest.raises(LookupError):
         reader.artifact("ckpt", project="p")
+
+
+# ---------------------------------------------------------------------------
+# Add policies (wandb's ``policy``) and log_model / use_model
+# ---------------------------------------------------------------------------
+
+def test_add_policy_mutable_copies_when_added(repo, tmp_path):
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("first")
+    (src / "b.txt").write_text("kept")
+    art = cairn.Artifact("snap", type="dataset")
+    art.add_dir(src)                                  # default: mutable, copied now
+    single = tmp_path / "single.txt"
+    single.write_text("one")
+    art.add_file(single)
+    (src / "a.txt").write_text("changed after add")   # does not reach the version
+    single.unlink()                                   # nor does deleting it
+    with _run(repo, "producer") as run:
+        v = run.log_artifact(art).wait()
+    assert v.file("a.txt").read_text() == "first"
+    assert v.file("single.txt").read_text() == "one"
+
+
+def test_add_policy_immutable_reads_when_logged(repo, tmp_path):
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("first")
+    art = cairn.Artifact("snap", type="dataset")
+    art.add_dir(src, policy="immutable")              # no copy: read at log time
+    (src / "a.txt").write_text("changed before log")
+    with _run(repo, "producer") as run:
+        v = run.log_artifact(art).wait()
+    assert v.file("a.txt").read_text() == "changed before log"
+    with pytest.raises(ValueError, match="policy"):
+        cairn.Artifact("x").add_file(src / "a.txt", policy="copy")
+
+
+def test_log_model_and_use_model(repo, tmp_path):
+    ckpt = tmp_path / "ckpts"
+    ckpt.mkdir()
+    (ckpt / "weights.bin").write_bytes(b"w1")
+    with _run(repo, "trainer") as run:
+        v = run.log_model(ckpt, aliases=["best"]).wait()
+        named = run.log_model(ckpt / "weights.bin", name="my-model").wait()
+    assert v.name == f"run-{run.id}-ckpts" and v.type == "model"
+    assert set(v.aliases) == {"latest", "best"}
+    assert named.name == "my-model" and [f.path for f in named.files()] == ["weights.bin"]
+    with _run(repo, "evaluator") as ev:
+        path = ev.use_model(f"run-{run.id}-ckpts:best")
+        assert (Path(path) / "weights.bin").read_bytes() == b"w1"
+    assert [r.name for r in v.used_by()] == ["evaluator"]

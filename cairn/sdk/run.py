@@ -897,6 +897,27 @@ class Run:
             self._backend_cache = backend_for_transport(self._transport)
         return self._backend_cache
 
+    def log_model(
+        self, path: str | Path, name: str | None = None, aliases: list[str] | None = None,
+    ) -> ArtifactVersion:
+        """Log a file or directory as a new version of a ``model`` artifact
+        (wandb's ``run.log_model``): ``log_artifact(path, name, type="model")``.
+
+        ``name`` defaults to ``run-<run id>-<basename of path>``, so logging
+        the same path again makes a new version of the same artifact.
+        ``aliases`` move to the new version beside ``latest``.
+        """
+        p = Path(path)
+        if name is None:
+            name = f"run-{self.id}-{p.resolve().name}"
+        return self.log_artifact(p, name, type="model", aliases=aliases)
+
+    def use_model(self, ref: str) -> str:
+        """Use a model artifact and download it (wandb's ``run.use_model``):
+        records it as this run's input (role ``model``) and returns the local
+        path of its files (see ``ArtifactVersion.download``)."""
+        return str(self.use_artifact(ref, role="model").download())
+
     def use_artifact(self, ref: str | ArtifactVersion, *, role: str = "input") -> ArtifactVersion:
         """Consume an artifact version: resolve it now and record it as an
         input of this run (re-using the same version is a no-op).
@@ -1395,6 +1416,12 @@ class _DisabledRun(Run):
         pass
 
     def use_artifact(self, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
+        pass
+
+    def log_model(self, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
+        pass
+
+    def use_model(self, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
         pass
 
     def use_viewer(self, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]

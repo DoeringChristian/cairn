@@ -41,7 +41,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path, PurePosixPath
-from typing import IO, Any, BinaryIO, Callable, Iterator
+from typing import IO, Any, BinaryIO, Callable, Iterator, Literal
 
 log = logging.getLogger(__name__)
 
@@ -62,6 +62,15 @@ def _entry_path(path: str) -> str:
     if rel.is_absolute() or ".." in rel.parts or not rel.parts or str(rel) == ".":
         raise ValueError(f"unsafe artifact entry path {path!r}")
     return rel.as_posix()
+
+
+#: ``add_file`` / ``add_dir``: copy now (``"mutable"``) or read at log time.
+Policy = Literal["mutable", "immutable"]
+
+
+def _check_policy(policy: str) -> None:
+    if policy not in ("mutable", "immutable"):
+        raise ValueError(f"policy must be 'mutable' or 'immutable', not {policy!r}")
 
 
 def _check_name(name: str) -> str:
@@ -226,27 +235,40 @@ class Artifact:
             return ArtifactEntry(path, size=s.size, mime=_guess_mime(path))
         return ArtifactEntry(path)
 
-    def add_file(self, local_path: str | Path, name: str | None = None) -> ArtifactEntry:
+    def add_file(
+        self, local_path: str | Path, name: str | None = None, *, policy: Policy = "mutable",
+    ) -> ArtifactEntry:
         """Add one file at entry path ``name`` (default: its basename).
+
+        ``policy`` (as in wandb): ``"mutable"`` (default) copies the file now,
+        so changing or deleting it before ``log_artifact`` does not affect
+        the version; ``"immutable"`` skips the copy and reads the file when
+        the artifact is logged (for large files you will not touch).
 
         Raises:
             FileNotFoundError: ``local_path`` is not a file.
-            ValueError: The artifact already has an entry at that path.
+            ValueError: The artifact already has an entry at that path, or an
+                unknown ``policy``.
         """
+        _check_policy(policy)
         p = Path(local_path)
         if not p.is_file():
             raise FileNotFoundError(f"no such file: {p}")
-        return self._stage(name if name is not None else p.name, _Staged("file", p, p.stat().st_size))
+        return self._stage(name if name is not None else p.name, self._staged_file(p, policy))
 
-    def add_dir(self, local_path: str | Path, name: str | None = None) -> list[ArtifactEntry]:
+    def add_dir(
+        self, local_path: str | Path, name: str | None = None, *, policy: Policy = "mutable",
+    ) -> list[ArtifactEntry]:
         """Add every file under ``local_path`` (recursive, sorted, symlinks
         followed, hidden files included) at its relative path, under the
-        prefix ``name`` (default: the artifact's root).
+        prefix ``name`` (default: the artifact's root). ``policy`` as in
+        ``add_file``: ``"mutable"`` (default) copies the files now.
 
         Raises:
             NotADirectoryError: ``local_path`` is not a directory.
-            ValueError: An entry path is already taken.
+            ValueError: An entry path is already taken, or an unknown ``policy``.
         """
+        _check_policy(policy)
         root = Path(local_path)
         if not root.is_dir():
             raise NotADirectoryError(f"no such directory: {root}")
@@ -256,8 +278,21 @@ class Artifact:
                 p = Path(dirpath) / fname
                 rel = p.relative_to(root).as_posix()
                 path = f"{name.rstrip('/')}/{rel}" if name else rel
-                out.append(self._stage(path, _Staged("file", p, p.stat().st_size)))
+                out.append(self._stage(path, self._staged_file(p, policy)))
         return out
+
+    def _staging_dir(self) -> Path:
+        if self._tmp is None:
+            self._tmp = tempfile.TemporaryDirectory(prefix="cairn-artifact-")
+        return Path(self._tmp.name)
+
+    def _staged_file(self, p: Path, policy: Policy) -> _Staged:
+        """``p`` as staged: a copy taken now (mutable) or the path itself."""
+        if policy == "mutable":
+            copy = self._staging_dir() / secrets.token_hex(8)
+            shutil.copyfile(p, copy)
+            p = copy
+        return _Staged("file", p, p.stat().st_size)
 
     def add_reference(
         self, uri: str, name: str | None = None, *, size: int | None = None,
@@ -296,9 +331,7 @@ class Artifact:
         path = _entry_path(name)
         if path in self._entries:
             raise ValueError(f"artifact {self.name!r} already has an entry at {path!r}")
-        if self._tmp is None:
-            self._tmp = tempfile.TemporaryDirectory(prefix="cairn-artifact-")
-        local = Path(self._tmp.name) / secrets.token_hex(8)
+        local = self._staging_dir() / secrets.token_hex(8)
         f = local.open(mode, encoding=encoding if mode == "w" else None)
         try:
             yield f
@@ -415,10 +448,11 @@ def draft_from_shorthand(value: Any, name: str | None, type: str, registry: Any)
     if name is None:
         raise TypeError("log_artifact needs a name unless it is given a cairn.Artifact")
     art = Artifact(name, type)
+    # No copy: the shorthand is logged at once, the files read right away.
     if isinstance(value, (str, Path)) and Path(value).is_dir():
-        art.add_dir(value)
+        art.add_dir(value, policy="immutable")
     elif isinstance(value, (str, Path)) and Path(value).is_file():
-        art.add_file(value)
+        art.add_file(value, policy="immutable")
     elif isinstance(value, (str, Path)):
         # A string is a path here; store text with cairn.Text or Artifact.add.
         raise FileNotFoundError(f"no such file or directory: {value}")
