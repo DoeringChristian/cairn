@@ -132,8 +132,12 @@ def test_kill_9_writer_mid_append(tmp_path, monkeypatch):
     )
     rid = proc.stdout.readline().strip()
     log = repo / "wals" / f"{rid}.wal.jsonl"
+    # Kill once the log holds a flushed batch of points (scalars sit in the
+    # SDK's buffer until its periodic flush, and a SIGKILL loses that
+    # buffer; under load the text records alone could pass any size bound
+    # first) and is large enough that the kill lands mid-append.
     deadline = time.monotonic() + 30
-    while not log.exists() or log.stat().st_size < 200_000:
+    while not (log.exists() and log.stat().st_size >= 200_000 and b'"batch"' in log.read_bytes()):
         assert time.monotonic() < deadline
         time.sleep(0.02)
     proc.send_signal(signal.SIGKILL)
