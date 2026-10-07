@@ -48,32 +48,21 @@ def test_http_transport_heartbeat_returns_flag(live_server):
         t.close()
 
 
-def test_local_direct_heartbeat_returns_flag(tmp_path):
-    t = LocalTransport(tmp_path / ".cairn")
-    try:
-        rid = t.create_run({"project": "p"})["run_id"]
-        assert t.heartbeat(rid) is None
-        ts = ingest_ops.request_stop(t.db, rid)
-        assert t.heartbeat(rid) == ts
-    finally:
-        t.close()
-
-
-def test_local_wal_heartbeat_reads_flag(tmp_path):
+def test_local_heartbeat_reads_flag(tmp_path):
     repo = tmp_path / ".cairn"
-    t = LocalTransport(repo, use_wal=True)
+    t = LocalTransport(repo)
     rid = t.create_run({"project": "p", "run_id": "a" * 32})["run_id"]
     try:
         dd = DataDir(repo)
         db = Database.open(dd.db_path)
-        ingest_all(dd, db, BlobStore(dd.artifacts_dir))  # incremental drain: run is live
+        ingest_all(dd, db, BlobStore(dd.artifacts_dir))  # the run is live
         assert t.heartbeat(rid) is None
         ts = ingest_ops.request_stop(db, rid)
         assert t.heartbeat(rid) == ts
         t.finish_run(rid, "stopped")
     finally:
         t.close()
-    ingest_all(dd, db, BlobStore(dd.artifacts_dir))  # full drain replays the heartbeats
+    ingest_all(dd, db, BlobStore(dd.artifacts_dir))  # the rest of the log
     row = db.read_columns("SELECT status, stop_requested FROM runs WHERE id = ?", [rid])[0]
     db.close()
     assert row == {"status": "stopped", "stop_requested": ts}
@@ -84,6 +73,17 @@ def _run(repo, **kw) -> cairn.Run:
         project="p", repo=repo, capture_source=False, capture_stdout=False,
         capture_env=False, capture_system_metrics=False, **kw,
     )
+
+
+def _request_stop(repo, rid):
+    """What the UI's Stop button does, through the repo's lease holder."""
+    from cairn.sdk.local import RepoTransport
+
+    rt = RepoTransport(repo)
+    try:
+        return rt.under_lease(lambda db: ingest_ops.request_stop(db, rid))
+    finally:
+        rt.close()
 
 
 def _wait(pred, timeout=5.0):
@@ -108,7 +108,7 @@ def test_sdk_flag_mode_calls_on_stop_and_finishes_stopped(tmp_path, monkeypatch)
     with _run(repo, stop_mode="flag", on_stop=lambda r: seen.append("ctor")) as run:
         run.on_stop(lambda r: seen.append("method"))
         assert not run.should_stop
-        ingest_ops.request_stop(run._transport.db, run.id)
+        _request_stop(repo, run.id)
         _wait(lambda: run.should_stop)
         rid = run.id
     assert seen == ["ctor", "method"]
@@ -130,7 +130,7 @@ def _interrupt_mode(tmp_path):
     with pytest.raises(KeyboardInterrupt):
         with _run(repo) as run:
             rid = run.id
-            ingest_ops.request_stop(run._transport.db, run.id)
+            _request_stop(repo, run.id)
             deadline = time.time() + 5
             while time.time() < deadline:
                 time.sleep(0.01)
