@@ -159,7 +159,9 @@ def test_answers_now_go_through_the_ui(ui_subprocess):
         run.track(2.0, "loss", step=1)
     with cairn.Run(project="ans", repo=repo, fork_from=(parent, 0), **QUIET) as kid:
         kid_id = kid.id
-    sw = cairn.sweep({"x": {"values": [1, 2]}}, project="ans", repo=repo)
+    # Grid, not the default random: random may draw x=2 twice (each trial
+    # samples independently), and then the best value is not 1.
+    sw = cairn.sweep({"x": {"values": [1, 2]}}, project="ans", repo=repo, method="grid")
     sw.run(lambda config: float(config["x"]), count=2)
     info = sw.info()
     assert info["trial_count"] == 2 and info["best"]["value"] == 1.0
