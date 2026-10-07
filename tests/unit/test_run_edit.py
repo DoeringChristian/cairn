@@ -5,11 +5,13 @@ from __future__ import annotations
 
 import json
 import os
+import time
 
 import pytest
 
 import cairn
 from cairn.server.storage.datadir import DataDir
+from cairn.server.storage import lease as lease_mod
 
 _RUN_KW = dict(
     capture_source=False,
@@ -74,17 +76,17 @@ def test_edit_local_repo_held_by_a_server_goes_over_http(tmp_path, live_server):
     # The live_server app serves tmp_path/"cairn"; claim it the way `cairn ui` does.
     served = "cairn://" + live_server.removeprefix("http://")
     run_id = _seed(served)
-    host, port = live_server.removeprefix("http://").split(":")
     dd = DataDir(tmp_path / "cairn")
-    dd.lock_path.write_text(json.dumps({
-        "pid": os.getpid(), "mode": "ui", "host": host, "port": int(port),
-        "started_at": "2026-01-01T00:00:00Z",
+    # The lease as a server in another live process holds it.
+    lease_mod.lease_path(dd.root).write_text(json.dumps({
+        "host": lease_mod.hostname(), "pid": os.getppid(), "token": "t" * 32,
+        "mode": "ui", "url": live_server, "expires_at": time.time() + 60,
     }))
     with cairn.Reader(dd.root) as reader:
         with reader.run(run_id).edit() as e:
             from cairn.sdk.transport import Transport
 
-            assert isinstance(e._transport, Transport)
+            assert isinstance(e._transport.served_by(), Transport)
             e.rename("via-server")
     with cairn.Reader(served) as reader:
         assert reader.run(run_id).name == "via-server"
@@ -114,18 +116,18 @@ def test_delete_keys_rejects_unknown_section(tmp_path):
             e.delete_keys("params", ["lr"])
 
 
-def test_rename_and_delete_keys_replay_from_local_wal(tmp_path):
+def test_rename_and_delete_keys_replay_from_the_runs_log(tmp_path):
     repo = tmp_path / ".cairn"
-    with cairn.Run(project="p", name="orig", repo=repo, local_wal=True, **_RUN_KW) as run:
+    with cairn.Run(project="p", name="orig", repo=repo, **_RUN_KW) as run:
         run.config(lr=0.1, hparams={"wd": 0.01})
-        run._transport.rename_run(run.id, "wal-renamed")
+        run._transport.rename_run(run.id, "log-renamed")
         run._transport.delete_keys(run.id, "params", ["hparams"])
         run_id = run.id
-    # The Reader drains the WAL before reading; a second drain is a no-op.
+    # The Reader ingests the log before reading; a second time is a no-op.
     for _ in range(2):
         with cairn.Reader(repo) as reader:
             run = reader.run(run_id)
-            assert run.name == "wal-renamed"
+            assert run.name == "log-renamed"
             assert run.config == {"lr": 0.1}
 
 
