@@ -43,13 +43,12 @@ import secrets
 import zipfile
 from typing import Any, Callable
 
-from . import config_doc, ingest_ops
+from . import config_doc, ingest_ops, progress
 from .artifact_refs import referenced_hashes
 from .routes._common import utc_now
 from .storage.blobs import BlobStore
 from .storage.datadir import DataDir
 from .storage.db import Database
-from . import progress
 from .storage.metric_stats import rebuild_metric_stats
 
 EXPORT_VERSION = 1

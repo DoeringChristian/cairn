@@ -4,6 +4,7 @@ ETA rule, the migration, and the integrations' totals."""
 
 from __future__ import annotations
 
+import itertools
 import json
 import sqlite3
 import sys
@@ -15,9 +16,9 @@ from unittest.mock import MagicMock
 import pytest
 
 import cairn
+from cairn.sdk.transport import Transport
 from cairn.server import progress
 from cairn.server.storage.migrations import apply_migrations
-from cairn.sdk.transport import Transport
 from tests.conftest import ingest_repo
 
 _RUN_KW = {
@@ -63,12 +64,12 @@ def test_eta_none_without_increase_and_never_negative():
 
 def test_samples_spaced_windowed_and_monotonic():
     s: list = []
-    for i in range(0, 1000):  # one sample every 0.5 s for 500 s
+    for i in range(1000):  # one sample every 0.5 s for 500 s
         s = progress.fold_sample(s, i * 0.5, i)
     times = [t for t, _ in s]
     assert times[-1] == 999 * 0.5
     # About SAMPLE_SPACING apart, and the window's oldest kept as the anchor.
-    assert all(b - a <= progress.SAMPLE_SPACING + 0.5 for a, b in zip(times, times[1:]))
+    assert all(b - a <= progress.SAMPLE_SPACING + 0.5 for a, b in itertools.pairwise(times))
     assert times[1] > times[-1] - progress.WINDOW
     assert times[0] <= times[-1] - progress.WINDOW
     assert len(s) < 80  # bounded: about WINDOW / SAMPLE_SPACING
@@ -203,7 +204,7 @@ def test_local_eta_from_point_wall_times(tmp_path):
     ingest_ops.create_run(db, project="p", run_id="r")
     ingest_ops.set_total_steps(db, "r", 1000)
     t0 = 1_700_000_000.0
-    for i in range(0, 61):  # one point per second, step = i * 2
+    for i in range(61):  # one point per second, step = i * 2
         ingest_ops.insert_batch(db, "r", [{
             "name": "loss", "step": i * 2, "wall_time": _iso(t0 + i),
             "object_type": "scalar", "scalar_value": 1.0,
@@ -296,7 +297,7 @@ def test_hf_sets_total_steps_from_max_steps():
 
     run = MagicMock()
     cb = CairnCallback(run=run)
-    args = SimpleNamespace(output_dir="out", to_dict=lambda: {})
+    args = SimpleNamespace(output_dir="out", to_dict=dict)
     cb.on_train_begin(args, SimpleNamespace(max_steps=321), None)
     assert run.total_steps == 321
 

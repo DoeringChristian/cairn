@@ -1134,7 +1134,7 @@ class Run:
             self._heartbeat_stop.set()
             try:
                 self._flush_progress()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 log.warning("progress flush failed during finish", exc_info=True)
             self._metric_buffer.stop(timeout=self._timeout)
             self._log_buffer.stop(timeout=self._timeout)
@@ -1206,8 +1206,8 @@ class Run:
                 return
             try:
                 self._flush_progress()
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception:
+                log.debug("progress flush failed", exc_info=True)
             try:
                 stop_requested = self._transport.heartbeat(self._run_id)
             except Exception:  # noqa: BLE001
