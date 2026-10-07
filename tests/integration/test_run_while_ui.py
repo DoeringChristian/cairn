@@ -74,6 +74,7 @@ def ui_subprocess(tmp_path):
             "127.0.0.1",
             "--port",
             str(port),
+            "--no-open-browser",
         ],
         cwd=str(REPO_ROOT),
         stdout=subprocess.PIPE,

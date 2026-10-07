@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import socket
 import threading
 import time
@@ -15,6 +16,12 @@ from cairn.server.app import create_app
 from cairn.server.storage.blobs import BlobStore
 from cairn.server.storage.datadir import DataDir
 from cairn.server.storage.db import Database
+
+# No test may open a browser tab on the developer's machine: Python's
+# `webbrowser` runs $BROWSER when it is set, here a no-op command. Set at
+# import, so every subprocess a test starts (a real `cairn ui`, `cairn open`)
+# inherits it too.
+os.environ["BROWSER"] = "true"
 
 
 @pytest.fixture
