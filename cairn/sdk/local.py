@@ -645,6 +645,17 @@ class LocalTransport:
         for alias in body.get("aliases") or []:
             artifact_registry_ops.validate_user_alias(alias)
         artifact_registry_ops.validate_tags(body.get("tags"))
+        # A family keeps one type: refuse now what ingestion would drop (as
+        # far as the repo has ingested; the ingester checks again).
+        known = self.read_columns(
+            "SELECT type FROM artifact_families WHERE project_id = ? AND name = ?",
+            [project_id, body["name"]],
+        )
+        want = body.get("type") or "artifact"
+        if known and known[0]["type"] != want:
+            raise ValueError(
+                f"artifact {body['name']!r} has type {known[0]['type']!r}, not {want!r}"
+            )
         self._wal_write("create_artifact_version", {"project_id": project_id, **body})
         return None
 

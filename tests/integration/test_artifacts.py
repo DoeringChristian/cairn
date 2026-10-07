@@ -52,8 +52,8 @@ def test_object_round_trip(repo, reader):
     arr = np.linspace(0, 1, 100)  # 1-D: once mistaken for audio
     with _run(repo, "producer") as run:
         v = run.log_artifact(state, "ckpt", type="model", step=3, metadata={"val": 0.5},
-                             description="after epoch 3")
-        a = run.log_artifact(arr, "signal")
+                             description="after epoch 3").wait()
+        a = run.log_artifact(arr, "signal").wait()
     assert (v.ref, v.qualified_ref, v.type, v.project) == ("ckpt:v1", "p/ckpt:v1", "model", "p")
     assert (v.step, v.metadata, v.description, v.aliases) == (3, {"val": 0.5}, "after epoch 3", ["latest"])
     assert v.digest and len(v.digest) == 64 and v.size > 0
@@ -82,8 +82,8 @@ def test_torch_state_dict_round_trip(repo):
 
 def test_every_call_is_a_new_version(repo, reader):
     with _run(repo) as run:
-        a = run.log_artifact(b"same", "blob")
-        b = run.log_artifact(b"same", "blob")
+        a = run.log_artifact(b"same", "blob").wait()
+        b = run.log_artifact(b"same", "blob").wait()
     assert (a.version, b.version) == (1, 2)
     assert a.digest == b.digest
     assert [v.version for v in reader.artifact_versions("blob", project="p")] == [1, 2]
@@ -121,7 +121,7 @@ def test_builder_entry_kinds(repo, reader, tmp_path):
     assert "train/.hidden" in staged and "train/sub/b.bin" in staged
 
     with _run(repo, "maker") as run:
-        v = run.log_artifact(art, aliases=["norm"])
+        v = run.log_artifact(art, aliases=["norm"]).wait()
     assert (v.name, v.type, v.description, v.metadata) == ("cifar", "dataset", "train split", {"n": 2})
     assert v.aliases == ["latest", "norm"]
     files = {e.path: e for e in v.files()}
@@ -193,8 +193,8 @@ def test_draft_with_extra_arguments_and_shorthand_errors(repo):
 def test_shorthand_paths(repo, tmp_path):
     src = _tree(tmp_path / "src")
     with _run(repo) as run:
-        d = run.log_artifact(src / "train", "train-dir")
-        f = run.log_artifact(str(src / "labels.json"), "labels")
+        d = run.log_artifact(src / "train", "train-dir").wait()
+        f = run.log_artifact(str(src / "labels.json"), "labels").wait()
     assert sorted(e.path for e in d.files()) == [".hidden", "a.txt", "sub/b.bin"]
     assert [e.path for e in f.files()] == ["labels.json"]
     assert f.get() == b'{"0": "cat"}'
@@ -202,7 +202,7 @@ def test_shorthand_paths(repo, tmp_path):
 
 def test_family_keeps_one_type(repo):
     with _run(repo) as run:
-        run.log_artifact(b"1", "thing", type="model")
+        run.log_artifact(b"1", "thing", type="model").wait()
         with pytest.raises(ValueError, match="type"):
             run.log_artifact(b"2", "thing", type="dataset")
 
@@ -213,9 +213,9 @@ def test_family_keeps_one_type(repo):
 
 def test_aliases(repo, reader):
     with _run(repo) as run:
-        v1 = run.log_artifact(b"1", "ckpt", aliases=["best"])
-        v2 = run.log_artifact(b"2", "ckpt")
-        v3 = run.log_artifact(b"3", "ckpt", aliases=["best"])
+        v1 = run.log_artifact(b"1", "ckpt", aliases=["best"]).wait()
+        v2 = run.log_artifact(b"2", "ckpt").wait()
+        v3 = run.log_artifact(b"3", "ckpt", aliases=["best"]).wait()
         with pytest.raises(ValueError, match="reserved"):
             run.log_artifact(b"4", "ckpt", aliases=["latest"])
         with pytest.raises(ValueError, match="reserved"):
@@ -256,10 +256,10 @@ def test_aliases(repo, reader):
 
 def test_lineage(repo, reader):
     with _run(repo, "base") as base:
-        v = base.log_artifact(b"w", "base-ckpt", type="model", aliases=["best"])
+        v = base.log_artifact(b"w", "base-ckpt", type="model", aliases=["best"]).wait()
         base_id = base.id
     with _run(repo, "other", project="q") as other:
-        q = other.log_artifact(b"d", "data", type="dataset")
+        q = other.log_artifact(b"d", "data", type="dataset").wait()
     with _run(repo, "residual") as res:
         got = res.use_artifact("base-ckpt:best")
         again = res.use_artifact(got)  # idempotent
@@ -339,22 +339,36 @@ def test_download(repo, reader, tmp_path, monkeypatch, caplog):
 # WAL mode
 # ---------------------------------------------------------------------------
 
-def test_wal_mode_pending_version(tmp_path):
+def test_local_version_is_pending_until_wait(tmp_path):
+    """A local run only logs the version: it is pending until the repo
+    ingests the log; ``wait()`` catches up and fills it in."""
     repo = tmp_path / ".cairn"
-    with cairn.Run("p", repo=repo, local_wal=True, **QUIET) as run:
+    with cairn.Run("p", repo=repo, **QUIET) as run:
         v = run.log_artifact({"a": 1}, "ckpt", step=2, aliases=["best"])
         assert v.pending and v.version is None
         with pytest.raises(RuntimeError, match="pending"):
             v.files()
-        with pytest.raises(RuntimeError):
-            run.use_artifact("ckpt")
         with pytest.raises(ValueError, match="reserved"):
             run.log_artifact(b"x", "ckpt", aliases=["latest"])
+        assert v.wait(timeout=30) is v
+        assert not v.pending and (v.version, v.step) == (1, 2)
+        assert sorted(v.aliases) == ["best", "latest"]
+        assert v.get() == {"a": 1}
+        # use_artifact catches up on this run's own log first.
+        assert run.use_artifact("ckpt:best").id == v.id
     with cairn.Reader(repo) as reader:
         back = reader.artifact("ckpt:best", project="p")
         assert (back.version, back.step, back.id) == (1, 2, v.id)
-        assert back.get() == {"a": 1}
         assert back.logged_by().id == run.id
+        assert [r.id for r in back.used_by()] == [run.id]
+
+
+def test_http_version_wait_returns_at_once(live_server, tmp_path, monkeypatch):
+    monkeypatch.setenv("CAIRN_WAL_DIR", str(tmp_path / "wal"))
+    with cairn.Run("p", repo=live_server.replace("http://", "cairn://"), **QUIET) as run:
+        v = run.log_artifact(b"x", "blob")
+        assert not v.pending and v.version == 1
+        assert v.wait(timeout=0) is v
 
 
 def test_pickle_wrapper_tracks():
@@ -370,8 +384,8 @@ def test_tags(repo, reader):
     art = cairn.Artifact("tagged", tags=["raw"])
     art.add(b"1", "a.bin")
     with _run(repo) as run:
-        v = run.log_artifact(art, tags=["candidate", "raw"])
-        w = run.log_artifact(b"2", "tagged", tags=["candidate"])
+        v = run.log_artifact(art, tags=["candidate", "raw"]).wait()
+        w = run.log_artifact(b"2", "tagged", tags=["candidate"]).wait()
         with pytest.raises(ValueError):
             run.log_artifact(b"3", "tagged", tags=[""])
     assert v.tags == ["raw", "candidate"] and w.tags == ["candidate"]  # tags may repeat across versions
@@ -411,7 +425,7 @@ def test_delete_versions_and_artifacts(repo, reader):
     v3.delete(force=True)
     assert reader.artifact("ckpt:latest", project="p").version == 1  # latest moved back
     with _run(repo) as run:
-        assert run.log_artifact(b"4", "ckpt").version == 4  # numbers are never reused
+        assert run.log_artifact(b"4", "ckpt").wait().version == 4  # numbers are never reused
     with pytest.raises(LookupError):
         reader.artifact("ckpt:v3", project="p")
 
