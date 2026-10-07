@@ -75,7 +75,7 @@ The run view is saved in the comparison's workspace, so it is shared with everyo
 
 ### Overview
 
-- A summary card per run.
+- A summary card per run. A run with [progress](../guides/runs.md#progress-and-eta) has a **Progress** row after Duration: a bar and `58% · ~9m` while it runs (re-read every 2 s), the percentage reached once it ended.
 - **Metrics**: each run's final values side by side, as the runs table shows them. The best value is green and the worst red. A metric whose summary rule is `min` counts lower as better and is marked ↓. `system.*` metrics are left out. A filter box narrows the rows.
 - **Parameters**: the runs' configs side by side. A long value is cut to one line of its column; **more** shows it in full. The run columns share the width; with many runs the table scrolls sideways and the keys stay in view.
 - **Environment**: Python, platform, CUDA and GPUs side by side.

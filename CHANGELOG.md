@@ -32,6 +32,18 @@
 - `ArtifactVersion.wait(timeout=None)`: blocks until a pending version is
   registered, then fills in `version`, aliases and the rest.
 - `POST /api/ingest/pending`: a lease-holding server ingests pending logs now.
+- **Run progress.** `cairn.Run(total_steps=N)` / `run.total_steps = N`
+  (progress = highest non-`system.*` step ÷ N) and `run.progress(i,
+  total=None)` (explicit, wins over steps). Over HTTP (`POST
+  /api/runs/{id}/total-steps`, `/progress`) and as run-log records. Run rows
+  carry `progress: {fraction, current, total, unit, eta_seconds}`; the ETA
+  is the rate over the last 5 minutes of client wall times.
+- The UI shows progress in the runs table's status cell, a line under the
+  run page header and a Progress row on comparison run cards: a bar and ETA
+  while running, the percentage reached once ended.
+- Integrations set the total: Lightning (`estimated_stepping_batches`),
+  HuggingFace (`max_steps`), Keras and Ultralytics (epochs, via
+  `run.progress`).
 - `cairn ping` reports `crashed_runs`.
 
 ### Fixed

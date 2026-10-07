@@ -30,6 +30,7 @@ a keyword:
 | `repo` | resolved | Where to log. See [how cairn picks a destination](../getting-started.md#how-cairn-picks-a-destination). |
 | `mode` | resolved | `"disabled"` makes the run a no-op. See [disabled runs](#disabled-runs). |
 | `resume`, `rewind_to`, `fork_from` | `None` | [Continue or branch an existing run](#resume-rewind-and-fork). |
+| `total_steps` | `None` | The steps the run will take; shown as [progress](#progress-and-eta). |
 | `stop_mode`, `on_stop` | `"interrupt"`, `None` | [Stopping from the UI](#stopping-a-run-from-the-ui). |
 | `capture_source`, `capture_stdout`, `capture_env`, `capture_system_metrics` | `True` | [Automatic capture](#system-metrics-logs-and-code). |
 | `system_metrics_interval` | `10.0` | Seconds between system-metric samples. |
@@ -114,6 +115,53 @@ run = cairn.Run("cifar10", resume=ckpt["cairn_run"], rewind_to=ckpt["step"])
     On a local repo, resuming, rewinding or forking first catches up on the run's log (through
     the `cairn ui`/`cairn server` serving the repo, or by itself), so a run that just finished
     in another process can be continued at once.
+
+## Progress and ETA
+
+Declare how many steps the run will take, and the UI shows how far it is: a bar and an ETA while
+it runs (runs table, run page header, comparison overview), the percentage reached once it ended.
+
+```python
+run = cairn.Run("cifar10", total_steps=50_000)
+run.total_steps = 60_000     # any time; None clears it
+```
+
+The **step-based progress** is the highest step the run logged so far, in any series except
+`system.*` (whose steps are the sampler's counters), divided by `total_steps`. A rewind or fork
+recomputes it from the history that is left.
+
+When steps are not what you count, report progress yourself:
+
+```python
+for epoch in range(epochs):
+    train_one_epoch()
+    run.progress(epoch + 1, total=epochs)
+```
+
+`run.progress(i, total=None)` stores `i` and `total`; `total` defaults to the run's `total_steps`
+(as it is when the run is read). Once a run called it, its value wins over the step-based one.
+It is cheap to call every iteration: at most one value per second is sent, always the newest (a
+held value goes out with the next heartbeat or at `finish()`). A disabled run accepts both as
+no-ops. Both work on a local repo (records in the run's log) and against a server.
+
+**The ETA rule.** Progress is sampled with the client's wall times: for steps, each point batch
+gives (the newest wall time of its points, the highest step so far); for `run.progress`, each call
+gives (its time, `i`). Samples are kept about 5 s apart, over the last 5 minutes (plus the newest
+older sample, so a run whose steps are minutes apart still has two). Then
+
+```text
+rate = (value of newest sample - value of oldest kept sample) / (seconds between them)
+eta  = max(0, (total - current) / rate)
+```
+
+The ETA is empty ("—") until the kept samples span at least 10 s with the value increasing, and
+only a `running` run has one. It is the estimate as of the newest sample, without counting the
+time since then.
+
+Over the API, run rows (`/api/runs`, `/api/runs/{id}`, the Reader's local rows) carry
+`progress: {fraction, current, total, unit, eta_seconds}` (`unit` is `"step"` or `"progress"`,
+`fraction` is capped at 1), or `null` when the run has no total. The
+[integrations](integrations.md#progress) set the total themselves.
 
 ## Stopping a run from the UI
 

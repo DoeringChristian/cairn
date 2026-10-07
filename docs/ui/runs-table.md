@@ -106,6 +106,8 @@ Levels nest in order (`by …`, `then …`); reorder them with ↑/↓ and remov
 | Config | the config key | A config value. |
 | Computed | the name or the expression | A scalar expression per run, see [below](#computed-columns). |
 
+The **Status** cell of a run with [progress](../guides/runs.md#progress-and-eta) shows it too. A running run gets a thin bar in its status colour under the badge, with `58% · ~9 min left` (`58% · —` until there is an ETA). An ended run shows the percentage it reached right of the badge (`100%`, `62%`). A run without a total looks as before. The table's live poll keeps both current.
+
 Metric and config columns are the union over the loaded runs: a run that never logged `val.acc` shows a blank cell, and the column stays.
 
 - **Name is frozen** on the left, cannot be hidden or moved, and always comes first.
