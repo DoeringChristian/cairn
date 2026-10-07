@@ -49,6 +49,7 @@ from .routes._common import utc_now
 from .storage.blobs import BlobStore
 from .storage.datadir import DataDir
 from .storage.db import Database
+from . import progress
 from .storage.metric_stats import rebuild_metric_stats
 
 EXPORT_VERSION = 1
@@ -346,6 +347,7 @@ def restore_archive(
             _insert(db, "sequences", seq_cols, dict(row, run_id=new_id))
         with db.transaction() as con:
             rebuild_metric_stats(con, [new_id])
+            progress.recompute_max_step(con, new_id)
 
         for md in _read_json(zf, prefix + "metric_defs.json", []):
             _insert(db, "metric_defs", md_cols, dict(md, run_id=new_id))

@@ -65,7 +65,17 @@ SCHEMA_SQL: list[str] = [
         summary       TEXT,
         -- When the run was archived; NULL = not archived. Archiving never
         -- touches ``status``.
-        archived_at   TEXT
+        archived_at   TEXT,
+        -- Progress (see cairn/server/progress.py): the declared total, the
+        -- highest non-system step logged, and the ETA's step samples
+        -- (JSON [[unix_time, step]]); an explicit run.progress(i, total)
+        -- value, its total (NULL: total_steps) and samples.
+        total_steps   INTEGER,
+        max_step      INTEGER,
+        step_samples  TEXT,
+        progress_value REAL,
+        progress_total REAL,
+        progress_samples TEXT
     )
     """,
     """
@@ -469,6 +479,12 @@ _ADDED_RUN_COLUMNS: list[tuple[str, str]] = [
     ("config", "TEXT"),
     ("summary", "TEXT"),
     ("archived_at", "TEXT"),
+    ("total_steps", "INTEGER"),
+    ("max_step", "INTEGER"),
+    ("step_samples", "TEXT"),
+    ("progress_value", "REAL"),
+    ("progress_total", "REAL"),
+    ("progress_samples", "TEXT"),
 ]
 
 _ADDED_COLUMN_INDEXES: list[str] = [

@@ -240,6 +240,12 @@ def _apply_op(
                 db, rid, payload["name"],
                 x=payload.get("x"), summary=payload.get("summary"),
             )
+        elif op == "total_steps":
+            ingest_ops.set_total_steps(db, rid, payload.get("total_steps"))
+        elif op == "progress":
+            ingest_ops.set_progress(
+                db, rid, payload["value"], payload.get("total"), payload.get("wall_time"),
+            )
         elif op == "resume_run":
             ingest_ops.resume_run(db, rid)
         elif op == "rewind_run":
