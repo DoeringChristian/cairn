@@ -178,7 +178,7 @@ A reader `Run` loads its data lazily:
 | `tags`, `notes`, `group`, `job_type`, `hostname` | Metadata |
 | `git` | `GitInfo(sha, branch, dirty, remote)`, or `None` |
 | `config` | The config, the nested document exactly as logged: `{"optim": {"lr": 0.001}, ...}` (a copy) |
-| `summary` | The summary, nested the same way |
+| `summary` | The summary, nested the same way; a [media value](runs.md#media-in-the-summary) is its `MediaRef` (a gallery: a list of them) |
 | `final` | Every metric's final value, exactly as the runs table shows it (flat metric names) |
 
 `run.final` resolves each metric in this order: an explicit `run.summary` key
@@ -246,6 +246,10 @@ img = run.media("samples").load()             # the highest step, decoded
 img = run.media("samples", step=10).load()
 raw = run.media("samples", step=10).bytes()
 ```
+
+A [summary media value](runs.md#media-in-the-summary) is read the same way under its dotted
+key, `run.media("showcase.loss_landscape")` (its one point is at step 0), or from
+`run.summary`. In `run.sequences()` its `SequenceInfo` has `summary=True`.
 
 `load()` decodes by type:
 

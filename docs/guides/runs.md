@@ -155,7 +155,7 @@ What each process may do:
   a second live process with a taken label raises `ValueError` (checked with a file lock, so it
   is reliable on one machine but not on every network filesystem); over HTTP they are not checked.
 - **Two processes logging the same series at the same step**: the point that is stored first
-  wins and the other is dropped. Give per-process metrics their own names (`rank1.loss`) and log
+  wins and the other is dropped, with a [run alert](#alerts). Give per-process metrics their own names (`rank1.loss`) and log
   run-wide metrics from rank 0 only; synchronising them is up to your code.
 - Workers do not upload a source snapshot or record their environment: those are the primary's.
   Integrations log from rank 0 only, as before.
@@ -214,6 +214,9 @@ with cairn.attach(train_run_id, label="eval") as run:
     run.track(evaluate(model), "test.acc", last_step)
     run.summary(test_fid=fid)
 ```
+
+To publish figures for a finished run, and replace them when you fix the script that makes
+them, put them in the summary: see [Media in the summary](#media-in-the-summary).
 
 A worker may start before its primary. On a local repo it starts logging at once; its records
 wait until the primary's run exists, then apply in order. Over HTTP, and on a local repo when
@@ -322,6 +325,18 @@ Slack and Discord webhooks, and any endpoint that accepts JSON. Runs that end `f
 `killed` raise an alert automatically. Alerts written while no server is running are delivered
 when one next starts on the repo.
 
+cairn also raises a `warn` alert when it drops points, once per run and series, naming the
+series and the step:
+
+- **A duplicate step.** A series keeps one point per step: the first one written. Tracking a
+  second, different point at a step the series already has (`run.track(x, "loss", 5)` twice,
+  two processes logging one series, a resumed run logging steps again) drops the later point.
+  The alert (also a warning in the log of the process that ingests the run) names the first step
+  that was dropped; later duplicates of that series are not reported again. A copy of a point
+  the client re-sent after a network error is not a duplicate.
+- **Points of a summary media key** that another process tracked (see
+  [Media in the summary](#media-in-the-summary)).
+
 ## Gradient and parameter histograms
 
 ```python
@@ -379,6 +394,57 @@ A disabled run accepts every call and does nothing: no repo is opened, no server
 no threads start. `run.url` is `None`. It is still an instance of `cairn.Run`, so type checks and
 `isinstance` keep working. Use `cairn.configure(mode="disabled")` or `CAIRN_MODE=disabled` to
 disable tracking without touching the code, for example in tests or debugging sessions.
+
+## Media in the summary
+
+A summary value can be media: any cairn wrapper (`cairn.Image`, `cairn.Figure`, `cairn.Video`,
+`cairn.Audio`, `cairn.Html`, `cairn.Markdown`, `cairn.Text`, `cairn.Table`, `cairn.Tensor`,
+`cairn.Data`, the 3D types, `cairn.Volume`, ...) or a list of them, which is a
+[gallery](media.md#captions-and-galleries) under the same rules as in `track`. Media and plain
+JSON values mix freely, at any depth:
+
+```python
+run.summary(showcase={
+    "loss_landscape": cairn.Figure(fig),
+    "samples": [cairn.Image(x) for x in samples],
+    "seed": 0,
+})
+```
+
+Each media value is ONE value with no step, named by its key's dotted path
+(`showcase.loss_landscape`, `showcase.samples`):
+
+- **Writing the key again replaces it.** The run keeps only the newest value; the old bytes are no
+  longer referenced and [`cairn gc`](server.md#garbage-collection) frees them.
+- **Deleting the key removes it**: `reader.run(id).edit().delete_keys("summary", ["showcase"])`.
+- **Cards show it like a tracked series** of that name: it gets an automatic panel, the add-card
+  flow offers it, comparisons and reports pick it up. Its card has no step slider. The run's
+  Overview shows a thumbnail of it in the summary tree, with a link that opens it full size. The
+  runs table has no column for it.
+- **A name is either a tracked series or a summary media value.** `run.summary` with media under a
+  name that has tracked points, or `run.track` under a summary media key, raises `ValueError`.
+  (A write that slips past that check from another process at the same time is dropped at
+  ingestion and raises a run [alert](#alerts).)
+- `Reader(...).run(id).summary` returns a `MediaRef` for each media value (a gallery: a list of
+  them), and so does `run.media("showcase.loss_landscape")`. `RunEditor.set_summary` takes media
+  too.
+
+**Re-run a showcase without re-training.** Make the figures in their own script that attaches to
+the finished training run. Attaching never changes the run's status or its training data, and
+each re-run replaces the figures:
+
+```python
+# showcase.py: run it again after fixing a bug; the figures are replaced
+run = cairn.attach(train_run_id, label="showcase")
+model = load_model(train_run_id)
+run.summary(showcase={
+    "loss_landscape": cairn.Figure(plot_landscape(model)),
+    "samples": [cairn.Image(x) for x in sample(model, n=8)],
+})
+run.finish()
+```
+
+This is wandb's `run.summary["fig"] = wandb.Image(...)`.
 
 ## Heavy evaluation at the end of training
 

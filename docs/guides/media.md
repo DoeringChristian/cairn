@@ -12,7 +12,9 @@ run.track(cairn.Table(dataframe=df), "predictions", step)
 ```
 
 Every media point belongs to a series like a scalar does: it has a name and a step, and the UI
-lets you move through the steps. Wrapper keyword arguments can also be passed to `run.track`
+lets you move through the steps. Media can also go in the run's summary
+(`run.summary(fig=cairn.Figure(f))`): one value per key, with no step, replaced by a later write
+(see [Media in the summary](runs.md#media-in-the-summary)). Wrapper keyword arguments can also be passed to `run.track`
 itself, and the two are merged: `run.track(cairn.Image(x), "img", step, caption="…")`.
 
 ## Automatic detection

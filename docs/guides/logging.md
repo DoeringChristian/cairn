@@ -131,6 +131,10 @@ value in the runs table. That lets you report, for example, the accuracy of the 
 actually kept rather than the last one logged. See
 [Final values and metric rules](metric-rules.md).
 
+A summary value can also be media, such as a figure or a gallery of images:
+`run.summary(showcase={"landscape": cairn.Figure(fig)})`. Each is one stepless value that a later
+write replaces; see [Media in the summary](runs.md#media-in-the-summary).
+
 ## Python objects
 
 `cairn.Pickle(obj)` stores any picklable object as a media point (`run.track(cairn.Pickle(state),

@@ -108,7 +108,7 @@ def test_overwrite_replaces_and_delete_removes(tmp_path):
     ingest_repo(repo)
     db = _db(repo)
     try:
-        before = dict((r[0], r[2]) for r in _rows(db, rid))
+        before = {r[0]: r[2] for r in _rows(db, rid)}
         (epoch0,) = db.read_one("SELECT data_epoch FROM runs WHERE id = ?", [rid])
 
         reader = cairn.Reader(repo=str(repo))
@@ -119,7 +119,7 @@ def test_overwrite_replaces_and_delete_removes(tmp_path):
         assert len(land) == 1 and land[0][1] == 0 and land[0][4] == 1
         assert land[0][2] != before["showcase.loss_landscape"]
         # The other keys are untouched (a deep merge).
-        assert dict((r[0], r[2]) for r in rows)["showcase.samples"] == before["showcase.samples"]
+        assert {r[0]: r[2] for r in rows}["showcase.samples"] == before["showcase.samples"]
         (epoch1,) = db.read_one("SELECT data_epoch FROM runs WHERE id = ?", [rid])
         assert epoch1 > epoch0
 
