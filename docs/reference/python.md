@@ -17,6 +17,13 @@ metrics](../guides/logging.md), [Run lifecycle](../guides/runs.md) and
     options:
       show_if_no_docstring: true
 
+`cairn.attach` and `cairn.new_run_id` are for [several processes logging into
+one run](../guides/runs.md#several-processes-one-run).
+
+::: cairn.sdk.run.attach
+
+::: cairn.sdk.run_ids.new_run_id
+
 ::: cairn.sdk.scope.Scope
 
 ## Media and rich types

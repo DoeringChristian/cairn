@@ -45,6 +45,26 @@
   HuggingFace (`max_steps`), Keras and Ultralytics (epochs, via
   `run.progress`).
 - `cairn ping` reports `crashed_runs`.
+- **Several processes, one run** (wandb's shared mode). Every process gets
+  the same id (`cairn.Run(run_id=...)` or `CAIRN_RUN_ID`; `cairn.new_run_id()`
+  makes one); the primary creates the run and workers join it with
+  `cairn.Run(..., label="rank1", primary=False)` or
+  `cairn.attach(run_id, label)`, also to a finished run. Workers record
+  everything into the run but never change its status or liveness; stop
+  requests reach every process. `label="auto"` takes the label and role from
+  `RANK`, `SLURM_PROCID`, `SKYPILOT_NODE_RANK`, `OMPI_COMM_WORLD_RANK` or
+  `PMI_RANK`. A labelled process logs `system.<label>.*` and writes its own
+  log, `.cairn/wals/<run_id>~<label>.wal.jsonl`, which waits at the ingester
+  until the run exists. Two processes logging a series at the same step:
+  the first point stored wins.
+- Console lines carry the label of the process that printed it
+  (`log_lines.label`); `GET /api/runs/{id}/logs` returns it per line, takes
+  `label=` (empty: unlabelled lines) and lists the run's `labels`.
+  `Reader` log lines have `label`.
+- Over HTTP, `POST /api/runs` with `primary: false` joins an existing run
+  (404 while it does not exist), and a finish or heartbeat with
+  `primary: false` changes nothing; creating a run (or a fork) with a taken
+  id is a 409.
 
 ### Fixed
 
