@@ -661,7 +661,8 @@ class LocalTransport:
 
     def resolve_artifact(self, project_id: str, ref: str) -> dict[str, Any]:
         """``[project/]name[:alias|:vN]`` -> the version dict, after the lease
-        holder caught up on every pending log."""
+        holder caught up on every pending log (this run's own included)."""
+        self._repo.ingest_pending()
         return self._repo.resolve_artifact(project_id, ref)
 
     def record_artifact_input(self, run_id: str, artifact_version_id: str, role: str) -> None:

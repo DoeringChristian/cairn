@@ -262,7 +262,7 @@ async def ingest_pending(request: Request) -> dict[str, Any]:
     """Apply every pending run log now (``wal_ingest.ingest_all``), for a
     local run that needs an answer that depends on its own log (resume,
     ``use_artifact``). Only the lease-holding app ingests."""
-    from ..wal_ingest import ingest_all
+    from ..wal_ingest import has_pending, ingest_all
 
     lease = getattr(request.app.state, "lease", None)
     if lease is None:
@@ -270,7 +270,9 @@ async def ingest_pending(request: Request) -> dict[str, Any]:
     db = get_db(request)
     dd = get_data_dir(request)
     blobs = get_blobs(request)
-    ops = await anyio.to_thread.run_sync(lambda: ingest_all(dd, db, blobs))
+    ops = await anyio.to_thread.run_sync(
+        lambda: ingest_all(dd, db, blobs) if has_pending(dd, db) else 0,
+    )
     return {"ops": ops}
 
 

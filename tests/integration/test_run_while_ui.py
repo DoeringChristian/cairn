@@ -1,12 +1,14 @@
-"""Simultaneous `cairn ui` + SDK ``Run(repo=...)`` via HTTP handoff.
+"""A real `cairn ui` process serving a repo while SDK runs log to it.
 
-When a UI is serving a repo, a Run on the same repo should transparently
-switch from ``LocalTransport`` to HTTP ``Transport`` against the UI's port.
+The UI holds the repo's ingest lease (with its URL) and ingests the runs'
+logs every ~2 s; a run keeps writing its own log. What needs an answer now
+(use_artifact, a version number, resume, sweep claims) goes to the UI.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import signal
 import socket
 import subprocess
@@ -91,46 +93,88 @@ def ui_subprocess(tmp_path):
             proc.wait(timeout=5)
 
 
+def _client(repo, port):
+    token = (repo / "auth" / "local.token").read_text().strip()
+    return httpx.Client(
+        base_url=f"http://127.0.0.1:{port}", timeout=5.0,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+
+QUIET = dict(capture_source=False, capture_stdout=False, capture_env=False,
+             capture_system_metrics=False)
+
+
 @pytest.mark.slow
-def test_run_joins_via_http_when_ui_is_serving(ui_subprocess):
+def test_run_logs_while_ui_ingests(ui_subprocess):
+    from cairn.sdk.local import LocalTransport
+    from cairn.server.storage import lease as lease_mod
+
     repo, port = ui_subprocess
+    lease = lease_mod.read_lease(repo.resolve())
+    assert (lease["mode"], lease["url"]) == ("ui", f"http://127.0.0.1:{port}")
+    assert lease_mod.serving_holder(repo.resolve()) is not None
 
-    # The lock file should record host + port.
-    lock = json.loads((repo / "repo.lock").read_text())
-    assert lock["mode"] == "ui"
-    assert lock["host"] == "127.0.0.1"
-    assert lock["port"] == port
-
-    # Now create a Run pointing at the SAME repo. It must NOT error; it
-    # must pick up the UI's HTTP endpoint.
-    with cairn.Run(
-        project="coexist",
-        repo=repo,
-        capture_source=False,
-        capture_stdout=False,
-        capture_env=False,
-        capture_system_metrics=False,
-    ) as run:
-        # run.url must be http://, not file:// — proof we took the HTTP path.
-        assert run.url.startswith(f"http://127.0.0.1:{port}"), run.url
+    with cairn.Run(project="coexist", repo=repo, **QUIET) as run:
+        assert isinstance(run._transport, LocalTransport)  # its own log
+        assert run.url.startswith(f"http://localhost:{port}/"), run.url
         for step in range(5):
             run.track(float(step), name="loss", step=step)
         run_id = run.id
+        log = repo / "wals" / f"{run_id}.wal.jsonl"
+        assert log.exists()
 
-    # The UI must see the run we just logged via its API. Reads authenticate
-    # with the same-user local-trust token the serving process leaves in the
-    # data dir — the same one the SDK upgrade path used.
-    local_token = (repo / "auth" / "local.token").read_text().strip()
-    with httpx.Client(
-        base_url=f"http://127.0.0.1:{port}",
-        timeout=5.0,
-        headers={"Authorization": f"Bearer {local_token}"},
-    ) as c:
+    # The UI ingests the log within its ~2 s cycle, then deletes it.
+    t0 = time.monotonic()
+    with _client(repo, port) as c:
+        while True:
+            detail = c.get(f"/api/runs/{run_id}")
+            if detail.status_code == 200 and detail.json()["run"]["status"] == "completed":
+                break
+            assert time.monotonic() - t0 < 10, "not ingested within 10 s"
+            time.sleep(0.05)
         seq = c.get(f"/api/runs/{run_id}/sequences/loss").json()
-        steps = sorted(p["step"] for p in seq["points"])
-        assert steps == [0, 1, 2, 3, 4]
-        detail = c.get(f"/api/runs/{run_id}").json()
-        assert detail["run"]["status"] == "completed"
+        assert sorted(p["step"] for p in seq["points"]) == [0, 1, 2, 3, 4]
+    assert time.monotonic() - t0 < 4.5
+    deadline = time.monotonic() + 5
+    while log.exists():
+        assert time.monotonic() < deadline, "finished log not deleted"
+        time.sleep(0.05)
+
+
+@pytest.mark.slow
+def test_answers_now_go_through_the_ui(ui_subprocess):
+    """use_artifact, log_artifact(...).wait(), resume, fork and sweep claims
+    on a served repo: the UI answers (this process never writes SQLite)."""
+    repo, port = ui_subprocess
+    with cairn.Run(project="ans", repo=repo, **QUIET) as run:
+        v = run.log_artifact(b"weights", "ckpt", aliases=["best"])
+        assert v.pending
+        assert v.wait(timeout=15).version == 1
+        assert run.use_artifact("ckpt:best").id == v.id
+        run.track(1.0, "loss", step=0)
+        parent = run.id
+    with cairn.Run(project="ans", repo=repo, resume=parent, **QUIET) as run:
+        run.track(2.0, "loss", step=1)
+    with cairn.Run(project="ans", repo=repo, fork_from=(parent, 0), **QUIET) as kid:
+        kid_id = kid.id
+    sw = cairn.sweep({"x": {"values": [1, 2]}}, project="ans", repo=repo)
+    sw.run(lambda config: float(config["x"]), count=2)
+    info = sw.info()
+    assert info["trial_count"] == 2 and info["best"]["value"] == 1.0
+    with cairn.Reader(repo) as reader:
+        deadline = time.monotonic() + 10
+        while True:
+            try:
+                back = reader.run(parent)
+                done = back.status == "completed" and reader.run(kid_id).status == "completed"
+            except KeyError:
+                done = False
+            if done:
+                break
+            assert time.monotonic() < deadline
+            time.sleep(0.1)
+        assert [r.id for r in reader.artifact("ckpt:best", project="ans").used_by()] == [parent]
 
 
 @pytest.mark.slow
@@ -157,35 +201,18 @@ def test_run_without_ui_uses_local_transport(tmp_path):
 
 @pytest.mark.slow
 def test_hung_holder_produces_clear_error(tmp_path):
-    """If the lock claims a UI at host:port but nothing answers, error out."""
+    """A lease naming a live server whose URL does not answer: the run still
+    logs, and an answer it needs fails with a clear error naming the URL."""
+    from cairn.sdk.local import ServerUnreachable
+    from cairn.server.storage import lease as lease_mod
     from cairn.server.storage.datadir import DataDir
 
-    # Fake a lock file claiming a live-looking UI on a certainly-dead port.
     dd = DataDir(tmp_path / ".cairn")
-    # Hand-write the lock so holder_is_live returns True (use current pid) but
-    # the declared port has nobody listening.
-    import os
-
-    (tmp_path / ".cairn" / "repo.lock").write_text(
-        json.dumps({
-            "pid": os.getpid(),
-            "mode": "ui",
-            "host": "127.0.0.1",
-            "port": 1,  # port 1 → connection refused
-            "started_at": "2026-01-01T00:00:00Z",
-        })
-    )
-    from cairn.server.storage.datadir import RepoLockedError
-
-    with pytest.raises(RepoLockedError) as exc:
-        cairn.Run(
-            project="x",
-            repo=tmp_path / ".cairn",
-            capture_source=False,
-            capture_stdout=False,
-            capture_env=False,
-            capture_system_metrics=False,
-        )
-    msg = str(exc.value)
-    # Expect the friendly hint mentioning the URL and the lock path.
-    assert "127.0.0.1:1" in msg or "hint" in exc.value.holder
+    lease_mod.lease_path(dd.root).write_text(json.dumps({
+        "host": lease_mod.hostname(), "pid": os.getppid(), "token": "t" * 32,
+        "mode": "ui", "url": "http://127.0.0.1:1", "expires_at": time.time() + 60,
+    }))
+    with cairn.Run(project="x", repo=dd.root, **QUIET) as run:
+        run.track(1.0, "loss", step=0)
+        with pytest.raises(ServerUnreachable, match="127.0.0.1:1"):
+            run.use_artifact("anything")

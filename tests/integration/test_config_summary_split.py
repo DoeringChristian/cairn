@@ -12,9 +12,11 @@ import pytest
 
 from cairn.server.storage.blobs import BlobStore
 from cairn.server.storage.db import Database
+from tests.conftest import ingest_repo
 
 
 def _inspect(repo):
+    ingest_repo(repo)  # apply the run's log, as a server or Reader would
     return Database(repo / "cairn.db"), BlobStore(repo / "blobs")
 
 
@@ -250,13 +252,12 @@ def test_summary_for_an_unknown_run_is_a_404(client):
     assert resp.status_code == 404, resp.text
 
 
-# --- WAL replay ----------------------------------------------------------
-# A run that outlives its server writes ops to a WAL that is drained later.
-# Nothing exercised cairn/server/wal_ingest.py before this, so an op the
-# dispatcher does not know is dropped in silence.
+# --- log ingestion -----------------------------------------------------------
+# A local run's log is applied by the ingester; an op the dispatcher does not
+# know would be dropped in silence.
 
 
-def test_wal_replay_restores_both_channels(tmp_path):
+def test_log_ingestion_restores_both_channels(tmp_path):
     import json as _json
 
     from cairn.server import wal_ingest
@@ -268,7 +269,8 @@ def test_wal_replay_restores_both_channels(tmp_path):
     db = Database.open(repo / "cairn.db")   # .open() runs migrations; Database() does not
     blobs = BlobStore(repo / "blobs")
 
-    wal_path = tmp_path / "run.wal"
+    (repo / "wals").mkdir()
+    wal_path = repo / "wals" / "r1.wal.jsonl"
     ops = [
         {"seq": 1, "op": "create_run", "payload": {"run_id": "r1", "project": "split"}},
         {"seq": 2, "op": "params", "payload": {"run_id": "r1", "params": {"lr": 3e-4}}},
@@ -277,7 +279,7 @@ def test_wal_replay_restores_both_channels(tmp_path):
     wal_path.write_text("\n".join(_json.dumps(o) for o in ops) + "\n")
 
     try:
-        processed = wal_ingest.ingest_wal(db, data_dir, blobs, wal_path)
+        processed = wal_ingest.ingest_log(db, data_dir, blobs, wal_path)
         assert processed == 3
         assert _keys(db, "params", "r1") == {"lr": "0.0003"}
         assert _keys(db, "summary", "r1") == {"acc": "0.9"}
