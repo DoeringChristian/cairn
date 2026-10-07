@@ -36,9 +36,10 @@ cairn server --ui                 # ingest on :4300, UI on :4301; prints a token
 
 **Object-store bucket mounts (`file_mounts` with `mode: MOUNT`, gcsfuse,
 s3fs, ...) are not suitable for run logs.** A local repo appends to its run
-logs line by line, syncs them and coordinates through a lease file; object
-stores rewrite whole objects and give none of the guarantees this needs, so
-records get lost or reordered. Use buckets for checkpoints and datasets (as
+logs line by line, syncs them and coordinates through a lease file; an object
+store rewrites a whole object for every change, and its FUSE mounts make
+appends slow or unsupported and give no atomic file creation, so neither
+works reliably there. Use buckets for checkpoints and datasets (as
 `task_spot.yaml` does), and HTTP for the run.
 
 ## Launch
