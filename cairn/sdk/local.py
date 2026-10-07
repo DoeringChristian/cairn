@@ -643,11 +643,22 @@ class LocalTransport:
     def sequence_steps(self, run_id: str) -> list[dict[str, Any]]:
         """Each of the run's series as ``{name, max_step, summary}``
         (``summary``: a summary media value, as in the catalogue)."""
-        return self.read_columns(
-            "SELECT name, MAX(step) AS max_step, MAX(summary) AS summary FROM sequences "
-            "WHERE run_id = ? GROUP BY name",
-            [run_id],
-        )
+        import sqlite3
+
+        try:
+            return self.read_columns(
+                "SELECT name, MAX(step) AS max_step, MAX(summary) AS summary FROM sequences "
+                "WHERE run_id = ? GROUP BY name",
+                [run_id],
+            )
+        except sqlite3.OperationalError:
+            # Read-only, so not migrated yet: a database from before summary
+            # media has none (the lease holder adds the column).
+            return self.read_columns(
+                "SELECT name, MAX(step) AS max_step, 0 AS summary FROM sequences "
+                "WHERE run_id = ? GROUP BY name",
+                [run_id],
+            )
 
     def post_batch(self, run_id: str, points: list[dict[str, Any]]) -> bool:
         try:
