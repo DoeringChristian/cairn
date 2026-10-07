@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .connect import open_writer
+from .local import RepoTransport
 
 log = logging.getLogger(__name__)
 
@@ -319,7 +320,13 @@ def _work(
                     continue
                 break
             params = trial["params"]
-            run = Run(project, sweep_id=sweep_id, transport=transport, **{
+            # Over HTTP the run shares the worker's client; on a local repo it
+            # writes its own log, like any run there.
+            where: dict[str, Any] = (
+                {"repo": transport.data_dir.root} if isinstance(transport, RepoTransport)
+                else {"transport": transport}
+            )
+            run = Run(project, sweep_id=sweep_id, **where, **{
                 **run_kwargs, "name": run_kwargs.get("name") or trial["name"],
             })
             transport.report_trial(sweep_id, trial["id"], run_id=run.id, status="running")
