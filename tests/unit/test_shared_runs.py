@@ -385,8 +385,10 @@ def test_worker_log_waits_for_its_run(repo, ing):
 
 def _write_log(path, records):
     with open(path, "a") as fh:
-        for i, (op, payload) in enumerate(records, 1):
-            fh.write(json.dumps({"seq": i, "op": op, "payload": payload}) + "\n")
+        fh.writelines(
+            json.dumps({"seq": i, "op": op, "payload": payload}) + "\n"
+            for i, (op, payload) in enumerate(records, 1)
+        )
 
 
 def test_worker_log_cannot_change_the_lifecycle(repo, ing):

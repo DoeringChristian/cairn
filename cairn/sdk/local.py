@@ -8,7 +8,9 @@ SQLite (see ``cairn/server/storage/lease.py``).
   content-addressed blobs; the lease holder ingests the log (a running
   ``cairn ui``/``cairn server`` within ~2 s, else the next Reader or CLI
   command). Many processes, on many hosts of a shared filesystem, can log
-  at once without contending for the database. What needs an answer now
+  at once without contending for the database; the processes of one shared
+  run (``cairn.Run(label=..., primary=False)``) each append to their own
+  ``<run_id>~<label>.wal.jsonl``. What needs an answer now
   (``use_artifact``, resume / fork / rewind, sweep claims) goes through
   ``RepoTransport``.
 * ``RepoTransport`` — every other write (Reader and CLI edits, sweeps,
