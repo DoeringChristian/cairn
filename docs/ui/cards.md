@@ -96,7 +96,7 @@ The slider picks which logged step each pane shows. The **Slider key** *(default
 - `step` (the default): each logged step is one position.
 - A scalar metric, such as `epoch`: each run's media is looked up **as of** each step, using the key's last value at or before that step. The slider then picks, in every run, the media logged while the key held that value, even when runs reach it at different steps. When several steps share a value, the position shows the newest of them.
 
-The slider saves a *value* rather than an index, so the position stays put when new steps arrive. At the last position it follows them instead: while a run is logging, a slider moved to the end keeps showing the newest step. The section slider does the same.
+A slider starts at the newest step and follows new steps as they arrive. Move it back and it saves that *value* (not an index), so it stays put while new steps arrive; move it to the end again and it follows them again. The section slider does the same.
 
 ### Section media sync
 
