@@ -158,7 +158,10 @@ def test_reap_stale_runs_kills_and_alerts_once(tmp_path):
         ingest_ops.create_run(db, project="p", run_id="logged")
         # A local run's log decides its liveness, not its heartbeat.
         db.write("UPDATE runs SET last_heartbeat = '2000-01-01T00:00:00+00:00' WHERE id = 'logged'")
-        db.write("INSERT INTO wal_progress VALUES ('logged.wal.jsonl', 'logged', 0, 0, 'x')")
+        db.write(
+            'INSERT INTO wal_progress (path, run_id, "offset", finished, updated_at) '
+            "VALUES ('logged.wal.jsonl', 'logged', 0, 0, 'x')"
+        )
 
         assert alerts_core.reap_stale_runs(db) == ["stale"]
         assert alerts_core.reap_stale_runs(db) == []
