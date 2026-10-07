@@ -17,6 +17,7 @@ exists, leaving bytes that could not be read.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import os
 import secrets
@@ -50,16 +51,29 @@ class BlobStore:
         return self.path_for(digest).stat().st_size
 
     def put(self, data: bytes) -> tuple[str, int]:
-        """Write ``data`` atomically; return ``(hash, size)``. Idempotent."""
+        """Write ``data`` atomically; return ``(hash, size)``. Idempotent.
+
+        Bytes already stored are not rewritten, but their mtime is refreshed
+        (see ``touch``). A garbage collection deleting the same digest at the
+        same moment (``delete_if_older``) makes a step fail (the directory
+        vanished); the put then simply starts over."""
         digest = self.hash_bytes(data)
+        for _ in range(10):
+            try:
+                return digest, self._put_once(digest, data)
+            except OSError as exc:
+                # ENOENT, or EINVAL for a file created in a directory being
+                # removed (macOS).
+                if exc.errno not in (errno.ENOENT, errno.EINVAL):
+                    raise
+        return digest, self._put_once(digest, data)
+
+    def _put_once(self, digest: str, data: bytes) -> int:
         blob_dir = self.dir_for(digest)
         blob_path = self.path_for(digest)
-
         if self.touch(digest):
-            return digest, blob_path.stat().st_size
-
+            return blob_path.stat().st_size
         blob_dir.mkdir(parents=True, exist_ok=True)
-
         # Atomic write: write to temp file in the same directory then rename.
         tmp_fd, tmp_name = tempfile.mkstemp(dir=blob_dir, prefix=".blob-", suffix=".tmp")
         try:
@@ -72,7 +86,7 @@ class BlobStore:
             except OSError:
                 pass
             raise
-        return digest, len(data)
+        return len(data)
 
     def touch(self, digest: str) -> bool:
         """Mark an existing blob as just written (its mtime); False if absent.

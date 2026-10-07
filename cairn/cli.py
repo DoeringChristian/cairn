@@ -1381,6 +1381,28 @@ def import_tb_cmd(logdir: Path, project: str | None, repo: str | None, server: s
     click.echo(f"imported {len(run_ids)} run(s)", err=True)
 
 
+@main.command("gc")
+@click.option("--dry-run", is_flag=True, help="Only report what would be deleted.")
+@target_options
+def gc_cmd(dry_run: bool, repo: str | None, server: str | None) -> None:
+    """Delete stored blobs nothing references any more.
+
+    Blobs are shared between runs, reports and artifact versions, so deleting
+    those never deletes blobs on the spot. This deletes every blob no run,
+    artifact version, report or pending run log names and that is older than
+    a day, as the repo's ingest-lease holder (the server serving the repo, or
+    this command under the lease). A server also does it on its own after
+    runs are deleted.
+    """
+    with open_api(repo, server) as api:
+        result = api.post("/api/gc", params={"dry_run": "true" if dry_run else "false"}).json()
+    verb = "would free" if dry_run else "freed"
+    click.echo(
+        f"{api.label}: {verb} {result['freed_bytes'] / 1e6:.1f} MB in {result['deleted']} "
+        f"blob(s); {result['kept']} kept"
+    )
+
+
 @main.command("sync")
 @target_options
 def sync_cmd(repo: str | None, server: str | None) -> None:
