@@ -1,0 +1,45 @@
+# Cairn + Azure Machine Learning: a distributed PyTorch command job, one cairn run.
+#
+# Runs examples/torchrun_ddp.py on 2 nodes, one process each. With
+# `distribution: type: pytorch`, Azure ML sets RANK (and WORLD_SIZE,
+# MASTER_ADDR, ...) for every process, so the script's label="auto" makes
+# rank 0 the primary "rank0" and every other process the worker "rankN".
+# All of them need the same CAIRN_RUN_ID: set it at submission.
+#
+# Compute nodes share no filesystem with your server, so the run goes over
+# HTTP: CAIRN_REPO must name a cairn server the cluster can reach (see
+# docs/guides/server.md). environment_variables are visible in the job's
+# definition; keep CAIRN_TOKEN out of shared YAML files (pass it with --set).
+#
+# Requirements: the Azure CLI with the ml extension (az extension add -n ml),
+# a workspace and a compute cluster named cpu-cluster.
+#
+# Usage (from the repository root):
+#
+#   az ml job create -f examples/azureml_job.yml \
+#     --set environment_variables.CAIRN_RUN_ID=$(python -c "import cairn; print(cairn.new_run_id())") \
+#     --set environment_variables.CAIRN_TOKEN=$CAIRN_TOKEN
+$schema: https://azuremlschemas.azureedge.net/latest/commandJob.schema.json
+type: command
+display_name: cairn-ddp
+experiment_name: cairn-examples
+
+code: .  # this folder (examples/), uploaded with the job
+command: >-
+  pip install "cairn-track @ git+https://github.com/DoeringChristian/cairn" &&
+  python torchrun_ddp.py
+environment: azureml:AzureML-acpt-pytorch-2.2-cuda12.1@latest
+compute: azureml:cpu-cluster
+
+resources:
+  instance_count: 2
+distribution:
+  type: pytorch
+  # More processes per node run the command (and its pip install) once each,
+  # concurrently: build an environment with cairn-track in it first.
+  process_count_per_instance: 1
+
+environment_variables:
+  CAIRN_REPO: cairn://<your-server>:4300
+  CAIRN_TOKEN: "<set with --set environment_variables.CAIRN_TOKEN=...>"
+  CAIRN_RUN_ID: "<set with --set environment_variables.CAIRN_RUN_ID=...>"
