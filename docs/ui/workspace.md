@@ -10,7 +10,7 @@ A run with [progress](../guides/runs.md#progress-and-eta) has a line under the h
 |---|---|
 | **Overview** | Details (status, exit code, host, user), Git (remote, branch, commit, dirty flag, a link to the captured diff), tags and notes (rendered as [Markdown](../guides/media.md#markdown); hover them and click **edit** to change them), the config as logged (a collapsible tree; long values are cut to one line, **more** shows them in full), CLI args, the environment snapshot, the final value of every metric (system metrics hidden behind a toggle), and artifacts. |
 | **Metrics & Media** | The project's current [workspace view](#workspace-views), bound to this run: sections of panels, one per logged series and named artifact unless you arrange them otherwise. |
-| **Logs** | Captured stdout/stderr. You can search and filter by stream. While the run is running, the view follows new lines. |
+| **Logs** | Captured stdout/stderr. You can search and filter by stream. While the run is running, the view follows new lines. When [several processes log into the run](../guides/runs.md), each line shows its process label after the time, a process filter appears next to the stream filter, and search matches labels too. |
 | **Source** | The source snapshot, when the run captured one. |
 | **Environment** | The environment snapshot and `pip freeze`. |
 
