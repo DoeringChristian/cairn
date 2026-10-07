@@ -1,0 +1,42 @@
+# A managed job on spot instances that survives preemptions: every recovery
+# continues the SAME cairn run.
+#
+#   cd examples/skypilot
+#   export CAIRN_TOKEN=<token>
+#   sky jobs launch -n cairn-spot task_spot.yaml --secret CAIRN_TOKEN \
+#     --env CAIRN_RUN_ID=$(python -c "import cairn; print(cairn.new_run_id())")
+#
+# CAIRN_RUN_ID is fixed for the job, so a recovery (a new VM running the run
+# section again) finds the run of the preempted attempt: train.py then
+# continues it with resume= and rewinds it to the step of the last checkpoint
+# instead of creating it. The checkpoints live in a bucket mounted at
+# /checkpoints; the run itself goes over HTTP to your server, never to the
+# bucket (see README.md).
+name: cairn-train-spot
+
+workdir: .
+
+resources:
+  cpus: 2+
+  use_spot: true
+  job_recovery:
+    strategy: EAGER_NEXT_REGION  # on preemption: relaunch, trying other regions
+    max_restarts_on_errors: 1    # also restart once after a non-zero exit
+
+file_mounts:
+  /checkpoints:
+    name: my-cairn-checkpoints  # change to a bucket name of your own
+    mode: MOUNT
+
+envs:
+  CAIRN_REPO: cairn://<your-server>:4300
+  CAIRN_RUN_ID:  # required: pass it with --env (see above); stable across recoveries
+
+secrets:
+  CAIRN_TOKEN:  # `--secret CAIRN_TOKEN` passes your local $CAIRN_TOKEN
+
+setup: |
+  pip install "cairn-track @ git+https://github.com/DoeringChristian/cairn"
+
+run: |
+  CHECKPOINT_DIR=/checkpoints/$CAIRN_RUN_ID python train.py

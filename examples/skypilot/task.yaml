@@ -1,0 +1,27 @@
+# One node, one cairn run, logged over HTTP to your cairn server.
+#
+#   cd examples/skypilot
+#   export CAIRN_TOKEN=<the token `cairn server` printed, or one from `cairn token create`>
+#   sky launch -c cairn-train task.yaml --secret CAIRN_TOKEN
+#
+# Clouds have no POSIX filesystem shared with your server, so the run goes
+# over HTTP: CAIRN_REPO must name a cairn server this VM can reach (see README.md).
+name: cairn-train
+
+workdir: .  # syncs this folder (train.py) to the VM
+
+resources:
+  cpus: 2+
+
+envs:
+  CAIRN_REPO: cairn://<your-server>:4300  # the server's ingest port
+  # CAIRN_RUN_ID: ...  # optional: a fixed run id (default: a fresh one)
+
+secrets:
+  CAIRN_TOKEN:  # no value here: `--secret CAIRN_TOKEN` passes your local $CAIRN_TOKEN
+
+setup: |
+  pip install "cairn-track @ git+https://github.com/DoeringChristian/cairn"
+
+run: |
+  python train.py

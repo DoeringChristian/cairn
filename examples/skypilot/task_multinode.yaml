@@ -1,0 +1,33 @@
+# Two nodes, ONE cairn run: node 0 creates it, node 1 joins it.
+#
+#   cd examples/skypilot
+#   export CAIRN_TOKEN=<token>
+#   sky launch -c cairn-multi task_multinode.yaml --secret CAIRN_TOKEN \
+#     --env CAIRN_RUN_ID=$(python -c "import cairn; print(cairn.new_run_id())")
+#
+# Every node gets the same CAIRN_RUN_ID (set once, for the whole task) and its
+# own SKYPILOT_NODE_RANK, which train.py's label="auto" reads: node 0 is the
+# primary "rank0" (it alone sets the run's status), node 1 the worker "rank1".
+# Running torchrun on each node instead? RANK (set by torchrun) wins over
+# SKYPILOT_NODE_RANK, so every process of every node gets its own label.
+name: cairn-train-multinode
+
+workdir: .
+
+num_nodes: 2
+
+resources:
+  cpus: 2+
+
+envs:
+  CAIRN_REPO: cairn://<your-server>:4300
+  CAIRN_RUN_ID:  # required: pass it with --env (see above), the same for every node
+
+secrets:
+  CAIRN_TOKEN:  # `--secret CAIRN_TOKEN` passes your local $CAIRN_TOKEN
+
+setup: |
+  pip install "cairn-track @ git+https://github.com/DoeringChristian/cairn"
+
+run: |
+  python train.py
