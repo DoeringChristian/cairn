@@ -72,7 +72,7 @@ Click a run's name to open `/p/<project>/r/<run id>`. The run page has six tabs:
 
 | Tab | Contents |
 |---|---|
-| Overview | Details, git, tags and notes, CLI args, environment snapshot, the run's artifacts. |
+| Overview | Details, git, tags and notes, the summary (media values as thumbnails), the config, CLI args, environment snapshot, the run's artifacts. |
 | Metrics & Media | The run's card workspace ([Run page and workspace](workspace.md), [Cards](cards.md)). |
 | Logs | Captured console output, filterable by stream. |
 | Source | The captured source files. |

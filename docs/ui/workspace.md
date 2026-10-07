@@ -8,7 +8,7 @@ A run with [progress](../guides/runs.md#progress-and-eta) has a line under the h
 
 | Tab | What it shows |
 |---|---|
-| **Overview** | Details (status, exit code, host, user), Git (remote, branch, commit, dirty flag, a link to the captured diff), tags and notes (rendered as [Markdown](../guides/media.md#markdown); hover them and click **edit** to change them), the config as logged (a collapsible tree; long values are cut to one line, **more** shows them in full), CLI args, the environment snapshot, the final value of every metric (system metrics hidden behind a toggle), and artifacts. |
+| **Overview** | Details (status, exit code, host, user), Git (remote, branch, commit, dirty flag, a link to the captured diff), tags and notes (rendered as [Markdown](../guides/media.md#markdown); hover them and click **edit** to change them), the summary as logged (a collapsible tree, shown when the run has one; a [media value](../guides/runs.md#media-in-the-summary) is a thumbnail, a gallery up to four thumbnails and **+N**, other kinds an icon and the kind's name, with an **open** link that shows it in its kind's card), the config as logged (a collapsible tree; long values are cut to one line, **more** shows them in full), CLI args, the environment snapshot, the final value of every metric (system metrics hidden behind a toggle), and artifacts. |
 | **Metrics & Media** | The project's current [workspace view](#workspace-views), bound to this run: sections of panels, one per logged series and named artifact unless you arrange them otherwise. |
 | **Logs** | Captured stdout/stderr. You can search and filter by stream. While the run is running, the view follows new lines. |
 | **Source** | The source snapshot, when the run captured one. |
