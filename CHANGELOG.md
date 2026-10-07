@@ -1,114 +1,87 @@
 # Changelog
 
-## 0.4.0 — unreleased
+## 0.4.0 — 2026-10-07
 
 ### Breaking
 
 - **One local mode: every run writes its own log.** A `cairn.Run` on a local
   repo always appends to `.cairn/wals/<run_id>.wal.jsonl` (plus blobs) and
-  never writes the SQLite database. Direct mode and `local_wal=` are removed;
-  a run on a repo that a `cairn ui`/`cairn server` serves no longer switches
-  to HTTP (the server ingests its log within ~2 s).
+  never writes the SQLite database. Direct mode and `local_wal=` are removed.
+  A run on a repo that a `cairn ui`/`cairn server` serves writes its log too;
+  the server ingests it within ~2 s.
 - **One writer per repo: the ingest lease** (`.cairn/ingest.lease`, replaces
   `repo.lock`). `cairn ui`/`cairn server` hold it for their lifetime; a
-  Reader, CLI command, sweep agent or run that needs an answer takes it
+  Reader, CLI command, sweep agent or run that needs an answer now takes it
   briefly when no server holds it. Only the holder writes SQLite. A second
   `cairn ui` on a served repo refuses to start and names the running one.
 - **New run status `crashed`**: a running local run whose log got no record
-  for 5 minutes and no finish. It turns `running` again if records arrive.
-  (Runs logged over HTTP still become `killed` after 2 minutes without a
-  heartbeat.)
-- `log_artifact` on a local repo returns a pending version (number assigned
-  at ingestion), as before in WAL mode; `use_artifact`, resume/fork/rewind
-  and sweeps now work on local repos without a server.
-- `examples/test_wal.py` is removed (covered by the test suite).
+  for 5 minutes and no finish (back to `running` if records arrive). Runs
+  logged over HTTP still become `killed` after 2 minutes without a heartbeat.
+- `log_artifact` on a local repo returns a pending version (its number is
+  assigned at ingestion; `.wait()` returns it).
+- The `hf` extra is now `huggingface` (transformers only).
+- Artifact `add_file` / `add_dir` copy the files when added (wandb's default
+  `policy="mutable"`); `policy="immutable"` keeps the old read-at-log-time
+  behaviour.
+- A step slider that was never moved starts at the newest step and follows
+  new ones (it used to start at the first).
+- `examples/test_wal.py` is removed.
 
 ### Added
 
-- Artifacts: `add_file` / `add_dir` take wandb's `policy`: `"mutable"`
-  (default) copies the files when added, `"immutable"` reads them at log
-  time (the old behaviour). `run.log_model(path, name=None, aliases=None)`
-  and `run.use_model(ref)` as in wandb.
-- `cairn gc [--dry-run]` (and `POST /api/gc`): deletes blobs nothing
-  references that are older than 24 h, and their `artifacts` rows; reports
-  the count and bytes freed. A server runs it in the background after runs
-  are deleted.
-- `ArtifactVersion.wait(timeout=None)`: blocks until a pending version is
-  registered, then fills in `version`, aliases and the rest.
-- `POST /api/ingest/pending`: a lease-holding server ingests pending logs now.
-- **Run progress.** `cairn.Run(total_steps=N)` / `run.total_steps = N`
-  (progress = highest non-`system.*` step ÷ N) and `run.progress(i,
-  total=None)` (explicit, wins over steps). Over HTTP (`POST
-  /api/runs/{id}/total-steps`, `/progress`) and as run-log records. Run rows
-  carry `progress: {fraction, current, total, unit, eta_seconds}`; the ETA
-  is the rate over the last 5 minutes of client wall times.
-- The UI shows progress in the runs table's status cell, a line under the
-  run page header and a Progress row on comparison run cards: a bar and ETA
-  while running, the percentage reached once ended.
-- Integrations set the total: Lightning (`estimated_stepping_batches`),
-  HuggingFace (`max_steps`), Keras and Ultralytics (epochs, via
-  `run.progress`).
-- `cairn ping` reports `crashed_runs`.
-- **Several processes, one run** (wandb's shared mode). Every process gets
-  the same id (`cairn.Run(run_id=...)` or `CAIRN_RUN_ID`; `cairn.new_run_id()`
-  makes one); the primary creates the run and workers join it with
-  `cairn.Run(..., label="rank1", primary=False)` or
-  `cairn.attach(run_id, label)`, also to a finished run. Workers record
-  everything into the run but never change its status or liveness; stop
-  requests reach every process. `label="auto"` takes the label and role from
-  `RANK`, `SLURM_PROCID`, `SKYPILOT_NODE_RANK`, `OMPI_COMM_WORLD_RANK` or
-  `PMI_RANK`. A labelled process logs `system.<label>.*` and writes its own
-  log, `.cairn/wals/<run_id>~<label>.wal.jsonl`, which waits at the ingester
-  until the run exists. Two processes logging a series at the same step:
-  the first point stored wins.
-- Console lines carry the label of the process that printed it
-  (`log_lines.label`); `GET /api/runs/{id}/logs` returns it per line, takes
-  `label=` (empty: unlabelled lines) and lists the run's `labels`.
-  `Reader` log lines have `label`.
-- Distributed-runner examples: `torchrun_ddp.py`, `torchrun_attach.py`,
-  `accelerate_ddp.py`, `deepspeed_ddp.py`, `skypilot/` (one node, multinode,
-  managed spot job), `modal_app.py`, `sagemaker_job.py`, `azureml_job.yml`
-  and `cluster_eval_attach.py`, with a runner table in the server guide.
-- Over HTTP, `POST /api/runs` with `primary: false` joins an existing run
-  (404 while it does not exist), and a finish or heartbeat with
-  `primary: false` changes nothing; creating a run (or a fork) with a taken
-  id is a 409.
+- **Several processes, one run** (wandb's shared mode): a shared id
+  (`run_id=` or `CAIRN_RUN_ID`, `cairn.new_run_id()`), `label=`,
+  `primary=False`, `cairn.attach(run_id, label)` (also to a finished run) and
+  `label="auto"` from `RANK` / `SLURM_PROCID` / `SKYPILOT_NODE_RANK` /
+  `OMPI_COMM_WORLD_RANK` / `PMI_RANK`. Workers never change the run's status;
+  labelled processes log `system.<label>.*` and their own log file. The Logs
+  tab gets a process filter and a label column (search matches labels).
 - **Media in the summary** (wandb's `run.summary["fig"] = wandb.Image(...)`):
-  `run.summary`, `cairn.attach(...).summary` and `RunEditor.set_summary`
-  take any cairn media wrapper or a gallery list of them, at any depth,
-  next to JSON values. Each is one stepless value under its dotted key: a
-  later write replaces it, `delete_keys` removes it, `cairn gc` frees the
-  replaced bytes. Re-run a showcase script with `cairn.attach` to replace
-  its figures without re-training. The catalogue lists it as a series with
-  `"summary": true` (one point at step 0), so automatic panels, the add-card
-  flow, comparisons and reports show it with its kind's card, without a
-  step slider; the Overview's summary tree shows a thumbnail with an "open"
-  link; the runs table has no column for it. `Reader` returns `MediaRef`s
-  for it (`run.summary`, `run.media(key)`; `SequenceInfo.summary`). A name
-  is either a tracked series or a summary media value (`ValueError`).
-- A dropped point is no longer silent: a point at a step its series already
-  has (the first one written is kept) raises a `warn` run alert naming the
-  series and step, once per run and series, and a log warning at ingestion.
+  any cairn media or gallery, at any depth; a later write replaces it, so a
+  showcase script re-run with `cairn.attach` replaces its figures without
+  re-training. Summary media are cards like logged series (automatic panels,
+  the add-card flow, comparisons, reports; no step slider, "summary" in the
+  header). The Overview lists them by kind with a link that jumps to their
+  card. A name is either a tracked series or a summary media value.
+- **Run progress**: `cairn.Run(total_steps=N)` / `run.total_steps` (steps done
+  = highest logged step + 1) and `run.progress(i, total=None)`; an ETA from
+  the last 5 minutes. Shown in the runs table, the run header and comparison
+  cards. Lightning, HuggingFace, Keras and Ultralytics set the total.
+- **Integrations**: Lightning `CairnLogger(log_model=True|"all")` and
+  `logger.watch(...)`; HuggingFace `CairnCallback(log_model="end"|"checkpoint")`
+  (the final model in both modes, as wandb); Keras `CairnModelCheckpoint`;
+  a new Ultralytics (YOLOv8+) integration `add_cairn_callbacks(model)`.
+  Checkpoints are versions of `model-<run id>` with `latest` / `best`.
+- `run.log_model(path, name=None, aliases=None)` and `run.use_model(ref)`.
+- `cairn gc [--dry-run]`: deletes unreferenced blobs older than 24 h; a server
+  runs it after deleting runs. `ArtifactVersion.wait()`.
+- A dropped point (a second point at a step its series already has) raises a
+  `warn` run alert naming the series and step.
+- `CAIRN_CACHE_DIR` moves cairn's per-user caches.
+- 2D Plotly figures sync live across a card's panes while panning or
+  wheel-zooming (box zoom on release), like 3D cameras.
+- Long config and JSON values fold to one line of their column with **more**;
+  the comparison's parameter table no longer grows sideways.
+- Distributed-runner examples: torchrun (shared id and `cairn.attach`),
+  accelerate, DeepSpeed, SkyPilot (one node, multinode, managed spot), Modal,
+  SageMaker, AzureML, a later evaluation attaching to a finished run; a runner
+  table in the server guide.
+- `cairn ping` reports `crashed_runs`; `POST /api/ingest/pending`.
 
 ### Fixed
 
-- `run.summary` with a non-JSON value said "config values must be JSON"; it
-  names the summary now (and mentions cairn media).
-
-- Log read offsets were kept in memory: a server restart re-read active logs
-  from the start. They are now stored (`wal_progress`) in the same
-  transaction as the ops they cover: exactly once, restart-safe.
-- A finished log was drained again in full after being ingested
-  incrementally. Each record is now applied once.
-- The server and any Reader/CLI process ingested concurrently and raced on
-  renaming logs. Only the lease holder ingests now.
-- Liveness was guessed from `.lock` files, which a `kill -9`ed writer left
-  behind forever. Completion is now the ingested finish record; idle logs
-  make the run `crashed`. Old `.lock` files are deleted.
-- Logs grew until the run ended and `.done` copies were kept forever. A
-  finished log is deleted once ingested; old `.done` files are deleted.
-- A writer resuming a log whose last line was torn by a crash no longer
-  merges its first record into the torn fragment.
+- Log ingestion: read offsets are stored with the ops they cover (exactly
+  once, restart-safe; no full re-drain of finished logs); only the lease
+  holder ingests (no concurrent ingesters); completion is the ingested finish
+  record, not a `.lock` file a killed writer left behind; finished logs and
+  old `.done` / `.lock` files are deleted; a log with a torn last line is
+  resumed cleanly.
+- The sticky key column of the comparison tables is opaque: values no longer
+  scroll visibly under the keys.
+- `run.summary` with a non-JSON value no longer says "config values".
+- Resuming or forking a missing run is `LookupError` over HTTP too (was a raw
+  404).
+- Tests no longer open browser tabs or write into the user's cairn cache.
 
 ## 0.3.1 — 2026-10-06
 
