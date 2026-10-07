@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.4.0 — unreleased
+
+### Breaking
+
+- **One local mode: every run writes its own log.** A `cairn.Run` on a local
+  repo always appends to `.cairn/wals/<run_id>.wal.jsonl` (plus blobs) and
+  never writes the SQLite database. Direct mode and `local_wal=` are removed;
+  a run on a repo that a `cairn ui`/`cairn server` serves no longer switches
+  to HTTP (the server ingests its log within ~2 s).
+- **One writer per repo: the ingest lease** (`.cairn/ingest.lease`, replaces
+  `repo.lock`). `cairn ui`/`cairn server` hold it for their lifetime; a
+  Reader, CLI command, sweep agent or run that needs an answer takes it
+  briefly when no server holds it. Only the holder writes SQLite. A second
+  `cairn ui` on a served repo refuses to start and names the running one.
+- **New run status `crashed`**: a running local run whose log got no record
+  for 5 minutes and no finish. It turns `running` again if records arrive.
+  (Runs logged over HTTP still become `killed` after 2 minutes without a
+  heartbeat.)
+- `log_artifact` on a local repo returns a pending version (number assigned
+  at ingestion), as before in WAL mode; `use_artifact`, resume/fork/rewind
+  and sweeps now work on local repos without a server.
+- `examples/test_wal.py` is removed (covered by the test suite).
+
+### Added
+
+- `cairn gc [--dry-run]` (and `POST /api/gc`): deletes blobs nothing
+  references that are older than 24 h, and their `artifacts` rows; reports
+  the count and bytes freed. A server runs it in the background after runs
+  are deleted.
+- `ArtifactVersion.wait(timeout=None)`: blocks until a pending version is
+  registered, then fills in `version`, aliases and the rest.
+- `POST /api/ingest/pending`: a lease-holding server ingests pending logs now.
+- `cairn ping` reports `crashed_runs`.
+
+### Fixed
+
+- Log read offsets were kept in memory: a server restart re-read active logs
+  from the start. They are now stored (`wal_progress`) in the same
+  transaction as the ops they cover: exactly once, restart-safe.
+- A finished log was drained again in full after being ingested
+  incrementally. Each record is now applied once.
+- The server and any Reader/CLI process ingested concurrently and raced on
+  renaming logs. Only the lease holder ingests now.
+- Liveness was guessed from `.lock` files, which a `kill -9`ed writer left
+  behind forever. Completion is now the ingested finish record; idle logs
+  make the run `crashed`. Old `.lock` files are deleted.
+- Logs grew until the run ended and `.done` copies were kept forever. A
+  finished log is deleted once ingested; old `.done` files are deleted.
+- A writer resuming a log whose last line was torn by a crash no longer
+  merges its first record into the torn fragment.
+
 ## 0.3.1 — 2026-10-06
 
 ### Breaking
