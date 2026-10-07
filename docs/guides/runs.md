@@ -126,9 +126,11 @@ run = cairn.Run("cifar10", total_steps=50_000)
 run.total_steps = 60_000     # any time; None clears it
 ```
 
-The **step-based progress** is the highest step the run logged so far, in any series except
-`system.*` (whose steps are the sampler's counters), divided by `total_steps`. A rewind or fork
-recomputes it from the history that is left.
+The **step-based progress** is the number of steps done, divided by `total_steps`: the highest
+step the run logged so far, plus one (a loop counting from 0 has done `k + 1` steps at step `k`;
+the count stops at `total_steps`, so a loop counting from 1 also ends at 100%). Every series counts
+except `system.*` (whose steps are the sampler's counters). A rewind or fork recomputes it from the
+history that is left.
 
 When steps are not what you count, report progress yourself:
 

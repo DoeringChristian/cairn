@@ -238,11 +238,15 @@ def run_progress(row: dict[str, Any]) -> dict[str, Any] | None:
         samples = _load(row.get("progress_samples"))
     else:
         unit = "step"
-        current = row.get("max_step") or 0
+        # Steps done, not the highest step: a loop counting from 0 has done
+        # k + 1 steps at step k (capped below, for loops counting from 1).
+        current = row["max_step"] + 1 if row.get("max_step") is not None else 0
         total = total_steps
         samples = _load(row.get("step_samples"))
     if total is None or total <= 0:
         return None
+    if unit == "step":
+        current = min(current, total)
     eta = eta_seconds(samples, current, total) if row.get("status") == "running" else None
     return {
         "fraction": min(1.0, max(0.0, current / total)),

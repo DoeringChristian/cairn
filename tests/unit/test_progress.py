@@ -1,5 +1,5 @@
 """Run progress: total_steps / run.progress through the local run log and
-HTTP, the fraction from the highest logged step, the explicit override, the
+HTTP, the fraction from the steps done (highest logged step + 1), the explicit override, the
 ETA rule, the migration, and the integrations' totals."""
 
 from __future__ import annotations
@@ -90,7 +90,8 @@ def test_run_progress_shapes():
             "progress_value": None, "progress_total": None, "progress_samples": None}
     assert progress.run_progress(base) is None
     p = progress.run_progress({**base, "total_steps": 10})
-    assert p == {"fraction": 0.5, "current": 5, "total": 10, "unit": "step", "eta_seconds": None}
+    # Steps done: highest step 5 of a loop counting from 0 is 6 steps.
+    assert p == {"fraction": 0.6, "current": 6, "total": 10, "unit": "step", "eta_seconds": None}
     # Explicit wins; its total defaults to total_steps.
     p = progress.run_progress({**base, "total_steps": 10, "progress_value": 2.0})
     assert p["unit"] == "progress" and p["current"] == 2 and p["total"] == 10
@@ -102,7 +103,8 @@ def test_run_progress_shapes():
     # ETA only while running.
     samples = json.dumps([[0, 0], [60, 5]])
     running = progress.run_progress({**base, "total_steps": 10, "step_samples": samples})
-    assert running["eta_seconds"] == pytest.approx(60.0)
+    # 5 steps per 60 s; 6 of 10 done, 4 left -> 48 s.
+    assert running["eta_seconds"] == pytest.approx(48.0)
     ended = progress.run_progress({**base, "status": "completed", "total_steps": 10,
                                    "step_samples": samples})
     assert ended["eta_seconds"] is None
@@ -150,8 +152,8 @@ def test_local_total_steps_from_max_logged_step(tmp_path):
         run.track(1.0, "eval.acc", 59)
         assert run.total_steps == 200
     p = _local_progress(repo, run.id)
-    assert p["unit"] == "step" and p["current"] == 59 and p["total"] == 200
-    assert p["fraction"] == pytest.approx(59 / 200)
+    assert p["unit"] == "step" and p["current"] == 60 and p["total"] == 200
+    assert p["fraction"] == pytest.approx(60 / 200)
     assert p["eta_seconds"] is None  # ended
 
 
@@ -160,7 +162,8 @@ def test_local_total_steps_settable_and_clearable(tmp_path):
     with cairn.Run("p", repo=repo, **_RUN_KW) as run:
         run.track(1.0, "loss", 9)
         run.total_steps = 10
-    assert _local_progress(repo, run.id)["fraction"] == pytest.approx(0.9)
+    # Step 9 of 10 counting from 0 is the last step: done.
+    assert _local_progress(repo, run.id)["fraction"] == pytest.approx(1.0)
     with cairn.Run("p", repo=repo, **_RUN_KW) as run2:
         run2.total_steps = 10
         run2.total_steps = None
@@ -211,13 +214,13 @@ def test_local_eta_from_point_wall_times(tmp_path):
         }])
     row = db.read_columns("SELECT * FROM runs WHERE id = 'r'")[0]
     p = progress.run_progress(row)
-    # 2 steps/s; 1000 - 120 = 880 left -> 440 s.
-    assert p["current"] == 120 and p["eta_seconds"] == pytest.approx(440.0)
+    # Highest step 120 = 121 steps done; 2 steps/s; 879 left -> 439.5 s.
+    assert p["current"] == 121 and p["eta_seconds"] == pytest.approx(439.5)
     # Rewind recomputes the highest step and drops the samples.
     ingest_ops.rewind_run(db, "r", 50)
     row = db.read_columns("SELECT * FROM runs WHERE id = 'r'")[0]
     p = progress.run_progress(row)
-    assert p["current"] == 50 and p["eta_seconds"] is None
+    assert p["current"] == 51 and p["eta_seconds"] is None
     db.close()
 
 
@@ -273,9 +276,9 @@ def test_http_total_steps_and_progress(live_server):
     run2.progress(3, total=12)
     with httpx.Client(base_url=live_server) as c:
         p = c.get(f"/api/runs/{run.id}").json()["run"]["progress"]
-        assert (p["unit"], p["current"], p["total"]) == ("step", 24, 100)
+        assert (p["unit"], p["current"], p["total"]) == ("step", 25, 100)
         listed = {r["id"]: r for r in c.get("/api/runs", params={"project": "p"}).json()["runs"]}
-        assert listed[run.id]["progress"]["fraction"] == pytest.approx(0.24)
+        assert listed[run.id]["progress"]["fraction"] == pytest.approx(0.25)
         p2 = listed[run2.id]["progress"]
         assert (p2["unit"], p2["current"], p2["total"]) == ("progress", 3, 12)
         assert "total_steps" not in listed[run2.id]
