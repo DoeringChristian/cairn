@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from cairn.server import auth as auth_core
 from cairn.server.app import create_app
+from cairn.server.run_sets import run_sets_yaml
 
 
 def _bearer(token: str) -> dict[str, str]:
@@ -65,8 +66,8 @@ def env(tmp_path):
 
         source = "\n\n".join([
             "# Results",
-            _fence(f"runs: {{ids: [{a}]}}\ncards:\n  - {{metric: loss, type: scalar}}"),
-            _fence(f"runs: {{ids: [{c}]}}\ncards:\n  - type: code-diff"),
+            _fence(f"{run_sets_yaml([a])}\ncards:\n  - {{metric: loss, type: scalar}}"),
+            _fence(f"{run_sets_yaml([c])}\ncards:\n  - type: code-diff"),
         ])
         rid = owner.post(f"/api/projects/{pid}/reports",
                          json={"name": "r", "payload": {"source": source}}).json()["id"]
@@ -118,6 +119,8 @@ def test_full_flow(env):
     assert {r["id"] for r in body["runs"]} == {env["a"], env["c"]}
     assert all("env_snapshot" not in r for r in body["runs"])
     assert {s["name"] for s in body["metric_index"][env["a"]]} == {"loss", "tbl"}
+    # Each fence's run sets, resolved by the server.
+    assert body["run_sets"] == [[[env["a"]]], [[env["c"]]]]
     assert body["source_run_ids"] == [env["c"]]
 
     # Allowed reads.
@@ -211,7 +214,7 @@ def test_scope_is_live(env):
     """Editing the report changes what the share reaches (after the cache TTL)."""
     viewer = _viewer(env, _create(env)["secret"])
     assert viewer.get(f"/api/runs/{env['b']}").status_code == 403
-    source = _fence(f"runs: {{ids: [{env['b']}]}}")
+    source = _fence(f"{run_sets_yaml([env['b']])}")
     env["owner"].put(f"/api/projects/{env['pid']}/reports/{env['rid']}",
                      json={"payload": {"source": source}})
     env["app"].state.share_scopes.clear()  # stands in for the 30 s TTL

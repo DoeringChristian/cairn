@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from cairn.server import auth as auth_core
 from cairn.server.app import create_app
 from cairn.server.routes.artifacts import HTML_DOC_SANDBOX, RESIZE_SHIM, inject_resize_shim
+from cairn.server.run_sets import run_sets_yaml
 
 PAGE = (
     b"<html><body><h1>hi \xc3\xa9</h1>"
@@ -112,7 +113,7 @@ def test_share_link_admits_only_in_scope_html(tmp_path):
                 "object_type": "html", "artifact_hash": h,
             }]})
             assert r.status_code == 200, r.text
-        source = f"```cairn\nruns: {{ids: [{a}]}}\ncards:\n  - {{metric: page, type: html}}\n```"
+        source = f"```cairn\n{run_sets_yaml([a])}\ncards:\n  - {{metric: page, type: html}}\n```"
         rid = owner.post(f"/api/projects/{pid}/reports", json={"name": "r", "payload": {"source": source}}).json()["id"]
         secret = owner.post(f"/api/projects/{pid}/reports/{rid}/shares", json={}).json()["secret"]
 

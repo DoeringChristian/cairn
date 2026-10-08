@@ -16,6 +16,7 @@ from cairn.server.app import create_app
 from cairn.server.custom_viewers import builtin_defaults, builtin_viewers
 from cairn.server.viewer_defaults import default_for_subject, normalize_kind, resolve
 from tests.conftest import ingest_repo
+from cairn.server.run_sets import run_sets_yaml
 
 QUIET = dict(capture_source=False, capture_stdout=False, capture_env=False, capture_system_metrics=False)
 
@@ -184,7 +185,7 @@ def test_share_scope_has_the_default_viewers_of_its_kinds(tmp_path):
         owner.headers.update({"Authorization": f"Bearer {token}"})
 
         def share(cards: str) -> TestClient:
-            source = f"```cairn\nruns: {{ids: [{run.id}]}}\ncards:\n{cards}```"
+            source = f"```cairn\n{run_sets_yaml([run.id])}\ncards:\n{cards}```"
             rid = owner.post("/api/projects/p/reports", json={"name": "r", "payload": {"source": source}}).json()["id"]
             secret = owner.post(f"/api/projects/p/reports/{rid}/shares", json={}).json()["secret"]
             c = TestClient(app)

@@ -65,6 +65,19 @@
   the run comparer's best/worst cells, the scatter card's Pareto default
   and a sweep's default goal all read it.
 
+- **Report cells with several run sets** (wandb's panel grids). A cards
+  cell holds `runSets`: 1..n frozen copies of the workspace's runs table
+  state (filter tree, group-by, Latest only, sort, eyes); their runs are
+  resolved live, the cards draw the union, and with several sets each set
+  has its own colour family. A Python port of the runs table's filter,
+  Latest only, sort, grouping and eyes (`cairn/server/run_sets.py`, shared
+  test vectors with the UI) resolves them on the server, so a share link's
+  scope is exactly the runs its cells show; `GET /api/share/context` carries
+  each cell's resolved sets (`run_sets`). The cell's run view moved to
+  `view: {hidden, pinned, baseline}`. Editing is minimal until the run set
+  editor: the **Runs** dialog lists the sets and edits the first set's
+  filter.
+
 ### Changed
 
 - **job_type is first-class (wandb):** the run page's Run block shows the
@@ -81,8 +94,7 @@
   `exp-44`, or under job types `train` and `eval`, are separate series
   everywhere a run is matched by name: the runs table's and the workspace's **Latest only** (and its
   highlight; the higher version wins, else the later start), **Archive
-  old** / **Delete old**, the `newest-per-name` run selector of reports and
-  share links (UI and server), the query URL's `run=newest-per-name`, and
+  old** / **Delete old**, the query URL's `run=newest-per-name`, and
   run labels (two series never collide on their name).
 - **Run page as wandb's.** Overview is one **Run** block (notes, tags,
   state with exit code, group link, version, start time, duration, author,
@@ -112,6 +124,12 @@
   place.
 
 ### Removed
+
+- The report-only dynamic run selector (`runs.selector` with `latest-n` /
+  `newest-per-name`, the auto badge, the static/auto toggle) and fixed
+  `runs.ids` cells: a fence with `runs:` is not read (its cell shows empty
+  with a notice; no migration). The query URL's `run=` selection is
+  unchanged. `examples/demo_run_selector.py` is gone.
 
 - The runs table's per-column **Better** setting and a computed column's
   better direction (and their stored state, no migration): deltas follow the

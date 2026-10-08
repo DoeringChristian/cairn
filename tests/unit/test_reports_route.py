@@ -40,7 +40,7 @@ def test_list_reports_summary_and_block_count(client):
         "Prose": {"source": "Just prose.\n\nTwo paragraphs, one block.\n"},
         # prose + ```cairn fence + prose = 3 blocks.
         "Mixed": {
-            "source": "Some intro prose.\n\n```cairn\nruns:\n  ids: []\ncards: []\n```\n\nMore prose after.\n",
+            "source": "Some intro prose.\n\n```cairn\nrunSets: []\ncards: []\n```\n\nMore prose after.\n",
         },
         # Any other fence stays embedded in its prose block.
         "Code": {"source": "Intro.\n\n```python\nx = 1\n```\n"},

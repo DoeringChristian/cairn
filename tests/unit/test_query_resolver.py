@@ -260,5 +260,5 @@ def test_step_latest_and_explicit(fresh_db):
 
 
 # ---------------------------------------------------------------------------
-# QueryRunSelector multi-run port
+# The query URL's run selection (run=latest:N, newest-per-name)
 # ---------------------------------------------------------------------------

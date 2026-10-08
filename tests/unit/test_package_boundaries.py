@@ -7,7 +7,7 @@ SDK's handlers, wrappers, or card specs. The query grammar lives server-side
 MARKED MIRROR pinned by ``schema/query-vectors.json``. (An earlier version of
 this docstring also claimed a TypeScript mirror pinned by the same file from the
 UI's test suite. There is none — the UI filters runs client-side through its own
-run-selector. Do not assert a guarantee nothing enforces.)
+runs-table filter. Do not assert a guarantee nothing enforces.)
 
 The reverse direction (sdk → server) is legal in the monolith — local-mode
 runs use the storage layer directly.

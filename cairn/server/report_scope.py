@@ -1,26 +1,24 @@
 """What a share link of a report may read: the report's own runs.
 
-A report's runs are named in its ```cairn fences: ``runs.ids``, the runs a
-``runs.selector`` resolves to (against the project's newest runs, exactly as
-the UI resolves it), each card's explicit ``series[].runId``, the cell's run
-view, and run ids in card settings (a code-diff card's ``leftRunId``/
-``rightRunId``). Source files are in scope only for the runs a code-diff card
-can show. A card's custom viewer (``settings.viewer``, pinned by
-``settings.viewer_version`` or else ``latest``) puts that viewer version's
-files in scope. A card that lets the UI pick its viewer (a ``custom`` card
-without ``settings.viewer``, or a ``volume`` card, which a viewer accepting
-``volume`` takes over) puts the ``latest`` of every viewer that could be
-picked in scope: those accepting some custom kind, or ``volume``. Scope is live: it is recomputed from the report's current source,
-cached for ``SCOPE_TTL_S`` per share.
+A report's runs are named in its ```cairn fences: the runs each cell's run
+sets (``runSets``) resolve to right now (``run_sets.resolve_run_set``, the
+Python port of cairn-ui's ``resolveRunSet``, over the project's newest runs
+exactly as the UI resolves them), each card's explicit ``series[].runId``,
+the cell's run view (``view``) and run ids in card settings (a code-diff
+card's ``leftRunId``/``rightRunId``). Source files are in scope only for the
+runs a code-diff card can show. A card's custom viewer (``settings.viewer``,
+pinned by ``settings.viewer_version`` or else ``latest``) puts that viewer
+version's files in scope. A card that lets the UI pick its viewer (a
+``custom`` card without ``settings.viewer``, or a ``volume`` card, which a
+viewer accepting ``volume`` takes over) puts the ``latest`` of every viewer
+that could be picked in scope: those accepting some custom kind, or
+``volume``. Scope is live: it is recomputed from the report's current
+source, cached for ``SCOPE_TTL_S`` per share.
 
-``resolve_run_selector_from_runs`` is a port of cairn-ui's
-``resolveRunSelectorFromRuns`` (``src/lib/run-selector.ts``); both run the
-vectors in cairn-ui ``docs/schemas/run-selector-vectors.json``.
-
-A fence the UI would reject as a whole (its ``runs`` malformed) contributes
-nothing. Past that, a fence's card entries are read leniently: a run id the
-author wrote into the report is in scope even if the UI would refuse to
-compile that card.
+A fence the UI would reject as a whole (not a mapping, the old ``runs:``
+format, ``runSets`` or ``view`` malformed) contributes nothing. Past that, a
+fence's card entries are read leniently: a run id the author wrote into the
+report is in scope even if the UI would refuse to compile that card.
 """
 
 from __future__ import annotations
@@ -34,8 +32,8 @@ from typing import Any
 
 import yaml
 
+from . import run_sets
 from .artifact_refs import reachable_hashes
-from .run_series import run_series_key
 from .custom_viewers import published_viewers, resolve_viewer_version
 from .viewer_defaults import BUILTIN_TYPES, default_for_subject, list_defaults
 from .storage.blobs import BlobStore
@@ -43,119 +41,30 @@ from .storage.db import Database
 
 #: Scope is recomputed at most this often per share.
 SCOPE_TTL_S = 30.0
-#: The run pool a selector resolves against — ``RUN_SELECTOR_FETCH_LIMIT`` in
-#: cairn-ui ``api/hooks.ts`` (the project's newest runs).
-RUN_SELECTOR_POOL = 500
-DEFAULT_RUN_SELECTOR_N = 5
 CAIRN_FENCE_LANG = "cairn"
 CODE_DIFF_CARD = "code-diff"
-
-
-# ---------------------------------------------------------------------------
-# Selector resolution (mirror of lib/run-selector.ts)
-# ---------------------------------------------------------------------------
-
-# The characters the TS glob escapes before turning ``*`` into ``.*``. ``?`` is
-# NOT among them, so it keeps its regex meaning on both sides.
-_GLOB_ESCAPE_RE = re.compile(r"[.+^${}()|\[\]\\]")
-
-
-def _parse_run_tags(tags: Any) -> list[str]:
-    if not tags:
-        return []
-    try:
-        parsed = json.loads(tags)
-    except (TypeError, ValueError):
-        return []
-    return [t for t in parsed if isinstance(t, str)] if isinstance(parsed, list) else []
-
-
-def _matches_name_pattern(display_name: str | None, pattern: str | None) -> bool:
-    if not pattern:
-        return True
-    name = (display_name or "").lower()
-    p = pattern.lower()
-    if "*" in p:
-        escaped = _GLOB_ESCAPE_RE.sub(lambda m: "\\" + m.group(0), p).replace("*", ".*")
-        try:
-            # fullmatch == JS ``^...$`` without the multiline flag.
-            return re.fullmatch(escaped, name) is not None
-        except re.error:
-            return False
-    return p in name
-
-
-def _matches_tags(run_tags: Any, want: list[str] | None) -> bool:
-    if not want:
-        return True
-    have = set(_parse_run_tags(run_tags))
-    return all(t in have for t in want)
-
-
-def resolve_run_selector_from_runs(sel: dict[str, Any], runs: list[dict[str, Any]]) -> list[str]:
-    """The run ids ``sel`` selects from ``runs`` (any order)."""
-    if sel.get("kind") == "static":
-        return list(sel.get("runIds") or [])
-
-    # Stable, newest first — equal timestamps keep their input order, as in JS.
-    ordered = sorted(runs, key=lambda r: r["created_at"], reverse=True)
-    candidates = [
-        r for r in ordered
-        if _matches_name_pattern(r.get("display_name"), sel.get("namePattern"))
-        and _matches_tags(r.get("tags"), sel.get("tags"))
-    ]
-
-    n = sel.get("n")
-    if sel.get("mode") == "latest-n":
-        limit = DEFAULT_RUN_SELECTOR_N if n is None else int(n)  # JS slice truncates
-        return [r["id"] for r in candidates[:limit]]
-
-    # newest-per-name: the newest run of each series (group, job_type, name).
-    seen: set[tuple[str | None, str | None, str]] = set()
-    out: list[str] = []
-    for r in candidates:
-        key = run_series_key(r)
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(r["id"])
-        if n is not None and len(out) >= n:
-            break
-    return out
-
-
-def _is_number(v: Any) -> bool:
-    return isinstance(v, (int, float)) and not isinstance(v, bool) and v == v and v not in (
-        float("inf"), float("-inf"),
-    )
 
 
 def _str_list(v: Any) -> bool:
     return isinstance(v, list) and all(isinstance(x, str) for x in v)
 
 
-def validate_run_selector(sel: Any) -> dict[str, Any] | None:
-    """A ``runs.selector`` mapping as a query selector, or None where
-    cairn-ui's ``validateRunSelector`` would throw."""
-    if not isinstance(sel, dict):
+def fence_run_sets(doc: Any) -> list[dict[str, Any]] | None:
+    """A fence's run sets as the UI reads them (``parseRunSet`` per entry),
+    or None where cairn-ui rejects the fence (not a mapping, the old
+    ``runs:`` format, a malformed ``runSets`` or ``view``)."""
+    if doc is None:
+        return []
+    if not isinstance(doc, dict) or "runs" in doc:
         return None
-    mode = sel.get("mode")
-    if mode not in ("latest-n", "newest-per-name"):
+    raw = doc.get("runSets", [])
+    if not isinstance(raw, list):
         return None
-    out: dict[str, Any] = {"kind": "query", "mode": mode}
-    if "namePattern" in sel:
-        if not isinstance(sel["namePattern"], str):
-            return None
-        out["namePattern"] = sel["namePattern"]
-    if "tags" in sel:
-        if not _str_list(sel["tags"]):
-            return None
-        out["tags"] = sel["tags"]
-    if "n" in sel:
-        if not _is_number(sel["n"]):
-            return None
-        out["n"] = sel["n"]
-    return out
+    view = doc.get("view")
+    if "view" in doc and not isinstance(view, dict):
+        return None
+    sets = [run_sets.parse_run_set(r, i) for i, r in enumerate(raw)]
+    return None if any(s is None for s in sets) else sets  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
@@ -202,6 +111,9 @@ class ShareScope:
     #: The custom viewer versions the report's cards use (``settings.viewer``
     #: + optional ``settings.viewer_version``; default ``latest``).
     viewer_versions: frozenset[str] = frozenset()
+    #: Each ```cairn fence's run sets, resolved: ``[fence][set] -> run ids``
+    #: (a fence the UI rejects has none).
+    run_sets: tuple[tuple[tuple[str, ...], ...], ...] = ()
     _artifacts: frozenset[str] | None = field(default=None, repr=False)
 
     def artifacts(self, db: Database, blobs: BlobStore) -> frozenset[str]:
@@ -209,14 +121,6 @@ class ShareScope:
         if self._artifacts is None:
             self._artifacts = frozenset(reachable_hashes(db, blobs, sorted(self.run_ids)))
         return self._artifacts
-
-
-def _selector_pool(db: Database, project_id: str) -> list[dict[str, Any]]:
-    return db.read_columns(
-        """SELECT id, display_name, run_group AS "group", job_type, tags, created_at FROM runs
-           WHERE project_id = ? ORDER BY created_at DESC LIMIT ?""",
-        [project_id, RUN_SELECTOR_POOL],
-    )
 
 
 def _settings_run_ids(settings: Any) -> list[str]:
@@ -245,7 +149,8 @@ def compute_scope(db: Database, report: dict[str, Any]) -> ShareScope:
     project_id = report["project_id"]
     run_ids: set[str] = set()
     source_run_ids: set[str] = set()
-    pool: list[dict[str, Any]] | None = None
+    resolve = run_sets.resolve_with(lambda: run_sets.run_set_pool(db, project_id))
+    fences: list[tuple[tuple[str, ...], ...]] = []
     viewer_refs: set[tuple[str, Any]] = set()
     #: Types of the cards whose viewer the UI picks (no ``settings.viewer``).
     auto_viewers: set[str] = set()
@@ -254,33 +159,24 @@ def compute_scope(db: Database, report: dict[str, Any]) -> ShareScope:
         try:
             doc = yaml.safe_load(body)
         except yaml.YAMLError:
+            doc = "not yaml"
+        sets = fence_run_sets(doc)
+        if sets is None:
+            fences.append(())
             continue
+        resolved = tuple(tuple(resolve(s)) for s in sets)
+        fences.append(resolved)
         if not isinstance(doc, dict):
             continue
 
-        block_runs: list[str] = []
-        runs = doc.get("runs")
-        if "runs" in doc and not isinstance(runs, dict):
-            continue
-        if isinstance(runs, dict):
-            if "ids" in runs and "selector" in runs:
-                continue
-            if "ids" in runs:
-                if not _str_list(runs["ids"]):
-                    continue
-                block_runs = list(runs["ids"])
-            elif "selector" in runs:
-                sel = validate_run_selector(runs["selector"])
-                if sel is None:
-                    continue
-                if pool is None:
-                    pool = _selector_pool(db, project_id)
-                block_runs = resolve_run_selector_from_runs(sel, pool)
+        block_runs: list[str] = [rid for ids in resolved for rid in ids]
+        view = doc.get("view")
+        if isinstance(view, dict):
             for key in ("hidden", "pinned"):
-                if _str_list(runs.get(key)):
-                    block_runs += runs[key]
-            if isinstance(runs.get("baseline"), str) and runs["baseline"]:
-                block_runs.append(runs["baseline"])
+                if _str_list(view.get(key)):
+                    block_runs += view[key]
+            if isinstance(view.get("baseline"), str) and view["baseline"]:
+                block_runs.append(view["baseline"])
 
         run_ids.update(block_runs)
         cards = doc.get("cards")
@@ -335,6 +231,7 @@ def compute_scope(db: Database, report: dict[str, Any]) -> ShareScope:
         run_ids=frozenset(run_ids),
         source_run_ids=frozenset(source_run_ids),
         viewer_versions=frozenset(viewer_versions),
+        run_sets=tuple(fences),
     )
 
 

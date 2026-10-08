@@ -23,6 +23,7 @@ from cairn.server.viewer_manifest import (
     validate_manifest,
 )
 from tests.conftest import ingest_repo
+from cairn.server.run_sets import run_sets_yaml
 
 QUIET = dict(capture_source=False, capture_stdout=False, capture_env=False, capture_system_metrics=False)
 SCHEMA = Path(__file__).resolve().parents[2] / "docs" / "schemas" / "cairn-viewer.schema.json"
@@ -437,7 +438,7 @@ def test_share_scope_includes_report_viewers_only(tmp_path):
         _id, token = auth_core.create_token(app.state.db, name="w", role="write")
         owner.headers.update({"Authorization": f"Bearer {token}"})
         source = (
-            f"```cairn\nruns: {{ids: [{run.id}]}}\ncards:\n"
+            f"```cairn\n{run_sets_yaml([run.id])}\ncards:\n"
             "  - {metric: d, type: custom, settings: {viewer: used}}\n"
             "  - {metric: d, type: custom, settings: {viewer: pinned, viewer_version: 1}}\n```"
         )
@@ -655,7 +656,7 @@ def test_share_scope_includes_viewers_a_card_may_pick(tmp_path):
         owner.headers.update({"Authorization": f"Bearer {token}"})
 
         def listed(cards: str) -> set[str]:
-            source = f"```cairn\nruns: {{ids: [{run.id}]}}\ncards:\n{cards}```"
+            source = f"```cairn\n{run_sets_yaml([run.id])}\ncards:\n{cards}```"
             rid = owner.post("/api/projects/p/reports", json={"name": "r", "payload": {"source": source}}).json()["id"]
             secret = owner.post(f"/api/projects/p/reports/{rid}/shares", json={}).json()["secret"]
             viewer = TestClient(app)

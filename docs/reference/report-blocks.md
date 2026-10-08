@@ -1,13 +1,24 @@
 # Report blocks
 
-A report is Markdown. Each fenced code block whose info string starts with the word `cairn` becomes a **cards cell**: a set of runs plus a grid of cards drawn from them. Everything else is prose. This page is the reference for the YAML inside such a fence. For writing and editing reports, see [Reports](../ui/reports.md).
+A report is Markdown. Each fenced code block whose info string starts with the word `cairn` becomes a **cards cell**: one or more run sets plus a grid of cards drawn from their runs. Everything else is prose. This page is the reference for the YAML inside such a fence. For writing and editing reports, see [Reports](../ui/reports.md).
 
 ````markdown
 ## Validation
 
 ```cairn
-runs:
-  selector: { mode: newest-per-name, namePattern: "train-*", tags: [prod], n: 5 }
+runSets:
+  - name: Training runs
+    filter:
+      kind: group
+      op: and
+      children:
+        - { kind: chip, field: job_type, op: exact, arg: train }
+        - { kind: chip, field: tags, op: contains, arg: prod }
+    groupBy: [{ source: group }]
+    latestOnly: true
+  - name: Baseline
+    filter: { kind: group, op: and, children: [{ kind: chip, field: display_name, op: exact, arg: baseline }] }
+    latestOnly: true
 title: Validation metrics
 cards:
   - metric: val.loss
@@ -27,56 +38,59 @@ The fence is parsed as YAML without running any code. A malformed fence does not
 
 | Key | Type | Meaning |
 |---|---|---|
-| `runs` | mapping | Which runs the cell shows. See [`runs`](#runs). |
+| `runSets` | list | The cell's run sets. The cards draw the union of their runs. See [`runSets`](#runsets). |
+| `view` | mapping | Optional run view: `hidden`, `pinned`, `baseline`. See [`view`](#view). |
 | `title` | string | Optional cell title. |
 | `cards` | list | The cards, in order. See [`cards`](#cards). |
 | `id` | string | The cell's id. The editor writes it so that the cell keeps its identity across edits. Leave it out when you write a fence by hand; a fresh id is assigned. |
 
 An empty fence is valid and produces an empty cell.
 
-## `runs`
+## `runSets`
 
-Give **either** `ids` **or** `selector`, not both.
+A run set is the runs table of the [workspace](../ui/workspace.md), frozen: its filter, grouping, **Latest only**, sort and eyes are stored in the report, and its runs are resolved live. When the report is opened, each set picks its runs from the project's 1000 newest runs exactly as the workspace's runs sidebar would with the same settings, so new matching runs appear without editing the report. Every key is optional:
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `name` | string | `Run set N` | Shown in the cell's **Runs** dialog. |
+| `filter` | filter tree | no filter | The runs table's filter tree, see below. |
+| `groupBy` | list | `[]` | Group-by levels: `{source: group}`, `{source: job_type}`, `{source: tag}`, `{source: param, key: lr}` or `{source: expr, expr: "config.lr * 10"}`. |
+| `latestOnly` | bool | `false` | Only the newest run of each series (group, job type, name). |
+| `sort` | list | newest first | Sort keys: `{column, direction}`, with `column` one of `name`, `status`, `created_at`, `duration`, `value:<metric>`, `param:<key>` and `direction` `asc` or `desc`. |
+| `eyes` | mapping | `{}` | Explicit eyes, as in the workspace: `"r:<run id>": true/false` for a run, `"g:<group-by>:<value>": true/false` for a top-level group (for example `"g:group:exp-44": false`). |
+
+Archived runs are never in a run set (they still count for **Latest only**). Without explicit eyes, a set shows the runs of its 10 newest top-level groups, or its 10 newest runs when it is not grouped, like the workspace. A run in several sets is drawn once. With more than one set, each set's runs are drawn in their own colour family (shades of one hue).
+
+### The filter tree
+
+A filter tree is a group: `{kind: group, op: and | or, children: [...]}`. A child is another group, a chip or an expression:
+
+| Node | Example | Matches |
+|---|---|---|
+| chip | `{kind: chip, field: values.acc, op: gt, arg: "0.9"}` | `field op arg`. `field` is `display_name`, `status`, `tags`, `group`, `job_type`, `values.<metric>` (the runs table's value) or `params.<key>`. `op` is one of `exact`, `iexact`, `gt`, `gte`, `lt`, `lte`, `in` (comma-separated), `contains`, `icontains`, `startswith`, `endswith`, `isnull`. `arg` is a string, read as a number or boolean where it is one. |
+| expression | `{kind: expr, expr: "min(val.loss) < 0.2 and config.opt == 'adam'"}` | the [expression](expressions.md) is true. An invalid expression constrains nothing. |
+
+An empty group constrains nothing. The editor writes a cell of fixed runs (a section sent to a report, a template applied to picked runs) as a set with the expression `run.id in ["…", "…"]` and each run's eye on.
+
+## `view`
 
 | Key | Type | Meaning |
 |---|---|---|
-| `ids` | list of run ids | A fixed set of runs. |
-| `selector` | mapping | A live query over the project's runs. See [Run selectors](#run-selectors). |
 | `hidden` | list of run ids | Runs hidden from the cell's charts. |
 | `pinned` | list of run ids | Runs drawn first, in this order. |
 | `baseline` | run id | The run the others are compared against. |
 
-`hidden`, `pinned` and `baseline` form the cell's **run view**. It works the same way as the runs table's run view (see [Runs table](../ui/runs-table.md)).
+These form the cell's **run view**. It works the same way as the runs table's run view (see [Runs table](../ui/runs-table.md)).
 
 ```yaml
-runs:
-  ids: [3f9c0a…, 81b2d4…, c07e19…]
+view:
   pinned: [81b2d4…]
   baseline: 3f9c0a…
 ```
 
-### Run selectors
+### Reports from before run sets
 
-A selector picks runs from the project's 500 newest runs by name and tags:
-
-| Key | Type | Meaning |
-|---|---|---|
-| `mode` | `latest-n` or `newest-per-name` | Required. `latest-n` picks the N most recently created matching runs. `newest-per-name` picks the newest matching run of each series: each distinct group and name (`train` in two groups is two series). |
-| `namePattern` | string | Optional. Without `*`, a case-insensitive substring of the run name. With `*`, a case-insensitive pattern that must match the whole name, where `*` matches any text. |
-| `tags` | list of strings | Optional. The run must carry every one of these tags. |
-| `n` | number | Optional cap on the number of runs. `latest-n` defaults to 5. `newest-per-name` has no cap unless you set `n`. |
-
-| Selector | Picks |
-|---|---|
-| `{ mode: latest-n }` | the 5 newest runs |
-| `{ mode: latest-n, namePattern: TRAIN, n: 10 }` | the 10 newest runs whose name contains `train` (any case) |
-| `{ mode: latest-n, namePattern: "train-*" }` | the 5 newest runs whose name starts with `train-` |
-| `{ mode: newest-per-name, tags: [prod] }` | the newest `prod`-tagged run of each group and name |
-
-!!! warning "Only `*` is a wildcard"
-    In a pattern that contains `*`, every other character is literal except `?`, which keeps its regular-expression meaning (it makes the preceding character optional). Avoid `?` in patterns.
-
-A selector's run set is live. The cell resolves it again when the report is opened and when the browser window regains focus, so new matching runs appear without editing the report. A [share link](../ui/sharing.md) resolves it the same way.
+A fence with the old `runs:` key (`runs: {ids: [...]}` or `runs: {selector: ...}`) is not read: its cell shows empty with a notice. The fence is kept as written until you edit the cell; give the cell a run set to show runs again. There is no migration.
 
 ## `cards`
 
@@ -90,7 +104,7 @@ Each entry is a mapping and takes one of three forms.
   settings: { x: "step * 32" }
 ```
 
-The card shows the metric for every run of the cell. `type` is the card type. If you leave it out, the cell infers it from how the metric was logged on its runs. Inference fails when no run has the metric, or when the name was logged as more than one kind (for example as both a scalar and an image); set `type` in those cases.
+The card shows the metric for every run of the cell's run sets. `type` is the card type. If you leave it out, the cell infers it from how the metric was logged on its runs. Inference fails when no run has the metric, or when the name was logged as more than one kind (for example as both a scalar and an image); set `type` in those cases.
 
 ### A multi-run card
 
@@ -147,9 +161,9 @@ The cell shows the parser's message. Common ones:
 
 | Problem | Message |
 |---|---|
-| The fence is not a YAML mapping | ``a ```cairn block must be a YAML mapping with `runs`/`title`/`cards` keys`` |
-| Both `ids` and `selector` | ``runs: specify only one of `ids` or `selector`, not both`` |
-| Bad selector mode | `runs.selector.mode must be "latest-n" or "newest-per-name"` |
+| The fence is not a YAML mapping | ``a ```cairn block must be a YAML mapping with `runSets`/`view`/`title`/`cards` keys`` |
+| `runSets` is not a list | `` `runSets` must be a list of run sets `` |
+| A run set is not a mapping | `runSets[0] must be a mapping` |
 | `type` cannot be inferred | ``cards[0]: cannot infer `type` for metric "…" — no matching sequence found on this block's runs; specify `type` explicitly`` |
 | One name logged as several kinds | ``cards[0]: metric "…" is ambiguous (found as scalar, image) — specify `type` explicitly`` |
 | No metric, series or multi-run type | ``cards[0]: specify a `metric`, an explicit `series`, or a multi-run `type` (one of parallel/scatter/bar/tile/importance/run-compare/code-diff/scalars/config)`` |
@@ -159,4 +173,4 @@ Type inference needs each run's list of logged metrics. When the report opens be
 
 ## JSON Schema
 
-cairn-ui ships a generated JSON Schema, `docs/schemas/cairn-card-spec.schema.json`, with a matching set of pydantic models in `cairn_ui.cards.spec`. The schema describes the card shape the editor stores, in which `id`, `type` and `series` are all required. It does not cover the short forms on this page: it has no `metric` key, and its selector requires a `kind` key that the fence does not use. For hand-written fences, follow this page.
+cairn-ui ships a generated JSON Schema, `docs/schemas/cairn-card-spec.schema.json`, with a matching set of pydantic models in `cairn_ui.cards.spec`. The schema describes the card shape the editor stores, in which `id`, `type` and `series` are all required. It does not cover the short forms on this page: it has no `metric` key. Its `RunSetSpec` describes a run set. For hand-written fences, follow this page.

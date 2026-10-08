@@ -270,4 +270,7 @@ def share_context(request: Request) -> dict[str, Any]:
         "runs": runs,
         "metric_index": _metric_index(db, run_ids),
         "source_run_ids": sorted(scope.source_run_ids & set(run_ids)),
+        # Each ```cairn fence's run sets as the server resolved them
+        # (report_scope): the viewer renders these, it cannot resolve them.
+        "run_sets": [[list(ids) for ids in fence] for fence in scope.run_sets],
     }

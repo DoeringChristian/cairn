@@ -71,19 +71,18 @@ Viewers **cannot**:
 - open any page other than the report,
 - read runs outside the report's scope.
 
-A selector cell appears as a fixed set of the runs it matched when the page loaded.
+Each cell shows the runs its run sets matched on the server when the page loaded, as fixed sets.
 
 ## Which runs a link exposes
 
 A share link gives access to the report's own runs and nothing else. The server works these out from the report's current source. A run is in scope if it is named in a ```` ```cairn ```` fence ([Report blocks](../reference/report-blocks.md)) in any of these ways:
 
-- listed in `runs.ids`,
-- matched by a `runs.selector`, resolved against the project's newest 500 runs just as the UI resolves it,
+- matched by one of the cell's run sets (`runSets`), resolved against the project's newest 1000 runs just as the UI resolves them (the same filter, Latest only, grouping and eyes; the server runs a port of the UI's code, tested against shared cases),
 - named as a run of a card's series (`series[].runId`),
-- in the cell's run view: `hidden`, `pinned` or `baseline`,
+- in the cell's run view (`view`): `hidden`, `pinned` or `baseline`,
 - given as a run id in a card's settings, such as a code-diff card's left and right run.
 
 For runs in scope, a viewer can read the run record, its logged series, its artifacts and the report's uploaded images. Viewers can only read runs' source files through a code-diff card, for the runs that card compares.
 
 !!! note "Scope follows the report"
-    Scope is **live**: the server works it out again from the current report at most every 30 seconds. If you add a cell for more runs, the link exposes them too. Remove a cell, and its runs drop out. A selector that matches newer runs brings them into scope.
+    Scope is **live**: the server works it out again from the current report at most every 30 seconds. If you add a cell for more runs, the link exposes them too. Remove a cell, and its runs drop out. A run set that matches newer runs brings them into scope.

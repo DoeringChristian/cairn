@@ -55,14 +55,15 @@ The image belongs to the report's asset store, so share-link viewers can see it 
 
 ### Cards cells
 
-A cards cell shows live cards for its runs. Its toolbar adds two buttons:
+A cards cell shows live cards for the runs of its **run sets**. A run set is the workspace's runs table, frozen: a filter, grouping, **Latest only**, sort and eyes, stored in the report. Its runs are resolved each time the report is opened, so a new run that matches shows up without editing the report. The cards draw the union of the sets' runs; with more than one set, each set's runs are drawn in their own colour family. A new cell starts with one run set of the project's 10 newest runs. See [Report blocks](../reference/report-blocks.md#runsets) for every field.
 
-- **+ (Add card)** opens the card picker. You need to choose runs first.
-- **Runs** (the sliders icon, with the run count) opens *Runs in this cell*. It picks a **static** run list or an **auto (query)** selector, and sets each run's hide / pin / baseline toggles.
+The cell's toolbar adds two buttons:
+
+- **+ (Add card)** opens the card picker. The run sets must match some runs first.
+- **Runs** (the sliders icon, with the run count) opens *Runs in this cell*: each run set with the runs it resolves to now, and each run's hide / pin / baseline toggles. For now only the **filter of the first run set** can be edited there, with the runs table's filter control; the full run set editor comes later.
     - **Reset cards from runs** throws away the cell's cards and creates one card per metric across its runs.
-    - With a selector, the refresh badge resolves the selector again and rebinds the existing cards to the new runs. Your cards and their order stay as they are.
 
-A selector cell also rebinds automatically whenever its resolved run set changes.
+When the resolved runs change, the cell rebinds its existing cards to them. Your cards and their order stay as they are.
 
 You can drag cards within a cell to reorder them. Card settings work as they do everywhere else (see [Cards](cards.md)). Every settings change is saved with the report. The media controls above the cards (step slider sync) apply to that cell only.
 
@@ -71,7 +72,7 @@ You can drag cards within a cell to reorder them. Card settings work as they do 
 
 ## The markdown source
 
-A report is stored as one markdown document. Prose is kept as written. Each cards cell becomes a fenced ```` ```cairn ```` block of YAML listing its runs, cards and each card's settings overrides:
+A report is stored as one markdown document. Prose is kept as written. Each cards cell becomes a fenced ```` ```cairn ```` block of YAML listing its run sets, cards and each card's settings overrides:
 
 ````markdown
 ## Validation
@@ -79,8 +80,10 @@ A report is stored as one markdown document. Prose is kept as written. Each card
 Loss keeps falling after the learning-rate drop.
 
 ```cairn
-runs:
-  selector: { mode: newest-per-name, namePattern: "resnet-*", n: 3 }
+runSets:
+  - name: ResNets
+    filter: { kind: group, op: and, children: [{ kind: chip, field: display_name, op: startswith, arg: resnet- }] }
+    latestOnly: true
 cards:
   - metric: val.loss
     type: scalar
@@ -92,6 +95,8 @@ cards:
 The full schema is in [Report blocks](../reference/report-blocks.md).
 
 Click **View source** to see the exact markdown a save would write. It is read-only: you edit cells, not the source. If you type a ```` ```cairn ```` fence into a markdown cell, it is saved as written. The next time the report loads, it becomes a cards cell.
+
+A fence in the format from before run sets (`runs:` with fixed ids or a selector) is not read: the cell shows empty with a notice, and its fence is kept as written until you edit the cell.
 
 ### Cells with errors
 
@@ -123,7 +128,7 @@ Every cell edit, insert, move and delete is an undo step. Undo and redo work as 
 ## Adding cards from elsewhere
 
 - **Add to report** on any card header lists the project's reports and offers to create a new one. It appends a new cards cell to the end of the report, containing a copy of the card with its settings inlined. Existing text is never rewritten. If the report changes during the append, the button reads it again and retries once, then reports an error.
-- **Send section to a new report** in a section header (run page or project workspace) creates a new report with a heading, a short intro and one cards cell holding the section's panels as cards, for the runs the workspace is bound to, with their settings.
+- **Send section to a new report** in a section header (run page or project workspace) creates a new report with a heading, a short intro and one cards cell holding the section's panels as cards, with their settings, over one run set of exactly the runs the workspace shows (`run.id in [...]`).
 
 In each case the source cards are left unchanged.
 

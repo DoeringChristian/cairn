@@ -1,12 +1,9 @@
 """Server-side run/artifact selector resolver for ``GET /api/query``.
 
-This is the first Python/server home for the run-selection semantics that,
-until now, existed only in the client (``ui/src/lib/run-selector.ts``) and the
-Python reader (``cairn/sdk/reader.py``). It ports three things into one pure,
-HTTP-free module so they can be unit-tested directly against a ``Database``:
+One pure, HTTP-free module, unit-testable directly against a ``Database``:
 
-* the ``QueryRunSelector`` schema (``mode: latest-n | newest-per-name``,
-  a faithful mirror of ``resolveRunSelectorFromRuns``;
+* the query URL's run selection (``run=latest | latest:N | newest-per-name |
+  id:<run_id>``, and a ``name=`` pattern);
 * ``RunQuery``'s Django-style ``field__op=value`` filters — evaluated by the
   one run-selection evaluator (``run_query.select_runs``), so ``latest`` here
   is ``reader.runs(...).last()``;
@@ -237,14 +234,12 @@ def parse_query_params(params: Mapping[str, str] | Iterable[tuple[str, str]]) ->
 
 
 # ---------------------------------------------------------------------------
-# Name / tag matching (mirror of ui/src/lib/run-selector.ts)
+# Name matching (the query URL's ``name=``)
 # ---------------------------------------------------------------------------
 
 def _matches_name(display_name: str | None, pattern: str | None) -> bool:
-    """Substring match (case-insensitive), or a glob when ``pattern`` has ``*``.
-
-    Faithful port of ``matchesNamePattern`` in run-selector.ts.
-    """
+    """Substring match (case-insensitive), or a glob when ``pattern`` has
+    ``*`` (which must match the whole name)."""
     if not pattern:
         return True
     name = (display_name or "").lower()

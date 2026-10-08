@@ -22,7 +22,8 @@ import pytest
 
 import cairn
 import cairn.ui as cui
-from cairn_ui.cards.spec import CardSpec, CardsSpec, RunsSpec
+from cairn.server.run_sets import run_set_of_ids
+from cairn_ui.cards.spec import CardSpec, CardsSpec, RunSetSpec
 from cairn_ui.cards.elements import CardElement
 from cairn.sdk.reader import Reader
 
@@ -167,7 +168,10 @@ def test_card_element_spec_is_reusable_in_a_cairn_fence_shaped_doc(two_runs):
     ```cairn fence root) without further translation — no card-spec fork."""
     _reader, run_a, run_b = two_runs
     el = cui.media_compare(run_a["loss"], run_b["loss"])
-    doc = CardsSpec(runs=RunsSpec(ids=[run_a.id]), cards=[CardSpec.model_validate(el.spec)])
+    doc = CardsSpec(
+        runSets=[RunSetSpec.model_validate(run_set_of_ids([run_a.id]))],
+        cards=[CardSpec.model_validate(el.spec)],
+    )
     assert doc.cards[0].series[0].runId == run_a.id
 
 

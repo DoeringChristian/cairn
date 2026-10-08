@@ -65,9 +65,12 @@ _MODEL_DEFS = [
     (cs.CardSpec, "CardSpec"),
     (cs.SeriesRef, "ComparisonSeriesRef"),
     (cs.CardSettingsSpec, "CardSettingsSpec"),
-    (cs.StaticRunSelector, "StaticRunSelector"),
-    (cs.QueryRunSelector, "QueryRunSelector"),
-    (cs.RunsSpec, "RunsSpec"),
+    (cs.FilterChipSpec, "FilterChipSpec"),
+    (cs.FilterExprSpec, "FilterExprSpec"),
+    (cs.FilterGroupSpec, "FilterGroupSpec"),
+    (cs.SortKeySpec, "SortKeySpec"),
+    (cs.RunSetSpec, "RunSetSpec"),
+    (cs.RunViewSpec, "RunViewSpec"),
     (cs.CardsSpec, "CardsSpec"),
     (cs.ReportSpec, "ReportSpec"),
 ]
@@ -103,10 +106,17 @@ def test_model_extra_policy_matches_schema(model, def_name, defs):
         assert extra == "allow", f"{def_name}: expected extra='allow'"
 
 
-def test_query_run_selector_mode_matches_schema(defs):
-    schema_modes = defs["QueryRunSelector"]["properties"]["mode"]["enum"]
-    field = cs.QueryRunSelector.model_fields["mode"]
-    assert list(_literal_values(field.annotation)) == schema_modes
+def test_filter_operators_match_schema(defs):
+    assert list(_literal_values(cs.FilterOperator)) == defs["FilterOperator"]["enum"]
+
+
+def test_group_by_variants_match_schema(defs):
+    variants = defs["GroupBySpec"]["anyOf"]
+    models = [cs.GroupBySourceSpec, cs.GroupByParamSpec, cs.GroupByExprSpec]
+    assert [set(v["properties"]) for v in variants] == [set(m.model_fields) for m in models]
+    assert list(_literal_values(cs.GroupBySourceSpec.model_fields["source"].annotation)) == (
+        variants[0]["properties"]["source"]["enum"]
+    )
 
 
 def test_x_is_an_expression_string(defs):
@@ -119,11 +129,20 @@ def test_x_is_an_expression_string(defs):
 def test_sample_spec_round_trips_and_is_schema_shaped(defs):
     spec = cs.CardsSpec(
         id="block_1",
-        runs=cs.RunsSpec(
-            selector=cs.QueryRunSelector(
-                kind="query", mode="newest-per-name", namePattern="ablate-*", n=5
-            )
-        ),
+        runSets=[cs.RunSetSpec(
+            name="Ablations",
+            filter=cs.FilterGroupSpec(kind="group", op="and", children=[
+                cs.FilterChipSpec(kind="chip", field="display_name", op="startswith", arg="ablate-"),
+                cs.FilterGroupSpec(kind="group", op="or", children=[
+                    cs.FilterExprSpec(kind="expr", expr="min(val.loss) < 0.5"),
+                ]),
+            ]),
+            groupBy=[cs.GroupBySourceSpec(source="group"), cs.GroupByParamSpec(source="param", key="lr")],
+            latestOnly=True,
+            sort=[cs.SortKeySpec(column="created_at", direction="desc")],
+            eyes={"r:run_a": False},
+        )],
+        view=cs.RunViewSpec(pinned=["run_a"]),
         title="Ablation study",
         cards=[
             cs.CardSpec(
