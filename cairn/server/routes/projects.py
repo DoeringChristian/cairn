@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from .. import auth
+from .. import auth, run_groups
 from ._common import get_db, slugify, utc_now
 
 router = APIRouter(prefix="/api", tags=["projects"])
@@ -66,3 +66,26 @@ def get_project(project_id: str, request: Request) -> dict[str, Any]:
     if not rows:
         raise HTTPException(status_code=404, detail="project not found")
     return rows[0]
+
+
+def _require_project(db: Any, project_id: str) -> None:
+    if not db.read_columns("SELECT 1 FROM projects WHERE id = ?", [project_id]):
+        raise HTTPException(status_code=404, detail="project not found")
+
+
+@router.get("/projects/{project_id}/groups")
+def list_groups(project_id: str, request: Request) -> dict[str, Any]:
+    """``{groups: [{group, run_count, last_activity}]}``: the project's run
+    groups over its non-archived runs, most recently active first."""
+    db = get_db(request)
+    _require_project(db, project_id)
+    return {"groups": run_groups.list_groups(db, project_id)}
+
+
+@router.get("/projects/{project_id}/groups/{group:path}/graph")
+def group_graph(project_id: str, group: str, request: Request) -> dict[str, Any]:
+    """``{group, runs, edges}``: one group's runs and the lineage among them
+    (shapes: ``run_groups.group_graph``). An unknown group has no runs."""
+    db = get_db(request)
+    _require_project(db, project_id)
+    return run_groups.group_graph(db, project_id, group)
