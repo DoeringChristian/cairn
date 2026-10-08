@@ -183,6 +183,21 @@ def test_log_create_is_numbered_once_under_a_restart_mid_ingest(tmp_path, monkey
     third.close()
 
 
+def test_waiting_logs_are_numbered_in_creation_order(tmp_path):
+    """Logs ingested together are applied in the order their runs were
+    created, not by file name (the random run id): the later run, whose id
+    sorts first, still gets the higher version."""
+    repo = tmp_path / ".cairn"
+    for rid, created in (("9" * 32, "2026-10-08T10:00:00+00:00"), ("1" * 32, "2026-10-08T10:00:01+00:00")):
+        t = LocalTransport(repo)
+        t.create_run({"project": "p", "run_id": rid, "name": "train", "created_at": created})
+        t.close()
+    ing = _Ingester(repo)
+    ing.ingest()
+    assert ing.versions() == {"9" * 32: 1, "1" * 32: 2}
+    ing.close()
+
+
 def test_sdk_run_version_on_a_local_repo(tmp_path):
     repo = tmp_path / ".cairn"
     a = cairn.Run("p", name="train", repo=repo, **QUIET)

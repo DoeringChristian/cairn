@@ -111,6 +111,23 @@ def _first_op(path: Path) -> str | None:
     return record.get("op") if record else ""
 
 
+def _creation_key(path: Path) -> tuple[str, str]:
+    """Sort key putting run logs in the order their runs were created (the
+    ``created_at`` of a first ``create_run``/``fork_run`` record), so runs
+    waiting together get their series versions in start order rather than
+    run-id order. Logs without one (attached processes, incomplete first
+    lines, gone files) sort after, by name."""
+    try:
+        with open(path, "rb") as fh:
+            line = fh.readline()
+    except FileNotFoundError:
+        return ("~", path.name)
+    record = _safe_json(line.decode("utf-8", errors="replace")) if line.endswith(b"\n") else None
+    payload = (record or {}).get("payload") or {}
+    created = payload.get("created_at") if (record or {}).get("op") in ("create_run", "fork_run") else None
+    return (created if isinstance(created, str) else "~", path.name)
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -503,7 +520,7 @@ def ingest_all(data_dir: DataDir, db: Database, blobs: BlobStore) -> int:
         _cleanup_legacy(data_dir)
         total = 0
         present = set()
-        for path in sorted(directory.glob(f"*{LOG_SUFFIX}")):
+        for path in sorted(directory.glob(f"*{LOG_SUFFIX}"), key=_creation_key):
             present.add(path.name)
             try:
                 total += ingest_log(db, data_dir, blobs, path)
