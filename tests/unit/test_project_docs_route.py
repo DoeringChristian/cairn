@@ -241,21 +241,28 @@ def test_project_workspace_endpoint_is_gone(client):
 
 def test_comparison_crud_and_rev(client):
     pid = _make_project(client)
-    payload = {"sections": [], "runs": {"ids": ["r1", "r2"]}}
+    payload = {"selection": {"entries": [
+        {"kind": "run", "id": "r1"},
+        {"kind": "group", "group": "exp-1", "latest": True},
+        {"kind": "group", "group": "exp-2", "latest": False, "runs": ["r2", "r3"]},
+    ]}, "view": None}
     r = client.post(f"/api/projects/{pid}/comparisons", json={"name": "c", "payload": payload})
     assert r.status_code == 200
     cid = r.json()["id"]
     assert r.json()["rev"] == 1
 
     listed = client.get(f"/api/projects/{pid}/comparisons").json()["comparisons"]
-    assert [(c["id"], c["name"], c["run_count"], c["rev"]) for c in listed] == [(cid, "c", 2, 1)]
+    assert [(c["id"], c["name"], c["entry_count"], c["rev"]) for c in listed] == [(cid, "c", 3, 1)]
+    assert "run_count" not in listed[0]
 
     got = client.get(f"/api/projects/{pid}/comparisons/{cid}").json()
     assert got["rev"] == 1 and got["payload"] == payload
 
     r = client.put(f"/api/projects/{pid}/comparisons/{cid}",
-                   json={"base_rev": 1, "payload": {"runs": {"ids": ["r1"]}}})
+                   json={"base_rev": 1, "payload": {"selection": {"entries": []}, "view": None}})
     assert r.status_code == 200 and r.json()["rev"] == 2
+    listed = client.get(f"/api/projects/{pid}/comparisons").json()["comparisons"]
+    assert listed[0]["entry_count"] == 0
 
     r = client.patch(f"/api/projects/{pid}/comparisons/{cid}", json={"name": "renamed"})
     assert r.status_code == 200

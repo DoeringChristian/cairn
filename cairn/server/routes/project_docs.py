@@ -11,11 +11,14 @@ document so the client can rebase and retry.
   stored, the list holds a virtual "Default" (``rev`` 0, null payload) under
   a fixed id, which the first write to it (or any other view write) stores,
   so reading never writes. The last view cannot be deleted.
-* A **comparison** is a workspace document with a run set (the payload's
-  ``runs``); ``name`` is its name. Created by POST (usually with a copy of a
-  view's layout), then written like a view.
+* A **comparison** is a saved selection plus the view it is shown in: its
+  payload is ``{selection: {entries: [...]}, view: <view doc id> | null}``,
+  an entry being ``{kind: "run", id}`` or ``{kind: "group", group, latest:
+  true}`` or ``{kind: "group", group, latest: false, runs: [ids]}``;
+  ``name`` is its name. Created by POST, then written like a view.
 
-The server does not interpret payloads beyond counting a comparison's runs.
+The server does not interpret payloads beyond counting a comparison's
+selection entries (``entry_count`` in the list).
 """
 
 from __future__ import annotations
@@ -113,10 +116,12 @@ _DOC_COLUMNS = "id, project_id, name, rev, created_at, updated_at, payload"
 # ── Comparisons ───────────────────────────────────────────────────────────
 
 
-def _run_count(payload: dict[str, Any]) -> int:
-    runs = payload.get("runs") if isinstance(payload, dict) else None
-    ids = runs.get("ids") if isinstance(runs, dict) else None
-    return len(ids) if isinstance(ids, list) else 0
+def _entry_count(payload: dict[str, Any]) -> int:
+    """The number of entries in a comparison's selection
+    (``payload.selection.entries``: runs and groups)."""
+    selection = payload.get("selection") if isinstance(payload, dict) else None
+    entries = selection.get("entries") if isinstance(selection, dict) else None
+    return len(entries) if isinstance(entries, list) else 0
 
 
 def _get_comparison_row(db: Database, project_id: str, comparison_id: str) -> dict[str, Any]:
@@ -147,7 +152,7 @@ def list_comparisons(project_id: str, request: Request) -> dict[str, Any]:
                 "rev": r["rev"],
                 "created_at": r["created_at"],
                 "updated_at": r["updated_at"],
-                "run_count": _run_count(_parse(r["payload"])),
+                "entry_count": _entry_count(_parse(r["payload"])),
             }
             for r in rows
         ]
