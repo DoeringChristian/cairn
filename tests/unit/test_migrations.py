@@ -76,19 +76,22 @@ def _old_project_docs(conn, kinds="'workspace','view'"):
 
 
 def test_old_comparison_tables_dropped_and_project_docs_rebuilt(conn):
-    """Comparisons became project_docs rows: old tables go, comparisons stay."""
+    """Saved comparisons are gone: old tables and comparison rows go, views stay."""
     conn.execute("CREATE TABLE comparisons (id TEXT PRIMARY KEY, payload TEXT)")
     conn.execute("CREATE TABLE comparison_templates (id TEXT PRIMARY KEY, payload TEXT)")
-    _old_project_docs(conn, "'workspace','comparison','view'")
+    _old_project_docs(conn, "'comparison','view'")
     conn.execute("INSERT INTO projects VALUES ('p', 'p', 't', NULL, NULL)")
     conn.execute("INSERT INTO project_docs VALUES ('c1', 'p', 'comparison', 'c', 4, 't', 't', '{\"runs\": {}}')")
+    conn.execute("INSERT INTO project_docs VALUES ('v1', 'p', 'view', 'Default', 3, 't', 't', '{\"a\": 1}')")
     apply_migrations(conn)
     tables = _tables(conn)
     assert "comparisons" not in tables
     assert "comparison_templates" not in tables
     assert conn.execute("SELECT id, kind, name, rev, payload FROM project_docs").fetchall() == [
-        ("c1", "comparison", "c", 4, '{"runs": {}}'),
+        ("v1", "view", "Default", 3, '{"a": 1}'),
     ]
+    sql = conn.execute("SELECT sql FROM sqlite_master WHERE name = 'project_docs'").fetchone()[0]
+    assert "'comparison'" not in sql
     apply_migrations(conn)  # idempotent
     assert len(conn.execute("SELECT * FROM project_docs").fetchall()) == 1
 

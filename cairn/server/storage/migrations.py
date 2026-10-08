@@ -254,17 +254,16 @@ SCHEMA_SQL: list[str] = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_report_shares_report ON report_shares(report_id)",
-    # A project's shared UI documents: its workspace views (named layouts;
-    # the run page shows the project's current one, ``project_view_state``)
-    # and its comparisons (each a saved run/group selection and its view; ``name``
-    # is the comparison's name).
+    # A project's shared UI documents: its workspace views (named layouts
+    # plus the workspace page's run state; the run page and the workspace
+    # show the project's current one, ``project_view_state``).
     # ``rev`` counts writes so a client can PUT against the revision it last
     # saw and be told when another tab or user wrote in between.
     """
     CREATE TABLE IF NOT EXISTS project_docs (
         id            TEXT PRIMARY KEY,
         project_id    TEXT NOT NULL REFERENCES projects(id),
-        kind          TEXT NOT NULL CHECK(kind IN ('comparison','view')),
+        kind          TEXT NOT NULL CHECK(kind IN ('view')),
         name          TEXT NOT NULL DEFAULT '',
         rev           INTEGER NOT NULL,
         created_at    TEXT NOT NULL,
@@ -547,20 +546,22 @@ def _add_column_if_missing(
 
 
 def _migrate_project_docs(con: sqlite3.Connection) -> None:
-    """Bring ``project_docs`` to its current kinds: comparisons and views.
+    """Bring ``project_docs`` to its current kind: views.
 
     Destructive by design (user rulings, no conversion kept afterwards):
 
     * The old ``comparisons`` / ``comparison_templates`` tables held card
       lists that no longer exist in the UI, so they are dropped.
+    * Saved comparisons (kind 'comparison') are gone: the project workspace
+      replaced them; their rows are dropped.
     * The run page's one project workspace (kind 'workspace') became the
       first of the project's workspace views, named "Default", and the
       project's current view. Saved views (kind 'view', payload
       ``{"layout": …}``) became views holding that layout. A project with
       saved views but no workspace gets an empty "Default" first.
 
-    A table whose CHECK still allows 'workspace' (or predates 'comparison')
-    is rebuilt with its rows converted.
+    A table whose CHECK still allows 'workspace' or 'comparison' is rebuilt
+    with its rows converted.
     """
     con.execute("DROP INDEX IF EXISTS idx_comparisons_project")
     con.execute("DROP TABLE IF EXISTS comparisons")
@@ -570,7 +571,8 @@ def _migrate_project_docs(con: sqlite3.Connection) -> None:
     row = con.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='project_docs'"
     ).fetchone()
-    if row is None or "'workspace'" not in (row[0] or ""):
+    sql = (row[0] or "") if row else ""
+    if "'workspace'" not in sql and "'comparison'" not in sql:
         return
     con.execute("ALTER TABLE project_docs RENAME TO project_docs_old")
     con.execute("DROP INDEX IF EXISTS idx_project_docs_project")
@@ -584,11 +586,15 @@ def _migrate_project_docs(con: sqlite3.Connection) -> None:
         for r in con.execute(f"SELECT {cols} FROM project_docs_old ORDER BY created_at, rowid")
     ]
     insert = f"INSERT INTO project_docs ({cols}) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-    for d in old:
-        if d["kind"] == "comparison":
-            con.execute(insert, [d[c] for c in names])
-    views = [d for d in old if d["kind"] == "view"]
     workspaces = {d["project_id"]: d for d in old if d["kind"] == "workspace"}
+    if "'workspace'" not in sql:
+        # Only the comparisons go: views are already in their current shape.
+        for d in old:
+            if d["kind"] == "view":
+                con.execute(insert, [d[c] for c in names])
+        con.execute("DROP TABLE project_docs_old")
+        return
+    views = [d for d in old if d["kind"] == "view"]
     for pid in dict.fromkeys([*workspaces, *(v["project_id"] for v in views)]):
         ws = workspaces.get(pid)
         stamps = [d["created_at"] for d in views if d["project_id"] == pid]

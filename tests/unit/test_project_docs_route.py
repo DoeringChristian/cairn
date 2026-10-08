@@ -1,4 +1,4 @@
-"""Route-layer tests for a project's workspace views and comparisons.
+"""Route-layer tests for a project's workspace views.
 
 Views are revisioned layout documents, oldest first; one is the project's
 current view (the run page's). A project always has one: until a view is
@@ -235,56 +235,7 @@ def test_project_workspace_endpoint_is_gone(client):
     assert client.get(f"/api/projects/{pid}/workspace").status_code == 404
 
 
-# ── Comparisons ────────────────────────────────────────────────────────────
-
-
-
-def test_comparison_crud_and_rev(client):
+def test_comparison_routes_are_gone(client):
     pid = _make_project(client)
-    payload = {"selection": {"entries": [
-        {"kind": "run", "id": "r1"},
-        {"kind": "group", "group": "exp-1", "latest": True},
-        {"kind": "group", "group": "exp-2", "latest": False, "runs": ["r2", "r3"]},
-    ]}, "view": None}
-    r = client.post(f"/api/projects/{pid}/comparisons", json={"name": "c", "payload": payload})
-    assert r.status_code == 200
-    cid = r.json()["id"]
-    assert r.json()["rev"] == 1
-
-    listed = client.get(f"/api/projects/{pid}/comparisons").json()["comparisons"]
-    assert [(c["id"], c["name"], c["entry_count"], c["rev"]) for c in listed] == [(cid, "c", 3, 1)]
-    assert "run_count" not in listed[0]
-
-    got = client.get(f"/api/projects/{pid}/comparisons/{cid}").json()
-    assert got["rev"] == 1 and got["payload"] == payload
-
-    r = client.put(f"/api/projects/{pid}/comparisons/{cid}",
-                   json={"base_rev": 1, "payload": {"selection": {"entries": []}, "view": None}})
-    assert r.status_code == 200 and r.json()["rev"] == 2
-    listed = client.get(f"/api/projects/{pid}/comparisons").json()["comparisons"]
-    assert listed[0]["entry_count"] == 0
-
-    r = client.patch(f"/api/projects/{pid}/comparisons/{cid}", json={"name": "renamed"})
-    assert r.status_code == 200
-    got = client.get(f"/api/projects/{pid}/comparisons/{cid}").json()
-    assert got["name"] == "renamed" and got["rev"] == 2
-
-    assert client.delete(f"/api/projects/{pid}/comparisons/{cid}").json() == {"deleted": cid}
-    assert client.get(f"/api/projects/{pid}/comparisons/{cid}").status_code == 404
-    assert client.delete(f"/api/projects/{pid}/comparisons/{cid}").status_code == 404
-
-
-def test_comparison_stale_rev_409_carries_server_doc(client):
-    pid = _make_project(client)
-    cid = client.post(f"/api/projects/{pid}/comparisons", json={"name": "c", "payload": {"a": 1}}).json()["id"]
-    client.put(f"/api/projects/{pid}/comparisons/{cid}", json={"base_rev": 1, "payload": {"a": 2}})
-    r = client.put(f"/api/projects/{pid}/comparisons/{cid}", json={"base_rev": 1, "payload": {"a": 3}})
-    assert r.status_code == 409
-    assert r.json()["rev"] == 2 and r.json()["payload"] == {"a": 2}
-
-
-def test_comparisons_are_not_views(client):
-    pid = _make_project(client)
-    client.post(f"/api/projects/{pid}/comparisons", json={"name": "c", "payload": {}})
-    assert [v["rev"] for v in client.get(f"/api/projects/{pid}/views").json()["views"]] == [0]
-    assert client.put(f"/api/projects/{pid}/comparisons/nope", json={"base_rev": 1, "payload": {}}).status_code == 404
+    assert client.get(f"/api/projects/{pid}/comparisons").status_code == 404
+    assert client.post(f"/api/projects/{pid}/comparisons", json={"name": "c", "payload": {}}).status_code in (404, 405)

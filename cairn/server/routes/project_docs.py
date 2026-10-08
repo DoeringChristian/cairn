@@ -1,4 +1,4 @@
-"""A project's shared UI documents: its workspace views and its comparisons.
+"""A project's shared UI documents: its workspace views.
 
 All live in ``project_docs`` and carry a ``rev`` that every write bumps. A
 write names the revision it was based on (``base_rev``); when another tab or
@@ -11,14 +11,10 @@ document so the client can rebase and retry.
   stored, the list holds a virtual "Default" (``rev`` 0, null payload) under
   a fixed id, which the first write to it (or any other view write) stores,
   so reading never writes. The last view cannot be deleted.
-* A **comparison** is a saved selection plus the view it is shown in: its
-  payload is ``{selection: {entries: [...]}, view: <view doc id> | null}``,
-  an entry being ``{kind: "run", id}`` or ``{kind: "group", group, latest:
-  true}`` or ``{kind: "group", group, latest: false, runs: [ids]}``;
-  ``name`` is its name. Created by POST, then written like a view.
+  A view's payload is the UI's workspace document: its layout and the
+  workspace page's run state (search, grouping, eyes, version picks).
 
-The server does not interpret payloads beyond counting a comparison's
-selection entries (``entry_count`` in the list).
+The server does not interpret payloads.
 """
 
 from __future__ import annotations
@@ -44,15 +40,6 @@ _write = Depends(auth.require_role("write"))
 class WorkspacePut(BaseModel):
     base_rev: int
     payload: dict[str, Any]
-
-
-class ComparisonCreate(BaseModel):
-    name: str
-    payload: dict[str, Any]
-
-
-class ComparisonRename(BaseModel):
-    name: str
 
 
 class ViewCreate(BaseModel):
@@ -111,129 +98,6 @@ def _rows(con: sqlite3.Connection, sql: str, params: list[Any]) -> list[dict[str
 
 
 _DOC_COLUMNS = "id, project_id, name, rev, created_at, updated_at, payload"
-
-
-# ── Comparisons ───────────────────────────────────────────────────────────
-
-
-def _entry_count(payload: dict[str, Any]) -> int:
-    """The number of entries in a comparison's selection
-    (``payload.selection.entries``: runs and groups)."""
-    selection = payload.get("selection") if isinstance(payload, dict) else None
-    entries = selection.get("entries") if isinstance(selection, dict) else None
-    return len(entries) if isinstance(entries, list) else 0
-
-
-def _get_comparison_row(db: Database, project_id: str, comparison_id: str) -> dict[str, Any]:
-    rows = db.read_columns(
-        f"SELECT {_DOC_COLUMNS} FROM project_docs "
-        "WHERE id = ? AND project_id = ? AND kind = 'comparison'",
-        [comparison_id, project_id],
-    )
-    if not rows:
-        raise HTTPException(status_code=404, detail="comparison not found")
-    return rows[0]
-
-
-@router.get("/projects/{project_id}/comparisons")
-def list_comparisons(project_id: str, request: Request) -> dict[str, Any]:
-    db = get_db(request)
-    _require_project(db, project_id)
-    rows = db.read_columns(
-        f"SELECT {_DOC_COLUMNS} FROM project_docs "
-        "WHERE project_id = ? AND kind = 'comparison' ORDER BY created_at DESC",
-        [project_id],
-    )
-    return {
-        "comparisons": [
-            {
-                "id": r["id"],
-                "name": r["name"],
-                "rev": r["rev"],
-                "created_at": r["created_at"],
-                "updated_at": r["updated_at"],
-                "entry_count": _entry_count(_parse(r["payload"])),
-            }
-            for r in rows
-        ]
-    }
-
-
-@router.get("/projects/{project_id}/comparisons/{comparison_id}")
-def get_comparison(project_id: str, comparison_id: str, request: Request) -> dict[str, Any]:
-    return _doc(_get_comparison_row(get_db(request), project_id, comparison_id))
-
-
-@router.post("/projects/{project_id}/comparisons", dependencies=[_write])
-def create_comparison(project_id: str, body: ComparisonCreate, request: Request) -> dict[str, Any]:
-    db = get_db(request)
-    _require_project(db, project_id)
-    cid = secrets.token_hex(8)
-    now = utc_now().isoformat()
-    db.write(
-        """INSERT INTO project_docs
-               (id, project_id, kind, name, rev, created_at, updated_at, payload)
-           VALUES (?, ?, 'comparison', ?, 1, ?, ?, ?)""",
-        [cid, project_id, body.name, now, now, json.dumps(body.payload)],
-    )
-    return {"id": cid, "name": body.name, "rev": 1, "created_at": now}
-
-
-@router.put(
-    "/projects/{project_id}/comparisons/{comparison_id}", dependencies=[_write], response_model=None,
-)
-def put_comparison(
-    project_id: str, comparison_id: str, body: WorkspacePut, request: Request,
-) -> dict[str, Any] | JSONResponse:
-    """Write a comparison's document against ``base_rev`` (409 + server doc when stale)."""
-    db = get_db(request)
-    now = utc_now().isoformat()
-    with db.transaction(immediate=True) as con:
-        cur = con.execute(
-            f"SELECT {_DOC_COLUMNS} FROM project_docs "
-            "WHERE id = ? AND project_id = ? AND kind = 'comparison'",
-            [comparison_id, project_id],
-        )
-        cols = [d[0] for d in cur.description]
-        found = cur.fetchone()
-        if found is None:
-            raise HTTPException(status_code=404, detail="comparison not found")
-        row = dict(zip(cols, found))
-        if body.base_rev != row["rev"]:
-            return _conflict(row)
-        rev = row["rev"] + 1
-        con.execute(
-            "UPDATE project_docs SET rev = ?, updated_at = ?, payload = ? WHERE id = ?",
-            [rev, now, json.dumps(body.payload), comparison_id],
-        )
-    return {"rev": rev, "updated_at": now}
-
-
-@router.patch("/projects/{project_id}/comparisons/{comparison_id}", dependencies=[_write])
-def rename_comparison(
-    project_id: str, comparison_id: str, body: ComparisonRename, request: Request,
-) -> dict[str, Any]:
-    """Rename; the document (and its rev) is untouched."""
-    db = get_db(request)
-    _get_comparison_row(db, project_id, comparison_id)
-    db.write(
-        "UPDATE project_docs SET name = ? WHERE id = ? AND project_id = ? AND kind = 'comparison'",
-        [body.name, comparison_id, project_id],
-    )
-    return {"id": comparison_id, "name": body.name}
-
-
-@router.delete("/projects/{project_id}/comparisons/{comparison_id}", dependencies=[_write])
-def delete_comparison(project_id: str, comparison_id: str, request: Request) -> dict[str, Any]:
-    db = get_db(request)
-    _get_comparison_row(db, project_id, comparison_id)
-    db.write(
-        "DELETE FROM project_docs WHERE id = ? AND project_id = ? AND kind = 'comparison'",
-        [comparison_id, project_id],
-    )
-    return {"deleted": comparison_id}
-
-
 
 
 # ── Views ─────────────────────────────────────────────────────────────────
