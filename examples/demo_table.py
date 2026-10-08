@@ -1,6 +1,6 @@
 """Demo: Table cards.
 
-Logs two runs so the multi-run comparison panes can be exercised. Each run
+Logs two runs so the project workspace's one-pane-per-run cards can be exercised. Each run
 logs:
 
   * ``predictions`` — a per-epoch table of 1,000 rows with mixed column types
@@ -11,8 +11,8 @@ logs:
 Exercise in the UI: sort any column (click header — numeric columns sort
 numerically), type in the filter box, page through (100 rows/page), move the
 step slider, download the current table as CSV, toggle column visibility and
-rows-per-page in settings, and open a comparison of both runs to see one table
-pane per run.
+rows-per-page in settings, and show both runs in the project workspace to see
+one table pane per run.
 
 Usage::
 
@@ -102,8 +102,8 @@ def main() -> None:
 
     print(
         "\nDone. Open the UI, add a 'Tables' card for `predictions`, and try "
-        "sort/filter/pagination/CSV. Create a comparison of run-a + run-b to "
-        "see one table pane per run."
+        "sort/filter/pagination/CSV. Show run-a + run-b in the project workspace "
+        "to see one table pane per run."
     )
 
 

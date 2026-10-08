@@ -230,9 +230,10 @@ def main() -> None:
     run.track(cairn.Pickle(config_dict), name="run_config", step=0)
 
     run.add_note(
-        "Demo finished. Check every tab: Overview (params/git/env), "
-        "Metrics (loss curves, grad_norm, accuracy), Media (sample images, "
-        "audio, figures, histogram), Logs (stdout), Source, Environment."
+        "Demo finished. Check every tab: Workspace (loss curves, grad_norm, "
+        "accuracy, sample images, audio, figures, histogram), Overview "
+        "(config, summary, git, command), System, Logs (stdout), Files "
+        "(source, environment), Artifacts."
     )
     print("\nAll done. Run ID:", run.id)
     print("Open:", run.url)

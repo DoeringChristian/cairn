@@ -13,8 +13,8 @@ exercising the point-cloud card's "Color by" modes:
   ``theta`` differs) → colour by the ``signal`` property, side by side
   across runs with synced cameras
 
-Three runs are logged so you can build a multi-run comparison (one pane per
-run).
+Three runs are logged so the project workspace shows them side by side (one
+pane per run).
 
 Usage::
 
@@ -122,8 +122,8 @@ def main() -> None:
     log_run("run-b", seed=7, spin=-1.5)
     log_run("run-c", seed=42, spin=2.2)
     print(
-        "\nAll done. Open the UI, add a Point Clouds card (sphere_rgb / "
-        "torus_category / helix_height), and build an N-run comparison."
+        "\nAll done. Open the project workspace and add a Point Clouds card "
+        "(sphere_rgb / torus_category / helix_height): one pane per run."
     )
 
 

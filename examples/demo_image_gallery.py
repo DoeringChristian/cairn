@@ -13,8 +13,8 @@ records:
 * ``pairs`` — for 3 samples, input and prediction as a 2-image gallery each
   step, to show small galleries.
 
-Two runs with different learning rates make the compare view useful: each
-run's gallery sits in its own pane.
+Two runs with different learning rates make the project workspace useful:
+each run's gallery sits in its own pane.
 
 Usage::
 
@@ -25,7 +25,7 @@ Usage::
     # browse http://localhost:4317/
     #   - A run → Workspace: the ``samples`` card shows 8 images per
     #     step; drag the step slider to watch them denoise.
-    #   - Select both runs → Compare: one gallery per run.
+    #   - The project workspace (both runs shown): one gallery per run.
 """
 
 from __future__ import annotations

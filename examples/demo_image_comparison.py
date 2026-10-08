@@ -2,8 +2,8 @@
 
 Creates a baseline run with reference images and several variant runs that
 introduce controlled distortions. Every run logs its distorted ``output`` and
-the clean ``reference`` at each step. Create a comparison of all runs and, on
-the ``output`` image card, try the panel modes (gallery: one pane per run;
+the clean ``reference`` at each step. Show all runs in the project workspace
+and, on the ``output`` image card, try the panel modes (gallery: one pane per run;
 grid: runs × steps; compare: 2–4 slots side by side) and set ``reference``
 as the card's Reference tag to get an A/B split slider in each pane.
 
@@ -229,7 +229,7 @@ def main() -> None:
         log_run(v["name"], v["tags"], v["params"], v["fn"])
         time.sleep(0.05)
 
-    print(f"\nAll done! Open the UI and create a comparison with these {1 + len(VARIANTS)} runs.")
+    print(f"\nAll done! Open the project workspace and show all {1 + len(VARIANTS)} runs.")
     print("Try: panel modes (gallery, grid, compare) and Reference tag = 'reference' for the A/B split")
 
 

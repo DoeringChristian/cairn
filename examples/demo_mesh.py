@@ -21,8 +21,8 @@ steps, exercising the mesh card:
 source below (not relying on winding normalization to mask a wrong
 generator).
 
-Three runs are logged so you can build a multi-run comparison (one pane per
-run).
+Three runs are logged so the project workspace shows them side by side (one
+pane per run).
 
 Usage::
 
@@ -250,8 +250,8 @@ def main() -> None:
     log_run("run-c", seed=42, phase=2.2)
     print(
         "\nAll done. Open the UI, add a 3D Mesh card (blob_sphere / "
-        "rainbow_torus / faceted_cube / mixed_winding_sphere), and build an "
-        "N-run comparison."
+        "rainbow_torus / faceted_cube / mixed_winding_sphere) in the project "
+        "workspace and show all three runs."
     )
 
 

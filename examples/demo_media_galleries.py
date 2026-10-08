@@ -16,7 +16,7 @@ here each run logs, per step:
 
 Every item has its own caption (``cairn.X(..., caption=...)``) and every
 gallery a point caption (``run.track(..., caption=...)``). Two runs make the
-compare view useful: each run's gallery sits in its own pane.
+project workspace useful: each run's gallery sits in its own pane.
 
 Usage::
 
@@ -27,7 +27,7 @@ Usage::
     # browse http://localhost:4317/
     #   - A run → Workspace: each card shows its items per step; drag
     #     the step slider to watch them change together.
-    #   - Select both runs → Compare: one gallery per run.
+    #   - The project workspace (both runs shown): one gallery per run.
 
 Needs the ``media`` extra (Plotly, matplotlib, imageio-ffmpeg).
 """

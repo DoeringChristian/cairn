@@ -14,7 +14,7 @@ Logs three ``boxes3d`` sequences per run, exercising the boxes card:
   synced), coloured by ``value``, so the differing values are easy to spot.
 
 A plain scalar metric is logged too (``loss``), and two runs (`run-a`/
-`run-b`) are written so you can build a 2-run comparison.
+`run-b`) are written so the project workspace shows them side by side.
 
 Usage::
 
@@ -209,8 +209,8 @@ def main() -> None:
     log_run("run-a", seed=0, orbit_radius=1.0)
     log_run("run-b", seed=7, orbit_radius=1.5)
     print(
-        "\nAll done. Open the UI, add an Octree / BVH card (octree / bvh), "
-        "and build a 2-run comparison."
+        "\nAll done. Open the project workspace and add an Octree / BVH card "
+        "(octree / bvh): one pane per run."
     )
 
 

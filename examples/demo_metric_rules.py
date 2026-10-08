@@ -1,17 +1,18 @@
 """Demo for metric rules — ``run.track(..., summary=..., x=...)``: which value
 a run reports for a metric, and which series a metric is plotted against.
 
-Every metric has one *final value*: the number the runs table, the run
-overview, the comparison table and query filters (``final_metric``) show.
-It is resolved, per run, in this order:
+Every metric has one *final value*: the number the runs table, the
+Summary section's Scalars card and ``Reader`` ``Run.final`` show. It is resolved, per run, in this order:
 
 1. an explicit ``run.summary(name=...)`` key;
-2. the metric's rule, ``run.track(value, name, step, summary="min"|"max"|"mean"|"last")``;
+2. the metric's rule in the project: a project override (set from the runs
+   table's column menu), else the ``summary=`` of the newest run that logged
+   one with ``run.track(value, name, step, summary="min"|"max"|"mean"|"last")``;
 3. otherwise the metric's last logged point.
 
-A ``"min"`` rule also tells the comparison table that lower is better, so
-the lowest value is green. Rules are applied when values are read, so they
-never change the logged data.
+A ``"min"`` rule also gives the metric its goal (lower is better; ``"max"``:
+higher), so the Scalars card colours the best run green and the worst red.
+Rules are applied when values are read, so they never change the logged data.
 
 ``run.track(..., x="epoch")`` makes charts of the metric start on the
 ``epoch`` series as their x-axis (joined on step). ``x`` is always a full
@@ -29,12 +30,11 @@ metric's rule as it is.
 
     # browse http://localhost:4316/
     #   - Runs table: loss / val.loss / val.acc / model.weight_norm columns
-    #     show min / min / max / min.
-    #   - A run's Overview → Metrics: the "From" column says min, max, last
-    #     or summary for each metric.
-    #   - Select all three runs → Compare → Overview: val.loss and loss are
-    #     green where lowest, val.acc where highest.
-    #   - Workspace tab: val.* charts start on the "epoch" x-axis.
+    #     show min / min / max / min; a column's ▾ menu shows the logged rule
+    #     and sets the project's Summary and Goal for the metric.
+    #   - The project workspace (all three runs shown) → Summary → Scalars:
+    #     val.loss and loss are green where lowest, val.acc where highest.
+    #   - A run's Workspace tab: val.* charts start on the "epoch" x-axis.
 """
 
 from __future__ import annotations

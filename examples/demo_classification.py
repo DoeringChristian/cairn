@@ -131,8 +131,8 @@ def main() -> None:
         )
 
     print(
-        "\nAll runs done. Create a comparison in project 'classification-demo' "
-        "across fake-3class-classifier-a and fake-3class-classifier-b."
+        "\nAll runs done. Open the workspace of project 'classification-demo' "
+        "to see fake-3class-classifier-a and fake-3class-classifier-b side by side."
     )
 
 

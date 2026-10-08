@@ -12,7 +12,8 @@ placeholder pane per run with the grid's shape, dtype and value range, a step
 slider, and a download link for that step's ``.npz``. Open the downloaded
 file with NumPy (or your own volume renderer) to inspect it.
 
-Two runs are logged so you can build a 2-run comparison (one pane per run).
+Two runs are logged so the project workspace shows them side by side (one
+pane per run).
 
 Usage::
 
@@ -94,8 +95,8 @@ def main() -> None:
     log_run("run-a", seed=0, direction=np.array([1.0, 0.5, -0.6], dtype=np.float32))
     log_run("run-b", seed=7, direction=np.array([-0.8, 1.0, 0.4], dtype=np.float32))
     print(
-        "\nAll done. Open the UI, add a Volumes card (blob / shell_anisotropic), "
-        "and build a 2-run comparison."
+        "\nAll done. Open the project workspace and add a Volumes card "
+        "(blob / shell_anisotropic): one pane per run."
     )
 
 

@@ -1,8 +1,8 @@
-"""Demo: summary cards (bar chart, scalar tile, comparison overview).
+"""Demo: summary cards (bar chart, scalar tile, the Summary section).
 
 Seeds four runs with distinct final scalar metrics + differing params so the
-BarChartCard, ScalarTileCard, and the Comparison Overview metrics/diff table
-all have deterministic, self-explanatory data to render.
+bar chart and scalar tile cards and the workspace's Summary section (Scalars
+and Config cards) all have deterministic, self-explanatory data to render.
 
 **Local mode**::
 
@@ -11,12 +11,13 @@ all have deterministic, self-explanatory data to render.
     uv run cairn ui --repo /tmp/cairn-summary/.cairn --port 4315
 
     # browse http://localhost:4315/
-    # Open a project → Compare → create a comparison, add all four runs, then:
-    #   - Add card → Bar Chart → settings: Value = last(final.accuracy) (a
+    # Open the project's workspace (all four runs shown), then:
+    #   - Add a Bar Chart card, settings: Value = last(final.accuracy) (a
     #     scalar expression, one number per run) → one bar per run, sorted by
     #     value, descending.
-    #   - Add card → Scalar Tile → Value = last(final.accuracy), Across runs = Best.
-    #   - Overview tab → Metrics table + "Only show differences" toggle.
+    #   - Add a Scalar Tile card: Value = last(final.accuracy), Across runs = Best.
+    #   - Summary section: the Scalars card (one row per run) and the Config
+    #     card with "only diffs".
 
 Each run trains for 40 steps; the four runs deliberately converge to different
 final accuracy / loss so the bars and tiles are visually distinct.

@@ -14,13 +14,14 @@ Usage::
     CAIRN_REPO=/tmp/cairn-demo/.cairn uv run python examples/rd_curve.py
     uv run cairn ui --repo /tmp/cairn-demo/.cairn
 
-Then open the ``rd-curve`` project, create a comparison of all its runs, add
-a **Scatter Plot** card, and set its axes (each takes an expression):
+Then open the ``rd-curve`` project's workspace, show all its runs (the eye
+above the runs sidebar), add a **Scatter Plot** card, and set its axes (each
+takes an expression):
 
 - X axis → ``summary.bpp``
 - Y axis → ``summary.psnr_db``
 
-To colour the points by codec, set the comparison toolbar's **Colour by** to
+To colour the points by codec, set the workspace toolbar's **Colour by** to
 ``config.codec`` (the scatter card's own Colour setting is a numeric colour
 scale, so leave it empty).
 
