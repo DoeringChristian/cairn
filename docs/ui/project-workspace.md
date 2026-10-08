@@ -2,7 +2,7 @@
 
 The project workspace (`/p/<project>/workspace`, **Workspace** in the project navigation) shows many runs together: a **Runs** sidebar picks the runs, and the right side shows the project's current [workspace view](workspace.md#workspace-views) bound to them, with the same toolbar, sections, panels and card editor as the run page.
 
-What the sidebar shows is part of the current view: every change saves into it like a layout edit (and is an undo step), and switching views switches the runs too. The run page ignores it. A [group page](#group-page) has the same workspace over one group's runs.
+What the sidebar shows is part of the current view: every change saves into it like a layout edit (and is an undo step), and switching views switches the runs too. The run page ignores it.
 
 ## Runs sidebar
 
@@ -27,7 +27,7 @@ Sort: [created ▾] [↓]
 
 The sidebar is the [runs table](runs-table.md) with only the Name column, and an eye in place of each checkbox: in the Name cell, before the run's dot or the group's caret, indented with it. The header's eye, left of **Name**, shows or hides every listed run. Its toolbar is the runs table's without **Columns**: **Status**, **Search**, **Filter**, **Group** and **Latest only** work exactly as there. **Sort** picks one of the runs table's sortable keys (`created`, `name`, `status`, `duration`, and the metric and param columns) and **↓ / ↑** flips its direction; it starts on `created ↓` (newest first) and is saved with the rest. Not grouped, a grouped run reads `exp-44 · train v2`, unless every listed run is in the same group. **N of M groups shown** (not grouped: runs) counts the groups with a visible run, or the visible runs. On a phone the sidebar folds behind a **Runs** button.
 
-- **▸ / ▾** folds a group (not saved). The first group and the `(none)` group start open. A run group's name (`group: exp-44`) links to its [group page](#group-page).
+- **▸ / ▾** folds a group (not saved). The first group and the `(none)` group start open. A run group's name (`group: exp-44`) [filters the workspace to it](#filtering-to-a-group).
 - The **header eye** shows every listed run, or hides them all when all are shown; ◐ means some are hidden.
 - A **group's eye** shows or hides every run in it; ◐ means some of them are hidden. The eyes of a group's runs are indented one step per level.
 - A **run's eye** shows or hides that run. A hidden run's dot is hollow.
@@ -45,19 +45,10 @@ The cards get the visible runs.
 
 ## From the runs table
 
-Select runs in the [runs table](runs-table.md) and click **Show in workspace**: the workspace opens with exactly the selected runs visible and nothing else, grouped or not, and its status, search, filter and **Latest only** cleared. Grouped, a group with other runs shows ◐, and its line is the mean over the selected runs only. On a group page's **Runs** tab it opens the group page's workspace.
+Select runs in the [runs table](runs-table.md) and click **Show in workspace**: the workspace opens with exactly the selected runs visible and nothing else, grouped or not, and its status, search, filter and **Latest only** cleared. Grouped, a group with other runs shows ◐, and its line is the mean over the selected runs only.
 
-## Group page
+## Filtering to a group
 
-A run group has its own page, `/p/<project>/g/<group>`:
+Click a run group's name (`group: exp-44`) in the sidebar to show only that group: the [filter](runs-table.md#filters) gains the condition `group = exp-44`, shown as a removable chip next to **Filter (1)**. Remove the chip (×) to bring the other groups back. Clicking another group's name replaces the condition; the filter editor can still build anything. The group's runs hidden by their eyes or by the 10-newest default are shown; other eyes stay as they were.
 
-```
-Projects › selections › exp-44                 group · 5 runs · last run 2h ago
-[Workspace] [Runs]
-```
-
-- **Workspace** is the project workspace over the group's runs: the same sidebar and cards in the project's current view (with the same view switcher). Its run state is the group's own, saved in the current view next to the project workspace's; it starts not grouped (one line per run), and names drop the `exp-44 ·` prefix. As everywhere, the 10 newest runs are visible by default.
-- **Runs** is the [runs table](runs-table.md) over the group's runs, with its bulk actions.
-- The header shows the group's run count (archived runs not counted) and when its newest run started.
-
-The group's name links here from the workspace sidebar's and the runs table's group headers, the run page header (`exp-44 ↗` next to the version) and the lineage panel's **Group** row.
+The group's name in the [runs table](runs-table.md)'s group headers, the run page header (`exp-44 ↗` next to the version) and the lineage panel's **Group** row open the workspace filtered the same way.
