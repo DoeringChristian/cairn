@@ -77,7 +77,7 @@ def train_fn(config: dict) -> None:
         loss = lr * math.exp(-step * decay)
         run.track(loss, name="loss", step=step)
         # Also report to Ray so its dashboard / early stopping can see progress.
-        tune.report(loss=loss, step=step)
+        tune.report({"loss": loss, "step": step})
 
     run.finish()
 
@@ -104,7 +104,7 @@ def main() -> None:
     tuner = tune.Tuner(
         train_fn,
         param_space=param_space,
-        run_config=ray.train.RunConfig(
+        run_config=tune.RunConfig(
             storage_path=str(ray_results),
             name="cairn-ray-sweep",
         ),
