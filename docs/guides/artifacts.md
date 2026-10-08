@@ -282,10 +282,6 @@ lineage graphs; deleting either run removes it. The Reader has `run.uses()` and
 `run.used_by()`; the API has `GET /api/runs/{id}/uses` (`{"uses": [{run_id, role}],
 "used_by": [...]}`).
 
-The runs of one group and the edges among them (through artifacts, or direct) are
-`GET /api/projects/{project}/groups/{group}/graph`; `GET /api/projects/{project}/groups`
-lists the project's groups.
-
 See [Reading data back](reading.md) for the reader.
 
 ## From the command line

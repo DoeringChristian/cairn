@@ -112,7 +112,7 @@ def test_scope_resolves_selectors_against_the_project_pool():
 
 
 def test_run_series_key_is_group_job_type_and_name():
-    from cairn.server.run_groups import run_series_key
+    from cairn.server.run_series import run_series_key
 
     assert run_series_key({"id": "a", "display_name": "train", "group": "exp-44"}) == (
         "exp-44", None, "train")

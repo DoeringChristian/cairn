@@ -66,9 +66,11 @@ imports into project `P`, as `--project` does.
 - Every run takes the next [version](runs.md#versions) of its series (project,
   group, job type, name) in this repo; the version it had in the exported repo is not
   kept.
-- References between runs follow the new ids: a fork's parent, and a run's
-  sweep. A reference to a run or sweep that is neither in the archive nor
-  already in the repo is dropped.
+- References between runs follow the new ids: a fork's parent, a run's
+  sweep, and [run links](artifacts.md#runs-that-use-runs) (`uses=` /
+  `use_run`) in both directions. A reference to a run or sweep that is
+  neither in the archive nor already in the repo is dropped (a run link with
+  it).
 - Registry entries merge by name. A family with the same project and name is
   reused, and a version whose content that family already has is reused.
   Anything else is appended. Existing aliases are never moved.

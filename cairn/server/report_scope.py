@@ -35,7 +35,7 @@ from typing import Any
 import yaml
 
 from .artifact_refs import reachable_hashes
-from .run_groups import run_series_key
+from .run_series import run_series_key
 from .custom_viewers import published_viewers, resolve_viewer_version
 from .viewer_defaults import BUILTIN_TYPES, default_for_subject, list_defaults
 from .storage.blobs import BlobStore

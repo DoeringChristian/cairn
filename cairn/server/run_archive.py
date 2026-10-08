@@ -10,6 +10,8 @@ artifact_registry.json         {families, versions, entries, aliases, inputs}: t
                                versions the runs produced or consumed, their
                                families, entries and aliases, and the runs'
                                input records
+run_links.json                 run_links rows (``use_run``) with either end in
+                               the archive; restored when both ends resolve
 artifacts/{hash}{ext}          blob bytes
 artifacts/{hash}.meta.json     the artifacts row
 {run_id}/run.json              {run}: the runs row, with its config / summary
@@ -160,6 +162,15 @@ def write_archive(
     registry = _registry_rows(db, run_ids)
     write_blobs([v["hash"] for v in registry["versions"]])
     zf.writestr("artifact_registry.json", json.dumps(registry, default=str))
+
+    holes = ",".join("?" * len(run_ids))
+    links = db.read_columns(
+        f"""SELECT * FROM run_links
+             WHERE run_id IN ({holes}) OR used_run_id IN ({holes})
+             ORDER BY created_at, run_id, used_run_id""",
+        [*run_ids, *run_ids],
+    ) if run_ids else []
+    zf.writestr("run_links.json", json.dumps(links, default=str))
 
 
 def _registry_rows(db: Database, run_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
@@ -386,6 +397,15 @@ def restore_archive(
         db, _read_json(zf, "artifact_registry.json", {}), keep_ids=keep_ids,
         remap_run=lambda ref: remap("runs", run_map, ref), project=project,
     )
+
+    # Run links: each end remapped like any run reference; a link with an
+    # end that resolves to nothing is dropped.
+    link_cols = _columns(db, "run_links")
+    for link in _read_json(zf, "run_links.json", []):
+        run_id = remap("runs", run_map, link.get("run_id"))
+        used = remap("runs", run_map, link.get("used_run_id"))
+        if run_id and used and run_id != used:
+            _insert(db, "run_links", link_cols, dict(link, run_id=run_id, used_run_id=used))
 
     # Trials last: their run references resolve against the restored runs.
     trial_cols = _columns(db, "sweep_trials")

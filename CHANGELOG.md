@@ -23,10 +23,8 @@
   `cairn.Run(..., uses=[...])` record that a run used another run without an
   artifact between them (`run_links` table; local logs and
   `POST/GET /api/runs/{id}/uses`). Lineage graphs show it as a `used` edge;
-  the Reader has `Run.uses()` / `Run.used_by()`.
-- **Group graph.** `GET /api/projects/{id}/groups/{group}/graph`: a group's
-  non-archived runs and the edges among them (through artifacts or direct
-  links); `GET /api/projects/{id}/groups` lists groups by last activity.
+  the Reader has `Run.uses()` / `Run.used_by()`. Run archives carry the
+  links (`run_links.json`), remapped to the imported runs' new ids.
 - **Project workspace** (UI, replaces the Compare page): a runs sidebar
   (the runs table with its toolbar, the Name column and eyes per group and
   run) next to the current view's cards; grouped, line charts draw one

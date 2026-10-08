@@ -186,3 +186,42 @@ def test_delete_run_clears_its_alerts_and_defs_and_unlinks_trials(client):
         assert db.read_columns(f"SELECT * FROM {table} WHERE run_id = ?", [ids["child"]]) == []
     (trial,) = db.read_columns("SELECT run_id FROM sweep_trials WHERE id = 't1'")
     assert trial["run_id"] is None
+
+
+def _uses(client, run_id: str) -> dict[str, list[tuple[str, str | None]]]:
+    body = client.get(f"/api/runs/{run_id}/uses").json()
+    return {k: [(r["run_id"], r["role"]) for r in body[k]] for k in ("uses", "used_by")}
+
+
+def test_run_links_round_trip(client, tmp_path):
+    """Links between two archived runs follow both new ids; a link to a run
+    outside the archive is kept while that run exists, else dropped."""
+    import cairn
+
+    def create(name):
+        return client.post("/api/runs", json={"project": "p", "name": name}).json()["run_id"]
+
+    prep, train, ev, outside = create("prep"), create("train"), create("eval"), create("outside")
+    for run_id, used, role in ((train, prep, "data"), (ev, train, None), (ev, outside, "ref")):
+        r = client.post(f"/api/runs/{run_id}/uses", json={"run_id": used, "role": role})
+        assert r.status_code == 200, r.text
+
+    ids = _roundtrip(client, [prep, train, ev])
+    assert _uses(client, ids[train]) == {"uses": [(ids[prep], "data")], "used_by": [(ids[ev], None)]}
+    assert sorted(_uses(client, ids[ev])["uses"]) == sorted([(ids[train], None), (outside, "ref")])
+    assert _uses(client, ids[prep]) == {"uses": [], "used_by": [(ids[train], "data")]}
+    # The originals keep theirs.
+    assert _uses(client, train)["used_by"] == [(ev, None)]
+
+    # Exporting only the user: the link to a run that exists is kept.
+    only_eval = _roundtrip(client, [ev])
+    assert sorted(_uses(client, only_eval[ev])["uses"]) == sorted([(train, None), (outside, "ref")])
+
+    # A fresh repo (the zip Reader keeps ids): only links between archived runs.
+    exported = client.post("/api/export", json={"run_ids": [train, ev]})
+    path = tmp_path / "runs.zip"
+    path.write_bytes(exported.content)
+    with cairn.Reader(repo=path) as reader:
+        assert [r.id for r in reader.run(ev).uses()] == [train]
+        assert [r.id for r in reader.run(train).used_by()] == [ev]
+        assert reader.run(train).uses() == []

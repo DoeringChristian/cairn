@@ -30,7 +30,7 @@ from typing import Any, Iterable, Literal, Mapping
 # the same comparison semantics as ``RunQuery.filter(...)``.
 from .query_grammar import OPERATOR_NAMES
 from ._operators import OPERATORS as _OPERATORS
-from .run_groups import run_series_key
+from .run_series import run_series_key
 from .run_query import RunQueryError, select_runs
 from .storage.db import Database
 
