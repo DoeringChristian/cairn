@@ -1,6 +1,6 @@
 # Web UI
 
-The cairn web UI is a single-page app for browsing projects, comparing runs, building card dashboards and writing reports. It ships with the Python package; there is nothing else to install.
+The cairn web UI is a single-page app for browsing projects, comparing runs in a workspace, building card dashboards and writing reports. It ships with the Python package; there is nothing else to install.
 
 ## Launch the UI
 
@@ -114,7 +114,8 @@ The UI adapts to narrow screens (below 768 px) and to touch input:
 
 ## Next steps
 
-- [Runs table](runs-table.md): filter, sort, group and compare runs.
+- [Runs table](runs-table.md): filter, sort and group runs, and show them in the workspace.
+- [Project workspace](project-workspace.md): many runs, grouped, in one set of cards.
 - [Run page and workspace](workspace.md): arrange cards and set defaults.
 - [Artifact explorer](artifacts.md) and [lineage graph](lineage.md).
 - [Keyboard shortcuts](shortcuts.md).

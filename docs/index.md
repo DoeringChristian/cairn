@@ -35,19 +35,26 @@ cairn ui      # opens the viewer on http://localhost:4301
   tables with media cells, histograms, Plotly and matplotlib figures, confusion matrices and
   PR/ROC curves, point clouds, meshes and box hierarchies.
 - **Final values you control.** `summary="min"|"max"|"mean"|"last"` picks the number each
-  metric shows in the runs table. `x="epoch"` picks the axis its charts start on.
+  metric shows in the runs table. `x="epoch"` picks the axis its charts start on. A project can
+  override a metric's summary and goal from the table header.
+- **Runs organised as in wandb.** Free names, a `group` and a `job_type` per run, nested
+  grouping (group → job type) with one aggregated chart line per group, and server-assigned
+  versions that tell re-runs apart (**Latest only** keeps the newest).
 - **Self-logging components.** Objects that implement `__cairn_track__(self, scope)` log
   themselves. `run.track(model, "model", step=it)` walks the whole component tree.
 - **Run lifecycle.** You can resume, rewind or fork runs, stop them from the UI, raise alerts,
   record gradient histograms, and capture system metrics, stdout, source code and the git
   state.
 - **Artifacts and lineage.** Versioned artifacts (objects, files, directories, external
-  references) with aliases and tags. Every `use_artifact` is recorded, and the project's lineage graph is
+  references) with aliases and tags, also across projects (`other-project/name:alias`). Every
+  `use_artifact` and every run link (`uses=`) is recorded, and the project's lineage graph is
   built from those records.
 - **Sweeps and integrations.** Grid, random and Bayesian sweeps, plus callbacks for Hugging Face,
   Lightning, Keras and XGBoost.
-- **A full web UI.** A runs table with filters, grouping and computed columns, run workspaces,
-  multi-run comparisons, notebook-style reports and share links.
+- **A full web UI.** A runs table with filters, grouping and computed columns, a project
+  workspace with a runs sidebar, run pages, parallel coordinates and parameter importance,
+  notebook-style reports with run sets, and share links. Run pages, the workspace and reports
+  also show inline in Jupyter and marimo.
 
 ## Where to go next
 
@@ -58,6 +65,7 @@ cairn ui      # opens the viewer on http://localhost:4301
 | Log images, audio, 3D and other media | [Media and rich types](guides/media.md) |
 | Control what the runs table shows | [Final values and metric rules](guides/metric-rules.md) |
 | Resume, fork, stop or evaluate runs | [Run lifecycle](guides/runs.md) |
+| Name, group and version runs | [Organising runs](guides/organising-runs.md) |
 | Make your models log themselves | [Components and scopes](guides/scopes.md) |
 | Version datasets and models | [Artifacts and lineage](guides/artifacts.md) |
 | Run hyperparameter sweeps | [Sweeps](guides/sweeps.md) |
