@@ -29,6 +29,8 @@ The **Run** block lists what the run is; a field the run did not record shows `�
 | Git | Remote (a link for GitHub/GitLab-style remotes), branch, commit and `(dirty)`, and a **diff** button that downloads the captured `git diff HEAD` of a dirty tree. |
 | Command | The command line; a Python script shows as `python train.py --lr 3e-4`. |
 | Run path | `<project>/<run id>`, with a **copy** button. |
+| Inputs | `← pretrain v2 · data-exp-44:v1 · other-proj/model:v3 (other project)`: the runs this run used (`uses=` / `run.use_run`, the run it was forked from, the runs that produced the artifacts it used), then the artifact versions it used. Runs show their name and version, artifacts `name:vN`; an artifact of another project is prefixed with that project and marked **(other project)**. Each links to its run page or artifact version. A long list shows the first six and **+N more**. Left out when the run used nothing. |
+| Used by | `→ eval-ft v1 · diff v1`: the runs that used this run (`uses=`) or an artifact it logged. Left out when none did. |
 
 **Config** is the config as flat `key  value` rows (nested keys dotted: `model.depth`). **Summary** is the run's final values: every metric's value as the runs table shows it, with where it comes from in brackets (`(last)` point, a [summary rule](../guides/runs.md) such as `(min)`, or `(summary)` for a `run.summary` key), and the summary's other keys. A [media value](../guides/runs.md#media-in-the-summary) shows its kind, such as `figure` or `6 images`, and a **show in Workspace** link that switches to that tab, scrolls to its card and highlights it. `system.*` series are on the System tab. Each table has a search box that keeps the keys containing what you type.
 

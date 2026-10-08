@@ -110,6 +110,26 @@
   and eyes; in a cell without cards also the workspace layout's cards).
   **Edit** is the set's name and the workspace's runs sidebar scoped to the
   set.
+- **Run page Overview: Inputs / Used by** (UI): the Run block lists
+  `Inputs ← pretrain v2 · data-exp-44:v1 · other-proj/model:v3 (other project)`
+  (the runs the run used, its fork parent and the producers of the artifacts
+  it used, then those artifact versions) and `Used by → eval-ft v1 · diff v1`
+  (the runs that used it or an artifact it logged), each linking to its run
+  page or artifact version; another project's artifacts are prefixed with
+  their project and marked; long lists collapse to **+N more**; empty rows
+  are left out. New `GET /api/runs/{id}/relations`.
+- **Notebook embeds** (Jupyter and marimo): a `cairn.Run` or a `Reader` run
+  as the last expression of a cell shows its run page inline (Workspace tab,
+  live, 720 px); `run.display(tab=, height=)` picks the tab and height;
+  `cairn.ui.workspace(project, filter=None, height=)` shows the project
+  workspace (the filter, an expression or a filter tree, applies to the
+  embed only) and `cairn.ui.report(project, report_id, height=)` a report,
+  read-only. They are the viewer's `/embed/run/<id>?tab=`,
+  `/embed/workspace/<project>?filter=` and `/embed/report/<project>/<id>`
+  pages (the page without the app's navigation, read-gated like the app and
+  `/embed/card`), found like `cairn.ui` cards' server; without a reachable
+  viewer the output says how to start one. `repr(run)` is unchanged. Example:
+  `examples/notebook_embeds.py` (marimo); guide: Notebooks.
 
 ### Changed
 

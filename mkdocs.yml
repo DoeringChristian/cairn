@@ -80,6 +80,7 @@ nav:
       - Sweeps: guides/sweeps.md
       - Integrations: guides/integrations.md
       - Reading data back: guides/reading.md
+      - Notebooks: guides/notebooks.md
       - Import and export: guides/import-export.md
       - Server, auth and deployment: guides/server.md
   - Web UI:

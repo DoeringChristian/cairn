@@ -24,5 +24,7 @@ logged a run yet, start with [Getting started](../getting-started.md).
 - [Sweeps](sweeps.md): hyperparameter search with `cairn sweep` and `cairn agent`.
 - [Integrations](integrations.md): Hugging Face, Lightning, Keras and XGBoost callbacks.
 - [Reading data back](reading.md): `cairn.Reader`, queries and editing runs.
+- [Notebooks](notebooks.md): a run page, the project workspace or a report inline in Jupyter
+  and marimo.
 - [Import and export](import-export.md): TensorBoard import, CSV/Parquet export, archives.
 - [Server, auth and deployment](server.md): `cairn server`, tokens and remote access.

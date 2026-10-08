@@ -79,6 +79,12 @@ cairn viewer dev examples/custom_viewers/guiding/vmf --project viewers-guiding  
 |---|---|---|---|
 | `artifact_registry.py` | A pipeline in project `artifact-demo`: data-prep runs log a `training-data` dataset (a directory, an S3 reference and a generated file, built with `cairn.Artifact`), training runs use it and log a `linear-model` checkpoint every epoch with a moving `best` alias, an evaluation run uses `linear-model:best`, and a reader walks the lineage back. | — | The project's **Artifacts** and **Lineage** pages. See [Artifacts and lineage](guides/artifacts.md). |
 
+## Notebooks
+
+| Script | What it logs | Needs | What to look at |
+|---|---|---|---|
+| `notebook_embeds.py` | A marimo notebook: project `notebook-demo`, group `exp-1`, a `prepare` run logging a dataset and two `train` runs using it. | `[ui]`, `marimo` | The run page, its Overview tab, the workspace filtered to `exp-1` and a report inline in the notebook (`marimo edit examples/notebook_embeds.py` with a `cairn ui` over the same repo). See [Notebooks](guides/notebooks.md). |
+
 ## Distributed and parallel training
 
 These examples show how to use cairn from a job launcher. Each creates a
