@@ -28,6 +28,13 @@
   run) next to the current view's cards; grouped, line charts draw one
   mean line with a min–max band per group. The run state is saved in the
   current view. The runs table's **Compare** becomes **Show in workspace**.
+- **Group page** (UI, `/p/<project>/g/<group>`): a run group's workspace
+  (the project workspace over its runs, its own run state in the current
+  view, not grouped by default) and its runs table. Group names link to it
+  from the workspace sidebar, the runs table, the run page header and the
+  lineage panel. The workspace sidebar gains a show/hide-all eye, a sort
+  control, pinned runs listed first, and a hover highlight between rows
+  and chart lines; **Show in workspace** shows exactly the selected runs.
 - UI: a muted `v2` after the run's name in the run header and the runs table
   (not grouped, a grouped run reads `exp-44 · train v2`);
   runs that share a name are labelled `train v1`, `train v2` in charts and

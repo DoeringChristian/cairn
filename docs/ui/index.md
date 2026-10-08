@@ -58,6 +58,7 @@ Every project page has a left navigation bar (a bottom bar on phones):
 |---|---|---|
 | Runs | `/p/<project>` | The [runs table](runs-table.md). |
 | Workspace | `/p/<project>/workspace` | [Project workspace](project-workspace.md): the current view bound to the runs its sidebar picks. |
+| Group | `/p/<project>/g/<group>` | [Group page](project-workspace.md#group-page): the workspace and the runs table over one group's runs. |
 | Sweeps | `/p/<project>/sweeps` | Sweeps and their trials ([Sweeps](../guides/sweeps.md)). |
 | Artifacts | `/p/<project>/artifacts` | The [artifact explorer](artifacts.md): artifacts, versions, files, usage snippets. |
 | Lineage | `/p/<project>/lineage` | The [lineage graph](lineage.md) of runs and the artifact versions they produce and consume. |

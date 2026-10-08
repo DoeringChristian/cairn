@@ -94,7 +94,7 @@ Click **Group** to add levels. Each level splits its parent group by one of:
 - `param: <key>`: a config value;
 - **expression…**: a scalar [expression](../reference/expressions.md), e.g. `min(val.loss) < 0.3`.
 
-Levels nest in order (`by …`, `then …`); reorder them with ↑/↓ and remove one with ×. Grouping and sorting compose: the runs inside each group follow the table's sort, and the groups themselves are ordered by their first run in that sort, at every level. Sorting by **Created** (newest first) puts the group with the most recent run on top; sorting by the grouped column orders the groups by their value. Runs with no value for a level go last as `(none)`. Each group header shows its run count; click it to collapse or expand it. Changing the group-by expands every group again.
+Levels nest in order (`by …`, `then …`); reorder them with ↑/↓ and remove one with ×. Grouping and sorting compose: the runs inside each group follow the table's sort, and the groups themselves are ordered by their first run in that sort, at every level. Sorting by **Created** (newest first) puts the group with the most recent run on top; sorting by the grouped column orders the groups by their value. Runs with no value for a level go last as `(none)`. Each group header shows its run count; click it to collapse or expand it. A run group's name (`group: exp-44`) links to its [group page](project-workspace.md#group-page). Changing the group-by expands every group again.
 
 ## Columns
 
@@ -109,7 +109,7 @@ The **Status** cell of a run with [progress](../guides/runs.md#progress-and-eta)
 
 Metric and config columns are the union over the loaded runs: a run that never logged `val.acc` shows a blank cell, and the column stays.
 
-- **Name is frozen** on the left, cannot be hidden or moved, and always comes first. A run with a [version](../guides/runs.md#versions) shows it as a muted `v2` right after its name. When the table is not grouped, a run in a [group](../guides/runs.md) reads `<group> · <name>`, such as `exp-44 · train v2`.
+- **Name is frozen** on the left, cannot be hidden or moved, and always comes first. A run with a [version](../guides/runs.md#versions) shows it as a muted `v2` right after its name. When the table is not grouped, a run in a [group](../guides/runs.md) reads `<group> · <name>`, such as `exp-44 · train v2`, unless every listed run is in the same group (a group page).
 - **Pin** a column (header menu → **Pin (freeze left)**, or the pin icon in the column manager) to freeze it after Name, in pin order. The rest scroll horizontally.
 - **Hide** a column from its header menu, or untick it in the column manager. The manager has a search box and **Hide all** / **Show all** for the matching columns.
 - **Reorder** by dragging a header onto another, or with **Move left** / **Move right** in its menu. Pinned columns reorder among themselves, and scrolling columns among themselves.
@@ -128,7 +128,7 @@ Tick a row's checkbox to select it; ++shift++-click another checkbox to select t
 |---|---|
 | **Clear** | Deselect all. |
 | **Tag** | The bulk tag editor: add a tag to every selected run, or remove a tag from all runs that have it. |
-| **Show in workspace** | Open the [project workspace](project-workspace.md) with only the selected runs' groups (and selected ungrouped runs) visible. |
+| **Show in workspace** | Open the [project workspace](project-workspace.md) with exactly the selected runs visible (on a group page: the group page's workspace). |
 | **Export** | Download the selected runs as `cairn_export_<date>.zip`. |
 | **Stop** | Ask the selected *running* runs to stop (asks first). See [Run lifecycle](../guides/runs.md). |
 | **Archive** / **Unarchive** | Archive or restore the selected runs. Archiving hides a run without changing its status; an archived run shows an `archived` mark beside it. |
