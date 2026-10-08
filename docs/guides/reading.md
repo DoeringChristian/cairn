@@ -306,6 +306,8 @@ reader.artifact_versions("base-ckpt", project="denoise") # oldest first
 reader.artifact_families("denoise", type="model")        # [ArtifactFamily]
 reader.lineage("denoise")                                # the graph
 reader.artifact("denoise/base-ckpt:v3").lineage(depth=2)  # the graph around one version
+run.uses()                                 # [Run] it used directly (cairn.Run.use_run)
+run.used_by()                              # [Run] that used it directly
 ```
 
 `reader.artifact` records no consumption (that is `cairn.Run.use_artifact`).

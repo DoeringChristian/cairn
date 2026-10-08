@@ -258,9 +258,33 @@ v.lineage(direction="upstream", depth=2)               # the graph around one ve
 
 The graph's nodes are runs (`kind: "run"`, with name, status, tags, group and job type) and
 versions (`kind: "artifact_version"`, with ref, type, aliases and tags); edges are `produced`
-(run to version), `consumed` (version to run, with the role) and `forked` (run to run). Runs that
+(run to version), `consumed` (version to run, with the role), `forked` (run to run) and `used`
+(run to run, see below). Runs that
 used the same inputs, and versions of one name from the same producer, are siblings: they share a
 `group_key`, which is how the UI folds 50 runs that used one dataset into one expandable node.
+
+### Runs that use runs
+
+When one run depends on another without an artifact between them (an evaluation that reads a
+training run's metrics, a report over a sweep), record the link directly:
+
+```python
+train = cairn.Run("denoise", name="train", group="exp-42")
+...
+with cairn.Run("denoise", name="eval", group="exp-42", uses=[train]) as ev:
+    ev.use_run(prep_run_id, role="data")    # a run id or a run; again is a no-op
+```
+
+`uses=` takes run ids or runs (anything with an `.id`, Reader runs included) and calls `use_run`
+for each once the run has started. Using a run that does not exist raises `LookupError`, using
+the run itself `ValueError`. The link is a `used` edge from the used run to the using one in the
+lineage graphs; deleting either run removes it. The Reader has `run.uses()` and
+`run.used_by()`; the API has `GET /api/runs/{id}/uses` (`{"uses": [{run_id, role}],
+"used_by": [...]}`).
+
+The runs of one group and the edges among them (through artifacts, or direct) are
+`GET /api/projects/{project}/groups/{group}/graph`; `GET /api/projects/{project}/groups`
+lists the project's groups.
 
 See [Reading data back](reading.md) for the reader.
 

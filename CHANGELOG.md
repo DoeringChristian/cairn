@@ -15,6 +15,16 @@
   `Reader` `Run.version`, a `version` field on every API run row, a `VERSION`
   column and `--sort version` in `cairn list`, and `group` on
   `PATCH /api/runs/{id}`.
+- **Run-to-run lineage.** `run.use_run(run_or_id, role=None)` and
+  `cairn.Run(..., uses=[...])` record that a run used another run without an
+  artifact between them (`run_links` table; local logs and
+  `POST/GET /api/runs/{id}/uses`). Lineage graphs show it as a `used` edge;
+  the Reader has `Run.uses()` / `Run.used_by()`.
+- **Group graph.** `GET /api/projects/{id}/groups/{group}/graph`: a group's
+  non-archived runs and the edges among them (through artifacts or direct
+  links); `GET /api/projects/{id}/groups` lists groups by last activity.
+- Comparisons save a selection of runs and groups; the comparison list
+  reports `entry_count` (selection entries) instead of `run_count`.
 - UI: a muted `v2` after the run's name in the run header and the runs table;
   runs that share a name are labelled `train v1`, `train v2` in charts and
   legends (with the group, `train v1 · exp-1`, when two groups have the same
