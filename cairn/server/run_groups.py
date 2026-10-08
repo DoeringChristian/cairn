@@ -1,14 +1,24 @@
 """A project's run groups (``runs.run_group``) and the lineage among a
-group's runs, for the group page and its picker.
+group's runs, and a run's series key.
 
 Archived runs are left out everywhere here.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Mapping
 
 from .storage.db import Database
+
+def run_series_key(run: Mapping[str, Any]) -> tuple[str | None, str]:
+    """A run's series: ``(group, name)``. A group is a namespace, so
+    ``exp-44 · train`` and ``exp-43 · train`` are different series; a run
+    without a name is its own (keyed by its id). Mirror of cairn-ui's
+    ``runSeriesKey`` (src/lib/run-series.ts). Takes an API row (``group``)
+    or a ``runs`` row (``run_group``)."""
+    group = run["group"] if "group" in run else run.get("run_group")
+    return (group, run.get("display_name") or run["id"])
+
 
 #: The newest of a run's timestamps (SQLite's multi-argument MAX is NULL when
 #: any argument is, hence the COALESCEs).

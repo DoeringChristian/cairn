@@ -30,6 +30,7 @@ from typing import Any, Iterable, Literal, Mapping
 # the same comparison semantics as ``RunQuery.filter(...)``.
 from .query_grammar import OPERATOR_NAMES
 from ._operators import OPERATORS as _OPERATORS
+from .run_groups import run_series_key
 from .run_query import RunQueryError, select_runs
 from .storage.db import Database
 
@@ -52,8 +53,8 @@ class RunSelection:
 
     * ``latest`` — the newest matching run.
     * ``latest-n`` — the ``n``-th newest (1-based), i.e. ``run=latest:2``.
-    * ``newest-per-name`` — dedup candidates by display name (keeping the
-      newest per name), then take the newest overall.
+    * ``newest-per-name`` — dedup candidates by series (group, name), keeping
+      the newest of each, then take the newest overall.
     * ``id`` — pin an explicit ``run_id`` (the hardest pin; ignores filters).
     """
 
@@ -290,9 +291,9 @@ def _select_run(candidates: list[dict[str, Any]], sel: RunSelection) -> dict[str
     if sel.mode == "latest-n":
         return candidates[sel.n - 1] if len(candidates) >= sel.n else None
     if sel.mode == "newest-per-name":
-        seen: set[str] = set()
+        seen: set[tuple[str | None, str]] = set()
         for r in candidates:  # already newest-first
-            key = r.get("display_name") or r["id"]
+            key = run_series_key(r)
             if key not in seen:
                 return r  # first (newest) of the newest-per-name set
             seen.add(key)

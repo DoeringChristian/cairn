@@ -41,6 +41,16 @@
   legends (grouped runs read `exp-1 · train v1` when the runs shown span
   groups) instead of their start times.
 
+### Changed
+
+- **A group is a namespace: a run's series is (group, name).** `train` in
+  `exp-43` and in `exp-44` are two series everywhere a run is matched by
+  name: the runs table's and the workspace's **Latest only** (and its
+  highlight; the higher version wins, else the later start), **Archive
+  old** / **Delete old**, the `newest-per-name` run selector of reports and
+  share links (UI and server), the query URL's `run=newest-per-name`, and
+  run labels (two series never collide on their name).
+
 ### Removed
 
 - Saved comparisons: the Compare page, the comparison kind of

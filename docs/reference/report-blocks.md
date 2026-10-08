@@ -61,7 +61,7 @@ A selector picks runs from the project's 500 newest runs by name and tags:
 
 | Key | Type | Meaning |
 |---|---|---|
-| `mode` | `latest-n` or `newest-per-name` | Required. `latest-n` picks the N most recently created matching runs. `newest-per-name` picks the newest matching run for each distinct run name. |
+| `mode` | `latest-n` or `newest-per-name` | Required. `latest-n` picks the N most recently created matching runs. `newest-per-name` picks the newest matching run of each series: each distinct group and name (`train` in two groups is two series). |
 | `namePattern` | string | Optional. Without `*`, a case-insensitive substring of the run name. With `*`, a case-insensitive pattern that must match the whole name, where `*` matches any text. |
 | `tags` | list of strings | Optional. The run must carry every one of these tags. |
 | `n` | number | Optional cap on the number of runs. `latest-n` defaults to 5. `newest-per-name` has no cap unless you set `n`. |
@@ -71,7 +71,7 @@ A selector picks runs from the project's 500 newest runs by name and tags:
 | `{ mode: latest-n }` | the 5 newest runs |
 | `{ mode: latest-n, namePattern: TRAIN, n: 10 }` | the 10 newest runs whose name contains `train` (any case) |
 | `{ mode: latest-n, namePattern: "train-*" }` | the 5 newest runs whose name starts with `train-` |
-| `{ mode: newest-per-name, tags: [prod] }` | the newest `prod`-tagged run of each name |
+| `{ mode: newest-per-name, tags: [prod] }` | the newest `prod`-tagged run of each group and name |
 
 !!! warning "Only `*` is a wildcard"
     In a pattern that contains `*`, every other character is literal except `?`, which keeps its regular-expression meaning (it makes the preceding character optional). Avoid `?` in patterns.
