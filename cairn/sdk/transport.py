@@ -634,6 +634,12 @@ class Transport:
             "artifact_version_id": artifact_version_id, "role": role,
         })
 
+    def record_run_use(self, run_id: str, used_run_id: str, role: str | None) -> None:
+        """Record that a run used another run directly."""
+        self._registry_request("POST", f"/api/runs/{run_id}/uses", json={
+            "run_id": used_run_id, "role": role,
+        })
+
     def add_artifact_alias(self, version_id: str, alias: str) -> dict[str, Any]:
         return self._registry_request(
             "POST", f"/api/artifact-versions/{version_id}/aliases", json={"alias": alias},

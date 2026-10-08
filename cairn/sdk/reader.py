@@ -815,6 +815,26 @@ class Run:
         the order it consumed them; only ``role``'s when given."""
         return [ArtifactVersion(v, self._backend) for v in self._backend.run_inputs(self.id, role)]
 
+    # ---- Run -> run links ----
+
+    def _linked(self, side: str) -> list[Run]:
+        out = []
+        for link in self._backend.run_uses(self.id)[side]:
+            try:
+                out.append(Run(self._backend.get_run(link["run_id"])["run"], self._backend))
+            except (KeyError, LookupError):
+                continue  # deleted since
+        return out
+
+    def uses(self) -> list[Run]:
+        """The runs this run used directly (``run.use_run`` / ``uses=``), in
+        the order it recorded them."""
+        return self._linked("uses")
+
+    def used_by(self) -> list[Run]:
+        """The runs that used this run directly, in the order they recorded it."""
+        return self._linked("used_by")
+
     def edit(self) -> RunEditor:
         """An editing handle for this run (config, summary, tags, name,
         notes). Use it as a context manager, or ``close()`` it:
@@ -1495,6 +1515,7 @@ class _Backend(Protocol):
     def version_consumers(self, version_id: str) -> list[dict[str, Any]]: ...
     def run_inputs(self, run_id: str, role: str | None) -> list[dict[str, Any]]: ...
     def run_outputs(self, run_id: str) -> list[dict[str, Any]]: ...
+    def run_uses(self, run_id: str) -> dict[str, list[dict[str, Any]]]: ...
     def add_alias(self, version_id: str, alias: str) -> dict[str, Any]: ...
     def remove_alias(self, version_id: str, alias: str) -> dict[str, Any]: ...
     def get_lineage(self, project_id: str, family_id: str | None) -> dict[str, Any]: ...
@@ -1819,6 +1840,10 @@ class _LocalBackend(_RegistryWrites):
     def run_outputs(self, run_id: str) -> list[dict[str, Any]]:
         return self._ops().run_outputs(self._db, run_id)
 
+    def run_uses(self, run_id: str) -> dict[str, list[dict[str, Any]]]:
+        self._drain_wals()
+        return self._ops().run_uses(self._db, run_id)
+
     def get_lineage(self, project_id: str, family_id: str | None = None) -> dict[str, Any]:
         return self._ops().project_lineage(self._db, project_id, family_id=family_id)
 
@@ -2046,6 +2071,9 @@ class _HttpBackend(_RegistryWrites):
 
     def run_outputs(self, run_id: str) -> list[dict[str, Any]]:
         return self._request("GET", f"/api/runs/{run_id}/outputs")["outputs"]
+
+    def run_uses(self, run_id: str) -> dict[str, list[dict[str, Any]]]:
+        return self._request("GET", f"/api/runs/{run_id}/uses")
 
     def get_lineage(self, project_id: str, family_id: str | None = None) -> dict[str, Any]:
         params = {"family_id": family_id} if family_id else None

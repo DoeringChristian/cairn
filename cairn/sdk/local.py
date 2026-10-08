@@ -278,6 +278,15 @@ class RepoTransport:
             run_id, artifact_version_id, role,
         )
 
+    def record_run_use(self, run_id: str, used_run_id: str, role: str | None) -> None:
+        from ..server import artifact_registry_ops as ops
+
+        self._call(
+            "record_run_use",
+            lambda db: ops.record_run_use(db, run_id=run_id, used_run_id=used_run_id, role=role),
+            run_id, used_run_id, role,
+        )
+
     def add_artifact_alias(self, version_id: str, alias: str) -> dict[str, Any]:
         from ..server import artifact_registry_ops as ops
         return self._call(
@@ -799,6 +808,26 @@ class LocalTransport:
         """Record (in the run's log) that the run consumed an artifact version."""
         self._wal_write("record_artifact_input", {
             "run_id": run_id, "artifact_version_id": artifact_version_id, "role": role,
+        })
+
+    def record_run_use(self, run_id: str, used_run_id: str, role: str | None) -> None:
+        """Record (in the run's log) that the run used another run directly.
+
+        Raises:
+            LookupError: No run ``used_run_id``: neither ingested nor
+                pending in a log, also after the lease holder caught up.
+        """
+        def known() -> bool:
+            return bool(
+                self.read_columns("SELECT 1 FROM runs WHERE id = ?", [used_run_id])
+            ) or self._primary_log(used_run_id) is not None
+
+        if not known():
+            self._repo.ingest_pending()
+            if not known():
+                raise LookupError(f"run {used_run_id} not found")
+        self._wal_write("record_run_use", {
+            "run_id": run_id, "used_run_id": used_run_id, "role": role,
         })
 
     def add_artifact_alias(self, version_id: str, alias: str) -> dict[str, Any]:

@@ -871,6 +871,7 @@ def delete_run(db: Database, data_dir: DataDir, run_id: str) -> None:
     db.write("DELETE FROM params WHERE run_id = ?", [run_id])
     db.write("DELETE FROM summary WHERE run_id = ?", [run_id])
     db.write("DELETE FROM run_inputs WHERE run_id = ?", [run_id])
+    db.write("DELETE FROM run_links WHERE run_id = ? OR used_run_id = ?", [run_id, run_id])
     db.write("DELETE FROM log_lines WHERE run_id = ?", [run_id])
     db.write("DELETE FROM alerts WHERE run_id = ?", [run_id])
     db.write("DELETE FROM metric_defs WHERE run_id = ?", [run_id])

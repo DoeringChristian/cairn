@@ -256,7 +256,7 @@ SCHEMA_SQL: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_report_shares_report ON report_shares(report_id)",
     # A project's shared UI documents: its workspace views (named layouts;
     # the run page shows the project's current one, ``project_view_state``)
-    # and its comparisons (each a workspace document with a run set; ``name``
+    # and its comparisons (each a saved run/group selection and its view; ``name``
     # is the comparison's name).
     # ``rev`` counts writes so a client can PUT against the revision it last
     # saw and be told when another tab or user wrote in between.
@@ -359,6 +359,19 @@ SCHEMA_SQL: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_artifact_versions_family ON artifact_versions(family_id, version DESC)",
     "CREATE INDEX IF NOT EXISTS idx_artifact_versions_producer ON artifact_versions(created_by_run)",
     "CREATE INDEX IF NOT EXISTS idx_run_inputs_artifact ON run_inputs(artifact_version_id)",
+    # Direct run -> run lineage without an artifact: ``run_id`` used
+    # ``used_run_id`` (``run.use_run``). No FKs: deleting either run deletes
+    # the link explicitly (ingest_ops.delete_run).
+    """
+    CREATE TABLE IF NOT EXISTS run_links (
+        run_id        TEXT NOT NULL,
+        used_run_id   TEXT NOT NULL,
+        role          TEXT,
+        created_at    TEXT NOT NULL,
+        PRIMARY KEY (run_id, used_run_id)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_run_links_used ON run_links(used_run_id)",
     # ── Run-log ingestion ───────────────────────────────────────────────
     # How far each run log in ``wals/`` has been applied: the byte offset
     # just past the last complete line ingested, committed in the same

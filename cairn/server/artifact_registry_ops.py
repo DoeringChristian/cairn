@@ -689,6 +689,39 @@ def run_inputs(db: Database, run_id: str, role: str | None = None) -> list[dict[
 
 
 # ---------------------------------------------------------------------------
+# Run -> run links (``run.use_run``)
+# ---------------------------------------------------------------------------
+
+def record_run_use(
+    db: Database, *, run_id: str, used_run_id: str, role: str | None = None,
+) -> None:
+    """Record that ``run_id`` used ``used_run_id`` directly (idempotent: the
+    first record, and its role, stay). A self-link is refused."""
+    if run_id == used_run_id:
+        raise ValueError("a run cannot use itself")
+    db.write(
+        """INSERT INTO run_links (run_id, used_run_id, role, created_at)
+           VALUES (?, ?, ?, ?) ON CONFLICT (run_id, used_run_id) DO NOTHING""",
+        [run_id, used_run_id, role, _now_iso()],
+    )
+
+
+def run_uses(db: Database, run_id: str) -> dict[str, list[dict[str, Any]]]:
+    """``{uses: [{run_id, role}], used_by: [{run_id, role}]}``: the runs
+    ``run_id`` used and the runs that used it, in link order."""
+    uses = db.read_columns(
+        "SELECT used_run_id AS run_id, role FROM run_links WHERE run_id = ? "
+        "ORDER BY created_at, used_run_id",
+        [run_id],
+    )
+    used_by = db.read_columns(
+        "SELECT run_id, role FROM run_links WHERE used_run_id = ? ORDER BY created_at, run_id",
+        [run_id],
+    )
+    return {"uses": uses, "used_by": used_by}
+
+
+# ---------------------------------------------------------------------------
 # Lineage
 # ---------------------------------------------------------------------------
 #
@@ -702,10 +735,11 @@ def run_inputs(db: Database, run_id: str, role: str | None = None) -> list[dict[
 #   status, tags, group, job_type, project_id, created_at, archived, degree,
 #   group_key}``;
 # * edge: ``{source, target, kind: "produced" (run -> version) | "consumed"
-#   (version -> run, with ``role``) | "forked" (run -> run)}``.
+#   (version -> run, with ``role``) | "forked" (run -> run) | "used" (used
+#   run -> using run, with ``role``: ``run.use_run``)}``.
 #
 # ``degree`` is ``{in, out}`` within the returned graph; ``full_degree`` is
-# ``{in, out}`` over the node's produced/consumed edges in the whole repo
+# ``{in, out}`` over the node's produced/consumed/used edges in the whole repo
 # (what one-hop expansions from it can add: a viewer compares the two to show
 # "more upstream / downstream"). Clustering: nodes of
 # one kind whose edges are identical (same neighbours, kinds, roles and
@@ -766,11 +800,16 @@ def _consumed(version_id: str, run_id: str, role: str) -> dict[str, Any]:
     return {"source": version_id, "target": run_id, "kind": "consumed", "role": role}
 
 
+def _used(used_run_id: str, run_id: str, role: str | None) -> dict[str, Any]:
+    return {"source": used_run_id, "target": run_id, "kind": "used", "role": role}
+
+
 def _full_degrees(
     db: Database, version_ids: list[str], run_ids: list[str],
 ) -> dict[str, dict[str, int]]:
-    """``{id: {in, out}}`` over every produced/consumed edge in the repo: a
-    version's producer (0 or 1) and consumers, a run's inputs and outputs."""
+    """``{id: {in, out}}`` over every produced/consumed/used edge in the
+    repo: a version's producer (0 or 1) and consumers, a run's inputs and
+    the runs it used, its outputs and the runs that used it."""
     out = {i: {"in": 0, "out": 0} for i in [*version_ids, *run_ids]}
     for i in range(0, len(version_ids), 500):
         chunk = version_ids[i:i + 500]
@@ -800,6 +839,18 @@ def _full_degrees(
             chunk,
         ):
             out[r["rid"]]["out"] = r["n"]
+        for r in db.read_columns(
+            f"SELECT run_id, COUNT(*) AS n FROM run_links WHERE run_id IN ({_holes(chunk)}) "
+            "GROUP BY run_id",
+            chunk,
+        ):
+            out[r["run_id"]]["in"] += r["n"]
+        for r in db.read_columns(
+            f"SELECT used_run_id AS rid, COUNT(*) AS n FROM run_links "
+            f"WHERE used_run_id IN ({_holes(chunk)}) GROUP BY used_run_id",
+            chunk,
+        ):
+            out[r["rid"]]["out"] += r["n"]
     return out
 
 
@@ -901,11 +952,11 @@ def lineage_graph(
     """The lineage around one version or run: ``{nodes, edges, groups, center}``
     (shapes and clustering: see the section comment above).
 
-    Walks the bipartite run/version graph from the centre, at most ``depth``
-    hops (None: unbounded). ``upstream`` follows where the centre came from (a
-    version's producing run, a run's inputs, their producers, ...),
-    ``downstream`` what came of it (a version's consumers, a run's outputs,
-    ...); ``both`` is the union of the two walks (it never turns around, so
+    Walks the run/version graph from the centre, at most ``depth`` hops
+    (None: unbounded). ``upstream`` follows where the centre came from (a
+    version's producing run, a run's inputs and the runs it used, their
+    producers, ...), ``downstream`` what came of it (a version's consumers, a
+    run's outputs and the runs that used it, ...); ``both`` is the union of the two walks (it never turns around, so
     siblings of the centre are not pulled in).
     """
     if direction not in ("upstream", "downstream", "both"):
@@ -950,6 +1001,12 @@ def lineage_graph(
             ):
                 edges[(r["vid"], ident, "consumed")] = _consumed(r["vid"], ident, r["role"])
                 out.append(("v", r["vid"]))
+            for r in db.read_columns(
+                "SELECT used_run_id, role FROM run_links WHERE run_id = ? ORDER BY created_at",
+                [ident],
+            ):
+                edges[(r["used_run_id"], ident, "used")] = _used(r["used_run_id"], ident, r["role"])
+                out.append(("r", r["used_run_id"]))
         else:
             for r in db.read_columns(
                 "SELECT id FROM artifact_versions WHERE created_by_run = ? ORDER BY created_at",
@@ -957,6 +1014,12 @@ def lineage_graph(
             ):
                 edges[(ident, r["id"], "produced")] = _produced(ident, r["id"])
                 out.append(("v", r["id"]))
+            for r in db.read_columns(
+                "SELECT run_id, role FROM run_links WHERE used_run_id = ? ORDER BY created_at",
+                [ident],
+            ):
+                edges[(ident, r["run_id"], "used")] = _used(ident, r["run_id"], r["role"])
+                out.append(("r", r["run_id"]))
         return out
 
     walks = {"upstream": [True], "downstream": [False], "both": [True, False]}[direction]
@@ -987,8 +1050,9 @@ def project_lineage(
     cluster: int | None = None,
 ) -> dict[str, Any]:
     """The whole project's lineage (or one family's): every version with its
-    producer and consumer edges, plus ``forked`` run -> run edges for the
-    whole project. Shapes and clustering as ``lineage_graph``."""
+    producer and consumer edges, plus ``forked`` and ``used`` run -> run
+    edges for the whole project (a ``used`` edge counts when the using run
+    is in the project). Shapes and clustering as ``lineage_graph``."""
     if cluster is not None and cluster < 1:
         raise ValueError("cluster must be >= 1")
     if family_id:
@@ -1028,4 +1092,13 @@ def project_lineage(
             runs.setdefault(fork["parent_run_id"])
             runs.setdefault(fork["id"])
             edges.append({"source": fork["parent_run_id"], "target": fork["id"], "kind": "forked"})
+        for link in db.read_columns(
+            """SELECT l.run_id, l.used_run_id, l.role FROM run_links l
+               JOIN runs r ON r.id = l.run_id
+               WHERE r.project_id = ? ORDER BY l.created_at""",
+            [project_id],
+        ):
+            runs.setdefault(link["used_run_id"])
+            runs.setdefault(link["run_id"])
+            edges.append(_used(link["used_run_id"], link["run_id"], link["role"]))
     return _graph(db, ids, runs, edges, cluster=cluster)

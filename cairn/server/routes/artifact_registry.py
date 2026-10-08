@@ -381,6 +381,39 @@ def run_inputs(run_id: str, request: Request, role: str | None = None) -> dict[s
     return {"inputs": ops.run_inputs(get_db(request), run_id, role)}
 
 
+class RecordUseBody(BaseModel):
+    run_id: str
+    role: str | None = None
+
+
+def _require_run_row(db: Any, run_id: str) -> None:
+    if not db.read_columns("SELECT 1 FROM runs WHERE id = ?", [run_id]):
+        raise HTTPException(status_code=404, detail=f"run {run_id} not found")
+
+
+@router.post("/runs/{run_id}/uses", dependencies=[_write])
+def record_run_use(run_id: str, body: RecordUseBody, request: Request) -> dict[str, Any]:
+    """Record that ``run_id`` used the run ``body.run_id`` directly
+    (idempotent; 404 when either run is unknown, 400 for a self-link)."""
+    db = get_db(request)
+    _require_run_row(db, run_id)
+    _require_run_row(db, body.run_id)
+    try:
+        ops.record_run_use(db, run_id=run_id, used_run_id=body.run_id, role=body.role)
+    except ValueError as exc:
+        raise _http(exc) from None
+    return {"run_id": run_id, "used_run_id": body.run_id}
+
+
+@router.get("/runs/{run_id}/uses")
+def run_uses(run_id: str, request: Request) -> dict[str, Any]:
+    """``{uses: [{run_id, role}], used_by: [{run_id, role}]}``: the runs this
+    run used and the runs that used it, in link order."""
+    db = get_db(request)
+    _require_run_row(db, run_id)
+    return ops.run_uses(db, run_id)
+
+
 @router.get("/runs/{run_id}/outputs")
 def run_outputs(
     run_id: str, request: Request,

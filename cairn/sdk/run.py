@@ -184,6 +184,9 @@ class Run:
             then the highest step it logged (any series but ``system.*``)
             divided by this, shown as a bar with an ETA in the UI. Settable
             later as ``run.total_steps``; ``progress()`` overrides it.
+        uses: Runs this run used directly, without an artifact between them
+            (run ids, or anything with an ``.id`` such as a ``cairn.Run`` or
+            a Reader run): ``use_run`` for each once the run has started.
 
     Raises:
         ValueError: For an unknown ``stop_mode``, ``rewind_to`` without
@@ -240,7 +243,9 @@ class Run:
         on_stop: Callable[["Run"], Any] | None = None,
         stop_mode: str = "interrupt",
         total_steps: int | None = None,
+        uses: list[Any] | None = None,
     ):
+        used_ids = [_used_run_id(u) for u in (uses or [])]
         if stop_mode not in ("interrupt", "flag"):
             raise ValueError(f"stop_mode must be 'interrupt' or 'flag', not {stop_mode!r}")
         if rewind_to is not None and resume is None:
@@ -532,6 +537,14 @@ class Run:
 
         if trial_id:
             self._join_trial(sweep_id, trial_id)  # primary only (see above)
+
+        if used_ids:
+            try:
+                for used in used_ids:
+                    self.use_run(used)
+            except Exception:
+                self.finish(status="failed")
+                raise
 
     def _join_trial(self, sweep_id: str, trial_id: str) -> None:
         """Link this run to its sweep trial and record the trial's params as
@@ -1035,6 +1048,27 @@ class Run:
         info = self._transport.resolve_artifact(self._project_id, ref)
         self._transport.record_artifact_input(self._run_id, info["id"], role)
         return ArtifactVersion(info, self._reader_backend)
+
+    def use_run(self, run: Any, *, role: str | None = None) -> None:
+        """Record that this run used another run directly ("v used u"),
+        without an artifact between them: e.g. an evaluation that reads a
+        training run's metrics. Lineage graphs show it as a ``used`` edge
+        from that run to this one. Re-recording a link is a no-op (the first
+        ``role`` stays).
+
+        ``run`` is a run id, or anything with an ``.id`` (a ``cairn.Run``, a
+        Reader run).
+
+        Raises:
+            ValueError: An empty id, or this run itself.
+            LookupError: No such run.
+        """
+        if self._finished:
+            raise RuntimeError("Run has already been finished")
+        used = _used_run_id(run)
+        if used == self._run_id:
+            raise ValueError("a run cannot use itself")
+        self._transport.record_run_use(self._run_id, used, role)
 
     def use_viewer(
         self, path: str | Path, *, aliases: list[str] | None = None, default_for: list[str] | None = None,
@@ -1561,6 +1595,14 @@ def attach(
     )
 
 
+def _used_run_id(run: Any) -> str:
+    """A ``use_run`` / ``uses=`` entry -> the run id it names."""
+    rid = getattr(run, "id", run)
+    if not isinstance(rid, str) or not rid.strip():
+        raise ValueError(f"expected a run id or a run, not {run!r}")
+    return rid
+
+
 class _DisabledRun(Run):
     """What ``cairn.Run`` returns in disabled mode: every method is a no-op.
 
@@ -1622,6 +1664,9 @@ class _DisabledRun(Run):
         pass
 
     def use_model(self, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
+        pass
+
+    def use_run(self, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
         pass
 
     def use_viewer(self, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]

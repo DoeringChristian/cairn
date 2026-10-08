@@ -272,6 +272,12 @@ def _apply_op(
                 artifact_version_id=payload["artifact_version_id"],
                 role=payload.get("role", "input"),
             )
+        elif op == "record_run_use":
+            from . import artifact_registry_ops
+
+            artifact_registry_ops.record_run_use(
+                db, run_id=rid, used_run_id=payload["used_run_id"], role=payload.get("role"),
+            )
         elif op == "source":
             # The archive is already in the blob store; copy it and the
             # manifest into the run's source dir.
