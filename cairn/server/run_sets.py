@@ -272,6 +272,8 @@ def cell_value(run: Run, col: str) -> Any:
         return None
     if col == "name":
         return run.get("display_name") or run["id"]
+    if col in ("group", "job_type"):
+        return run.get(col)
     if col == "status":
         return run.get("status")
     if col == "created_at":

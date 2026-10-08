@@ -25,6 +25,20 @@
   `POST/GET /api/runs/{id}/uses`). Lineage graphs show it as a `used` edge;
   the Reader has `Run.uses()` / `Run.used_by()`. Run archives carry the
   links (`run_links.json`), remapped to the imported runs' new ids.
+- **Nested grouping as wandb** (UI): group rows read `Field: value`
+  (`Group: exp-44`, `Job Type: train`); an outer group shows a hollow
+  circle and its sub-group and run counts, an innermost group the filled
+  dot of its chart line and its run count, and runs inside groups no dot.
+  In the workspace, line charts draw one mean line per innermost group,
+  labelled `group: exp-44, jobType: train`, each in its own colour (sidebar
+  dot, chart line and Summary cards alike); hover links innermost group rows
+  and lines. The runs table gains **Group** and **Job Type** columns, shown
+  when a listed run has one.
+- **Metric column menu** (UI): a metric column's ▾ on the runs table and the
+  Scalars card sorts, sets the project's **Summary** and **Goal** for the
+  metric (its project override), shows the logged rule, resets to it and
+  hides the column. The Scalars card colours each goal metric's best row
+  green and worst red; the Config card tints the rows that differ.
 - **Project workspace** (UI, replaces the Compare page): a runs sidebar
   (the runs table with its toolbar, the Name column and eyes per group and
   run) next to the current view's cards; grouped, line charts draw one

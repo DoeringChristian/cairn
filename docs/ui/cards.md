@@ -33,7 +33,7 @@ Series cards show one logged name (or several: in a workspace, the card's **Data
 | `importance` | Parameter importance | Which params explain a target | multi-run |
 | `run-compare` | Run comparer | Metrics, params and environment side by side | multi-run |
 | `code-diff` | Code diff | Two runs' source snapshots diffed | multi-run |
-| `scalars` | Scalars | Single-step metrics, summary values and run info, one row per run or group | multi-run |
+| `scalars` | Scalars | Single-step metrics, summary values and run info, one row per run or group; best green, worst red | multi-run |
 | `config` | Config | Config keys, tags and notes, one column per run or group | multi-run |
 
 A list of media logged under one name at one step is a **gallery**. Every media card above (image, figure, audio, video, histogram, tensor, text, HTML, Markdown, 3D, volume) shows it: see [Galleries](#galleries).
@@ -70,7 +70,7 @@ A scalar's curve, one line per run.
 | Tab | Settings |
 |---|---|
 | Values | **Metrics** (the series drawn; reports and share links only: in a workspace the card editor's **Data** picks them). **X axis**: `step`, `wall_time`, `relative_time` or a metric *(default)*. **X range** / **Y range**, **Log x** / **Log y** *(default)*. **Smoothing**: kind and amount *(default)*. **Outliers**: low/high percentile to clip the y range to *(default)*. **Max runs**: pinned runs come first *(default)*. |
-| Grouping | **Group runs**: **Workspace** *(default)* follows the [workspace](project-workspace.md) sidebar's grouping (grouped: one line per sidebar group; not grouped: one line per run), and outside a workspace (run page, reports) uses the settings below. **Off** draws one line per run, even in a grouped workspace. **By key** always uses the settings below, also in a grouped workspace. **Group runs by**: Group, Job type or a Param. Runs that share the value draw as one centre **Line** (mean, median, min or max) with a **Band** (std, min–max or sem). **Hide member runs**, **Latest run per group** *(all default)*. Shown only when the card has several runs. |
+| Grouping | **Group runs**: **Workspace** *(default)* follows the [workspace](project-workspace.md) sidebar's grouping (grouped: one line per innermost sidebar group, labelled `group: exp-44, jobType: train`; not grouped: one line per run), and outside a workspace (run page, reports) uses the settings below. **Off** draws one line per run, even in a grouped workspace. **By key** always uses the settings below, also in a grouped workspace. **Group runs by**: Group, Job type or a Param. Runs that share the value draw as one centre **Line** (mean, median, min or max) with a **Band** (std, min–max or sem). **Hide member runs**, **Latest run per group** *(all default)*. Shown only when the card has several runs. |
 | Display | **Line type**: linear, monotone, step, step before, step after. **Stack**: none, stacked, percent. **Show original**: the faded raw line under a smoothed one. **Full fidelity**: per-pixel min/max, recomputed on zoom. Axis titles. **Legend** on/off, position and template. **Tooltip** template and wall time *(most default)*. Each series also has its own **Colour**, **Label** and **Style**. |
 | Expressions | **X expression**: any [expression](../reference/expressions.md) over the run, evaluated on each line's steps, e.g. `step * 32`, `epoch` or `relative_time / 60`. A metric is joined as of each step. **Add derived series**: an expression such as `loss / step`, drawn for every run. |
 
@@ -307,17 +307,17 @@ Settings:
 
 ### Scalars (`scalars`)
 
-One table: a row per run, or per group when the [project workspace](project-workspace.md) is grouped, labelled and coloured as in the charts. Its columns:
+One table: a row per run, or per innermost group when the [project workspace](project-workspace.md) is grouped, labelled and coloured as in the charts. Its columns:
 
 - **Run info** (status, duration, created, user, host) first, while **Show run info** *(default)* is on.
 - Every scalar logged at a single step, A–Z.
 - The runs' `run.summary(...)` values, A–Z, with italic headers.
 
-A group's cell is the mean over its runs that have a value, its earliest created time, or a shared text value (`mixed` when its runs differ); `—` when none has one. Click a header to sort by it: ascending, descending, then unsorted; empty cells go last. The [Summary section](workspace.md#automatic-panels) has one automatically.
+A group's cell is the mean over its runs that have a value, its earliest created time, or a shared text value (`mixed` when its runs differ); `—` when none has one. Click a header to sort by it: ascending, descending, then unsorted; empty cells go last. A single-step metric column's ▾ opens the [metric column menu](runs-table.md#metric-column-menu): sort, the project's **Summary** and **Goal** for the metric, **Reset to logged** and **Hide column** (settings → **Show hidden columns** brings hidden ones back). In a metric column with a goal and at least two values, the best cell is green and the worst red, as in the run comparer; tied cells share the colour, empty and `mixed` cells get none. The [Summary section](workspace.md#automatic-panels) has one automatically.
 
 ### Config (`config`)
 
-The config's keys as rows (nested keys dotted, `model.depth`), after **tags** and **notes**, with a column per run, or per group when the project workspace is grouped. A group's cell shows the value when all its runs with a config agree, else a muted `mixed`. **only diffs** *(default)*, in the header and the settings, hides the keys that are the same in every column. The [Summary section](workspace.md#automatic-panels) has one automatically.
+The config's keys as rows (nested keys dotted, `model.depth`), after **tags** and **notes**, with a column per run, or per innermost group when the project workspace is grouped. A group's cell shows the value when all its runs with a config agree, else a muted `mixed`. The rows whose values differ across the columns are tinted, as in the run comparer. **only diffs** *(default)*, in the header and the settings, hides the keys that are the same in every column. The [Summary section](workspace.md#automatic-panels) has one automatically.
 
 ### Code diff (`code-diff`)
 

@@ -88,7 +88,10 @@ The effective rule of a metric is resolved in this order:
    higher); else the direction of the logged summary; else `none`. Overriding a logged
    `summary="min"` with `last` therefore keeps "lower is better".
 
-Overrides are set over HTTP (the UI's column menu comes later); writing takes the write role:
+In the UI, set them from a metric column's ▾ menu, on the runs table or a Scalars card
+([Metric column menu](../ui/runs-table.md#metric-column-menu)): **Summary**, **Goal** and
+**Reset to logged**; the menu also shows the logged rule and whether the project overrides it.
+Over HTTP, writing takes the write role:
 
 ```bash
 curl -X PUT  $SERVER/api/projects/mnist/metric-rules/val.loss -d '{"summary": "last"}' \

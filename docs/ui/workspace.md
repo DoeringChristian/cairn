@@ -122,7 +122,7 @@ Section header controls:
 | Send to report | Copy the section's panels, for the runs on screen, into a new [report](reports.md) and open it. |
 | Trash | Delete the section. Only shown while it has no panels. |
 
-A scalar series with a single point is a column of the Summary section's Scalars card. A card you add for it yourself (a line chart from **Add card**) shows a plain value, not a one-dot chart, and becomes a line plot once a second point arrives.
+A scalar series with a single point is a column of the Summary section's Scalars card. The column's ▾ menu sets the metric's summary and goal for the project ([metric column menu](runs-table.md#metric-column-menu)); with a goal, its best row is green and its worst red. A card you add for it yourself (a line chart from **Add card**) shows a plain value, not a one-dot chart, and becomes a line plot once a second point arrives.
 
 ### Adding cards
 

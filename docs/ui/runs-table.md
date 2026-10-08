@@ -81,7 +81,7 @@ The table has no full series, so an expression that needs one evaluates to null.
 
 - Click a column header to sort by it; click again to flip the direction. **Created** starts newest-first, every other column ascending.
 - ++shift++-click a header to add it as the next sort key, or to flip it if it already is one. Headers show the direction arrow and, with several keys, the key's rank.
-- The column menu (⋮ on the header) also has **Sort ascending**, **Sort descending** and **Add to sort** / **Remove from sort**.
+- The column menu (⋮ on the header, ▾ on a metric column) also has **Sort ascending** and **Sort descending**; other than a metric column's, it has **Add to sort** / **Remove from sort** too.
 
 Runs without a value sort last in both directions. Numbers sort numerically, text in natural order (`run-2` before `run-10`), and numbers come before text in a mixed column. Ties are broken by run id, so the order is stable. [Pinned runs](#hide-pin-and-baseline) always come first, in sorted order.
 
@@ -94,13 +94,13 @@ Click **Group** to add levels. Each level splits its parent group by one of:
 - `param: <key>`: a config value;
 - **expression…**: a scalar [expression](../reference/expressions.md), e.g. `min(val.loss) < 0.3`.
 
-Levels nest in order (`by …`, `then …`); reorder them with ↑/↓ and remove one with ×. Grouping and sorting compose: the runs inside each group follow the table's sort, and the groups themselves are ordered by their first run in that sort, at every level. Sorting by **Created** (newest first) puts the group with the most recent run on top; sorting by the grouped column orders the groups by their value. Runs with no value for a level go last as `(none)`. Each group header shows its run count; click it to collapse or expand it. A run group's name (`group: exp-44`) opens the [project workspace filtered to that group](project-workspace.md#filtering-to-a-group). Changing the group-by expands every group again.
+Levels nest in order (`by …`, `then …`); reorder them with ↑/↓ and remove one with ×. Grouping and sorting compose: the runs inside each group follow the table's sort, and the groups themselves are ordered by their first run in that sort, at every level. Sorting by **Created** (newest first) puts the group with the most recent run on top; sorting by the grouped column orders the groups by their value. Runs with no value for a level go last as `(none)`. Group rows look as in the [workspace sidebar](project-workspace.md#runs-sidebar), as in wandb: they read `Field: value` (`Group: exp-44`, `Job Type: train`, `Tag: prod`, `lr: 0.001`, `Group: (none)`); an outer group (with sub-groups) has a hollow circle and two counts (sub-groups, runs), an innermost group a filled dot in its workspace chart colour and its run count, and the runs inside groups no dot. Click a group header to collapse or expand it. A run group's name (`exp-44` in `Group: exp-44`) opens the [project workspace filtered to that group](project-workspace.md#filtering-to-a-group). Changing the group-by expands every group again.
 
 ## Columns
 
 | Kind | Column | Contents |
 |---|---|---|
-| Built-in | Name, Status, Created, Duration, Tags | Run fields. Duration runs up to now for an unfinished run. |
+| Built-in | Name, Group, Job Type, Status, Created, Duration, Tags | Run fields. Group and Job Type are there (and shown by default) when a listed run has one. Duration runs up to now for an unfinished run. |
 | Metric | the metric or summary key | The run's value: the metric's last point, replaced by its summary rule in the project if it has one, replaced by an explicit `run.summary()` key of the same name. See [Final values and metric rules](../guides/metric-rules.md). |
 | Config | the config key | A config value. |
 | Computed | the name or the expression | A scalar expression per run, see [below](#computed-columns). |
@@ -115,6 +115,24 @@ Metric and config columns are the union over the loaded runs: a run that never l
 - **Reorder** by dragging a header onto another, or with **Move left** / **Move right** in its menu. Pinned columns reorder among themselves, and scrolling columns among themselves.
 
 New columns (a metric that appears later) are placed next to their natural neighbours.
+
+### Metric column menu
+
+A metric column's header has a ▾ menu (the Scalars card's metric columns have the same one):
+
+```
+EVAL/MSE ▾
+┌──────────────────────────────────────────┐
+│ Sort ascending / Sort descending         │
+│ Summary   [ last ▾ ]                     │
+│ Goal      [ lower is better ▾ ]          │
+│ logged: summary=min · project overrides  │
+│ [Reset to logged]                        │
+│ Hide column                              │
+└──────────────────────────────────────────┘
+```
+
+**Summary** (`min`, `max`, `mean`, `last`) picks the number the column shows, **Goal** (lower is better, higher is better, none) which way is better. Both set the metric's [project override](../guides/metric-rules.md#project-overrides): every run of the project, every table and card follows it, for everyone. The muted line shows the rule the runs logged (`summary=` of `run.track`, `none` without one) and `· project overrides` while an override is set; **Reset to logged** removes it. A read-only user sees the values, disabled.
 
 ### Computed columns
 

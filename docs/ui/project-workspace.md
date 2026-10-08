@@ -8,31 +8,29 @@ What the sidebar shows is part of the current view: every change saves into it l
 
 ```
 Status [All ▾]  Search [regex          ]
-[Filter] [Group: group] [ ] Latest only
+[Filter] [Group: group › job_type] [ ] Latest only
 Sort: [created ▾] [↓]
-4 of 4 groups shown
-◉  NAME
-◉  ▾ group: exp-44  5
-  ◉    ● train v2
-  ◉    ● prepare v2
-  ◉    ● eval v1
-  ◉    ● train v1
-  ◉    ● prepare v1
-◉  ▸ group: exp-43  4
-○  ▸ group: exp-42  4
-◉  ▾ group: (none)  2
-  ◉    ● baseline v2
-  ◉    ● baseline v1
+3 of 3 groups shown
+◉  NAME  15 listed
+◉  ○ ▾ Group: exp-44        3  5
+     ◉ ● ▾ Job Type: train      2
+         ◉ eager-sun v2
+         ◉ eager-sun v1
+     ◉ ● ▸ Job Type: eval       1
+     ◉ ● ▸ Job Type: prepare    2
+◉  ○ ▸ Group: seeds-lr3e-4  1  3
+◉  ○ ▸ Group: (none)        2  2
 ```
 
-The sidebar is the [runs table](runs-table.md) with only the Name column, and an eye in place of each checkbox: in the Name cell, before the run's dot or the group's caret, indented with it. The header's eye, left of **Name**, shows or hides every listed run. Its toolbar is the runs table's without **Columns**: **Status**, **Search**, **Filter**, **Group** and **Latest only** work exactly as there. **Sort** picks one of the runs table's sortable keys (`created`, `name`, `status`, `duration`, and the metric and param columns) and **↓ / ↑** flips its direction; it starts on `created ↓` (newest first) and is saved with the rest. Not grouped, a grouped run reads `exp-44 · train v2`, unless every listed run is in the same group. **N of M groups shown** (not grouped: runs) counts the groups with a visible run, or the visible runs. On a phone the sidebar folds behind a **Runs** button.
+The sidebar is the [runs table](runs-table.md) with only the Name column, and an eye in place of each checkbox: in the Name cell, before the run's dot or the group's caret, indented with it. The header's eye, left of **Name**, shows or hides every listed run; `15 listed` counts the listed runs. Its toolbar is the runs table's without **Columns**: **Status**, **Search**, **Filter**, **Group** and **Latest only** work exactly as there. **Sort** picks one of the runs table's sortable keys (`created`, `name`, `status`, `duration`, and the metric and param columns) and **↓ / ↑** flips its direction; it starts on `created ↓` (newest first) and is saved with the rest. Not grouped, a grouped run reads `exp-44 · train v2`, unless every listed run is in the same group. **N of M groups shown** (not grouped: runs) counts the groups with a visible run, or the visible runs. On a phone the sidebar folds behind a **Runs** button.
 
-- **▸ / ▾** folds a group (not saved). The first group and the `(none)` group start open. A run group's name (`group: exp-44`) [filters the workspace to it](#filtering-to-a-group).
+- Group rows read `Field: value` (`Group: exp-44`, `Job Type: train`, `Tag: prod`, `lr: 0.001`; no value: `Group: (none)`), as in wandb. An **outer** group (one with sub-groups) has a hollow circle and two counts, its sub-groups and its runs. An **innermost** group has a filled dot in the colour of its chart line, and its run count. With one grouping level every group is innermost. Runs inside groups have no dot: their line is their group's.
+- **▸ / ▾** folds a group (not saved). The first top-level group and the `(none)` group start open. A run group's name (`exp-44` in `Group: exp-44`) [filters the workspace to it](#filtering-to-a-group).
 - The **header eye** shows every listed run, or hides them all when all are shown; ◐ means some are hidden.
 - A **group's eye** shows or hides every run in it; ◐ means some of them are hidden. The eyes of a group's runs are indented one step per level.
-- A **run's eye** shows or hides that run. A hidden run's dot is hollow.
+- A **run's eye** shows or hides that run. A hidden run's dot is hollow, and so is an innermost group's when all its runs are hidden.
 - **Pinned runs** (the pin on row hover; the same pins as the runs table's) are listed first and stay listed whatever the status, search, filter and **Latest only**. Grouped, a pinned run is first in its group.
-- **Hover** a run and its line(s) are highlighted in every chart, the others dimmed; hover a line in a chart and its row is highlighted. Grouped, a group header, or a run in it, highlights the group's line, and hovering that line highlights the group header.
+- **Hover** a run and its line(s) are highlighted in every chart, the others dimmed; hover a line in a chart and its row is highlighted. Grouped, an innermost group header, or a run in it, highlights the group's line, and hovering that line highlights the group header.
 
 By default the 10 newest groups (by their newest run; not grouped: the 10 newest runs) are visible and the rest hidden, so a new run shows up on its own. An eye you click overrides that.
 
@@ -40,7 +38,7 @@ By default the 10 newest groups (by their newest run; not grouped: the 10 newest
 
 The cards get the visible runs.
 
-- Grouped, a line chart draws **one line per top-level group**: the mean over the group's runs that log the metric, with a min–max band, in the group's colour and labelled with its name. Runs without a group value stay their own lines. Not grouped, every run is its own line, in the colour of its dot. A card whose **Group runs** setting is **Off** or **By key** ([cards](cards.md)) keeps its own grouping instead.
+- Grouped, a line chart draws **one line per innermost group** (wandb's): the mean over the group's runs that log the metric, with a min–max band, in the colour of the group's dot, and labelled with its path as `key: value` pairs: `group: exp-44, jobType: train` (one level: `group: exp-44`; no value: `group: (none)`). The Scalars and Config cards have a row or column per innermost group, labelled the same way. Not grouped, every run is its own line, in the colour of its dot. A card whose **Group runs** setting is **Off** or **By key** ([cards](cards.md)) keeps its own grouping instead.
 - Media and other cards show one item per run. When the runs span groups, grouped runs are labelled `<group> · <name> v<n>`, such as `exp-43 · eval v2`.
 
 ## From the runs table
@@ -49,6 +47,6 @@ Select runs in the [runs table](runs-table.md) and click **Show in workspace**: 
 
 ## Filtering to a group
 
-Click a run group's name (`group: exp-44`) in the sidebar to show only that group: the [filter](runs-table.md#filters) gains the condition `group = exp-44`, shown as a removable chip next to **Filter (1)**. Remove the chip (×) to bring the other groups back. Clicking another group's name replaces the condition; the filter editor can still build anything. The group's runs hidden by their eyes or by the 10-newest default are shown; other eyes stay as they were.
+Click a run group's name (`exp-44` in `Group: exp-44`) in the sidebar to show only that group: the [filter](runs-table.md#filters) gains the condition `group = exp-44`, shown as a removable chip next to **Filter (1)**. Remove the chip (×) to bring the other groups back. Clicking another group's name replaces the condition; the filter editor can still build anything. The group's runs hidden by their eyes or by the 10-newest default are shown; other eyes stay as they were.
 
 The group's name in the [runs table](runs-table.md)'s group headers, the run page header (`exp-44 ↗` next to the version) and the lineage panel's **Group** row open the workspace filtered the same way.
