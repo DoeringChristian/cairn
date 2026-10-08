@@ -174,7 +174,7 @@ A reader `Run` loads its data lazily:
 | Attribute | Contents |
 |---|---|
 | `id`, `name`, `project`, `status`, `archived` | Identity and status |
-| `version` | The run's number in its series (project, group, job_type, name), assigned by the server and never reused; `None` for an unnamed run. See [Versions](runs.md#versions) |
+| `version` | The run's number in its series (project, group, job_type, name), assigned by the server and never reused; `None` for an unnamed run. See [Versions](organising-runs.md#versions) |
 | `created_at`, `ended_at`, `duration` | `datetime` / `timedelta`. `duration` runs to now for a live run. |
 | `tags`, `notes`, `group`, `job_type`, `hostname` | Metadata |
 | `git` | `GitInfo(sha, branch, dirty, remote)`, or `None` |
@@ -358,7 +358,7 @@ it points to can be cached forever.
 | Argument | Meaning |
 |---|---|
 | `tag` | The media sequence to resolve (required) |
-| `run` | `latest` (default), `latest:N` (the N-th newest), `newest-per-name`, or `id:<run_id>`. Archived runs are never selected; `latest` is `reader.runs(...).last()`. |
+| `run` | `latest` (default), `latest:N` (the N-th newest), `newest-per-name` (the newest run of each [series](organising-runs.md#versions) (group, job type, name); a query URL resolves one run, so this picks the same run as `latest`), or `id:<run_id>`. Archived runs are never selected; `latest` is `reader.runs(...).last()`. |
 | `project` | Restrict to one project |
 | `name` | A display-name glob (`exp*`) or case-insensitive substring |
 | `step` | `latest` (the highest step, default) or an integer |

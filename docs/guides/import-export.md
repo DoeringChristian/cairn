@@ -63,7 +63,7 @@ imports into project `P`, as `--project` does.
 
 - Every run gets a **new id**, so importing the same archive twice gives two
   copies. The response lists `original_id`, `new_id` and `name` for each run.
-- Every run takes the next [version](runs.md#versions) of its series (project,
+- Every run takes the next [version](organising-runs.md#versions) of its series (project,
   group, job type, name) in this repo; the version it had in the exported repo is not
   kept.
 - References between runs follow the new ids: a fork's parent, a run's

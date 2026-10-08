@@ -1,6 +1,6 @@
 # Run page and workspace
 
-Click a run in the [runs table](runs-table.md) to open its run page at `/p/<project>/r/<run>`, on its **Workspace** tab (as wandb's; every link to a run, and the URL `cairn` prints, opens there). The header shows the run's name, its [version](../guides/runs.md#versions) as a muted `v2` right after it (a run without a name has none), its status, its group (a link to the [project workspace](project-workspace.md) filtered to that group), its short id (click to copy), how long it has run, and a **forked from** link when the run is a fork. A run opened from the [project workspace](project-workspace.md)'s runs sidebar has a **← Workspace** link before its name, back to the workspace as you left it. While the run is `running`, a **Stop** button asks it to stop. The run sees the request on its next heartbeat (see [Run lifecycle](../guides/runs.md)).
+Click a run in the [runs table](runs-table.md) to open its run page at `/p/<project>/r/<run>`, on its **Workspace** tab (as wandb's; every link to a run, and the URL `cairn` prints, opens there). The header shows the run's name, its [version](../guides/organising-runs.md#versions) as a muted `v2` right after it (a run without a name has none), its status, its group (a link to the [project workspace](project-workspace.md) filtered to that group), its short id (click to copy), how long it has run, and a **forked from** link when the run is a fork. A run opened from the [project workspace](project-workspace.md)'s runs sidebar has a **← Workspace** link before its name, back to the workspace as you left it. While the run is `running`, a **Stop** button asks it to stop. The run sees the request on its next heartbeat (see [Run lifecycle](../guides/runs.md)).
 
 A run with [progress](../guides/runs.md#progress-and-eta) has a line under the header: while it runs, a full-width bar in its status colour and `step 5,800 / 10,000 · 58% · ~9 min left` (for `run.progress` values, `3 / 10 · 30% · …` without the word "step"); once it ended, only `step 10,000 / 10,000 · 100%`. The page re-reads a running run every 2 s.
 
@@ -60,7 +60,7 @@ The view switcher is the first item of the [toolbar](#workspace-toolbar). On the
 - Click a tile to switch to its view. The panel closes. Switching is not an edit: ++cmd+z++ never switches back. Switching also clears the undo history, so ++cmd+z++ never changes a view you have left; edits inside the view you are in undo as usual.
 - **+ New view** turns into a name field with **Copy of current view** (the default) or **Empty (automatic panels only)**. ++enter++ creates the view and switches to it; ++escape++ cancels.
 
-The [project workspace](project-workspace.md) has the same switcher; there a view also holds the sidebar's runs (search, grouping, eyes and version picks), so switching views switches them too.
+The [project workspace](project-workspace.md) has the same switcher; there a view also holds the sidebar's runs (status, search, filter, grouping, **Latest only**, sort and eyes), so switching views switches them too.
 
 On a phone the panel spans the full width, with one or two tiles per row.
 
@@ -169,7 +169,7 @@ Move cards and sections with their grips:
 Every move applies to the page at once and is one [undo](#undo-and-redo) step.
 
 !!! note "What is stored where"
-    **In the workspace** (each view, on the server, shared by everyone who uses the project): sections and their order, collapsed and sorted state; panels with their type, metrics, settings, size and hidden flag; removed automatic panels; whether unlisted metrics get automatic panels; hide patterns; workspace and section defaults; prefs (sync zoom, colour by). A view also holds the [project workspace](project-workspace.md)'s runs: search, grouping, eyes and version picks. Which view is current is stored on the server too.
+    **In the workspace** (each view, on the server, shared by everyone who uses the project): sections and their order, collapsed and sorted state; panels with their type, metrics, settings, size and hidden flag; removed automatic panels; whether unlisted metrics get automatic panels; hide patterns; workspace and section defaults; prefs (sync zoom, colour by). A view also holds the [project workspace](project-workspace.md)'s runs: status, search, filter, grouping, **Latest only**, sort and eyes. Which view is current is stored on the server too.
 
     **In this browser only:** the run page's and runs table's hidden, pinned and baseline runs.
 
@@ -244,7 +244,7 @@ Each project has one undo stack. It records every workspace edit, on the run pag
 - card adds, duplicates, moves, hides, removals and edits
 - turning unlisted metrics on or off
 - section edits, hide patterns, defaults, colour by
-- the project workspace's search, grouping, eyes and version picks
+- the project workspace's status, search, filter, grouping, **Latest only**, sort and eyes
 
 Switching views on the run page is not an edit and is not recorded; it clears the undo history. Undo with ++cmd+z++ / ++ctrl+z++ and redo with ++cmd+shift+z++ / ++ctrl+shift+z++. These shortcuts do nothing while a text field has focus, because the field keeps its own typing undo. The stack holds 200 steps.
 

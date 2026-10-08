@@ -44,7 +44,7 @@ a keyword:
 `group` and `job_type` are shown on the run page (Overview, next to each other), and in the runs
 table and the workspace you can filter and group by them (group, then job type). They are also
 available in [expressions](../reference/expressions.md) and on [`Reader`](reading.md) runs
-(`run.group`, `run.job_type`). See [Identity](#identity-id-name-group-job-type-version) for how
+(`run.group`, `run.job_type`). See [Organising runs](organising-runs.md) for how
 they work together with the name and the version.
 
 ## Finishing a run and its status
@@ -119,74 +119,6 @@ run = cairn.Run("cifar10", resume=ckpt["cairn_run"], rewind_to=ckpt["step"])
     On a local repo, resuming, rewinding or forking first catches up on the run's log (through
     the `cairn ui`/`cairn server` serving the repo, or by itself), so a run that just finished
     in another process can be continued at once.
-
-## Identity: id, name, group, job type, version
-
-A run has one identity and three labels, as in wandb:
-
-| Field | What it is |
-|---|---|
-| **id** | The run itself: 32 hex characters, random unless you pass `run_id=`. URLs, `resume=`, `fork_from=` and `uses=` name runs by id. |
-| **name** | A free display label (`name=`); it need not be unique and can be edited. |
-| **group** | Runs that belong together: the seeds of one configuration, the folds of a cross-validation, the steps of one experiment (`group="exp-44"`). The workspace aggregates a group into one line, and clicking a group filters to it. |
-| **job type** | The run's role within its group: `"prepare"`, `"train"`, `"eval"`, `"finetune"`, … The runs table and the workspace group by it below the group (group → job type), and the lineage graph labels and clusters runs by it. |
-| **version** | Deduplication: the run's number among the runs with the same group, job type *and* name (below). |
-
-```python
-cairn.Run("mnist", group="exp-44", job_type="prepare", name="prepare")
-cairn.Run("mnist", group="exp-44", job_type="train", name="train")
-cairn.Run("mnist", group="exp-44", job_type="finetune", name="ft-lr1e-4")   # v1
-cairn.Run("mnist", group="exp-44", job_type="finetune", name="ft-lr1e-5")   # v1: another name
-cairn.Run("mnist", group="exp-44", job_type="finetune", name="ft-lr1e-4")   # v2: a re-run
-```
-
-## Versions
-
-Runs with the same **group, job type and name** form a **series**; a missing
-group or job type is part of the key, so `train` without a group, `train` in
-group `exp-44`, and `train` as job type `eval` in `exp-44` are three series.
-The server numbers every named run in its series when it creates the run: the
-first is version 1, a re-run with the same identity version 2, and so on.
-The number is the run's `version` field; it is never written into the name,
-and the client never chooses it. Runs with different names never share a
-series, so unique names never get a v2.
-
-```python
-run = cairn.Run("mnist", name="train")
-run.version   # 3: the third ungrouped "train" without a job type
-```
-
-- **Never reused.** Each series keeps its highest number, so deleting `train`
-  v3 does not make the next `train` v3 again: it is v4.
-- **A new name, group or job type: a new number.** A run whose name, group or
-  job type changes (a rename, or a `PATCH /api/runs/{id}` of `group` or
-  `job_type`) takes the next number of its new series; its old number stays
-  taken in the old one (changing back gives yet another new number).
-- **Resume and shared runs keep it.** `resume=`, `rewind_to=`, and processes
-  joining a run (`primary=False`, `cairn.attach`) continue the same run, with
-  the same version.
-- **A fork is a new run**, so it takes the next number of its series.
-- **No name, no version**: an unnamed run's `version` is `None`.
-- **Imported runs** ([run archives](import-export.md#run-archives)) take the
-  next number of their series in the repo they are imported into; the number
-  they had where they were exported is not kept.
-
-Over HTTP the server returns the version when the run is created. On a local
-repo the number is assigned when the run's log is ingested: the first read of
-`run.version` catches up on the repo's logs (like `ArtifactVersion.wait()`),
-and it is known from then on. Repos numbered before the job type was part of
-the key are renumbered once, per series in creation order, when a newer cairn
-first opens them.
-
-**Latest only** in the runs table and the workspace keeps the newest run of
-every series, and **Archive old** / **Delete old** act on every other one.
-The UI shows the version after a run's name (`train  v2`), and labels runs
-that share a series `train v1`, `train v2` in charts and legends. Where it
-needs more, it shows what differs: the group first (`exp-44 · train v1` when
-the runs span groups), then the job type (`finetune · ft` next to
-`eval · ft`). `cairn list` has a `VERSION` column and `--sort version` (with
-`GROUP` and `JOB_TYPE` columns when a listed run has one); the
-[Reader](reading.md) has `Run.version`.
 
 ## Several processes, one run
 
@@ -441,7 +373,8 @@ CUDA availability and GPU names, and a hash of the installed packages.
 **Git state** (with `capture_source` or `capture_env`): the commit, branch, dirty flag and
 `origin` remote of the working directory, with credentials stripped from the URL. If the tree is
 dirty and `capture_source` is on, the diff against `HEAD` plus a list of untracked files (capped
-at 2 MB) is stored with the source snapshot; the run's overview links it as **Diff**.
+at 2 MB) is stored with the source snapshot; the Git row of the run's Overview has a **diff**
+button that downloads it.
 
 **Source snapshot** (`capture_source`): cairn walks up from the working directory to the project
 root, marked by `.git`, `pyproject.toml`, `pixi.toml`, `setup.py` and similar files, and uploads
@@ -451,7 +384,7 @@ caches, build output, `.git` and `.cairn`, skips files over 1 MB, and respects t
 `.gitignore`. Override this with `source_root`, `source_include`, `source_exclude` (glob
 patterns that replace the defaults) and `source_max_file_size_mb`.
 
-The snapshot appears on the run's *Source* page. `cairn diff RUN_ID` compares your current
+The snapshot appears on the run page's **Files** tab. `cairn diff RUN_ID` compares your current
 working directory with it.
 
 ## Disabled runs
@@ -488,7 +421,7 @@ Each media value is ONE value with no step, named by its key's dotted path
   longer referenced and [`cairn gc`](server.md#garbage-collection) frees them.
 - **Deleting the key removes it**: `reader.run(id).edit().delete_keys("summary", ["showcase"])`.
 - **Cards show it like a tracked series** of that name: it gets an automatic panel, the add-card
-  flow offers it, comparisons and reports pick it up. Its card has no step slider. The run's
+  flow offers it, the project workspace and reports pick it up. Its card has no step slider. The run's
   Overview lists it in the Summary table by kind (`figure`, `6 images`), with a link to its card in
   the Workspace tab; media renders only there. The runs table has no column for it.
 - **A name is either a tracked series or a summary media value.** `run.summary` with media under a

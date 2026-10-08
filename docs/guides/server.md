@@ -541,7 +541,7 @@ cairn list --archived all --format json                # or csv
 | `-c KEY` | Add a column: `config.<path>` (nested config), `summary.<path>`, `metrics.<name>` (the final value the runs table shows) or a run field (`group`, `job_type`, `hostname`, `user`, `notes`, `ended_at`, `archived`). Repeatable |
 | `--format table\|json\|csv` | `json` and `csv` give ISO 8601 times and durations in seconds |
 
-The default columns are `ID`, `NAME`, `VERSION` (the run's [version](runs.md#versions)),
+The default columns are `ID`, `NAME`, `VERSION` (the run's [version](organising-runs.md#versions)),
 `PROJECT` (left out with `--project`),
 `STATUS`, `CREATED` (local time), `DURATION` and `TAGS`.
 

@@ -14,14 +14,14 @@ The table updates live: new and deleted runs appear within a few seconds, and ru
 | **Search** | A case-insensitive regex over each run's name, id, status and tags. An invalid regex turns the box red. |
 | Filter chips, **Filter** | The [filter tree](#filters). |
 | **Group** | [Nested group-by](#group-by). |
-| **Latest only** | Keep only the newest run of each series: per group, the latest version of each name (`train` in two groups is two series). |
+| **Latest only** | Keep only the newest run of each [series](../guides/organising-runs.md#versions) (group, job type, name): its highest version, else its latest start. `train` in two groups, or under two job types, is two series. |
 | **Columns** | The [column manager](#columns). The button shows `(+N ƒ)` when you have N computed columns. |
 | Sort summary | With more than one sort key, lists them; × removes one. |
 | Run view summary | With runs hidden or pinned, or a baseline set, shows e.g. `2 hidden · 1 pinned · baseline <name>`; **reset** clears all three. |
-| **Archive old** / **Delete old** | For each run name with several runs, archive or delete all but the newest (archived runs are left out). Both ask first. |
+| **Archive old** / **Delete old** | For each series with several runs, archive or delete all but the newest (archived runs are left out). Both ask first. |
 | **Import** | Upload a `.zip` export ([Import and export](../guides/import-export.md)). |
 
-When several runs share a name, the newest of them gets an accent bar on its left edge.
+When a series has several runs, the newest of them gets an accent bar on its left edge.
 
 ## Filters
 
@@ -109,7 +109,7 @@ The **Status** cell of a run with [progress](../guides/runs.md#progress-and-eta)
 
 Metric and config columns are the union over the loaded runs: a run that never logged `val.acc` shows a blank cell, and the column stays.
 
-- **Name is frozen** on the left, cannot be hidden or moved, and always comes first. A run with a [version](../guides/runs.md#versions) shows it as a muted `v2` right after its name. When the table is not grouped, a run in a [group](../guides/runs.md) reads `<group> · <name>`, such as `exp-44 · train v2`, unless every listed run is in the same group.
+- **Name is frozen** on the left, cannot be hidden or moved, and always comes first. A run with a [version](../guides/organising-runs.md#versions) shows it as a muted `v2` right after its name. When the table is not grouped, a run in a [group](../guides/organising-runs.md) reads `<group> · <name>`, such as `exp-44 · train v2`, unless every listed run is in the same group.
 - **Pin** a column (header menu → **Pin (freeze left)**, or the pin icon in the column manager) to freeze it after Name, in pin order. The rest scroll horizontally.
 - **Hide** a column from its header menu, or untick it in the column manager. The manager has a search box and **Hide all** / **Show all** for the matching columns.
 - **Reorder** by dragging a header onto another, or with **Move left** / **Move right** in its menu. Pinned columns reorder among themselves, and scrolling columns among themselves.
