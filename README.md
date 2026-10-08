@@ -171,13 +171,15 @@ priority order). The default is `"enabled"`.
 ## Final metric values
 
 Each metric has one final value per run — what the runs table, the run
-overview, the comparison table, `Reader` runs' `.final`, and the metric filters
+overview, the Summary cards, `Reader` runs' `.final`, and the metric filters
 (`metrics__<name>` in `RunQuery.filter`, `metrics.<name>` in query URLs) show.
 It is, in order: an explicit `run.summary(name=...)` key; else the metric's rule, set
 with `run.track(value, name, step, summary="min"|"max"|"mean"|"last")`; else
 the last logged point. Rules are applied when values are read, so they never
-change logged data. A `"min"` rule also makes the comparison table colour
-lower as better.
+change logged data. A `"min"` rule also makes lower values count as better
+(best green, worst red in the Scalars card and the run comparer). A project can
+override a metric's summary and goal from a metric column's header menu in the
+UI (`Reader.metric_rules(project)` reads the effective rules).
 
 `x=` names another scalar series (its full name, never scope-prefixed) that
 charts of the metric start on as their x-axis, joined on step:
@@ -192,6 +194,22 @@ component's `__cairn_track__`, `scope.track(v, "loss", summary="min")` rules
 the prefixed name, e.g. `model.loss`). A rule is sent only when it changes, so
 passing it on every call is free; a keyword you pass replaces that part of
 the rule, and one you leave out keeps its earlier value. See `examples/demo_metric_rules.py`.
+
+## Organising runs
+
+As in wandb, a run has a free `name`, a `group` (runs that belong together:
+seeds, folds, the steps of one experiment) and a `job_type` (its role:
+`train`, `eval`, ...). The server numbers re-runs with the same group, job
+type and name (`run.version`: v1, v2, ...); unique names never get a v2, and
+**Latest only** in the UI keeps the newest of each. The runs table and the
+project workspace group by group, then job type, with one aggregated chart line
+per innermost group; clicking a group filters the workspace to it.
+
+```python
+train = cairn.Run("mnist", group="exp-44", job_type="train", name="train")
+...
+ev = cairn.Run("mnist", group="exp-44", job_type="eval", name="eval", uses=[train])
+```
 
 ## Run IDs
 
@@ -242,14 +260,24 @@ cairn configure --server URL              # save the default server (or --repo) 
   of machines, or `cairn.sweep(space, ...).run(train)` in process.
 - **Artifacts** — `run.log_artifact(value_or_path, name, type="model", aliases=["best"])`
   logs a new version (`cairn.Artifact` builds multi-file ones: directories, references,
-  generated files); `run.use_artifact("model:best")` records lineage and returns the
-  version (`.get()`, `.download()`).
+  generated files); `run.use_artifact("model:best")` (or `"other-project/model:best"`)
+  records lineage and returns the version (`.get()`, `.download()`);
+  `run.use_run(other)` / `cairn.Run(..., uses=[...])` links runs directly.
 - **Integrations** — `cairn.integrations.{huggingface,lightning,keras,xgboost,ultralytics}`.
 - **Import/export** — `cairn import-tb LOGDIR`, `cairn export RUN_ID` or
   `cairn export --project P --format csv|parquet`, run archives with
   `cairn export-runs` / `cairn import-runs`.
 - **Run lifecycle** — `resume=`, `fork_from=(id, step)`, stop from the UI
   (`run.should_stop`), `run.alert(...)` with `cairn server --alert-webhook`.
+- **Web UI** — a runs table, a project workspace (runs sidebar + cards, grouped
+  lines, parallel coordinates, parameter importance), run pages (Workspace,
+  Overview with Inputs / Used by, System, Logs, Files, Artifacts), an artifact
+  explorer, a lineage graph, and reports whose card blocks hold live run sets,
+  with share links.
+- **Notebooks** — a `cairn.Run` or `Reader` run as a cell's last expression
+  shows its run page inline (`run.display(tab=, height=)`);
+  `cairn.ui.workspace(project, filter=)` and `cairn.ui.report(project, id)`
+  embed the workspace and reports (Jupyter and marimo).
 
 ## Live query URLs
 
@@ -278,7 +306,7 @@ Selector grammar (query params):
 
 | Param | Meaning |
 |-------|---------|
-| `run` | `latest` (default) · `latest:N` (N-th newest) · `id:<run_id>` (pin) · `newest-per-name` |
+| `run` | `latest` (default) · `latest:N` (N-th newest) · `id:<run_id>` (pin) · `newest-per-name` (per series: group, job type, name) |
 | `project` | restrict to a project id |
 | `name` | display-name glob (`exp*`) or case-insensitive substring |
 | `status` | exact run status (`completed`, …) |
