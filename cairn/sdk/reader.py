@@ -488,7 +488,7 @@ class Run:
 
     @property
     def version(self) -> int | None:
-        """The run's number in its series (project, group, name), assigned by
+        """The run's number in its series (project, group, job_type, name), assigned by
         the server: 1, 2, ... in creation order, never reused. None for an
         unnamed run."""
         return self._raw.get("version")

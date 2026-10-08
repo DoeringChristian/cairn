@@ -911,11 +911,6 @@ def list_cmd(
                 f"unknown column {key!r}; use config.<path>, summary.<path>, "
                 f"metrics.<name> or one of {', '.join(_LIST_FIELDS)}"
             )
-    keys = ["id", "name", "version"] + ([] if project else ["project"]) + [
-        "status", "created_at", "duration", "tags",
-    ] + (["archived"] if archived == "all" else [])
-    keys += [k for k in columns if k not in keys]
-
     location, label = reader_location(repo, server)
     with Reader(location) as reader, _ReaderErrors(label):
         query = reader.runs(project, archived={"hide": False, "only": True, "all": None}[archived])
@@ -929,6 +924,13 @@ def list_cmd(
         except (ValueError, ExprError) as exc:
             raise click.UsageError(str(exc)) from None
         runs = query.list()
+        # GROUP and JOB_TYPE (a version is numbered per group, job_type and
+        # name) only when a listed run has one.
+        identity = [k for k in ("group", "job_type") if any(_list_value(r, k) for r in runs)]
+        keys = ["id", "name", *identity, "version"] + ([] if project else ["project"]) + [
+            "status", "created_at", "duration", "tags",
+        ] + (["archived"] if archived == "all" else [])
+        keys += [k for k in columns if k not in keys]
         rows = [[_list_value(r, k) for k in keys] for r in runs]
 
     if fmt == "json":

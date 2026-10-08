@@ -1,5 +1,5 @@
 """Server-assigned run versions: a run's number in its series (project,
-group, name), never reused."""
+group, job_type, name), never reused."""
 
 from __future__ import annotations
 
@@ -19,8 +19,8 @@ QUIET = {"capture_source": False, "capture_stdout": False, "capture_env": False,
          "capture_system_metrics": False}
 
 
-def _create(client, name=None, group=None, project="p", **kw) -> dict:
-    body = {"project": project, "name": name, "group": group, **kw}
+def _create(client, name=None, group=None, project="p", job_type=None, **kw) -> dict:
+    body = {"project": project, "name": name, "group": group, "job_type": job_type, **kw}
     r = client.post("/api/runs", json=body)
     assert r.status_code == 200, r.text
     return r.json()
@@ -54,6 +54,48 @@ def test_series_is_project_group_name(client):
     assert [r["version"] for r in rows][-1] is None  # missing sorts last
     q = client.post("/api/runs/query", json={"project": "p"}).json()["runs"]
     assert {r["id"]: r["version"] for r in q}[a["run_id"]] == 1
+
+
+def test_series_includes_the_job_type(client):
+    # Fine-tune siblings with distinct names coexist, each its own v1.
+    ft1 = _create(client, "ft-lr1e-4", group="exp-44", job_type="finetune")
+    ft2 = _create(client, "ft-lr1e-5", group="exp-44", job_type="finetune")
+    assert (ft1["version"], ft2["version"]) == (1, 1)
+    # A re-run of the same (group, job_type, name) is v2.
+    assert _create(client, "ft-lr1e-4", group="exp-44", job_type="finetune")["version"] == 2
+    # The same name under another job type (or none) is another series.
+    assert _create(client, "ft-lr1e-4", group="exp-44", job_type="eval")["version"] == 1
+    assert _create(client, "ft-lr1e-4", group="exp-44")["version"] == 1
+    assert _create(client, "ft-lr1e-4", group="exp-44")["version"] == 2
+    # An empty job type is a job type of its own, not "none".
+    assert _create(client, "ft-lr1e-4", group="exp-44", job_type="")["version"] == 1
+    # Without a group the key is (job_type, name).
+    assert _create(client, "train", job_type="train")["version"] == 1
+    assert _create(client, "train")["version"] == 1
+    row = client.get(f"/api/runs/{ft2['run_id']}").json()["run"]
+    assert (row["group"], row["job_type"], row["version"]) == ("exp-44", "finetune", 1)
+
+
+def test_job_type_change_moves_to_the_new_series(client):
+    a = _create(client, "train", group="g", job_type="train")
+    _create(client, "train", group="g", job_type="eval")
+    r = client.patch(f"/api/runs/{a['run_id']}", json={"job_type": "eval"})
+    assert r.json() == {"run_id": a["run_id"], "job_type": "eval", "version": 2}
+    # The same job type again: no change.
+    assert client.patch(f"/api/runs/{a['run_id']}", json={"job_type": "eval"}).json()["version"] == 2
+    # Back: the next number there (1 stays taken).
+    assert client.patch(f"/api/runs/{a['run_id']}", json={"job_type": "train"}).json()["version"] == 2
+    # Cleared: the (g, none, train) series.
+    r = client.patch(f"/api/runs/{a['run_id']}", json={"job_type": None})
+    assert r.json()["version"] == 1
+    run = client.get(f"/api/runs/{a['run_id']}").json()["run"]
+    assert (run["job_type"], run["group"], run["display_name"], run["version"]) == (
+        None, "g", "train", 1)
+    # A rename and a group change keep the job type in the key.
+    b = _create(client, "x", group="g", job_type="eval")
+    assert client.patch(f"/api/runs/{b['run_id']}", json={"display_name": "train"}).json()[
+        "version"] == 3
+    assert client.patch(f"/api/runs/{b['run_id']}", json={"group": "h"}).json()["version"] == 1
 
 
 def test_numbers_are_never_reused_after_delete(client):
@@ -290,6 +332,42 @@ def test_migration_numbers_existing_runs(tmp_path):
     con.close()
 
 
+def test_migration_renumbers_runs_keyed_without_job_type(tmp_path):
+    """A database numbered per (group, name) is renumbered per (group,
+    job_type, name)."""
+    path = tmp_path / "old.db"
+    con = sqlite3.connect(path)
+    con.execute(
+        "CREATE TABLE runs (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, "
+        "display_name TEXT, created_at TEXT NOT NULL, status TEXT NOT NULL, run_group TEXT, "
+        "job_type TEXT, version INTEGER)"
+    )
+    con.execute(
+        "CREATE TABLE run_series (project_id TEXT NOT NULL, grouped INTEGER NOT NULL, "
+        "run_group TEXT NOT NULL, name TEXT NOT NULL, last_version INTEGER NOT NULL, "
+        "PRIMARY KEY (project_id, grouped, run_group, name))"
+    )
+    rows = [
+        ("t1", "train", "g", "train", "2026-01-01", 1),
+        ("e1", "train", "g", "eval", "2026-01-02", 2),
+        ("t2", "train", "g", "train", "2026-01-03", 3),
+    ]
+    con.executemany(
+        "INSERT INTO runs (id, project_id, display_name, run_group, job_type, created_at, "
+        "status, version) VALUES (?, 'p', ?, ?, ?, ?, 'completed', ?)", rows,
+    )
+    con.execute("INSERT INTO run_series VALUES ('p', 1, 'g', 'train', 3)")
+    con.commit()
+    apply_migrations(con)
+    got = dict(con.execute("SELECT id, version FROM runs").fetchall())
+    assert got == {"t1": 1, "e1": 1, "t2": 2}
+    counters = set(con.execute("SELECT run_group, typed, job_type, name, last_version FROM run_series"))
+    assert counters == {("g", 1, "train", "train", 2), ("g", 1, "eval", "train", 1)}
+    apply_migrations(con)
+    assert dict(con.execute("SELECT id, version FROM runs").fetchall()) == got
+    con.close()
+
+
 # ---- cairn list ----------------------------------------------------------------
 
 
@@ -308,3 +386,20 @@ def test_cairn_list_shows_and_sorts_by_version(tmp_path):
     rows = [line.split() for line in result.output.strip().splitlines()]
     assert rows[0][:3] == ["ID", "NAME", "VERSION"]
     assert [r[2] for r in rows[1:]] == ["1", "1", "2", "3"]
+
+
+def test_cairn_list_shows_group_and_job_type_when_a_run_has_one(tmp_path):
+    from click.testing import CliRunner
+
+    from cairn import cli
+
+    repo = tmp_path / ".cairn"
+    for job_type in ("train", "eval", "train"):
+        cairn.Run("p", name="m", group="g", job_type=job_type, repo=repo, **QUIET).finish()
+    result = CliRunner().invoke(
+        cli.main, ["list", "--repo", str(repo), "--project", "p", "--sort", "created_at", "--asc"],
+    )
+    assert result.exit_code == 0, result.output
+    rows = [line.split() for line in result.output.strip().splitlines()]
+    assert rows[0][:5] == ["ID", "NAME", "GROUP", "JOB_TYPE", "VERSION"]
+    assert [r[2:5] for r in rows[1:]] == [["g", "train", "1"], ["g", "eval", "1"], ["g", "train", "2"]]

@@ -110,8 +110,8 @@ def resolve_run_selector_from_runs(sel: dict[str, Any], runs: list[dict[str, Any
         limit = DEFAULT_RUN_SELECTOR_N if n is None else int(n)  # JS slice truncates
         return [r["id"] for r in candidates[:limit]]
 
-    # newest-per-name: the newest run of each series (group, name).
-    seen: set[tuple[str | None, str]] = set()
+    # newest-per-name: the newest run of each series (group, job_type, name).
+    seen: set[tuple[str | None, str | None, str]] = set()
     out: list[str] = []
     for r in candidates:
         key = run_series_key(r)
@@ -213,7 +213,7 @@ class ShareScope:
 
 def _selector_pool(db: Database, project_id: str) -> list[dict[str, Any]]:
     return db.read_columns(
-        """SELECT id, display_name, run_group AS "group", tags, created_at FROM runs
+        """SELECT id, display_name, run_group AS "group", job_type, tags, created_at FROM runs
            WHERE project_id = ? ORDER BY created_at DESC LIMIT ?""",
         [project_id, RUN_SELECTOR_POOL],
     )

@@ -128,6 +128,8 @@ class RunPatchRequest(BaseModel):
     notes: str | None = None
     #: The run's group; an explicit null ungroups it.
     group: str | None = None
+    #: The run's job type; an explicit null clears it.
+    job_type: str | None = None
 
 
 class DeleteKeysRequest(BaseModel):
@@ -408,9 +410,9 @@ def set_notes(run_id: str, body: NotesRequest, request: Request) -> dict[str, An
 
 @router.patch("/runs/{run_id}")
 def patch_run(run_id: str, body: RunPatchRequest, request: Request) -> dict[str, Any]:
-    """Edit a run's name, group and/or notes; omitted fields stay as they
-    are. A new name or group moves the run to that series: the response's
-    ``version`` is its number there."""
+    """Edit a run's name, group, job type and/or notes; omitted fields stay
+    as they are. A new name, group or job type moves the run to that series
+    (group, job_type, name): the response's ``version`` is its number there."""
     db = get_db(request)
     out: dict[str, Any] = {"run_id": run_id, **body.model_dump(exclude_none=True)}
     try:
@@ -418,6 +420,8 @@ def patch_run(run_id: str, body: RunPatchRequest, request: Request) -> dict[str,
             out.update(ingest_ops.rename_run(db, run_id, body.display_name))
         if "group" in body.model_fields_set:
             out.update(ingest_ops.set_group(db, run_id, body.group))
+        if "job_type" in body.model_fields_set:
+            out.update(ingest_ops.set_job_type(db, run_id, body.job_type))
         if body.notes is not None:
             ingest_ops.set_notes(db, run_id, body.notes)
     except ingest_ops.RunNotFound as exc:

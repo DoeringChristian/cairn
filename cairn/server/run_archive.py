@@ -337,7 +337,8 @@ def restore_archive(
         # number is not kept.
         with db.transaction() as con:
             run["version"] = ingest_ops.next_version(
-                con, project_id, run.get("run_group"), run["display_name"],
+                con, project_id, run.get("run_group"), run.get("job_type"),
+                run["display_name"],
             )
         _insert(db, "runs", run_cols, run)
 

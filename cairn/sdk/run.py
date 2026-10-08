@@ -578,7 +578,7 @@ class Run:
 
     @property
     def version(self) -> int | None:
-        """The run's number in its series (project, group, name), assigned by
+        """The run's number in its series (project, group, job_type, name), assigned by
         the server: 1, 2, ... in creation order, never reused. A resumed run
         or a process joining a shared run keeps it; a fork is a new run, with
         the series' next number. None for an unnamed run.

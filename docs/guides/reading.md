@@ -174,7 +174,7 @@ A reader `Run` loads its data lazily:
 | Attribute | Contents |
 |---|---|
 | `id`, `name`, `project`, `status`, `archived` | Identity and status |
-| `version` | The run's number in its series (project, group, name), assigned by the server and never reused; `None` for an unnamed run. See [Versions](runs.md#versions) |
+| `version` | The run's number in its series (project, group, job_type, name), assigned by the server and never reused; `None` for an unnamed run. See [Versions](runs.md#versions) |
 | `created_at`, `ended_at`, `duration` | `datetime` / `timedelta`. `duration` runs to now for a live run. |
 | `tags`, `notes`, `group`, `job_type`, `hostname` | Metadata |
 | `git` | `GitInfo(sha, branch, dirty, remote)`, or `None` |

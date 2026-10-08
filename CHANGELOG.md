@@ -4,16 +4,20 @@
 
 ### Added
 
-- **Run versions.** Runs that share a project, group and name form a series;
-  the server numbers each named run in it when it creates the run (`version`
-  1, 2, ...). Numbers are never reused, also after a run is deleted. A rename
-  or group change takes the next number of the new series; resume and
+- **Run versions** (deduplication when a run's identity collides). Runs that
+  share a project, group, job type and name form a series (a missing group or
+  job type is part of the key); the server numbers each named run in it when
+  it creates the run (`version` 1, 2, ...), so a re-run is v2 while runs with
+  distinct names (fine-tune siblings, seeds) are each v1. Numbers are never
+  reused, also after a run is deleted. A rename, group or job type change
+  takes the next number of the new series; resume and
   processes joining a run keep it; a fork takes the next one; an unnamed run
   has none. Existing repos are numbered per series by creation time on first
   open, and imported runs take the next number of their series.
   `run.version` (on a local repo it catches up on the logs first),
   `Reader` `Run.version`, a `version` field on every API run row, a `VERSION`
-  column and `--sort version` in `cairn list`, and `group` on
+  column and `--sort version` in `cairn list` (plus `GROUP` / `JOB_TYPE`
+  columns when a listed run has one), and `group` and `job_type` on
   `PATCH /api/runs/{id}`.
 - **Run-to-run lineage.** `run.use_run(run_or_id, role=None)` and
   `cairn.Run(..., uses=[...])` record that a run used another run without an
@@ -45,9 +49,10 @@
   `mixed`). On the run page each shows while the run has data for it.
 - UI: a muted `v2` after the run's name in the run header and the runs table
   (not grouped, a grouped run reads `exp-44 · train v2`);
-  runs that share a name are labelled `train v1`, `train v2` in charts and
+  runs of one series are labelled `train v1`, `train v2` in charts and
   legends (grouped runs read `exp-1 · train v1` when the runs shown span
-  groups) instead of their start times.
+  groups; a name used under several job types in one group adds the job
+  type, `finetune · ft`) instead of their start times.
 
 ### Changed
 
@@ -56,9 +61,9 @@
   hold only series with more than one step. A card for it can still be
   added by hand.
 
-- **A group is a namespace: a run's series is (group, name).** `train` in
-  `exp-43` and in `exp-44` are two series everywhere a run is matched by
-  name: the runs table's and the workspace's **Latest only** (and its
+- **A run's series is (group, job_type, name).** `train` in `exp-43` and in
+  `exp-44`, or under job types `train` and `eval`, are separate series
+  everywhere a run is matched by name: the runs table's and the workspace's **Latest only** (and its
   highlight; the higher version wins, else the later start), **Archive
   old** / **Delete old**, the `newest-per-name` run selector of reports and
   share links (UI and server), the query URL's `run=newest-per-name`, and

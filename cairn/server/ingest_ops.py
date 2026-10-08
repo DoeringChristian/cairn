@@ -42,9 +42,12 @@ def _require_run(db: Database, run_id: str) -> dict[str, Any]:
     return rows[0]
 
 
-def next_version(con: Any, project_id: str, group: str | None, name: str | None) -> int | None:
+def next_version(
+    con: Any, project_id: str, group: str | None, job_type: str | None, name: str | None,
+) -> int | None:
     """Take the next version of the series (``project_id``, ``group``,
-    ``name``) from its counter; None for an unnamed run (no series).
+    ``job_type``, ``name``) from its counter; None for an unnamed run (no
+    series). A missing group or job type is part of the key.
 
     Numbers are never reused: the counter only grows (a deleted or renamed
     run keeps its number taken). Call it inside the write that stores the
@@ -54,13 +57,15 @@ def next_version(con: Any, project_id: str, group: str | None, name: str | None)
         return None
     row = con.execute(
         """
-        INSERT INTO run_series (project_id, grouped, run_group, name, last_version)
-        VALUES (?, ?, ?, ?, 1)
-        ON CONFLICT (project_id, grouped, run_group, name)
+        INSERT INTO run_series
+               (project_id, grouped, run_group, typed, job_type, name, last_version)
+        VALUES (?, ?, ?, ?, ?, ?, 1)
+        ON CONFLICT (project_id, grouped, run_group, typed, job_type, name)
         DO UPDATE SET last_version = last_version + 1
         RETURNING last_version
         """,
-        [project_id, int(group is not None), group or "", name],
+        [project_id, int(group is not None), group or "", int(job_type is not None),
+         job_type or "", name],
     ).fetchone()
     return int(row[0])
 
@@ -101,8 +106,8 @@ def create_run(
     ``created_at`` backdates the run (imports, WAL replay); default now.
     ``group`` is stored in the ``run_group`` column.
 
-    The server numbers the run in its series (project, group, name): the
-    returned ``version`` (None for an unnamed run).
+    The server numbers the run in its series (project, group, job_type,
+    name): the returned ``version`` (None for an unnamed run).
 
     Raises:
         RunExists: A run with ``run_id`` exists already.
@@ -116,7 +121,7 @@ def create_run(
     created = parse_timestamp(created_at) or now
 
     with db.transaction() as con:
-        version = next_version(con, project_id, group, name)
+        version = next_version(con, project_id, group, job_type, name)
         con.execute(
             """
             INSERT INTO projects (id, name, created_at, description, tags)
@@ -573,41 +578,57 @@ def set_notes(db: Database, run_id: str, notes: str) -> None:
     db.write("UPDATE runs SET notes = ? WHERE id = ?", [notes, run_id])
 
 
+_UNSET: Any = object()
+
+
 def _move_series(
-    db: Database, run_id: str, *, name: str | None, group: str | None,
+    db: Database, run_id: str, *, name: Any = _UNSET, group: Any = _UNSET,
+    job_type: Any = _UNSET,
 ) -> int | None:
-    """Store the run's display name and group; a run whose series changes
-    takes the next version of its new series (its old number stays taken in
-    the old one). Returns the run's version."""
+    """Store the run's display name, group and/or job type (the others stay);
+    a run whose series (group, job type, name) changes takes the next version
+    of its new series (its old number stays taken in the old one). Returns
+    the run's version."""
     with db.transaction() as con:
         row = con.execute(
-            "SELECT project_id, display_name, run_group, version FROM runs WHERE id = ?",
+            "SELECT project_id, display_name, run_group, job_type, version FROM runs WHERE id = ?",
             [run_id],
         ).fetchone()
         if row is None:
             raise RunNotFound(f"run {run_id} not found")
-        project_id, old_name, old_group, version = row
-        if (name, group) != (old_name, old_group):
-            version = next_version(con, project_id, group, name)
+        project_id, old_name, old_group, old_type, version = row
+        new = (
+            old_name if name is _UNSET else name,
+            old_group if group is _UNSET else group,
+            old_type if job_type is _UNSET else job_type,
+        )
+        if new != (old_name, old_group, old_type):
+            name, group, job_type = new
+            version = next_version(con, project_id, group, job_type, name)
             con.execute(
-                "UPDATE runs SET display_name = ?, run_group = ?, version = ? WHERE id = ?",
-                [name, group, version, run_id],
+                "UPDATE runs SET display_name = ?, run_group = ?, job_type = ?, version = ? "
+                "WHERE id = ?",
+                [name, group, job_type, version, run_id],
             )
     return version
 
 
 def rename_run(db: Database, run_id: str, display_name: str) -> dict[str, Any]:
     """Set the display name -> ``{"display_name", "version"}``."""
-    group = _require_run(db, run_id)["run_group"]
-    version = _move_series(db, run_id, name=display_name, group=group)
+    version = _move_series(db, run_id, name=display_name)
     return {"display_name": display_name, "version": version}
 
 
 def set_group(db: Database, run_id: str, group: str | None) -> dict[str, Any]:
     """Set (None: clear) the run's group -> ``{"group", "version"}``."""
-    name = _require_run(db, run_id)["display_name"]
-    version = _move_series(db, run_id, name=name, group=group)
+    version = _move_series(db, run_id, group=group)
     return {"group": group, "version": version}
+
+
+def set_job_type(db: Database, run_id: str, job_type: str | None) -> dict[str, Any]:
+    """Set (None: clear) the run's job type -> ``{"job_type", "version"}``."""
+    version = _move_series(db, run_id, job_type=job_type)
+    return {"job_type": job_type, "version": version}
 
 
 def delete_keys(db: Database, run_id: str, table: str, keys: list[str]) -> None:

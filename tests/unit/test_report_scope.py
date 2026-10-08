@@ -111,15 +111,20 @@ def test_scope_resolves_selectors_against_the_project_pool():
     assert db.calls == [["proj", rs.RUN_SELECTOR_POOL]]  # one pool query per scope
 
 
-def test_run_series_key_is_group_and_name():
+def test_run_series_key_is_group_job_type_and_name():
     from cairn.server.run_groups import run_series_key
 
-    assert run_series_key({"id": "a", "display_name": "train", "group": "exp-44"}) == ("exp-44", "train")
+    assert run_series_key({"id": "a", "display_name": "train", "group": "exp-44"}) == (
+        "exp-44", None, "train")
     # A runs-table row names the column run_group.
-    assert run_series_key({"id": "a", "display_name": "train", "run_group": "exp-43"}) == ("exp-43", "train")
-    assert run_series_key({"id": "a", "display_name": "train"}) == (None, "train")
+    assert run_series_key({"id": "a", "display_name": "train", "run_group": "exp-43"}) == (
+        "exp-43", None, "train")
+    assert run_series_key({"id": "a", "display_name": "train"}) == (None, None, "train")
+    assert run_series_key(
+        {"id": "a", "display_name": "ft", "group": "exp-44", "job_type": "finetune"}
+    ) == ("exp-44", "finetune", "ft")
     # No name: the run is its own series.
-    assert run_series_key({"id": "a", "display_name": None, "group": "g"}) == ("g", "a")
+    assert run_series_key({"id": "a", "display_name": None, "group": "g"}) == ("g", None, "a")
 
 
 def test_newest_per_name_is_per_series():

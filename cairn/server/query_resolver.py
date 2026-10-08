@@ -53,7 +53,7 @@ class RunSelection:
 
     * ``latest`` — the newest matching run.
     * ``latest-n`` — the ``n``-th newest (1-based), i.e. ``run=latest:2``.
-    * ``newest-per-name`` — dedup candidates by series (group, name), keeping
+    * ``newest-per-name`` — dedup candidates by series (group, job_type, name), keeping
       the newest of each, then take the newest overall.
     * ``id`` — pin an explicit ``run_id`` (the hardest pin; ignores filters).
     """
@@ -291,7 +291,7 @@ def _select_run(candidates: list[dict[str, Any]], sel: RunSelection) -> dict[str
     if sel.mode == "latest-n":
         return candidates[sel.n - 1] if len(candidates) >= sel.n else None
     if sel.mode == "newest-per-name":
-        seen: set[tuple[str | None, str]] = set()
+        seen: set[tuple[str | None, str | None, str]] = set()
         for r in candidates:  # already newest-first
             key = run_series_key(r)
             if key not in seen:

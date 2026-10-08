@@ -10,14 +10,15 @@ from typing import Any, Mapping
 
 from .storage.db import Database
 
-def run_series_key(run: Mapping[str, Any]) -> tuple[str | None, str]:
-    """A run's series: ``(group, name)``. A group is a namespace, so
-    ``exp-44 · train`` and ``exp-43 · train`` are different series; a run
-    without a name is its own (keyed by its id). Mirror of cairn-ui's
-    ``runSeriesKey`` (src/lib/run-series.ts). Takes an API row (``group``)
-    or a ``runs`` row (``run_group``)."""
+def run_series_key(run: Mapping[str, Any]) -> tuple[str | None, str | None, str]:
+    """A run's series: ``(group, job_type, name)``, the key its version is
+    numbered in. ``exp-44 · train`` and ``exp-43 · train`` are different
+    series, and so are the same name under two job types; a missing group or
+    job type is part of the key. A run without a name is its own (keyed by
+    its id). Mirror of cairn-ui's ``runSeriesKey`` (src/lib/run-series.ts).
+    Takes an API row (``group``) or a ``runs`` row (``run_group``)."""
     group = run["group"] if "group" in run else run.get("run_group")
-    return (group, run.get("display_name") or run["id"])
+    return (group, run.get("job_type"), run.get("display_name") or run["id"])
 
 
 #: The newest of a run's timestamps (SQLite's multi-argument MAX is NULL when
