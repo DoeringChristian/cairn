@@ -48,7 +48,7 @@ Only part of the lineage is loaded at first. A card with more connections than t
 
 Sibling nodes are folded into a group card when there are more than **5** of them:
 
-- runs that used exactly the same inputs (for example every run of a sweep that used one dataset);
+- runs of one job type that used exactly the same inputs (for example every run of a sweep that used one dataset); the card reads `12 finetune runs`, and the evals of the same model are a separate set;
 - versions of one artifact whose producers are siblings (each sweep run's checkpoint).
 
 **Expand** on a group card, or **Expand group** in its panel, shows the members; **Collapse siblings** in a member's panel folds them again. The toolbar's **Expand groups** and **Collapse groups** do this for every group at once. The centre node is never folded into a group.

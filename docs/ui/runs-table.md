@@ -89,7 +89,7 @@ Runs without a value sort last in both directions. Numbers sort numerically, tex
 
 Click **Group** to add levels. Each level splits its parent group by one of:
 
-- `group` or `job_type` (the run fields);
+- `group` or `job_type` (the run fields); **group, then job_type** gives wandb's nested grouping (`exp-44` → `prepare`, `train`, `eval`);
 - `tag`: a run with several tags appears under each of them;
 - `param: <key>`: a config value;
 - **expression…**: a scalar [expression](../reference/expressions.md), e.g. `min(val.loss) < 0.3`.

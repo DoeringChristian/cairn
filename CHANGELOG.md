@@ -56,6 +56,11 @@
 
 ### Changed
 
+- **job_type is first-class (wandb):** the run page's Run block shows the
+  **Job type** next to the group; the runs table and the workspace group by
+  group, then job_type; in lineage graphs, runs are siblings only within one
+  job type, and a folded set reads `12 finetune runs`.
+
 - **A scalar logged at a single step gets no automatic card**: it is a
   column of the Summary section's Scalars card, so automatic chart sections
   hold only series with more than one step. A card for it can still be

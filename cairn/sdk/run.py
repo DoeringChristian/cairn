@@ -106,14 +106,22 @@ class Run:
         project: Project name. Normalised to an id (lowercase, spaces become
             dashes); created on first use. Required, except for a worker
             (``primary=False``), which joins the run's project.
-        name: Display name. Default: none (the UI shows the id); a run
-            launched by ``cairn agent`` takes its trial's name.
+        name: Display name: a free label, need not be unique. Default: none
+            (the UI shows the id); a run launched by ``cairn agent`` takes
+            its trial's name. A run with the same group, job type and name
+            as an earlier one is its next ``version`` (a re-run).
         tags: Initial tags. Edit later with ``set_tag``/``remove_tag``/``set_tags``.
         notes: Free-text notes shown on the run page.
-        group: Group label for related runs (e.g. the workers of one
-            distributed job); filterable and groupable in the runs table.
-        job_type: Kind of job (e.g. ``"train"``, ``"eval"``); filterable and
-            groupable like ``group``.
+        group: The runs that belong together (e.g. the seeds of one
+            configuration, the steps of one experiment ``"exp-44"``). The
+            workspace aggregates a group into one line; filterable and
+            groupable in the runs table.
+        job_type: The run's role within its group (e.g. ``"prepare"``,
+            ``"train"``, ``"eval"``, ``"finetune"``). Shown next to the group
+            on the run page; the runs table and the workspace group by it
+            below the group (group, then job type), and the lineage graph
+            labels and clusters runs by it. Part of the version key (group,
+            job type, name).
         sweep_id: Attach the run to this sweep. Set automatically, together
             with the trial, when the process runs under ``cairn agent``.
         parent_run_id: Record another run as this run's parent (lineage only;

@@ -72,7 +72,7 @@ Click a run's name to open `/p/<project>/r/<run id>`. The run page has six tabs:
 
 | Tab | Contents |
 |---|---|
-| Overview | The Run block (notes, tags, state, group, version, times, author, host, git, command, run path), the config and summary tables with a search each, the run's artifacts ([Overview](workspace.md#overview)). |
+| Overview | The Run block (notes, tags, state, group, job type, version, times, author, host, git, command, run path), the config and summary tables with a search each, the run's artifacts ([Overview](workspace.md#overview)). |
 | Workspace | The run's card workspace without its `system.*` series; cards with no data for the run are hidden ([Run page and workspace](workspace.md), [Cards](cards.md)). |
 | System | The same workspace over the run's `system.*` series. |
 | Logs | Captured console output, filterable by stream. |

@@ -25,8 +25,8 @@ a keyword:
 |---|---|---|
 | `name` | `None` | Display name. Names need not be unique; the ID is. |
 | `tags`, `notes` | `None` | See [tags and notes](logging.md#tags-and-notes). |
-| `group` | `None` | Groups related runs, such as the seeds of one configuration or the workers of one job. |
-| `job_type` | `None` | What kind of work the run does, such as `"train"` or `"eval"`. |
+| `group` | `None` | Groups related runs, such as the seeds of one configuration or the steps of one experiment. |
+| `job_type` | `None` | The run's role within its group, such as `"train"`, `"eval"` or `"finetune"`. |
 | `repo` | resolved | Where to log. See [how cairn picks a destination](../getting-started.md#how-cairn-picks-a-destination). |
 | `mode` | resolved | `"disabled"` makes the run a no-op. See [disabled runs](#disabled-runs). |
 | `resume`, `rewind_to`, `fork_from` | `None` | [Continue or branch an existing run](#resume-rewind-and-fork). |
@@ -41,9 +41,11 @@ a keyword:
 | `created_at` | now | Override the creation time, for example when importing historical runs. |
 | `timeout` | `10.0` | HTTP timeout in seconds (server mode), also how long `finish()` keeps sending what is left (see [Server mode](server.md#server-mode-and-connection-loss)). |
 
-`group` and `job_type` are shown in the runs table, where you can filter and group by them. They
-are also available in [expressions](../reference/expressions.md) and on
-[`Reader`](reading.md) runs (`run.group`, `run.job_type`).
+`group` and `job_type` are shown on the run page (Overview, next to each other), and in the runs
+table and the workspace you can filter and group by them (group, then job type). They are also
+available in [expressions](../reference/expressions.md) and on [`Reader`](reading.md) runs
+(`run.group`, `run.job_type`). See [Identity](#identity-id-name-group-job-type-version) for how
+they work together with the name and the version.
 
 ## Finishing a run and its status
 

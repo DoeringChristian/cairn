@@ -133,6 +133,27 @@ def test_sibling_groups_and_server_side_clustering(fresh_db, blob_store):
     assert len(ops.lineage_graph(db, version_id=data["id"], cluster=60)["nodes"]) == 102  # + prep
 
 
+def test_run_siblings_are_clustered_per_job_type(fresh_db, blob_store):
+    """Fine-tunes and evals of one model are two sibling sets (wandb clusters
+    by job type); a collapsed set is labelled with its job type."""
+    db = fresh_db
+    train = ingest_ops.create_run(db, project="p", name="train", job_type="train")["run_id"]
+    model = _version(db, blob_store, "model", train)
+    by_type: dict[str, list[str]] = {"finetune": [], "eval": []}
+    for job_type, names in (("finetune", ["ft-a", "ft-b", "ft-c"]), ("eval", ["ev-a", "ev-b"])):
+        for name in names:
+            rid = ingest_ops.create_run(db, project="p", name=name, group="g",
+                                        job_type=job_type)["run_id"]
+            ops.record_input(db, run_id=rid, artifact_version_id=model["id"])
+            by_type[job_type].append(rid)
+    graph = ops.lineage_graph(db, version_id=model["id"], direction="downstream")
+    sets = sorted(sorted(g["members"]) for g in graph["groups"] if g["member_kind"] == "run")
+    assert sets == sorted(sorted(m) for m in by_type.values())
+    small = ops.lineage_graph(db, version_id=model["id"], direction="downstream", cluster=1)
+    labels = sorted(n["label"] for n in small["nodes"] if n["kind"] == "group")
+    assert labels == ["2 eval runs", "3 finetune runs"]
+
+
 def test_full_degree_counts_edges_beyond_the_returned_graph(chain):
     db, ids = chain
     one = ops.lineage_graph(db, version_id=ids["data"], depth=1)

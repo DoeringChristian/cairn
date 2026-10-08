@@ -743,11 +743,12 @@ def run_uses(db: Database, run_id: str) -> dict[str, list[dict[str, Any]]]:
 # (what one-hop expansions from it can add: a viewer compares the two to show
 # "more upstream / downstream"). Clustering: nodes of
 # one kind whose edges are identical (same neighbours, kinds, roles and
-# directions) and, for versions, of one artifact name, are SIBLINGS and share
+# directions) and, for runs, of one job type, for versions, of one artifact
+# name, are SIBLINGS and share
 # a ``group_key`` (null for a node without siblings). With ``cluster=N``,
 # every sibling set larger than N (the centre never included) is collapsed
 # into one group node ``{kind: "group", id: "group:<key>", group_key,
-# member_kind, count, members: [ids], label}``, which takes over the
+# member_kind, count, members: [ids], label}`` (``"12 finetune runs"``), which takes over the
 # members' edges (deduplicated; ``count`` on each edge says how many member
 # edges it stands for). ``groups`` lists every sibling set as ``{group_key,
 # member_kind, members}`` either way, so a client can cluster or expand
@@ -889,8 +890,9 @@ def _graph(
                 sets.setdefault(k, []).append(n["id"])
         return {k: m for k, m in sets.items() if len(m) > 1}
 
-    # Runs: siblings share their inputs (e.g. every run that used one dataset).
-    run_sets = collect("run", lambda n: key_of(["run", sorted(ins[n["id"]], key=str)])
+    # Runs: siblings share their job type and inputs (e.g. every fine-tune
+    # that used one model; the evals of it are another set).
+    run_sets = collect("run", lambda n: key_of(["run", n["job_type"], sorted(ins[n["id"]], key=str)])
                        if ins[n["id"]] else None)
     for k, members in run_sets.items():
         for m in members:
@@ -920,7 +922,10 @@ def _graph(
         kept = [n for n in nodes if n["id"] not in member_of]
         for k, g in collapse.items():
             first = by_id[g["members"][0]]
-            what = (f"{first['name']} versions" if g["member_kind"] == "artifact_version" else "runs")
+            if g["member_kind"] == "artifact_version":
+                what = f"{first['name']} versions"
+            else:
+                what = f"{first['job_type']} runs" if first.get("job_type") else "runs"
             kept.append({
                 "kind": "group", "id": f"group:{k}", "group_key": k,
                 "member_kind": g["member_kind"], "count": len(g["members"]),

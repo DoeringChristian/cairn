@@ -23,7 +23,7 @@ The **Run** block lists what the run is; a field the run did not record shows `â
 |---|---|
 | Notes | The notes, rendered as [Markdown](../guides/media.md#markdown). Hover them and click **edit** to change them; empty notes open straight in the editor. |
 | Tags | The tags; hover one and click Ã— to remove it, **+ add** to add one (with suggestions from the project's tags). |
-| State | The status, with the exit code when there is one: `completed (exit 0)`. Next to it the **Group** (a link to the project workspace filtered to it) and the **Version**. |
+| State | The status, with the exit code when there is one: `completed (exit 0)`. Next to it the **Group** (a link to the project workspace filtered to it), the **Job type** and the **Version**. |
 | Start time | When the run was created, and its **Duration**. |
 | Author | The user who ran it, its **Host**, and **OS / Python**. |
 | Git | Remote (a link for GitHub/GitLab-style remotes), branch, commit and `(dirty)`, and a **diff** button that downloads the captured `git diff HEAD` of a dirty tree. |
