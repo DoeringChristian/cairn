@@ -1,6 +1,6 @@
 # Run page and workspace
 
-Click a run in the [runs table](runs-table.md) to open its run page at `/p/<project>/r/<run>`. The header shows the run's name, its [version](../guides/runs.md#versions) as a muted `v2` right after it (a run without a name has none), its status, its group (a link to the [project workspace](project-workspace.md) filtered to that group), its short id (click to copy), how long it has run, and a **forked from** link when the run is a fork. While the run is `running`, a **Stop** button asks it to stop. The run sees the request on its next heartbeat (see [Run lifecycle](../guides/runs.md)).
+Click a run in the [runs table](runs-table.md) to open its run page at `/p/<project>/r/<run>`, on its **Workspace** tab (as wandb's; every link to a run, and the URL `cairn` prints, opens there). The header shows the run's name, its [version](../guides/runs.md#versions) as a muted `v2` right after it (a run without a name has none), its status, its group (a link to the [project workspace](project-workspace.md) filtered to that group), its short id (click to copy), how long it has run, and a **forked from** link when the run is a fork. A run opened from the [project workspace](project-workspace.md)'s runs sidebar has a **← Workspace** link before its name, back to the workspace as you left it. While the run is `running`, a **Stop** button asks it to stop. The run sees the request on its next heartbeat (see [Run lifecycle](../guides/runs.md)).
 
 A run with [progress](../guides/runs.md#progress-and-eta) has a line under the header: while it runs, a full-width bar in its status colour and `step 5,800 / 10,000 · 58% · ~9 min left` (for `run.progress` values, `3 / 10 · 30% · …` without the word "step"); once it ended, only `step 10,000 / 10,000 · 100%`. The page re-reads a running run every 2 s.
 
@@ -8,8 +8,8 @@ A run with [progress](../guides/runs.md#progress-and-eta) has a line under the h
 
 | Tab | What it shows |
 |---|---|
+| **Workspace** | The default tab. The project's current [workspace view](#workspace-views), bound to this run, without its `system.*` series: sections of panels, one per logged series and named artifact unless you arrange them otherwise. |
 | **Overview** | The **Run** block, **Config** and **Summary** side by side (one above the other on a phone), and **Artifacts**; see [Overview](#overview). |
-| **Workspace** | The project's current [workspace view](#workspace-views), bound to this run, without its `system.*` series: sections of panels, one per logged series and named artifact unless you arrange them otherwise. |
 | **System** | The same view over the run's `system.*` series only (CPU, memory, disk, network, process). |
 | **Logs** | Captured stdout/stderr. You can search and filter by stream. While the run is running, the view follows new lines. When [several processes log into the run](../guides/runs.md), each line shows its process label after the time, a process filter appears next to the stream filter, and search matches labels too. |
 | **Files** | The source snapshot, when the run captured one (pick a file on the left), then the environment snapshot and the packages (`pip freeze`). |

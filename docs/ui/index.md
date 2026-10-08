@@ -68,18 +68,18 @@ A breadcrumb (`Projects › <project> › <run>`) sits above the content; on a r
 
 ### Run page
 
-Click a run's name to open `/p/<project>/r/<run id>`. The run page has six tabs:
+Click a run's name to open `/p/<project>/r/<run id>`. The run page has six tabs, and opens on **Workspace** (as wandb's):
 
 | Tab | Contents |
 |---|---|
-| Overview | The Run block (notes, tags, state, group, job type, version, times, author, host, git, command, run path), the config and summary tables with a search each, the run's artifacts ([Overview](workspace.md#overview)). |
-| Workspace | The run's card workspace without its `system.*` series; cards with no data for the run are hidden ([Run page and workspace](workspace.md), [Cards](cards.md)). |
+| Workspace | `/p/<project>/r/<run id>`: the run's card workspace without its `system.*` series; cards with no data for the run are hidden ([Run page and workspace](workspace.md), [Cards](cards.md)). |
+| Overview | `…/overview`: the Run block (notes, tags, state, group, job type, version, times, author, host, git, command, run path), the config and summary tables with a search each, the run's artifacts ([Overview](workspace.md#overview)). |
 | System | The same workspace over the run's `system.*` series. |
 | Logs | Captured console output, filterable by stream. |
 | Files | The captured source files, then the environment and `pip freeze`. |
 | Artifacts | The artifact versions the run logged and used, and its [lineage graph](lineage.md) ([A run's artifacts](artifacts.md#a-runs-artifacts)). |
 
-A running run shows a **Stop** button, which asks the run to stop ([Run lifecycle](../guides/runs.md)). A forked run links to its parent.
+A running run shows a **Stop** button, which asks the run to stop ([Run lifecycle](../guides/runs.md)). A forked run links to its parent. A run opened from the [project workspace](project-workspace.md)'s runs sidebar has a **← Workspace** link back to it.
 
 ## Live updates
 

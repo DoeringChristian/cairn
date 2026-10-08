@@ -132,6 +132,13 @@
   **Workspace** (was Metrics & Media; without `system.*` series), **System**
   (the same view over the `system.*` series), Logs, **Files** (Source and
   Environment merged), Artifacts.
+- **Run navigation as wandb's.** The run page's tabs are Workspace,
+  Overview, System, Logs, Files, Artifacts, and it opens on **Workspace**
+  (the bare `/p/<project>/r/<run>`; Overview moved to `…/overview`, the
+  `…/workspace` path is gone). A run opened from the project workspace's
+  runs sidebar has a **← Workspace** link next to its name, back to the
+  workspace as left (its folded groups and sidebar scroll are kept for the
+  session).
 - **The run page hides cards with no data.** On its Workspace and System
   tabs, a card showing no series the run logs, and a section left without
   cards, are not shown; the project workspace still shows them.
