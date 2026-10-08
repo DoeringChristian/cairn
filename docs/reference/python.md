@@ -166,6 +166,20 @@ data they draw. See [Custom viewers](../guides/custom-viewers.md).
 
 ::: cairn.publish_viewer
 
+## Notebook embeds
+
+`cairn.ui` (with the `ui` extra) shows the viewer's pages and cards inline in Jupyter and marimo.
+A `cairn.Run` or a `Reader` run displays its run page by itself (`Run.display(tab=, height=)`).
+See [Notebooks](../guides/notebooks.md).
+
+::: cairn_ui.cards.pages.workspace
+
+::: cairn_ui.cards.pages.report
+
+::: cairn_ui.cards.compare.media_compare
+
+::: cairn_ui.cards.compare.image_compare
+
 ## Configuration
 
 `configure` sets process-wide defaults for where runs go and whether tracking

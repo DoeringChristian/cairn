@@ -1,7 +1,7 @@
 # Notebooks
 
 In Jupyter and marimo, cairn shows its pages inline: a run's page, the
-project workspace and reports render in the cell's output as the viewer's own
+project workspace, reports and single cards render in the cell's output as the viewer's own
 pages, live, without the app's navigation. They need the viewer
 (`pip install 'cairn-track[ui]'`) and a running viewer over the same repo,
 such as `cairn ui`.
@@ -48,6 +48,25 @@ tree as the runs table stores it
 (`{"kind": "group", "op": "and", "children": [...]}`). It applies to this embed
 only; the project's workspace view is not changed. Each function takes
 `height=` (pixels, default 720).
+
+## Single cards
+
+`cairn.ui` also builds one card from media you logged, for a side-by-side look without opening
+the app. The sources are `run[tag]` values of [`Reader`](reading.md) runs:
+
+```python
+reader = cairn.Reader()
+a, b = reader.run(run_a), reader.run(run_b)
+
+cairn.ui.image_compare(a["render"], a["reference"])   # one run: a split view with a divider
+cairn.ui.image_compare(a["render"], b["render"])      # two runs: side by side
+cairn.ui.media_compare(a["mesh"], b["mesh"], card_type="mesh")
+```
+
+`media_compare(*sources, card_type=...)` takes any number of sources of one kind (`image`,
+`mesh`, `pointcloud`, `volume`, `boxes3d`), with zoom or the 3D camera kept together across the
+panes; `mesh_compare`, `pointcloud_compare`, `volume_compare` and `boxes_compare` are the
+two-source shorthands. Each is the viewer's `/embed/card` page.
 
 ## Which viewer, and access
 
