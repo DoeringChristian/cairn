@@ -25,7 +25,7 @@ Sort: [created ▾] [↓]
   ◉    ● baseline v1
 ```
 
-The sidebar is the [runs table](runs-table.md) with only the Name column, and an eye column in place of the checkboxes. Its toolbar is the runs table's without **Columns**: **Status**, **Search**, **Filter**, **Group** and **Latest only** work exactly as there. **Sort** picks one of the runs table's sortable keys (`created`, `name`, `status`, `duration`, and the metric and param columns) and **↓ / ↑** flips its direction; it starts on `created ↓` (newest first) and is saved with the rest. Not grouped, a grouped run reads `exp-44 · train v2`, unless every listed run is in the same group. **N of M groups shown** (not grouped: runs) counts the groups with a visible run, or the visible runs. On a phone the sidebar folds behind a **Runs** button.
+The sidebar is the [runs table](runs-table.md) with only the Name column, and an eye in place of each checkbox: in the Name cell, before the run's dot or the group's caret, indented with it. The header's eye, left of **Name**, shows or hides every listed run. Its toolbar is the runs table's without **Columns**: **Status**, **Search**, **Filter**, **Group** and **Latest only** work exactly as there. **Sort** picks one of the runs table's sortable keys (`created`, `name`, `status`, `duration`, and the metric and param columns) and **↓ / ↑** flips its direction; it starts on `created ↓` (newest first) and is saved with the rest. Not grouped, a grouped run reads `exp-44 · train v2`, unless every listed run is in the same group. **N of M groups shown** (not grouped: runs) counts the groups with a visible run, or the visible runs. On a phone the sidebar folds behind a **Runs** button.
 
 - **▸ / ▾** folds a group (not saved). The first group and the `(none)` group start open. A run group's name (`group: exp-44`) links to its [group page](#group-page).
 - The **header eye** shows every listed run, or hides them all when all are shown; ◐ means some are hidden.
@@ -40,7 +40,7 @@ By default the 10 newest groups (by their newest run; not grouped: the 10 newest
 
 The cards get the visible runs.
 
-- Grouped, a line chart draws **one line per top-level group**: the mean over the group's runs that log the metric, with a min–max band, in the group's colour and labelled with its name. Runs without a group value stay their own lines. Not grouped, every run is its own line, in the colour of its dot.
+- Grouped, a line chart draws **one line per top-level group**: the mean over the group's runs that log the metric, with a min–max band, in the group's colour and labelled with its name. Runs without a group value stay their own lines. Not grouped, every run is its own line, in the colour of its dot. A card whose **Group runs** setting is **Off** or **By key** ([cards](cards.md)) keeps its own grouping instead.
 - Media and other cards show one item per run. When the runs span groups, grouped runs are labelled `<group> · <name> v<n>`, such as `exp-43 · eval v2`.
 
 ## From the runs table

@@ -14,7 +14,7 @@ The table updates live: new and deleted runs appear within a few seconds, and ru
 | **Search** | A case-insensitive regex over each run's name, id, status and tags. An invalid regex turns the box red. |
 | Filter chips, **Filter** | The [filter tree](#filters). |
 | **Group** | [Nested group-by](#group-by). |
-| **Latest only** | Keep only the newest run of each name. |
+| **Latest only** | Keep only the newest run of each series: per group, the latest version of each name (`train` in two groups is two series). |
 | **Columns** | The [column manager](#columns). The button shows `(+N ƒ)` when you have N computed columns. |
 | Sort summary | With more than one sort key, lists them; × removes one. |
 | Run view summary | With runs hidden or pinned, or a baseline set, shows e.g. `2 hidden · 1 pinned · baseline <name>`; **reset** clears all three. |
@@ -122,7 +122,7 @@ At the bottom of **Columns**, enter a scalar expression (e.g. `min(val.loss)`), 
 
 ## Selecting runs
 
-Tick a row's checkbox to select it; ++shift++-click another checkbox to select the range between them in on-screen order. The header checkbox selects or clears every run that passes the filters. A bar with the selection's actions appears:
+Tick a row's checkbox to select it; ++shift++-click another checkbox to select the range between them in on-screen order. The header checkbox selects or clears every run that passes the filters. Grouped, a group header's checkbox selects every listed run beneath it (nested groups included), or clears them when all are selected; it shows – when some are. A bar with the selection's actions appears:
 
 | Action | What it does |
 |---|---|
