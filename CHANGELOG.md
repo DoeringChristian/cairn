@@ -2,201 +2,183 @@
 
 ## 0.5.0 — unreleased
 
+Run management as in wandb: runs organised by name, group and job type, a
+project workspace in place of the Compare page, wandb's run page, report
+blocks with several live run sets, parallel coordinates and parameter
+importance, and notebook embeds.
+
+### Breaking
+
+- **Saved comparisons are dropped** when a repo is first opened: the Compare
+  page, the comparison kind of `project_docs` and the
+  `/api/projects/{id}/comparisons` routes are gone. The project workspace
+  replaces them, and the runs table's **Compare** is now **Show in
+  workspace**.
+- **Report cells from before run sets are not read.** A ```` ```cairn ````
+  fence with `runs:` (fixed `ids`, or the dynamic `selector` with `latest-n` /
+  `newest-per-name`) shows empty with a notice and is kept as written until
+  the cell is edited; there is no migration. Give the cell a run set.
+- **Run versions are numbered per (group, job_type, name).** Existing repos
+  are renumbered once per series, in creation order, on first open.
+- **A metric's summary rule is the project's**, not each run's own: the
+  newest run that logged one, or a project override, decides every run's
+  value. `run.stats[...].rule` is gone from the API, and the runs table's
+  per-column **Better** setting and a computed column's better direction are
+  dropped (with their stored state).
+- **Run page URLs**: the bare `/p/<project>/r/<run>` is the Workspace tab,
+  Overview moved to `…/overview`, and `…/workspace` is gone.
+- `cairn.sweep(goal=None)` is the new default: a sweep without a goal takes
+  the metric's goal in the project (see Changed).
+
 ### Added
 
 - **Run versions** (deduplication when a run's identity collides). Runs that
-  share a project, group, job type and name form a series (a missing group or
-  job type is part of the key); the server numbers each named run in it when
-  it creates the run (`version` 1, 2, ...), so a re-run is v2 while runs with
-  distinct names (fine-tune siblings, seeds) are each v1. Numbers are never
-  reused, also after a run is deleted. A rename, group or job type change
-  takes the next number of the new series; resume and
-  processes joining a run keep it; a fork takes the next one; an unnamed run
-  has none. Existing repos are numbered per series by creation time on first
-  open, and imported runs take the next number of their series.
-  `run.version` (on a local repo it catches up on the logs first),
-  `Reader` `Run.version`, a `version` field on every API run row, a `VERSION`
-  column and `--sort version` in `cairn list` (plus `GROUP` / `JOB_TYPE`
-  columns when a listed run has one), and `group` and `job_type` on
-  `PATCH /api/runs/{id}`.
-- **Run-to-run lineage.** `run.use_run(run_or_id, role=None)` and
-  `cairn.Run(..., uses=[...])` record that a run used another run without an
-  artifact between them (`run_links` table; local logs and
-  `POST/GET /api/runs/{id}/uses`). Lineage graphs show it as a `used` edge;
-  the Reader has `Run.uses()` / `Run.used_by()`. Run archives carry the
-  links (`run_links.json`), remapped to the imported runs' new ids.
-- **Nested grouping as wandb** (UI): group rows read `Field: value`
-  (`Group: exp-44`, `Job Type: train`); an outer group shows a hollow
-  circle and its sub-group and run counts, an innermost group the filled
-  dot of its chart line and its run count, and runs inside groups no dot.
-  In the workspace, line charts draw one mean line per innermost group,
-  labelled `group: exp-44, jobType: train`, each in its own colour (sidebar
-  dot, chart line and Summary cards alike); hover links innermost group rows
-  and lines. The runs table gains **Group** and **Job Type** columns, shown
+  share a project, group, job type and name form a series; a missing group or
+  job type is part of the key. The server numbers each named run in its
+  series when it creates it (`version` 1, 2, ...), so a re-run is v2 while
+  runs with distinct names (fine-tune siblings, seeds) are each v1. Numbers
+  are never reused, also after a run is deleted. A rename, group or job type
+  change takes the next number of the new series; resume and processes
+  joining a run keep it; a fork takes the next one; an unnamed run has none;
+  imported runs take the next number of their series. `run.version` (on a
+  local repo it catches up on the logs first), `Reader` `Run.version`, a
+  `version` field on every API run row, `VERSION`, `GROUP` and `JOB_TYPE`
+  columns and `--sort version` in `cairn list`, and `group` / `job_type` on
+  `PATCH /api/runs/{id}`. The UI shows a muted `v2` after a run's name and
+  labels runs of one series `train v1`, `train v2` (grouped runs
+  `exp-44 · train v1` when the runs span groups; a name used under several
+  job types adds the job type, `finetune · ft`).
+- **Project workspace** (`/p/<project>/workspace`): a runs sidebar that is
+  the runs table (status, search, filter, group, **Latest only**, sort; eyes
+  per run and group, a show/hide-all eye, pinned runs first, hover linking
+  rows and chart lines) next to the current workspace view's cards. The run
+  state is saved in the view. By default the 10 newest groups (or runs) are
+  visible. **Show in workspace** in the runs table shows exactly the selected
+  runs.
+- **Nested grouping as wandb**: group rows read `Field: value`
+  (`Group: exp-44`, `Job Type: train`); an outer group shows a hollow circle
+  with its sub-group and run counts, an innermost group the filled dot of its
+  chart line. In the workspace, line charts draw one mean line with a min–max
+  band per innermost group, labelled `group: exp-44, jobType: train`. A line
+  card's **Group runs** setting is **Workspace** (the default), **Off** or
+  **By key**. The runs table gains **Group** and **Job Type** columns, shown
   when a listed run has one.
-- **Metric column menu** (UI): a metric column's ▾ on the runs table and the
-  Scalars card sorts, sets the project's **Summary** and **Goal** for the
-  metric (its project override), shows the logged rule, resets to it and
-  hides the column. The Scalars card colours each goal metric's best row
-  green and worst red; the Config card tints the rows that differ.
-- **Parallel coordinates card as wandb** (UI): axes default to the config
-  keys that vary across the card's runs, then a metric (its final value
-  under the project's summary rule); add, remove and reorder axes (config
-  keys, metrics), log scale per axis, categorical axes as ordered
-  categories. Lines coloured by the last axis or by run/group colours.
-  Drag along an axis to brush (not saved); hover a line for its values and
-  its sidebar row. Grouped: one line per innermost group (means). Drawn as
-  SVG instead of Plotly's parcoords.
-- **Parameter importance card as wandb** (UI): `Parameter importance for
-  [metric ▾]`, one row per varying config key with its importance (a seeded
-  100-tree random forest, impurity-based, summing to 1) and correlation
-  (Pearson r, green when it moves the metric towards its goal, red away);
-  sortable by either; needs 5 runs with the metric. Replaces the
-  permutation importance / correlation switch and the target expression.
-- **Project workspace** (UI, replaces the Compare page): a runs sidebar
-  (the runs table with its toolbar, the Name column and eyes per group and
-  run) next to the current view's cards; grouped, line charts draw one
-  mean line with a min–max band per group. The run state is saved in the
-  current view. The runs table's **Compare** becomes **Show in workspace**.
-- **Filter to a group** (UI): clicking a run group's name in the workspace
-  sidebar adds `group = <name>` to the workspace's filter (a removable
-  chip); the group's name in the runs table, the run page header and the
-  lineage panel opens the workspace filtered that way. The workspace
-  sidebar gains a show/hide-all eye, a sort
-  control, pinned runs listed first, and a hover highlight between rows
-  and chart lines; **Show in workspace** shows exactly the selected runs.
-- **Summary section** (UI): the workspace and the run page start with a
-  **Summary** section of two automatic cards, the new `scalars` and
-  `config` card types. **Scalars** is one table of every scalar logged at a
-  single step, the runs' `summary` values and run info (status, duration,
-  created, user, host; **Show run info**), sortable by any column; **Config**
-  lists the config keys (with tags and notes) per run, with **only diffs**.
-  In a grouped workspace both show one row / column per group (a mean, or
-  `mixed`). On the run page each shows while the run has data for it.
-- UI: a muted `v2` after the run's name in the run header and the runs table
-  (not grouped, a grouped run reads `exp-44 · train v2`);
-  runs of one series are labelled `train v1`, `train v2` in charts and
-  legends (grouped runs read `exp-1 · train v1` when the runs shown span
-  groups; a name used under several job types in one group adds the job
-  type, `finetune · ft`) instead of their start times.
-
-- **Project overrides of metric rules.** Per project and metric, a
-  `summary` (`min | max | mean | last`) and a `goal` (`lower | higher |
-  none`) override what `run.track(..., summary=)` logged
-  (`metric_overrides` table; `GET /api/projects/{p}/metric-rules`,
-  `PUT`/`DELETE .../metric-rules/{metric}` with the write role;
+- **Filter to a group**: clicking a group's name in the workspace sidebar adds
+  `group = <name>` to the workspace's filter (a removable chip); the group's
+  name in the runs table, the run page header and the lineage panel opens the
+  workspace filtered that way.
+- **Summary section**: the workspace and the run page start with two
+  automatic cards, the new `scalars` and `config` types. **Scalars** is one
+  table of every scalar logged at a single step, the runs' `summary` values
+  and run info (status, duration, created, user, host), sortable; **Config**
+  lists config keys, tags and notes per run with **only diffs**. Grouped, both
+  show one row / column per group (a mean, or `mixed`).
+- **Metric rules per project.** Per project and metric, a `summary`
+  (`min | max | mean | last`) and a `goal` (`lower | higher | none`) override
+  what `run.track(..., summary=)` logged (`GET /api/projects/{p}/metric-rules`,
+  `PUT` / `DELETE .../metric-rules/{metric}` with the write role;
   `Reader.metric_rules(project)`). One resolver, in Python and the UI with
-  shared test vectors, gives each metric its effective rule: the override,
-  else the newest run's logged rule; the goal from the override, else from
-  the summary's direction (min: lower, max: higher). Run values (runs table,
-  Summary cards, `Run.final`, `metrics.<name>` sorting), Runs page deltas,
-  the run comparer's best/worst cells, the scatter card's Pareto default
-  and a sweep's default goal all read it.
-
-- **Report cells with several run sets** (wandb's panel grids). A cards
-  cell holds `runSets`: 1..n frozen copies of the workspace's runs table
-  state (filter tree, group-by, Latest only, sort, eyes); their runs are
-  resolved live, the cards draw the union, and with several sets each set
-  has its own colour family. A Python port of the runs table's filter,
-  Latest only, sort, grouping and eyes (`cairn/server/run_sets.py`, shared
-  test vectors with the UI) resolves them on the server, so a share link's
-  scope is exactly the runs its cells show; `GET /api/share/context` carries
-  each cell's resolved sets (`run_sets`). The cell's run view moved to
-  `view: {hidden, pinned, baseline}`.
-- **Report run set editor** (UI): a cell's **Runs** dialog lists its run
-  sets (colour family dot, name, live run count, **Edit**, **✕**; the last
-  set cannot be removed), **+ Add run set** and **⤓ Insert from workspace**
-  (a set copying the workspace view's filter, grouping, Latest only, sort
-  and eyes; in a cell without cards also the workspace layout's cards).
+  shared test vectors, gives the effective rule: the override, else the newest
+  run's logged rule; the goal from the override, else from the summary's
+  direction. The runs table, Summary cards, `Run.final`, `metrics.<name>`
+  sorting, baseline deltas, the run comparer, the scatter card's Pareto
+  default and a sweep's default goal all read it. There is no separate
+  `define_metric`.
+- **Metric column menu**: a metric column's ▾ on the runs table and the
+  Scalars card sorts, sets the project's **Summary** and **Goal**, shows the
+  logged rule, **Reset to logged** and **Hide column**. The Scalars card
+  colours each goal metric's best row green and worst red; the Config card
+  tints the rows that differ.
+- **Parallel coordinates card** (`parallel`, as wandb): axes default to the
+  config keys that vary across the runs, then a metric (its final value under
+  the project's rule); add, remove and reorder axes, log scale per axis,
+  categorical axes. Lines coloured by the last axis or by run/group colours;
+  drag along an axis to brush (not saved); hover a line for its values and its
+  sidebar row. Grouped: one line per innermost group. The sweep page uses it.
+- **Parameter importance card** (`importance`, as wandb):
+  `Parameter importance for [metric ▾]`, one row per varying config key with
+  its importance (a seeded 100-tree random forest, impurity-based, summing
+  to 1) and correlation (Pearson r, green towards the metric's goal, red
+  away); sortable by either; needs 5 runs with the metric.
+- **Report cells with several run sets** (wandb's panel grids). A cards cell
+  holds `runSets`: 1..n frozen copies of the workspace's runs table state
+  (filter, group-by, Latest only, sort, eyes) whose runs are resolved live;
+  the cards draw the union, each set in its own colour family. The server
+  resolves them with a Python port of the runs table's model (shared test
+  vectors), so a share link's scope is exactly the runs its cells show. The
+  cell's run view is `view: {hidden, pinned, baseline}`.
+- **Report run set editor**: a cell's **Runs** dialog lists its sets (colour
+  dot, name, live run count, **Edit**, **✕**), **+ Add run set** and
+  **⤓ Insert from workspace** (copies the workspace view's filter, grouping,
+  Latest only, sort and eyes; in a cell without cards also its cards).
   **Edit** is the set's name and the workspace's runs sidebar scoped to the
   set.
-- **Run page Overview: Inputs / Used by** (UI): the Run block lists
+- **Run-to-run lineage.** `run.use_run(run_or_id, role=None)` and
+  `cairn.Run(..., uses=[...])` record that a run used another run without an
+  artifact between them (`POST/GET /api/runs/{id}/uses`). Lineage graphs show
+  it as a `used` edge; the Reader has `Run.uses()` / `Run.used_by()`; run
+  archives carry the links (remapped on import).
+- **Run page Overview: Inputs / Used by.** The Run block lists
   `Inputs ← pretrain v2 · data-exp-44:v1 · other-proj/model:v3 (other project)`
-  (the runs the run used, its fork parent and the producers of the artifacts
-  it used, then those artifact versions) and `Used by → eval-ft v1 · diff v1`
-  (the runs that used it or an artifact it logged), each linking to its run
-  page or artifact version; another project's artifacts are prefixed with
-  their project and marked; long lists collapse to **+N more**; empty rows
-  are left out. New `GET /api/runs/{id}/relations`.
-- **Notebook embeds** (Jupyter and marimo): a `cairn.Run` or a `Reader` run
-  as the last expression of a cell shows its run page inline (Workspace tab,
+  (the runs it used, its fork parent, the producers of the artifacts it used,
+  then those versions) and `Used by → eval-ft v1 · diff v1`, each a link;
+  another project's artifacts are marked; long lists collapse to **+N more**.
+  New `GET /api/runs/{id}/relations`.
+- **Notebook embeds** (Jupyter and marimo): a `cairn.Run` or a `Reader` run as
+  the last expression of a cell shows its run page inline (Workspace tab,
   live, 720 px); `run.display(tab=, height=)` picks the tab and height;
   `cairn.ui.workspace(project, filter=None, height=)` shows the project
-  workspace (the filter, an expression or a filter tree, applies to the
-  embed only) and `cairn.ui.report(project, report_id, height=)` a report,
+  workspace (the filter, an expression or a filter tree, applies to the embed
+  only) and `cairn.ui.report(project, report_id, height=)` a report,
   read-only. They are the viewer's `/embed/run/<id>?tab=`,
   `/embed/workspace/<project>?filter=` and `/embed/report/<project>/<id>`
-  pages (the page without the app's navigation, read-gated like the app and
-  `/embed/card`), found like `cairn.ui` cards' server; without a reachable
-  viewer the output says how to start one. `repr(run)` is unchanged. Example:
-  `examples/notebook_embeds.py` (marimo); guide: Notebooks.
+  pages, read-gated like the app; without a reachable viewer the output says
+  how to start one. Example: `examples/notebook_embeds.py` (marimo).
 
 ### Changed
 
-- **job_type is first-class (wandb):** the run page's Run block shows the
-  **Job type** next to the group; the runs table and the workspace group by
-  group, then job_type; in lineage graphs, runs are siblings only within one
-  job type, and a folded set reads `12 finetune runs`.
-
-- **A scalar logged at a single step gets no automatic card**: it is a
-  column of the Summary section's Scalars card, so automatic chart sections
-  hold only series with more than one step. A card for it can still be
-  added by hand.
-
-- **A run's series is (group, job_type, name).** `train` in `exp-43` and in
-  `exp-44`, or under job types `train` and `eval`, are separate series
-  everywhere a run is matched by name: the runs table's and the workspace's **Latest only** (and its
-  highlight; the higher version wins, else the later start), **Archive
-  old** / **Delete old**, the query URL's `run=newest-per-name`, and
-  run labels (two series never collide on their name).
-- **Run page as wandb's.** Overview is one **Run** block (notes, tags,
-  state with exit code, group link, version, start time, duration, author,
-  host, OS / Python, git with `(dirty)` and a diff button, command, run path
-  with copy), **Config** and **Summary** as searchable key/value tables side
-  by side, and **Artifacts** as Outputs / Inputs. Tabs: Overview,
-  **Workspace** (was Metrics & Media; without `system.*` series), **System**
-  (the same view over the `system.*` series), Logs, **Files** (Source and
-  Environment merged), Artifacts.
-- **Run navigation as wandb's.** The run page's tabs are Workspace,
-  Overview, System, Logs, Files, Artifacts, and it opens on **Workspace**
-  (the bare `/p/<project>/r/<run>`; Overview moved to `…/overview`, the
-  `…/workspace` path is gone). A run opened from the project workspace's
-  runs sidebar has a **← Workspace** link next to its name, back to the
-  workspace as left (its folded groups and sidebar scroll are kept for the
-  session).
-- **The run page hides cards with no data.** On its Workspace and System
-  tabs, a card showing no series the run logs, and a section left without
-  cards, are not shown; the project workspace still shows them.
-
-- **A metric's summary rule is the project's**, not each run's own: the
-  newest run that logged one (or a project override) decides the value of
-  every run's column. `run.stats[...].rule` is gone from the API; the
-  run comparer colours only metrics with a goal.
-- **A sweep without a `goal`** takes the metric's goal in the project
-  (higher is better: maximize), else minimize; `cairn.sweep(goal=None)` is the
-  new default.
-
-### Fixed
-
-- Editing one automatic card (a setting, its title, type, a duplicate)
-  wrote every automatic card before it, and every section, into the view.
-  Now only that card is written; the automatic cards around it keep their
-  place.
+- **job_type is first-class (wandb)**: the run's role. The run page shows it
+  next to the group; the runs table and the workspace group by group, then
+  job type; in lineage graphs runs are siblings only within one job type
+  (`12 finetune runs`).
+- **Latest only, Archive old / Delete old, the newest-run highlight and run
+  labels match runs by series** (group, job type, name): `train` in two groups
+  or under two job types is two series. Latest only prefers the higher
+  version, else the later start. The query URL's `run=newest-per-name` is per
+  series too.
+- **Run page as wandb's.** Tabs: **Workspace** (the default; the project's
+  current view without `system.*` series, hiding cards and sections with no
+  data for the run), **Overview** (one **Run** block with notes, tags, state
+  and exit code, group, job type, version, times, author, host, OS / Python,
+  git with `(dirty)` and a diff download, command and run path; searchable
+  **Config** and **Summary** tables; **Artifacts** as Outputs / Inputs),
+  **System** (the same view over `system.*`), Logs, **Files** (Source and
+  Environment merged), Artifacts. A run opened from the workspace sidebar has
+  a **← Workspace** link back to the workspace as it was left.
+- **A scalar logged at a single step gets no automatic card**: it is a column
+  of the Summary section's Scalars card. A card for it can still be added.
+- **A sweep without a `goal`** takes the metric's goal in the project (higher
+  is better: maximize), else minimize.
+- The run comparer colours only metrics with a goal; baseline deltas follow
+  the metric's goal in the project.
 
 ### Removed
 
+- Saved comparisons and the Compare page (see Breaking).
 - The report-only dynamic run selector (`runs.selector` with `latest-n` /
   `newest-per-name`, the auto badge, the static/auto toggle) and fixed
-  `runs.ids` cells: a fence with `runs:` is not read (its cell shows empty
-  with a notice; no migration). The query URL's `run=` selection is
-  unchanged. `examples/demo_run_selector.py` is gone.
-
+  `runs.ids` cells; `examples/demo_run_selector.py`. The query URL's `run=`
+  selection is unchanged.
 - The runs table's per-column **Better** setting and a computed column's
-  better direction (and their stored state, no migration): deltas follow the
-  metric's goal in the project.
-- Saved comparisons: the Compare page, the comparison kind of
-  `project_docs` and its `/api/projects/{id}/comparisons` routes (existing
-  comparisons are dropped on first open).
+  better direction.
+- The run page's **Metrics & Media**, **Source** and **Environment** tabs
+  (now Workspace and Files).
+
+### Fixed
+
+- Editing one automatic card (a setting, its title, type, a duplicate) wrote
+  every automatic card before it, and every section, into the view. Now only
+  that card is written; the cards around it keep their place.
 
 ## 0.4.0 — 2026-10-07
 
