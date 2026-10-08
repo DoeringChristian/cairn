@@ -52,7 +52,7 @@ A run set is the runs table of the [workspace](../ui/workspace.md), frozen: its 
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `name` | string | `Run set N` | Shown in the cell's **Runs** dialog. |
+| `name` | string | `Run set N` | Shown in the cell's **Runs** dialog, where each set is edited ([Reports](../ui/reports.md)). |
 | `filter` | filter tree | no filter | The runs table's filter tree, see below. |
 | `groupBy` | list | `[]` | Group-by levels: `{source: group}`, `{source: job_type}`, `{source: tag}`, `{source: param, key: lr}` or `{source: expr, expr: "config.lr * 10"}`. |
 | `latestOnly` | bool | `false` | Only the newest run of each series (group, job type, name). |

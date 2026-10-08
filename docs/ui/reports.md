@@ -60,7 +60,21 @@ A cards cell shows live cards for the runs of its **run sets**. A run set is the
 The cell's toolbar adds two buttons:
 
 - **+ (Add card)** opens the card picker. The run sets must match some runs first.
-- **Runs** (the sliders icon, with the run count) opens *Runs in this cell*: each run set with the runs it resolves to now, and each run's hide / pin / baseline toggles. For now only the **filter of the first run set** can be edited there, with the runs table's filter control; the full run set editor comes later.
+- **Runs** (the sliders icon, with the run count) opens *Runs in this cell*, the list of the cell's run sets:
+
+    ```
+    ┌ Run sets ──────────────────────────────────────────────┐
+    │ ● lr sweep        12 runs    [Edit] [✕]                │
+    │ ● baselines        2 runs    [Edit] [✕]                │
+    │ + Add run set        ⤓ Insert from workspace           │
+    └────────────────────────────────────────────────────────┘
+    ```
+
+    Each row has the set's colour family dot, its name, how many runs it resolves to now, **Edit** and **✕** (removes the set; the last set cannot be removed). In view mode and on a share link the list is read-only, and a share link's sets show the runs the server resolved.
+
+    - **Edit** opens the set's **Name** and the [project workspace](project-workspace.md#runs-sidebar)'s runs sidebar over the project's runs, scoped to the set: **Filter**, **Group**, **Latest only**, **Sort** and the eyes change the set (and the cards, right away). **Status** and **Search** only narrow what the editor lists: a run set has neither. **← Run sets** goes back to the list.
+    - **+ Add run set** adds a set of the project's 10 newest runs, named `Run set N`.
+    - **⤓ Insert from workspace** adds a set copying the workspace's current view: its filter, grouping, **Latest only**, sort and eyes, named after the view. In a cell without cards it also copies the cards of the workspace's layout (with their settings), over the cell's runs.
     - **Reset cards from runs** throws away the cell's cards and creates one card per metric across its runs.
 
 When the resolved runs change, the cell rebinds its existing cards to them. Your cards and their order stay as they are.

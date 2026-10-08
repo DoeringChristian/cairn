@@ -102,9 +102,14 @@
   test vectors with the UI) resolves them on the server, so a share link's
   scope is exactly the runs its cells show; `GET /api/share/context` carries
   each cell's resolved sets (`run_sets`). The cell's run view moved to
-  `view: {hidden, pinned, baseline}`. Editing is minimal until the run set
-  editor: the **Runs** dialog lists the sets and edits the first set's
-  filter.
+  `view: {hidden, pinned, baseline}`.
+- **Report run set editor** (UI): a cell's **Runs** dialog lists its run
+  sets (colour family dot, name, live run count, **Edit**, **✕**; the last
+  set cannot be removed), **+ Add run set** and **⤓ Insert from workspace**
+  (a set copying the workspace view's filter, grouping, Latest only, sort
+  and eyes; in a cell without cards also the workspace layout's cards).
+  **Edit** is the set's name and the workspace's runs sidebar scoped to the
+  set.
 
 ### Changed
 
