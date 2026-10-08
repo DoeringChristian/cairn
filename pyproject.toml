@@ -51,7 +51,7 @@ dependencies = [
 # that they agree. Swap it back to a version range the day the package is
 # published.
 ui = [
-    "cairn-ui @ git+https://github.com/DoeringChristian/cairn-ui@8c3e1989657697ba1228acb97f4fad7f9f07dc59",
+    "cairn-ui @ git+https://github.com/DoeringChristian/cairn-ui@72e50fee1d48d8ff66e77d22e582b32c3c47f7d6",
 ]
 media = [
     "matplotlib>=3.7",
