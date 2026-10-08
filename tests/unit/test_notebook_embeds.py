@@ -9,17 +9,17 @@ import json
 import sys
 from urllib.parse import parse_qs, urlsplit
 
+import cairn_ui.cards.elements as elements_mod
 import pytest
+from cairn_ui.cards.elements import PageElement
+from cairn_ui.cards.pages import run_page
 from fastapi.testclient import TestClient
 
 import cairn
 import cairn.ui as cui
-import cairn_ui.cards.elements as elements_mod
 from cairn.server import auth as auth_core
 from cairn.server.app import create_app
 from cairn.server.ui_mount import FRAME_CSP
-from cairn_ui.cards.elements import PageElement
-from cairn_ui.cards.pages import run_page
 
 QUIET = {"capture_source": False, "capture_stdout": False, "capture_env": False,
          "capture_system_metrics": False}
