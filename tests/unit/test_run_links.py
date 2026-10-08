@@ -149,3 +149,38 @@ def test_use_run_over_http(live_server):
         assert [r.id for r in reader.run(train.id).used_by()] == [ev.id]
     finally:
         reader.close()
+
+
+# ---- the run page's Inputs / Used by ------------------------------------------
+
+
+def test_relations_route(live_server):
+    kw = dict(repo=live_server, **QUIET)
+    with cairn.Run("other", name="maker", **kw) as maker:
+        maker.log_artifact({"w": 1}, "model", type="model")
+    with cairn.Run("p", name="prep", **kw) as prep:
+        data = prep.log_artifact({"rows": 3}, "data", type="dataset")
+    with cairn.Run("p", name="base", **kw) as base:
+        pass
+    with cairn.Run("p", name="train", uses=[base.id], **kw) as train:
+        train.use_artifact(data)
+        train.use_artifact("other/model:v1")
+        out = train.log_artifact({"level": 1}, "ckpt", type="model")
+        train.use_artifact(out)  # its own output: never lists itself
+    with cairn.Run("p", name="eval", **kw) as ev:
+        ev.use_artifact(out)
+    with cairn.Run("p", name="report", uses=[train.id], **kw) as rep:
+        pass
+
+    body = httpx.get(f"{live_server}/api/runs/{train.id}/relations").json()
+    assert [r["id"] for r in body["inputs"]["runs"]] == [base.id, prep.id, maker.id]
+    assert body["inputs"]["runs"][2] == {"id": maker.id, "display_name": "maker", "version": 1, "project_id": "other"}
+    arts = body["inputs"]["artifacts"]
+    assert [(a["project_id"], a["ref"]) for a in arts] == [("p", "data:v1"), ("other", "model:v1"), ("p", "ckpt:v1")]
+    assert set(arts[0]) == {"id", "project_id", "name", "version", "ref"}
+    assert [r["id"] for r in body["used_by"]["runs"]] == [rep.id, ev.id]
+
+    lone = httpx.get(f"{live_server}/api/runs/{rep.id}/relations").json()
+    assert [r["id"] for r in lone["inputs"]["runs"]] == [train.id]
+    assert lone["inputs"]["artifacts"] == [] and lone["used_by"]["runs"] == []
+    assert httpx.get(f"{live_server}/api/runs/missing/relations").status_code == 404

@@ -721,6 +721,57 @@ def run_uses(db: Database, run_id: str) -> dict[str, list[dict[str, Any]]]:
     return {"uses": uses, "used_by": used_by}
 
 
+def _relation_runs(db: Database, run_ids: Iterable[str]) -> list[dict[str, Any]]:
+    """``[{id, display_name, version, project_id}]`` in ``run_ids`` order,
+    de-duplicated; deleted runs are left out."""
+    ids = list(dict.fromkeys(run_ids))
+    rows: dict[str, dict[str, Any]] = {}
+    for i in range(0, len(ids), 500):
+        chunk = ids[i:i + 500]
+        for r in db.read_columns(
+            f"SELECT id, display_name, version, project_id FROM runs WHERE id IN ({_holes(chunk)})",
+            chunk,
+        ):
+            rows[r["id"]] = dict(r)
+    return [rows[i] for i in ids if i in rows]
+
+
+def run_relations(db: Database, run_id: str) -> dict[str, Any]:
+    """The run page's Inputs / Used by:
+
+    ``{inputs: {runs, artifacts}, used_by: {runs}}``. Input runs: the runs it
+    used (``uses=``), its fork parent, then the producers of the artifact
+    versions it used; input artifacts: those versions (``{id, project_id,
+    name, version, ref}``), in consumption order. Used-by runs: the runs that
+    used it, then the consumers of the versions it logged. The run itself is
+    never listed; runs are ``{id, display_name, version, project_id}``.
+    """
+    links = run_uses(db, run_id)
+    inputs = run_inputs(db, run_id)
+    parent = db.read_columns("SELECT parent_run_id FROM runs WHERE id = ?", [run_id])
+    parent_id = parent[0]["parent_run_id"] if parent else None
+    in_ids = [u["run_id"] for u in links["uses"]]
+    if parent_id:
+        in_ids.append(parent_id)
+    in_ids += [v["created_by_run"] for v in inputs if v.get("created_by_run")]
+    consumers = db.read_columns(
+        "SELECT ri.run_id FROM run_inputs ri JOIN artifact_versions av ON av.id = ri.artifact_version_id "
+        "WHERE av.created_by_run = ? ORDER BY ri.created_at, ri.run_id",
+        [run_id],
+    )
+    out_ids = [u["run_id"] for u in links["used_by"]] + [c["run_id"] for c in consumers]
+    artifacts = list({
+        v["id"]: {k: v[k] for k in ("id", "project_id", "name", "version", "ref")} for v in inputs
+    }.values())
+    return {
+        "inputs": {
+            "runs": _relation_runs(db, (i for i in in_ids if i != run_id)),
+            "artifacts": artifacts,
+        },
+        "used_by": {"runs": _relation_runs(db, (i for i in out_ids if i != run_id))},
+    }
+
+
 # ---------------------------------------------------------------------------
 # Lineage
 # ---------------------------------------------------------------------------

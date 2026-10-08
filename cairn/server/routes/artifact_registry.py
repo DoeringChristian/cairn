@@ -414,6 +414,15 @@ def run_uses(run_id: str, request: Request) -> dict[str, Any]:
     return ops.run_uses(db, run_id)
 
 
+@router.get("/runs/{run_id}/relations")
+def run_relations(run_id: str, request: Request) -> dict[str, Any]:
+    """The run page's Inputs / Used by: ``{inputs: {runs, artifacts},
+    used_by: {runs}}`` (see ``artifact_registry_ops.run_relations``)."""
+    db = get_db(request)
+    _require_run_row(db, run_id)
+    return ops.run_relations(db, run_id)
+
+
 @router.get("/runs/{run_id}/outputs")
 def run_outputs(
     run_id: str, request: Request,
