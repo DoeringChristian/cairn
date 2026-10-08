@@ -25,7 +25,7 @@ Usage::
     uv run cairn ui --repo /tmp/cairn-galleries/.cairn --port 4317
 
     # browse http://localhost:4317/
-    #   - A run → Metrics & Media: each card shows its items per step; drag
+    #   - A run → Workspace: each card shows its items per step; drag
     #     the step slider to watch them change together.
     #   - Select both runs → Compare: one gallery per run.
 

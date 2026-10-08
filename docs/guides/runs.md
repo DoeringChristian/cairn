@@ -459,8 +459,8 @@ Each media value is ONE value with no step, named by its key's dotted path
 - **Deleting the key removes it**: `reader.run(id).edit().delete_keys("summary", ["showcase"])`.
 - **Cards show it like a tracked series** of that name: it gets an automatic panel, the add-card
   flow offers it, comparisons and reports pick it up. Its card has no step slider. The run's
-  Overview lists it in the summary tree by kind (`figure`, `6 images`), with a link to its card in
-  Metrics & Media; media renders only there. The runs table has no column for it.
+  Overview lists it in the Summary table by kind (`figure`, `6 images`), with a link to its card in
+  the Workspace tab; media renders only there. The runs table has no column for it.
 - **A name is either a tracked series or a summary media value.** `run.summary` with media under a
   name that has tracked points, or `run.track` under a summary media key, raises `ValueError`.
   (A write that slips past that check from another process at the same time is dropped at

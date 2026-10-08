@@ -50,6 +50,24 @@
   old** / **Delete old**, the `newest-per-name` run selector of reports and
   share links (UI and server), the query URL's `run=newest-per-name`, and
   run labels (two series never collide on their name).
+- **Run page as wandb's.** Overview is one **Run** block (notes, tags,
+  state with exit code, group link, version, start time, duration, author,
+  host, OS / Python, git with `(dirty)` and a diff button, command, run path
+  with copy), **Config** and **Summary** as searchable key/value tables side
+  by side, and **Artifacts** as Outputs / Inputs. Tabs: Overview,
+  **Workspace** (was Metrics & Media; without `system.*` series), **System**
+  (the same view over the `system.*` series), Logs, **Files** (Source and
+  Environment merged), Artifacts.
+- **The run page hides cards with no data.** On its Workspace and System
+  tabs, a card showing no series the run logs, and a section left without
+  cards, are not shown; the project workspace still shows them.
+
+### Fixed
+
+- Editing one automatic card (a setting, its title, type, a duplicate)
+  wrote every automatic card before it, and every section, into the view.
+  Now only that card is written; the automatic cards around it keep their
+  place.
 
 ### Removed
 

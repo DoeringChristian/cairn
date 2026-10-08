@@ -1,6 +1,6 @@
 # Run page and workspace
 
-Click a run in the [runs table](runs-table.md) to open its run page at `/p/<project>/r/<run>`. The header shows the run's name, its [version](../guides/runs.md#versions) as a muted `v2` right after it (a run without a name has none), its status, its id, how long it has run, and a **forked from** link when the run is a fork. While the run is `running`, a **Stop** button asks it to stop. The run sees the request on its next heartbeat (see [Run lifecycle](../guides/runs.md)).
+Click a run in the [runs table](runs-table.md) to open its run page at `/p/<project>/r/<run>`. The header shows the run's name, its [version](../guides/runs.md#versions) as a muted `v2` right after it (a run without a name has none), its status, its group (a link to the [project workspace](project-workspace.md) filtered to that group), its short id (click to copy), how long it has run, and a **forked from** link when the run is a fork. While the run is `running`, a **Stop** button asks it to stop. The run sees the request on its next heartbeat (see [Run lifecycle](../guides/runs.md)).
 
 A run with [progress](../guides/runs.md#progress-and-eta) has a line under the header: while it runs, a full-width bar in its status colour and `step 5,800 / 10,000 · 58% · ~9 min left` (for `run.progress` values, `3 / 10 · 30% · …` without the word "step"); once it ended, only `step 10,000 / 10,000 · 100%`. The page re-reads a running run every 2 s.
 
@@ -8,15 +8,39 @@ A run with [progress](../guides/runs.md#progress-and-eta) has a line under the h
 
 | Tab | What it shows |
 |---|---|
-| **Overview** | Details (status, exit code, host, user), Git (remote, branch, commit, dirty flag, a link to the captured diff), tags and notes (rendered as [Markdown](../guides/media.md#markdown); hover them and click **edit** to change them), the summary as logged (a collapsible tree, shown when the run has one; a [media value](../guides/runs.md#media-in-the-summary) shows its kind, such as `figure` or `6 images`, and a **show in Metrics & Media** link that switches to that tab, scrolls to its card and highlights it; media itself renders only in Metrics & Media), the config as logged (a collapsible tree; long values are cut to one line, **more** shows them in full), CLI args, the environment snapshot, the final value of every metric (system metrics hidden behind a toggle), and artifacts. |
-| **Metrics & Media** | The project's current [workspace view](#workspace-views), bound to this run: sections of panels, one per logged series and named artifact unless you arrange them otherwise. |
+| **Overview** | The **Run** block, **Config** and **Summary** side by side (one above the other on a phone), and **Artifacts**; see [Overview](#overview). |
+| **Workspace** | The project's current [workspace view](#workspace-views), bound to this run, without its `system.*` series: sections of panels, one per logged series and named artifact unless you arrange them otherwise. |
+| **System** | The same view over the run's `system.*` series only (CPU, memory, disk, network, process). |
 | **Logs** | Captured stdout/stderr. You can search and filter by stream. While the run is running, the view follows new lines. When [several processes log into the run](../guides/runs.md), each line shows its process label after the time, a process filter appears next to the stream filter, and search matches labels too. |
-| **Source** | The source snapshot, when the run captured one. |
-| **Environment** | The environment snapshot and `pip freeze`. |
+| **Files** | The source snapshot, when the run captured one (pick a file on the left), then the environment snapshot and the packages (`pip freeze`). |
+| **Artifacts** | The artifact versions the run logged and used, and its [lineage graph](lineage.md) ([A run's artifacts](artifacts.md#a-runs-artifacts)). |
+
+### Overview
+
+The **Run** block lists what the run is; a field the run did not record shows `—`:
+
+| Field | Value |
+|---|---|
+| Notes | The notes, rendered as [Markdown](../guides/media.md#markdown). Hover them and click **edit** to change them; empty notes open straight in the editor. |
+| Tags | The tags; hover one and click × to remove it, **+ add** to add one (with suggestions from the project's tags). |
+| State | The status, with the exit code when there is one: `completed (exit 0)`. Next to it the **Group** (a link to the project workspace filtered to it) and the **Version**. |
+| Start time | When the run was created, and its **Duration**. |
+| Author | The user who ran it, its **Host**, and **OS / Python**. |
+| Git | Remote (a link for GitHub/GitLab-style remotes), branch, commit and `(dirty)`, and a **diff** button that downloads the captured `git diff HEAD` of a dirty tree. |
+| Command | The command line; a Python script shows as `python train.py --lr 3e-4`. |
+| Run path | `<project>/<run id>`, with a **copy** button. |
+
+**Config** is the config as flat `key  value` rows (nested keys dotted: `model.depth`). **Summary** is the run's final values: every metric's value as the runs table shows it, with where it comes from in brackets (`(last)` point, a [summary rule](../guides/runs.md) such as `(min)`, or `(summary)` for a `run.summary` key), and the summary's other keys. A [media value](../guides/runs.md#media-in-the-summary) shows its kind, such as `figure` or `6 images`, and a **show in Workspace** link that switches to that tab, scrolls to its card and highlights it. `system.*` series are on the System tab. Each table has a search box that keeps the keys containing what you type.
+
+**Artifacts** lists the artifact versions the run logged (**Outputs**) and used (**Inputs**), with type, files and size; it is left out when there are none.
+
+### Cards with no data
+
+On the run page's Workspace and System tabs, a card that shows no series this run logs is not shown, and neither is a section left without cards (as wandb's run page). The rest keeps the view's layout and order; open a run that logs the series and the card is back at its place. Multi-run cards (value, bar chart, scatter, …) select no series and always show. The [project workspace](project-workspace.md) shows every card, with an empty state when the visible runs have no data for it.
 
 ## Workspaces
 
-The **Metrics & Media** tab shows a **workspace**: a layout of named sections holding panels, bound to the run you are viewing. The layout is written in metric names, never in runs, so it is the same on every run of the project. Switching runs changes only the data.
+The **Workspace** and **System** tabs show a **workspace**: a layout of named sections holding panels, bound to the run you are viewing. The layout is written in metric names, never in runs, so it is the same on every run of the project. Switching runs changes only the data.
 
 On the run page the workspace is one of the project's [workspace views](#workspace-views). The [project workspace](project-workspace.md) shows the same current view bound to the runs its sidebar picks. Both render the same page: the same toolbar, sections, panels and dialogs, including [adding cards](#adding-cards).
 
@@ -58,7 +82,7 @@ You don't have to build a layout. Every metric that no panel shows gets an **aut
 
 A panel whose selector names exactly one metric stands in for that metric's automatic panel. Panels over several metrics or a regex are extra views: the metrics they show keep their own panels. So are the multi-run cards (value, bar chart, scatter, …) you [add](#adding-cards) from a series: they read it through an expression in their settings, and the series keeps its own panel. Any number of panels may show the same series.
 
-When you change an automatic panel in any way (a setting, its size, its type, its position, a duplicate), it becomes part of the layout. The panels before it in its section are written with it, so nothing on the page moves. From then on it is an ordinary panel.
+When you change an automatic panel (a setting, its size, its type, its title, a duplicate), it becomes part of the layout: only that panel is written. The automatic panels around it keep their A–Z place among the section's written ones, so nothing on the page moves. From then on it is an ordinary panel. Moving a panel writes the automatic panels of the sections it leaves and enters too, so the order you arrange is the order kept.
 
 ### Include unlisted metrics
 

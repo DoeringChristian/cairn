@@ -23,7 +23,7 @@ Usage::
     uv run cairn ui --repo /tmp/cairn-gallery/.cairn --port 4317
 
     # browse http://localhost:4317/
-    #   - A run → Metrics & Media: the ``samples`` card shows 8 images per
+    #   - A run → Workspace: the ``samples`` card shows 8 images per
     #     step; drag the step slider to watch them denoise.
     #   - Select both runs → Compare: one gallery per run.
 """

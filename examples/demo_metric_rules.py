@@ -34,7 +34,7 @@ metric's rule as it is.
     #     or summary for each metric.
     #   - Select all three runs → Compare → Overview: val.loss and loss are
     #     green where lowest, val.acc where highest.
-    #   - Metrics & Media: val.* charts start on the "epoch" x-axis.
+    #   - Workspace tab: val.* charts start on the "epoch" x-axis.
 """
 
 from __future__ import annotations
