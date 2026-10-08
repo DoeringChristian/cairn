@@ -269,7 +269,7 @@ Each column is a scalar expression, and each polyline is a run. Lines are colour
 | Tab | Settings |
 |---|---|
 | Values | **X**, **Y** and optional **Colour**, a colour scale; unset uses each run's colour. |
-| Display | **X range** / **Y range**, with log. **Pareto front** *(default)*, with **better is** per axis. By default the direction comes from the metric's summary rule, else min. **Dim points off the front** *(default)*. **Running lines**: min, max or mean of y as x grows *(default)*. **Regression line**, fitted in log space on log axes *(default)*. Up to 5 **reference lines**. **Point label** template and **Tooltip fields**. |
+| Display | **X range** / **Y range**, with log. **Pareto front** *(default)*, with **better is** per axis. By default the direction is the goal of the axis's metric in the project ([metric rules](../guides/metric-rules.md#project-overrides)), else min. **Dim points off the front** *(default)*. **Running lines**: min, max or mean of y as x grows *(default)*. **Regression line**, fitted in log space on log axes *(default)*. Up to 5 **reference lines**. **Point label** template and **Tooltip fields**. |
 
 Click a point to open its run.
 
@@ -296,7 +296,7 @@ Bars are coloured by the sign of the correlation.
 
 ### Run comparer (`run-compare`)
 
-One column per run, with tables of final metric values, params and the captured environment. For metrics, the best value is green and the worst red, following each metric's summary rule (see [Final values and metric rules](../guides/metric-rules.md)).
+One column per run, with tables of final metric values, params and the captured environment. For metrics with a goal in the project, the best value is green and the worst red (see [Final values and metric rules](../guides/metric-rules.md)); metrics without a goal are not coloured.
 
 Settings:
 

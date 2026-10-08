@@ -571,6 +571,8 @@ SHARE_ALLOWED: dict[str, ShareChecker] = {
     "/api/projects/{project_id}/viewers": _the_project,
     # Which viewer each kind defaults to (the report's cards without a pinned viewer).
     "/api/projects/{project_id}/viewer-defaults": _the_project,
+    # Metric rules (summary + goal), narrowed to the report's runs in the route.
+    "/api/projects/{project_id}/metric-rules": _the_project,
     # The built-in viewers ship with the app.
     "/api/viewers/builtin/{name}/files": lambda request, scope: True,
     "/api/viewers/builtin/{name}/file": lambda request, scope: True,

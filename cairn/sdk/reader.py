@@ -576,8 +576,10 @@ class Run:
     @property
     def final(self) -> dict[str, Any]:
         """Each metric's final value, exactly as the UI's runs table shows it:
-        the last scalar point, replaced by a ``track(..., summary=)`` rule,
-        replaced by an explicit ``summary`` key."""
+        the last scalar point, replaced by the metric's summary rule in the
+        project (``Reader.metric_rules``: a project override, else the newest
+        run's ``track(..., summary=)``), replaced by an explicit ``summary``
+        key."""
         if "values" not in self._raw:
             self._raw["values"] = self._backend.get_run(self.id)["run"]["values"]
         return dict(self._raw["values"])
@@ -1519,6 +1521,7 @@ class _Backend(Protocol):
     def add_alias(self, version_id: str, alias: str) -> dict[str, Any]: ...
     def remove_alias(self, version_id: str, alias: str) -> dict[str, Any]: ...
     def get_lineage(self, project_id: str, family_id: str | None) -> dict[str, Any]: ...
+    def metric_rules(self, project_id: str) -> dict[str, Any]: ...
     def version_lineage(self, version_id: str, *, depth: int | None,
                         direction: str) -> dict[str, Any]: ...
 
@@ -1689,7 +1692,7 @@ class _LocalBackend(_RegistryWrites):
 
     def _with_values(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Each row with ``values``, from the server function the runs routes use."""
-        from ..server.summary_rules import resolved_values
+        from ..server.metric_rules import resolved_values
 
         values = resolved_values(self._db, [r["id"] for r in rows])
         for r in rows:
@@ -1846,6 +1849,11 @@ class _LocalBackend(_RegistryWrites):
 
     def get_lineage(self, project_id: str, family_id: str | None = None) -> dict[str, Any]:
         return self._ops().project_lineage(self._db, project_id, family_id=family_id)
+
+    def metric_rules(self, project_id: str) -> dict[str, Any]:
+        from ..server.metric_rules import rules_document
+
+        return rules_document(self._db, project_id)
 
     def version_lineage(
         self, version_id: str, *, depth: int | None = None, direction: str = "both",
@@ -2079,6 +2087,9 @@ class _HttpBackend(_RegistryWrites):
         params = {"family_id": family_id} if family_id else None
         return self._request("GET", f"/api/projects/{project_id}/lineage", params=params)
 
+    def metric_rules(self, project_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/api/projects/{project_id}/metric-rules")
+
     def version_lineage(
         self, version_id: str, *, depth: int | None = None, direction: str = "both",
     ) -> dict[str, Any]:
@@ -2285,6 +2296,15 @@ class Reader:
             )
             for f in self._backend.list_artifact_families(_project_id(project), type_filter=type)
         ]
+
+    def metric_rules(self, project: str) -> dict[str, dict[str, Any]]:
+        """Each metric's effective rule in ``project``: ``{metric: {"summary",
+        "goal"}}`` for every metric with a logged ``track(..., summary=)``
+        rule (the newest run's) or a project override. ``summary`` is
+        ``"min" | "max" | "mean" | "last"`` (None: the last point), ``goal``
+        ``"lower" | "higher" | "none"``. ``Run.final`` reads values under
+        these rules. See the metric rules guide."""
+        return self._backend.metric_rules(_project_id(project))["rules"]
 
     def lineage(self, project: str, *, family: str | None = None) -> dict[str, Any]:
         """The artifact lineage graph of a project (or of one artifact).

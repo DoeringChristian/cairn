@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field
 
 from .. import auth
 from ..storage.db import Database
-from ..summary_rules import resolved_values
+from ..metric_rules import resolved_values
 from ._common import api_run_row, get_db, utc_now
 from .report_assets import require_report
 from .reports import _parse_payload

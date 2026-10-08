@@ -52,6 +52,19 @@
   groups; a name used under several job types in one group adds the job
   type, `finetune · ft`) instead of their start times.
 
+- **Project overrides of metric rules.** Per project and metric, a
+  `summary` (`min | max | mean | last`) and a `goal` (`lower | higher |
+  none`) override what `run.track(..., summary=)` logged
+  (`metric_overrides` table; `GET /api/projects/{p}/metric-rules`,
+  `PUT`/`DELETE .../metric-rules/{metric}` with the write role;
+  `Reader.metric_rules(project)`). One resolver, in Python and the UI with
+  shared test vectors, gives each metric its effective rule: the override,
+  else the newest run's logged rule; the goal from the override, else from
+  the summary's direction (min: lower, max: higher). Run values (runs table,
+  Summary cards, `Run.final`, `metrics.<name>` sorting), Runs page deltas,
+  the run comparer's best/worst cells, the scatter card's Pareto default
+  and a sweep's default goal all read it.
+
 ### Changed
 
 - **job_type is first-class (wandb):** the run page's Run block shows the
@@ -83,6 +96,14 @@
   tabs, a card showing no series the run logs, and a section left without
   cards, are not shown; the project workspace still shows them.
 
+- **A metric's summary rule is the project's**, not each run's own: the
+  newest run that logged one (or a project override) decides the value of
+  every run's column. `run.stats[...].rule` is gone from the API; the
+  run comparer colours only metrics with a goal.
+- **A sweep without a `goal`** takes the metric's goal in the project
+  (higher is better: maximize), else minimize; `cairn.sweep(goal=None)` is the
+  new default.
+
 ### Fixed
 
 - Editing one automatic card (a setting, its title, type, a duplicate)
@@ -92,6 +113,9 @@
 
 ### Removed
 
+- The runs table's per-column **Better** setting and a computed column's
+  better direction (and their stored state, no migration): deltas follow the
+  metric's goal in the project.
 - Saved comparisons: the Compare page, the comparison kind of
   `project_docs` and its `/api/projects/{id}/comparisons` routes (existing
   comparisons are dropped on first open).

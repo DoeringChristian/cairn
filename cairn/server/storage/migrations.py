@@ -437,6 +437,20 @@ SCHEMA_SQL: list[str] = [
         PRIMARY KEY (run_id, name)
     )
     """,
+    # A project's override of a metric's rule (cairn/server/metric_rules.py):
+    # NULL fields are not overridden.
+    """
+    CREATE TABLE IF NOT EXISTS metric_overrides (
+        project_id    TEXT NOT NULL,
+        name          TEXT NOT NULL,
+        -- min | max | mean | last
+        summary       TEXT,
+        -- lower | higher | none
+        goal          TEXT,
+        updated_at    TEXT NOT NULL,
+        PRIMARY KEY (project_id, name)
+    )
+    """,
     """
     CREATE TABLE IF NOT EXISTS sweeps (
         id            TEXT PRIMARY KEY,

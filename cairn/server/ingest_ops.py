@@ -739,9 +739,9 @@ def set_metric_rule(
     summary: str | None = None,
 ) -> None:
     """Record how the metric ``name`` is read: the series ``x`` to plot it
-    against, and its summary rule (see ``summary_rules``). Fields merge: a
+    against, and its summary rule (see ``metric_rules``). Fields merge: a
     later call replaces the fields it sets and keeps the ones it leaves None."""
-    from .summary_rules import SUMMARY_KINDS
+    from .metric_rules import SUMMARY_KINDS
 
     _require_run(db, run_id)
     if summary is not None and summary not in SUMMARY_KINDS:

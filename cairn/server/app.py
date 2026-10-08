@@ -40,6 +40,7 @@ from .routes import (
     import_export,
     ingest,
     logs,
+    metric_rules as metric_rules_routes,
     project_docs,
     projects,
     query,
@@ -338,6 +339,7 @@ def create_app(
         alerts.router,
         sweeps.router,
         viewers.router,
+        metric_rules_routes.router,
     ):
         app.include_router(router, dependencies=[Depends(require("read"))])
 

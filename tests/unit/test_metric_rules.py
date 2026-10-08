@@ -16,7 +16,7 @@ from cairn.server import ingest_ops
 from cairn.server.storage.blobs import BlobStore
 from cairn.server.storage.datadir import DataDir
 from cairn.server.storage.db import Database
-from cairn.server.summary_rules import resolve_summary_rules, resolved_values
+from cairn.server.metric_rules import project_rules, resolved_values
 from cairn.server.wal_ingest import ingest_all
 from cairn.sdk.transport import Transport
 
@@ -180,15 +180,19 @@ def test_resolution_order_and_exact_names(fresh_db):
     ingest_ops.set_metric_rule(db, rid, "val.*", summary="max")  # not a glob
     ingest_ops.set_metric_rule(db, rid, "lr", x="epoch")  # no summary rule
 
-    assert resolve_summary_rules(db, [rid, other]) == {
-        rid: {"loss": 1.0, "val.f1": pytest.approx(0.3)},
+    assert project_rules(db, ["p"])["p"] == {
+        "loss": {"summary": "min", "goal": "lower"},
+        "val.f1": {"summary": "mean", "goal": "none"},
+        "val.*": {"summary": "max", "goal": "higher"},
     }
     assert _final_metric(db, rid, "loss") == 1.0
+    assert _final_metric(db, rid, "val.f1") == pytest.approx(0.3)
     assert _final_metric(db, rid, "val.acc") == 0.7  # no exact rule: last
-    assert _final_metric(db, other, "loss") == 2.0
+    # The rule is the project's: the other run reads its loss by it too.
+    assert _final_metric(db, other, "loss") == 1.0
 
     ingest_ops.set_metric_rule(db, rid, "loss", summary="last")
-    assert resolve_summary_rules(db, [rid])[rid]["loss"] == 2.0
+    assert _final_metric(db, rid, "loss") == 2.0
     with pytest.raises(ValueError):
         ingest_ops.set_metric_rule(db, rid, "loss", summary="median")
     with pytest.raises(ingest_ops.RunNotFound):

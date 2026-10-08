@@ -40,7 +40,7 @@ from . import config_doc
 from ._operators import OPERATORS
 from .routes._common import api_run_row
 from .storage.db import Database
-from .summary_rules import resolved_values
+from .metric_rules import resolved_values
 
 #: A run row as run lists return it: every column but ``env_snapshot`` (large,
 #: only shown on the run page) and the two documents (served decoded on request).

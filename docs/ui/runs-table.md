@@ -101,7 +101,7 @@ Levels nest in order (`by …`, `then …`); reorder them with ↑/↓ and remov
 | Kind | Column | Contents |
 |---|---|---|
 | Built-in | Name, Status, Created, Duration, Tags | Run fields. Duration runs up to now for an unfinished run. |
-| Metric | the metric or summary key | The run's value: the metric's last point, replaced by its `summary=` rule if it has one, replaced by an explicit `run.summary()` key of the same name. See [Final values and metric rules](../guides/metric-rules.md). |
+| Metric | the metric or summary key | The run's value: the metric's last point, replaced by its summary rule in the project if it has one, replaced by an explicit `run.summary()` key of the same name. See [Final values and metric rules](../guides/metric-rules.md). |
 | Config | the config key | A config value. |
 | Computed | the name or the expression | A scalar expression per run, see [below](#computed-columns). |
 
@@ -118,7 +118,7 @@ New columns (a metric that appears later) are placed next to their natural neigh
 
 ### Computed columns
 
-At the bottom of **Columns**, enter a scalar expression (e.g. `min(val.loss)`), an optional name and an optional *better* direction, and click **Add column**. The expression sees the same names as [filter expressions](#expressions). Edit or remove a computed column from its header menu (**Edit expression**, **Remove column**).
+At the bottom of **Columns**, enter a scalar expression (e.g. `min(val.loss)`) and an optional name, and click **Add column**. The expression sees the same names as [filter expressions](#expressions). Edit or remove a computed column from its header menu (**Edit expression**, **Remove column**).
 
 ## Selecting runs
 
@@ -156,12 +156,13 @@ Toggles that are on stay visible after the name. These three settings are the pr
 
 ### Deltas against the baseline
 
-With a baseline set, each numeric cell of another run shows `value − baseline` next to the value (Duration excepted). The tooltip also gives the relative change. The baseline counts even when a filter hides it. Deltas are coloured green (better) or red (worse) when the column has a *better* direction:
+With a baseline set, each numeric cell of another run shows `value − baseline` next to the value (Duration excepted). The tooltip also gives the relative change. The baseline counts even when a filter hides it. Deltas are coloured green (better) or red (worse) when the column has a *goal*:
 
-1. the column's own setting: the **Better** row in its header menu (**auto** / **lower** / **higher**), or the direction chosen for a computed column;
-2. otherwise, for a metric column, its `summary=` rule: `min` means lower is better, `max` higher. Other rules have no direction.
+- a metric column has its metric's goal in the project: a project override, else the direction of its `summary=` rule (`min` means lower is better, `max` higher). See [Project overrides](../guides/metric-rules.md#project-overrides).
+- a computed column has the goal of the one metric its expression reads (`min(val.loss) * 100` is lower-is-better when `val.loss` is). An expression over several metrics has none.
+- config columns have no goal.
 
-Config columns show deltas only once you pick a direction for them. Without a direction a delta is shown uncoloured.
+Without a goal a delta is shown uncoloured.
 
 ## Run colours
 
@@ -171,4 +172,4 @@ The dot before each name is the run's colour. The colour is derived from the run
 
 ## Where the table's state is kept
 
-The filter tree, group-by levels, sort keys, column order, hidden and pinned columns, *better* overrides and computed columns are saved in your browser per project, and restored when you come back. The status filter, search and **Latest only** are not saved. None of this is part of the server-side workspace views. Table edits are not on the [undo](shortcuts.md) stack.
+The filter tree, group-by levels, sort keys, column order, hidden and pinned columns and computed columns are saved in your browser per project, and restored when you come back. The status filter, search and **Latest only** are not saved. None of this is part of the server-side workspace views. Table edits are not on the [undo](shortcuts.md) stack.

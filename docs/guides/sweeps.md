@@ -169,7 +169,7 @@ both in `cairn sweep create` and when a sweep is created through the API.
 | `description` | Free text, stored with the sweep. |
 | `method` | `grid`, `random` (the default) or `bayes`. See [Methods](#methods). |
 | `metric` | `{name: ..., goal: ...}`, or a plain metric name with `goal` beside it. |
-| `goal` | `minimize` (the default) or `maximize`, when `metric` is a plain name. |
+| `goal` | `minimize` or `maximize`, when `metric` is a plain name. Default: from the metric's goal in the project, else `minimize`. |
 | `parameters` | The search space. See [The search space](#the-search-space). |
 | `program` | The training script, used by the `${program}` macro. |
 | `command` | What the agent runs per trial. See [Program and command](#program-and-command). |
@@ -278,8 +278,11 @@ error.
 | `random` | Samples every parameter independently. Never finishes on its own. | — |
 | `bayes` | Asks Optuna's TPE sampler for the next parameters, based on the completed trials that have a value. Never finishes on its own. | A `metric`, and the `[sweep]` extra: `pip install 'cairn-track[sweep]'` |
 
-`goal` is `minimize` (the default) or `maximize`. It decides which trial is the
-best one and which direction `bayes` optimizes in.
+`goal` is `minimize` or `maximize`. It decides which trial is the best one and
+which direction `bayes` optimizes in. Without a `goal`, the sweep takes the
+metric's goal in the project when it is created: `maximize` when higher is
+better (a `track(..., summary="max")` rule or a [project
+override](metric-rules.md#project-overrides)), else `minimize`.
 
 ## Trials and runs
 

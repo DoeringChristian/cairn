@@ -25,7 +25,7 @@ from cairn.server.run_archive import restore_archive, write_archive
 from cairn.server.storage.blobs import BlobStore
 from cairn.server.storage.db import Database
 from cairn.server.storage.metric_stats import rebuild_metric_stats
-from cairn.server.summary_rules import resolve_summary_rules, resolved_values
+from cairn.server.metric_rules import resolved_values
 
 WALL = "2026-01-01T00:00:00+00:00"
 
@@ -38,9 +38,14 @@ def _oracle_rules(db: Database, run_ids: list[str]) -> dict[str, dict[str, Any]]
         return {}
     holes = ",".join("?" * len(run_ids))
     defs: dict[str, dict[str, str]] = {}
+    # A rule is per project (metric_rules): every run of the project reads
+    # it. The test's rule names encode one kind each, so no newest-run order.
     for r in db.read_columns(
-        f"SELECT run_id, name, summary FROM metric_defs "
-        f"WHERE run_id IN ({holes}) AND summary IS NOT NULL",
+        f"""SELECT r2.id AS run_id, d.name AS name, d.summary AS summary
+              FROM metric_defs d
+              JOIN runs r ON r.id = d.run_id
+              JOIN runs r2 ON r2.project_id = r.project_id
+             WHERE r2.id IN ({holes}) AND d.summary IS NOT NULL""",
         list(run_ids),
     ):
         defs.setdefault(r["run_id"], {})[r["name"]] = r["summary"]
@@ -58,8 +63,6 @@ def _oracle_rules(db: Database, run_ids: list[str]) -> dict[str, dict[str, Any]]
                        AND l.scalar_value IS NOT NULL
                      ORDER BY l.step DESC LIMIT 1) AS last
               FROM sequences s
-              JOIN metric_defs d
-                ON d.run_id = s.run_id AND d.name = s.name AND d.summary IS NOT NULL
              WHERE s.run_id IN ({holes}) AND s.scalar_value IS NOT NULL
              GROUP BY s.run_id, s.name""",
         ruled,
@@ -106,8 +109,7 @@ def _oracle_stats(db: Database, run_ids: list[str]) -> dict[str, dict[str, Any]]
         f"""SELECT g.run_id AS run_id, g.name AS name, g.count AS count,
                    f.scalar_value AS first, l.scalar_value AS last,
                    g.min AS min, g.max AS max, g.mean AS mean,
-                   g.first_step AS first_step, g.last_step AS last_step,
-                   d.summary AS rule
+                   g.first_step AS first_step, g.last_step AS last_step
               FROM (SELECT run_id, name, COUNT(*) AS count,
                            MIN(scalar_value) AS min, MAX(scalar_value) AS max,
                            AVG(scalar_value) AS mean,
@@ -118,9 +120,7 @@ def _oracle_stats(db: Database, run_ids: list[str]) -> dict[str, dict[str, Any]]
               JOIN sequences f
                 ON f.run_id = g.run_id AND f.name = g.name AND f.step = g.first_step
               JOIN sequences l
-                ON l.run_id = g.run_id AND l.name = g.name AND l.step = g.last_step
-              LEFT JOIN metric_defs d
-                ON d.run_id = g.run_id AND d.name = g.name""",
+                ON l.run_id = g.run_id AND l.name = g.name AND l.step = g.last_step""",
         list(run_ids),
     ):
         rid, name = r.pop("run_id"), r.pop("name")
@@ -153,7 +153,6 @@ def _check(db: Database) -> None:
     run_ids = [r[0] for r in db.read("SELECT id FROM runs")]
     # Each rule's name encodes its kind, so mean-rule floats compare loosely.
     _same(_metric_stats(db, run_ids), _oracle_stats(db, run_ids), "stats")
-    _same(resolve_summary_rules(db, run_ids), _oracle_rules(db, run_ids), "rules")
     _same(resolved_values(db, run_ids), _oracle_values(db, run_ids), "values")
     for rid in run_ids:  # the single-run callers (Run.final, metrics.x)
         _same(resolved_values(db, [rid]), _oracle_values(db, [rid]), "values1")
@@ -323,5 +322,5 @@ def test_out_of_order_and_resent_points(fresh_db):
     ingest_ops.insert_batch(db, rid, [pt(9, -7.0), pt(7, math.nan)])
     assert _metric_stats(db, [rid])[rid]["loss"] == {
         "count": 4, "first": 4.0, "last": 3.0, "min": 1.0, "max": 4.0,
-        "mean": 2.5, "first_step": 0, "last_step": 9, "rule": None,
+        "mean": 2.5, "first_step": 0, "last_step": 9,
     }

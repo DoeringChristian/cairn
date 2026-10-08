@@ -110,7 +110,7 @@ def sweep(
     *,
     project: str,
     metric: str | None = None,
-    goal: str = "minimize",
+    goal: str | None = None,
     method: str = "random",
     name: str | None = None,
     command: str | list[str] | None = None,
@@ -141,7 +141,10 @@ def sweep(
         metric: The metric a trial is scored by, when the trial function
             returns no number: its final value as the runs table shows it.
             Needed for ``best`` and for ``method="bayes"``.
-        goal: ``"minimize"`` or ``"maximize"`` the metric.
+        goal: ``"minimize"`` or ``"maximize"`` the metric. Default: from the
+            metric's rule in the project (a goal of "higher is better", set by
+            ``track(..., summary="max")`` or a project override, maximizes),
+            else minimize.
         method: ``"grid"`` (every combination of the ``values`` lists, then
             the sweep finishes; ranges are an error), ``"random"`` (samples
             independently, forever) or ``"bayes"`` (Optuna's TPE sampler;

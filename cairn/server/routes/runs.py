@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from .. import auth, config_doc
 from ..storage.db import Database
 from ..run_query import RUN_LIST_COLUMNS, RunQueryError, docs_by_run, select_runs
-from ..summary_rules import resolved_values
+from ..metric_rules import resolved_values
 from ._common import api_run_row, get_db, require_run
 
 router = APIRouter(prefix="/api", tags=["runs"])
@@ -154,29 +154,23 @@ def _metric_stats(
     db: Database, run_ids: list[str]
 ) -> dict[str, dict[str, dict[str, Any]]]:
     """Per run, per scalar metric: ``{count, first, last, min, max, mean,
-    first_step, last_step, rule}``.
+    first_step, last_step}``.
 
     One query for the whole page, over ``metric_stats`` (maintained at
     ingest; see ``storage/metric_stats.py``). ``first``/``last`` are the
-    values at the lowest/highest step; ``rule`` is the run's
-    ``metric_defs.summary`` for the name (min|max|mean|last, or None). Points
-    without a scalar value (media, NaN) are ignored, so non-scalar sequences
-    never appear.
+    values at the lowest/highest step. Points without a scalar value (media,
+    NaN) are ignored, so non-scalar sequences never appear. The metric's
+    rule is the project's (``GET /api/projects/{p}/metric-rules``).
     """
     if not run_ids:
         return {}
     holes = ",".join("?" * len(run_ids))
     out: dict[str, dict[str, dict[str, Any]]] = {rid: {} for rid in run_ids}
     for r in db.read_columns(
-        f"""SELECT s.run_id AS run_id, s.name AS name, s.count AS count,
-                   s.first_value AS first, s.last_value AS last,
-                   s.min AS min, s.max AS max, s.sum / s.count AS mean,
-                   s.first_step AS first_step, s.last_step AS last_step,
-                   d.summary AS rule
-              FROM metric_stats s
-              LEFT JOIN metric_defs d
-                ON d.run_id = s.run_id AND d.name = s.name
-             WHERE s.run_id IN ({holes})""",
+        f"""SELECT run_id, name, count, first_value AS first, last_value AS last,
+                   min, max, sum / count AS mean, first_step, last_step
+              FROM metric_stats
+             WHERE run_id IN ({holes})""",
         list(run_ids),
     ):
         rid, name = r.pop("run_id"), r.pop("name")

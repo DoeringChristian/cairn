@@ -249,6 +249,18 @@ def _summarize(sweep: dict[str, Any], trials: list[dict[str, Any]]) -> dict[str,
 # ---- operations ----------------------------------------------------------------
 
 
+def default_goal(db: Database, project_id: str, metric: str | None) -> str:
+    """A sweep's goal when none is given: the metric's effective rule in the
+    project (``metric_rules``: goal ``higher`` -> maximize), else minimize."""
+    from .metric_rules import project_rules
+
+    if metric:
+        rule = project_rules(db, [project_id]).get(project_id, {}).get(metric)
+        if rule is not None and rule["goal"] == "higher":
+            return "maximize"
+    return "minimize"
+
+
 def create_sweep(
     db: Database,
     *,
@@ -269,7 +281,9 @@ def create_sweep(
     ``DEFAULT_COMMAND``."""
     if method not in METHODS:
         raise ValueError(f"method must be one of {', '.join(METHODS)}")
-    goal = goal or "minimize"
+    project_id = slugify(project)
+    if goal is None:
+        goal = default_goal(db, project_id, metric)
     if goal not in GOALS:
         raise ValueError(f"goal must be one of {', '.join(GOALS)}")
     normalized = normalize_space(space)
@@ -291,7 +305,6 @@ def create_sweep(
         isinstance(run_cap, bool) or not isinstance(run_cap, int) or run_cap < 1
     ):
         raise ValueError("run_cap must be a positive integer")
-    project_id = slugify(project)
     sweep_id = sweep_id or secrets.token_hex(8)
     now = _now()
     with db.transaction() as con:
@@ -417,7 +430,7 @@ def next_trial(db: Database, sweep_id: str) -> dict[str, Any]:
 
 def run_metric_value(db: Database, run_id: str, metric: str) -> float | None:
     """What the runs table shows for ``metric``: its summary, else its last point."""
-    from .summary_rules import resolved_values
+    from .metric_rules import resolved_values
 
     value = resolved_values(db, [run_id]).get(run_id, {}).get(metric)
     if isinstance(value, bool) or not isinstance(value, (int, float)):

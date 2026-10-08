@@ -361,3 +361,24 @@ def test_token_beats_share_cookie(env):
     _id, read = auth_core.create_token(env["app"].state.db, name="r2", role="read")
     viewer.cookies.set(auth_core.auth_cookie_name(env["app"].state.server_id), read)
     assert viewer.get("/api/runs").status_code == 200
+
+
+def test_metric_rules_are_narrowed_to_the_reports_runs(env):
+    owner, pid = env["owner"], env["pid"]
+    owner.post(f"/api/runs/{env['a']}/metric-rules", json={"name": "loss", "summary": "min"})
+    owner.post(f"/api/runs/{env['b']}/batch", json={"points": [
+        {"name": "secret", "step": 1, "wall_time": "2026-01-01T00:00:00Z",
+         "object_type": "scalar", "scalar_value": 1.0},
+    ]})
+    owner.post(f"/api/runs/{env['b']}/metric-rules", json={"name": "secret", "summary": "max"})
+    owner.put(f"/api/projects/{pid}/metric-rules/secret", json={"goal": "higher"})
+    assert set(owner.get(f"/api/projects/{pid}/metric-rules").json()["rules"]) == {"loss", "secret"}
+
+    viewer = _viewer(env, _create(env)["secret"])
+    body = viewer.get(f"/api/projects/{pid}/metric-rules").json()
+    assert body == {
+        "logged": {"loss": "min"}, "overrides": {},
+        "rules": {"loss": {"summary": "min", "goal": "lower"}},
+    }
+    assert viewer.put(f"/api/projects/{pid}/metric-rules/loss", json={"goal": "none"}).status_code == 403
+    assert viewer.get("/api/projects/other/metric-rules").status_code == 403

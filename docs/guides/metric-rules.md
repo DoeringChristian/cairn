@@ -9,7 +9,8 @@ Each scalar metric has exactly one final value per run. cairn resolves it in thi
 first match wins:
 
 1. An explicit **summary key** with the metric's name: `run.summary({"val.loss": 0.21})`.
-2. The metric's **rule**, set with `run.track(..., summary="min")`.
+2. The metric's **rule** in the project: a [project override](#project-overrides), else the
+   `summary=` of the newest run that set one with `run.track(..., summary="min")`.
 3. The **last logged point**, meaning the one with the highest step.
 
 Rules are applied when the data is read. They never change the logged points, so you can always
@@ -31,8 +32,9 @@ run.track(reward, "episode.reward", step, summary="mean")
 | `"max"` | the largest value in the series |
 | `"mean"` | the mean of all points in the series |
 
-A rule also tells the UI which direction is better: with `"min"`, lower values count as better
-when runs are compared.
+A rule also gives the metric its **goal**, the direction that is better: with `"min"` lower
+values count as better when runs are compared, with `"max"` higher ones. `"mean"` and `"last"`
+give no goal.
 
 ## `x=`: the default x-axis
 
@@ -54,7 +56,10 @@ against the run's top-level `epoch` series wherever the component is mounted.
 
 - **Scalars only.** `summary=` and `x=` apply to scalar metrics. Passing them with an image,
   table, gallery or component raises `ValueError`.
-- **Exact name.** A rule belongs to one metric name in one run. Inside a component,
+- **One rule per project.** The runs table needs one rule per column, so a metric's summary
+  rule is the one of the project's newest run that set one, and it applies to every run of the
+  project. Runs logging different rules for one name is rare; the newest wins.
+- **Exact name.** A rule belongs to one metric name. Inside a component,
   `scope.track(v, "loss", summary="min")` sets the rule for the full, prefixed name, such as
   `model.loss`.
 - **Fields merge.** A keyword you pass replaces that part of the rule, and a keyword you leave out
@@ -64,6 +69,37 @@ against the run's top-level `epoch` series wherever the component is mounted.
 - **Set by tracking.** A rule is set by passing the keyword with a point. Rules can't be removed
   once set, but you can switch to another kind, including `"last"`.
 - **Carried along.** Rules persist when you resume a run and are copied when you fork one.
+
+## Project overrides
+
+A project can override a metric's summary and goal, without logging anything again. An
+override applies to every run of the project, in the runs table, the Summary cards, the run
+comparer, `Run.final` and a sweep's default goal. It takes two fields, each optional:
+
+| Field | Values | Replaces |
+|---|---|---|
+| `summary` | `min`, `max`, `mean`, `last` | the logged `summary=` rule |
+| `goal` | `lower`, `higher`, `none` | the goal |
+
+The effective rule of a metric is resolved in this order:
+
+1. **summary**: the override's, else the logged rule, else none (the last point).
+2. **goal**: the override's; else the direction of the effective summary (`min`: lower, `max`:
+   higher); else the direction of the logged summary; else `none`. Overriding a logged
+   `summary="min"` with `last` therefore keeps "lower is better".
+
+Overrides are set over HTTP (the UI's column menu comes later); writing takes the write role:
+
+```bash
+curl -X PUT  $SERVER/api/projects/mnist/metric-rules/val.loss -d '{"summary": "last"}' \
+     -H 'Content-Type: application/json'
+curl -X DELETE $SERVER/api/projects/mnist/metric-rules/val.loss    # back to the logged rule
+curl $SERVER/api/projects/mnist/metric-rules
+# {"logged": {"val.loss": "min"}, "overrides": {"val.loss": {"summary": "last", "goal": null}},
+#  "rules": {"val.loss": {"summary": "last", "goal": "lower"}}}
+```
+
+`Reader.metric_rules(project)` returns the effective rules (`{metric: {"summary", "goal"}}`).
 
 ## Overriding with `summary`
 

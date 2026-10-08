@@ -39,14 +39,8 @@ def test_stats_on_run_detail(app, client):
     stats = client.get(f"/api/runs/{rid}").json()["run"]["stats"]
     assert stats == {"loss": {
         "count": 4, "first": 4.0, "last": 3.0, "min": 1.0, "max": 4.0,
-        "mean": pytest.approx(2.5), "first_step": 0, "last_step": 9, "rule": "min",
+        "mean": pytest.approx(2.5), "first_step": 0, "last_step": 9,
     }}
-
-
-def test_rule_is_none_without_metric_def(app, client):
-    rid = _run(client)
-    _points(app, rid, "acc", [(0, 0.5)])
-    assert client.get(f"/api/runs/{rid}").json()["run"]["stats"]["acc"]["rule"] is None
 
 
 def test_non_scalar_sequences_are_excluded(app, client):
@@ -75,8 +69,10 @@ def test_list_includes_stats_only_when_asked(app, client):
     by_id = {r["id"]: r for r in runs}
     assert by_id[a]["stats"]["loss"]["last"] == 0.5
     assert by_id[a]["stats"]["loss"]["count"] == 2
-    assert by_id[a]["stats"]["loss"]["rule"] is None
-    assert by_id[b]["stats"]["loss"]["rule"] == "max"
+    # The rule is the project's (metric-rules), not a per-run stat; b's "max"
+    # makes it the project's summary, so a's value is its max too.
+    assert "rule" not in by_id[a]["stats"]["loss"]
+    assert by_id[a]["values"]["loss"] == 1.0
     assert "params" in by_id[a]
 
 
