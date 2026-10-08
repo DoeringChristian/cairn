@@ -26,11 +26,11 @@ Series cards show one logged name (or several: in a workspace, the card's **Data
 | `custom` | Custom viewer | Your own browser code: a [custom viewer](../guides/custom-viewers.md) of the project, listed by its title | `cairn.Data`, or a built-in kind a viewer accepts |
 | `preset` | Confusion / PR / ROC | Confusion matrices, PR and ROC curves | `cairn.ConfusionMatrix`, `PRCurve`, `ROCCurve` |
 | `artifact` | Artifact | A pickled point, or the versions of an artifact the run logged: files, sizes and download links | `run.track(cairn.Pickle(...))`, `run.log_artifact(...)` |
-| `parallel` | Parallel coordinates | One polyline per run across expression columns | multi-run |
+| `parallel` | Parallel coordinates | One line per run (or group) across the varying config keys and a metric | multi-run |
 | `scatter` | Scatter plot | One point per run | multi-run |
 | `bar` | Bar chart | One bar (or distribution) per run or group | multi-run |
 | `tile` | Scalar tile | One number reduced across runs | multi-run |
-| `importance` | Parameter importance | Which params explain a target | multi-run |
+| `importance` | Parameter importance | Which config keys explain a metric: importance and correlation | multi-run |
 | `run-compare` | Run comparer | Metrics, params and environment side by side | multi-run |
 | `code-diff` | Code diff | Two runs' source snapshots diffed | multi-run |
 | `scalars` | Scalars | Single-step metrics, summary values and run info, one row per run or group; best green, worst red | multi-run |
@@ -167,7 +167,7 @@ Plotly figures, one pane per run and metric. A figure logged without a Plotly so
 
 #### Many WebGL plots on one page
 
-A browser keeps only about 16 live WebGL contexts per page, and Chrome silently drops the oldest when a plot asks for another one. Each 3D scene uses one context, a plot's 2D WebGL layer uses two, and parcoords uses three. Every Plotly plot that uses WebGL shares one page budget of 10 contexts. This covers figure cards, galleries and overlays, and also the scatter and parallel-coordinates cards.
+A browser keeps only about 16 live WebGL contexts per page, and Chrome silently drops the oldest when a plot asks for another one. Each 3D scene uses one context, a plot's 2D WebGL layer uses two, and parcoords uses three. Every Plotly plot that uses WebGL shares one page budget of 10 contexts. This covers figure cards, galleries and overlays, and also the scatter card.
 
 - The plots you hover, then the ones on screen, then the ones within a screen of the viewport, get the budget first. Plots that have scrolled away keep their contexts until another plot needs room.
 - A plot outside the budget is released and shows a picture of itself instead: a snapshot of how it last looked (with your camera and zoom), else the figure's stored PNG (when one was rendered with kaleido), else a note. It draws again, with the same camera and zoom, when it scrolls back into view or when you hover or click it.
@@ -258,11 +258,30 @@ The pipeline runs in this order: derived columns, then the query, then group-by.
 
 ## Multi-run cards
 
-These cards take the set of runs in their workspace or report. Where a setting asks for a value, it takes a scalar [expression](../reference/expressions.md) that gives one number per run, such as `last(acc)`, `min(val.loss)` or `config.lr`. Hidden runs are left out.
+These cards take the set of runs in their workspace or report. Where a setting asks for a value, it takes a scalar [expression](../reference/expressions.md) that gives one number per run, such as `last(acc)`, `min(val.loss)` or `config.lr`. The parallel-coordinates and parameter-importance cards instead read config keys and metrics by name: a metric's value is its final value under the project's [summary rule](../guides/metric-rules.md), as in the runs table. Hidden runs are left out.
 
 ### Parallel coordinates
 
-Each column is a scalar expression, and each polyline is a run. Lines are coloured by the rightmost column. For each column you can invert its axis, move it, or remove it.
+```
+┌ Parallel coordinates ──────────────────────────────── ⚙ ✕ ┐
+│  lr        batch_size   model.depth   noise     eval/mse   │
+│ 1e-3 ┬       128 ┬          8 ┬       0.5 ┬      0.50 ┬    │
+│      │ ╲╲        │ ╱        ╱ │         │ ╲        │       │
+│ 1e-5 ┴        32 ┴          2 ┴       0.0 ┴      0.10 ┴    │
+│ drag along an axis to brush · 12 runs                      │
+└────────────────────────────────────────────────────────────┘
+```
+
+One line per run across its axes. By default the axes are the config keys that vary across the card's runs, then the **metric** (the first metric with a goal, unless you choose one). An axis of numbers is linear, or log with its **log** setting; an axis of anything else shows its values as ordered categories. A run without a value on an axis skips it.
+
+- **Brush:** drag along an axis to keep the lines inside that range coloured and dim the rest; brush several axes to combine them, click an axis to clear its brush. Brushes are not saved.
+- **Hover** a line for its values; in the [project workspace](project-workspace.md) its row in the runs sidebar lights up.
+- **Grouped workspace:** one line per innermost group, at the mean of its runs for numbers; a category shows only when all of the group's runs agree, else the line skips that axis.
+
+| Tab | Settings |
+|---|---|
+| Values | **Metric**. **Axes**: add config keys and metrics, remove or reorder them, **log** per axis; **Default axes** goes back to the varying config keys and the metric. |
+| Display | **Line colour**: a **gradient by the last axis** *(default)* or the **run colours** (group colours when grouped). |
 
 ### Scatter plot
 
@@ -287,12 +306,22 @@ A single number. **Value** is reduced across runs by **Across runs** *(default)*
 
 ### Parameter importance
 
-For a **Target** expression, one bar per param. The **Method** *(default)* is either:
+```
+┌ Parameter importance for [eval/mse ▾] ───────────────── ⚙ ✕ ┐
+│ Parameter      Importance ↓          Correlation            │
+│ lr             ████████░░  0.62      ▓▓▓▓ +0.71             │
+│ model.depth    ███░░░░░░░  0.21      ▓▓   −0.33             │
+│ noise          ██░░░░░░░░  0.12      ░     +0.05            │
+│ 12 runs · random forest + correlation                       │
+└─────────────────────────────────────────────────────────────┘
+```
 
-- **importance:** permutation importance from a seeded random forest.
-- **correlation:** Pearson r, for numeric params only.
+Which config keys explain a metric, as in wandb. Pick the metric in the title (default: the first metric with a goal). One row per config key that varies across the runs:
 
-Bars are coloured by the sign of the correlation.
+- **Importance:** a random forest (100 trees, bootstrap samples, a random subset of the keys at each split, a fixed seed so the result is stable) predicts the metric from the config; a key's importance is how much its splits reduce the error, and the importances sum to 1. A key of text values counts as one key.
+- **Correlation:** the linear correlation (Pearson r) between a numeric key and the metric, "—" for keys of text values. Its bar is green when raising the key moves the metric towards its [goal](../guides/metric-rules.md) (goal lower: a negative correlation), red when it moves it away, and grey when the metric has no goal.
+
+Click **Importance** or **Correlation** to sort by it (correlation: the strongest first, either sign). The card needs at least 5 runs with the metric. In a grouped workspace it uses the runs of the shown groups, not their means. Settings: **Metric** and **Sort by**.
 
 ### Run comparer (`run-compare`)
 

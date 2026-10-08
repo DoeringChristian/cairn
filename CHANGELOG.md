@@ -39,6 +39,20 @@
   metric (its project override), shows the logged rule, resets to it and
   hides the column. The Scalars card colours each goal metric's best row
   green and worst red; the Config card tints the rows that differ.
+- **Parallel coordinates card as wandb** (UI): axes default to the config
+  keys that vary across the card's runs, then a metric (its final value
+  under the project's summary rule); add, remove and reorder axes (config
+  keys, metrics), log scale per axis, categorical axes as ordered
+  categories. Lines coloured by the last axis or by run/group colours.
+  Drag along an axis to brush (not saved); hover a line for its values and
+  its sidebar row. Grouped: one line per innermost group (means). Drawn as
+  SVG instead of Plotly's parcoords.
+- **Parameter importance card as wandb** (UI): `Parameter importance for
+  [metric ▾]`, one row per varying config key with its importance (a seeded
+  100-tree random forest, impurity-based, summing to 1) and correlation
+  (Pearson r, green when it moves the metric towards its goal, red away);
+  sortable by either; needs 5 runs with the metric. Replaces the
+  permutation importance / correlation switch and the target expression.
 - **Project workspace** (UI, replaces the Compare page): a runs sidebar
   (the runs table with its toolbar, the Name column and eyes per group and
   run) next to the current view's cards; grouped, line charts draw one

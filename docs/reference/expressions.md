@@ -3,7 +3,7 @@
 cairn has one small, Python-like expression language for values derived from a run. The same language drives:
 
 - run filters, computed columns, group-by and colour-by in the [runs table](../ui/runs-table.md)
-- the x-axis, derived series and legend/tooltip templates of scalar cards, and the per-run values of scatter, parallel-coordinates, bar, tile and importance cards (see [Cards](../ui/cards.md))
+- the x-axis, derived series and legend/tooltip templates of scalar cards, and the per-run values of scatter, bar and tile cards (see [Cards](../ui/cards.md))
 - derived columns and the row query of table cards
 - `where()` and `Run.eval()` in Python (see [Reading data back](../guides/reading.md))
 
