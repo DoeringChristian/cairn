@@ -273,3 +273,23 @@ def test_migration_numbers_existing_runs(tmp_path):
     apply_migrations(con)
     assert dict(con.execute("SELECT id, version FROM runs").fetchall()) == got
     con.close()
+
+
+# ---- cairn list ----------------------------------------------------------------
+
+
+def test_cairn_list_shows_and_sorts_by_version(tmp_path):
+    from click.testing import CliRunner
+
+    from cairn import cli
+
+    repo = tmp_path / ".cairn"
+    for name in ("train", "train", "train", "evaluate"):
+        cairn.Run("p", name=name, repo=repo, **QUIET).finish()
+    result = CliRunner().invoke(
+        cli.main, ["list", "--repo", str(repo), "--project", "p", "--sort", "version", "--asc"],
+    )
+    assert result.exit_code == 0, result.output
+    rows = [line.split() for line in result.output.strip().splitlines()]
+    assert rows[0][:3] == ["ID", "NAME", "VERSION"]
+    assert [r[2] for r in rows[1:]] == ["1", "1", "2", "3"]
