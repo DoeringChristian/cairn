@@ -24,12 +24,12 @@
   non-archived runs and the edges among them (through artifacts or direct
   links); `GET /api/projects/{id}/groups` lists groups by last activity.
 - **Project workspace** (UI, replaces the Compare page): a runs sidebar
-  (search, Group by group/none, per-group eyes, colours and lineage-
-  consistent `latest` / custom version picks, per-name version pickers,
-  ungrouped runs) next to the current view's cards; line charts draw one
+  (the runs table with its toolbar, the Name column and eyes per group and
+  run) next to the current view's cards; grouped, line charts draw one
   mean line with a min–max band per group. The run state is saved in the
   current view. The runs table's **Compare** becomes **Show in workspace**.
-- UI: a muted `v2` after the run's name in the run header and the runs table;
+- UI: a muted `v2` after the run's name in the run header and the runs table
+  (not grouped, a grouped run reads `exp-44 · train v2`);
   runs that share a name are labelled `train v1`, `train v2` in charts and
   legends (grouped runs read `exp-1 · train v1` when the runs shown span
   groups) instead of their start times.
