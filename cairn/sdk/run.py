@@ -1276,6 +1276,46 @@ class Run:
 
     # ---- finish -----------------------------------------------------------
 
+    # ---- notebook display ---------------------------------------------------
+
+    def _viewer_source(self) -> tuple[str | None, str | None]:
+        """``(server, repo_path)``: where the run page renders from."""
+        if self._server.startswith("file://"):
+            root = getattr(getattr(self._transport, "data_dir", None), "root", None)
+            return None, (str(root) if root is not None else None)
+        return self._server, None
+
+    def display(self, tab: str = "workspace", height: int = 720) -> Any:
+        """The run page inline in a notebook (Jupyter, marimo): live, as the
+        last expression of a cell. A run displays its Workspace tab by
+        itself; this picks another ``tab`` (workspace, overview, system,
+        logs, files, artifacts) or ``height`` (px).
+
+        Returns:
+            A ``cairn.ui.PageElement``. Needs the ``ui`` extra.
+        """
+        from .notebook import run_element
+
+        server, repo_path = self._viewer_source()
+        return run_element(self._run_id, server=server, repo_path=repo_path, tab=tab, height=height)
+
+    def _repr_html_(self) -> str | None:
+        from .notebook import run_html
+
+        server, repo_path = self._viewer_source()
+        return run_html(self._run_id, server=server, repo_path=repo_path)
+
+    def _repr_mimebundle_(self, include: Any = None, exclude: Any = None) -> dict[str, Any] | None:
+        html = self._repr_html_()
+        return None if html is None else {"text/html": html, "text/plain": repr(self)}
+
+    def _display_(self) -> Any:
+        """marimo: the run page (plain repr without the ``ui`` extra)."""
+        try:
+            return self.display()
+        except ImportError:
+            return repr(self)
+
     def finish(self, status: str = "completed", exit_code: int | None = None) -> None:
         """End the run: flush everything it buffered and record its status.
 
@@ -1632,6 +1672,18 @@ class _DisabledRun(Run):
     @property
     def url(self) -> None:  # type: ignore[override]
         return None
+
+    def display(self, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
+        return None
+
+    def _repr_html_(self) -> None:  # type: ignore[override]
+        return None
+
+    def _repr_mimebundle_(self, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
+        return None
+
+    def _display_(self) -> str:  # type: ignore[override]
+        return repr(self)
 
     @property
     def total_steps(self) -> int | None:  # type: ignore[override]

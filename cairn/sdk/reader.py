@@ -837,6 +837,43 @@ class Run:
         """The runs that used this run directly, in the order they recorded it."""
         return self._linked("used_by")
 
+    # ---- notebook display ----
+
+    def _viewer_source(self) -> tuple[str | None, str | None]:
+        """``(server, repo_path)``: where the run page renders from."""
+        return getattr(self._backend, "server_url", None), getattr(self._backend, "repo_path", None)
+
+    def display(self, tab: str = "workspace", height: int = 720) -> Any:
+        """The run page inline in a notebook (Jupyter, marimo), live. A run
+        displays its Workspace tab by itself as the last expression of a
+        cell; this picks another ``tab`` (workspace, overview, system, logs,
+        files, artifacts) or ``height`` (px).
+
+        Returns:
+            A ``cairn.ui.PageElement``. Needs the ``ui`` extra.
+        """
+        from .notebook import run_element
+
+        server, repo_path = self._viewer_source()
+        return run_element(self.id, server=server, repo_path=repo_path, tab=tab, height=height)
+
+    def _repr_html_(self) -> str | None:
+        from .notebook import run_html
+
+        server, repo_path = self._viewer_source()
+        return run_html(self.id, server=server, repo_path=repo_path)
+
+    def _repr_mimebundle_(self, include: Any = None, exclude: Any = None) -> dict[str, Any] | None:
+        html = self._repr_html_()
+        return None if html is None else {"text/html": html, "text/plain": repr(self)}
+
+    def _display_(self) -> Any:
+        """marimo: the run page (plain repr without the ``ui`` extra)."""
+        try:
+            return self.display()
+        except ImportError:
+            return repr(self)
+
     def edit(self) -> RunEditor:
         """An editing handle for this run (config, summary, tags, name,
         notes). Use it as a context manager, or ``close()`` it:
