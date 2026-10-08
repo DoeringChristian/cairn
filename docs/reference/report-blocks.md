@@ -46,7 +46,7 @@ Give **either** `ids` **or** `selector`, not both.
 | `pinned` | list of run ids | Runs drawn first, in this order. |
 | `baseline` | run id | The run the others are compared against. |
 
-`hidden`, `pinned` and `baseline` form the cell's **run view**. It works the same way as the run view of a [comparison](../ui/comparisons.md).
+`hidden`, `pinned` and `baseline` form the cell's **run view**. It works the same way as the runs table's run view (see [Runs table](../ui/runs-table.md)).
 
 ```yaml
 runs:

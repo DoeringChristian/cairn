@@ -23,12 +23,22 @@
 - **Group graph.** `GET /api/projects/{id}/groups/{group}/graph`: a group's
   non-archived runs and the edges among them (through artifacts or direct
   links); `GET /api/projects/{id}/groups` lists groups by last activity.
-- Comparisons save a selection of runs and groups; the comparison list
-  reports `entry_count` (selection entries) instead of `run_count`.
+- **Project workspace** (UI, replaces the Compare page): a runs sidebar
+  (search, Group by group/none, per-group eyes, colours and lineage-
+  consistent `latest` / custom version picks, per-name version pickers,
+  ungrouped runs) next to the current view's cards; line charts draw one
+  mean line with a min–max band per group. The run state is saved in the
+  current view. The runs table's **Compare** becomes **Show in workspace**.
 - UI: a muted `v2` after the run's name in the run header and the runs table;
   runs that share a name are labelled `train v1`, `train v2` in charts and
-  legends (with the group, `train v1 · exp-1`, when two groups have the same
-  name and number) instead of their start times.
+  legends (grouped runs read `exp-1 · train v1` when the runs shown span
+  groups) instead of their start times.
+
+### Removed
+
+- Saved comparisons: the Compare page, the comparison kind of
+  `project_docs` and its `/api/projects/{id}/comparisons` routes (existing
+  comparisons are dropped on first open).
 
 ## 0.4.0 — 2026-10-07
 

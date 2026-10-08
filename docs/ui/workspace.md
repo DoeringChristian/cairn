@@ -18,7 +18,7 @@ A run with [progress](../guides/runs.md#progress-and-eta) has a line under the h
 
 The **Metrics & Media** tab shows a **workspace**: a layout of named sections holding panels, bound to the run you are viewing. The layout is written in metric names, never in runs, so it is the same on every run of the project. Switching runs changes only the data.
 
-On the run page the workspace is one of the project's [workspace views](#workspace-views). Every [comparison](comparisons.md) is a workspace too, with its own layout bound to its own runs. The run page and comparisons render the same page: the same toolbar, sections, panels and dialogs, including [adding cards](#adding-cards).
+On the run page the workspace is one of the project's [workspace views](#workspace-views). The [project workspace](project-workspace.md) shows the same current view bound to the runs its sidebar picks. Both render the same page: the same toolbar, sections, panels and dialogs, including [adding cards](#adding-cards).
 
 ### Workspace views
 
@@ -34,7 +34,7 @@ The view switcher is the first item of the [toolbar](#workspace-toolbar). On the
 - Click a tile to switch to its view. The panel closes. Switching is not an edit: ++cmd+z++ never switches back. Switching also clears the undo history, so ++cmd+z++ never changes a view you have left; edits inside the view you are in undo as usual.
 - **+ New view** turns into a name field with **Copy of current view** (the default) or **Empty (automatic panels only)**. ++enter++ creates the view and switches to it; ++escape++ cancels.
 
-In a [comparison](comparisons.md), the switcher reads **Views** and opens the same panel, without a ✓. A comparison keeps its own layout: clicking a tile copies that view's layout into the comparison, replacing its layout and keeping its runs (++cmd+z++ undoes it). **+ New view** asks only for a name and saves the comparison's current layout as a new view. ✎, ⧉ and × work as on the run page.
+The [project workspace](project-workspace.md) has the same switcher; there a view also holds the sidebar's runs (search, grouping, eyes and version picks), so switching views switches them too.
 
 On a phone the panel spans the full width, with one or two tiles per row.
 
@@ -62,7 +62,7 @@ When you change an automatic panel in any way (a setting, its size, its type, it
 
 ### Include unlisted metrics
 
-**Unlisted metrics: on / off** in the toolbar decides whether metrics no panel shows get automatic panels. It is a setting of each workspace: every [view](#workspace-views) and every comparison has its own (a new comparison copies the current view's along with the rest of the layout).
+**Unlisted metrics: on / off** in the toolbar decides whether metrics no panel shows get automatic panels. It is a setting of each workspace: every [view](#workspace-views) has its own.
 
 - **On** (the default): every metric gets a panel, as described above.
 - **Off**: only the layout's own panels show. Turning it off first writes every automatic panel on screen into the layout, so nothing disappears; what changes is that metrics logged afterwards don't get a panel. **N series without a card · manage** above the sections counts them, and [Manage cards](#manage-cards) lists them, each with a **Show** button that adds its panel. Panels a hide pattern hides at that moment are not written, so they behave like a metric logged later.
@@ -83,7 +83,7 @@ Every edit changes the workspace, so it applies to every run the workspace shows
 | Hide, show, delete | [Manage cards](#manage-cards). |
 | Add a section | **+ New section** below the last section. |
 
-A panel whose metrics the bound runs don't log shows an empty state ("This run does not log this metric") instead of disappearing, so the layout holds still while you switch runs. Multi-run panels (run comparer, code diff, scatter plot, parallel coordinates, parameter importance) need at least two runs: on the run page they say so, and they come alive in a comparison. Bar charts and scalar tiles work with one run.
+A panel whose metrics the bound runs don't log shows an empty state ("This run does not log this metric") instead of disappearing, so the layout holds still while you switch runs. Multi-run panels (run comparer, code diff, scatter plot, parallel coordinates, parameter importance) need at least two runs: on the run page they say so, and they come alive in the [project workspace](project-workspace.md). Bar charts and scalar tiles work with one run.
 
 Section header controls:
 
@@ -113,7 +113,7 @@ The dashed **Add card** card at the end of every section's grid adds cards to th
 2. **Type.** The **Type** tab (or ++enter++ in the search or regex field) lists the types that can show the data, while the left side shows each one as a live tile on the bound runs:
     - a series of a kind gets that kind's card (image → image card, histogram → histogram card, …), and the [custom viewers](../guides/media.md#custom-data-for-your-own-viewers) that accept it. When a viewer is the [default viewer](../guides/custom-viewers.md#default-viewers) of that kind, the type says so (**Volume (default: Volume (ray marching))**) and the card follows the default; custom data lists **Default (<viewer>)** first, then each viewer to pin;
     - scalars also offer **Value** (one number: the last value, reduced across runs), **Bar chart**, **Scatter** (one or two series), **Parallel coordinates** and **Parameter importance**, which read the last value of each run (`last(loss)`); edit the expression in their settings for `min(loss)` and the like;
-    - cards that need more runs than the workspace binds stay listed with **needs 2+ runs**: on the run page that is scatter, parallel coordinates, importance, run comparer and code diff. Add them in a [comparison](comparisons.md).
+    - cards that need more runs than the workspace binds stay listed with **needs 2+ runs**: on the run page that is scatter, parallel coordinates, importance, run comparer and code diff. Add them in the [project workspace](project-workspace.md).
 
     Click a type, in the list or on its tile. The card goes at the end of the section, and the same editor turns into that card's, on its **Values** tab (else its first one): the card takes the left side, its title the header, and its settings tabs join **Data** and **Type**. With one card per group, every group's card is added and the first one opens.
 
@@ -142,7 +142,7 @@ Move cards and sections with their grips:
 Every move applies to the page at once and is one [undo](#undo-and-redo) step.
 
 !!! note "What is stored where"
-    **In the workspace** (each view, and each comparison, on the server, shared by everyone who uses the project): sections and their order, collapsed and sorted state; panels with their type, metrics, settings, size and hidden flag; removed automatic panels; whether unlisted metrics get automatic panels; hide patterns; workspace and section defaults; prefs (sync zoom, colour by). A comparison's workspace also holds its runs and their hide / pin / baseline toggles. Which view is current is stored on the server too.
+    **In the workspace** (each view, on the server, shared by everyone who uses the project): sections and their order, collapsed and sorted state; panels with their type, metrics, settings, size and hidden flag; removed automatic panels; whether unlisted metrics get automatic panels; hide patterns; workspace and section defaults; prefs (sync zoom, colour by). A view also holds the [project workspace](project-workspace.md)'s runs: search, grouping, eyes and version picks. Which view is current is stored on the server too.
 
     **In this browser only:** the run page's and runs table's hidden, pinned and baseline runs.
 
@@ -152,11 +152,11 @@ Every move applies to the page at once and is one [undo](#undo-and-redo) step.
 
 ## Workspace toolbar
 
-The toolbar appears above the sections on the run page and on [comparisons](comparisons.md).
+The toolbar appears above the sections on the run page and in the [project workspace](project-workspace.md).
 
 ### View switcher
 
-The first item: the current view's name on the run page, **Views** in a comparison. See [Workspace views](#workspace-views).
+The first item: the current view's name. See [Workspace views](#workspace-views).
 
 ### Search
 
@@ -173,10 +173,6 @@ While a search is active, **Hide N matching** saves the query as a hide pattern 
 ### Unlisted metrics
 
 **Unlisted metrics: on / off** — see [Include unlisted metrics](#include-unlisted-metrics).
-
-### New comparison
-
-On the run page, **New comparison** creates a [comparison](comparisons.md) of this run, starting from a copy of the current view's layout, and opens it.
 
 ### Colour by
 
@@ -200,7 +196,7 @@ Each card setting resolves through these layers, highest first:
 1. **Card:** the card's own override.
 2. **Instance:** what the card was created with. This is its metric, or the x-axis you gave with `run.track(..., x=...)`.
 3. **Section:** set with the section's gear.
-4. **Workspace:** for the run page's current view, set on the **Defaults** page (`/p/<project>/defaults`, the **Defaults** link in the project navigation). A comparison copies these when it is created and keeps its own afterwards; edit them through its section gears.
+4. **Workspace:** for the run page's current view, set on the **Defaults** page (`/p/<project>/defaults`, the **Defaults** link in the project navigation).
 5. **Built-in:** the card type's default value.
 
 Only some settings take section and workspace defaults: smoothing, axis scales, the legend, the slider key, and similar per-type settings. Other settings (the metrics shown, title, size, zoom) resolve card → instance → built-in. In a defaults editor, pick a card type to get that type's settings panel, limited to the settings that take defaults. The card types are listed in [Cards](cards.md).
@@ -214,24 +210,24 @@ Reports and share links ignore workspace and section defaults and use the built-
 
 ## Undo and redo
 
-Each project has one undo stack. It records every workspace edit, on the run page and in comparisons:
+Each project has one undo stack. It records every workspace edit, on the run page and in the project workspace:
 
 - card setting changes
 - resizes (one drag is one step)
 - card adds, duplicates, moves, hides, removals and edits
 - turning unlisted metrics on or off
 - section edits, hide patterns, defaults, colour by
-- copying a view's layout into a comparison
+- the project workspace's search, grouping, eyes and version picks
 
 Switching views on the run page is not an edit and is not recorded; it clears the undo history. Undo with ++cmd+z++ / ++ctrl+z++ and redo with ++cmd+shift+z++ / ++ctrl+shift+z++. These shortcuts do nothing while a text field has focus, because the field keeps its own typing undo. The stack holds 200 steps.
 
-Undoing a workspace edit restores only the parts of the workspace that edit changed (its sections and panels, removed panels, the unlisted-metrics setting, hide patterns, defaults, prefs or runs), so changes another tab made to the other parts in the meantime survive. See also [Keyboard shortcuts](shortcuts.md).
+Undoing a workspace edit restores only the parts of the workspace that edit changed (its sections and panels, removed panels, the unlisted-metrics setting, hide patterns, defaults, prefs or the project workspace's runs), so changes another tab made to the other parts in the meantime survive. See also [Keyboard shortcuts](shortcuts.md).
 
 ## Full-screen card and settings
 
 The gear on a card opens the card full screen, with its settings panel beside it. On a phone, the card and the settings are two tabs.
 
-On the run page and in comparisons, the settings panel is the **card editor**, the one editor of a card, which also [adds cards](#adding-cards):
+On the run page and in the project workspace, the settings panel is the **card editor**, the one editor of a card, which also [adds cards](#adding-cards):
 
 - The header, which does not scroll, has ←/→, the card's title with ✎ (click to edit; ++enter++ or leaving the field saves, ++escape++ cancels, empty names the card by its data) and one row of tabs with ×: **Data**, **Type**, then the card's own tabs (**Values**, **Grouping**, **Display**, **Expressions**, as the card has them).
 - **Data**: the same data picker as when adding (without one card per group, which makes several cards), and nothing else.

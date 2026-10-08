@@ -87,7 +87,7 @@ nav:
       - Runs table: ui/runs-table.md
       - Run page and workspace: ui/workspace.md
       - Cards: ui/cards.md
-      - Comparisons: ui/comparisons.md
+      - Project workspace: ui/project-workspace.md
       - Artifact explorer: ui/artifacts.md
       - Lineage graph: ui/lineage.md
       - Reports: ui/reports.md

@@ -1,6 +1,6 @@
 # Final values and metric rules
 
-A metric is a whole series, but the runs table, the run overview and the comparison views need
+A metric is a whole series, but the runs table, the run overview and the multi-run cards need
 one number per run. This page explains which number that is and how you control it.
 
 ## The final value

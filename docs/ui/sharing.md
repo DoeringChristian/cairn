@@ -14,7 +14,7 @@ Every token has a role. Share links add a fourth, restricted kind of access.
 | Access | Can |
 | --- | --- |
 | `read` | View everything in the UI. Reports open in view mode: cards can be explored, but nothing is saved. There is no commenting or sharing. |
-| `write` | Everything `read` can, plus edit reports, comparisons and workspaces, comment, and create or revoke share links. |
+| `write` | Everything `read` can, plus edit reports and workspaces, comment, and create or revoke share links. |
 | `admin` | Everything `write` can, plus edit or delete anyone's report comments. |
 | share link | View one report and its runs. See below. |
 
@@ -67,7 +67,7 @@ Card changes last only for that session and are never saved.
 
 Viewers **cannot**:
 
-- edit, comment, or add cards to workspaces, comparisons or reports,
+- edit, comment, or add cards to workspaces or reports,
 - open any page other than the report,
 - read runs outside the report's scope.
 

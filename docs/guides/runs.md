@@ -278,7 +278,7 @@ log ends with a *detach* record instead of a finish, and is deleted once ingeste
 ## Progress and ETA
 
 Declare how many steps the run will take, and the UI shows how far it is: a bar and an ETA while
-it runs (runs table, run page header, comparison overview), the percentage reached once it ended.
+it runs (runs table, run page header), the percentage reached once it ended.
 
 ```python
 run = cairn.Run("cifar10", total_steps=50_000)

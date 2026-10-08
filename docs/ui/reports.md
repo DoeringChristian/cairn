@@ -58,7 +58,7 @@ The image belongs to the report's asset store, so share-link viewers can see it 
 A cards cell shows live cards for its runs. Its toolbar adds two buttons:
 
 - **+ (Add card)** opens the card picker. You need to choose runs first.
-- **Runs** (the sliders icon, with the run count) opens *Runs in this cell*. This is the same run-set editor a [comparison](comparisons.md#run-sets) uses. It picks a **static** run list or an **auto (query)** selector, and sets each run's hide / pin / baseline toggles.
+- **Runs** (the sliders icon, with the run count) opens *Runs in this cell*. It picks a **static** run list or an **auto (query)** selector, and sets each run's hide / pin / baseline toggles.
     - **Reset cards from runs** throws away the cell's cards and creates one card per metric across its runs.
     - With a selector, the refresh badge resolves the selector again and rebinds the existing cards to the new runs. Your cards and their order stay as they are.
 
@@ -123,7 +123,7 @@ Every cell edit, insert, move and delete is an undo step. Undo and redo work as 
 ## Adding cards from elsewhere
 
 - **Add to report** on any card header lists the project's reports and offers to create a new one. It appends a new cards cell to the end of the report, containing a copy of the card with its settings inlined. Existing text is never rewritten. If the report changes during the append, the button reads it again and retries once, then reports an error.
-- **Send section to a new report** in a section header (run page or comparison) creates a new report with a heading, a short intro and one cards cell holding the section's panels as cards, for the runs the workspace is bound to, with their settings.
+- **Send section to a new report** in a section header (run page or project workspace) creates a new report with a heading, a short intro and one cards cell holding the section's panels as cards, for the runs the workspace is bound to, with their settings.
 
 In each case the source cards are left unchanged.
 

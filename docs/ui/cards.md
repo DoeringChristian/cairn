@@ -1,12 +1,12 @@
 # Cards
 
-A card shows one logged series, or a set of runs, in the [workspace](workspace.md), in [comparisons](comparisons.md) and in [reports](reports.md). This page lists every card type, what data it shows, and its settings. For how settings inherit (card → section → workspace → built-in) and the ↺ reset, see [Defaults cascade](workspace.md#defaults-cascade).
+A card shows one logged series, or a set of runs, in the [workspace](workspace.md), in the [project workspace](project-workspace.md) and in [reports](reports.md). This page lists every card type, what data it shows, and its settings. For how settings inherit (card → section → workspace → built-in) and the ↺ reset, see [Defaults cascade](workspace.md#defaults-cascade).
 
 Settings are grouped into up to four tabs: **Values**, **Grouping**, **Display** and **Expressions**. A card shows only the tabs it uses. Some settings appear only when a card has more than one run. Settings marked *(default)* in the tables below can also be set as section or workspace defaults.
 
 ## Card types
 
-Series cards show one logged name (or several: in a workspace, the card's **Data** in the [card editor](workspace.md#full-screen-card-and-settings)), and the Python type you log decides which card you get. Multi-run cards show a set of runs rather than one series. You add them to [comparisons](comparisons.md) and reports with **Add card**.
+Series cards show one logged name (or several: in a workspace, the card's **Data** in the [card editor](workspace.md#full-screen-card-and-settings)), and the Python type you log decides which card you get. Multi-run cards show a set of runs rather than one series. You add them to the [project workspace](project-workspace.md) and reports with **Add card**.
 
 | Type | Card | Shows | Logged with |
 |---|---|---|---|
@@ -46,13 +46,13 @@ On the left of a card header: the chevron (collapse), the title (double-click or
 2. **Download data**: the card's data. Line charts: a CSV of the plotted series; value, bar, scatter, parallel coordinates, importance, tables and the run comparer: a CSV of what they show; code diff: the diff as a `.patch`; media (images, video, audio, HTML, markdown, text, figures, tensors, histograms, 3D, volumes, artifacts, custom data): the logged file(s) at the shown step, zipped when several panes or gallery items show.
 3. **Add to report:** see [Reports](reports.md).
 4. **Reset view:** back to the card's default view (zoom and pan, camera); nothing happens when nothing changed.
-5. **Settings** (gear): opens the card full screen with its settings (see [Full-screen card](workspace.md#full-screen-card-and-settings)). On the run page and comparisons that is the card editor.
+5. **Settings** (gear): opens the card full screen with its settings (see [Full-screen card](workspace.md#full-screen-card-and-settings)). On the run page and the project workspace that is the card editor.
 6. **Duplicate card** (two squares): a copy of the card — data, type and settings — right after itself.
 7. **×:** remove the card.
 
 Read-only cards (a read-only token, share links) have Screenshot, Download data, Reset view and Settings only. On narrow screens the actions fold into the **⋯** menu, except **Add to report**.
 
-Cards that plot several series show them as chips. In reports, click a chip's × to remove that series, or drag a chip onto another card to add the series there; on the run page and in comparisons a card's series are its **Data**. In a comparison, a card that shows one metric for every run has no chip strip: its title names the metric.
+Cards that plot several series show them as chips. In reports, click a chip's × to remove that series, or drag a chip onto another card to add the series there; on the run page and in the project workspace a card's series are its **Data**. There, a card that shows one metric for every run has no chip strip: its title names the metric.
 
 ## Line plot (`scalar`)
 
@@ -96,7 +96,7 @@ The slider picks which logged step each pane shows. The **Slider key** *(default
 - `step` (the default): each logged step is one position.
 - A scalar metric, such as `epoch`: each run's media is looked up **as of** each step, using the key's last value at or before that step. The slider then picks, in every run, the media logged while the key held that value, even when runs reach it at different steps. When several steps share a value, the position shows the newest of them.
 
-A [summary media value](../guides/runs.md#media-in-the-summary) (`run.summary(fig=cairn.Figure(f))`) is one value with no step: a card whose series are all summary media values has no slider and does not follow the section slider. In a comparison it still shows one pane per run, and a later `run.summary` write replaces what it shows (at once while the run is running; on a finished run, when the page is reloaded).
+A [summary media value](../guides/runs.md#media-in-the-summary) (`run.summary(fig=cairn.Figure(f))`) is one value with no step: a card whose series are all summary media values has no slider and does not follow the section slider. With several runs it still shows one pane per run, and a later `run.summary` write replaces what it shows (at once while the run is running; on a finished run, when the page is reloaded).
 
 A slider starts at the newest step and follows new steps as they arrive. Move it back and it saves that *value* (not an index), so it stays put while new steps arrive; move it to the end again and it follows them again. The section slider does the same.
 
@@ -256,7 +256,7 @@ The pipeline runs in this order: derived columns, then the query, then group-by.
 
 ## Multi-run cards
 
-These cards take the set of runs in their comparison or report. Where a setting asks for a value, it takes a scalar [expression](../reference/expressions.md) that gives one number per run, such as `last(acc)`, `min(val.loss)` or `config.lr`. Hidden runs are left out.
+These cards take the set of runs in their workspace or report. Where a setting asks for a value, it takes a scalar [expression](../reference/expressions.md) that gives one number per run, such as `last(acc)`, `min(val.loss)` or `config.lr`. Hidden runs are left out.
 
 ### Parallel coordinates
 

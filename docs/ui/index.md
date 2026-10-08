@@ -57,7 +57,7 @@ Every project page has a left navigation bar (a bottom bar on phones):
 | Page | Path | What it is |
 |---|---|---|
 | Runs | `/p/<project>` | The [runs table](runs-table.md). |
-| Compare | `/p/<project>/compare` | [Comparisons](comparisons.md): workspaces bound to a set of runs. |
+| Workspace | `/p/<project>/workspace` | [Project workspace](project-workspace.md): the current view bound to the runs its sidebar picks. |
 | Sweeps | `/p/<project>/sweeps` | Sweeps and their trials ([Sweeps](../guides/sweeps.md)). |
 | Artifacts | `/p/<project>/artifacts` | The [artifact explorer](artifacts.md): artifacts, versions, files, usage snippets. |
 | Lineage | `/p/<project>/lineage` | The [lineage graph](lineage.md) of runs and the artifact versions they produce and consume. |
@@ -89,7 +89,7 @@ While a run is running, the UI polls the server for its new points and appends t
 
 | Setting | Stored |
 |---|---|
-| Workspaces (the run page's views and the current view, each comparison's): sections, panels, card settings, defaults, colour-by | Server-side, per project ([Run page and workspace](workspace.md)). |
+| Workspace views and the current view: sections, panels, card settings, defaults, colour-by, the project workspace's runs | Server-side, per project ([Run page and workspace](workspace.md)). |
 | Runs table view: filter, sort, group-by, columns, computed columns | Your browser (`localStorage`), per project. |
 | Project run view: hidden, pinned and baseline runs | Your browser (`localStorage`), per project. |
 
@@ -104,7 +104,7 @@ The UI has a single light theme; there is no dark mode. Charts take their colour
 The UI adapts to narrow screens (below 768 px) and to touch input:
 
 - **Navigation**: the top bar collapses into a menu button; project navigation moves to a bottom bar.
-- **Runs table**: rows become a list of run cards. The selection bar keeps **Clear**, **Tag** and **Compare** and moves the other actions into **More**.
+- **Runs table**: rows become a list of run cards. The selection bar keeps **Clear**, **Tag** and **Show in workspace** and moves the other actions into **More**.
 - **Card grid**: one column, no resize handles; a card's fixed height is capped at 75% of the viewport.
 - **Card headers**: on narrow screens the shared actions (Screenshot, Download data, Reset view, Settings, Duplicate card, Remove card) move into the card's **⋯** menu; Add to report stays a button. On touch devices the menu also offers **Move up** / **Move down** instead of drag-to-reorder.
 - **Tap to interact**: on touch devices, charts, image panes and 3D views start non-interactive, so a one-finger drag scrolls the page. Tap the hand button in the card header to pan and zoom the content; tap it again to go back to scrolling. In full screen the content is always interactive.

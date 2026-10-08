@@ -1,6 +1,6 @@
 # Runs table
 
-The runs table (`/p/<project>`) lists a project's runs, newest first. Use it to find runs, add metric, config and computed columns, and send a selection to a [comparison](comparisons.md).
+The runs table (`/p/<project>`) lists a project's runs, newest first. Use it to find runs, add metric, config and computed columns, and show a selection in the [project workspace](project-workspace.md).
 
 Runs load 100 at a time as you scroll. While a filter or a group-by is active, the table loads every page, so matches outside the first page are not missed. The header shows `<shown> of <total> runs`.
 
@@ -19,7 +19,6 @@ The table updates live: new and deleted runs appear within a few seconds, and ru
 | Sort summary | With more than one sort key, lists them; × removes one. |
 | Run view summary | With runs hidden or pinned, or a baseline set, shows e.g. `2 hidden · 1 pinned · baseline <name>`; **reset** clears all three. |
 | **Archive old** / **Delete old** | For each run name with several runs, archive or delete all but the newest (archived runs are left out). Both ask first. |
-| **New comparison** | Create a comparison with no runs (and a copy of the current workspace view's layout) and open it. |
 | **Import** | Upload a `.zip` export ([Import and export](../guides/import-export.md)). |
 
 When several runs share a name, the newest of them gets an accent bar on its left edge.
@@ -129,7 +128,7 @@ Tick a row's checkbox to select it; ++shift++-click another checkbox to select t
 |---|---|
 | **Clear** | Deselect all. |
 | **Tag** | The bulk tag editor: add a tag to every selected run, or remove a tag from all runs that have it. |
-| **Compare** | Create a comparison of the selected runs, starting from a copy of the current workspace view's layout, and open it. See [Comparisons](comparisons.md). |
+| **Show in workspace** | Open the [project workspace](project-workspace.md) with only the selected runs' groups (and selected ungrouped runs) visible. |
 | **Export** | Download the selected runs as `cairn_export_<date>.zip`. |
 | **Stop** | Ask the selected *running* runs to stop (asks first). See [Run lifecycle](../guides/runs.md). |
 | **Archive** / **Unarchive** | Archive or restore the selected runs. Archiving hides a run without changing its status; an archived run shows an `archived` mark beside it. |
@@ -153,7 +152,7 @@ Hover a run's name to show three toggles (on touch devices they are always visib
 | Pin | **Pin**: listed first in the table and drawn first in charts. |
 | Flag | **Set as baseline**: one run per project. Other runs show deltas against it. |
 
-Toggles that are on stay visible after the name. These three settings are the project's *run view*, shared by the table and the run page. It is stored in your browser, per project, and synced between open tabs. [Comparisons](comparisons.md) and report cells each keep their own run view.
+Toggles that are on stay visible after the name. These three settings are the project's *run view*, shared by the table and the run page. It is stored in your browser, per project, and synced between open tabs. Report cells each keep their own run view.
 
 ### Deltas against the baseline
 
@@ -168,7 +167,7 @@ Config columns show deltas only once you pick a direction for them. Without a di
 
 The dot before each name is the run's colour. The colour is derived from the run id; nothing is stored. There are 10 hues in a light and a dark shade. Among the runs shown together, older runs keep their preferred hue and newer ones move to a free hue, so the first 10 runs always get 10 different hues. Colours repeat after 20 runs. A run keeps the same colour everywhere unless an older run in the same view takes its hue.
 
-**Colour by value** is a workspace setting (`prefs.colorBy`), edited from the workspace toolbar. It colours runs on the run page and in comparisons by an expression's value, bucketed into 2–8 colours of a palette. The runs table keeps the id-derived colours. See [Run page and workspace](workspace.md).
+**Colour by value** is a workspace setting (`prefs.colorBy`), edited from the workspace toolbar. It colours runs on the run page and in the project workspace by an expression's value, bucketed into 2–8 colours of a palette. The runs table keeps the id-derived colours. See [Run page and workspace](workspace.md).
 
 ## Where the table's state is kept
 
