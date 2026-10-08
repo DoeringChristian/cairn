@@ -25,12 +25,18 @@ them:
 - `[media]`: `pip install 'cairn-track[media]'` (matplotlib, plotly, …)
 - `[ui]`: `pip install 'cairn-track[ui]'` (the viewer; `cairn ui` always needs it)
 
+## Organising runs
+
+| Script | What it logs | Needs | What to look at |
+|---|---|---|---|
+| `organise_runs.py` | Project `organise-demo`, group `exp-1`: a `prepare` → `train` → `finetune` → `eval` pipeline whose `prepare` and `base` runs are re-run (v2), a dataset and a model artifact, three fine-tune runs that each declare `uses=[base]` and use the base model, and an eval run linking them with `use_run`; group `seeds-lr3e-4`: three `train` runs differing by `seed`. Metric rules via `track(summary=, x="epoch")`. Prints each run's group, job type, name, version and links. | — | The workspace sidebar grouped by group, then job type, and one chart line per group; the runs table's Group / Job Type columns, versions and **Latest only**; a fine-tune run's **Inputs** and the base run's **Used by** on the Overview; the Lineage page. See [Organising runs](guides/organising-runs.md). |
+
 ## Metrics and the runs table
 
 | Script | What it logs | Needs | What to look at |
 |---|---|---|---|
 | `demo_training.py` | One run, `full-demo` in project `demo`: nested config, `train.*`/`val.*` losses and accuracy, `grad_norm`, sample images, a matplotlib figure, a histogram, audio, a tensor, text, stdout, a versioned `final_weights` artifact, a `summary_plot` image and a pickled `run_config` and a note. Sleeps 0.1 s per step, so you can watch it live. | `[media]` | Every tab of the run page: overview, metrics and media, logs, source, environment |
-| `demo_metric_rules.py` | Three runs using `summary="min"/"max"` rules and `x="epoch"`, including a component that logs itself through `__cairn_track__`, plus a `best_epoch` summary key | — | The runs table's metric columns; the **From** column of a run's metrics; the run comparer's best-value colouring; `val.*` charts plotted against `epoch`. See [Final values and metric rules](guides/metric-rules.md). |
+| `demo_metric_rules.py` | Three runs using `summary="min"/"max"` rules and `x="epoch"`, including a component that logs itself through `__cairn_track__`, plus a `best_epoch` summary key | — | The runs table's metric columns and their ▾ menu (the project's Summary and Goal); the workspace's Scalars card colouring the best run green and the worst red; `val.*` charts plotted against `epoch`. See [Final values and metric rules](guides/metric-rules.md). |
 | `demo_summary_cards.py` | Four runs with different hyperparameters that converge to different `final.accuracy` and `final.loss`, plus `grad_norm` | — | Show the four runs in the project workspace; add bar-chart and scalar-tile cards on `final.accuracy` |
 | `rd_curve.py` | One run per codec and quality level (project `rd-curve`), with `codec`/`quality` as config and `bpp`, `psnr_db`, `bpp.positions`, `bpp.normals` as summary values. No series. | — | A scatter-plot card of `bpp` against `psnr_db`, coloured by `codec` |
 | `stress_1k.py` | 1000 small runs in project `stress-test` (random config, tags, `loss` and `accuracy`), started as up to 64 parallel subprocesses | — | How the runs table, filters and grouping behave with many runs |
