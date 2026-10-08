@@ -33,6 +33,8 @@ Series cards show one logged name (or several: in a workspace, the card's **Data
 | `importance` | Parameter importance | Which params explain a target | multi-run |
 | `run-compare` | Run comparer | Metrics, params and environment side by side | multi-run |
 | `code-diff` | Code diff | Two runs' source snapshots diffed | multi-run |
+| `scalars` | Scalars | Single-step metrics, summary values and run info, one row per run or group | multi-run |
+| `config` | Config | Config keys, tags and notes, one column per run or group | multi-run |
 
 A list of media logged under one name at one step is a **gallery**. Every media card above (image, figure, audio, video, histogram, tensor, text, HTML, Markdown, 3D, volume) shows it: see [Galleries](#galleries).
 
@@ -302,6 +304,20 @@ Settings:
 - **Filter**: a key substring.
 - **Pinned keys**: always shown first.
 - **Only differences** *(default)*: hides rows that are the same in every run.
+
+### Scalars (`scalars`)
+
+One table: a row per run, or per group when the [project workspace](project-workspace.md) is grouped, labelled and coloured as in the charts. Its columns:
+
+- **Run info** (status, duration, created, user, host) first, while **Show run info** *(default)* is on.
+- Every scalar logged at a single step, A–Z.
+- The runs' `run.summary(...)` values, A–Z, with italic headers.
+
+A group's cell is the mean over its runs that have a value, its earliest created time, or a shared text value (`mixed` when its runs differ); `—` when none has one. Click a header to sort by it: ascending, descending, then unsorted; empty cells go last. The [Summary section](workspace.md#automatic-panels) has one automatically.
+
+### Config (`config`)
+
+The config's keys as rows (nested keys dotted, `model.depth`), after **tags** and **notes**, with a column per run, or per group when the project workspace is grouped. A group's cell shows the value when all its runs with a config agree, else a muted `mixed`. **only diffs** *(default)*, in the header and the settings, hides the keys that are the same in every column. The [Summary section](workspace.md#automatic-panels) has one automatically.
 
 ### Code diff (`code-diff`)
 

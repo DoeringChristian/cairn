@@ -75,10 +75,11 @@ A workspace with hundreds of panels opens at once: a panel loads its data and dr
 
 You don't have to build a layout. Every metric that no panel shows gets an **automatic panel** of its type, grouped into sections:
 
+- **Summary**, at the top: a [Scalars](cards.md#scalars-scalars) card (every scalar logged at a single step, the runs' `summary` values and run info) and a [Config](cards.md#config-config) card (config, tags and notes), each while some run has something for it. A scalar logged at a single step in every run gets no automatic panel of its own: it is a column of the Scalars card.
 - A metric whose name contains a dot goes into the section named by its prefix. For example, `train.loss` goes into **train**.
 - A metric without a dot goes into **Charts**.
 - Media go into **Media**: images, audio, video, figures, histograms, tensors, tables, 3D objects, volumes, HTML, Markdown and presets.
-- Automatic sections appear in this order after the layout's own sections: **Charts**, your prefix sections A–Z, **Media**, and **system** last. When a layout section has the same name, the automatic panels join it after its own panels.
+- Automatic sections appear in this order after the layout's own sections (**Summary** before them): **Charts**, your prefix sections A–Z, **Media**, and **system** last. When a layout section has the same name, the automatic panels join it after its own panels.
 
 A panel whose selector names exactly one metric stands in for that metric's automatic panel. Panels over several metrics or a regex are extra views: the metrics they show keep their own panels. So are the multi-run cards (value, bar chart, scatter, …) you [add](#adding-cards) from a series: they read it through an expression in their settings, and the series keeps its own panel. Any number of panels may show the same series.
 
@@ -121,7 +122,7 @@ Section header controls:
 | Send to report | Copy the section's panels, for the runs on screen, into a new [report](reports.md) and open it. |
 | Trash | Delete the section. Only shown while it has no panels. |
 
-A scalar series with a single point shows as a plain value card, not a one-dot chart. It becomes a line plot once a second point arrives.
+A scalar series with a single point is a column of the Summary section's Scalars card. A card you add for it yourself (a line chart from **Add card**) shows a plain value, not a one-dot chart, and becomes a line plot once a second point arrives.
 
 ### Adding cards
 

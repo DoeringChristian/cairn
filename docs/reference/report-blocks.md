@@ -98,7 +98,7 @@ The card shows the metric for every run of the cell. `type` is the card type. If
 - type: parallel
 ```
 
-Leave out `metric`, and set `type` to one of the cards that summarise a set of runs: `parallel`, `scatter`, `bar`, `tile`, `importance`, `run-compare` or `code-diff`.
+Leave out `metric`, and set `type` to one of the cards that summarise a set of runs: `parallel`, `scatter`, `bar`, `tile`, `importance`, `run-compare`, `code-diff`, `scalars` or `config`.
 
 ### An explicit overlay
 
@@ -121,7 +121,7 @@ Leave out `metric`, and set `type` to one of the cards that summarise a set of r
 | `settings` | mapping | This card's settings (see below). |
 | `id` | string | The card's id. The editor writes it so that the card's settings stay attached when you change its metric or type. Optional when you write a fence by hand. |
 
-**Card types:** `scalar`, `image`, `figure`, `audio`, `video`, `histogram`, `tensor`, `text`, `pointcloud`, `mesh`, `boxes3d`, `volume`, `preset`, `parallel`, `scatter`, `bar`, `tile`, `importance`, `run-compare`, `code-diff`, `table`, `html`, `markdown`, `artifact`. See [Cards](../ui/cards.md) for what each one shows.
+**Card types:** `scalar`, `image`, `figure`, `audio`, `video`, `histogram`, `tensor`, `text`, `pointcloud`, `mesh`, `boxes3d`, `volume`, `preset`, `parallel`, `scatter`, `bar`, `tile`, `importance`, `run-compare`, `code-diff`, `scalars`, `config`, `table`, `html`, `markdown`, `artifact`. See [Cards](../ui/cards.md) for what each one shows.
 
 ### `settings`
 
@@ -152,7 +152,7 @@ The cell shows the parser's message. Common ones:
 | Bad selector mode | `runs.selector.mode must be "latest-n" or "newest-per-name"` |
 | `type` cannot be inferred | ``cards[0]: cannot infer `type` for metric "…" — no matching sequence found on this block's runs; specify `type` explicitly`` |
 | One name logged as several kinds | ``cards[0]: metric "…" is ambiguous (found as scalar, image) — specify `type` explicitly`` |
-| No metric, series or multi-run type | ``cards[0]: specify a `metric`, an explicit `series`, or a multi-run `type` (one of parallel/scatter/bar/tile/importance/run-compare/code-diff)`` |
+| No metric, series or multi-run type | ``cards[0]: specify a `metric`, an explicit `series`, or a multi-run `type` (one of parallel/scatter/bar/tile/importance/run-compare/code-diff/scalars/config)`` |
 | An overlay without a type | `` cards[0]: an explicit `series` overlay requires `type` `` |
 
 Type inference needs each run's list of logged metrics. When the report opens before those lists have loaded, the cell waits and compiles the fence again once they arrive. The recompiled cell is displayed straight away, but it is only saved when you edit the cell.

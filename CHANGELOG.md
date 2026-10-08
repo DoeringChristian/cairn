@@ -35,6 +35,14 @@
   sidebar gains a show/hide-all eye, a sort
   control, pinned runs listed first, and a hover highlight between rows
   and chart lines; **Show in workspace** shows exactly the selected runs.
+- **Summary section** (UI): the workspace and the run page start with a
+  **Summary** section of two automatic cards, the new `scalars` and
+  `config` card types. **Scalars** is one table of every scalar logged at a
+  single step, the runs' `summary` values and run info (status, duration,
+  created, user, host; **Show run info**), sortable by any column; **Config**
+  lists the config keys (with tags and notes) per run, with **only diffs**.
+  In a grouped workspace both show one row / column per group (a mean, or
+  `mixed`). On the run page each shows while the run has data for it.
 - UI: a muted `v2` after the run's name in the run header and the runs table
   (not grouped, a grouped run reads `exp-44 · train v2`);
   runs that share a name are labelled `train v1`, `train v2` in charts and
@@ -42,6 +50,11 @@
   groups) instead of their start times.
 
 ### Changed
+
+- **A scalar logged at a single step gets no automatic card**: it is a
+  column of the Summary section's Scalars card, so automatic chart sections
+  hold only series with more than one step. A card for it can still be
+  added by hand.
 
 - **A group is a namespace: a run's series is (group, name).** `train` in
   `exp-43` and in `exp-44` are two series everywhere a run is matched by
