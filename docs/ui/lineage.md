@@ -1,6 +1,6 @@
 # Lineage graph
 
-The lineage graph shows how runs and artifact versions connect: a run **produced** the versions it logged, and **consumed** the versions it used. It appears in three places, all the same viewer:
+The lineage graph shows how runs and artifact versions connect: a run **produced** the versions it logged, and **consumed** the versions it used. A run that [used another run](../guides/artifacts.md#runs-that-use-runs) directly (`uses=` / `run.use_run`) has an arrow from that run, labelled with its role if it gave one. It appears in three places, all the same viewer:
 
 | Where | Centred on |
 |---|---|
@@ -30,7 +30,7 @@ The graph flows left to right, from inputs to outputs, laid out automatically.
 
 Click a card to open its details on the right (click the background or **×** to close it). The panel is the place to act on a node:
 
-- **Run**: status, group, job type, created, tags (editable), how many artifacts it used and logged, its config as a collapsible tree, **Open run**.
+- **Run**: status, group (a link to the [project workspace](project-workspace.md#filtering-to-a-group) filtered to it), job type, created, tags (editable), how many artifacts it used and logged, its config as a collapsible tree, **Open run**.
 - **Version**: aliases and tags (editable), description (editable), digest, created, step, files and size, the run that logged it, the number of consumers, **Open in explorer** and **Files**.
 - **Group**: its members (clicking one expands the group and selects it) and **Expand group**.
 

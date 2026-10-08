@@ -259,7 +259,7 @@ v.lineage(direction="upstream", depth=2)               # the graph around one ve
 The graph's nodes are runs (`kind: "run"`, with name, status, tags, group and job type) and
 versions (`kind: "artifact_version"`, with ref, type, aliases and tags); edges are `produced`
 (run to version), `consumed` (version to run, with the role), `forked` (run to run) and `used`
-(run to run, see below). Runs that
+(run to run, see below). Runs of one job type that
 used the same inputs, and versions of one name from the same producer, are siblings: they share a
 `group_key`, which is how the UI folds 50 runs that used one dataset into one expandable node.
 
@@ -281,6 +281,12 @@ the run itself `ValueError`. The link is a `used` edge from the used run to the 
 lineage graphs; deleting either run removes it. The Reader has `run.uses()` and
 `run.used_by()`; the API has `GET /api/runs/{id}/uses` (`{"uses": [{run_id, role}],
 "used_by": [...]}`).
+
+A run page's Overview lists both directions in its Run block
+([Overview](../ui/workspace.md#overview)): **Inputs ←** (the runs it used, its fork parent, the
+runs that produced the artifacts it used, then those artifact versions, with another project's
+artifacts marked) and **Used by →** (the runs that used it or an artifact it logged).
+`GET /api/runs/{id}/relations` returns the same lists.
 
 See [Reading data back](reading.md) for the reader.
 

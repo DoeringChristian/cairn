@@ -349,8 +349,10 @@ every option.
 
 Each project has a **Sweeps** page that lists every sweep with its status,
 method, metric, best value and trial count. A sweep's own page shows the best
-trial and one row per trial (status, value, parameters and a link to its run),
-plus the actions its status allows: Pause, Stop and Cancel while running;
+trial, a [parallel coordinates](../ui/cards.md#parallel-coordinates) card over the
+searched parameters and the metric (log axes for log-scaled parameters) next to a scatter plot
+of the first parameter against the metric, and one row per trial (status, value, parameters
+and a link to its run), plus the actions its status allows: Pause, Stop and Cancel while running;
 Resume, Stop and Cancel while paused; Cancel when stopped.
 
 ## Distributed training without a sweep
