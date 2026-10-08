@@ -85,7 +85,7 @@ same code in-process).
 - The default order is **chronological**: `created_at` ascending. Iteration,
   `list()` and `history()` follow it.
 - `sort(key, desc=False)` replaces the order. `key` is `created_at`,
-  `ended_at`, `duration`, `name`, `status`, `id`, `config.<path>`,
+  `ended_at`, `duration`, `name`, `version`, `status`, `id`, `config.<path>`,
   `summary.<path>` or `metrics.<name>` (the final value, as `Run.final`; a
   dotted metric name is written as is, `metrics.val.acc`). An unknown key
   raises `ValueError`.
@@ -174,6 +174,7 @@ A reader `Run` loads its data lazily:
 | Attribute | Contents |
 |---|---|
 | `id`, `name`, `project`, `status`, `archived` | Identity and status |
+| `version` | The run's number in its series (project, group, name), assigned by the server and never reused; `None` for an unnamed run. See [Versions](runs.md#versions) |
 | `created_at`, `ended_at`, `duration` | `datetime` / `timedelta`. `duration` runs to now for a live run. |
 | `tags`, `notes`, `group`, `job_type`, `hostname` | Metadata |
 | `git` | `GitInfo(sha, branch, dirty, remote)`, or `None` |
@@ -328,7 +329,8 @@ with reader.run(run_id).edit() as e:
     e.set_notes("Re-evaluated on the v2 test set.")
 ```
 
-The `Run` you called `edit()` on sees the changes. Editing needs the `write`
+The `Run` you called `edit()` on sees the changes; after `rename()`, its
+`version` is its number in the new series. Editing needs the `write`
 role on a server with authentication (see [Server, auth and
 deployment](server.md#tokens-and-roles)). Runs read from a `.zip` archive
 cannot be edited.

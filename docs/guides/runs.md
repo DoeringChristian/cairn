@@ -118,6 +118,46 @@ run = cairn.Run("cifar10", resume=ckpt["cairn_run"], rewind_to=ckpt["step"])
     the `cairn ui`/`cairn server` serving the repo, or by itself), so a run that just finished
     in another process can be continued at once.
 
+## Versions
+
+Runs that share a name form a **series**: the runs of one project with the
+same group and the same name (`cairn.Run(..., group=..., name=...)`; a run
+without a group is in the ungrouped series of its name). The server numbers
+every named run in its series when it creates the run: the first `train` is
+version 1, the next 2, and so on. The number is the run's `version` field; it
+is never written into the name, and the client never chooses it.
+
+```python
+run = cairn.Run("mnist", name="train")
+run.version   # 3: the third "train" of the project
+```
+
+- **Never reused.** Each series keeps its highest number, so deleting `train`
+  v3 does not make the next `train` v3 again: it is v4.
+- **Rename or regroup: a new number.** A run whose name or group changes takes
+  the next number of its new series; its old number stays taken in the old
+  one (renaming back gives yet another new number).
+- **Resume and shared runs keep it.** `resume=`, `rewind_to=`, and processes
+  joining a run (`primary=False`, `cairn.attach`) continue the same run, with
+  the same version.
+- **A fork is a new run**, so it takes the next number of its series.
+- **No name, no version**: an unnamed run's `version` is `None`.
+- **Imported runs** ([run archives](import-export.md#run-archives)) take the
+  next number of their series in the repo they are imported into; the number
+  they had where they were exported is not kept.
+
+Over HTTP the server returns the version when the run is created. On a local
+repo the number is assigned when the run's log is ingested: the first read of
+`run.version` catches up on the repo's logs (like `ArtifactVersion.wait()`),
+and it is known from then on. Repos from before versions are numbered once,
+per series in creation order, when a newer cairn first opens them.
+
+The UI shows the version after a run's name (`train  v2`), and labels runs
+that share a name `train v1`, `train v2` in charts and legends (adding the
+group, `train v1 · exp-1`, when two groups both have a `train v1`). `cairn list`
+has a `VERSION` column and `--sort version`; the [Reader](reading.md) has
+`Run.version`.
+
 ## Several processes, one run
 
 A distributed job (one process per GPU or node) can log into a single run, like wandb's

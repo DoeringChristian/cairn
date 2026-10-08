@@ -537,11 +537,12 @@ cairn list --archived all --format json                # or csv
 | `--filter KEY=VALUE` | A [`filter()`](reading.md#filtering-with-filter) keyword; `VALUE` is parsed as JSON when it can be. Repeatable |
 | `--where EXPR` | A [`where()`](reading.md#filtering-with-expressions-where) expression. Repeatable |
 | `--archived hide\|only\|all` | Leave archived runs out (default), list only them, or both (adds an `ARCHIVED` column) |
-| `--sort KEY`, `--asc`/`--desc` | `created_at` (default), `ended_at`, `duration`, `name`, `status`, `id`, `config.<path>`, `summary.<path>` or `metrics.<name>`; descending by default. Runs missing the key come last |
+| `--sort KEY`, `--asc`/`--desc` | `created_at` (default), `ended_at`, `duration`, `name`, `version`, `status`, `id`, `config.<path>`, `summary.<path>` or `metrics.<name>`; descending by default. Runs missing the key come last |
 | `-c KEY` | Add a column: `config.<path>` (nested config), `summary.<path>`, `metrics.<name>` (the final value the runs table shows) or a run field (`group`, `job_type`, `hostname`, `user`, `notes`, `ended_at`, `archived`). Repeatable |
 | `--format table\|json\|csv` | `json` and `csv` give ISO 8601 times and durations in seconds |
 
-The default columns are `ID`, `NAME`, `PROJECT` (left out with `--project`),
+The default columns are `ID`, `NAME`, `VERSION` (the run's [version](runs.md#versions)),
+`PROJECT` (left out with `--project`),
 `STATUS`, `CREATED` (local time), `DURATION` and `TAGS`.
 
 See the [CLI reference](../reference/cli.md) for all commands.

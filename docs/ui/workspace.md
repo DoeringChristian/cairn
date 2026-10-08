@@ -1,6 +1,6 @@
 # Run page and workspace
 
-Click a run in the [runs table](runs-table.md) to open its run page at `/p/<project>/r/<run>`. The header shows the run's name and id, its status, how long it has run, and a **forked from** link when the run is a fork. While the run is `running`, a **Stop** button asks it to stop. The run sees the request on its next heartbeat (see [Run lifecycle](../guides/runs.md)).
+Click a run in the [runs table](runs-table.md) to open its run page at `/p/<project>/r/<run>`. The header shows the run's name, its [version](../guides/runs.md#versions) as a muted `v2` right after it (a run without a name has none), its status, its id, how long it has run, and a **forked from** link when the run is a fork. While the run is `running`, a **Stop** button asks it to stop. The run sees the request on its next heartbeat (see [Run lifecycle](../guides/runs.md)).
 
 A run with [progress](../guides/runs.md#progress-and-eta) has a line under the header: while it runs, a full-width bar in its status colour and `step 5,800 / 10,000 · 58% · ~9 min left` (for `run.progress` values, `3 / 10 · 30% · …` without the word "step"); once it ended, only `step 10,000 / 10,000 · 100%`. The page re-reads a running run every 2 s.
 

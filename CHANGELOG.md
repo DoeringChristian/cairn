@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.5.0 — unreleased
+
+### Added
+
+- **Run versions.** Runs that share a project, group and name form a series;
+  the server numbers each named run in it when it creates the run (`version`
+  1, 2, ...). Numbers are never reused, also after a run is deleted. A rename
+  or group change takes the next number of the new series; resume and
+  processes joining a run keep it; a fork takes the next one; an unnamed run
+  has none. Existing repos are numbered per series by creation time on first
+  open, and imported runs take the next number of their series.
+  `run.version` (on a local repo it catches up on the logs first),
+  `Reader` `Run.version`, a `version` field on every API run row, a `VERSION`
+  column and `--sort version` in `cairn list`, and `group` on
+  `PATCH /api/runs/{id}`.
+- UI: a muted `v2` after the run's name in the run header and the runs table;
+  runs that share a name are labelled `train v1`, `train v2` in charts and
+  legends (with the group, `train v1 · exp-1`, when two groups have the same
+  name and number) instead of their start times.
+
 ## 0.4.0 — 2026-10-07
 
 ### Breaking

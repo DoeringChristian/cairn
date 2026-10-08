@@ -681,11 +681,11 @@ def apply_migrations(con: sqlite3.Connection) -> int:
 
     # Incremental column migrations for existing databases.
     _add_column_if_missing(con, "runs", "last_heartbeat", "TEXT")
-    _number_existing_runs(con)
     _add_column_if_missing(con, "artifacts", "object_type", "TEXT")
     _add_column_if_missing(con, "tokens", "parent_id", "TEXT")
     for column, col_type in _ADDED_RUN_COLUMNS:
         _add_column_if_missing(con, "runs", column, col_type)
+    _number_existing_runs(con)
     _add_column_if_missing(con, "sequences", "metadata", "TEXT")
     _add_column_if_missing(con, "sequences", "summary", "INTEGER NOT NULL DEFAULT 0")
     _add_column_if_missing(con, "log_lines", "label", "TEXT")

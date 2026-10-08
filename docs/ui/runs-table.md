@@ -110,7 +110,7 @@ The **Status** cell of a run with [progress](../guides/runs.md#progress-and-eta)
 
 Metric and config columns are the union over the loaded runs: a run that never logged `val.acc` shows a blank cell, and the column stays.
 
-- **Name is frozen** on the left, cannot be hidden or moved, and always comes first.
+- **Name is frozen** on the left, cannot be hidden or moved, and always comes first. A run with a [version](../guides/runs.md#versions) shows it as a muted `v2` right after its name.
 - **Pin** a column (header menu → **Pin (freeze left)**, or the pin icon in the column manager) to freeze it after Name, in pin order. The rest scroll horizontally.
 - **Hide** a column from its header menu, or untick it in the column manager. The manager has a search box and **Hide all** / **Show all** for the matching columns.
 - **Reorder** by dragging a header onto another, or with **Move left** / **Move right** in its menu. Pinned columns reorder among themselves, and scrolling columns among themselves.

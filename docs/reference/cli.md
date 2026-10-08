@@ -11,7 +11,7 @@ The `cairn` command is installed with `cairn-track`. Run `cairn --help`, or
 | `cairn token create\|list\|revoke` | Manage auth tokens on the server host | [Server](../guides/server.md#tokens-and-roles) |
 | `cairn login [URL]`, `cairn logout [URL]` | Save or forget a server's token (`--ssh`: get one with an SSH key; `--list`: show saved logins) | [Server](../guides/server.md#logging-in-from-the-sdk-and-cli) |
 | `cairn configure` | Save the default server or repo to the config file | [Configuration](configuration.md) |
-| `cairn list` | List runs with filters, sorting, config and metric columns, as a table, JSON or CSV | [Server](../guides/server.md#listing-runs) |
+| `cairn list` | List runs (with their [version](../guides/runs.md#versions)) with filters, sorting, config and metric columns, as a table, JSON or CSV | [Server](../guides/server.md#listing-runs) |
 | `cairn ping`, `open` | Check a server or a local repo; open a run in the viewer | [Server](../guides/server.md#client-commands) |
 | `cairn rm`, `archive`, `unarchive` | Delete, archive or unarchive runs | [Server](../guides/server.md#client-commands) |
 | `cairn sync` | Replay run logs that never reached their server, or a local repo's WAL logs | [Server](../guides/server.md#server-mode-and-connection-loss) |
