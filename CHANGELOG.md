@@ -141,6 +141,26 @@ importance, and notebook embeds.
 
 ### Changed
 
+- **The Runs page belongs to the current workspace view** (wandb): its
+  status, search, filter, grouping, **Latest only**, sort, eyes, open groups
+  and column setup (shown, pinned, ordered columns, widths, computed columns)
+  are the view's run state, shared with the workspace sidebar, and the
+  workspace's view switcher sits in its header. Its leading column is a
+  checkbox plus the workspace eye (group headers too); **Show in workspace**
+  sets those eyes and opens the workspace. Folded groups are saved in the
+  view instead of the browser session; the runs table and the sidebar start
+  with the first top-level group and `(none)` open.
+- **One colour assignment per page** (the project workspace, the run page, a
+  report cell): visible ungrouped runs and innermost groups share one
+  palette, computed once and used by the sidebar dots, the Runs page, every
+  card (lines and legends, Summary cards, parallel coordinates, media badges,
+  the run comparer) and the hover highlight. A run's dot always matches its
+  line, and runs no longer take a group's colour.
+- The workspace sidebar's row hover shows only the copyable run id; a set pin
+  or baseline shows inline after the version. Pin and baseline are set on the
+  Runs page.
+- Media galleries default to **Column content: Index** (wandb); point clouds,
+  meshes and boxes keep **Run** (each tile is a 3D viewer).
 - **Media cards work as wandb's media panel** (image, audio, video, HTML,
   Markdown, text, custom viewer, point cloud, mesh, boxes): an **Index** for
   logged lists (All, One with a `‹ i / n ›` stepper over the media, Range,
@@ -187,6 +207,10 @@ importance, and notebook embeds.
   selection is unchanged.
 - The runs table's per-column **Better** setting and a computed column's
   better direction.
+- The project run view's **Hide from charts** eye (the workspace eyes do
+  that); the runs table's per-browser filter, grouping, sort and column state
+  and the session-kept folded groups (no migration: the view's state
+  applies).
 - The run page's **Metrics & Media**, **Source** and **Environment** tabs
   (now Workspace and Files).
 

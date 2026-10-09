@@ -2,6 +2,14 @@
 
 The runs table (`/p/<project>`) lists a project's runs, newest first. Use it to find runs, add metric, config and computed columns, and show a selection in the [project workspace](project-workspace.md).
 
+```
+selections / runs                                   [view: Default ▾]
+Status [All▾] Search [regex] [Filter] [Group] [ ] Latest only [Columns]
+☐ ◉ NAME            STATE      CREATED   …
+```
+
+As in wandb, the table belongs to the current [workspace view](workspace.md#workspace-views): its status, search, filter, grouping, **Latest only**, sort, eyes, open and closed groups, and its column setup (shown, pinned and ordered columns, widths, computed columns) are the view's run state, the same one the [workspace sidebar](project-workspace.md#runs-sidebar) shows. Change one and the other follows. The view switcher in the header (the workspace's) switches the view, and with it the table's state; a new view copies the current one's. Edits are undoable like workspace edits.
+
 Runs load 100 at a time as you scroll. While a filter or a group-by is active, the table loads every page, so matches outside the first page are not missed. The header shows `<shown> of <total> runs`.
 
 The table updates live: new and deleted runs appear within a few seconds, and running runs' status and values refresh every 3 seconds.
@@ -83,7 +91,7 @@ The table has no full series, so an expression that needs one evaluates to null.
 - ++shift++-click a header to add it as the next sort key, or to flip it if it already is one. Headers show the direction arrow and, with several keys, the key's rank.
 - The column menu (⋮ on the header, ▾ on a metric column) also has **Sort ascending** and **Sort descending**; other than a metric column's, it has **Add to sort** / **Remove from sort** too.
 
-Runs without a value sort last in both directions. Numbers sort numerically, text in natural order (`run-2` before `run-10`), and numbers come before text in a mixed column. Ties are broken by run id, so the order is stable. [Pinned runs](#hide-pin-and-baseline) always come first, in sorted order.
+Runs without a value sort last in both directions. Numbers sort numerically, text in natural order (`run-2` before `run-10`), and numbers come before text in a mixed column. Ties are broken by run id, so the order is stable. [Pinned runs](#eyes-pin-and-baseline) always come first, in sorted order.
 
 ## Group by
 
@@ -94,7 +102,7 @@ Click **Group** to add levels. Each level splits its parent group by one of:
 - `param: <key>`: a config value;
 - **expression…**: a scalar [expression](../reference/expressions.md), e.g. `min(val.loss) < 0.3`.
 
-Levels nest in order (`by …`, `then …`); reorder them with ↑/↓ and remove one with ×. Grouping and sorting compose: the runs inside each group follow the table's sort, and the groups themselves are ordered by their first run in that sort, at every level. Sorting by **Created** (newest first) puts the group with the most recent run on top; sorting by the grouped column orders the groups by their value. Runs with no value for a level go last as `(none)`. Group rows look as in the [workspace sidebar](project-workspace.md#runs-sidebar), as in wandb: they read `Field: value` (`Group: exp-44`, `Job Type: train`, `Tag: prod`, `lr: 0.001`, `Group: (none)`); an outer group (with sub-groups) has a hollow circle and two counts (sub-groups, runs), an innermost group a filled dot in its workspace chart colour and its run count, and the runs inside groups no dot. Click a group header to collapse or expand it. A run group's name (`exp-44` in `Group: exp-44`) opens the [project workspace filtered to that group](project-workspace.md#filtering-to-a-group). Changing the group-by expands every group again.
+Levels nest in order (`by …`, `then …`); reorder them with ↑/↓ and remove one with ×. Grouping and sorting compose: the runs inside each group follow the table's sort, and the groups themselves are ordered by their first run in that sort, at every level. Sorting by **Created** (newest first) puts the group with the most recent run on top; sorting by the grouped column orders the groups by their value. Runs with no value for a level go last as `(none)`. Group rows look as in the [workspace sidebar](project-workspace.md#runs-sidebar), as in wandb: they read `Field: value` (`Group: exp-44`, `Job Type: train`, `Tag: prod`, `lr: 0.001`, `Group: (none)`); an outer group (with sub-groups) has a hollow circle and two counts (sub-groups, runs), an innermost group a filled dot in its workspace chart colour and its run count, and the runs inside groups no dot. Click a group header to collapse or expand it; the first top-level group and the `(none)` group start open, the others closed. Which groups are open is saved in the view, shared with the sidebar. A run group's name (`exp-44` in `Group: exp-44`) opens the [project workspace filtered to that group](project-workspace.md#filtering-to-a-group). Changing the group-by resets every group to that default; what is visible stays visible.
 
 ## Columns
 
@@ -146,7 +154,7 @@ Tick a row's checkbox to select it; ++shift++-click another checkbox to select t
 |---|---|
 | **Clear** | Deselect all. |
 | **Tag** | The bulk tag editor: add a tag to every selected run, or remove a tag from all runs that have it. |
-| **Show in workspace** | Open the [project workspace](project-workspace.md) with exactly the selected runs visible. |
+| **Show in workspace** | Set the view's eyes to exactly the selected runs (clearing status, search, filter and **Latest only**) and open the [project workspace](project-workspace.md). |
 | **Export** | Download the selected runs as `cairn_export_<date>.zip`. |
 | **Stop** | Ask the selected *running* runs to stop (asks first). See [Run lifecycle](../guides/runs.md). |
 | **Archive** / **Unarchive** | Archive or restore the selected runs. Archiving hides a run without changing its status; an archived run shows an `archived` mark beside it. |
@@ -160,17 +168,18 @@ Export, Archive / Unarchive and Delete have command-line counterparts:
 
 The Tags column lists each run's tags. Click **+** to add a tag, with suggestions from the tags already in the project (++enter++ adds, ++escape++ cancels). Click a tag's × to remove it.
 
-## Hide, pin and baseline
+## Eyes, pin and baseline
 
-Hover a run's name to show three toggles (on touch devices they are always visible):
+The **eye** beside each checkbox is the workspace's: it picks the runs the [project workspace](project-workspace.md)'s cards draw, exactly as the sidebar's eyes (they are the same eyes). A group header's eye shows or hides every run in it (◐: some hidden), the header's eye every listed run. By default the 10 newest groups (not grouped: runs) are visible. A hidden run's row is dimmed, not removed, and its dot is hollow.
+
+Hover a run's name to show its copyable id and two toggles (on touch devices they are always visible):
 
 | Toggle | Effect |
 |---|---|
-| Eye | **Hide from charts**: the run is left out of every card. In the table its row is dimmed, not removed. |
-| Pin | **Pin**: listed first in the table and drawn first in charts. |
+| Pin | **Pin**: listed first in the table and the sidebar, whatever the filters, and drawn first in charts. |
 | Flag | **Set as baseline**: one run per project. Other runs show deltas against it. |
 
-Toggles that are on stay visible after the name. These three settings are the project's *run view*, shared by the table and the run page. It is stored in your browser, per project, and synced between open tabs. Report cells each keep their own run view.
+Toggles that are on stay visible after the name. Pin and baseline are the project's *run view*, shared by the table, the workspace sidebar and the run page. It is stored in your browser, per project, and synced between open tabs. Report cells each keep their own run view.
 
 ### Deltas against the baseline
 
@@ -184,9 +193,11 @@ Without a goal a delta is shown uncoloured.
 
 ## Run colours
 
-The dot before each name is the run's colour. The colour is derived from the run id; nothing is stored. There are 10 hues in a light and a dark shade. Among the runs shown together, older runs keep their preferred hue and newer ones move to a free hue, so the first 10 runs always get 10 different hues. Colours repeat after 20 runs. A run keeps the same colour everywhere unless an older run in the same view takes its hue.
+The dot before each name is the colour of the run's chart line in the project workspace, and an innermost group's dot its group line's: the table and the workspace assign them the same way, so they always match. Only runs with a line of their own (visible, and not averaged into a group) have a dot.
 
-**Colour by value** is a workspace setting (`prefs.colorBy`), edited from the workspace toolbar. It colours runs on the run page and in the project workspace by an expression's value, bucketed into 2–8 colours of a palette. The runs table keeps the id-derived colours. See [Run page and workspace](workspace.md).
+Colours are derived from run ids and group labels; nothing is stored. There are 10 hues in a light and a dark shade. A page (the project workspace, the run page, a report cell) assigns its colours once, over the lines it draws together: its visible ungrouped runs and its innermost groups share one palette, so a run never takes a group's colour. Older lines keep their preferred hue (a group counts as old as its oldest run) and newer ones move to a free hue, so the first 10 lines always get 10 different hues; colours repeat after 20. Hiding or showing newer runs never changes a line's colour. Runs averaged into a group get a colour from what is left, for cards that draw them one by one.
+
+**Colour by value** is a workspace setting (`prefs.colorBy`), edited from the workspace toolbar. It colours runs on the run page and in the project workspace by an expression's value, bucketed into 2–8 colours of a palette. The runs table and the sidebar keep the assigned colours. See [Run page and workspace](workspace.md).
 
 ## Where the table's state is kept
 

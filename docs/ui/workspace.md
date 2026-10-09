@@ -169,7 +169,7 @@ Move cards and sections with their grips:
 Every move applies to the page at once and is one [undo](#undo-and-redo) step.
 
 !!! note "What is stored where"
-    **In the workspace** (each view, on the server, shared by everyone who uses the project): sections and their order, collapsed and sorted state; panels with their type, metrics, settings, size and hidden flag; removed automatic panels; whether unlisted metrics get automatic panels; hide patterns; workspace and section defaults; prefs (sync zoom, colour by). A view also holds the [project workspace](project-workspace.md)'s runs: status, search, filter, grouping, **Latest only**, sort and eyes. Which view is current is stored on the server too.
+    **In the workspace** (each view, on the server, shared by everyone who uses the project): sections and their order, collapsed and sorted state; panels with their type, metrics, settings, size and hidden flag; removed automatic panels; whether unlisted metrics get automatic panels; hide patterns; workspace and section defaults; prefs (sync zoom, colour by). A view also holds the [project workspace](project-workspace.md)'s runs, shared with the [runs table](runs-table.md): status, search, filter, grouping, **Latest only**, sort, eyes, open and closed groups, and the runs table's columns (shown, pinned, order, widths, computed columns). Which view is current is stored on the server too.
 
     **In this browser only:** the run page's and runs table's hidden, pinned and baseline runs.
 
