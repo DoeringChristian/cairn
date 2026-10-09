@@ -245,6 +245,7 @@ importance, and notebook embeds.
   (now Workspace and Files).
 
 ### Fixed
+- `cairn.Table({"col": [...], ...})` (a mapping of column -> values) logs those rows; it used to be read as column names only and silently logged an empty table. Ragged columns, or a mapping plus `data=`, raise.
 
 - Scalar charts: a series of one or two points (a metric logged once per
   run) drew nothing though it was in the legend; its points are now marked.

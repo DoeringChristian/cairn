@@ -23,6 +23,8 @@ unchanged and its column is typed ``"media"``.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import json
 import math
 from typing import Any
@@ -111,6 +113,25 @@ class TableHandler:
             names = [str(c) for c in dataframe.columns]
             rows = [list(row) for row in dataframe.itertuples(index=False, name=None)]
             return names, rows
+
+        if isinstance(columns, Mapping):
+            # cairn.Table({"id": [...], "pred": [...]}): a mapping of column ->
+            # values (the shape of a DataFrame's dict). Iterating it as names
+            # would silently log a header-only table.
+            if data is not None:
+                raise TypeError(
+                    "cairn.Table(mapping) takes the columns' values from the "
+                    "mapping; don't pass data= as well."
+                )
+            names = [str(c) for c in columns]
+            values = [list(v) for v in columns.values()]
+            lengths = {len(v) for v in values}
+            if len(lengths) > 1:
+                raise ValueError(
+                    "cairn.Table(mapping): every column needs the same number of "
+                    f"values; got {dict(zip(names, (len(v) for v in values)))}"
+                )
+            return names, [list(r) for r in zip(*values)]
 
         if data is None:
             data = []

@@ -111,3 +111,16 @@ def test_deserialize_roundtrip():
     data, _ = _serialize(columns=["a"], data=[[1], [2]])
     back = h.deserialize(data)
     assert back["data"] == [[1], [2]]
+
+
+def test_mapping_of_columns_becomes_rows():
+    names, rows = TableHandler()._normalize(Table({"id": [0, 1], "pred": [0.2, 0.3]}).obj)
+    assert names == ["id", "pred"]
+    assert rows == [[0, 0.2], [1, 0.3]]
+
+
+def test_mapping_rejects_ragged_columns_and_extra_data():
+    with pytest.raises(ValueError, match="same number of values"):
+        TableHandler()._normalize(Table({"a": [1, 2], "b": [1]}).obj)
+    with pytest.raises(TypeError, match="don't pass data"):
+        TableHandler()._normalize(Table({"a": [1]}, data=[[1]]).obj)

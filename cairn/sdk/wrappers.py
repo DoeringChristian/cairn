@@ -278,6 +278,12 @@ class Table(_TypeWrapper):
     )
     ```
 
+    or from a mapping of column name -> values (all the same length):
+
+    ```python
+    run.track(cairn.Table({"id": [0, 1], "pred": [0.2, 0.3]}), name="preds", step=0)
+    ```
+
     or from a pandas ``DataFrame``:
 
     ```python
@@ -298,7 +304,8 @@ class Table(_TypeWrapper):
     are not JSON-native are stringified.
 
     Args:
-        columns: Column names, used with ``data``.
+        columns: Column names, used with ``data``; or a mapping of column name ->
+            values (then without ``data``).
         data: Rows, each a list with one value per column.
         dataframe: A pandas ``DataFrame``, instead of ``columns`` + ``data``.
         **kwargs: ``caption=`` labels the logged point.
