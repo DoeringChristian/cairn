@@ -273,6 +273,7 @@ importance, and notebook embeds.
   (now Workspace and Files).
 
 ### Fixed
+- `examples/organise_runs.py` waits for its runs before reading them back, so with a viewer running (which ingests a moment behind) it lists every run. The examples keep the source snapshot on (the default); only `stress_1k.py` turns it off.
 - Report cells: a card whose **Group runs** is **Workspace** follows its run
   sets' grouping, as in the project workspace: an ungrouped set draws one
   line per run (it used to average each run group into one line), a grouped

@@ -66,7 +66,6 @@ def train_fn(config: dict) -> None:
         project="ray-tune-sweep",
         name=f"lr-{lr:.0e}",
         repo=str(repo_path),
-        capture_source=False,
         capture_stdout=False,
         capture_env=False,
         capture_system_metrics=False,

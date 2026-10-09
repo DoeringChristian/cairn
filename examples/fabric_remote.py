@@ -54,7 +54,6 @@ def train(repo_path_str: str, config: dict) -> str:
         project="fabric-sweep",
         name=config["name"],
         repo=str(repo_path),
-        capture_source=False,
         capture_stdout=False,
         capture_env=False,
         capture_system_metrics=False,

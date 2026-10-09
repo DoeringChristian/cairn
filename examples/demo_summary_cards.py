@@ -56,7 +56,6 @@ def main() -> None:
             name=name,
             tags=["summary-demo"],
             notes=f"Converges to acc={final_acc}, loss={final_loss}.",
-            capture_source=False,
             capture_stdout=False,
             capture_env=True,
             capture_system_metrics=False,

@@ -58,7 +58,7 @@ def train(repo: str | None, workdir: Path) -> str:
     data = make_data(256, seed=0)
     w = b = 0.0
     steps, lr = 200, 0.1
-    with cairn.Run(PROJECT, name="regressor", repo=repo, capture_source=False,
+    with cairn.Run(PROJECT, name="regressor", repo=repo,
                    total_steps=steps) as run:
         run.config(lr=lr, steps=steps)
         for step in range(steps):

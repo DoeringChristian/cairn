@@ -50,11 +50,15 @@ from __future__ import annotations
 import math
 import random
 
+import time
+
 import cairn
 
 PROJECT = "organise-demo"
-# Keep the demo fast: skip the source snapshot and system metrics per run.
-QUIET = dict(capture_source=False, capture_system_metrics=False)
+# Keep the demo fast: skip system metrics per run (the source snapshot stays on, the default).
+QUIET = dict(capture_system_metrics=False)
+# The ids of the runs this script creates, to wait for them before reading back.
+CREATED: list[str] = []
 EPOCHS = 4
 STEPS_PER_EPOCH = 10
 
@@ -77,6 +81,7 @@ def fake_training(run: cairn.Run, rng: random.Random, *, start: float, rate: flo
 def prepare(group: str, rows: int) -> cairn.ArtifactVersion:
     """``prepare``: build the dataset and log it as an artifact."""
     with cairn.Run(PROJECT, name="prepare", group=group, job_type="prepare", **QUIET) as run:
+        CREATED.append(run.id)
         run.config(rows=rows)
         return run.log_artifact({"rows": rows, "features": 16}, f"data-{group}", type="dataset")
 
@@ -85,6 +90,7 @@ def train_base(group: str, data: cairn.ArtifactVersion, lr: float) -> tuple[cair
     """``train``: the base model, trained on the dataset."""
     rng = random.Random(0)
     with cairn.Run(PROJECT, name="base", group=group, job_type="train", **QUIET) as run:
+        CREATED.append(run.id)
         run.use_artifact(data)
         run.config(lr=lr, seed=0)
         fake_training(run, rng, start=2.0, rate=lr * 30)
@@ -98,6 +104,7 @@ def finetune(group: str, base: cairn.Run, model: cairn.ArtifactVersion, task: st
     rng = random.Random(10 + i)
     with cairn.Run(PROJECT, name=f"ft-{task}", group=group, job_type="finetune",
                    uses=[base], **QUIET) as run:
+        CREATED.append(run.id)
         run.use_artifact(model)
         run.config(task=task, lr=1e-4, seed=0)
         fake_training(run, rng, start=0.8 + 0.2 * i, rate=0.08)
@@ -108,6 +115,7 @@ def evaluate(group: str, finetuned: list[cairn.Run]) -> None:
     """``eval``: reads the fine-tuned runs' results, so it links them with
     ``use_run`` (no artifact between them)."""
     with cairn.Run(PROJECT, name="eval", group=group, job_type="eval", **QUIET) as run:
+        CREATED.append(run.id)
         for ft in finetuned:
             run.use_run(ft, role="evaluated")
         for i, ft in enumerate(finetuned):
@@ -120,6 +128,7 @@ def seeds(group: str, lr: float, n: int) -> None:
     for seed in range(n):
         rng = random.Random(seed)
         with cairn.Run(PROJECT, name=f"seed-{seed}", group=group, job_type="train", **QUIET) as run:
+            CREATED.append(run.id)
             run.config(lr=lr, seed=seed)
             fake_training(run, rng, start=2.0 + 0.3 * rng.random(), rate=lr * 30)
 
@@ -138,6 +147,16 @@ def main() -> None:
     evaluate(group, finetuned)
 
     seeds("seeds-lr3e-4", lr=3e-3, n=3)
+
+    # A viewer that is running holds the repo's ingest lease, and a Reader then
+    # sees what it has ingested so far (a moment behind): wait for our runs.
+    deadline = time.monotonic() + 30
+    while True:
+        with cairn.Reader() as reader:
+            ids = {r.id for r in reader.runs(PROJECT).list()}
+        if set(CREATED) <= ids or time.monotonic() > deadline:
+            break
+        time.sleep(0.5)
 
     with cairn.Reader() as reader:
         runs = reader.runs(PROJECT).list()
