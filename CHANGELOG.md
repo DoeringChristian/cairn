@@ -141,6 +141,18 @@ importance, and notebook embeds.
 
 ### Changed
 
+- **Media cards work as wandb's media panel** (image, audio, video, HTML,
+  Markdown, text, custom viewer, point cloud, mesh, boxes): an **Index** for
+  logged lists (All, One with a `‹ i / n ›` stepper over the media, Range,
+  First N; applied in every mode); gallery **Column content** (Run, Index:
+  a tile per list item, Step: a tile per sampled step); a grid of any two of
+  Step, Index and Run with a **Steps** range and a **Rows** cap (30); compare
+  slots with **Run**, **Step** and **Index** each Linked or Individual (a
+  picker per slot); a **Media limit** on tiles. A metric slider key labels
+  the slider (`epoch ━━● epoch 4 (5/5)`). The compare mode's single Linked
+  toggle and its `compareLinked` setting are gone.
+- **The text card** is a media card like the others: several runs, the slider
+  key, the section slider, the Index and the panel modes.
 - **job_type is first-class (wandb)**: the run's role. The run page shows it
   next to the group; the runs table and the workspace group by group, then
   job type; in lineage graphs runs are siblings only within one job type

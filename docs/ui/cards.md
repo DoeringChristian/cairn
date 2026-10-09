@@ -98,6 +98,8 @@ The slider picks which logged step each pane shows. The **Slider key** *(default
 - `step` (the default): each logged step is one position.
 - A scalar metric, such as `epoch`: each run's media is looked up **as of** each step, using the key's last value at or before that step. The slider then picks, in every run, the media logged while the key held that value, even when runs reach it at different steps. When several steps share a value, the position shows the newest of them.
 
+The exact rule: at slider value *x*, each run shows the media logged at the step whose key value is the largest value at or below *x*; when several of its media steps share that value, the latest of them. A run that does not log the key (or not yet at any media step) shows nothing. With a metric key the slider is labelled with it on both sides: `epoch ━━━━● epoch 4 (5/5)`.
+
 A [summary media value](../guides/runs.md#media-in-the-summary) (`run.summary(fig=cairn.Figure(f))`) is one value with no step: a card whose series are all summary media values has no slider and does not follow the section slider. With several runs it still shows one pane per run, and a later `run.summary` write replaces what it shows (at once while the run is running; on a finished run, when the page is reloaded).
 
 A slider starts at the newest step and follows new steps as they arrive. Move it back and it saves that *value* (not an index), so it stays put while new steps arrive; move it to the end again and it follows them again. The section slider does the same.
@@ -106,17 +108,40 @@ A slider starts at the newest step and follows new steps as they arrive. Move it
 
 When **Follow section slider** is on *(default; on by default)*, a media card follows its section's shared slider. The section shows that slider above its cards. It covers the union of the values of every following card loaded so far (panels load as they come near the screen, see [Loading](workspace.md#loading)) and has its own key field. When a section has synced videos, the bar also gets play/pause. Turn **Follow section slider** off to give the card its own slider. The section slider position is remembered in this browser.
 
-### Layout: gallery, grid, compare
+### Index, layout and media limit
 
-Image, audio, video, HTML and Markdown cards have a **Mode** *(default)*:
+These controls work as wandb's media panel. Image, audio, video, HTML, Markdown, text, custom viewer, point cloud, mesh and boxes cards have them.
 
-| Mode | Layout |
+```
+┌ samples ──────────────────────────── 📷 ⤓ ↺ ⚙ ⧉ ✕ ┐
+│ Index [ One ▾ ]   ‹ 3 / 8 ›                        │  lists only
+│ (media)                                            │
+│ epoch ━━━━━━━━━━━━━━━━━━━━━━━━━━●  epoch 4 (5/5)   │
+└────────────────────────────────────────────────────┘
+```
+
+**Index** (gear › Values, and over the media; only on cards whose points are [lists](#galleries)) picks which items of each logged list the card shows, counting from 0:
+
+| Index | Shows |
 |---|---|
-| **Gallery** | One pane per run, all at the slider's value, in **Columns** columns. `auto` means up to two, and one on phones. |
-| **Grid** | Runs as rows and slider values as columns (5 values when columns is `auto`). Click a column header to move the slider there. |
-| **Compare** | 2–4 **Slots**. Each slot picks its own run. While the slots are linked to the slider they share its value; unlink them to pick a value per slot. |
+| **All** *(default)* | every item |
+| **One** `i` | item `i`. Over the media, `‹ i / n ›` steps through the items (`n` is the longest list shown). |
+| **Range** `a`–`b` | items `a` to `b` |
+| **First N** `k` | the first `k` items |
 
-**Max runs** *(default)* shows only the first N runs; 0 shows them all. Figure, preset (confusion matrix), 3D and volume cards have **Columns** and **Max runs** but no modes.
+The Index applies in every mode. A list shorter than the index shows its last item (One) or what it has (Range, First N).
+
+**Mode** *(default)*, on the Display tab:
+
+| Mode | Settings | Layout |
+|---|---|---|
+| **Gallery** | **Columns**, **Column content** *(default)* | Tiles in **Columns** columns. **Column content** says what one tile is. **Run** (the default): one tile per run, at the slider's value, with the Index's items together (several runs: `auto` columns means up to two, one on phones). **Index**: one tile per item of each run's list, at the slider's value. **Step**: one tile per step (slider value), sampled evenly like the grid's columns (5 for `auto`), each with the first item the Index selects; one row per run. On a card without lists, Index is the same as Run. |
+| **Grid** | **X-axis**, **Y-axis** *(default)*, **Grid columns**, **Steps** *from*–*to*, **Rows** *(default)* | Two of **Step**, **Index** and **Run** as columns and rows (X Step and Y Run by default; Index only for lists). The step axis is the slider values within **Steps** (in slider-key values; an empty bound is open), sampled evenly: **Grid columns** values on the X-axis (5 for `auto`), **Rows** on the Y-axis. When Run is on neither axis, each run repeats the Y-axis (rows `media-a · #0`, `media-a · #1`, …). When Index is on neither axis, each cell shows the Index's items. At most **Rows** *(default 30)* rows. Click a step column's header to move the slider there. |
+| **Compare** | **Slots**, **Run** / **Step** / **Index**: **Linked** or **Individual** *(default)* | 2–4 slots side by side. A linked variable is the card's for every slot: the first run, the slider's value, the Index. An individual one has its own picker in each slot's header (`media-b`, `epoch 3`, `Index 5`). By default Run is individual and Step and Index are linked. Going individual starts each slot where it was. |
+
+**Media limit** *(default)*: **Show all**, or **Limit** `N` tiles (25 by default). The grid keeps whole rows while they fit.
+
+**Max runs** *(default)* shows only the first N runs; 0 shows them all. Figure, preset (confusion matrix) and volume cards have **Columns** and **Max runs** but no modes.
 
 ### Galleries
 
@@ -124,7 +149,7 @@ A [gallery](../guides/media.md#captions-and-galleries) point holds several items
 
 - **Image, figure, histogram, tensor**: a near-square grid that fills the pane. When the pane is too small the grid scrolls instead of shrinking charts. Figures share the card's zoom.
 - **Audio, video, HTML, Markdown, text, volume**: the items in a grid at their natural height. With **Sync playback** on, a gallery's videos (and every run's) play together on the card's transport bar, or on the section's when the card follows the section slider.
-- **Point cloud, mesh, boxes**: one viewer per run, with a tab per item. The chosen tab applies to every run's pane. Browsers limit a page to about 16 live 3D viewers, so a card does not open one per item.
+- **Point cloud, mesh, boxes**: one viewer per run, with a tab per item the Index selects. The chosen tab applies to every run's pane. Browsers limit a page to about 16 live 3D viewers, so a card does not open one per item unless its layout asks for it (Column content Index or Step, a grid, compare); keep such cards to a few tiles with **Media limit**.
 
 A step change swaps the whole gallery once all its items have loaded; until then the previous step stays on screen. Runs side by side (the Gallery mode's panes, grid cells, compare slots) switch steps together. The histogram card's heatmap needs one histogram per step, so it is unavailable for a gallery series.
 
@@ -232,7 +257,7 @@ A custom viewer card draws its data with one of the project's [custom viewers](.
 
 ### Text and artifact
 
-- **Text** shows the logged text at the slider's step. Settings: **Font size**, **Word wrap** *(default)*.
+- **Text** shows the logged text at the slider's step, one pane per run, with the slider key, [Index, layout and media limit](#index-layout-and-media-limit) of the other media cards. Settings: **Font size**, **Word wrap** *(default)*.
 - **Artifact** shows a pickled point (`cairn.Pickle`) or the versions of an artifact the run logged: a one-file version in the viewer for its kind (an image zooms, a table sorts, as in the [explorer](artifacts.md#files)); otherwise file names, sizes and MIME types with download links, and a step slider over the steps they were logged at (a version without a step sits at its version number).
 
 ## Table
