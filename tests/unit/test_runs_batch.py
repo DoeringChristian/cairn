@@ -85,3 +85,24 @@ def test_at_most_a_thousand_ids(client):
     assert client.post("/api/runs/batch", json={"ids": [f"r{i}" for i in range(1001)]}).status_code == 422
     body = client.post("/api/runs/batch", json={"ids": [f"r{i}" for i in range(1000)]}).json()
     assert len(body["missing"]) == 1000
+
+
+def test_series_of_many_runs_is_each_runs_series_body(client):
+    a, b, c = _runs(client)
+    asked = {a: ["loss", "samples", "never"], b: ["loss"], c: ["loss"]}
+    r = client.post("/api/runs/series", json={"runs": {**asked, "nope": ["loss"]}})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["missing"] == ["nope"] and body["forbidden"] == []
+    assert list(body["runs"]) == [a, b, c]
+    for rid, names in asked.items():
+        assert body["runs"][rid] == client.get(f"/api/runs/{rid}/series", params={"name": names}).json()
+    assert body["runs"][a]["series"][0]["count"] == 3
+
+
+def test_series_of_many_runs_limits(client):
+    a, b, _ = _runs(client)
+    assert client.post("/api/runs/series", json={"runs": {a: [f"m{i}" for i in range(201)]}}).status_code == 400
+    many = {f"r{i}": [f"m{j}" for j in range(200)] for i in range(26)}
+    assert client.post("/api/runs/series", json={"runs": many}).status_code == 400
+    assert client.post("/api/runs/series", json={"runs": {}}).json() == {"runs": {}, "missing": [], "forbidden": []}

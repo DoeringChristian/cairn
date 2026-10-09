@@ -585,8 +585,9 @@ SHARE_ALLOWED: dict[str, ShareChecker] = {
 #: principal may call, keyed like ``SHARE_ALLOWED``. The route narrows what it
 #: reads to the report's scope itself.
 SHARE_READ_POSTS: dict[str, ShareChecker] = {
-    # Answers only the report's runs; the others come back ``forbidden``.
+    # Both answer only the report's runs; the others come back ``forbidden``.
     "/api/runs/batch": lambda request, scope: True,
+    "/api/runs/series": lambda request, scope: True,
 }
 
 

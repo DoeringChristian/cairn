@@ -11,7 +11,9 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
+from .. import auth
 from ._common import get_db, require_run
 
 router = APIRouter(prefix="/api", tags=["sequences"])
@@ -236,7 +238,11 @@ def get_series(
         raise HTTPException(status_code=400, detail=f"at most {SERIES_BATCH_LIMIT} names per request")
     db = get_db(request)
     run = require_run(db, run_id)
-    names = list(dict.fromkeys(name))
+    return JSONResponse(_series(db, run_id, run["data_epoch"] or 0, list(dict.fromkeys(name))))
+
+
+def _series(db: Any, run_id: str, data_epoch: int, names: list[str]) -> dict[str, Any]:
+    """One run's ``GET /runs/{id}/series`` body for ``names`` (distinct)."""
     rows: list[tuple[Any, ...]] = []
     if names:
         holes = ",".join("?" * len(names))
@@ -268,9 +274,47 @@ def get_series(
         cursor = max((rows[k][0] for k in range(start, end)), default=0)
         top = max(top, cursor)
         series.append({"name": n, "count": end - start, "cursor": cursor, "columns": columns, "constant": constant})
-    return JSONResponse({
-        "run_id": run_id, "data_epoch": run["data_epoch"] or 0, "cursor": top, "series": series,
-    })
+    return {"run_id": run_id, "data_epoch": data_epoch, "cursor": top, "series": series}
+
+
+# Most names (over every run) one ``POST /api/runs/series`` may ask for.
+SERIES_MANY_LIMIT = 5000
+
+
+class SeriesManyBody(BaseModel):
+    """``POST /api/runs/series``: ``{run_id: [name]}``."""
+
+    runs: dict[str, list[str]]
+
+
+@router.post("/runs/series")
+def get_series_many(body: SeriesManyBody, request: Request) -> JSONResponse:
+    """Several runs' ``GET /runs/{id}/series`` in one request (a workspace's
+    charts over a thousand runs): ``{"runs": {id: <that run's /series
+    body>}, "missing": [id], "forbidden": [id]}``. At most
+    ``SERIES_BATCH_LIMIT`` names per run and ``SERIES_MANY_LIMIT`` in all.
+    ``missing``: ids of no run; ``forbidden``: through a share link, the ids
+    outside the shared report (the per-run route's 403), never read.
+    """
+    if any(len(names) > SERIES_BATCH_LIMIT for names in body.runs.values()):
+        raise HTTPException(status_code=400, detail=f"at most {SERIES_BATCH_LIMIT} names per run")
+    if sum(len(names) for names in body.runs.values()) > SERIES_MANY_LIMIT:
+        raise HTTPException(status_code=400, detail=f"at most {SERIES_MANY_LIMIT} names per request")
+    ids = list(body.runs)
+    forbidden: list[str] = []
+    grant = auth.request_share(request)
+    if grant is not None:
+        scope = auth.share_scope(request, grant)
+        forbidden = [rid for rid in ids if rid not in scope.run_ids]
+        ids = [rid for rid in ids if rid in scope.run_ids]
+    db = get_db(request)
+    epochs: dict[str, int] = {}
+    for i in range(0, len(ids), 500):
+        chunk = ids[i:i + 500]
+        for rid, epoch in db.read(f"SELECT id, data_epoch FROM runs WHERE id IN ({','.join('?' * len(chunk))})", chunk):
+            epochs[rid] = epoch or 0
+    out = {rid: _series(db, rid, epochs[rid], list(dict.fromkeys(body.runs[rid]))) for rid in ids if rid in epochs}
+    return JSONResponse({"runs": out, "missing": [rid for rid in ids if rid not in epochs], "forbidden": forbidden})
 
 
 @router.get("/runs/{run_id}/sequences/{name:path}")

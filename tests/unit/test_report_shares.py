@@ -392,7 +392,7 @@ def test_metric_rules_are_narrowed_to_the_reports_runs(env):
     assert viewer.get("/api/projects/other/metric-rules").status_code == 403
 
 
-def test_runs_batch_answers_only_the_reports_runs(env):
+def test_runs_batch_and_series_answer_only_the_reports_runs(env):
     viewer = _viewer(env, _create(env)["secret"])
     a, b, c = env["a"], env["b"], env["c"]
     r = viewer.post("/api/runs/batch", json={"ids": [a, b, c, "nope"]})
@@ -409,5 +409,10 @@ def test_runs_batch_answers_only_the_reports_runs(env):
     owned = env["owner"].post("/api/runs/batch", json={"ids": [a, b], "include": ["run"]}).json()
     assert list(owned["runs"]) == [a, b] and owned["forbidden"] == []
     assert owned["runs"][a]["run"]["run"]["env_snapshot"]
+    # The same for series.
+    r = viewer.post("/api/runs/series", json={"runs": {a: ["loss"], b: ["tbl"]}})
+    assert r.status_code == 200, r.text
+    assert list(r.json()["runs"]) == [a] and r.json()["forbidden"] == [b]
+    assert r.json()["runs"][a] == viewer.get(f"/api/runs/{a}/series", params={"name": "loss"}).json()
     # Other POSTs stay closed to a share link.
     assert viewer.post("/api/runs/query", json={}).status_code == 403
