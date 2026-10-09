@@ -168,6 +168,24 @@ importance, and notebook embeds.
   card (lines and legends, Summary cards, parallel coordinates, media badges,
   the run comparer) and the hover highlight. A run's dot always matches its
   line, and runs no longer take a group's colour.
+- **Run colours**: the first 8 lines of a page get 8 far-apart hues (blue,
+  orange, green, red, purple, brown, pink, olive), then cyan and grey, and
+  only then the dark shades; two near-identical blues no longer sit side by
+  side.
+- **Histogram card like wandb's**: the default view is a heatmap over steps
+  (density colour, light grey to blue), one strip per run, or per innermost
+  group when the workspace is grouped (its runs' histograms pooled per step),
+  on one value axis; hovering a cell shows that step's histogram. X axis:
+  step, relative or wall time. **Bars (per step)** stays as a view option,
+  the runs overlaid. Lists of histograms show one index at a time.
+- **Table card like wandb's table panel**: several runs' tables show as one
+  table with a coloured `run` column (**Rows**, the default; **Panes** keeps
+  them side by side). New: **Columns** (show, hide, reorder), **Reset**, a
+  `1–10 of 23` pager with a page size, the sort kept with the card, and the
+  CSV export writes what the table shows (columns in order, sorted rows, all
+  pages).
+- The line plot's legend lists only the lines that draw in the chart: a run
+  or group that does not log the metric is left out.
 - The workspace sidebar's row hover shows only the copyable run id; a set pin
   or baseline shows inline after the version. Pin and baseline are set on the
   Runs page.

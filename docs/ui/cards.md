@@ -71,7 +71,7 @@ A scalar's curve, one line per run.
 |---|---|
 | Values | **Metrics** (the series drawn; reports and share links only: in a workspace the card editor's **Data** picks them). **X axis** *(default)*: **Step**, **Relative time (wall)** (seconds since the run was created), **Relative time (process)** (the seconds its process ran; cairn records no resume times yet, so this equals the wall-relative time), **Wall time**, or any metric; a metric whose values decrease somewhere is noted *Not monotonically increasing* (it still works, joined as of each step). **X range** / **Y range**, **Log x** / **Log y** *(default)*. **Smoothing**: kind and amount *(default)*. **Outliers**: low/high percentile to clip the y range to *(default)*. **Max runs**: pinned runs come first *(default)*. |
 | Grouping | **Group runs**: **Workspace** *(default)* follows the [workspace](project-workspace.md) sidebar's grouping (grouped: one line per innermost sidebar group, labelled `group: exp-44, jobType: train`; not grouped: one line per run), and outside a workspace (run page, reports) uses the settings below. **Off** draws one line per run, even in a grouped workspace. **By key** always uses the settings below, also in a grouped workspace. **Group runs by**: Group, Job type or a Param. Runs that share the value draw as one centre **Line** (mean, median, min or max) with a **Band** (std, min–max or sem). **Hide member runs**, **Latest run per group** *(all default)*. Shown only when the card has several runs. |
-| Display | **Line type**: linear, monotone, step, step before, step after. **Chart type**: **Line**, **Area** (the lines stacked, each filled down to the one below) or **Percentage area** (each line's share of the total). **Show original**: the faded raw line under a smoothed one. **Full fidelity**: per-pixel min/max, recomputed on zoom. Axis titles. **Legend** on/off, position (top, bottom, right, left), font size (small, medium, large, or auto: small below a 480 px chart, medium above) and [template](../reference/expressions.md#templates) (e.g. `${run.name} · ${run.group} · ${config.lr}`). **Tooltip** template and wall time *(most default)*. Each series also has its own **Colour**, **Width** and **Dash**, and a **Label**: a run template whose `[[ … ]]` sections show in the legend only while hovering, with `${x}` and `${y}` the hovered point (as wandb's `[[ ${x}: ${y} ]] name`). A series of one or two points is drawn as point markers. |
+| Display | **Line type**: linear, monotone, step, step before, step after. **Chart type**: **Line**, **Area** (the lines stacked, each filled down to the one below) or **Percentage area** (each line's share of the total). **Show original**: the faded raw line under a smoothed one. **Full fidelity**: per-pixel min/max, recomputed on zoom. Axis titles. **Legend** (it lists only the lines that draw in the chart: a run or group that does not log the metric is left out) on/off, position (top, bottom, right, left), font size (small, medium, large, or auto: small below a 480 px chart, medium above) and [template](../reference/expressions.md#templates) (e.g. `${run.name} · ${run.group} · ${config.lr}`). **Tooltip** template and wall time *(most default)*. Each series also has its own **Colour**, **Width** and **Dash**, and a **Label**: a run template whose `[[ … ]]` sections show in the legend only while hovering, with `${x}` and `${y}` the hovered point (as wandb's `[[ ${x}: ${y} ]] name`). A series of one or two points is drawn as point markers. |
 | Expressions | **X expression**: any [expression](../reference/expressions.md) over the run, evaluated on each line's steps, e.g. `step * 32`, `epoch` or `relative_time / 60`. A metric is joined as of each step. **Add derived series**: an expression such as `loss / step`, drawn for every run. |
 
 Smoothing kinds:
@@ -151,7 +151,7 @@ A [gallery](../guides/media.md#captions-and-galleries) point holds several items
 - **Audio, video, HTML, Markdown, text, volume**: the items in a grid at their natural height. With **Sync playback** on, a gallery's videos (and every run's) play together on the card's transport bar, or on the section's when the card follows the section slider.
 - **Point cloud, mesh, boxes**: one viewer per run, with a tab per item the Index selects. The chosen tab applies to every run's pane. Browsers limit a page to about 16 live 3D viewers, so a 3D card's Column content defaults to Run (one viewer per run), and it does not open one per item unless its layout asks for it (Column content Index or Step, a grid, compare); keep such cards to a few tiles with **Media limit**.
 
-A step change swaps the whole gallery once all its items have loaded; until then the previous step stays on screen. Runs side by side (the Gallery mode's panes, grid cells, compare slots) switch steps together. The histogram card's heatmap needs one histogram per step, so it is unavailable for a gallery series.
+A step change swaps the whole gallery once all its items have loaded; until then the previous step stays on screen. Runs side by side (the Gallery mode's panes, grid cells, compare slots) switch steps together. The histogram card's heatmap shows one item of a list at a time: step through them with **Index ‹ ›** above it.
 
 ### Image
 
@@ -223,7 +223,7 @@ Video settings, under **Playback** *(default)*:
 
 ### Histogram and tensor
 
-- **Histogram:** set **View** *(default)* to **Bars (per step)** at the slider's step, or **Heatmap (over steps)**, which needs more than 3 steps. There is also **Log Y axis** (in heatmap view, log colour scale) and **Colormap**.
+- **Histogram:** **View** *(default)* **Heatmap (over steps)**, as wandb draws histograms: x is the step, y the value, and a cell's colour is the share of that step's samples in the bin (light grey low, blue high). Every run of the card has its own strip, stacked on one value axis and labelled with the run's name and colour dot; when the workspace is grouped, each innermost group is one strip that pools its runs' histograms per step. Hover a cell to see that step's histogram of the strip as small bars, with the hovered bin's count. **Bars (per step)** shows the histograms at the slider's step instead, the runs overlaid in their colours. **X axis**: **Step** *(default)*, **Relative time** (seconds since the run started) or **Wall time**. There is also **Log colour scale** (bars: **Log Y axis**) and **Colormap** (default **Blues**). For a list of histograms the heatmap shows one index at a time (**Index ‹ ›**); bars follow the card's Index.
 - **Tensor:** set **View** *(default)* to **Stats**, **Histogram** (with **Bins**) or **Heatmap** (with **Colormap**). For an array with more than two dimensions, the **Slice dim** controls pick the index of each leading dimension, and the heatmap shows the last two.
 
 ### 3D and volume
@@ -262,7 +262,13 @@ A custom viewer card draws its data with one of the project's [custom viewers](.
 
 ## Table
 
-Logged tables, one pane per run. Cells that hold `cairn.Image`, `Audio` or `Video` render inline; click **Enlarge** to open an image or video in the image card's zoomable pane or the video card's player. Click a column header to sort (ascending, descending, off). **Save** downloads the current table as CSV.
+Logged tables at the slider's step, as wandb's table panel: with several runs, every run's rows in one table behind a leading `run` column with the run's colour dot. Cells that hold `cairn.Image`, `Audio` or `Video` render inline; click **Enlarge** to open an image or video in the image card's zoomable pane or the video card's player.
+
+- Click a column header to sort (ascending, descending, off). The sort is kept with the card.
+- **Columns** (beside the query bar): show or hide each column and move it up or down; **Show all** / **Hide all**.
+- **Reset**: the query, sort, columns and page size back to their defaults.
+- Below the table: **Rows** per page (10, 25, 50, 100) and `1–10 of 23` with previous / next.
+- **Download data** in the header exports what the table shows as CSV: its columns in their order and every row in its sort order, all pages.
 
 **Query bar.** Above the table, type a boolean [expression](../reference/expressions.md) over the columns to keep only the rows where it is true. Examples: `score > 0.5` or `` `pred/label` != null ``.
 
@@ -274,9 +280,9 @@ If the query has an error, it is reported and not applied.
 
 | Tab | Settings |
 |---|---|
-| Values | **Tables**: `None` shows one pane per series. `Concat` stacks the tables into one, with a leading `source` column. `Join` joins the first two sources on a **Key column** (inner, left or outer). By default the key is the shared id-like first column, or rows are matched by position. Clashing columns get `_1` / `_2` suffixes. Each source is a series at the slider's step or at a fixed step. |
+| Values | **Tables**: `Rows` *(default)* stacks every series' table at the slider's step into one, with a leading `run` column. `Panes` shows one pane per series, side by side. `Concat` stacks the tables into one, with a leading `source` column. `Join` joins the first two sources on a **Key column** (inner, left or outer). By default the key is the shared id-like first column, or rows are matched by position. Clashing columns get `_1` / `_2` suffixes. Each source is a series at the slider's step or at a fixed step. |
 | Grouping | **Group by** key columns, with aggregates: `count`, `sum`, `mean`, `min`, `max`, `first`, `nunique`. |
-| Display | **Rows per page** *(default)*. **Columns**: show or hide. **Compare**: **Diff colors** colours numeric cells red/green against the other runs, and is on by default with exactly two runs. **Invert colors**. **Text diff** *(default)*: off, words, chars or lines. It marks what changed in text cells against the first table, or `x_2` against `x_1` in a join. |
+| Display | **Rows per page** *(default)*. **Columns**: show or hide. **Compare** (`Panes`): **Diff colors** colours numeric cells red/green against the other runs, and is on by default with exactly two runs. **Invert colors**. **Text diff** *(default)*: off, words, chars or lines. It marks what changed in text cells against the first table, or `x_2` against `x_1` in a join. |
 | Expressions | **Derived columns**: a name and an expression evaluated per row, e.g. `score * 100`. |
 
 The pipeline runs in this order: derived columns, then the query, then group-by.
