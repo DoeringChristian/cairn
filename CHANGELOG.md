@@ -164,6 +164,7 @@ importance, and notebook embeds.
   never overlapping (hover for the full name).
 
 ### Changed
+- Card widths are full, 1/2, 1/3 or 1/4 of the row (as wandb), so cards of one width always fill a row: the resize handle snaps to them and the gear modal has a Width setting. Stored widths from before fall back to the card type's default.
 
 - **"Latest only" moved out of the runs toolbar** (Runs page and workspace
   sidebar). **Latest versions only** is now an option in the **Filter**
