@@ -182,5 +182,5 @@ def test_prefixed_names_are_separate_series(transport, reader):
     by_name = {s["name"]: s for s in seqs}
     assert set(by_name) == {"loss", "val.loss"}
     assert len(seqs) == 2
-    assert set(by_name["loss"]) == {"name", "object_type", "min_step", "max_step", "count"}
+    assert set(by_name["loss"]) == {"name", "object_type", "min_step", "max_step", "count", "monotonic"}
     assert by_name["loss"]["count"] == by_name["val.loss"]["count"] == 3

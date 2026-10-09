@@ -21,6 +21,12 @@ It is a derived index, never a source of truth:
   operation that deletes or copies history (rewind, fork, archive import);
 * ``backfill_metric_stats`` builds the whole table once for a repo written
   before it existed.
+
+``monotonic`` says whether the values never decrease along the steps (the
+scalar chart lists a metric that does as "not monotonically increasing" when
+offering it as the x-axis). Ingest folds a batch in when it lands wholly
+after (or before) the stored steps; a batch interleaved with them leaves it
+NULL for a moment and ``fill_monotonic`` rescans that one series.
 """
 
 from __future__ import annotations
@@ -47,6 +53,33 @@ def _sum(values: list[float]) -> float:
         return sum(values)
 
 
+#: 1 when a row's series never decreases along its steps, else 0: a scan of
+#: the series' points (correlated on the ``metric_stats`` row being updated).
+_MONOTONIC_SCAN = """NOT EXISTS (
+    SELECT 1 FROM (SELECT scalar_value AS v,
+                          LAG(scalar_value) OVER (ORDER BY step) AS p
+                     FROM sequences s
+                    WHERE s.run_id = metric_stats.run_id AND s.name = metric_stats.name
+                      AND s.scalar_value IS NOT NULL)
+     WHERE v < p)"""
+
+
+def fill_monotonic(con: sqlite3.Connection, where: str = "1", params: Sequence[Any] = ()) -> None:
+    """Scan the points of every row matching ``where`` whose ``monotonic``
+    is unknown (NULL) and store it."""
+    con.execute(
+        f"UPDATE metric_stats SET monotonic = {_MONOTONIC_SCAN} "
+        f"WHERE monotonic IS NULL AND ({where})",
+        list(params),
+    )
+
+
+def _non_decreasing(pts: list[tuple[int, float]]) -> bool:
+    """Whether the values of ``pts`` (step, value) never decrease by step."""
+    vals = [v for _, v in sorted(pts)]
+    return all(b >= a for a, b in zip(vals, vals[1:]))
+
+
 def apply_inserted(
     con: sqlite3.Connection, run_id: str, inserted: Iterable[Sequence[Any]],
 ) -> None:
@@ -56,6 +89,8 @@ def apply_inserted(
     One upsert per metric. A batch may arrive out of order relative to what
     is stored: ``first`` moves only to a lower step, ``last`` only to a
     higher one. SET expressions all see the row before the update.
+    ``monotonic`` extends when the batch lies wholly after or before the
+    stored steps; otherwise it is rescanned (``fill_monotonic``).
     """
     groups: dict[str, list[tuple[int, float]]] = {}
     for name, step, value in inserted:
@@ -70,15 +105,22 @@ def apply_inserted(
         last = max(pts)
         rows.append((
             run_id, name, len(pts), _sum(values), min(values), max(values),
-            first[0], first[1], last[0], last[1],
+            first[0], first[1], last[0], last[1], int(_non_decreasing(pts)),
         ))
     con.executemany(
         """
         INSERT INTO metric_stats (
             run_id, name, count, sum, min, max,
-            first_step, first_value, last_step, last_value
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            first_step, first_value, last_step, last_value, monotonic
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (run_id, name) DO UPDATE SET
+            monotonic = CASE
+                WHEN monotonic IS NULL THEN NULL
+                WHEN excluded.first_step > last_step
+                    THEN monotonic AND excluded.monotonic AND excluded.first_value >= last_value
+                WHEN excluded.last_step < first_step
+                    THEN monotonic AND excluded.monotonic AND excluded.last_value <= first_value
+                ELSE NULL END,
             count = count + excluded.count,
             sum = sum + excluded.sum,
             min = MIN(min, excluded.min),
@@ -92,6 +134,7 @@ def apply_inserted(
         """,
         rows,
     )
+    fill_monotonic(con, "run_id = ?", [run_id])
 
 
 def rebuild_metric_stats(con: sqlite3.Connection, run_ids: Sequence[str]) -> None:
@@ -124,6 +167,7 @@ def rebuild_metric_stats(con: sqlite3.Connection, run_ids: Sequence[str]) -> Non
             """,
             chunk,
         )
+        fill_monotonic(con, f"run_id IN ({holes})", chunk)
 
 
 def backfill_metric_stats(con: sqlite3.Connection) -> None:

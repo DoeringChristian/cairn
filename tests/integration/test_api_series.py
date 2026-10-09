@@ -97,8 +97,9 @@ def test_series_caps_the_batch(client):
 
 
 def _scan(app, rid: str) -> list[dict]:
-    """The catalogue as a scan of every point (the old query)."""
-    return app.state.db.read_columns(
+    """The catalogue as a scan of every point (the old query), plus whether
+    a series with scalar values never decreases along its steps."""
+    rows = app.state.db.read_columns(
         """
         SELECT name, MAX(object_type) AS object_type, MIN(step) AS min_step,
                MAX(step) AS max_step, COUNT(*) AS count
@@ -106,6 +107,17 @@ def _scan(app, rid: str) -> list[dict]:
         """,
         [rid],
     )
+    values: dict[str, list[float]] = {}
+    for name, v in app.state.db.read(
+        "SELECT name, scalar_value FROM sequences WHERE run_id = ? AND scalar_value IS NOT NULL ORDER BY step",
+        [rid],
+    ):
+        values.setdefault(name, []).append(v)
+    for r in rows:
+        vals = values.get(r["name"])
+        if vals is not None:
+            r["monotonic"] = all(b >= a for a, b in zip(vals, vals[1:]))
+    return rows
 
 
 def test_catalogue_equals_a_scan_of_every_point(client, app):

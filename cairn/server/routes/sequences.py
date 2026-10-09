@@ -94,7 +94,9 @@ def get_updates(
 @router.get("/runs/{run_id}/sequences")
 def list_sequences(run_id: str, request: Request) -> dict[str, Any]:
     """Every sequence of the run: name, object type (the greatest one, if a
-    series mixes them), first and last step, and point count. A ``custom``
+    series mixes them), first and last step, and point count; a scalar series
+    also says whether its values never decrease along its steps
+    (``monotonic``: what an x-axis needs). A ``custom``
     series also has its data ``kind`` (that of its latest point). A summary
     media value (``run.summary(fig=cairn.Figure(f))``) is a series of ONE
     point at step 0 marked ``"summary": true`` (no other series has the key):
@@ -110,7 +112,7 @@ def list_sequences(run_id: str, request: Request) -> dict[str, Any]:
     db = get_db(request)
     require_run(db, run_id)
     stats = db.read(
-        "SELECT name, count, first_step, last_step FROM metric_stats WHERE run_id = ?",
+        "SELECT name, count, first_step, last_step, monotonic FROM metric_stats WHERE run_id = ?",
         [run_id],
     )
     rest = db.read(
@@ -124,8 +126,11 @@ def list_sequences(run_id: str, request: Request) -> dict[str, Any]:
         [run_id],
     )
     out: dict[str, dict[str, Any]] = {}
-    for name, count, first, last in stats:
-        out[name] = {"name": name, "object_type": "scalar", "min_step": first, "max_step": last, "count": count}
+    for name, count, first, last, monotonic in stats:
+        out[name] = {
+            "name": name, "object_type": "scalar", "min_step": first, "max_step": last, "count": count,
+            "monotonic": bool(monotonic),
+        }
     for name, otype, lo, hi, count, valued, summary in rest:
         seq = out.get(name)
         if seq is None:

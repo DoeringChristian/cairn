@@ -149,7 +149,23 @@ def _same(a: Any, b: Any, path: str = "") -> None:
         assert a == b and type(a) is type(b), f"{path}: {a!r} != {b!r}"
 
 
+def _oracle_monotonic(db: Database) -> dict[tuple[str, str], bool]:
+    """Per (run, metric): the scalar values never decrease along the steps."""
+    pts: dict[tuple[str, str], list[tuple[int, float]]] = {}
+    for rid, name, step, v in db.read(
+        "SELECT run_id, name, step, scalar_value FROM sequences WHERE scalar_value IS NOT NULL"
+    ):
+        pts.setdefault((rid, name), []).append((step, v))
+    out = {}
+    for key, p in pts.items():
+        vals = [v for _, v in sorted(p)]
+        out[key] = all(b >= a for a, b in zip(vals, vals[1:]))
+    return out
+
+
 def _check(db: Database) -> None:
+    stored = {(r, n): m for r, n, m in db.read("SELECT run_id, name, monotonic FROM metric_stats")}
+    assert stored == {k: int(v) for k, v in _oracle_monotonic(db).items()}
     run_ids = [r[0] for r in db.read("SELECT id FROM runs")]
     # Each rule's name encodes its kind, so mean-rule floats compare loosely.
     _same(_metric_stats(db, run_ids), _oracle_stats(db, run_ids), "stats")
@@ -324,3 +340,40 @@ def test_out_of_order_and_resent_points(fresh_db):
         "count": 4, "first": 4.0, "last": 3.0, "min": 1.0, "max": 4.0,
         "mean": 2.5, "first_step": 0, "last_step": 9,
     }
+
+
+def test_monotonic_flag(fresh_db):
+    """In-order, prepended and interleaved batches keep ``monotonic`` exact;
+    the sequence list reports it per scalar series."""
+    db = fresh_db
+    rid = ingest_ops.create_run(db, project="p")["run_id"]
+
+    def pts(name, *sv):
+        return [{"name": name, "step": s, "wall_time": WALL, "object_type": "scalar",
+                 "scalar_value": v} for s, v in sv]
+
+    def flag(name):
+        return db.read_one(
+            "SELECT monotonic FROM metric_stats WHERE run_id = ? AND name = ?", [rid, name])[0]
+
+    ingest_ops.insert_batch(db, rid, pts("epoch", (0, 0.0), (1, 0.0), (2, 1.0)))
+    ingest_ops.insert_batch(db, rid, pts("epoch", (3, 1.0), (4, 2.0)))  # appended
+    assert flag("epoch") == 1
+    ingest_ops.insert_batch(db, rid, pts("epoch", (5, 1.5)))  # drops
+    assert flag("epoch") == 0
+
+    ingest_ops.insert_batch(db, rid, pts("lr", (10, 5.0), (20, 6.0)))
+    ingest_ops.insert_batch(db, rid, pts("lr", (0, 1.0)))  # prepended, still rising
+    assert flag("lr") == 1
+    ingest_ops.insert_batch(db, rid, pts("lr", (15, 7.0)))  # interleaved: 5, 7, 6
+    assert flag("lr") == 0
+
+    ingest_ops.insert_batch(db, rid, pts("t", (0, 1.0), (10, 3.0)))
+    ingest_ops.insert_batch(db, rid, pts("t", (5, 2.0)))  # interleaved, in order
+    assert flag("t") == 1
+
+    db.write("UPDATE metric_stats SET monotonic = NULL")
+    from cairn.server.storage.migrations import apply_migrations
+    with db.transaction() as con:
+        apply_migrations(con)
+    assert (flag("epoch"), flag("lr"), flag("t")) == (0, 0, 1)

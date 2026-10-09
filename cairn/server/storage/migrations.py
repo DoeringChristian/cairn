@@ -7,6 +7,8 @@ import secrets
 import shlex
 import sqlite3
 
+from .metric_stats import fill_monotonic
+
 SCHEMA_VERSION = 2  # Bumped from 1 (DuckDB) to 2 (SQLite). Breaking change.
 
 SCHEMA_SQL: list[str] = [
@@ -173,6 +175,8 @@ SCHEMA_SQL: list[str] = [
         first_value   REAL NOT NULL,
         last_step     INTEGER NOT NULL,
         last_value    REAL NOT NULL,
+        -- 1: the values never decrease along the steps (NULL: not yet scanned).
+        monotonic     INTEGER,
         PRIMARY KEY (run_id, name)
     )
     """,
@@ -750,6 +754,8 @@ def apply_migrations(con: sqlite3.Connection) -> int:
     _add_column_if_missing(con, "wal_progress", "worker", "INTEGER NOT NULL DEFAULT 0")
     _add_column_if_missing(con, "artifact_versions", "tags", "TEXT")
     _add_column_if_missing(con, "artifact_families", "last_version", "INTEGER NOT NULL DEFAULT 0")
+    _add_column_if_missing(con, "metric_stats", "monotonic", "INTEGER")
+    fill_monotonic(con)  # rows from before the column (one scan; none afterwards)
     # Indexes on added columns run after the ALTERs: in SCHEMA_SQL they would
     # fail on a database that predates the column.
     for stmt in _ADDED_COLUMN_INDEXES:
