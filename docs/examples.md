@@ -29,7 +29,7 @@ them:
 
 | Script | What it logs | Needs | What to look at |
 |---|---|---|---|
-| `organise_runs.py` | Project `organise-demo`, group `exp-1`: a `prepare` → `train` → `finetune` → `eval` pipeline whose `prepare` and `base` runs are re-run (v2), a dataset and a model artifact, three fine-tune runs that each declare `uses=[base]` and use the base model, and an eval run linking them with `use_run`; group `seeds-lr3e-4`: three `train` runs differing by `seed`. Metric rules via `track(summary=, x="epoch")`. Prints each run's group, job type, name, version and links. | — | The workspace sidebar grouped by group, then job type, and one chart line per group; the runs table's Group / Job Type columns, versions and **Latest only**; a fine-tune run's **Inputs** and the base run's **Used by** on the Overview; the Lineage page. See [Organising runs](guides/organising-runs.md). |
+| `organise_runs.py` | Project `organise-demo`, group `exp-1`: a `prepare` → `train` → `finetune` → `eval` pipeline whose `prepare` and `base` runs are re-run (v2), a dataset and a model artifact, three fine-tune runs that each declare `uses=[base]` and use the base model, and an eval run linking them with `use_run`; group `seeds-lr3e-4`: three `train` runs differing by `seed`. Metric rules via `track(summary=, x="epoch")`. Prints each run's group, job type, name, version and links. | — | The workspace sidebar grouped by group, then job type, and one chart line per group; the runs table's Group / Job Type columns, versions, **Latest versions only** (Filter) and **Show latest only** (eye menu); a fine-tune run's **Inputs** and the base run's **Used by** on the Overview; the Lineage page. See [Organising runs](guides/organising-runs.md). |
 
 ## Metrics and the runs table
 

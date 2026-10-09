@@ -8,10 +8,10 @@ What the sidebar shows is part of the current view: every change saves into it l
 
 ```
 Status [All ▾]  Search [regex          ]
-[Filter] [Group: group › job_type] [ ] Latest only
+[Filter] [Group: group › job_type]
 Sort: [created ▾] [↓]
 3 of 3 groups shown
-◉  NAME  15 listed
+◉▾ NAME  15 listed
 ◉  ○ ▾ Group: exp-44        3  5
      ◉ ● ▾ Job Type: train      2
          ◉ eager-sun v2
@@ -22,15 +22,15 @@ Sort: [created ▾] [↓]
 ◉  ○ ▸ Group: (none)        2  2
 ```
 
-The sidebar is the [runs table](runs-table.md) (the same view state: what you change in one shows in the other) with only the Name column, and an eye in place of each checkbox: in the Name cell, before the run's dot or the group's caret, indented with it. The header's eye, left of **Name**, shows or hides every listed run; `15 listed` counts the listed runs. Its toolbar is the runs table's without **Columns**: **Status**, **Search**, **Filter**, **Group** and **Latest only** work exactly as there. **Sort** picks one of the runs table's sortable keys (`created`, `name`, `status`, `duration`, and the metric and param columns) and **↓ / ↑** flips its direction; it starts on `created ↓` (newest first) and is saved with the rest. Not grouped, a grouped run reads `exp-44 · train v2`, unless every listed run is in the same group. **N of M groups shown** (not grouped: runs) counts the groups with a visible run, or the visible runs. On a phone the sidebar folds behind a **Runs** button.
+The sidebar is the [runs table](runs-table.md) (the same view state: what you change in one shows in the other) with only the Name column, and an eye in place of each checkbox: in the Name cell, before the run's dot or the group's caret, indented with it. The header's eye, left of **Name**, shows or hides every listed run; `15 listed` counts the listed runs. Its toolbar is the runs table's without **Columns**: **Status**, **Search**, **Filter** (with **Latest versions only**) and **Group** work exactly as there. **Sort** picks one of the runs table's sortable keys (`created`, `name`, `status`, `duration`, and the metric and param columns) and **↓ / ↑** flips its direction; it starts on `created ↓` (newest first) and is saved with the rest. Not grouped, a grouped run reads `exp-44 · train v2`, unless every listed run is in the same group. **N of M groups shown** (not grouped: runs) counts the groups with a visible run, or the visible runs. On a phone the sidebar folds behind a **Runs** button.
 
 - A new view starts **not grouped** (one line per run, as wandb's default workspace); **Group** groups it, and a view keeps the grouping it saved.
 - Group rows read `Field: value` (`Group: exp-44`, `Job Type: train`, `Tag: prod`, `lr: 0.001`; no value: `Group: (none)`), as in wandb. An **outer** group (one with sub-groups) has a hollow circle and two counts, its sub-groups and its runs. An **innermost** group has a filled dot in the colour of its chart line, and its run count. With one grouping level every group is innermost. Runs inside groups have no dot: their line is their group's. **Runs without a value are never averaged**: a `(none)` group, at any level, has no line, so its dot is hollow like an outer group's, and each run under it keeps its own dot and its own line.
 - **▸ / ▾** folds a group, saved in the view (the [runs table](runs-table.md) shows the same groups open). The first top-level group and the `(none)` group start open. A run group's name (`exp-44` in `Group: exp-44`) [filters the workspace to it](#filtering-to-a-group).
-- The **header eye** shows every listed run, or hides them all when all are shown; ◐ means some are hidden.
+- The **header eye** shows every listed run, or hides them all when all are shown; ◐ means some are hidden. Its **▾** opens **Show all**, **Hide all** and **Show latest only**. **Show latest only** shows the latest version of every series and hides the older versions, which stay listed (dimmed) and are not drawn. Grouped, a group with older versions shows ◐. A run's eye still overrides it afterwards.
 - A **group's eye** shows or hides every run in it; ◐ means some of them are hidden. The eyes of a group's runs are indented one step per level.
 - A **run's eye** shows or hides that run. A hidden run's dot is hollow, and so is an innermost group's when all its runs are hidden.
-- **Pinned runs** (pinned in the runs table) are listed first and stay listed whatever the status, search, filter and **Latest only**. Grouped, a pinned run is first in its group. A pinned run or the baseline shows its pin or flag right after its version.
+- **Pinned runs** (pinned in the runs table) are listed first and stay listed whatever the status, search and filter (**Latest versions only** included). Grouped, a pinned run is first in its group. A pinned run or the baseline shows its pin or flag right after its version.
 - **Hover** a row to show its copyable id at the end of the row (nothing else, so names stay readable in the narrow sidebar). Pin and baseline are set in the runs table.
 - Hovering a run also highlights its line(s) are highlighted in every chart, the others dimmed; hover a line in a chart and its row is highlighted. Grouped, an innermost group header, or a run in it, highlights the group's line, and hovering that line highlights the group header. A run under a `(none)` group highlights its own line.
 
@@ -47,7 +47,7 @@ The cards get the visible runs. The page assigns colours once, over the visible 
 
 ## From the runs table
 
-The [runs table](runs-table.md) belongs to the same view: its toolbar, eyes and open groups are the sidebar's, so a filter or an eye set there is set here too. Select runs there and click **Show in workspace**: the workspace opens with exactly the selected runs visible and nothing else, grouped or not, and its status, search, filter and **Latest only** cleared. Grouped, a group with other runs shows ◐, and its line is the mean over the selected runs only.
+The [runs table](runs-table.md) belongs to the same view: its toolbar, eyes and open groups are the sidebar's, so a filter or an eye set there is set here too. Select runs there and click **Show in workspace**: the workspace opens with exactly the selected runs visible and nothing else, grouped or not, and its status, search and filter (**Latest versions only** included) cleared. Grouped, a group with other runs shows ◐, and its line is the mean over the selected runs only.
 
 ## Filtering to a group
 

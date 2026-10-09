@@ -4,15 +4,15 @@ The runs table (`/p/<project>`) lists a project's runs, newest first. Use it to 
 
 ```
 selections / runs                                   [view: Default ▾]
-Status [All▾] Search [regex] [Filter] [Group] [ ] Latest only [Columns]
-☐ ◉ NAME            STATE      CREATED   …
+Status [All▾] Search [regex] [latest versions only ×] [Filter (1)] [Group] [Columns]
+☐ ◉▾ NAME           STATE      CREATED   …
 ```
 
-As in wandb, the table belongs to the current [workspace view](workspace.md#workspace-views): its status, search, filter, grouping, **Latest only**, sort, eyes, open and closed groups, and its column setup (shown, pinned and ordered columns, widths, computed columns) are the view's run state, the same one the [workspace sidebar](project-workspace.md#runs-sidebar) shows. Change one and the other follows. The view switcher in the header (the workspace's) switches the view, and with it the table's state; a new view copies the current one's. Edits are undoable like workspace edits.
+As in wandb, the table belongs to the current [workspace view](workspace.md#workspace-views): its status, search, filter (with **Latest versions only**), grouping, sort, eyes, open and closed groups, and its column setup (shown, pinned and ordered columns, widths, computed columns) are the view's run state, the same one the [workspace sidebar](project-workspace.md#runs-sidebar) shows. Change one and the other follows. The view switcher in the header (the workspace's) switches the view, and with it the table's state; a new view copies the current one's. Edits are undoable like workspace edits.
 
 Runs load as you scroll: the first 100, then 500 at a time. While a filter or a group-by is active, the table loads every page, so matches outside the first page are not missed. The header shows `<shown> of <total> runs`.
 
-Big tables render only what is on screen: past 100 rows, only the rows near the viewport (here and in the [workspace sidebar](project-workspace.md#runs-sidebar)), and past 30 scrolling columns, only the columns near the visible part of the table. They look the same as a fully rendered table: each column keeps the width its widest cell gives it. Sorting, searching, grouping or **Latest only** on a thousand runs with hundreds of columns takes a fraction of a second. Coming back to the table restores where you had scrolled to.
+Big tables render only what is on screen: past 100 rows, only the rows near the viewport (here and in the [workspace sidebar](project-workspace.md#runs-sidebar)), and past 30 scrolling columns, only the columns near the visible part of the table. They look the same as a fully rendered table: each column keeps the width its widest cell gives it. Sorting, searching, grouping or **Latest versions only** on a thousand runs with hundreds of columns takes a fraction of a second. Coming back to the table restores where you had scrolled to.
 
 The table updates live: new and deleted runs appear within a few seconds, and running runs' status and values refresh every 3 seconds.
 
@@ -22,9 +22,8 @@ The table updates live: new and deleted runs appear within a few seconds, and ru
 |---|---|
 | **Status** | Show only runs with one status (`running`, `completed`, `failed`, `killed`, `stopped`, `crashed`), or only the **archived** runs. Every other choice hides archived runs. |
 | **Search** | A case-insensitive regex over each run's name, id, status and tags. An invalid regex turns the box red. |
-| Filter chips, **Filter** | The [filter tree](#filters). |
+| Filter chips, **Filter** | The [filter](#filters): **Latest versions only** and the filter tree. |
 | **Group** | [Nested group-by](#group-by). |
-| **Latest only** | Keep only the newest run of each [series](../guides/organising-runs.md#versions) (group, job type, name): its highest version, else its latest start. `train` in two groups, or under two job types, is two series. |
 | **Columns** | The [column manager](#columns). The button shows `(+N ƒ)` when you have N computed columns. |
 | Sort summary | With more than one sort key, lists them; × removes one. |
 | Run view summary | With runs hidden or pinned, or a baseline set, shows e.g. `2 hidden · 1 pinned · baseline <name>`; **reset** clears all three. |
@@ -35,7 +34,9 @@ When a series has several runs, the newest of them gets an accent bar on its lef
 
 ## Filters
 
-A filter is a tree: **groups** combine their children with AND or OR, and the leaves are **conditions** or **expressions**. Groups nest. The top-level children appear as removable chips next to the **Filter** button; **Clear filters** removes them all.
+**Latest versions only**, the first option in the **Filter** popover, keeps only the newest run of each [series](../guides/organising-runs.md#versions) (group, job type, name): its highest version, else its latest start. `train` in two groups, or under two job types, is two series. When on, it shows as the chip `latest versions only ×` and counts in **Filter (N)**; the older versions are not listed. To keep them listed but not drawn, use the eye menu's [Show latest only](#eyes-pin-and-baseline) instead.
+
+The rest of the filter is a tree: **groups** combine their children with AND or OR, and the leaves are **conditions** or **expressions**. Groups nest. The top-level children appear as removable chips next to the **Filter** button; **Clear filters** removes them all (and **Latest versions only**).
 
 To edit the tree, click **Filter**:
 
@@ -156,7 +157,7 @@ Tick a row's checkbox to select it; ++shift++-click another checkbox to select t
 |---|---|
 | **Clear** | Deselect all. |
 | **Tag** | The bulk tag editor: add a tag to every selected run, or remove a tag from all runs that have it. |
-| **Show in workspace** | Set the view's eyes to exactly the selected runs (clearing status, search, filter and **Latest only**) and open the [project workspace](project-workspace.md). |
+| **Show in workspace** | Set the view's eyes to exactly the selected runs (clearing status, search and filter, **Latest versions only** included) and open the [project workspace](project-workspace.md). |
 | **Export** | Download the selected runs as `cairn_export_<date>.zip`. |
 | **Stop** | Ask the selected *running* runs to stop (asks first). See [Run lifecycle](../guides/runs.md). |
 | **Archive** / **Unarchive** | Archive or restore the selected runs. Archiving hides a run without changing its status; an archived run shows an `archived` mark beside it. |
@@ -172,7 +173,7 @@ The Tags column lists each run's tags. Click **+** to add a tag, with suggestion
 
 ## Eyes, pin and baseline
 
-The **eye** beside each checkbox is the workspace's: it picks the runs the [project workspace](project-workspace.md)'s cards draw, exactly as the sidebar's eyes (they are the same eyes). A group header's eye shows or hides every run in it (◐: some hidden), the header's eye every listed run. By default the 10 newest groups (not grouped: runs) are visible. A hidden run's row is dimmed, not removed, and its dot is hollow.
+The **eye** beside each checkbox is the workspace's: it picks the runs the [project workspace](project-workspace.md)'s cards draw, exactly as the sidebar's eyes (they are the same eyes). A group header's eye shows or hides every run in it (◐: some hidden), the header's eye every listed run. The **▾** beside the header's eye opens **Show all**, **Hide all** and **Show latest only**. **Show latest only** turns on the eye of the latest version of every listed [series](../guides/organising-runs.md#versions) and turns off the eyes of the older versions. It acts once and is not a mode. The older versions stay listed, dimmed like other hidden runs, and the cards do not draw them. Grouped, a group with older versions shows ◐. Clicking a run's eye afterwards still shows or hides that run. By default the 10 newest groups (not grouped: runs) are visible. A hidden run's row is dimmed, not removed, and its dot is hollow.
 
 Hover a run's name to show its copyable id and two toggles (on touch devices they are always visible):
 
@@ -203,4 +204,4 @@ Colours are derived from run ids and group labels; nothing is stored. There are 
 
 ## Where the table's state is kept
 
-The filter tree, group-by levels, sort keys, column order, hidden and pinned columns and computed columns are saved in your browser per project, and restored when you come back. The status filter, search and **Latest only** are not saved. None of this is part of the server-side workspace views. Table edits are not on the [undo](shortcuts.md) stack.
+The filter tree, group-by levels, sort keys, column order, hidden and pinned columns and computed columns are saved in your browser per project, and restored when you come back. The status filter and search are not saved. None of this is part of the server-side workspace views. Table edits are not on the [undo](shortcuts.md) stack.

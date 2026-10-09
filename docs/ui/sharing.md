@@ -77,7 +77,7 @@ Each cell shows the runs its run sets matched on the server when the page loaded
 
 A share link gives access to the report's own runs and nothing else. The server works these out from the report's current source. A run is in scope if it is named in a ```` ```cairn ```` fence ([Report blocks](../reference/report-blocks.md)) in any of these ways:
 
-- matched by one of the cell's run sets (`runSets`), resolved against the project's newest 1000 runs just as the UI resolves them (the same filter, Latest only, grouping and eyes; the server runs a port of the UI's code, tested against shared cases),
+- matched by one of the cell's run sets (`runSets`), resolved against the project's newest 1000 runs just as the UI resolves them (the same filter, latest versions only, grouping and eyes; the server runs a port of the UI's code, tested against shared cases),
 - named as a run of a card's series (`series[].runId`),
 - in the cell's run view (`view`): `hidden`, `pinned` or `baseline`,
 - given as a run id in a card's settings, such as a code-diff card's left and right run.

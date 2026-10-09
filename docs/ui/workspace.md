@@ -38,7 +38,7 @@ The **Run** block lists what the run is; a field the run did not record shows `�
 
 ### Cards with no data
 
-On the run page's Workspace and System tabs, a card that shows no series this run logs is not shown, and neither is a section left without cards (as wandb's run page). The rest keeps the view's layout and order; open a run that logs the series and the card is back at its place. Multi-run cards (value, bar chart, scatter, …) select no series and always show. The [project workspace](project-workspace.md) shows every card, with an empty state when the visible runs have no data for it.
+On the run page's Workspace and System tabs, a card that shows no series this run logs is not shown (as wandb's run page). On the Workspace tab a section whose cards are all hidden keeps its header, its section controls and its **Add card**, with the note `N cards without data for this run`. Cards that show only `system.*` series belong to the System tab and are not counted. The System tab leaves out sections that have only hidden cards. On both tabs, a section with no cards at all (such as a new one) always shows, with its **Add card**. The rest keeps the view's layout and order; open a run that logs the series and the card is back at its place. Multi-run cards (value, bar chart, scatter, …) select no series and always show. The [project workspace](project-workspace.md) shows every card, with an empty state when the visible runs have no data for it.
 
 ## Workspaces
 
@@ -60,7 +60,7 @@ The view switcher is the first item of the [toolbar](#workspace-toolbar). On the
 - Click a tile to switch to its view. The panel closes. Switching is not an edit: ++cmd+z++ never switches back. Switching also clears the undo history, so ++cmd+z++ never changes a view you have left; edits inside the view you are in undo as usual.
 - **+ New view** turns into a name field with **Copy of current view** (the default) or **Empty (automatic panels only)**. ++enter++ creates the view and switches to it; ++escape++ cancels.
 
-The [project workspace](project-workspace.md) has the same switcher; there a view also holds the sidebar's runs (status, search, filter, grouping, **Latest only**, sort and eyes), so switching views switches them too. A new view starts not grouped (one line per run, as wandb's default workspace).
+The [project workspace](project-workspace.md) has the same switcher; there a view also holds the sidebar's runs (status, search, filter with **Latest versions only**, grouping, sort and eyes), so switching views switches them too. A new view starts not grouped (one line per run, as wandb's default workspace).
 
 On a phone the panel spans the full width, with one or two tiles per row.
 
@@ -169,7 +169,7 @@ Move cards and sections with their grips:
 Every move applies to the page at once and is one [undo](#undo-and-redo) step.
 
 !!! note "What is stored where"
-    **In the workspace** (each view, on the server, shared by everyone who uses the project): sections and their order, collapsed and sorted state; panels with their type, metrics, settings, size and hidden flag; removed automatic panels; whether unlisted metrics get automatic panels; hide patterns; workspace and section defaults; prefs (sync zoom, colour by). A view also holds the [project workspace](project-workspace.md)'s runs, shared with the [runs table](runs-table.md): status, search, filter, grouping, **Latest only**, sort, eyes, open and closed groups, and the runs table's columns (shown, pinned, order, widths, computed columns). Which view is current is stored on the server too.
+    **In the workspace** (each view, on the server, shared by everyone who uses the project): sections and their order, collapsed and sorted state; panels with their type, metrics, settings, size and hidden flag; removed automatic panels; whether unlisted metrics get automatic panels; hide patterns; workspace and section defaults; prefs (sync zoom, colour by). A view also holds the [project workspace](project-workspace.md)'s runs, shared with the [runs table](runs-table.md): status, search, filter (with **Latest versions only**), grouping, sort, eyes, open and closed groups, and the runs table's columns (shown, pinned, order, widths, computed columns). Which view is current is stored on the server too.
 
     **In this browser only:** the run page's and runs table's hidden, pinned and baseline runs.
 
@@ -244,7 +244,7 @@ Each project has one undo stack. It records every workspace edit, on the run pag
 - card adds, duplicates, moves, hides, removals and edits
 - turning unlisted metrics on or off
 - section edits, hide patterns, defaults, colour by
-- the project workspace's status, search, filter, grouping, **Latest only**, sort and eyes
+- the project workspace's status, search, filter (with **Latest versions only**), grouping, sort and eyes
 
 Switching views on the run page is not an edit and is not recorded; it clears the undo history. Undo with ++cmd+z++ / ++ctrl+z++ and redo with ++cmd+shift+z++ / ++ctrl+shift+z++. These shortcuts do nothing while a text field has focus, because the field keeps its own typing undo. The stack holds 200 steps.
 

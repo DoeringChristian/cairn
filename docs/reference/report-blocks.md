@@ -48,7 +48,7 @@ An empty fence is valid and produces an empty cell.
 
 ## `runSets`
 
-A run set is the runs table of the [workspace](../ui/workspace.md), frozen: its filter, grouping, **Latest only**, sort and eyes are stored in the report, and its runs are resolved live. When the report is opened, each set picks its runs from the project's 1000 newest runs exactly as the workspace's runs sidebar would with the same settings, so new matching runs appear without editing the report. Every key is optional:
+A run set is the runs table of the [workspace](../ui/workspace.md), frozen: its filter, grouping, latest versions only (`latestOnly`; the editor's **Filter** option), sort and eyes are stored in the report, and its runs are resolved live. When the report is opened, each set picks its runs from the project's 1000 newest runs exactly as the workspace's runs sidebar would with the same settings, so new matching runs appear without editing the report. Every key is optional:
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
@@ -59,7 +59,7 @@ A run set is the runs table of the [workspace](../ui/workspace.md), frozen: its 
 | `sort` | list | newest first | Sort keys: `{column, direction}`, with `column` one of `name`, `status`, `created_at`, `duration`, `value:<metric>`, `param:<key>` and `direction` `asc` or `desc`. |
 | `eyes` | mapping | `{}` | Explicit eyes, as in the workspace: `"r:<run id>": true/false` for a run, `"g:<group-by>:<value>": true/false` for a top-level group (for example `"g:group:exp-44": false`). |
 
-Archived runs are never in a run set (they still count for **Latest only**). Without explicit eyes, a set shows the runs of its 10 newest top-level groups, or its 10 newest runs when it is not grouped, like the workspace. A run in several sets is drawn once. With more than one set, each set's runs are drawn in their own colour family (shades of one hue).
+Archived runs are never in a run set (they still count for `latestOnly`). Without explicit eyes, a set shows the runs of its 10 newest top-level groups, or its 10 newest runs when it is not grouped, like the workspace. A run in several sets is drawn once. With more than one set, each set's runs are drawn in their own colour family (shades of one hue).
 
 ### The filter tree
 

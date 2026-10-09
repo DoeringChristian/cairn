@@ -39,7 +39,7 @@ cairn ui      # opens the viewer on http://localhost:4301
   override a metric's summary and goal from the table header.
 - **Runs organised as in wandb.** Free names, a `group` and a `job_type` per run, nested
   grouping (group → job type) with one aggregated chart line per group, and server-assigned
-  versions that tell re-runs apart (**Latest only** keeps the newest).
+  versions that tell re-runs apart (**Latest versions only** lists the newest).
 - **Self-logging components.** Objects that implement `__cairn_track__(self, scope)` log
   themselves. `run.track(model, "model", step=it)` walks the whole component tree.
 - **Run lifecycle.** You can resume, rewind or fork runs, stop them from the UI, raise alerts,

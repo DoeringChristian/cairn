@@ -165,6 +165,15 @@ importance, and notebook embeds.
 
 ### Changed
 
+- **"Latest only" moved out of the runs toolbar** (Runs page and workspace
+  sidebar). **Latest versions only** is now an option in the **Filter**
+  popover, shown as a `latest versions only ×` chip and stored with the
+  view's filter. A view's old `latestOnly` setting is ignored. Run sets keep
+  their own `latestOnly`, and their editor shows it as the same Filter
+  option. New: the header eye's **▾** menu has **Show all**, **Hide all** and
+  **Show latest only**. **Show latest only** shows the latest version of
+  every series and hides the older ones; they stay listed, dimmed. It acts
+  once, and a group with older versions shows ◐.
 - **Big runs tables render only what is on screen** (the Runs page and the
   workspace sidebar): past 100 rows only the rows near the viewport, past 30
   scrolling columns only the columns in view, at the widths the whole table
@@ -263,6 +272,10 @@ importance, and notebook embeds.
   (now Workspace and Files).
 
 ### Fixed
+- Run page: a new section, and a section whose cards all lack data for the
+  run, no longer vanish. A section with no cards always shows its **Add
+  card**. On the Workspace tab, a section whose cards are all hidden keeps
+  its header with `N cards without data for this run`.
 - Coming back to the Runs page restored the scroll position the next page
   had clamped it to (often the top), not the one scrolled to.
 - `cairn.Table({"col": [...], ...})` (a mapping of column -> values) logs those rows; it used to be read as column names only and silently logged an empty table. Ragged columns, or a mapping plus `data=`, raise.

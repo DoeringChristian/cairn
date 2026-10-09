@@ -14,7 +14,7 @@ logged a run yet, start with [Getting started](../getting-started.md).
 - [Run lifecycle](runs.md): run options, resume, rewind and fork, stopping from the UI, alerts,
   gradient histograms, system metrics and code capture, and where to put a heavy final
   evaluation.
-- [Organising runs](organising-runs.md): names, groups, job types and versions; Latest only,
+- [Organising runs](organising-runs.md): names, groups, job types and versions; Latest versions only,
   nested grouping and filtering to a group in the UI.
 - [Components and scopes](scopes.md): let models and datasets log themselves with
   `__cairn_track__`.

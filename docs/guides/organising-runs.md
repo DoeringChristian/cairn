@@ -76,11 +76,19 @@ the runs span groups), then the job type (`finetune · ft` next to
 `eval · ft`). `cairn list` has a `VERSION` column and `--sort version`; the
 [Reader](reading.md) has `Run.version`.
 
-## Latest only, Archive old, Delete old
+## Latest versions only, Show latest only, Archive old, Delete old
 
-**Latest only**, in the [runs table](../ui/runs-table.md) and the
-[project workspace](../ui/project-workspace.md)'s sidebar, keeps the newest run of every series:
-its highest version, else its latest start. Older runs of a series are hidden, not deleted.
+The newest run of a series is its highest version, else its latest start. Two controls in
+the [runs table](../ui/runs-table.md) and the
+[project workspace](../ui/project-workspace.md)'s sidebar use it:
+
+- **Latest versions only** in the **Filter** popover lists only the newest run of every
+  series. It shows as the chip `latest versions only ×`. The older runs are not listed, and
+  they are not deleted.
+- **Show latest only** in the header eye's **▾** menu shows the newest run of every series and
+  hides the older ones. They stay listed, dimmed, and the cards do not draw them. It acts once,
+  and you can still click a run's eye to show that run.
+
 **Archive old** / **Delete old** on the runs table archive or delete every run but the newest
 of each series (both ask first). In the runs table the newest run of a series with several runs
 has an accent bar on its left edge.

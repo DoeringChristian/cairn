@@ -11,7 +11,7 @@ In this page, ++cmd++ means ++cmd++ on macOS and ++ctrl++ everywhere else. Press
 | ++cmd+shift+z++ | Redo | Same rule as undo. |
 | ++escape++ | Close the innermost dialog, popover or full-screen card | With a popover open inside a dialog, only the popover closes. |
 
-Each project has its own undo stack. It starts empty when you open or switch projects. The stack covers workspace edits on the run page and in the project workspace (panels, sections, card settings, defaults, the project workspace's runs sidebar: filter, grouping, Latest only, sort and eyes) and report cell edits. Runs table settings and the runs table's hide/pin/baseline toggles are not on the stack.
+Each project has its own undo stack. It starts empty when you open or switch projects. The stack covers workspace edits on the run page and in the project workspace (panels, sections, card settings, defaults, the project workspace's runs sidebar: filter (with Latest versions only), grouping, sort and eyes) and report cell edits. Runs table settings and the runs table's hide/pin/baseline toggles are not on the stack.
 
 ## Workspace (run page and project workspace)
 

@@ -55,7 +55,7 @@ The image belongs to the report's asset store, so share-link viewers can see it 
 
 ### Cards cells
 
-A cards cell shows live cards for the runs of its **run sets**. A run set is the workspace's runs table, frozen: a filter, grouping, **Latest only**, sort and eyes, stored in the report. Its runs are resolved each time the report is opened, so a new run that matches shows up without editing the report. The cards draw the union of the sets' runs; with more than one set, each set's runs are drawn in their own colour family. A new cell starts with one run set of the project's 10 newest runs. See [Report blocks](../reference/report-blocks.md#runsets) for every field.
+A cards cell shows live cards for the runs of its **run sets**. A run set is the workspace's runs table, frozen: a filter (with latest versions only), grouping, sort and eyes, stored in the report. Its runs are resolved each time the report is opened, so a new run that matches shows up without editing the report. The cards draw the union of the sets' runs; with more than one set, each set's runs are drawn in their own colour family. A new cell starts with one run set of the project's 10 newest runs. See [Report blocks](../reference/report-blocks.md#runsets) for every field.
 
 The cell's toolbar adds two buttons:
 
@@ -72,9 +72,9 @@ The cell's toolbar adds two buttons:
 
     Each row has the set's colour family dot, its name, how many runs it resolves to now, **Edit** and **✕** (removes the set; the last set cannot be removed). In view mode and on a share link the list is read-only, and a share link's sets show the runs the server resolved.
 
-    - **Edit** opens the set's **Name** and the [project workspace](project-workspace.md#runs-sidebar)'s runs sidebar over the project's runs, scoped to the set: **Filter**, **Group**, **Latest only**, **Sort** and the eyes change the set (and the cards, right away). **Status** and **Search** only narrow what the editor lists: a run set has neither. **← Run sets** goes back to the list.
+    - **Edit** opens the set's **Name** and the [project workspace](project-workspace.md#runs-sidebar)'s runs sidebar over the project's runs, scoped to the set: **Filter** (its **Latest versions only** is the set's `latestOnly`), **Group**, **Sort** and the eyes change the set (and the cards, right away). **Status** and **Search** only narrow what the editor lists: a run set has neither. **← Run sets** goes back to the list.
     - **+ Add run set** adds a set of the project's 10 newest runs, named `Run set N`.
-    - **⤓ Insert from workspace** adds a set copying the workspace's current view: its filter, grouping, **Latest only**, sort and eyes, named after the view. In a cell without cards it also copies the cards of the workspace's layout (with their settings), over the cell's runs.
+    - **⤓ Insert from workspace** adds a set copying the workspace's current view: its filter (with **Latest versions only**, the set's `latestOnly`), grouping, sort and eyes, named after the view. In a cell without cards it also copies the cards of the workspace's layout (with their settings), over the cell's runs.
     - **Reset cards from runs** throws away the cell's cards and creates one card per metric across its runs.
 
 When the resolved runs change, the cell rebinds its existing cards to them. Your cards and their order stay as they are.
