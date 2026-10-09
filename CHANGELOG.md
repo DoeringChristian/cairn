@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.0 — unreleased
+## 0.5.0 — 2026-10-09
 
 Run management as in wandb: runs organised by name, group and job type, a
 project workspace in place of the Compare page, wandb's run page, report

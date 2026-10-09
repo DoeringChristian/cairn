@@ -1,6 +1,6 @@
 [project]
 name = "cairn-track"
-version = "0.4.0"
+version = "0.5.0"
 description = "An open-source ML experiment tracker with a client/server architecture for easy cross-device use on a local network."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -51,7 +51,7 @@ dependencies = [
 # that they agree. Swap it back to a version range the day the package is
 # published.
 ui = [
-    "cairn-ui @ git+https://github.com/DoeringChristian/cairn-ui@92a1203139cca3d981cf34cf6aa999a121ace0a3",
+    "cairn-ui @ git+https://github.com/DoeringChristian/cairn-ui@fa06f76e270bfa4a6d22d4ead69c8a0c85cf34d9",
 ]
 media = [
     "matplotlib>=3.7",
