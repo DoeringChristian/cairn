@@ -87,10 +87,11 @@ When the first segment of a name is unquoted, these roots have special meanings:
 | `step` | series | The step of each point |
 | `wall_time` | series | The wall-clock time of each point, in epoch milliseconds |
 | `relative_time` | series | Seconds since `run.created_at` |
+| `process_time` | series | Seconds the run's process ran. cairn records no resume times yet, so this equals `relative_time` |
 
 `config` and `summary` on their own are errors. So is an unknown run field, which gets a suggestion: `run.nme` gives *unknown run field 'nme'; did you mean 'name'?*.
 
-`step`, `wall_time` and `relative_time` are evaluated over a **domain**: the steps of the first metric in the expression, or the line being drawn when the expression is a scalar card's x-axis. With neither, they are an error:
+`step`, `wall_time`, `relative_time` and `process_time` are evaluated over a **domain**: the steps of the first metric in the expression, or the line being drawn when the expression is a scalar card's x-axis. With neither, they are an error:
 
 | Expression | Result |
 |---|---|

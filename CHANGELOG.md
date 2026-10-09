@@ -139,6 +139,18 @@ importance, and notebook embeds.
   pages, read-gated like the app; without a reachable viewer the output says
   how to start one. Example: `examples/notebook_embeds.py` (marimo).
 
+- **Scalar chart parity with wandb's line plot**: the X axis offers Step,
+  Relative time (wall), Relative time (process), Wall time and every metric,
+  noting metrics that are *Not monotonically increasing*; **Chart type** Line,
+  Area or Percentage area (the stack modes, renamed); the legend gains a
+  **Left** position and a **font size** (Small, Medium, Large, Auto: small
+  below a 480 px chart); each series gets a **Label** template whose
+  `[[ ${x}: ${y} ]]` sections show in the legend while hovering.
+- Expressions: **`process_time`**, the seconds the run's process ran. cairn
+  records no resume times yet, so it equals `relative_time`.
+- `/api/runs/{id}/sequences` reports `monotonic` per scalar series (kept in
+  `metric_stats` at ingest; existing repos are scanned once on first open).
+
 ### Changed
 
 - **The Runs page belongs to the current workspace view** (wandb): its
@@ -216,6 +228,8 @@ importance, and notebook embeds.
 
 ### Fixed
 
+- Scalar charts: a series of one or two points (a metric logged once per
+  run) drew nothing though it was in the legend; its points are now marked.
 - Editing one automatic card (a setting, its title, type, a duplicate) wrote
   every automatic card before it, and every section, into the view. Now only
   that card is written; the cards around it keep their place.
