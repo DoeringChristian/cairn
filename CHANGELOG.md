@@ -184,6 +184,23 @@ importance, and notebook embeds.
   count=len(grid))`). The last trial to end now finishes it.
 - Creating a report in a project that does not exist answered 500; it is
   now a 404.
+- Short runs showed a duration of **0s**. Durations below 10 s keep a
+  decimal (`0.4s`, `<0.1s`) in the runs table, the run header and Overview,
+  and Summary cards.
+- On a phone, run cards broke run names at hyphens (`exp-` / `44`). A name
+  is now one line, truncated, with the full name as its tooltip.
+- The runs table's **search**, **status**, **Latest only** and a sort other
+  than newest-first applied to the first 100 loaded runs only (a search
+  missed matches further down). They now load every run, as a filter or
+  grouping already did.
+- A workspace or report over many runs (1000) took up to a minute to load,
+  failed thousands of requests (`ERR_INSUFFICIENT_RESOURCES`) and froze the
+  page while parameter importance refit its forest for every arriving run.
+  Requests are now capped in flight, renders are batched, and the forest is
+  fitted once (and 2× faster): a 1000-run workspace loads in about 7 s, a
+  report with parallel coordinates and importance in about 6 s.
+- On a phone, a card whose title carries a picker (Parameter importance)
+  made the report page scroll sideways.
 
 ## 0.4.0 — 2026-10-07
 
