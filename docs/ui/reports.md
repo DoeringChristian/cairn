@@ -57,6 +57,8 @@ The image belongs to the report's asset store, so share-link viewers can see it 
 
 A cards cell shows live cards for the runs of its **run sets**. A run set is the workspace's runs table, frozen: a filter (with latest versions only), grouping, sort and eyes, stored in the report. Its runs are resolved each time the report is opened, so a new run that matches shows up without editing the report. The cards draw the union of the sets' runs; with more than one set, each set's runs are drawn in their own colour family. A new cell starts with one run set of the project's 10 newest runs. See [Report blocks](../reference/report-blocks.md#runsets) for every field.
 
+The cards group as their run sets do, as the project workspace's cards follow its sidebar: a card whose **Group runs** is **Workspace** *(default)* draws one line per innermost group of its run's set (labelled `group: exp-44, jobType: train`), and one line per run when the set is not grouped. With several sets each set keeps its own groups, prefixed with the set's name (`Seeds › group: exp-44`), so groups of different sets never merge; a run in several sets counts in its first. **Off** and **By key** work as everywhere else (see [Line plot](cards.md#line-plot-scalar)). A share link draws the same lines.
+
 The cell's toolbar adds two buttons:
 
 - **+ (Add card)** opens the card picker. The run sets must match some runs first.

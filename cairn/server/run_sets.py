@@ -446,24 +446,56 @@ def visible_runs(sorted_runs: list[Run], groups: list[dict[str, Any]] | None, ey
     return {r["id"] for r in sorted_runs if eyes.get(f"r:{r['id']}", r["id"] in by_default)}
 
 
-def card_runs(sorted_runs: list[Run], groups: list[dict[str, Any]] | None, visible: set[str]) -> list[str]:
+def _legend_key(by: Mapping[str, Any]) -> str:
+    """``groupLegendKey``: group, jobType, tag, a param key, an expression."""
+    if by["source"] == "job_type":
+        return "jobType"
+    if by["source"] == "param":
+        return by["key"]
+    if by["source"] == "expr":
+        return by["expr"]
+    return by["source"]
+
+
+def _group_line(path: list[dict[str, Any]]) -> str | None:
+    """``groupLineLabel`` of an innermost group that ``aggregates`` (no
+    ``(none)`` level), else None: its runs stay their own lines."""
+    if any(step["label"] is None for step in path):
+        return None
+    return ", ".join(f"{_legend_key(step['by'])}: {step['label']}" for step in path)
+
+
+def card_runs_lines(
+    sorted_runs: list[Run], groups: list[dict[str, Any]] | None, visible: set[str],
+) -> tuple[list[str], dict[str, str]]:
+    """``cardRuns``: the visible runs in table order and each grouped run's
+    innermost group line (a run in several groups takes its first)."""
     if groups is None:
-        return [r["id"] for r in sorted_runs if r["id"] in visible]
+        return [r["id"] for r in sorted_runs if r["id"] in visible], {}
     out: list[str] = []
+    lines: dict[str, str] = {}
     seen: set[str] = set()
 
-    def walk(ns: list[dict[str, Any]]) -> None:
+    def walk(ns: list[dict[str, Any]], parent: list[dict[str, Any]]) -> None:
         for n in ns:
+            path = [*parent, n]
             if n["children"] is not None:
-                walk(n["children"])
+                walk(n["children"], path)
                 continue
+            line = _group_line(path)
             for r in n["runs"]:
                 if r["id"] in visible and r["id"] not in seen:
                     seen.add(r["id"])
                     out.append(r["id"])
+                    if line is not None:
+                        lines[r["id"]] = line
 
-    walk(groups)
-    return out
+    walk(groups, [])
+    return out, lines
+
+
+def card_runs(sorted_runs: list[Run], groups: list[dict[str, Any]] | None, visible: set[str]) -> list[str]:
+    return card_runs_lines(sorted_runs, groups, visible)[0]
 
 
 # ---------------------------------------------------------------------------
@@ -474,6 +506,12 @@ def card_runs(sorted_runs: list[Run], groups: list[dict[str, Any]] | None, visib
 def resolve_run_set(run_set: Mapping[str, Any], pool: list[Run]) -> list[str]:
     """The runs ``run_set`` shows, in table order; ``pool`` is the project's
     newest runs, archived ones included."""
+    return resolve_run_set_lines(run_set, pool)[0]
+
+
+def resolve_run_set_lines(run_set: Mapping[str, Any], pool: list[Run]) -> tuple[list[str], dict[str, str]]:
+    """``resolveRunSetLines``: :func:`resolve_run_set` and each grouped run's
+    innermost group line (``group: exp-44, jobType: train``)."""
     latest = latest_ids(pool)
     listed = [
         r for r in pool
@@ -483,7 +521,7 @@ def resolve_run_set(run_set: Mapping[str, Any], pool: list[Run]) -> list[str]:
     ]
     ordered = sort_runs(listed, run_set["sort"])
     groups = group_runs(ordered, run_set["groupBy"])
-    return card_runs(ordered, groups, visible_runs(ordered, groups, run_set["eyes"]))
+    return card_runs_lines(ordered, groups, visible_runs(ordered, groups, run_set["eyes"]))
 
 
 def run_set_pool(db: Any, project_id: str) -> list[dict[str, Any]]:
@@ -504,14 +542,16 @@ def run_set_pool(db: Any, project_id: str) -> list[dict[str, Any]]:
     return rows
 
 
-def resolve_with(pool_of: Callable[[], list[Run]]) -> Callable[[Mapping[str, Any]], list[str]]:
-    """A resolver that loads the pool once, on first use."""
+def resolve_with(
+    pool_of: Callable[[], list[Run]],
+) -> Callable[[Mapping[str, Any]], tuple[list[str], dict[str, str]]]:
+    """A resolver (:func:`resolve_run_set_lines`) that loads the pool once, on first use."""
     cache: list[list[Run]] = []
 
-    def resolve(run_set: Mapping[str, Any]) -> list[str]:
+    def resolve(run_set: Mapping[str, Any]) -> tuple[list[str], dict[str, str]]:
         if not cache:
             cache.append(pool_of())
-        return resolve_run_set(run_set, cache[0])
+        return resolve_run_set_lines(run_set, cache[0])
 
     return resolve
 

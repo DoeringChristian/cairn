@@ -114,6 +114,9 @@ class ShareScope:
     #: Each ```cairn fence's run sets, resolved: ``[fence][set] -> run ids``
     #: (a fence the UI rejects has none).
     run_sets: tuple[tuple[tuple[str, ...], ...], ...] = ()
+    #: Each set's group lines, as ``run_sets``: ``[fence][set] -> {run id:
+    #: innermost group line}`` (``run_sets.resolve_run_set_lines``).
+    run_set_groups: tuple[tuple[dict[str, str], ...], ...] = ()
     _artifacts: frozenset[str] | None = field(default=None, repr=False)
 
     def artifacts(self, db: Database, blobs: BlobStore) -> frozenset[str]:
@@ -151,6 +154,7 @@ def compute_scope(db: Database, report: dict[str, Any]) -> ShareScope:
     source_run_ids: set[str] = set()
     resolve = run_sets.resolve_with(lambda: run_sets.run_set_pool(db, project_id))
     fences: list[tuple[tuple[str, ...], ...]] = []
+    fence_groups: list[tuple[dict[str, str], ...]] = []
     viewer_refs: set[tuple[str, Any]] = set()
     #: Types of the cards whose viewer the UI picks (no ``settings.viewer``).
     auto_viewers: set[str] = set()
@@ -163,9 +167,12 @@ def compute_scope(db: Database, report: dict[str, Any]) -> ShareScope:
         sets = fence_run_sets(doc)
         if sets is None:
             fences.append(())
+            fence_groups.append(())
             continue
-        resolved = tuple(tuple(resolve(s)) for s in sets)
+        lines = [resolve(s) for s in sets]
+        resolved = tuple(tuple(ids) for ids, _ in lines)
         fences.append(resolved)
+        fence_groups.append(tuple(groups for _, groups in lines))
         if not isinstance(doc, dict):
             continue
 
@@ -232,6 +239,7 @@ def compute_scope(db: Database, report: dict[str, Any]) -> ShareScope:
         source_run_ids=frozenset(source_run_ids),
         viewer_versions=frozenset(viewer_versions),
         run_sets=tuple(fences),
+        run_set_groups=tuple(fence_groups),
     )
 
 

@@ -273,4 +273,7 @@ def share_context(request: Request) -> dict[str, Any]:
         # Each ```cairn fence's run sets as the server resolved them
         # (report_scope): the viewer renders these, it cannot resolve them.
         "run_sets": [[list(ids) for ids in fence] for fence in scope.run_sets],
+        # Each set's group lines (run id -> innermost group line), as
+        # ``run_sets``: the cells' cards group as their run sets do.
+        "run_set_groups": [[dict(groups) for groups in fence] for fence in scope.run_set_groups],
     }

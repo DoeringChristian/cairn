@@ -86,7 +86,20 @@ def test_scope_collects_run_sets_series_views_and_settings(pool):
     assert scope.run_ids == {"a", "b", "c", "d", "e", "f", "h", "i"}
     assert scope.source_run_ids == {"a", "b", "h", "i"}
     assert scope.run_sets == ((("b",),), (), (("h",), ("b", "a")))
+    # No set is grouped: no group lines.
+    assert scope.run_set_groups == (({},), (), ({}, {}))
     assert pool == ["proj"]  # one pool load per scope
+
+
+def test_scope_keeps_each_sets_group_lines(pool):
+    src = _fence("runSets: [{groupBy: [{source: group}]}, {groupBy: [{source: group}, {source: job_type}]}, {}]")
+    scope = rs.compute_scope(object(), _report(src))
+    assert scope.run_sets == ((("h", "b", "a"),) * 3,)
+    assert scope.run_set_groups == ((
+        {"h": "group: g2", "b": "group: g1", "a": "group: g1"},
+        {"h": "group: g2, jobType: eval", "b": "group: g1, jobType: train", "a": "group: g1, jobType: train"},
+        {},
+    ),)
 
 
 @pytest.mark.parametrize("body", [

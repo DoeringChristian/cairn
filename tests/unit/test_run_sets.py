@@ -18,6 +18,7 @@ _DOC = json.loads(_VECTORS.read_text())
 def test_run_set_vectors(case):
     run_set = rs.parse_run_set(case["set"])
     assert rs.resolve_run_set(run_set, _DOC["pools"][case["pool"]]) == case["expected"]
+    assert rs.resolve_run_set_lines(run_set, _DOC["pools"][case["pool"]]) == (case["expected"], case["expectedGroupOf"])
 
 
 def test_parse_run_set_defaults():

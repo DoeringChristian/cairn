@@ -121,6 +121,7 @@ def test_full_flow(env):
     assert {s["name"] for s in body["metric_index"][env["a"]]} == {"loss", "tbl"}
     # Each fence's run sets, resolved by the server.
     assert body["run_sets"] == [[[env["a"]]], [[env["c"]]]]
+    assert body["run_set_groups"] == [[{}], [{}]]
     assert body["source_run_ids"] == [env["c"]]
 
     # Allowed reads.

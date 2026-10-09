@@ -273,6 +273,13 @@ importance, and notebook embeds.
   (now Workspace and Files).
 
 ### Fixed
+- Report cells: a card whose **Group runs** is **Workspace** follows its run
+  sets' grouping, as in the project workspace: an ungrouped set draws one
+  line per run (it used to average each run group into one line), a grouped
+  set one line per innermost group, several sets each their own groups. Share
+  links draw the same lines (`/api/share/context` now has `run_set_groups`).
+- Artifact version page on a phone: the title no longer renders one letter
+  per line; it wraps at its segments, with the actions below it.
 - Run page: a new section, and a section whose cards all lack data for the
   run, no longer vanish. A section with no cards always shows its **Add
   card**. On the Workspace tab, a section whose cards are all hidden keeps
