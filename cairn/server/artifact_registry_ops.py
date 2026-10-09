@@ -473,16 +473,24 @@ def version_files(db: Database, version_id: str) -> list[dict[str, Any]]:
     object_type, uri, etag, meta}`` (``digest`` None for a reference, ``uri``
     None otherwise)."""
     get_version(db, version_id)
-    return [
-        {
-            "path": r["path"], "size": r["size"], "digest": r["hash"], "mime": r["mime"],
-            "object_type": r["object_type"], "uri": r["uri"], "etag": r["etag"],
-            "meta": json.loads(r["meta"]) if r["meta"] else {},
-        }
+    return versions_files(db, [version_id])[version_id]
+
+
+def versions_files(db: Database, version_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+    """``{version_id: entries}``: ``version_files`` of many existing versions, batched."""
+    out: dict[str, list[dict[str, Any]]] = {vid: [] for vid in version_ids}
+    for i in range(0, len(version_ids), 500):
+        chunk = version_ids[i:i + 500]
         for r in db.read_columns(
-            "SELECT * FROM artifact_entries WHERE version_id = ? ORDER BY path", [version_id],
-        )
-    ]
+            f"SELECT * FROM artifact_entries WHERE version_id IN ({_holes(chunk)}) ORDER BY version_id, path",
+            chunk,
+        ):
+            out[r["version_id"]].append({
+                "path": r["path"], "size": r["size"], "digest": r["hash"], "mime": r["mime"],
+                "object_type": r["object_type"], "uri": r["uri"], "etag": r["etag"],
+                "meta": json.loads(r["meta"]) if r["meta"] else {},
+            })
+    return out
 
 
 def version_file(db: Database, version_id: str, path: str) -> dict[str, Any]:
@@ -666,10 +674,21 @@ def record_input(
 
 def run_outputs(db: Database, run_id: str) -> list[dict[str, Any]]:
     """Versions the run logged, in creation order."""
-    return _shape_versions(db, db.read_columns(
-        _VERSION_SELECT + " WHERE av.created_by_run = ? ORDER BY av.created_at, av.version",
-        [run_id],
-    ))
+    return runs_outputs(db, [run_id])[run_id]
+
+
+def runs_outputs(db: Database, run_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+    """``{run_id: versions}``: ``run_outputs`` of many runs, batched."""
+    out: dict[str, list[dict[str, Any]]] = {rid: [] for rid in run_ids}
+    for i in range(0, len(run_ids), 500):
+        chunk = run_ids[i:i + 500]
+        for v in _shape_versions(db, db.read_columns(
+            _VERSION_SELECT + f" WHERE av.created_by_run IN ({_holes(chunk)})"
+            " ORDER BY av.created_at, av.version",
+            chunk,
+        )):
+            out[v["created_by_run"]].append(v)
+    return out
 
 
 def run_inputs(db: Database, run_id: str, role: str | None = None) -> list[dict[str, Any]]:

@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 
 from .. import artifact_registry_ops as ops
 from .. import auth
+from ..storage.db import Database
 from ._common import get_blobs, get_db, slugify
 from ..viewer_manifest import VIEWER_TYPE, mime_for
 from .artifacts import serve_blob
@@ -433,9 +434,15 @@ def run_outputs(
     db = get_db(request)
     outputs = ops.run_outputs(db, run_id)
     if include and "files" in include.split(","):
-        for v in outputs:
-            v["files"] = ops.version_files(db, v["id"])
+        with_files(db, outputs)
     return {"outputs": outputs}
+
+
+def with_files(db: Database, versions: list[dict[str, Any]]) -> None:
+    """Add each version's entries (``files``), one query per 500 versions."""
+    files = ops.versions_files(db, [v["id"] for v in versions])
+    for v in versions:
+        v["files"] = files[v["id"]]
 
 
 @router.get("/runs/{run_id}/lineage")

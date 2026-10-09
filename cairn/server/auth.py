@@ -581,6 +581,15 @@ SHARE_ALLOWED: dict[str, ShareChecker] = {
 }
 
 
+#: POST routes that only READ (a body too big for a query string) a share
+#: principal may call, keyed like ``SHARE_ALLOWED``. The route narrows what it
+#: reads to the report's scope itself.
+SHARE_READ_POSTS: dict[str, ShareChecker] = {
+    # Answers only the report's runs; the others come back ``forbidden``.
+    "/api/runs/batch": lambda request, scope: True,
+}
+
+
 def share_scope(request: Request, grant: ShareGrant) -> ShareScope:
     """The live scope of ``grant``'s report (cached per share)."""
     return request.app.state.share_scopes.get(
@@ -589,10 +598,13 @@ def share_scope(request: Request, grant: ShareGrant) -> ShareScope:
 
 
 def share_allows(request: Request, grant: ShareGrant) -> bool:
-    if request.method not in ("GET", "HEAD"):
+    route = getattr(request.scope.get("route"), "path", None) or ""
+    if request.method in ("GET", "HEAD"):
+        checker = SHARE_ALLOWED.get(route)
+    elif request.method == "POST":
+        checker = SHARE_READ_POSTS.get(route)
+    else:
         return False
-    route = request.scope.get("route")
-    checker = SHARE_ALLOWED.get(getattr(route, "path", None) or "")
     if checker is None:
         return False
     return bool(checker(request, share_scope(request, grant)))
@@ -611,7 +623,8 @@ def require_role(min_role: str) -> Callable[[Request], Principal | None]:
     stays unaffected.
 
     A share principal passes only a read-role check, only on a GET/HEAD
-    route in ``SHARE_ALLOWED`` whose checker admits the request."""
+    route in ``SHARE_ALLOWED`` (or a POST route in ``SHARE_READ_POSTS``)
+    whose checker admits the request."""
     if min_role not in ROLE_RANK:
         raise ValueError(f"invalid role {min_role!r}; must be one of {ROLES}")
     min_rank = ROLE_RANK[min_role]

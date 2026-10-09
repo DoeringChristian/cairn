@@ -111,45 +111,57 @@ def list_sequences(run_id: str, request: Request) -> dict[str, Any]:
     """
     db = get_db(request)
     require_run(db, run_id)
-    stats = db.read(
-        "SELECT name, count, first_step, last_step, monotonic FROM metric_stats WHERE run_id = ?",
-        [run_id],
-    )
-    rest = db.read(
-        """
-        SELECT name, MAX(object_type), MIN(step), MAX(step), COUNT(*), COUNT(scalar_value),
-               MAX(summary)
-        FROM sequences
-        WHERE run_id = ? AND (object_type != 'scalar' OR scalar_value IS NULL)
-        GROUP BY name
-        """,
-        [run_id],
-    )
-    out: dict[str, dict[str, Any]] = {}
-    for name, count, first, last, monotonic in stats:
-        out[name] = {
-            "name": name, "object_type": "scalar", "min_step": first, "max_step": last, "count": count,
-            "monotonic": bool(monotonic),
-        }
-    for name, otype, lo, hi, count, valued, summary in rest:
-        seq = out.get(name)
-        if seq is None:
-            out[name] = {"name": name, "object_type": otype, "min_step": lo, "max_step": hi, "count": count}
-            if summary:
-                out[name]["summary"] = True
-            continue
-        # ``valued`` points carry a scalar under another object type: already
-        # counted by metric_stats. Only when every summarized point is one of
-        # them does no point of type ``scalar`` exist.
-        typed_scalar = seq["count"] > valued
-        seq["object_type"] = max(otype, "scalar") if typed_scalar else otype
-        seq["min_step"] = min(seq["min_step"], lo)
-        seq["max_step"] = max(seq["max_step"], hi)
-        seq["count"] += count - valued
-    for name, kind in custom_kinds(db, [run_id]).get(run_id, {}).items():
-        if name in out and out[name]["object_type"] == "custom":
-            out[name]["kind"] = kind
-    return {"sequences": [out[n] for n in sorted(out)]}
+    return {"sequences": sequence_catalogues(db, [run_id])[run_id]}
+
+
+def sequence_catalogues(db: Any, run_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+    """``{run_id: [series]}``: each run's ``GET /api/runs/{id}/sequences``
+    list (by name), a few queries per 500 runs (``POST /api/runs/batch``
+    reads many runs' catalogues at once). A run without series, or unknown,
+    has an empty list."""
+    out: dict[str, dict[str, dict[str, Any]]] = {rid: {} for rid in run_ids}
+    for i in range(0, len(run_ids), 500):
+        chunk = run_ids[i:i + 500]
+        holes = ",".join("?" * len(chunk))
+        for rid, name, count, first, last, monotonic in db.read(
+            f"SELECT run_id, name, count, first_step, last_step, monotonic FROM metric_stats WHERE run_id IN ({holes})",
+            chunk,
+        ):
+            out[rid][name] = {
+                "name": name, "object_type": "scalar", "min_step": first, "max_step": last, "count": count,
+                "monotonic": bool(monotonic),
+            }
+        for rid, name, otype, lo, hi, count, valued, summary in db.read(
+            f"""
+            SELECT run_id, name, MAX(object_type), MIN(step), MAX(step), COUNT(*), COUNT(scalar_value),
+                   MAX(summary)
+            FROM sequences
+            WHERE run_id IN ({holes}) AND (object_type != 'scalar' OR scalar_value IS NULL)
+            GROUP BY run_id, name
+            """,
+            chunk,
+        ):
+            seqs = out[rid]
+            seq = seqs.get(name)
+            if seq is None:
+                seqs[name] = {"name": name, "object_type": otype, "min_step": lo, "max_step": hi, "count": count}
+                if summary:
+                    seqs[name]["summary"] = True
+                continue
+            # ``valued`` points carry a scalar under another object type: already
+            # counted by metric_stats. Only when every summarized point is one of
+            # them does no point of type ``scalar`` exist.
+            typed_scalar = seq["count"] > valued
+            seq["object_type"] = max(otype, "scalar") if typed_scalar else otype
+            seq["min_step"] = min(seq["min_step"], lo)
+            seq["max_step"] = max(seq["max_step"], hi)
+            seq["count"] += count - valued
+        for rid, kinds in custom_kinds(db, chunk).items():
+            for name, kind in kinds.items():
+                seq = out[rid].get(name)
+                if seq is not None and seq["object_type"] == "custom":
+                    seq["kind"] = kind
+    return {rid: [seqs[n] for n in sorted(seqs)] for rid, seqs in out.items()}
 
 
 def custom_kinds(db: Any, run_ids: list[str]) -> dict[str, dict[str, str]]:

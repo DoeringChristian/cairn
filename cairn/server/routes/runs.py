@@ -13,7 +13,10 @@ from .. import auth, config_doc
 from ..storage.db import Database
 from ..run_query import RUN_LIST_COLUMNS, RunQueryError, docs_by_run, select_runs
 from ..metric_rules import resolved_values
+from .. import artifact_registry_ops as artifact_ops
 from ._common import api_run_row, get_db, require_run
+from .artifact_registry import with_files
+from .sequences import sequence_catalogues
 
 router = APIRouter(prefix="/api", tags=["runs"])
 
@@ -180,36 +183,121 @@ def _metric_stats(
 
 @router.get("/runs/{run_id}")
 def get_run(run_id: str, request: Request) -> dict[str, Any]:
+    details = run_details(get_db(request), [run_id], share=auth.request_share(request) is not None)
+    if run_id not in details:
+        raise HTTPException(status_code=404, detail=f"run {run_id} not found")
+    return details[run_id]
+
+
+def _rows_by_run(db: Database, sql: str, run_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+    """``sql`` (``... WHERE run_id IN ({holes}) ...``, selecting ``run_id``
+    first) per run, the ``run_id`` column dropped, one query per 500 runs."""
+    out: dict[str, list[dict[str, Any]]] = {rid: [] for rid in run_ids}
+    for i in range(0, len(run_ids), 500):
+        chunk = run_ids[i:i + 500]
+        for r in db.read_columns(sql.format(holes=",".join("?" * len(chunk))), chunk):
+            out[r.pop("run_id")].append(r)
+    return out
+
+
+def run_details(db: Database, run_ids: list[str], *, share: bool = False) -> dict[str, dict[str, Any]]:
+    """``{run_id: GET /api/runs/{id} body}`` for the runs that exist (an
+    unknown id is left out), a few queries for the lot. ``share``: the
+    caller is a share link, which never sees a run's environment."""
+    runs: dict[str, dict[str, Any]] = {}
+    for i in range(0, len(run_ids), 500):
+        chunk = run_ids[i:i + 500]
+        for row in db.read_columns(f"SELECT * FROM runs WHERE id IN ({','.join('?' * len(chunk))})", chunk):
+            runs[row["id"]] = api_run_row(row)
+    ids = [rid for rid in run_ids if rid in runs]
+    if not ids:
+        return {}
+    docs = docs_by_run(db, ids)
+    params = _rows_by_run(
+        db, "SELECT run_id, key, value, value_type FROM params WHERE run_id IN ({holes}) ORDER BY run_id, key", ids,
+    )
+    summary = _rows_by_run(
+        db, "SELECT run_id, key, value, value_type FROM summary WHERE run_id IN ({holes}) ORDER BY run_id, key", ids,
+    )
+    metric_defs = _rows_by_run(
+        db, "SELECT run_id, name, x, summary FROM metric_defs WHERE run_id IN ({holes}) ORDER BY run_id, name", ids,
+    )
+    values = resolved_values(db, ids)
+    stats = _metric_stats(db, ids)
+    out: dict[str, dict[str, Any]] = {}
+    for rid in ids:
+        run = runs[rid]
+        if share:
+            run.pop("env_snapshot", None)
+        run["values"] = values[rid]
+        run["stats"] = stats[rid]
+        d = docs.get(rid, {})
+        out[rid] = {
+            "run": run, "params": params[rid], "summary": summary[rid], "metric_defs": metric_defs[rid],
+            # The nested documents as logged; ``params`` / ``summary`` are their
+            # flat index. A summary MEDIA value is its marker leaf
+            # ``{"$media": {hash, object_type, mime_type, caption?}}`` (the
+            # Overview shows a thumbnail of it); it has no flat row, and it is
+            # also a series of the run (``/sequences``, ``"summary": true``).
+            "config_doc": config_doc.json_safe(d.get("config", {})),
+            "summary_doc": config_doc.json_safe(d.get("summary", {})),
+        }
+    return out
+
+
+#: Most runs one ``POST /api/runs/batch`` may ask for (the UI sends 200).
+RUNS_BATCH_LIMIT = 1000
+#: What ``POST /api/runs/batch`` can return per run.
+RUNS_BATCH_PARTS = ("run", "sequences", "outputs")
+
+
+class RunsBatchBody(BaseModel):
+    """``POST /api/runs/batch``: what to read for which runs."""
+
+    ids: list[str] = Field(max_length=RUNS_BATCH_LIMIT)
+    #: Per run: ``run`` (``GET /api/runs/{id}``), ``sequences`` (``GET
+    #: /api/runs/{id}/sequences``), ``outputs`` (``GET
+    #: /api/runs/{id}/outputs?include=files``).
+    include: list[str] = Field(default_factory=lambda: list(RUNS_BATCH_PARTS))
+
+
+@router.post("/runs/batch")
+def runs_batch(body: RunsBatchBody, request: Request) -> dict[str, Any]:
+    """Many runs' per-run reads in one request (a workspace bound to a
+    thousand runs): ``{"runs": {id: {run?, sequences?, outputs?}},
+    "missing": [id], "forbidden": [id]}``. Each part is exactly what its
+    per-run route returns for that run (``run``: the ``GET /api/runs/{id}``
+    body; ``sequences``: its ``sequences`` list; ``outputs``: its
+    ``outputs`` list, with ``files``). ``missing``: ids of no run;
+    ``forbidden``: through a share link, the ids outside the shared report
+    (the per-run routes' 403), never read.
+    """
+    unknown = sorted(set(body.include) - set(RUNS_BATCH_PARTS))
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"unknown include {unknown}; one of {list(RUNS_BATCH_PARTS)}")
+    ids = list(dict.fromkeys(body.ids))
+    grant = auth.request_share(request)
+    forbidden: list[str] = []
+    if grant is not None:
+        scope = auth.share_scope(request, grant)
+        forbidden = [rid for rid in ids if rid not in scope.run_ids]
+        ids = [rid for rid in ids if rid in scope.run_ids]
     db = get_db(request)
-    run = require_run(db, run_id)
-    docs = docs_by_run(db, [run_id]).get(run_id, {})
-    if auth.request_share(request) is not None:
-        # A share link never reveals a run's environment.
-        run.pop("env_snapshot", None)
-    params = db.read_columns(
-        "SELECT key, value, value_type FROM params WHERE run_id = ? ORDER BY key",
-        [run_id],
-    )
-    summary = db.read_columns(
-        "SELECT key, value, value_type FROM summary WHERE run_id = ? ORDER BY key",
-        [run_id],
-    )
-    metric_defs = db.read_columns(
-        "SELECT name, x, summary FROM metric_defs WHERE run_id = ? ORDER BY name",
-        [run_id],
-    )
-    run["values"] = resolved_values(db, [run_id])[run_id]
-    run["stats"] = _metric_stats(db, [run_id])[run_id]
-    return {
-        "run": run, "params": params, "summary": summary, "metric_defs": metric_defs,
-        # The nested documents as logged; ``params`` / ``summary`` are their
-        # flat index. A summary MEDIA value is its marker leaf
-        # ``{"$media": {hash, object_type, mime_type, caption?}}`` (the
-        # Overview shows a thumbnail of it); it has no flat row, and it is
-        # also a series of the run (``/sequences``, ``"summary": true``).
-        "config_doc": config_doc.json_safe(docs.get("config", {})),
-        "summary_doc": config_doc.json_safe(docs.get("summary", {})),
-    }
+    details = run_details(db, ids, share=grant is not None)
+    found = [rid for rid in ids if rid in details]
+    out: dict[str, dict[str, Any]] = {rid: {} for rid in found}
+    if "run" in body.include:
+        for rid in found:
+            out[rid]["run"] = details[rid]
+    if "sequences" in body.include:
+        for rid, seqs in sequence_catalogues(db, found).items():
+            out[rid]["sequences"] = seqs
+    if "outputs" in body.include:
+        outputs = artifact_ops.runs_outputs(db, found)
+        with_files(db, [v for vs in outputs.values() for v in vs])
+        for rid, vs in outputs.items():
+            out[rid]["outputs"] = vs
+    return {"runs": out, "missing": [rid for rid in ids if rid not in details], "forbidden": forbidden}
 
 
 @router.get("/runs/{run_id}/documents")

@@ -290,6 +290,7 @@ def _fill(path: str) -> str:
 def test_guard_every_route_not_allowlisted_is_403(env):
     viewer = _viewer(env, _create(env)["secret"])
     seen_allowed = set()
+    seen_read_posts = set()
     checked = 0
     for route in env["app"].routes:
         if not isinstance(route, APIRoute) or not route.path.startswith("/api"):
@@ -300,12 +301,16 @@ def test_guard_every_route_not_allowlisted_is_403(env):
             if route.path in auth_core.SHARE_ALLOWED and method in ("GET", "HEAD"):
                 seen_allowed.add(route.path)
                 continue
+            if route.path in auth_core.SHARE_READ_POSTS and method == "POST":
+                seen_read_posts.add(route.path)
+                continue
             r = viewer.request(method, _fill(route.path), json={})
             assert r.status_code == 403, f"{method} {route.path} -> {r.status_code}"
             checked += 1
     assert checked > 50
     # Every allowlist entry names a real GET route (no stale entries).
     assert seen_allowed == set(auth_core.SHARE_ALLOWED)
+    assert seen_read_posts == set(auth_core.SHARE_READ_POSTS)
 
 
 def test_public_routes_are_exactly_the_known_ones(env):
@@ -385,3 +390,24 @@ def test_metric_rules_are_narrowed_to_the_reports_runs(env):
     }
     assert viewer.put(f"/api/projects/{pid}/metric-rules/loss", json={"goal": "none"}).status_code == 403
     assert viewer.get("/api/projects/other/metric-rules").status_code == 403
+
+
+def test_runs_batch_answers_only_the_reports_runs(env):
+    viewer = _viewer(env, _create(env)["secret"])
+    a, b, c = env["a"], env["b"], env["c"]
+    r = viewer.post("/api/runs/batch", json={"ids": [a, b, c, "nope"]})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    # b is the project's but not the report's; an unknown id is no more the report's.
+    assert list(body["runs"]) == [a, c]
+    assert body["forbidden"] == [b, "nope"] and body["missing"] == []
+    # Exactly the per-run routes' answers, so never the run's environment.
+    assert body["runs"][a]["run"] == viewer.get(f"/api/runs/{a}").json()
+    assert "env_snapshot" not in body["runs"][a]["run"]["run"]
+    assert body["runs"][a]["sequences"] == viewer.get(f"/api/runs/{a}/sequences").json()["sequences"]
+    # The owner sees every run, the environment included.
+    owned = env["owner"].post("/api/runs/batch", json={"ids": [a, b], "include": ["run"]}).json()
+    assert list(owned["runs"]) == [a, b] and owned["forbidden"] == []
+    assert owned["runs"][a]["run"]["run"]["env_snapshot"]
+    # Other POSTs stay closed to a share link.
+    assert viewer.post("/api/runs/query", json={}).status_code == 403
