@@ -8,7 +8,8 @@ Summary: Python-like syntax (``or and not``, chained comparisons incl.
 ``in``/``not in``, ``+ - * / % **``, calls, literals, lists); dotted metric
 names with backtick quoting; reserved roots ``config.``, ``summary.``,
 ``run.{name,id,status,tags,group,job_type,created_at}``, ``step``,
-``wall_time``, ``relative_time``. Values are ``scalar | series``; scalars
+``wall_time``, ``relative_time``, ``process_time`` (= ``relative_time``: no
+resume times are recorded). Values are ``scalar | series``; scalars
 broadcast; series with different steps are as-of joined, with an
 ``ExprWarning``. Functions: reducers ``min max mean first last``,
 pointwise ``min|max(a, b) log exp abs clip``, series ``cummin cummax diff
@@ -51,7 +52,7 @@ __all__ = [
 ]
 
 RUN_FIELDS = ("name", "id", "status", "tags", "group", "job_type", "created_at")
-AXES = ("step", "wall_time", "relative_time")
+AXES = ("step", "wall_time", "relative_time", "process_time")
 REDUCERS = ("min", "max", "mean", "first", "last")
 FUNCTION_NAMES = (*REDUCERS, "cummin", "cummax", "diff", "ema", "log", "exp", "abs", "clip",
                   "exact", "resample")
@@ -1041,6 +1042,8 @@ class _Evaluator:
                 return Series(list(steps), list(steps))
             if node.name == "wall_time":
                 return Series(list(steps), list(wall))
+            # relative_time / process_time: seconds since the run was created (no
+            # resume times are recorded, so the process time has no pauses to drop).
             created = parse_time(self.ctx.run("created_at"))
             return Series(list(steps), [None if w is None or created is None else (w - created) / 1000
                                         for w in wall])
