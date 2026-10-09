@@ -275,7 +275,13 @@ importance, and notebook embeds.
 - Run page: a new section, and a section whose cards all lack data for the
   run, no longer vanish. A section with no cards always shows its **Add
   card**. On the Workspace tab, a section whose cards are all hidden keeps
-  its header with `N cards without data for this run`.
+  its header with `N cards without data for this run`, and its card
+  count reads `0 of N shown` (`k of N shown` when only some cards are
+  hidden) instead of `0 card(s)`.
+- Table card: in **Rows** (several runs' tables as one), a run that logged
+  no table at the slider's step blanked the whole card with
+  `no table logged for <run>`. Rows now stacks the tables of the runs that
+  have one.
 - Coming back to the Runs page restored the scroll position the next page
   had clamped it to (often the top), not the one scrolled to.
 - `cairn.Table({"col": [...], ...})` (a mapping of column -> values) logs those rows; it used to be read as column names only and silently logged an empty table. Ragged columns, or a mapping plus `data=`, raise.
