@@ -179,6 +179,9 @@ importance, and notebook embeds.
 - Editing one automatic card (a setting, its title, type, a duplicate) wrote
   every automatic card before it, and every section, into the view. Now only
   that card is written; the cards around it keep their place.
+- A grid sweep (or one with a `run_cap`) stayed **running** after all its
+  trials ended when no worker asked for another trial (`sweep.run(fn,
+  count=len(grid))`). The last trial to end now finishes it.
 
 ## 0.4.0 — 2026-10-07
 

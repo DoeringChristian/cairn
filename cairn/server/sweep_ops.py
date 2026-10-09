@@ -377,6 +377,14 @@ def set_status(db: Database, sweep_id: str, action: str) -> dict[str, Any]:
     return get_sweep(db, sweep_id)
 
 
+def _exhausted(sweep: dict[str, Any], claimed: int, grid: list[Any] | None = None) -> bool:
+    """True when a grid or ``run_cap`` has no trial left to hand out."""
+    if grid is None and sweep["method"] == "grid":
+        grid = _grid(normalize_space(json.loads(sweep["space"])))
+    cap = sweep["run_cap"]
+    return (grid is not None and claimed >= len(grid)) or (cap is not None and claimed >= cap)
+
+
 def next_trial(db: Database, sweep_id: str) -> dict[str, Any]:
     """Claim the next trial atomically: ``{"status", "trial"}``, where
     ``trial`` is None once the sweep is not running (paused, stopped,
@@ -397,8 +405,7 @@ def next_trial(db: Database, sweep_id: str) -> dict[str, Any]:
                 "SELECT COUNT(*) FROM sweep_trials WHERE sweep_id = ?", [sweep_id],
             ).fetchone()
             grid = _grid(space) if method == "grid" else None
-            cap = sweep["run_cap"]
-            if (grid is not None and claimed >= len(grid)) or (cap is not None and claimed >= cap):
+            if _exhausted(sweep, claimed, grid):
                 con.execute("UPDATE sweeps SET status = 'finished' WHERE id = ?", [sweep_id])
                 return {"status": "finished", "trial": None}
             if grid is not None:
@@ -480,6 +487,18 @@ def report_trial(
                 "UPDATE runs SET stop_requested = COALESCE(stop_requested, ?) "
                 "WHERE id = ? AND status = 'running'", [_now(), run_id],
             )
+        # The last trial of a grid (or run_cap) ending finishes the sweep, even
+        # when no worker asks for another trial (``run(count=len(grid))``).
+        if status not in (None, "running") and sweep["status"] == "running":
+            (claimed, running) = con.execute(
+                "SELECT COUNT(*), COALESCE(SUM(status = 'running'), 0) "
+                "FROM sweep_trials WHERE sweep_id = ?", [sweep_id],
+            ).fetchone()
+            if running == 0 and _exhausted(sweep, claimed):
+                con.execute(
+                    "UPDATE sweeps SET status = 'finished' WHERE id = ? AND status = 'running'",
+                    [sweep_id],
+                )
     row = db.read_columns("SELECT * FROM sweep_trials WHERE id = ?", [trial_id])[0]
     (index,) = db.read_columns(
         "SELECT COUNT(*) AS n FROM sweep_trials WHERE sweep_id = ? "

@@ -68,6 +68,30 @@ def test_grid_walks_the_product_then_finishes(db):
     assert sweep_ops.get_sweep(db, sw["id"])["status"] == "finished"
 
 
+def test_grid_finishes_when_its_last_trial_ends(db):
+    """Regression: a grid whose trials were all claimed and reported stayed
+    "running" until some worker asked for one more trial."""
+    sw = sweep_ops.create_sweep(db, project="p", space={"a": {"values": [1, 2]}}, method="grid")
+    a, b = (sweep_ops.next_trial(db, sw["id"])["trial"] for _ in range(2))
+    sweep_ops.report_trial(db, sw["id"], a["id"], status="completed")
+    assert sweep_ops.get_sweep(db, sw["id"])["status"] == "running"  # b still runs
+    sweep_ops.report_trial(db, sw["id"], b["id"], status="running")
+    assert sweep_ops.get_sweep(db, sw["id"])["status"] == "running"
+    sweep_ops.report_trial(db, sw["id"], b["id"], status="failed")
+    assert sweep_ops.get_sweep(db, sw["id"])["status"] == "finished"
+    # A paused sweep isn't silently finished; random sweeps never run out.
+    rnd = sweep_ops.create_sweep(db, project="p", space={"a": {"min": 0.0, "max": 1.0}})
+    t = sweep_ops.next_trial(db, rnd["id"])["trial"]
+    sweep_ops.report_trial(db, rnd["id"], t["id"], status="completed")
+    assert sweep_ops.get_sweep(db, rnd["id"])["status"] == "running"
+
+
+def test_python_grid_sweep_with_exact_count_finishes(tmp_path):
+    sw = cairn.sweep({"x": {"values": [0, 1]}}, project="p", method="grid", repo=tmp_path / ".cairn")
+    assert [t["status"] for t in sw.run(lambda c: 1.0, count=2, **QUIET)] == ["completed", "completed"]
+    assert sw.info()["status"] == "finished"
+
+
 def test_trials_are_numbered_and_named_in_creation_order(db):
     sw = sweep_ops.create_sweep(db, project="p", space={"a": {"min": 0.0, "max": 1.0}}, name="lr scan")
     claimed = [sweep_ops.next_trial(db, sw["id"])["trial"] for _ in range(3)]
