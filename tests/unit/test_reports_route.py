@@ -34,6 +34,13 @@ def test_get_report_404(client):
     assert r.status_code == 404
 
 
+def test_create_report_in_a_missing_project_is_404(client):
+    """Regression: the reports row's project foreign key failed with a 500."""
+    r = client.post("/api/projects/nope/reports", json={"name": "x", "payload": {"source": ""}})
+    assert r.status_code == 404
+    assert "nope" in r.json()["detail"]
+
+
 def test_list_reports_summary_and_block_count(client):
     project_id = _make_project(client)
     payloads = {

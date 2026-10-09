@@ -204,6 +204,8 @@ def get_report(project_id: str, report_id: str, request: Request) -> dict[str, A
 @router.post("/projects/{project_id}/reports", dependencies=[_write])
 def create_report(project_id: str, body: ReportCreate, request: Request) -> dict[str, Any]:
     db = get_db(request)
+    if db.read_one("SELECT 1 FROM projects WHERE id = ?", [project_id]) is None:
+        raise HTTPException(status_code=404, detail=f"project {project_id} not found")
     rid = secrets.token_hex(8)
     now = utc_now().isoformat()
     db.write(

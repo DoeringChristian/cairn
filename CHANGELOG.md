@@ -182,6 +182,8 @@ importance, and notebook embeds.
 - A grid sweep (or one with a `run_cap`) stayed **running** after all its
   trials ended when no worker asked for another trial (`sweep.run(fn,
   count=len(grid))`). The last trial to end now finishes it.
+- Creating a report in a project that does not exist answered 500; it is
+  now a 404.
 
 ## 0.4.0 — 2026-10-07
 
