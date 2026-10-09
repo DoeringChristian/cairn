@@ -87,8 +87,8 @@ has an accent bar on its left edge.
 
 ## Grouping in the UI
 
-The runs table and the workspace's runs sidebar group runs with **Group** (the workspace starts
-grouped by the run's group, the runs table ungrouped). **group, then job type** gives wandb's
+The runs table and the workspace's runs sidebar group runs with **Group** (both start ungrouped, one
+line per run, as wandb's default workspace). **group, then job type** gives wandb's
 nested grouping:
 
 ```
@@ -105,6 +105,8 @@ nested grouping:
 
 - Group rows read `Field: value`. An outer group shows a hollow circle, its sub-group count and
   its run count; an innermost group a filled dot in the colour of its chart line.
+- Runs without a value are never averaged: a `(none)` group, at any level, has a hollow dot,
+  and each run under it keeps its own dot and is its own line, row or column in the cards.
 - In the [project workspace](../ui/project-workspace.md), a line chart draws **one line per
   innermost group**: the mean over its runs with a min–max band, labelled with its path,
   `group: exp-44, jobType: train`. The Summary section's Scalars and Config cards have a row or

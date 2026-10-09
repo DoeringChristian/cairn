@@ -59,7 +59,11 @@ importance, and notebook embeds.
   (`Group: exp-44`, `Job Type: train`); an outer group shows a hollow circle
   with its sub-group and run counts, an innermost group the filled dot of its
   chart line. In the workspace, line charts draw one mean line with a min–max
-  band per innermost group, labelled `group: exp-44, jobType: train`. A line
+  band per innermost group, labelled `group: exp-44, jobType: train`. Runs
+  without a value are never averaged: under a `(none)` group at any level
+  each run is its own line (and Summary row), with its own dot, and the
+  `(none)` row's dot is hollow. A new workspace view starts not grouped, one
+  line per run, as wandb's default workspace. A line
   card's **Group runs** setting is **Workspace** (the default), **Off** or
   **By key**. The runs table gains **Group** and **Job Type** columns, shown
   when a listed run has one.

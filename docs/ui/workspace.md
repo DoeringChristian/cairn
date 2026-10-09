@@ -60,7 +60,7 @@ The view switcher is the first item of the [toolbar](#workspace-toolbar). On the
 - Click a tile to switch to its view. The panel closes. Switching is not an edit: ++cmd+z++ never switches back. Switching also clears the undo history, so ++cmd+z++ never changes a view you have left; edits inside the view you are in undo as usual.
 - **+ New view** turns into a name field with **Copy of current view** (the default) or **Empty (automatic panels only)**. ++enter++ creates the view and switches to it; ++escape++ cancels.
 
-The [project workspace](project-workspace.md) has the same switcher; there a view also holds the sidebar's runs (status, search, filter, grouping, **Latest only**, sort and eyes), so switching views switches them too.
+The [project workspace](project-workspace.md) has the same switcher; there a view also holds the sidebar's runs (status, search, filter, grouping, **Latest only**, sort and eyes), so switching views switches them too. A new view starts not grouped (one line per run, as wandb's default workspace).
 
 On a phone the panel spans the full width, with one or two tiles per row.
 
