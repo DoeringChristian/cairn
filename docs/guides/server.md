@@ -345,6 +345,26 @@ requests from any site.
 A report can be shared with people who have no token, through a link that
 grants read access to that one report. See [Sharing](../ui/sharing.md).
 
+### Batched reads
+
+The UI reads many runs at once (a workspace over a thousand runs) through
+two read-only POST routes, instead of a request per run:
+
+- `POST /api/runs/batch` with `{"ids": [...], "include": ["run",
+  "sequences", "outputs"]}` (at most 1000 ids; `include` defaults to all
+  three) returns `{"runs": {id: {"run": ..., "sequences": [...],
+  "outputs": [...]}}, "missing": [...], "forbidden": [...]}`. Each part is
+  exactly what `GET /api/runs/{id}`, `GET /api/runs/{id}/sequences` and
+  `GET /api/runs/{id}/outputs?include=files` return for that run.
+- `POST /api/runs/series` with `{"runs": {id: [name, ...]}}` (at most 200
+  names per run and 5000 in all) returns `{"runs": {id: ...}, "missing":
+  [...], "forbidden": [...]}`, each run's entry exactly what `GET
+  /api/runs/{id}/series?name=...` returns.
+
+`missing` lists ids of no run. Both need the read role; a share link may
+call them too, and gets only its report's runs: any other id is listed in
+`forbidden` and not read, as the per-run routes answer it 403.
+
 ## Using the UI from another machine
 
 You can open a server's UI port directly (`http://tracking-host:4301`). To keep

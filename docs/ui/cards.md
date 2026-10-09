@@ -308,10 +308,12 @@ One line per run across its axes. By default the axes are the config keys that v
 - **Brush:** drag along an axis to keep the lines inside that range coloured and dim the rest; brush several axes to combine them, click an axis to clear its brush. Brushes are not saved.
 - **Hover** a line for its values; in the [project workspace](project-workspace.md) its row in the runs sidebar lights up.
 - **Grouped workspace:** one line per innermost group, at the mean of its runs for numbers; a category shows only when all of the group's runs agree, else the line skips that axis.
+- **Many axes:** the default axes are spaced at least 64 px apart. When more config keys vary than fit the card's width, the card shows the metric and the config keys the runs vary most along, in their usual order, and the footer says `7 of 41 axes`. How much the runs vary along a key is the entropy of its values: numbers are counted in 10 equal bins over their range (in log10 when they are all positive and span more than two decades, such as a learning rate), anything else by distinct value. Add the others under **Axes** in the settings. The expanded card is wider and shows more.
+- **Axis labels** never overlap: when an axis's name does not fit between its neighbours, the names alternate between two rows, and a name still too long for its room ends in `…`. Hover a name for the full one.
 
 | Tab | Settings |
 |---|---|
-| Values | **Metric**. **Axes**: add config keys and metrics, remove or reorder them, **log** per axis; **Default axes** goes back to the varying config keys and the metric. |
+| Values | **Metric**. **Axes**: add config keys and metrics, remove or reorder them, **log** per axis; **Default axes** goes back to the varying config keys (the most varying ones that fit) and the metric. |
 | Display | **Line colour**: a **gradient by the last axis** *(default)* or the **run colours** (group colours when grouped). |
 
 ### Scatter plot

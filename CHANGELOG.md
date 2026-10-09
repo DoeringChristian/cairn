@@ -150,9 +150,27 @@ importance, and notebook embeds.
   records no resume times yet, so it equals `relative_time`.
 - `/api/runs/{id}/sequences` reports `monotonic` per scalar series (kept in
   `metric_stats` at ingest; existing repos are scanned once on first open).
+- **Batched run reads**: `POST /api/runs/batch` returns many runs' details,
+  series catalogues and output artifacts (each exactly its per-run route's
+  body), and `POST /api/runs/series` several runs' series. The UI sends the
+  per-run reads one render asks for as a few of these: a workspace showing
+  1000 runs makes 16 of them instead of about 3500 per-run requests (plus
+  one series read per run), and loads in about 3 s instead of a minute. A share link may call both and gets only its
+  report's runs (the others come back `forbidden`).
+- **Parallel coordinates with many axes**: when more config keys vary than
+  the card's width holds (64 px per axis), it shows the metric and the keys
+  the runs vary most along (`7 of 41 axes`; add the rest in the settings),
+  and axis names that do not fit are staggered on two rows and truncated,
+  never overlapping (hover for the full name).
 
 ### Changed
 
+- **Big runs tables render only what is on screen** (the Runs page and the
+  workspace sidebar): past 100 rows only the rows near the viewport, past 30
+  scrolling columns only the columns in view, at the widths the whole table
+  would give them. At 1000 runs with 250 columns, sorting, searching,
+  grouping and **Latest only** take under 0.3 s instead of 3 to 12 s. The
+  runs list loads 100 runs, then 500 at a time.
 - **The Runs page belongs to the current workspace view** (wandb): its
   status, search, filter, grouping, **Latest only**, sort, eyes, open groups
   and column setup (shown, pinned, ordered columns, widths, computed columns)
@@ -245,6 +263,8 @@ importance, and notebook embeds.
   (now Workspace and Files).
 
 ### Fixed
+- Coming back to the Runs page restored the scroll position the next page
+  had clamped it to (often the top), not the one scrolled to.
 - `cairn.Table({"col": [...], ...})` (a mapping of column -> values) logs those rows; it used to be read as column names only and silently logged an empty table. Ragged columns, or a mapping plus `data=`, raise.
 
 - Scalar charts: a series of one or two points (a metric logged once per

@@ -10,7 +10,9 @@ Status [All▾] Search [regex] [Filter] [Group] [ ] Latest only [Columns]
 
 As in wandb, the table belongs to the current [workspace view](workspace.md#workspace-views): its status, search, filter, grouping, **Latest only**, sort, eyes, open and closed groups, and its column setup (shown, pinned and ordered columns, widths, computed columns) are the view's run state, the same one the [workspace sidebar](project-workspace.md#runs-sidebar) shows. Change one and the other follows. The view switcher in the header (the workspace's) switches the view, and with it the table's state; a new view copies the current one's. Edits are undoable like workspace edits.
 
-Runs load 100 at a time as you scroll. While a filter or a group-by is active, the table loads every page, so matches outside the first page are not missed. The header shows `<shown> of <total> runs`.
+Runs load as you scroll: the first 100, then 500 at a time. While a filter or a group-by is active, the table loads every page, so matches outside the first page are not missed. The header shows `<shown> of <total> runs`.
+
+Big tables render only what is on screen: past 100 rows, only the rows near the viewport (here and in the [workspace sidebar](project-workspace.md#runs-sidebar)), and past 30 scrolling columns, only the columns near the visible part of the table. They look the same as a fully rendered table: each column keeps the width its widest cell gives it. Sorting, searching, grouping or **Latest only** on a thousand runs with hundreds of columns takes a fraction of a second. Coming back to the table restores where you had scrolled to.
 
 The table updates live: new and deleted runs appear within a few seconds, and running runs' status and values refresh every 3 seconds.
 
