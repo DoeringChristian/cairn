@@ -97,8 +97,17 @@ def make_system(backend: str, work: Path, *, ui: bool = False) -> System:
         pg = postgres()
         if pg is None:
             raise RuntimeError("postgres unavailable: " + (_PG.note if _PG else ""))
+        if not getattr(pg, "template_ready", False):
+            # MLflow's schema migrations take minutes over podman's network:
+            # run them once into a template database, clone it per system.
+            tw = work.parent / "pg-template"
+            tw.mkdir(parents=True, exist_ok=True)
+            srv = c.mlflow_server(pg.new_db("mlflow_tmpl"), tw)
+            srv.start()
+            srv.stop()
+            pg.template_ready = True
         name = "b" + work.name.replace("-", "_").lower()[:40]
-        uri = pg.new_db(name)
+        uri = pg.new_db(name, template="mlflow_tmpl")
         srv = c.mlflow_server(uri, work)
         return System(backend, work, srv, srv.url, c.mlflow_python(), srv.url, "mlflow", pg_db=name)
     srv = c.mlflow_server("sqlite", work)

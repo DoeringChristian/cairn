@@ -61,7 +61,7 @@ def probe(browser, page_cfg: dict, shots: Path, rep: int) -> dict:
         if not inflight and time.perf_counter() - last_activity[0] > 0.5:
             break
         page.wait_for_timeout(50)
-    out["settled_ms"] = (last_activity[0] - t0) * 1e3
+    out["settled_ms"] = max((last_activity[0] - t0) * 1e3, out.get("ready_ms", 0))
     out["requests"], out["bytes"], out["failed_requests"] = nreq[0], nbytes[0], failed[0]
     m = {x["name"]: x["value"] for x in cdp.send("Performance.getMetrics")["metrics"]}
     out["js_heap_used_mb"] = m.get("JSHeapUsedSize", 0) / 2**20

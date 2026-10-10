@@ -29,6 +29,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--postgres", action="store_true", help="add mlflow-postgres (podman)")
     ap.add_argument("--no-ui", action="store_true", help="api: skip the headless UI timings")
     ap.add_argument("--out", required=True, help="results JSON path")
+    ap.add_argument("--set", action="append", default=[], metavar="KEY=JSON",
+                    help="override a scale entry, e.g. --set lag_secs=5 --set 'api_runs=[100]'")
     ap.add_argument("--keep", action="store_true", help="keep the scenario's data under BENCH_ROOT")
     args = ap.parse_args(argv)
 
@@ -45,10 +47,19 @@ def main(argv: list[str] | None = None) -> int:
         notes.append(f"mlflow-postgres skipped: {systems._PG.note if systems._PG else 'unavailable'}")
         backends.remove("mlflow-postgres")
 
+    import json
+
+    from .scenarios import SCALES
+
+    for kv in args.set:
+        k, _, v = kv.partition("=")
+        if k not in SCALES[args.scale]:
+            ap.error(f"unknown scale key {k!r}")
+        SCALES[args.scale][k] = json.loads(v)
     names = list(SCENARIOS) if args.scenario == "all" else [args.scenario]
     work = c.bench_root() / "runs" / time.strftime("%Y%m%d-%H%M%S")
     result = {"machine": c.machine_info(), "scale": args.scale, "backends": backends, "notes": notes,
-              "argv": sys.argv, "scenarios": {}}
+              "argv": sys.argv, "sizes": SCALES[args.scale], "scenarios": {}}
     out = Path(args.out)
     try:
         for name in names:

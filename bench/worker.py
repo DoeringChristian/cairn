@@ -268,7 +268,13 @@ def populate(a: dict[str, Any]) -> dict[str, Any]:
         mlflow.set_tracking_uri(a["target"])
         c = mlflow.MlflowClient()
         exp = c.get_experiment_by_name(a["project"])
-        exp_id = exp.experiment_id if exp else c.create_experiment(a["project"])
+        if exp is not None:
+            exp_id = exp.experiment_id
+        else:
+            try:
+                exp_id = c.create_experiment(a["project"])
+            except Exception:  # noqa: BLE001  (a concurrent populater created it)
+                exp_id = c.get_experiment_by_name(a["project"]).experiment_id
         for i in range(n):
             r = c.create_run(exp_id, run_name=f"run-{base + i}")
             rid = r.info.run_id

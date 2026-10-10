@@ -168,7 +168,10 @@ class Server:
     def pid(self) -> int | None:
         return self.proc.pid if self.proc else None
 
-    def start(self, timeout: float = 90.0) -> float:
+    def start(self, timeout: float | None = None) -> float:
+        # MLflow over Postgres runs its schema migrations at first start:
+        # minutes through podman's VM network.
+        timeout = timeout or (400.0 if "postgresql://" in " ".join(self.cmd) else 90.0)
         assert self.log_path is not None
         log = open(self.log_path, "ab")  # noqa: SIM115
         self.proc = subprocess.Popen(self.cmd, env=self.env, stdout=log, stderr=subprocess.STDOUT,
@@ -181,8 +184,11 @@ class Server:
             return
         try:
             os.killpg(self.proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        except (ProcessLookupError, PermissionError):
+            try:
+                self.proc.kill()
+            except ProcessLookupError:
+                pass
         self.proc.wait()
         self.proc = None
 
@@ -192,7 +198,7 @@ class Server:
         try:
             os.killpg(self.proc.pid, signal.SIGTERM)
             self.proc.wait(timeout=20)
-        except (ProcessLookupError, subprocess.TimeoutExpired):
+        except (ProcessLookupError, PermissionError, subprocess.TimeoutExpired):
             self.kill9()
         self.proc = None
 
@@ -286,10 +292,11 @@ class Postgres:
             self.note = f"podman error: {exc}"
         return False
 
-    def new_db(self, name: str) -> str:
+    def new_db(self, name: str, template: str | None = None) -> str:
         subprocess.run(["podman", "exec", PG_CONTAINER, "psql", "-U", "bench", "-c", f"DROP DATABASE IF EXISTS {name}"],
                        capture_output=True, timeout=60)
-        subprocess.run(["podman", "exec", PG_CONTAINER, "psql", "-U", "bench", "-c", f"CREATE DATABASE {name}"],
+        tmpl = f" TEMPLATE {template}" if template else ""
+        subprocess.run(["podman", "exec", PG_CONTAINER, "psql", "-U", "bench", "-c", f"CREATE DATABASE {name}{tmpl}"],
                        capture_output=True, timeout=60, check=True)
         return f"postgresql://bench:bench@127.0.0.1:{PG_PORT}/{name}"
 
