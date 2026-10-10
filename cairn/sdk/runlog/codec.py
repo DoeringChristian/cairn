@@ -207,7 +207,21 @@ BLOB_OPS = ("artifact_meta", "source")
 
 
 def record_blobs(record: dict[str, Any]) -> list[str]:
-    """The blob hashes a record needs on the server first."""
-    if record.get("op") in BLOB_OPS and isinstance(record.get("hash"), str):
+    """The blob hashes a record needs on the server first: a blob op's
+    ``hash``, an artifact version's manifest ``digest``, a point's
+    ``artifact_hash`` (their bytes were stored by an earlier ``artifact_meta``
+    of this run; listing them again is cheap, the uploader remembers what the
+    server has)."""
+    op = record.get("op")
+    if op in BLOB_OPS and isinstance(record.get("hash"), str):
         return [record["hash"]]
+    if op == "create_artifact_version" and isinstance(record.get("digest"), str):
+        return [record["digest"]]
+    if op == "batch":
+        out: list[str] = []
+        for p in record.get("points") or []:
+            h = p.get("artifact_hash") if isinstance(p, dict) else None
+            if isinstance(h, str) and h not in out:
+                out.append(h)
+        return out
     return []

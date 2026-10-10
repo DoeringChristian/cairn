@@ -32,8 +32,10 @@ class LogSync:
         self.reader = LogReader(ref.log_dir)
         #: The server's applied_seq as last answered; None: ask first.
         self.applied: int | None = None
+        #: Payload bytes per batch (halved by a 413).
+        self.max_bytes = MAX_BODY
 
-    def step(self, client: IngestClient, run_id: str, *, max_bytes: int = MAX_BODY) -> int:
+    def step(self, client: IngestClient, run_id: str, *, max_bytes: int | None = None) -> int:
         """Upload one batch; returns the number of records the server newly
         confirmed (0: nothing to send).
 
@@ -42,12 +44,28 @@ class LogSync:
         """
         for _attempt in range(3):
             try:
-                return self._step(client, run_id, max_bytes)
+                return self._step(client, run_id, min(max_bytes or self.max_bytes, self.max_bytes))
             except Gap as gap:
+                if gap.missing_blobs:
+                    # The server lacks blobs it needs first (maybe collected
+                    # since we saw them): send them, then the batch again.
+                    for digest in gap.missing_blobs:
+                        client.known_blobs.discard(digest)
+                        if not client.ensure_blob(digest, self.ref.run_dir.blobs_dir / digest):
+                            raise UploadError(
+                                f"the server needs blob {digest}, which is missing from "
+                                f"{self.ref.run_dir.blobs_dir} too (run `cairn fsck`)",
+                                rejected=True,
+                            ) from None
                 # The server has less than we thought (it restored a backup,
                 # or another uploader raced us): continue from its answer.
                 self.applied = gap.applied_seq
                 self._ack(gap.applied_seq)
+            except UploadError as exc:
+                if exc.status == 413 and self.max_bytes > 64 << 10:
+                    self.max_bytes //= 2  # too big for the server: smaller batches
+                    continue
+                raise
         return 0
 
     def _step(self, client: IngestClient, run_id: str, max_bytes: int) -> int:
@@ -99,8 +117,8 @@ class DirSync:
 
     def refresh(self) -> list[LogSync]:
         for ref in self.run_dir.logs():
-            if ref.name not in self.logs:
-                self.logs[ref.name] = LogSync(ref)
+            if ref.key not in self.logs:
+                self.logs[ref.key] = LogSync(ref)
         return list(self.logs.values())
 
     def step(self, client: IngestClient, *, budget: int = 8) -> int:

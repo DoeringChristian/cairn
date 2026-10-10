@@ -115,18 +115,6 @@ class ServerReads:
     def sequences(self, run_id: str) -> list[dict[str, Any]]:
         return self._call(f"reading run {run_id}", lambda t: t.sequence_steps(run_id))
 
-    def applied_seq(self, run_id: str, log_name: str) -> int:
-        import httpx
-
-        def get(t: Any) -> int:
-            try:
-                return int(t.get(f"/api/ingest/runs/{run_id}/logs/{log_name}").json()["applied_seq"])
-            except httpx.HTTPStatusError as exc:
-                if exc.response.status_code == 404:
-                    return 0
-                raise
-        return self._call(f"continuing run {run_id}", get)
-
 
 def run_state(body: dict[str, Any]) -> dict[str, Any]:
     """A ``GET /api/runs/{id}`` body -> what a reopening Run needs."""

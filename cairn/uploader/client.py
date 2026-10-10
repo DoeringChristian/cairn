@@ -33,18 +33,26 @@ class UploadError(Exception):
     changes, so the uploader backs off to the maximum.
     """
 
-    def __init__(self, message: str, *, retry_after: float | None = None, rejected: bool = False):
+    def __init__(
+        self, message: str, *, retry_after: float | None = None, rejected: bool = False,
+        status: int | None = None,
+    ):
         super().__init__(message)
         self.retry_after = retry_after
         self.rejected = rejected
+        self.status = status
 
 
 class Gap(Exception):
-    """409: the server has applied less than the batch assumes."""
+    """409: the server has applied less than the batch assumes (resend from
+    ``applied_seq + 1``), or lacks blobs the batch references
+    (``missing_blobs``: PUT them, then resend; nothing was applied)."""
 
-    def __init__(self, applied_seq: int):
-        super().__init__(f"server applied_seq is {applied_seq}")
+    def __init__(self, applied_seq: int, missing_blobs: list[str] | None = None):
+        super().__init__(f"server applied_seq is {applied_seq}"
+                         + (f", missing blobs {missing_blobs}" if missing_blobs else ""))
         self.applied_seq = applied_seq
+        self.missing_blobs = list(missing_blobs or [])
 
 
 _TRANSIENT_4XX = frozenset({401, 403, 408, 425, 429})
@@ -110,15 +118,16 @@ class IngestClient:
             raise UploadError(f"{method} {path}: {type(exc).__name__}: {exc}") from None
         if resp.status_code in (429, 503):
             raise UploadError(
-                f"{method} {path}: server busy ({resp.status_code})",
-                retry_after=_retry_after(resp),
+                f"{method} {path}: not now ({resp.status_code}) {resp.text[:200]}",
+                retry_after=_retry_after(resp), status=resp.status_code,
             )
         if resp.status_code >= 500:
-            raise UploadError(f"{method} {path}: server error {resp.status_code}")
+            raise UploadError(f"{method} {path}: server error {resp.status_code}",
+                              status=resp.status_code)
         if resp.status_code >= 400 and resp.status_code not in (404, 409):
             raise UploadError(
                 f"{method} {path}: {resp.status_code} {resp.text[:300]}",
-                rejected=resp.status_code not in _TRANSIENT_4XX,
+                rejected=resp.status_code not in _TRANSIENT_4XX, status=resp.status_code,
             )
         return resp
 
@@ -153,10 +162,15 @@ class IngestClient:
             headers["Content-Encoding"] = "gzip"
         resp = self._send("POST", path, content=body, headers=headers)
         if resp.status_code == 409:
-            seq = _applied(_json(resp))
+            body = _json(resp)
+            seq = _applied(body)
             if seq is None:
                 raise UploadError(f"POST {path}: 409 without applied_seq: {resp.text[:200]}")
-            raise Gap(seq)
+            missing = None
+            for src in (body, body.get("detail") if isinstance(body, dict) else None):
+                if isinstance(src, dict) and isinstance(src.get("missing_blobs"), list):
+                    missing = [str(h) for h in src["missing_blobs"]]
+            raise Gap(seq, missing)
         if resp.status_code == 404:
             raise UploadError(f"POST {path}: 404 (no ingestion endpoint?)", rejected=True)
         seq = _applied(_json(resp))

@@ -576,14 +576,19 @@ class Run:
             )
 
     def _open_writer(self, label: str | None, *, project_id: str, remote: bool) -> None:
-        """Open this process's log of the run directory (``main`` for the
-        primary, the label for a worker), writing ``run.json`` if missing.
+        """Open this process's log of the run directory (``log/`` for the
+        primary, ``procs/<label>/`` for a worker), writing ``run.json`` if
+        missing.
 
-        A log that is not on this machine yet continues the seqs the server
-        has (``remote``: asked for sure; a worker asks only a server that is
-        up, else starts at 1)."""
-        log_name = None if self._primary else label
+        A log continues in place when its directory is here. A NEW log of a
+        run whose logs may exist elsewhere gets a fresh name on the server
+        (``main.<hex>`` / ``<label>.<hex>``), so its seqs never collide with
+        records the server applied already: a resume of a run that is not on
+        this machine (``remote``), a worker whose run's primary log is not
+        here either."""
+        key = None if self._primary else label
         fresh_primary = self._primary and not (self._run_dir.path / "log").exists()
+        primary_here = (self._run_dir.path / "log").exists()
         if fresh_primary or not self._run_dir.exists():
             meta: dict[str, Any] = {
                 "run_id": self._run_id, "project": self._project, "project_id": project_id,
@@ -595,24 +600,17 @@ class Run:
                 # The uploader may run with another environment.
                 meta["token"] = token
             self._run_dir.write_meta(meta)
-        base = 0
-        ref = self._run_dir.log(log_name)
+        ref = self._run_dir.log(key)
+        name = None
         if not ref.log_dir.exists():
-            name = ref.name
-            if remote:
-                base = self._reads.applied_seq(self._run_id, name)
-            elif not self._primary:
-                t = self._reads.peek()
-                if t is not None:
-                    try:
-                        base = int(t.get(
-                            f"/api/ingest/runs/{self._run_id}/logs/{name}").json()["applied_seq"])
-                    except Exception:  # noqa: BLE001 - unknown: a new log
-                        base = 0
+            if self._primary and remote:
+                name = f"{MAIN_LOG}.{secrets.token_hex(3)}"
+            elif not self._primary and not primary_here:
+                name = f"{label}.{secrets.token_hex(3)}"
         try:
-            self._writer = RunWriter(self._run_dir, self._run_id, log_name, base_seq=base)
+            self._writer = RunWriter(self._run_dir, self._run_id, key, log_name=name)
         except LogLocked:
-            what = f"label {label!r}" if log_name else "the run"
+            what = f"label {label!r}" if key else "the run"
             raise ValueError(
                 f"{what} is in use by another live process of run {self._run_id}"
             ) from None

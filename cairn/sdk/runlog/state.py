@@ -21,7 +21,7 @@ def replay(run_dir: RunDir, log_name: str | None = None) -> dict[str, Any]:
     }
     max_steps: dict[str, int] = {}
     for ref in run_dir.logs():
-        mine = ref.name == (log_name or "main")
+        mine = ref.key == (log_name or "main")
         reader = LogReader(ref.log_dir)
         after = 0
         while True:

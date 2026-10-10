@@ -129,3 +129,6 @@ def test_record_blobs() -> None:
     assert codec.record_blobs({"op": "artifact_meta", "hash": h}) == [h]
     assert codec.record_blobs({"op": "source", "hash": h}) == [h]
     assert codec.record_blobs({"op": "batch", "hash": h}) == []
+    assert codec.record_blobs({"op": "batch", "points": [{"artifact_hash": h}, {"artifact_hash": h},
+                                                         {"scalar_value": 1}]}) == [h]
+    assert codec.record_blobs({"op": "create_artifact_version", "digest": h}) == [h]

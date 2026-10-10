@@ -150,8 +150,10 @@ def test_a_fresh_session_trusts_the_servers_applied_seq(tmp_path) -> None:
 def test_log_starting_after_the_server_is_refused(tmp_path) -> None:
     rd = RunDir.for_run("r9", tmp_path)
     rd.write_meta({"run_id": "r9", "endpoint": "http://fake"})
-    w = RunWriter(rd, "r9", base_seq=100)
-    w.resume_run()
+    from cairn.sdk.runlog.log import LogWriter
+
+    w = LogWriter(rd.log().log_dir, base_seq=100)
+    w.append("resume_run", {"run_id": "r9"})
     w.close()
     with pytest.raises(UploadError, match="starts at 101") as info:
         LogSync(rd.log()).step(client_for(FakeIngest()), "r9")
@@ -199,13 +201,17 @@ def test_sync_paths_reports_failures(tmp_path) -> None:
     fake.assert_exactly_once("r1", "main", rd.log().last_seq())
 
 
-def test_missing_blob_does_not_block_the_log(tmp_path) -> None:
+def test_a_blob_lost_on_both_sides_is_reported(tmp_path) -> None:
     rd = make_run(tmp_path, blobs=1)
     for p in rd.blobs_dir.iterdir():
         p.unlink()
     fake = FakeIngest()
-    drive(DirSync(rd), client_for(fake))
-    assert fake.applied[("r1", "main")] == rd.log().last_seq()
+    with pytest.raises(UploadError, match="missing from") as info:
+        for _ in range(5):
+            DirSync(rd).step(client_for(fake))
+    assert info.value.rejected
+    # Everything before the record that needs it is in.
+    assert fake.applied.get(("r1", "main"), 0) < rd.log().last_seq()
 
 
 # ---- the daemon --------------------------------------------------------------------
@@ -331,3 +337,48 @@ def test_status_file_is_json(tmp_path) -> None:
     d = agent.Daemon(base)
     d._status(rd.path, "boom")
     assert json.loads(agent.status_path(rd.path, base).read_text())["error"] == "boom"
+
+
+def test_409_missing_blobs_are_sent_then_the_batch_again(tmp_path) -> None:
+    rd = make_run(tmp_path)
+    fake = FakeIngest()
+    client = client_for(fake)
+    # The client believes the server has every blob (e.g. collected since).
+    import hashlib
+
+    for p in rd.blobs_dir.iterdir():
+        client.known_blobs.add(hashlib.sha256(p.read_bytes()).hexdigest())
+    drive(DirSync(rd), client)
+    fake.assert_exactly_once("r1", "main", rd.log().last_seq())
+    assert len(fake.blobs) == 3
+
+
+def test_413_shrinks_the_batches(tmp_path) -> None:
+    rd = make_run(tmp_path, n=20_000)
+    fake = FakeIngest(max_body=100_000)
+    ls = LogSync(rd.log())
+    client = client_for(fake)
+    while not ls.done():
+        ls.step(client, "r1")
+    assert ls.max_bytes < 6 << 20
+    fake.assert_exactly_once("r1", "main", rd.log().last_seq())
+
+
+def test_503_waiting_for_the_run_is_retried_later(tmp_path) -> None:
+    rd = make_run(tmp_path, n=5)
+    calls = {"n": 0}
+
+    def fault(method: str, path: str):
+        if method == "POST":
+            calls["n"] += 1
+            if calls["n"] <= 2:
+                return ("status", 503, {"Retry-After": "0.5"})
+        return None
+
+    fake = FakeIngest(fault=fault)
+    ds = DirSync(rd)
+    with pytest.raises(UploadError) as info:
+        ds.step(client_for(fake))
+    assert info.value.retry_after == 0.5 and not info.value.rejected
+    drive(ds, client_for(fake))
+    fake.assert_exactly_once("r1", "main", rd.log().last_seq())

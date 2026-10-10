@@ -39,6 +39,7 @@ class FakeIngest:
         *,
         fault: Callable[[str, str], Fault] | None = None,
         apply_fn: Callable[[str, str, dict[str, Any]], None] | None = None,
+        max_body: int | None = None,
     ) -> None:
         self.lock = threading.Lock()
         self.applied: dict[tuple[str, str], int] = {}
@@ -49,6 +50,8 @@ class FakeIngest:
         self.requests: list[tuple[str, str]] = []
         self.fault = fault
         self.apply_fn = apply_fn
+        #: Bodies (as received) above this get a 413.
+        self.max_body = max_body
 
     # ---- the protocol ------------------------------------------------------------
 
@@ -62,6 +65,8 @@ class FakeIngest:
                 with self.lock:
                     return _json(200, {"applied_seq": self.applied.get(key, 0)})
             if method == "POST":
+                if self.max_body is not None and len(body) > self.max_body:
+                    return _json(413, {"detail": "body too large"})
                 if headers.get("content-encoding") == "gzip":
                     body = gzip.decompress(body)
                 req = json.loads(body)
@@ -90,6 +95,12 @@ class FakeIngest:
             for i, rec in enumerate(records):
                 if rec["seq"] != from_seq + i:
                     return _json(400, {"detail": "seqs not consecutive"})
+            # Like the real server: every referenced blob first, else 409 and
+            # nothing applied.
+            missing = sorted({h for rec in records if rec["seq"] > applied
+                              for h in record_blobs(rec) if h not in self.blobs})
+            if missing:
+                return _json(409, {"applied_seq": applied, "missing_blobs": missing})
             for rec in records:
                 if rec["seq"] <= applied:
                     continue  # exactly once: already applied

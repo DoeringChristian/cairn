@@ -42,23 +42,28 @@ def finish_timeout() -> float:
 
 
 class RunWriter:
-    """Writes one log (``main`` for the primary, the label for an attached
-    process) of a run directory, plus its blobs.
+    """Writes one log of a run directory (``log_key``: None for the
+    primary's ``log/``, the label for ``procs/<label>/``; ``log_name``: its
+    name on the server when not the default), plus its blobs.
 
     Raises:
         LogLocked: Another live process writes this log.
     """
 
     def __init__(
-        self, run_dir: RunDir, run_id: str, log_name: str | None = None, *, base_seq: int = 0,
+        self, run_dir: RunDir, run_id: str, log_key: str | None = None, *,
+        log_name: str | None = None,
     ) -> None:
         self.run_dir = run_dir
         self.run_id = run_id
-        self.ref = run_dir.log(log_name)
+        self.ref = run_dir.log(log_key)
         self._points: deque[dict[str, Any]] = deque()
         self._lines: deque[dict[str, Any]] = deque()
         self._acc_lock = threading.Lock()
-        self.log = LogWriter(self.ref.log_dir, base_seq=base_seq, before_commit=self._drain)
+        self.log = LogWriter(self.ref.log_dir, before_commit=self._drain)
+        if log_name is not None:
+            # Named under the log's lock, before its first record.
+            self.ref.set_name(log_name)
         self._closed = False
 
     # ---- plumbing ------------------------------------------------------------

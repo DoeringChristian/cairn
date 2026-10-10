@@ -6,18 +6,23 @@
     log/000000.seg ...     the primary's records (log ``main``)
     blobs/<sha256>         content-addressed media and artifact files
     procs/<label>/log/     an attached process's records (log ``<label>``)
-    acked                  the highest seq the server confirmed of ``main``
-    procs/<label>/acked    ... of ``<label>``
+    acked                  JSON {"<log>": highest seq the server confirmed}
     FINISHED               the primary finished (JSON: status, exit code, time)
     procs/<label>/FINISHED the attached process detached
 
 Every log has exactly one writer (``log/.lock``); ``acked`` is written only
-by the uploader, atomically.
+by uploaders, atomically. A log's name on the server is its directory's
+(``main`` / the label) unless ``log/name`` says otherwise: a log started on
+this machine for a run whose log of that name may already exist elsewhere
+(a resume on another machine, a requeued worker) gets a fresh name
+(``main.<hex>``, ``<label>.<hex>``), so its seqs never collide with records
+the server has applied already.
 """
 
 from __future__ import annotations
 
 import json
+import threading
 import os
 import secrets
 import time
@@ -55,39 +60,80 @@ def write_atomic(path: Path, data: bytes, *, mode: int = 0o644) -> None:
     fsync_dir(path.parent)
 
 
+_acked_lock = threading.Lock()
+
+
+def read_acked(path: Path) -> dict[str, int]:
+    """An ``acked`` file: JSON ``{"<log>": n}``, ``<log> <n>`` lines, or a bare
+    int (``main``)."""
+    try:
+        text = path.read_text().strip()
+    except FileNotFoundError:
+        return {}
+    if not text:
+        return {}
+    try:
+        data = json.loads(text)
+    except ValueError:
+        data = None
+    if isinstance(data, dict):
+        return {str(k): int(v) for k, v in data.items() if isinstance(v, int)}
+    if isinstance(data, int):
+        return {MAIN: data}
+    out = {}
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[1].isdigit():
+            out[parts[0]] = int(parts[1])
+    return out
+
+
 @dataclass(frozen=True)
 class LogRef:
-    """One log of a run directory."""
+    """One log of a run directory: ``key`` is its directory (``main`` = the
+    run directory's own ``log/``, else ``procs/<key>/``)."""
 
     run_dir: "RunDir"
-    name: str  # "main" or a process label
+    key: str
 
     @property
     def owner(self) -> Path:
-        """The directory holding the log's ``log/``, ``acked`` and ``FINISHED``."""
+        """The directory holding the log's ``log/`` and ``FINISHED``."""
         p = self.run_dir.path
-        return p if self.name == MAIN else p / "procs" / self.name
+        return p if self.key == MAIN else p / "procs" / self.key
 
     @property
     def log_dir(self) -> Path:
         return self.owner / "log"
 
     @property
+    def name(self) -> str:
+        """The log's name on the server."""
+        try:
+            return (self.log_dir / "name").read_text().strip() or self.key
+        except FileNotFoundError:
+            return self.key
+
+    def set_name(self, name: str) -> None:
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        write_atomic(self.log_dir / "name", name.encode())
+
+    @property
     def acked_path(self) -> Path:
-        return self.owner / "acked"
+        return self.run_dir.path / "acked"
 
     @property
     def finished_path(self) -> Path:
         return self.owner / "FINISHED"
 
     def acked(self) -> int:
-        try:
-            return int(self.acked_path.read_text().strip() or 0)
-        except (FileNotFoundError, ValueError):
-            return 0
+        return read_acked(self.acked_path).get(self.name, 0)
 
     def set_acked(self, seq: int) -> None:
-        write_atomic(self.acked_path, f"{seq}\n".encode())
+        with _acked_lock:
+            data = read_acked(self.acked_path)
+            data[self.name] = seq
+            write_atomic(self.acked_path, json.dumps(data, sort_keys=True).encode())
 
     def finished(self) -> dict[str, Any] | None:
         try:

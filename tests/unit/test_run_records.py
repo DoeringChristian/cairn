@@ -216,13 +216,32 @@ def test_resume_elsewhere_asks_the_server(env, monkeypatch) -> None:
         "config_doc": {"a": 1}, "summary_doc": {},
     })
     monkeypatch.setattr(ServerReads, "sequences", lambda self, rid: [{"name": "system.cpu", "max_step": 9}])
-    monkeypatch.setattr(ServerReads, "applied_seq", lambda self, rid, log: 40)
     run = cairn.Run("q", resume="abc", **QUIET)
     assert run.version == 3 and run.project == "q" and run._tags == ["x"]
     assert run._step_counters["system.cpu"] == 10
     run.finish()
     recs = records("abc")
-    assert recs[0]["op"] == "resume_run" and recs[0]["seq"] == 41  # continues the server's seqs
+    assert recs[0]["op"] == "resume_run" and recs[0]["seq"] == 1
+    # A new log of a run whose "main" is elsewhere: its own name on the server.
+    name = RunDir.for_run("abc").log().name
+    assert name.startswith("main.") and name != "main"
+
+
+def test_a_worker_away_from_its_primary_gets_its_own_log_name(env) -> None:
+    w = cairn.attach("feed", label="rank3", project="p", system_metrics=False, capture_output=False)
+    w.finish()
+    ref = RunDir.for_run("feed").log("rank3")
+    assert ref.name.startswith("rank3.")
+    run = cairn.Run("p", run_id="beef", **QUIET)
+    w2 = cairn.attach("beef", label="rank3", system_metrics=False, capture_output=False)
+    w2.finish()
+    run.finish()
+    assert RunDir.for_run("beef").log("rank3").name == "rank3"  # next to its primary
+    # A second process of the same label continues its log, name and all.
+    w3 = cairn.attach("feed", label="rank3", project="p", system_metrics=False, capture_output=False)
+    w3.finish()
+    assert RunDir.for_run("feed").log("rank3").name == ref.name
+    assert ops("feed", "rank3") == ["join", "detach", "join", "detach"]
 
 
 def test_resume_elsewhere_offline_is_a_clear_error(env) -> None:
