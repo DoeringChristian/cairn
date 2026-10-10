@@ -24,19 +24,19 @@ def probe(browser, page_cfg: dict, shots: Path, rep: int) -> dict:
     cdp = ctx.new_cdp_session(page)
     cdp.send("Performance.enable")
     cdp.send("Network.enable")
-    inflight: set = set()
+    inflight: dict = {}
     last_activity = [time.perf_counter()]
     nbytes = [0]
     nreq = [0]
     failed = [0]
 
     def on_req(r):
-        inflight.add(r)
+        inflight[r] = time.perf_counter()
         nreq[0] += 1
         last_activity[0] = time.perf_counter()
 
     def on_done(r):
-        inflight.discard(r)
+        inflight.pop(r, None)
         last_activity[0] = time.perf_counter()
 
     def on_failed(r):
@@ -56,12 +56,20 @@ def probe(browser, page_cfg: dict, shots: Path, rep: int) -> dict:
         out["ready_count"] = page.locator(page_cfg["selector"]).count()
     except Exception as exc:  # noqa: BLE001
         out["error"] = f"{type(exc).__name__}: {str(exc)[:300]}"
-    deadline = time.perf_counter() + 120
+    # settled: no request started or finished for 500 ms, ignoring requests
+    # open for > 5 s (long polls / streams); capped at 60 s (a page that
+    # polls faster than every 500 ms never settles: settled = None)
+    deadline = time.perf_counter() + 60
+    settled = None
     while time.perf_counter() < deadline:
-        if not inflight and time.perf_counter() - last_activity[0] > 0.5:
+        now = time.perf_counter()
+        busy = any(now - t < 5 for t in inflight.values())
+        if not busy and now - last_activity[0] > 0.5:
+            settled = last_activity[0]
             break
         page.wait_for_timeout(50)
-    out["settled_ms"] = max((last_activity[0] - t0) * 1e3, out.get("ready_ms", 0))
+    out["settled_ms"] = max((settled - t0) * 1e3, out.get("ready_ms", 0)) if settled else None
+    out["long_requests_open"] = len(inflight)
     out["requests"], out["bytes"], out["failed_requests"] = nreq[0], nbytes[0], failed[0]
     m = {x["name"]: x["value"] for x in cdp.send("Performance.getMetrics")["metrics"]}
     out["js_heap_used_mb"] = m.get("JSHeapUsedSize", 0) / 2**20
@@ -92,7 +100,7 @@ def main() -> None:
         ok = [r for r in rs if "ready_ms" in r]
         med = lambda k, xs=ok: sorted(x[k] for x in xs)[len(xs) // 2] if xs else None  # noqa: E731
         out.append({"page": cfg["page"], "url": cfg["url"], "reps": len(rs), "ok_reps": len(ok),
-                    "ready_ms": med("ready_ms"), "settled_ms": med("settled_ms", rs),
+                    "ready_ms": med("ready_ms"), "settled_ms": med("settled_ms", [r for r in rs if r.get("settled_ms") is not None]),
                     "requests": med("requests", rs), "bytes": med("bytes", rs),
                     "js_heap_used_mb": med("js_heap_used_mb", rs), "ready_count": med("ready_count"),
                     "error": next((r["error"] for r in rs if "error" in r), None), "all": rs})

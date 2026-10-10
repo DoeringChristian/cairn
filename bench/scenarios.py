@@ -488,8 +488,10 @@ def _ui(sysm: System, key: str, proj: str, ids: list[str], work: Path) -> list[d
         cl = httpx.Client(base_url=sysm.read_url, timeout=60)
         exp = cl.get("/api/2.0/mlflow/experiments/get-by-name", params={"experiment_name": proj}).json()["experiment"]["experiment_id"]
         pages = [
-            {"page": "runs", "url": f"{sysm.read_url}/#/experiments/{exp}", "selector": 'a[href*="/runs/"]'},
-            {"page": "workspace", "url": f"{sysm.read_url}/#/experiments/{exp}?compareRunsMode=CHART",
+            # MLflow 3 opens experiments in its GenAI overview; /runs is the
+            # model-training runs table, compareRunsMode=CHART its chart view
+            {"page": "runs", "url": f"{sysm.read_url}/#/experiments/{exp}/runs", "selector": 'a[href*="/runs/"]'},
+            {"page": "workspace", "url": f"{sysm.read_url}/#/experiments/{exp}/runs?compareRunsMode=CHART",
              "selector": ".js-plotly-plot, canvas"},
         ]
     args = {"pages": pages, "reps": 3, "shots": str(work / f"ui-{proj}")}

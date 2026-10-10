@@ -97,7 +97,7 @@ def api(res: dict) -> str:
     out = table(head, rows)
     errs = [r for r in res["rows"] if "error" in r and "runs" not in r]
     for e in errs:
-        out += f"\n{e['backend']}: {e['error']}\n"
+        out += f"\n{e['backend']}: {e['error'][:300]}\n"
     ui = res.get("ui") or []
     if ui:
         out += "\nUI (headless Chromium, cold context, median of 3):\n\n"

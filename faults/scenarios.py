@@ -68,6 +68,8 @@ class Case:
         work.mkdir(parents=True)
         self.sysm: System = make_system(_BACKEND[system], server_root or work)
         self.sysm.work = work if server_root is None else server_root
+        # keep the server's log beside the case (not on a volume under test)
+        self.sysm.server.log_path = work / f"server-{self.sysm.server.port}.log"
         self.env = c.isolated_env(work)
         self.proxy: FaultProxy | None = None
         self.target = self.sysm.target
@@ -177,6 +179,25 @@ class Case:
         self.sysm.server.stop()
 
 
+def _sync_leftovers(case: Case, rid: str | None, w: dict, row: dict[str, Any]) -> None:
+    """cairn-http: when the run ended with data still in its client WAL, record
+    the state before, then run ``cairn sync`` (the documented recovery) and let
+    the caller verify after."""
+    if case.system != "cairn-http" or not rid:
+        return
+    wals = list((case.work / "cairn-wal").glob("*.wal.jsonl"))
+    row["client_wal_left_after_finish"] = len(wals)
+    if not wals:
+        return
+    row["before_sync"] = {k: v for k, v in _verify_row(case, w, rid).items()
+                          if k in ("lost", "lost_accepted", "present")}
+    t0 = time.monotonic()
+    r = subprocess.run([str(Path(c.CAIRN_PY).parent / "cairn"), "sync", "--server", case.sysm.read_url],
+                       env=case.env, capture_output=True, text=True, timeout=300)
+    row["sync_s"] = time.monotonic() - t0
+    row["sync_output"] = (r.stdout + r.stderr)[-300:]
+
+
 def _client_summary(w: dict) -> dict[str, Any]:
     lat = w.get("step_latency") or {}
     return {
@@ -235,6 +256,7 @@ def _live(system: str, work: Path, *, proxy: bool, fault: Callable[[Case], None]
         # let a cairn-local ingester / cairn replay finish
         if rid:
             case.wait_complete(rid, w.get("progress_last", -1), timeout=60)
+        _sync_leftovers(case, rid, w, row)
         row.update(_client_summary(w))
         row.update(_verify_row(case, w, rid))
     except Exception as exc:  # noqa: BLE001
@@ -316,11 +338,7 @@ def client_kill9(system: str, work: Path) -> dict[str, Any]:
         # what arrives on its own (cairn-local: the ingester's next cycles)
         row["complete_without_sync_s"] = case.wait_complete(rid, w["progress_last"], timeout=15, since=t_kill) if rid else None
         row["before_sync"] = _verify_row(case, w, rid)
-        if system == "cairn-http":
-            r = subprocess.run([str(Path(c.CAIRN_PY).parent / "cairn"), "sync", "--server", case.sysm.read_url],
-                               env=case.env, capture_output=True, text=True, timeout=300)
-            row["sync_output"] = (r.stdout + r.stderr)[-400:]
-            time.sleep(1)
+        _sync_leftovers(case, rid, w, row)
         row.update(_client_summary(w))
         row.update(_verify_row(case, w, rid))
     except Exception as exc:  # noqa: BLE001
@@ -392,17 +410,23 @@ def disk_full(system: str, work: Path) -> dict[str, Any]:
         t_rel = time.monotonic()
         rid = case.run_id_of("w", 30)
         row["server_alive_at_release"] = case.sysm.server.proc is not None and case.sysm.server.proc.poll() is None
-        row["recovery_s"] = case.wait_complete(rid, upto, since=t_rel) if rid else None
+        row["recovery_s"] = case.wait_complete(rid, upto, since=t_rel, timeout=90) if rid else None
         w = case.wait_workers(DURATION * 6)[0]
         rid = rid or w.get("run_id")
         if rid:
             case.wait_complete(rid, w.get("progress_last", -1), timeout=60)
+        _sync_leftovers(case, rid, w, row)
         row.update(_client_summary(w))
         row.update(_verify_row(case, w, rid))
         row["server_alive_at_end"] = case.sysm.server.proc is not None and case.sysm.server.proc.poll() is None
         try:
-            row["server_log_tail"] = (case.sysm.server.log_path.read_text()[-600:]
-                                      if case.sysm.server.log_path else None)
+            text = case.sysm.server.log_path.read_text(errors="replace")
+            errs: dict[str, int] = {}
+            for line in text.splitlines():
+                if any(k in line for k in ("Error", "error", "not ingesting", "lease")):
+                    key = line.strip()[:160]
+                    errs[key] = errs.get(key, 0) + 1
+            row["server_log_errors"] = sorted(errs.items(), key=lambda kv: -kv[1])[:8]
         except OSError:
             pass
     except Exception as exc:  # noqa: BLE001
