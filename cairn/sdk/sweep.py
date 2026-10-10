@@ -323,11 +323,10 @@ def _work(
                     continue
                 break
             params = trial["params"]
-            # Over HTTP the run shares the worker's client; on a local repo it
-            # writes its own log, like any run there.
+            # The run belongs where the sweep lives.
             where: dict[str, Any] = (
                 {"repo": transport.data_dir.root} if isinstance(transport, RepoTransport)
-                else {"transport": transport}
+                else {"server": transport.server_url}
             )
             run = Run(project, sweep_id=sweep_id, **where, **{
                 **run_kwargs, "name": run_kwargs.get("name") or trial["name"],

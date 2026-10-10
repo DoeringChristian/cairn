@@ -38,18 +38,19 @@ from ..sdk.wrappers import _TypeWrapper
 from ..server import artifact_registry_ops as _registry_rules
 from ..server import config_doc
 from ..server import progress as _progress_rules
+from ..server import ingest_ops
 from ..server.ingest_ops import summary_conflict
 from .artifacts import Artifact, ArtifactVersion, draft_from_shorthand
-from .buffer import MetricBuffer
-from .connect import open_transport
 from .gallery import GalleryItem, resolve_gallery
-from .local import LocalTransport, RepoTransport
 from .run_ids import auto_label, check_label, check_run_id, env_run_id, new_run_id
+from .runlog.log import LogLocked
+from .runlog.rundir import MAIN as MAIN_LOG
+from .runlog.rundir import RunDir
+from .runlog.server import ServerReads, ServerUnavailable, run_state
+from .runlog.writer import RunWriter, finish_timeout
 from .scope import Scope
 from .summary_media import check_summary_names, media_paths, upload_media
-from .transport import Transport
 from .uploads import upload_gallery, upload_value
-from .wal import WriteAheadLog
 from .watch import Watcher
 
 log = logging.getLogger(__name__)
@@ -148,14 +149,17 @@ class Run:
         primary: False: join the existing run as a worker (see above)
             instead of creating one. Default: True, or what
             ``label="auto"`` detected.
-        repo: Where to write: a ``.cairn/`` directory or a
+        repo: The repo the run belongs to: a ``.cairn/`` directory (served
+            by its local server, started when needed) or a
             ``cairn://host:port`` server. Default: ``cairn.configure``,
             then ``CAIRN_REPO``, ``CAIRN_SERVER``, the config file, then
-            ``./.cairn``. A local repo is written as the run's own append-only
-            log (``.cairn/wals/<run_id>.wal.jsonl``) plus blobs: the run never
-            writes the database. A ``cairn ui``/``cairn server`` on the repo
-            ingests the log within ~2 s, else the next ``cairn.Reader`` or
-            CLI command does.
+            ``./.cairn``. Wherever it is, the run only writes its own run
+            directory, ``$CAIRN_DIR/runs/<id>/`` (default ``./.cairn``): an
+            append-only record log (fsynced every ~100 ms) plus its blobs.
+            A background uploader (``cairn sync --daemon``, started on
+            demand) sends it to the server, exactly once; logging never
+            waits on the network, and a run works with the server down.
+        server: The server's URL, instead of ``repo``.
         capture_source: Upload a snapshot of the project's source files
             (and, in a git checkout with uncommitted changes, the
             ``git diff HEAD``, stored with the snapshot).
@@ -175,12 +179,11 @@ class Run:
             (``.git``, ``__pycache__``, ``.venv``, ``node_modules``, ...).
             ``.gitignore`` is always honoured.
         source_max_file_size_mb: Skip source files larger than this.
-        timeout: HTTP request timeout in seconds, also the time ``finish()``
-            waits for each buffer to drain.
+        timeout: HTTP timeout in seconds of the reads that need the server
+            (resuming a run that is not on this machine, resolving an
+            artifact ref, sweeps).
         registry: Handler registry deciding how values are stored. Default:
             the global one (see ``cairn.register_handler``).
-        transport: A ready transport to write through instead of resolving
-            ``repo`` (mainly for tests); the caller keeps ownership.
         mode: ``"disabled"`` makes every method a no-op (see above).
         on_stop: Callback ``fn(run)`` run when a stop is requested; more can
             be added with ``on_stop``.
@@ -234,6 +237,7 @@ class Run:
         label: str | None = None,
         primary: bool | None = None,
         repo: str | Path | None = None,
+        server: str | None = None,
         capture_source: bool = True,
         capture_stdout: bool = True,
         capture_env: bool = True,
@@ -246,7 +250,6 @@ class Run:
         source_max_file_size_mb: float = 1.0,
         timeout: float = 10.0,
         registry: HandlerRegistry | None = None,
-        transport: Transport | LocalTransport | None = None,
         mode: str | None = None,
         on_stop: Callable[["Run"], Any] | None = None,
         stop_mode: str = "interrupt",
@@ -267,6 +270,8 @@ class Run:
             raise ValueError("a worker (primary=False) joins a run: it cannot resume or fork one")
         if primary and project is None:
             raise TypeError("cairn.Run() needs a project")
+        if not primary and label == MAIN_LOG:
+            raise ValueError(f"the label {MAIN_LOG!r} is reserved (it names the primary's log)")
         _progress_rules.check_total_steps(total_steps)
         self._label = label
         self._primary = primary
@@ -275,17 +280,13 @@ class Run:
         self._stop_requested = False
         self._stop_mode = stop_mode
         self._on_stop: list[Callable[["Run"], Any]] = [on_stop] if on_stop else []
-        self._wal: WriteAheadLog | None = None
         self._page_url: str | None = None
-        if transport is not None:
-            self._transport = transport
-            self._owns_transport = False
-            self._server = getattr(transport, "server_url", "")
-        else:
-            self._transport, self._server = open_transport(repo, timeout=timeout)
-            self._owns_transport = True
-        self._transport.label = label
-        self._transport.primary = primary
+        # Where the run's records go: a server URL, or the server of a local
+        # repo. The run itself only ever writes its run directory; the
+        # uploader resolves (and, for a repo, starts) the server.
+        self._ep_server, self._ep_repo = _resolve_endpoint_target(repo, server)
+        self._reads = ServerReads(self._ep_server, self._ep_repo, timeout=timeout)
+        self._server = self._ep_server or f"file://{self._ep_repo}"
         self._project = project
         self._name = name
         # Launched by `cairn agent`: join its sweep and take the trial's params.
@@ -295,14 +296,15 @@ class Run:
             trial_id = os.environ.get("CAIRN_TRIAL_ID") or None
         self._timeout = timeout
         # The run's tag list, kept client-side: the ``set_tags`` op replaces
-        # the whole list, and a local run's LocalTransport has no DB to read it back.
+        # the whole list.
         self._tags: list[str] = list(tags or [])
 
         # Bookkeeping
         self._finished = False
+        self._writer: RunWriter | None = None
         self._step_counters: dict[str, int] = {}
-        # name -> (summary, x): the rule last sent per metric, so a rule
-        # passed to every track() call reaches the server once.
+        # name -> (summary, x): the rule last recorded per metric, so a rule
+        # passed to every track() call is recorded once.
         self._metric_rules: dict[str, tuple[str | None, str | None]] = {}
         self._step_lock = threading.Lock()
         self._line_counter = 0
@@ -311,13 +313,13 @@ class Run:
         self._last_step: int | None = None
         self._watchers: list[Watcher] = []
         self._total_steps: int | None = None
-        # run.progress(): the last value sent (monotonic time, body) and the
-        # newest one held back by the throttle (sent by the heartbeat/finish).
+        # run.progress(): the last value recorded (monotonic time, body) and
+        # the newest one held back by the throttle (recorded by the heartbeat/finish).
         self._progress_lock = threading.Lock()
         self._progress_sent_at: float | None = None
         self._progress_pending: dict[str, Any] | None = None
 
-        # Env + git captured synchronously so we can send them on create. A
+        # Env + git captured synchronously so they go in the creation record. A
         # worker creates nothing, and the run's source snapshot is its
         # primary's.
         if not primary:
@@ -357,90 +359,96 @@ class Run:
                 created_at.isoformat() if isinstance(created_at, datetime) else created_at
             ),
         }
+        # Every way to start writes this process's log of the run directory
+        # ($CAIRN_DIR/runs/<id>/). The state needed here comes from that
+        # directory's records when it is on this machine, else from the server.
+        catalogue: list[dict[str, Any]] = []
+        state: dict[str, Any]
         if not primary:
-            resp = self._transport.join_run(client_run_id, project)
-            self._tags = list(resp.get("tags") or [])
-            # Its system.<label>.* counters continue past an earlier
-            # process of the same label (a requeued job, a later eval).
-            self._seed_step_counters(client_run_id)
+            self._run_id = client_run_id
+            self._run_dir = RunDir.for_run(client_run_id)
+            state = self._join_state(client_run_id, project)
+            self._open_writer(label, project_id=state["project_id"], remote=False)
+            self._writer.join(label)
+            catalogue = state.get("sequences") or []
         elif resume is not None:
-            resp = (
-                self._transport.rewind_run(resume, int(rewind_to))
-                if rewind_to is not None
-                else self._transport.resume_run(resume)
-            )
-            self._tags = list(resp.get("tags") or [])
-            self._seed_step_counters(resume)
+            check_run_id(resume)
+            self._run_id = resume
+            self._run_dir = RunDir.for_run(resume)
+            state = self._reopen_state(resume)
+            self._open_writer(None, project_id=state["project_id"], remote=state["remote"])
+            if rewind_to is not None:
+                self._writer.rewind_run(int(rewind_to))
+            else:
+                self._writer.resume_run()
+            catalogue = state.get("sequences") or []
         elif fork_from is not None:
             parent_id, step = fork_from
-            resp = self._transport.fork_run(parent_id, client_run_id, int(step), create_body)
+            check_run_id(parent_id)
+            parent = self._reopen_state(parent_id)
+            self._run_id = client_run_id
+            self._run_dir = RunDir.for_run(client_run_id)
+            self._claim_new_dir()
+            state = {**parent, "tags": list(tags or []), "version": None, "stop_requested": None}
+            self._open_writer(None, project_id=parent["project_id"], remote=False)
+            fields = {
+                k: create_body.get(k) for k in ingest_ops.CREATE_RUN_FIELDS
+                if k not in ("run_id", "parent_run_id", "fork_step")
+            }
+            self._writer.fork_run({
+                **fields, "parent_id": parent_id, "new_id": client_run_id, "step": int(step),
+            })
             # The copied system.* rows carry the parent's sampler counters.
-            self._seed_step_counters(parent_id)
+            catalogue = parent.get("sequences") or []
         else:
-            resp = self._transport.create_run(create_body)
-        self._run_id: str = resp["run_id"]
-        self._project_id: str = resp["project_id"]
-        # The run's version when the answer carried it (the server assigns
-        # it); else ``version`` looks it up on first use.
+            self._run_id = client_run_id
+            self._run_dir = RunDir.for_run(client_run_id)
+            self._claim_new_dir()
+            project_id = ingest_ops.slugify(project)
+            state = {"project_id": project_id}
+            self._open_writer(None, project_id=project_id, remote=False)
+            fields = {k: create_body.get(k) for k in ingest_ops.CREATE_RUN_FIELDS}
+            self._writer.create_run({
+                **fields, "project": project, "project_id": project_id,
+                "created_at": fields["created_at"] or _now_iso(),
+            })
+        if not primary or resume is not None:
+            self._tags = list(state.get("tags") or [])
+        self._project_id: str = state["project_id"]
+        self._seed_step_counters(catalogue)
+        # The server assigns the version: known here only when it answered
+        # (``version`` asks it on first use otherwise).
         self._version_info: dict[str, Any] | None = (
-            {"version": resp["version"]} if "version" in resp else None
+            {"version": state["version"]} if state.get("version") is not None else None
         )
         # This run's copy of its config / summary documents, so a write that
-        # the merge rules reject raises here, on both backends.
+        # the merge rules reject raises here.
         self._docs: dict[str, dict[str, Any]] = {
-            "config": dict(resp.get("config") or {}),
-            "summary": dict(resp.get("summary") or {}),
+            "config": dict(state.get("config") or {}),
+            "summary": dict(state.get("summary") or {}),
         }
         # A name is a tracked series or a summary media value, never both:
-        # the summary's media keys (refused by track) and the names this
-        # process tracked (refused by summary, beside the stored series).
+        # the summary's media keys (refused by track) and the series stored
+        # already or tracked by this process (refused by summary).
         self._summary_media: set[str] = set(config_doc.media_leaves(self._docs["summary"]))
+        self._catalogue: list[dict[str, Any]] = list(catalogue)
         self._tracked_names: set[str] = set()
         self._backend_cache: Any = None
-        self._url_path: str = resp.get("url", f"/p/{self._project_id}/r/{self._run_id}")
+        self._url_path: str = f"/p/{self._project_id}/r/{self._run_id}"
         # A run that had ended when this worker joined keeps the stop request
         # it ended with: that one is not for this process.
         self._stale_stop: str | None = (
-            resp.get("stop_requested")
-            if not primary and resp.get("status") not in (None, "running", "crashed")
+            state.get("stop_requested")
+            if not primary and state.get("status") not in (None, "running", "crashed")
             else None
         )
-
-        # Attach WAL for HTTP transports (local mode writes the repo-dir WAL itself).
-        if isinstance(self._transport, Transport):
-            try:
-                wal_key = self._run_id if label is None else f"{self._run_id}~{label}"
-                self._wal = WriteAheadLog(wal_key, target=self._server)
-                self._transport._wal = self._wal
-            except OSError:
-                log.warning("failed to create WAL for run %s", self._run_id, exc_info=True)
+        self._start_uploader()
 
         if total_steps is not None:
             self.total_steps = total_steps
 
         # Guard against nested runs.
         stdout_capture.set_active_run(self._run_id)
-
-        # Metric + log buffers.
-        # Over HTTP with a WAL, a backlog the server cannot take right now is
-        # spilled to the WAL and replayed by ``catch_up``: memory stays
-        # bounded and track() never waits on the network.
-        wal_backed = isinstance(self._transport, Transport) and self._wal is not None
-        self._metric_buffer = MetricBuffer(
-            flush_fn=lambda batch: self._transport.post_batch(self._run_id, batch),
-            flush_interval=0.5,
-            max_rows=1000,
-            spill_fn=(
-                (lambda batch: self._transport.defer_batch(self._run_id, batch))
-                if wal_backed else None
-            ),
-            idle_fn=self._transport.catch_up if wal_backed else None,
-        )
-        self._log_buffer = MetricBuffer(
-            flush_fn=self._flush_logs,
-            flush_interval=0.5,
-            max_rows=500,
-        )
 
         # Stdout capture — tee sends lines into the log buffer.
         self._stdout_capture: stdout_capture.StdoutCapture | None = None
@@ -554,21 +562,150 @@ class Run:
                 self.finish(status="failed")
                 raise
 
+    # ---- the run directory ------------------------------------------------
+
+    def _claim_new_dir(self) -> None:
+        """A new run's directory must not exist yet."""
+        # (A worker sharing the directory may have made it first: only the
+        # primary's log says the run exists.)
+        if (self._run_dir.path / "log").exists():
+            raise ingest_ops.RunExists(
+                f"a run with id {self._run_id} exists already ({self._run_dir.path})"
+            )
+
+    def _open_writer(self, label: str | None, *, project_id: str, remote: bool) -> None:
+        """Open this process's log of the run directory (``main`` for the
+        primary, the label for a worker), writing ``run.json`` if missing.
+
+        A log that is not on this machine yet continues the seqs the server
+        has (``remote``: asked for sure; a worker asks only a server that is
+        up, else starts at 1)."""
+        log_name = None if self._primary else label
+        fresh_primary = self._primary and not (self._run_dir.path / "log").exists()
+        if fresh_primary or not self._run_dir.exists():
+            meta: dict[str, Any] = {
+                "run_id": self._run_id, "project": self._project, "project_id": project_id,
+                "endpoint": self._ep_server or "local", "repo": self._ep_repo,
+                "created_at": _now_iso(), "sdk_version": _sdk_version(),
+            }
+            token = os.environ.get("CAIRN_TOKEN")
+            if token:
+                # The uploader may run with another environment.
+                meta["token"] = token
+            self._run_dir.write_meta(meta)
+        base = 0
+        ref = self._run_dir.log(log_name)
+        if not ref.log_dir.exists():
+            name = ref.name
+            if remote:
+                base = self._reads.applied_seq(self._run_id, name)
+            elif not self._primary:
+                t = self._reads.peek()
+                if t is not None:
+                    try:
+                        base = int(t.get(
+                            f"/api/ingest/runs/{self._run_id}/logs/{name}").json()["applied_seq"])
+                    except Exception:  # noqa: BLE001 - unknown: a new log
+                        base = 0
+        try:
+            self._writer = RunWriter(self._run_dir, self._run_id, log_name, base_seq=base)
+        except LogLocked:
+            what = f"label {label!r}" if log_name else "the run"
+            raise ValueError(
+                f"{what} is in use by another live process of run {self._run_id}"
+            ) from None
+
+    def _reopen_state(self, run_id: str) -> dict[str, Any]:
+        """A run to resume or fork from: its state from its directory on this
+        machine, else from the server (``remote``: True).
+
+        Raises:
+            LookupError: Neither has the run.
+            ServerUnavailable: Not on this machine, and the server is down.
+        """
+        from .runlog.state import replay
+
+        rd = RunDir.for_run(run_id)
+        if rd.exists():
+            return {**replay(rd), "remote": False, "version": None}
+        body = self._reads.run(run_id)
+        if body is None:
+            raise LookupError(f"run {run_id} not found")
+        state = run_state(body)
+        state["sequences"] = self._reads.sequences(run_id)
+        state["remote"] = True
+        return state
+
+    #: Seconds a worker waits for its run to appear when it must look up the project.
+    JOIN_WAIT = 120.0
+
+    def _join_state(self, run_id: str, project: str | None) -> dict[str, Any]:
+        """A worker's view of its run: from the server when it is up, else
+        from the run directory on this machine (a primary next to it).
+        Without ``project``, waits up to ``JOIN_WAIT`` s for one of them to
+        name it.
+
+        Raises:
+            ValueError: ``project`` is not the run's project.
+            LookupError: The project could not be found out in time.
+        """
+        from .runlog.state import replay
+
+        deadline = time.monotonic() + self.JOIN_WAIT
+        while True:
+            state: dict[str, Any] | None = None
+            t = self._reads.peek()
+            if t is not None:
+                try:
+                    state = run_state(t.get(f"/api/runs/{run_id}").json())
+                    state["sequences"] = t.sequence_steps(run_id)
+                except Exception:  # noqa: BLE001 - not uploaded yet, or down
+                    state = None
+            if state is None and self._run_dir.exists():
+                state = {**replay(self._run_dir, self._label), "version": None}
+                if state.get("project_id") is None:
+                    state = None
+            if state is not None:
+                if project is not None and state.get("project_id") not in (
+                    None, ingest_ops.slugify(project),
+                ):
+                    raise ValueError(
+                        f"run {run_id} is in project {state['project_id']!r}, not {project!r}"
+                    )
+                return state
+            if project is not None:
+                return {"project_id": ingest_ops.slugify(project)}
+            if time.monotonic() > deadline:
+                raise LookupError(f"run {run_id} not found (pass project= to join it offline)")
+            time.sleep(0.25)
+
+    def _start_uploader(self) -> None:
+        """Register the run directory with the uploader daemon and start it
+        if none runs (never waiting for it). ``CAIRN_UPLOADER=off``: leave
+        the directory for ``cairn sync``."""
+        from ..uploader import daemon as agent
+
+        self._uploading = os.environ.get("CAIRN_UPLOADER", "on").lower() not in ("0", "off", "false", "no")
+        if not self._uploading:
+            return
+        try:
+            agent.register(self._run_dir.path)
+            agent.ensure_running()
+        except Exception:  # noqa: BLE001 - the run goes on; `cairn sync` later
+            log.warning("cairn: could not start the uploader", exc_info=True)
+
     def _join_trial(self, sweep_id: str, trial_id: str) -> None:
         """Link this run to its sweep trial and record the trial's params as
         config. An unnamed run takes the trial's name (``<sweep>-<n>``)."""
         try:
-            trial = self._transport.report_trial(
+            trial = self._reads.api().report_trial(
                 sweep_id, trial_id, run_id=self._run_id, status="running",
             )
             if self._name is None and trial.get("name"):
-                renamed = self._transport.rename_run(self._run_id, trial["name"])
+                self._writer.rename_run(self._run_id, trial["name"])
                 self._name = trial["name"]
-                # A new name is a new series: a new version.
-                self._version_info = (
-                    {"version": renamed["version"]}
-                    if isinstance(renamed, dict) and "version" in renamed else None
-                )
+                # A new name is a new series: a new version (the server's).
+                self._version_info = None
         except Exception:
             self.finish(status="failed")
             raise
@@ -598,7 +735,13 @@ class Run:
         yet.
         """
         if self._version_info is None:
-            self._version_info = self._transport.run_version(self._run_id)
+            try:
+                body = self._reads.run(self._run_id)
+            except ServerUnavailable:
+                body = None
+            version = (body or {}).get("run", {}).get("version")
+            if version is not None:
+                self._version_info = {"version": version}
         return None if self._version_info is None else self._version_info["version"]
 
     @property
@@ -618,11 +761,11 @@ class Run:
         """
         from .viewer_url import run_page_url
 
-        if self._server.startswith("file://"):
+        if self._ep_server is None:
             # A viewer over the repo may come and go: ask every time.
-            return run_page_url(self._transport, self._server, self._url_path)
+            return run_page_url(_repo_ref(self._ep_repo), self._server, self._url_path)
         if self._page_url is None:
-            self._page_url = run_page_url(self._transport, self._server, self._url_path)
+            self._page_url = run_page_url(None, self._server, self._url_path)
         return self._page_url
 
     @property
@@ -654,7 +797,7 @@ class Run:
     def total_steps(self, value: int | None) -> None:
         _progress_rules.check_total_steps(value)
         self._total_steps = value
-        self._transport.set_total_steps(self._run_id, value)
+        self._writer.set_total_steps(self._run_id, value)
 
     #: Seconds between two ``progress()`` values sent; a newer one in between
     #: is held and sent by the next call after that, the heartbeat or finish.
@@ -691,7 +834,7 @@ class Run:
                 return
             self._progress_pending = None
             self._progress_sent_at = now
-        self._transport.post_progress(self._run_id, body)
+        self._writer.post_progress(self._run_id, body)
 
     def _flush_progress(self) -> None:
         """Send the value ``progress()`` held back, if any."""
@@ -700,7 +843,7 @@ class Run:
             if body is None:
                 return
             self._progress_sent_at = time.monotonic()
-        self._transport.post_progress(self._run_id, body)
+        self._writer.post_progress(self._run_id, body)
 
     # ---- tracking ---------------------------------------------------------
 
@@ -874,7 +1017,7 @@ class Run:
             digest, _mime, _meta = self._upload_value(handler, payload, merged_kwargs)
             point["artifact_hash"] = digest
 
-        self._metric_buffer.append(point)
+        self._writer.add_point(point)
         self._tracked_names.add(name)
 
     def _set_metric_rule(self, name: str, summary: str | None, x: str | None) -> None:
@@ -885,13 +1028,13 @@ class Run:
         rule = (summary if summary is not None else old_summary, x if x is not None else old_x)
         if self._metric_rules.get(name) == rule:
             return
-        self._transport.set_metric_rule(self._run_id, name, x, summary)
+        self._writer.set_metric_rule(self._run_id, name, x, summary)
         self._metric_rules[name] = rule
 
     def _upload_value(self, handler: Any, payload: Any, kwargs: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
         """Serialize one media value and upload it (``uploads.upload_value``).
         Returns its ``(hash, mime_type, metadata)``."""
-        digest, mime, meta, _size = upload_value(self._transport, self._registry, handler, payload, kwargs)
+        digest, mime, meta, _size = upload_value(self._writer, self._registry, handler, payload, kwargs)
         return digest, mime, meta
 
     def _track_gallery(
@@ -907,7 +1050,7 @@ class Run:
         own artifact, and the point's artifact is a manifest listing them
         (``GALLERY_MIME``, see ``cairn.sdk.gallery``). Keywords apply to every
         item under the item's own; ``caption`` labels the point."""
-        digest, caption = upload_gallery(self._transport, self._registry, object_type, items, kwargs)
+        digest, caption = upload_gallery(self._writer, self._registry, object_type, items, kwargs)
         if step is not None:
             self._last_step = step if self._last_step is None else max(self._last_step, step)
         point: dict[str, Any] = {
@@ -919,7 +1062,7 @@ class Run:
         }
         if caption is not None:
             point["metadata"] = {"caption": str(caption)}
-        self._metric_buffer.append(point)
+        self._writer.add_point(point)
         self._tracked_names.add(name)
 
     def log_artifact(
@@ -993,14 +1136,16 @@ class Run:
         *, created_by_run: str | None, tags: list[str] | None = None,
     ) -> ArtifactVersion:
         return log_draft(
-            self._transport, self._registry, self._project_id, draft, aliases, step,
+            self._writer, self._registry, self._project_id, draft, aliases, step,
             created_by_run=created_by_run, backend=self._reader_backend, tags=tags,
         )
 
     def _reader_backend(self) -> Any:
         """The Reader backend over this run's target (ArtifactVersion reads)."""
         if getattr(self, "_backend_cache", None) is None:
-            self._backend_cache = backend_for_transport(self._transport)
+            from .reader import Reader
+
+            self._backend_cache = Reader(repo=self._ep_server or self._ep_repo)._backend
         return self._backend_cache
 
     def log_model(
@@ -1050,11 +1195,18 @@ class Run:
         if self._finished:
             raise RuntimeError("Run has already been finished")
         if isinstance(ref, ArtifactVersion):
-            if ref.pending:
-                ref.wait()
-            ref = ref.qualified_ref
-        info = self._transport.resolve_artifact(self._project_id, ref)
-        self._transport.record_artifact_input(self._run_id, info["id"], role)
+            # An immutable version, pending or not: recorded by its id, no
+            # server needed.
+            self._writer.record_artifact_input(self._run_id, ref.id, role)
+            return ref
+        try:
+            info = self._reads.api().resolve_artifact(self._project_id, ref)
+        except ServerUnavailable as exc:
+            raise ServerUnavailable(
+                f"use_artifact({ref!r}) resolves the ref on the server, which cannot be "
+                f"reached: {exc}. Pass an ArtifactVersion to use one without the server."
+            ) from None
+        self._writer.record_artifact_input(self._run_id, info["id"], role)
         return ArtifactVersion(info, self._reader_backend)
 
     def use_run(self, run: Any, *, role: str | None = None) -> None:
@@ -1076,7 +1228,14 @@ class Run:
         used = _used_run_id(run)
         if used == self._run_id:
             raise ValueError("a run cannot use itself")
-        self._transport.record_run_use(self._run_id, used, role)
+        if not RunDir.for_run(used).exists():
+            try:
+                known = self._reads.run(used) is not None
+            except ServerUnavailable:
+                known = True  # offline: the server checks it when it applies the record
+            if not known:
+                raise LookupError(f"run {used} not found")
+        self._writer.record_run_use(self._run_id, used, role)
 
     def use_viewer(
         self, path: str | Path, *, aliases: list[str] | None = None, default_for: list[str] | None = None,
@@ -1107,7 +1266,8 @@ class Run:
         if self._finished:
             raise RuntimeError("Run has already been finished")
         return publish_folder(
-            self._transport, self._registry, self._project_id, path, aliases=aliases,
+            _ViewerTarget(self._writer, self._reads), self._registry, self._project_id, path,
+            aliases=aliases,
             created_by_run=self._run_id, backend=self._reader_backend, default_for=default_for,
         )
 
@@ -1158,7 +1318,7 @@ class Run:
             raise RuntimeError("Run has already been finished")
         merged = self._merge_mapping("run.config", args, kwargs)
         if merged:
-            self._transport.post_params(self._run_id, self._merge_doc("config", merged))
+            self._writer.post_params(self._run_id, self._merge_doc("config", merged))
 
     def summary(self, *args: Any, **kwargs: Any) -> None:
         """Record the run's RESULTS — the numbers you are claiming.
@@ -1200,26 +1360,26 @@ class Run:
             return
         names = media_paths(merged)
         if names:
-            check_summary_names(names, self._transport.sequence_steps(self._run_id), self._tracked_names)
-            merged = upload_media(self._transport, self._registry, merged)
-        self._transport.post_summary(self._run_id, self._merge_doc("summary", merged))
+            check_summary_names(names, self._catalogue, self._tracked_names)
+            merged = upload_media(self._writer, self._registry, merged)
+        self._writer.post_summary(self._run_id, self._merge_doc("summary", merged))
         self._summary_media = set(config_doc.media_leaves(self._docs["summary"]))
 
     def set_tag(self, tag: str) -> None:
         """Add one tag, keeping the ones the run already has."""
         if tag not in self._tags:
             self._tags.append(tag)
-        self._transport.set_tags(self._run_id, list(self._tags))
+        self._writer.set_tags(self._run_id, list(self._tags))
 
     def remove_tag(self, tag: str) -> None:
         """Remove one tag; a tag the run doesn't have is ignored."""
         self._tags = [t for t in self._tags if t != tag]
-        self._transport.set_tags(self._run_id, list(self._tags))
+        self._writer.set_tags(self._run_id, list(self._tags))
 
     def set_tags(self, tags: list[str]) -> None:
         """Replace the run's tags."""
         self._tags = list(tags)
-        self._transport.set_tags(self._run_id, list(self._tags))
+        self._writer.set_tags(self._run_id, list(self._tags))
 
     def add_note(self, text: str) -> None:
         """Set the run's notes, replacing any notes it already has.
@@ -1227,7 +1387,7 @@ class Run:
         Args:
             text: The new notes (plain text; shown on the run page).
         """
-        self._transport.set_notes(self._run_id, text)
+        self._writer.set_notes(self._run_id, text)
 
     # ---- model watching ---------------------------------------------------
 
@@ -1266,7 +1426,7 @@ class Run:
         ``level`` is ``"info"``, ``"warn"`` or ``"error"``."""
         if level not in ("info", "warn", "error"):
             raise ValueError(f"alert level must be 'info', 'warn' or 'error', not {level!r}")
-        self._transport.alert(self._run_id, {
+        self._writer.alert(self._run_id, {
             "alert_id": secrets.token_hex(16),
             "title": title,
             "text": text,
@@ -1280,9 +1440,8 @@ class Run:
 
     def _viewer_source(self) -> tuple[str | None, str | None]:
         """``(server, repo_path)``: where the run page renders from."""
-        if self._server.startswith("file://"):
-            root = getattr(getattr(self._transport, "data_dir", None), "root", None)
-            return None, (str(root) if root is not None else None)
+        if self._ep_server is None:
+            return None, self._ep_repo
         return self._server, None
 
     def display(self, tab: str = "workspace", height: int = 720) -> Any:
@@ -1317,15 +1476,19 @@ class Run:
             return repr(self)
 
     def finish(self, status: str = "completed", exit_code: int | None = None) -> None:
-        """End the run: flush everything it buffered and record its status.
+        """End the run: record its status and make everything durable.
 
-        A worker (``primary=False``) only detaches: it flushes everything
+        A worker (``primary=False``) only detaches: it records everything
         and stops logging, and the run's status stays its primary's to set.
 
         Stops model watching, system-metric sampling and stdout capture,
-        drains the metric and log buffers, waits (up to two minutes) for the
-        source snapshot upload, then marks the run finished. Calling it again
-        does nothing, and no method that records data works afterwards.
+        waits (up to two minutes) for the source snapshot, records the
+        finish and fsyncs the run's log. Then it waits up to
+        ``CAIRN_FINISH_TIMEOUT`` seconds (default 30) for the uploader to
+        get everything to the server, and prints a notice if it did not (the
+        uploader keeps sending in the background; ``cairn sync`` too).
+        Calling it again does nothing, and no method that records data works
+        afterwards.
 
         Usually not called directly: leaving a ``with cairn.Run(...)`` block
         or the interpreter exiting finishes the run.
@@ -1339,56 +1502,25 @@ class Run:
             return
         try:
             # Watch histograms go through _track_leaf, which refuses once
-            # finished: drain them before the metric buffer stops.
+            # finished: drain them first.
             self.unwatch()
             if self._sys_collector is not None:
                 self._sys_collector.stop()
                 self._sys_collector.join(timeout=5)
             if self._stdout_capture is not None:
                 self._stdout_capture.stop()
-            # Drain both buffers before posting finish.
             self._heartbeat_stop.set()
             try:
                 self._flush_progress()
             except Exception:
                 log.warning("progress flush failed during finish", exc_info=True)
-            self._metric_buffer.stop(timeout=self._timeout)
-            self._log_buffer.stop(timeout=self._timeout)
-            # Wait for source upload to finish before closing the transport/DB.
-            # Large projects can take a while to archive + upload.
+            # The snapshot's records precede the finish.
             if self._source_thread is not None and self._source_thread.is_alive():
                 self._source_thread.join(timeout=120)
-            if self._wal is not None and isinstance(self._transport, Transport):
-                # Everything pending replays in order, ending with the finish
-                # itself, for at most ``timeout`` seconds: a slow or dead
-                # server leaves the rest in the WAL for ``cairn sync``.
-                deadline = time.monotonic() + self._timeout
-                delivered = (
-                    self._transport.finish_run(self._run_id, status, exit_code, deadline=deadline)
-                    if self._primary
-                    else self._transport.detach_run(self._run_id, deadline=deadline)
-                )
-                try:
-                    if delivered and not self._wal.has_pending:
-                        self._wal.cleanup()
-                    else:
-                        log.warning(
-                            "cairn: run %s finished, but some of its data has not reached "
-                            "%s yet; it is kept in %s. Run `cairn sync` to send it.",
-                            self._run_id, self._server, self._wal.wal_dir,
-                        )
-                        self._wal.close()
-                except Exception:  # noqa: BLE001
-                    log.warning("WAL cleanup failed", exc_info=True)
+            if self._primary:
+                self._writer.finish(status, exit_code)
             else:
-                try:
-                    self._transport.drain_spill(self._run_id)
-                except Exception:  # noqa: BLE001
-                    log.warning("drain_spill failed during finish", exc_info=True)
-                if self._primary:
-                    self._transport.finish_run(self._run_id, status, exit_code)
-                else:
-                    self._transport.detach_run(self._run_id)
+                self._writer.detach(self._label)
         finally:
             self._finished = True
             stdout_capture.clear_active_run(self._run_id)
@@ -1405,23 +1537,42 @@ class Run:
                     sys.excepthook = self._prev_excepthook
                 except Exception:  # noqa: BLE001
                     pass
-            if self._owns_transport:
-                # Ensure source thread is done before closing the DB.
-                if self._source_thread is not None and self._source_thread.is_alive():
-                    log.warning("source upload still running after timeout; waiting before closing DB")
-                    self._source_thread.join(timeout=30)
-                self._transport.close()
+            try:
+                self._writer.close()
+            except Exception:  # noqa: BLE001
+                log.warning("closing the run log failed", exc_info=True)
+            self._wait_uploaded()
+            self._reads.close()
             # Don't fire the atexit hook now that we've finished explicitly.
             try:
                 atexit.unregister(self._atexit_finish)
             except Exception:  # noqa: BLE001 - defensive; unregister is cheap
                 pass
 
+    def _wait_uploaded(self) -> None:
+        """Give the uploader up to ``CAIRN_FINISH_TIMEOUT`` s; say so if it
+        did not get everything to the server."""
+        if not self._uploading:
+            return
+        try:
+            pending = self._writer.wait_uploaded(finish_timeout())
+        except Exception:  # noqa: BLE001
+            log.debug("waiting for the upload failed", exc_info=True)
+            return
+        if pending:
+            print(
+                f"cairn: run {self._run_id}: {pending} record(s) not confirmed by "
+                f"{self._reads.describe()} yet; the uploader keeps sending them in the "
+                f"background (or run `cairn sync {self._run_dir.path}`).",
+                file=sys.stderr,
+            )
+
     #: Seconds between heartbeats (also how quickly a stop request is seen).
     _HEARTBEAT_INTERVAL = 10.0
 
     def _heartbeat_loop(self) -> None:
-        """Periodically send heartbeat to the server/DB."""
+        """Periodically record a heartbeat (the primary) and look for a stop
+        request on the server, when it is up (never starting it)."""
         while not self._heartbeat_stop.wait(self._HEARTBEAT_INTERVAL):
             if self._finished:
                 return
@@ -1430,11 +1581,23 @@ class Run:
             except Exception:
                 log.debug("progress flush failed", exc_info=True)
             try:
-                stop_requested = self._transport.heartbeat(self._run_id)
+                if self._primary:
+                    self._writer.heartbeat()
+                stop_requested = self._poll_stop()
             except Exception:  # noqa: BLE001
                 continue  # Best effort — don't crash the heartbeat thread.
             if stop_requested and stop_requested != self._stale_stop and not self._stop_requested:
                 self._handle_stop_request()
+
+    def _poll_stop(self) -> str | None:
+        """The run's ``stop_requested`` on its server, if the server is up."""
+        t = self._reads.peek()
+        if t is None:
+            return None
+        try:
+            return (t.get(f"/api/runs/{self._run_id}").json().get("run") or {}).get("stop_requested")
+        except Exception:  # noqa: BLE001 - down, or the run is not uploaded yet
+            return None
 
     def _handle_stop_request(self) -> None:
         self._stop_requested = True
@@ -1488,16 +1651,20 @@ class Run:
 
     # ---- internals --------------------------------------------------------
 
-    def _seed_step_counters(self, run_id: str) -> None:
-        """Continue the per-name counters past ``run_id``'s recorded steps.
+    def _seed_step_counters(self, catalogue: list[dict[str, Any]]) -> None:
+        """Continue the per-name counters past a run's recorded steps
+        (``catalogue``: its series as ``{name, max_step}``).
 
         Only timer-sampled ``system.*`` points use the counters; without the
         seed a resumed or forked run's samples would restart at step 0 and be
         dropped as duplicates of the ones already stored.
         """
-        for s in self._transport.sequence_steps(run_id):
+        for s in catalogue:
+            top = s.get("max_step", s.get("last_step"))
+            if top is None:
+                continue
             name = s["name"]
-            self._step_counters[name] = max(self._step_counters.get(name, 0), s["max_step"] + 1)
+            self._step_counters[name] = max(self._step_counters.get(name, 0), int(top) + 1)
 
     def _next_step(self, name: str, explicit: int | None) -> int:
         with self._step_lock:
@@ -1514,10 +1681,7 @@ class Run:
             self._line_counter += 1
             event["line_no"] = self._line_counter
         event["label"] = self._label
-        self._log_buffer.append(event)
-
-    def _flush_logs(self, batch: list[dict[str, Any]]) -> bool:
-        return self._transport.post_logs(self._run_id, batch)
+        self._writer.add_line(event)
 
     def _capture_source(
         self,
@@ -1546,15 +1710,64 @@ class Run:
             if diff:
                 # The dirty-tree diff travels with the snapshot: its blob's
                 # hash is in the manifest (the UI downloads it from there).
-                manifest["diff_hash"] = self._transport.upload_artifact(
+                manifest["diff_hash"] = self._writer.upload_artifact(
                     diff.encode("utf-8"), "text/x-diff", {},
                 )
-            self._transport.upload_source(self._run_id, archive, manifest)
+            self._writer.upload_source(self._run_id, archive, manifest)
         except Exception:  # noqa: BLE001
             log.warning("source capture failed", exc_info=True)
 
 
 SUMMARY_KINDS = ("min", "max", "mean", "last")
+
+
+def _resolve_endpoint_target(
+    repo: str | Path | None, server: str | None,
+) -> tuple[str | None, str | None]:
+    """``(server URL, None)`` or ``(None, absolute local repo path)``."""
+    if server is not None:
+        return config._as_server_url(server).rstrip("/"), None
+    target = config.resolve_target(repo=repo)
+    if not target.is_local:
+        return target.location.rstrip("/"), None
+    return None, str(Path(target.location).expanduser().resolve())
+
+
+def _repo_ref(repo: str | None) -> Any:
+    """What ``run_page_url`` reads a local repo's root from."""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(data_dir=SimpleNamespace(root=Path(repo))) if repo else None
+
+
+def _sdk_version() -> str | None:
+    try:
+        from importlib.metadata import version
+
+        return version("cairn-track")
+    except Exception:  # noqa: BLE001
+        return None
+
+
+class _ViewerTarget:
+    """``publish_folder``'s transport for a run: writes go to the run's log,
+    the ``latest`` lookup and alias moves to the server."""
+
+    def __init__(self, writer: RunWriter, reads: ServerReads) -> None:
+        self._writer = writer
+        self._reads = reads
+
+    def upload_artifact(self, *args: Any, **kwargs: Any) -> str:
+        return self._writer.upload_artifact(*args, **kwargs)
+
+    def create_artifact_version(self, project_id: str, body: dict[str, Any]) -> None:
+        return self._writer.create_artifact_version(project_id, body)
+
+    def resolve_artifact(self, project_id: str, ref: str) -> dict[str, Any]:
+        return self._reads.api().resolve_artifact(project_id, ref)
+
+    def add_artifact_alias(self, version_id: str, alias: str) -> dict[str, Any]:
+        return self._reads.api().add_artifact_alias(version_id, alias)
 
 
 def _rule_on_non_scalar(name: str, kind: str | None) -> str:
@@ -1799,9 +2012,10 @@ def log_draft(
 
 def backend_for_transport(transport: Any) -> Any:
     """A Reader backend over the same target as a writer transport."""
+    from .local import RepoTransport
     from .reader import _HttpBackend, _LocalBackend
 
-    if isinstance(transport, (LocalTransport, RepoTransport)):
+    if isinstance(transport, RepoTransport):
         return _LocalBackend(transport.data_dir.root)
     return _HttpBackend(transport.server_url, token=getattr(transport, "token", None))
 
