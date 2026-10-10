@@ -13,7 +13,23 @@ import pytest
 import uvicorn
 from fastapi.testclient import TestClient
 
-from cairn.server.app import create_app
+import cairn.server.app as _app_mod
+from tests import standin_server
+
+# TEST-ONLY (client branch; see tests/standin_server.py): every app a test
+# builds also speaks the 0.6 ingestion protocol. Patched before any test
+# module imports create_app.
+_real_create_app = _app_mod.create_app
+
+
+def _create_app_with_ingest(*args, **kwargs):
+    app = _real_create_app(*args, **kwargs)
+    app.include_router(standin_server.ingest_router())
+    return app
+
+
+_app_mod.create_app = _create_app_with_ingest
+create_app = _create_app_with_ingest
 from cairn.server.storage.blobs import BlobStore
 from cairn.server.storage.datadir import DataDir
 from cairn.server.storage.db import Database
@@ -126,12 +142,24 @@ def live_server(app):
         thread.join(timeout=10)
 
 
+@pytest.fixture(autouse=True)
+def _standin_server(request, monkeypatch):
+    """TEST-ONLY: local repos get an in-process server and runs upload at every
+    group commit (tests/standin_server.py). A module sets ``STANDIN = False``
+    to test the client on its own."""
+    if getattr(request.module, "STANDIN", True):
+        standin_server.install(monkeypatch)
+    yield
+    standin_server.close_all()
+
+
 def ingest_repo(repo) -> None:
     """Apply a local repo's pending run logs now, under its ingest lease (what
     a server's background loop, a Reader or a CLI command does)."""
     from cairn.sdk.local import RepoTransport
     from cairn.server.wal_ingest import ingest_all
 
+    standin_server.sync_repo(repo)
     rt = RepoTransport(repo)
     try:
         rt.under_lease(lambda db: ingest_all(rt.data_dir, db, rt.blobs), catch_up_first=False)

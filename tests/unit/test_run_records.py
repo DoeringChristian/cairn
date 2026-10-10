@@ -3,6 +3,9 @@ and those records applied by the existing ingest code end where 0.5 put them."""
 
 from __future__ import annotations
 
+#: Test the client alone, without the server stand-in (tests/standin_server.py).
+STANDIN = False
+
 import os
 import signal
 import time

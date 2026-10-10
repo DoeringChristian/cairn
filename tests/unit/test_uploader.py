@@ -4,6 +4,9 @@ connections, kill -9 of the daemon, and one daemon at a time."""
 
 from __future__ import annotations
 
+#: Test the client alone, without the server stand-in (tests/standin_server.py).
+STANDIN = False
+
 import json
 import os
 import random

@@ -8,7 +8,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import cairn
-from cairn.sdk.local import LocalTransport
 from cairn.server.storage.blobs import BlobStore
 from cairn.server.storage.datadir import DataDir
 from cairn.server.storage.db import Database
@@ -98,40 +97,6 @@ def test_list_include_params(client):
     assert runs[other]["params"] == {}
     # Without include the list stays lean.
     assert "params" not in client.get("/api/runs").json()["runs"][0]
-
-
-def test_local_log_replayed(tmp_path):
-    repo = tmp_path / ".cairn"
-    t = LocalTransport(repo)
-    rid = t.create_run({**FIELDS, "run_id": "f" * 32})["run_id"]
-    t.finish_run(rid, "completed", ended_at=ENDED)
-    t.close()
-
-    dd = DataDir(repo)
-    db = Database.open(dd.db_path)
-    try:
-        ingest_all(dd, db, BlobStore(dd.artifacts_dir))
-        _check_row(db.read_columns("SELECT * FROM runs WHERE id = ?", [rid])[0], ended=True)
-    finally:
-        db.close()
-
-
-def test_local_log_dates_the_run_by_the_client_clock(tmp_path):
-    """Without an explicit created_at the log still carries the client's
-    creation time, and ingestion uses it instead of the (later) ingest time."""
-    repo = tmp_path / ".cairn"
-    t = LocalTransport(repo)
-    before = datetime.now(timezone.utc)
-    rid = t.create_run({"project": "p", "run_id": "e" * 32})["run_id"]
-    t.close()
-    dd = DataDir(repo)
-    db = Database.open(dd.db_path)
-    try:
-        ingest_all(dd, db, BlobStore(dd.artifacts_dir))
-        (created,) = db.read_one("SELECT created_at FROM runs WHERE id = ?", [rid])
-    finally:
-        db.close()
-    assert before <= _ts(created) <= datetime.now(timezone.utc)
 
 
 def test_sdk_run_kwargs(tmp_path):

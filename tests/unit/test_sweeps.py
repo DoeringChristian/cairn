@@ -1,4 +1,4 @@
-"""Sweeps: sweep_ops, the routes, LocalTransport (direct; WAL refuses), the
+"""Sweeps: sweep_ops, the routes, RepoTransport, the
 SDK's env pickup, and cairn.sweep(...).run."""
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ import pytest
 
 import cairn
 from cairn.sdk import sweep as sweep_mod
-from cairn.sdk.local import LocalTransport
+from cairn.sdk.local import RepoTransport
 from cairn.sdk.sweep import expand_command
 from cairn.server import sweep_ops
 from cairn.server.storage.db import Database
@@ -332,11 +332,11 @@ def test_runs_list_filters_by_sweep(client):
     assert [r["id"] for r in client.get("/api/runs", params={"sweep_id": sid}).json()["runs"]] == [rid]
 
 
-# ---- LocalTransport ------------------------------------------------------------------
+# ---- RepoTransport ------------------------------------------------------------------
 
 
-def test_local_direct_transport(tmp_path):
-    t = LocalTransport(tmp_path / ".cairn")
+def test_repo_transport(tmp_path):
+    t = RepoTransport(tmp_path / ".cairn")
     try:
         sw = t.create_sweep({"project": "P", "parameters": {"a": {"values": [1]}}, "method": "grid"})
         assert [s["id"] for s in t.list_sweeps("P")] == [sw["id"]]
@@ -357,7 +357,7 @@ def test_local_direct_transport(tmp_path):
 
 def test_run_joins_the_trial_from_env(tmp_path, monkeypatch):
     repo = tmp_path / ".cairn"
-    t = LocalTransport(repo)
+    t = RepoTransport(repo)
     sw = t.create_sweep({"project": "p", "parameters": {"lr": {"values": [0.5]}}, "metric": "loss"})
     trial = t.next_trial(sw["id"])["trial"]
     t.close()
@@ -367,7 +367,7 @@ def test_run_joins_the_trial_from_env(tmp_path, monkeypatch):
     with cairn.Run(project="p", repo=repo, **QUIET) as run:
         run.track(0.1, name="loss", step=0)
     # A later trial gets its own number; an explicit name wins over the trial's.
-    t = LocalTransport(repo)
+    t = RepoTransport(repo)
     sw_r = t.create_sweep({"project": "p", "parameters": {"lr": {"min": 0.1, "max": 0.2}}})
     t.next_trial(sw_r["id"])
     trial3 = t.next_trial(sw_r["id"])["trial"]
@@ -389,7 +389,7 @@ def test_run_joins_the_trial_from_env(tmp_path, monkeypatch):
         assert reader.run(named.id).name == "mine"
     finally:
         reader.close()
-    t = LocalTransport(repo)
+    t = RepoTransport(repo)
     try:
         assert t.get_sweep(sw["id"])["trials"][0]["run_id"] == run.id
     finally:
@@ -489,6 +489,8 @@ def test_python_sweep_cancel_stops_the_running_trial(tmp_path, monkeypatch):
     started = threading.Event()
 
     def train(config, run):
+        # A cancel reaches the runs the server has: upload this one first.
+        run._writer.flush()
         started.set()
         while not run.should_stop:
             time.sleep(0.01)

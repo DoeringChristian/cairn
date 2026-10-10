@@ -14,7 +14,6 @@ from fastapi.testclient import TestClient
 
 import cairn
 from cairn import cli
-from cairn.sdk.local import LocalTransport
 from cairn.server import gc, ingest_ops
 from cairn.server.app import create_app
 from cairn.server.storage.blobs import BlobStore
@@ -106,10 +105,11 @@ def test_every_reference_site_is_marked(tmp_path):
         src = r.dd.run_source_dir(rid)
         (src / "manifest.json").write_text(json.dumps({"files": [], "diff_hash": diff}))
         # A record not ingested yet names a blob.
-        t = LocalTransport(root)
-        t.create_run({"project": "p", "run_id": "9" * 32})
-        pending = t.upload_artifact(b"pending-bytes", "text/plain")
-        t.close()
+        from tests.legacy_wal import LegacyLog
+
+        t = LegacyLog(root, "9" * 32)
+        t.create()
+        pending = t.blob(b"pending-bytes", "text/plain")
         everything = set(r.blobs.iter_digests())
         _age_all(r.blobs)
         marked = gc.mark(r.db, r.dd, r.blobs)

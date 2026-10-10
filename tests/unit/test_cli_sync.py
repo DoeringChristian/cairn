@@ -3,6 +3,9 @@ anything the server has not confirmed or that is not finished."""
 
 from __future__ import annotations
 
+#: Test the client alone, without the server stand-in (tests/standin_server.py).
+STANDIN = False
+
 from click.testing import CliRunner
 
 from cairn.cli import main

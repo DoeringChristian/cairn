@@ -1,9 +1,9 @@
 """Run ids and process labels (stdlib only: ``cairn.new_run_id()`` is called
 from launch scripts, before anything else is imported).
 
-A run id names the run's log files (``.cairn/wals/<run_id>.wal.jsonl``) and a
-labelled process's log adds ``~<label>`` to it; a label also names that
-process's system metrics (``system.<label>.*``). Both are therefore kept to
+A run id names the run's directory (``$CAIRN_DIR/runs/<run_id>/``) and a
+label names an attached process's log in it (``procs/<label>/``); a label also
+names that process's system metrics (``system.<label>.*``). Both are therefore kept to
 characters that are safe in a file name and contain no ``.`` or ``~``.
 """
 

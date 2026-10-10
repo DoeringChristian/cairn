@@ -13,7 +13,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 import cairn
-from cairn.sdk.local import LocalTransport
 from cairn.server import alerts as alerts_core
 from cairn.server import ingest_ops
 from cairn.server.app import create_app
@@ -86,7 +85,7 @@ def test_other_finishes_do_not_alert(client, status):
     assert _alerts(client.app.state.db, rid) == []
 
 
-# ---- LocalTransport ---------------------------------------------------------
+# ---- legacy (0.5) run logs ---------------------------------------------------
 
 
 def _alert(title, alert_id, level="info"):
@@ -97,13 +96,15 @@ def _alert(title, alert_id, level="info"):
 def test_local_run_log_alerts_apply_once(tmp_path):
     repo = tmp_path / ".cairn"
     dd = DataDir(repo)
-    t = LocalTransport(repo)
-    rid = t.create_run({"project": "p", "run_id": "b" * 32})["run_id"]
-    t.alert(rid, _alert("hi", "a1"))
+    from tests.legacy_wal import LegacyLog
+
+    rid = "b" * 32
+    t = LegacyLog(repo, rid)
+    t.create()
+    t.write("alert", {"run_id": rid, **_alert("hi", "a1")})
     db = Database.open(dd.db_path)
     ingest_all(dd, db, BlobStore(dd.artifacts_dir))  # the run is still live
-    t.finish_run(rid, "failed", exit_code=1)
-    t.close()
+    t.finish("failed", exit_code=1)
     ingest_all(dd, db, BlobStore(dd.artifacts_dir))  # only the rest
     rows = _alerts(db, rid)
     db.close()

@@ -8,17 +8,17 @@ import time
 
 from fastapi.testclient import TestClient
 
-from cairn.sdk.local import LocalTransport
 from cairn.server.app import create_app
 from cairn.server.storage import lease as lease_mod
 
 
 def _finished_log(repo):
-    t = LocalTransport(repo)
-    rid = t.create_run({"project": "p", "run_id": "a" * 32})["run_id"]
-    t.finish_run(rid, "completed")
-    t.close()
-    return next((repo / "wals").glob("*.wal.jsonl"))
+    from tests.legacy_wal import LegacyLog
+
+    log = LegacyLog(repo, "a" * 32)
+    log.create()
+    log.finish()
+    return log.path
 
 
 def _ingested(log, timeout: float) -> bool:

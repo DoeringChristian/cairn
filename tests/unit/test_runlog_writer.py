@@ -3,6 +3,9 @@ concurrent reading, blobs."""
 
 from __future__ import annotations
 
+#: Test the client alone, without the server stand-in (tests/standin_server.py).
+STANDIN = False
+
 import os
 import subprocess
 import sys

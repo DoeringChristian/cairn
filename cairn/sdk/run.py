@@ -289,6 +289,8 @@ class Run:
         self._server = self._ep_server or f"file://{self._ep_repo}"
         self._project = project
         self._name = name
+        # A resumed run keeps its name (and version) from before.
+        self._resumed = resume is not None
         # Launched by `cairn agent`: join its sweep and take the trial's params.
         trial_id = None
         if primary and sweep_id is None and os.environ.get("CAIRN_SWEEP_ID"):
@@ -728,21 +730,35 @@ class Run:
         or a process joining a shared run keeps it; a fork is a new run, with
         the series' next number. None for an unnamed run.
 
-        Over HTTP the server answers it on creation. On a local repo the
-        number exists once the run's creation is ingested: the first read
-        catches up on the repo's logs (like ``ArtifactVersion.wait``), so it
-        is known from then on. None also while a worker's run is not created
-        yet.
+        The server assigns it when it applies the run's creation record:
+        the first read makes the run's records durable and asks the server,
+        waiting up to 5 s for the upload; it is known from then on. None
+        while the server cannot be reached or has not seen the run yet.
         """
-        if self._version_info is None:
-            try:
-                body = self._reads.run(self._run_id)
-            except ServerUnavailable:
-                body = None
-            version = (body or {}).get("run", {}).get("version")
-            if version is not None:
-                self._version_info = {"version": version}
+        if self._version_info is None and (
+            self._name is not None or not self._primary or self._resumed
+        ):
+            # The server numbers the run when it applies its creation: make
+            # the records durable and give the upload a moment.
+            if self._writer is not None and not self._writer.log.closed:
+                self._writer.flush()
+            deadline = time.monotonic() + self._VERSION_WAIT
+            while True:
+                try:
+                    body = self._reads.run(self._run_id)
+                except ServerUnavailable:
+                    break
+                version = (body or {}).get("run", {}).get("version")
+                if version is not None:
+                    self._version_info = {"version": version}
+                    break
+                if body is not None or time.monotonic() > deadline:
+                    break
+                time.sleep(0.1)
         return None if self._version_info is None else self._version_info["version"]
+
+    #: Seconds ``version`` waits for the server to learn of the run.
+    _VERSION_WAIT = 5.0
 
     @property
     def project(self) -> str:

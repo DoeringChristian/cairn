@@ -48,16 +48,13 @@ def sync_cmd(paths: tuple[Path, ...], clean: bool, server: str | None, daemon: b
         click.echo("nothing to sync")
         return
 
-    client_for = None
     shared: IngestClient | None = None
     if server is not None:
         from .config import _as_server_url, resolve_token
 
         url = _as_server_url(server).rstrip("/")
         shared = IngestClient(url, resolve_token(url))
-
-        def client_for(_rd):  # noqa: ANN001, ANN202
-            return shared
+    client_for = None if shared is None else (lambda _rd: shared)
 
     failed = 0
 

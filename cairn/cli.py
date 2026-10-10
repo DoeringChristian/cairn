@@ -35,7 +35,7 @@ import click
 from . import config as _config
 from . import viewer as _viewer
 from .cli_target import (
-    Api, explicit, is_repo, open_api, reader_location, require_repo, resolve, target_options,
+    Api, explicit, open_api, reader_location, require_repo, resolve, target_options,
 )
 from .sdk.transport import Transport
 

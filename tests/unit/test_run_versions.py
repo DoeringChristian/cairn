@@ -7,7 +7,7 @@ import io
 import sqlite3
 
 import cairn
-from cairn.sdk.local import LocalTransport
+from tests.legacy_wal import LegacyLog
 from cairn.server import wal_ingest
 from cairn.server.storage.blobs import BlobStore
 from cairn.server.storage.datadir import DataDir
@@ -185,10 +185,9 @@ def test_log_create_is_numbered_once_under_a_restart_mid_ingest(tmp_path, monkey
     repo = tmp_path / ".cairn"
     ids = ["1" * 32, "2" * 32]
     for rid in ids:
-        t = LocalTransport(repo)
-        t.create_run({"project": "p", "run_id": rid, "name": "train"})
-        t.rename_run(rid, "train")  # same name: no new number
-        t.close()
+        t = LegacyLog(repo, rid)
+        t.create(name="train")
+        t.write("rename_run", {"run_id": rid, "name": "train"})  # same name: no new number
 
     real = wal_ingest._apply_record
     calls = {"n": 0}
@@ -213,10 +212,9 @@ def test_log_create_is_numbered_once_under_a_restart_mid_ingest(tmp_path, monkey
     assert second.counter("train") == 2
     second.close()
 
-    t = LocalTransport(repo)
-    t.create_run({"project": "p", "run_id": "3" * 32, "name": "train"})
-    t.rename_run(ids[0], "eval")
-    t.close()
+    t = LegacyLog(repo, "3" * 32)
+    t.create(name="train")
+    t.write("rename_run", {"run_id": ids[0], "name": "eval"})
     third = _Ingester(repo)
     third.ingest()
     v = third.versions()
@@ -231,9 +229,7 @@ def test_waiting_logs_are_numbered_in_creation_order(tmp_path):
     sorts first, still gets the higher version."""
     repo = tmp_path / ".cairn"
     for rid, created in (("9" * 32, "2026-10-08T10:00:00+00:00"), ("1" * 32, "2026-10-08T10:00:01+00:00")):
-        t = LocalTransport(repo)
-        t.create_run({"project": "p", "run_id": rid, "name": "train", "created_at": created})
-        t.close()
+        LegacyLog(repo, rid).create(name="train", created_at=created)
     ing = _Ingester(repo)
     ing.ingest()
     assert ing.versions() == {"9" * 32: 1, "1" * 32: 2}

@@ -1,6 +1,6 @@
 """Stopping a run from the UI: ``POST /api/runs/{id}/stop`` sets
 ``stop_requested``; the heartbeat hands it back on every write path (HTTP,
-LocalTransport direct, LocalTransport WAL) and the SDK run ends "stopped"."""
+the run's server) and the SDK run ends "stopped"."""
 
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ import time
 import pytest
 
 import cairn
-from cairn.sdk.local import LocalTransport
 from cairn.sdk.transport import Transport
 from cairn.server import ingest_ops
 from cairn.server.storage.blobs import BlobStore
@@ -37,37 +36,6 @@ def test_http_stop_route_and_heartbeat(client):
     assert client.post("/api/runs/nope/stop").status_code == 404
 
 
-def test_http_transport_heartbeat_returns_flag(live_server):
-    t = Transport(live_server)
-    try:
-        rid = t.create_run({"project": "p"})["run_id"]
-        assert t.heartbeat(rid) is None
-        t.post_json(f"/api/runs/{rid}/stop", {})
-        assert t.heartbeat(rid)
-    finally:
-        t.close()
-
-
-def test_local_heartbeat_reads_flag(tmp_path):
-    repo = tmp_path / ".cairn"
-    t = LocalTransport(repo)
-    rid = t.create_run({"project": "p", "run_id": "a" * 32})["run_id"]
-    try:
-        dd = DataDir(repo)
-        db = Database.open(dd.db_path)
-        ingest_all(dd, db, BlobStore(dd.artifacts_dir))  # the run is live
-        assert t.heartbeat(rid) is None
-        ts = ingest_ops.request_stop(db, rid)
-        assert t.heartbeat(rid) == ts
-        t.finish_run(rid, "stopped")
-    finally:
-        t.close()
-    ingest_all(dd, db, BlobStore(dd.artifacts_dir))  # the rest of the log
-    row = db.read_columns("SELECT status, stop_requested FROM runs WHERE id = ?", [rid])[0]
-    db.close()
-    assert row == {"status": "stopped", "stop_requested": ts}
-
-
 def _run(repo, **kw) -> cairn.Run:
     return cairn.Run(
         project="p", repo=repo, capture_source=False, capture_stdout=False,
@@ -76,9 +44,23 @@ def _run(repo, **kw) -> cairn.Run:
 
 
 def _request_stop(repo, rid):
-    """What the UI's Stop button does, through the repo's lease holder."""
+    """What the UI's Stop button does, through the repo's lease holder (once
+    the server has the run: its log is uploaded at the group commit)."""
     from cairn.sdk.local import RepoTransport
+    from cairn.server.storage.datadir import DataDir as _DD
+    from cairn.server.storage.db import Database as _DB
 
+    def known() -> bool:
+        path = _DD(repo).db_path
+        if not path.exists():
+            return False
+        db = _DB.open_readonly(path)
+        try:
+            return bool(db.read_columns("SELECT 1 FROM runs WHERE id = ?", [rid]))
+        finally:
+            db.close()
+
+    _wait(known)
     rt = RepoTransport(repo)
     try:
         return rt.under_lease(lambda db: ingest_ops.request_stop(db, rid))

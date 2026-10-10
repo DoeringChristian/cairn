@@ -3,8 +3,8 @@
 One primary creates the run; workers (``primary=False`` / ``cairn.attach``)
 join it with a label. Everything they record lands in the run, but only the
 primary sets its status and keeps it alive. Each process writes its own log
-(``<run_id>[~<label>].wal.jsonl``); a worker's log waits at the ingester until
-the run exists.
+(``procs/<label>/`` of the run directory); a worker's log waits at the server
+until the run exists.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import pytest
 
 import cairn
 from cairn.sdk import run_ids
-from cairn.sdk.local import LocalTransport
+
 from cairn.sdk.run import _resolve_process
 from cairn.server import ingest_ops, wal_ingest
 from cairn.server.storage.blobs import BlobStore
@@ -48,6 +48,11 @@ class _Repo:
         self.blobs = BlobStore(self.dd.artifacts_dir)
 
     def ingest(self) -> int:
+        """Upload the runs' directories (the server applies them), plus any
+        legacy log."""
+        from tests import standin_server
+
+        standin_server.sync_repo(self.dd.root)
         return wal_ingest.ingest_all(self.dd, self.db, self.blobs)
 
     def status(self, rid):
@@ -182,14 +187,11 @@ def test_worker_data_lands_in_the_run_and_its_log_is_deleted(repo, ing):
             w.config(rank1={"batch": 8})
             w.summary(rank1_best=0.5)
         run.track(0.5, "loss", step=0)
-    assert ing.logs() == [f"{rid}.wal.jsonl", f"{rid}~rank1.wal.jsonl"]
     ing.ingest()
-    assert ing.logs() == []
     assert ing.status(rid) == "completed"
     assert ing.points(rid, "rank1.loss") == [{"step": 0, "scalar_value": 1.5}]
     docs = ingest_ops.run_docs(ing.db, rid)
     assert docs == {"config": {"rank1": {"batch": 8}}, "summary": {"rank1_best": 0.5}}
-    assert ing.db.read_one("SELECT COUNT(*) FROM wal_progress") == (0,)
 
 
 def test_worker_exception_and_finish_never_change_the_status(repo, ing):
@@ -252,7 +254,7 @@ def test_worker_project_must_match_the_run(repo, ing):
 
 
 def test_join_waits_for_a_run_it_cannot_find(repo, monkeypatch):
-    monkeypatch.setattr(LocalTransport, "JOIN_WAIT", 0.3)
+    monkeypatch.setattr(cairn.Run, "JOIN_WAIT", 0.3)
     t0 = time.monotonic()
     with pytest.raises(LookupError):
         cairn.attach(cairn.new_run_id(), "rank1", repo=repo)
@@ -369,24 +371,25 @@ def test_worker_log_waits_for_its_run(repo, ing):
     w.track(1.0, "a", step=0)
     w.track(2.0, "a", step=1)
     w.finish()
-    assert ing.ingest() == 0
+    ing.ingest()
     assert ing.db.read_one("SELECT COUNT(*) FROM runs") == (0,)
-    assert ing.db.read_one("SELECT COUNT(*) FROM wal_progress") == (0,)
-    assert not wal_ingest.has_pending(ing.dd, ing.db)  # nothing it can do yet
-    assert ing.logs() == [f"{rid}~rank1.wal.jsonl"]
+    from cairn.sdk.runlog.rundir import RunDir
+
+    rd = RunDir.for_run(rid)
+    assert rd.log("rank1").acked() == 0  # the server keeps it waiting
 
     run = _primary(repo, run_id=rid)
-    assert wal_ingest.has_pending(ing.dd, ing.db)
     ing.ingest()
     assert ing.points(rid, "a") == [{"step": 0, "scalar_value": 1.0},
                                     {"step": 1, "scalar_value": 2.0}]
-    assert ing.logs() == [f"{rid}.wal.jsonl"]  # the worker's: detached and deleted
+    assert rd.log("rank1").acked() == rd.log("rank1").last_seq()
     run.finish()
     ing.ingest()
-    assert ing.status(rid) == "completed" and ing.logs() == []
+    assert ing.status(rid) == "completed"
 
 
 def _write_log(path, records):
+    path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "a") as fh:
         fh.writelines(
             json.dumps({"seq": i, "op": op, "payload": payload}) + "\n"
@@ -414,33 +417,6 @@ def test_worker_log_cannot_change_the_lifecycle(repo, ing):
     assert ing.status(rid) == "completed"
     assert ing.points(rid, "y") == [{"step": 0, "scalar_value": 4.0}]
     assert not path.exists()
-
-
-def test_crashed_only_from_the_primarys_liveness(repo, ing):
-    run = _primary(repo)
-    w = _worker(repo, run.id, "rank1")
-    w.track(1.0, "x", step=0)
-    ing.ingest()
-    primary_log = wal_ingest.log_path(ing.dd, run.id)
-    worker_log = wal_ingest.log_path(ing.dd, run.id, "rank1")
-    old = time.time() - wal_ingest.STALE_SECONDS - 5
-
-    os.utime(worker_log, (old, old))  # a silent worker: the run is alive
-    assert wal_ingest.mark_crashed(ing.db, ing.dd) == []
-    assert ing.status(run.id) == "running"
-
-    os.utime(primary_log, (old, old))  # a silent primary: crashed, busy worker or not
-    os.utime(worker_log, None)
-    assert wal_ingest.mark_crashed(ing.db, ing.dd) == [run.id]
-    assert ing.status(run.id) == "crashed"
-
-    w.track(2.0, "x", step=1)  # a worker's records do not revive it
-    ing.ingest()
-    assert ing.status(run.id) == "crashed"
-    w.finish()
-    run.finish()  # its primary's do (a finish here)
-    ing.ingest()
-    assert ing.status(run.id) == "completed"
 
 
 # ---- stop requests -----------------------------------------------------------
@@ -575,6 +551,7 @@ def test_http_workers(live_server):
     url = live_server.replace("http://", "cairn://")
     rid = cairn.new_run_id()
     run = cairn.Run("p", repo=url, run_id=rid, **QUIET)
+    run._writer.flush()  # the server has the run once its log is uploaded
     with pytest.raises(ValueError, match="exists"):
         cairn.Run("p", repo=url, run_id=rid, **QUIET)
     w = cairn.attach(rid, "rank1", repo=url, system_metrics=False, capture_output=False)

@@ -7,7 +7,6 @@ import httpx
 import pytest
 
 import cairn
-from cairn.sdk.local import LocalTransport
 from cairn.server import artifact_registry_ops
 from cairn.server.storage.datadir import DataDir
 from cairn.server.storage.db import Database
@@ -56,26 +55,6 @@ def test_use_run_on_a_local_repo(tmp_path):
         reader.close()
     assert {"source": train.id, "target": ev.id, "kind": "used", "role": None} in graph["edges"]
     assert {"source": prep.id, "target": ev.id, "kind": "used", "role": "data"} in graph["edges"]
-
-
-def test_use_run_record_is_replayed_from_the_log(tmp_path):
-    repo = tmp_path / ".cairn"
-    t = LocalTransport(repo)
-    up = t.create_run({"project": "p", "run_id": "a" * 32})["run_id"]
-    t.close()
-    t = LocalTransport(repo)
-    down = t.create_run({"project": "p", "run_id": "b" * 32})["run_id"]
-    # The used run is still only in its (un-ingested) log: known all the same.
-    t.record_run_use(down, up, "base")
-    t.close()
-    ingest_repo(repo)
-    db = Database.open(DataDir(repo).db_path)
-    try:
-        assert artifact_registry_ops.run_uses(db, down) == {
-            "uses": [{"run_id": up, "role": "base"}], "used_by": [],
-        }
-    finally:
-        db.close()
 
 
 def test_uses_validates_entries_before_creating_the_run(tmp_path):

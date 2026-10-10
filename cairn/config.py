@@ -54,8 +54,7 @@ class RunTarget:
 
 
 def cache_dir() -> Path:
-    """Root of cairn's per-user caches: unsent run data (``wal``,
-    ``pending``) and the Reader's blob cache. ``CAIRN_CACHE_DIR`` overrides
+    """Root of cairn's per-user caches (the Reader's blob cache). ``CAIRN_CACHE_DIR`` overrides
     the platform default (e.g. a node-local disk on a cluster)."""
     env = os.environ.get("CAIRN_CACHE_DIR")
     return Path(env) if env else Path(platformdirs.user_cache_dir("cairn"))
