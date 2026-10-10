@@ -520,7 +520,7 @@ def profile(scale: str, backends: list[str], work: Path) -> dict[str, Any]:
     cfg = SCALES[scale]
     prof_py = c.profiling_python()
     out: dict[str, Any] = {}
-    shape = dict(cfg["tp_multi"])
+    shape = {"metrics": 20, "steps": 5000}  # 4 clients x 100k points, any scale
     for be in ("cairn-http", "cairn-local"):
         w = work / f"profile-{be}"
         print(f"[profile] {be}", flush=True)

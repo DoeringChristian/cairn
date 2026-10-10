@@ -79,7 +79,7 @@ def profiling_python() -> str:
     """An interpreter that sees cairn's environment plus ``yappi`` (a venv
     whose .pth adds cairn's site-packages as a site dir)."""
     py = _venv_python("venv-prof", ["yappi"], "BENCH_PROF_PYTHON")
-    base = Path(CAIRN_PY).resolve().parent.parent
+    base = Path(sys.prefix)  # cairn's venv (not the resolved base interpreter)
     site = next((base / "lib").glob("python3*/site-packages"), None)
     if site is None:  # CAIRN_PY is a base interpreter, not a venv's
         site = Path(next(p for p in sys.path if p.endswith("site-packages")))
