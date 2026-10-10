@@ -29,6 +29,17 @@ os.environ["BROWSER"] = "true"
 # inherited by subprocesses too.
 os.environ["CAIRN_CACHE_DIR"] = tempfile.mkdtemp(prefix="cairn-test-cache-")
 
+# Run directories ($CAIRN_DIR) and the uploader's state (registry, lock) go
+# to temp dirs too, never ./.cairn of the checkout or ~/.local/state. The
+# background uploader is off unless a test turns it on (CAIRN_UPLOADER=on):
+# runs stay in their directories, uploaded by the test itself.
+# INTEGRATION NOTE (0.6 merge): tests that log with cairn.Run and read back
+# with the Reader need the upload step (an auto-started local server, or an
+# explicit in-process sync); decide here whether to turn the uploader on.
+os.environ.setdefault("CAIRN_DIR", tempfile.mkdtemp(prefix="cairn-test-rundirs-"))
+os.environ["CAIRN_AGENT_DIR"] = tempfile.mkdtemp(prefix="cairn-test-agent-")
+os.environ.setdefault("CAIRN_UPLOADER", "off")
+
 
 @pytest.fixture
 def data_dir(tmp_path) -> DataDir:
