@@ -1,7 +1,7 @@
-"""Ingest endpoints: SDK → server.
+"""Direct write endpoints: run creation, edits, points, blobs, lifecycle.
 
-Thin HTTP wrappers around ``cairn.server.ingest_ops``. All actual DB logic
-lives there so it can be reused by the local-mode SDK transport.
+Thin HTTP wrappers around ``cairn.server.ingest_ops``. The upload protocol
+of run directories (records + blobs) is ``routes/records.py``.
 """
 
 from __future__ import annotations
@@ -284,25 +284,6 @@ def head_artifact(digest: str, request: Request) -> Response:
     if blobs.touch(digest):
         return Response(status_code=200)
     return Response(status_code=404)
-
-
-@router.post("/ingest/pending")
-async def ingest_pending(request: Request) -> dict[str, Any]:
-    """Apply every pending run log now (``wal_ingest.ingest_all``), for a
-    local run that needs an answer that depends on its own log (resume,
-    ``use_artifact``). Only the lease-holding app ingests."""
-    from ..wal_ingest import has_pending, ingest_all
-
-    lease = getattr(request.app.state, "lease", None)
-    if lease is None:
-        raise HTTPException(status_code=409, detail="this app does not ingest run logs")
-    db = get_db(request)
-    dd = get_data_dir(request)
-    blobs = get_blobs(request)
-    ops = await anyio.to_thread.run_sync(
-        lambda: ingest_all(dd, db, blobs) if has_pending(dd, db) else 0,
-    )
-    return {"ops": ops}
 
 
 #: Largest permitted multipart-part size. Starlette's default is 1 MiB,
@@ -631,8 +612,7 @@ def delete_run(run_id: str, request: Request, background: BackgroundTasks) -> di
         ingest_ops.delete_run(db, dd, run_id)
     except ingest_ops.RunNotFound as exc:
         raise _run_not_found(exc) from None
-    if getattr(request.app.state, "lease", None) is not None:
-        background.add_task(_collect_garbage, request.app)
+    background.add_task(_collect_garbage, request.app)
     return {"deleted": run_id}
 
 
@@ -651,9 +631,6 @@ def _collect_garbage(app: Any) -> None:
     try:
         while _gc_again.is_set():
             _gc_again.clear()
-            lease = getattr(app.state, "lease", None)
-            if lease is None or not lease.valid():
-                return
             gc.collect(app.state.db, app.state.data_dir, app.state.blobs)
     except Exception:
         logging.getLogger(__name__).exception("garbage collection failed")

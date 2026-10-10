@@ -38,7 +38,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from .metric_stats import backfill_metric_stats
-from .migrations import apply_migrations
+from .migrations import SCHEMA_RELEASE, SCHEMA_VERSION, apply_migrations, needs_migration
 
 # Explicit adapters for datetime/date parameters: Python 3.12 deprecates the
 # implicit defaults. ISO 8601 with a "T", the format every other timestamp in
@@ -137,6 +137,10 @@ class Database:
         )
         # Enable WAL mode for concurrent read/write access across processes.
         self._conn.execute("PRAGMA journal_mode=WAL")
+        # Every commit is on disk before it returns: an ingest request is
+        # acknowledged (and its client may drop the records) only after its
+        # transaction committed, so a power loss must not undo it.
+        self._conn.execute("PRAGMA synchronous=FULL")
         self._conn.execute("PRAGMA busy_timeout=5000")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._pool: list[sqlite3.Connection] = []
@@ -151,29 +155,6 @@ class Database:
         # registered with ``after_commit`` run once the outermost commits.
         self._tx_depth = 0
         self._after_commit: list[Any] = []
-        self._readonly = False
-
-    @classmethod
-    def open_readonly(cls, path: Path) -> Database:
-        """Open an existing database for reading only: no migrations, and
-        the writer connection refuses writes (``query_only``). For a process
-        that is not the repo's ingest-lease holder (see ``storage.lease``)."""
-        db = cls.__new__(cls)
-        db.path = Path(path)
-        db._lock = threading.RLock()
-        db._writing = threading.local()
-        db._conn = sqlite3.connect(str(db.path), check_same_thread=False, timeout=10.0)
-        db._conn.execute("PRAGMA busy_timeout=5000")
-        db._conn.execute("PRAGMA query_only=ON")
-        db._pool = []
-        db._pool_lock = threading.Lock()
-        db._heavy_gate = _FifoLock()
-        db._read_cost = {}
-        db._closed = False
-        db._tx_depth = 0
-        db._after_commit = []
-        db._readonly = True
-        return db
 
     @classmethod
     def open(cls, path: Path) -> "Database":
@@ -186,6 +167,8 @@ class Database:
             db = cls(path)
             try:
                 with db._write_lock():
+                    if needs_migration(db._conn):
+                        backup_before_migrating(db._conn, Path(path))
                     apply_migrations(db._conn)
                     backfill_metric_stats(db._conn)
             except BaseException:
@@ -355,3 +338,60 @@ class Database:
             cur = con.execute(sql, params or [])
             cols = [d[0] for d in cur.description]
             return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def backup_to(con: sqlite3.Connection, dest: Path) -> Path:
+    """A consistent copy of the database behind ``con`` at ``dest`` (SQLite's
+    online backup API: safe while other connections read and write), fsynced
+    before it is renamed into place."""
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_name(f".{dest.name}.tmp")
+    tmp.unlink(missing_ok=True)
+    out = sqlite3.connect(str(tmp))
+    try:
+        con.backup(out)
+        # A self-contained single file (no -wal sidecar to copy along).
+        out.execute("PRAGMA journal_mode=DELETE")
+    finally:
+        out.close()
+    with open(tmp, "rb") as fh:
+        os.fsync(fh.fileno())
+    os.replace(tmp, dest)
+    _fsync_dir(dest.parent)
+    return dest
+
+
+def _fsync_dir(path: Path) -> None:
+    if os.name == "nt":
+        return
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def backup_before_migrating(con: sqlite3.Connection, db_path: Path) -> Path:
+    """The automatic backup taken before an older database is migrated:
+    ``<repo>/backups/cairn-<UTC timestamp>-pre-<release>.db``."""
+    import logging
+
+    from datetime import timezone
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    release = SCHEMA_RELEASE.get(SCHEMA_VERSION, f"schema{SCHEMA_VERSION}")
+    dest = backup_to(con, db_path.parent / "backups" / f"cairn-{stamp}-pre-{release}.db")
+    logging.getLogger(__name__).warning(
+        "cairn: backed up %s to %s before migrating it to schema %d",
+        db_path, dest, SCHEMA_VERSION,
+    )
+    return dest
+
+
+def quick_check(db: Database) -> list[str]:
+    """SQLite's ``PRAGMA quick_check``: [] when the database is sound, else
+    the problems it reports."""
+    with db._write_lock() as con:
+        rows = [r[0] for r in con.execute("PRAGMA quick_check").fetchall()]
+    return [] if rows == ["ok"] else rows

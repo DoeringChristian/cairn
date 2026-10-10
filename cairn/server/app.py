@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -30,6 +31,7 @@ from . import auth as auth_core
 from .embed_specs import EmbedSpecStore
 from .report_scope import ScopeCache
 from .routes import (
+    admin,
     alerts,
     artifact_registry,
     artifacts,
@@ -44,12 +46,14 @@ from .routes import (
     project_docs,
     projects,
     query,
+    records,
     report_assets,
     report_comments,
     report_templates,
     reports,
     runs,
     sequences,
+    series_buckets,
     shares,
     source,
     sweeps,
@@ -59,13 +63,13 @@ from .ui_mount import mount_viewer
 from .storage.blobs import BlobStore
 from .storage.datadir import DataDir, default_data_dir
 from .storage.db import Database
-from .storage import lease as lease_mod
-from .wal_ingest import ingest_all
+from .record_apply import mark_crashed
+from .startup import open_repo_database
 
 _log = logging.getLogger(__name__)
 
-#: Seconds between two background ingestion cycles.
-INGEST_INTERVAL = 2.0
+#: Seconds between two maintenance cycles (stale runs, alert delivery).
+MAINTENANCE_INTERVAL = 5.0
 
 
 class _JsonGZipResponder(GZipResponder):
@@ -96,6 +100,29 @@ class _JsonGZip:
             await self.app(scope, receive, send)
             return
         await _JsonGZipResponder(self.app, minimum_size=4096, compresslevel=1)(scope, receive, send)
+
+
+class _Activity:
+    """ASGI middleware: the time of the last API request and the number in
+    flight (``app.state.activity``), for a daemon server's idle exit. Health
+    probes do not count: they only ask whether the server is there."""
+
+    def __init__(self, app, state) -> None:
+        self.app = app
+        self.state = state
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http" or scope.get("path") == "/api/health":
+            await self.app(scope, receive, send)
+            return
+        activity = self.state.activity
+        activity["in_flight"] += 1
+        activity["last"] = time.monotonic()
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            activity["in_flight"] -= 1
+            activity["last"] = time.monotonic()
 
 
 class _NoReferrer:
@@ -154,12 +181,10 @@ def create_app(
             False so existing test fixtures (``tests/conftest.py``) and
             library callers of ``create_app()`` are unaffected; the CLI
             (``cairn server`` / ``cairn ui``) opts in unless ``--no-auth``.
-        background_tasks: Hold the repo's ingest lease and run the
-            lifespan's background loops (log ingestion, stale-run reaping,
-            alert delivery). Exactly one app per repo may run them: ``cairn
-            server --ui`` builds a second app on the same DB and passes
-            False for it. An app without them must only be used by a
-            process that holds the lease itself (the CLI's in-process API).
+        background_tasks: Run the lifespan's background loops (crashed and
+            stale-run reaping, alert delivery, a daemon's idle exit).
+            Exactly one app per repo may run them: ``cairn server --ui``
+            builds a second app on the same DB and passes False for it.
         alert_webhook: URL the background task posts alerts to (ntfy, Slack,
             Discord, or any JSON webhook; see ``cairn/server/alerts.py``).
             None keeps alerts in the UI only.
@@ -175,16 +200,9 @@ def create_app(
     async def lifespan(app: FastAPI):
         dd = DataDir(resolved_dir) if owns_db else data_dir_obj
         assert dd is not None
-        # The ingest lease (storage/lease.py): the app that runs the
-        # background loops is the repo's one writer. ``cairn ui``/``cairn
-        # server`` took it already (with their URL); this shares it.
-        lease = None
-        if background_tasks:
-            lease = lease_mod.acquire(dd.root, mode="server", wait=60.0)
-        app.state.lease = lease
         if owns_db:
-            _db = Database.open(dd.db_path)
             _blobs = BlobStore(dd.artifacts_dir)
+            _db = open_repo_database(dd, _blobs)
         else:
             _db = db  # type: ignore[assignment]
             _blobs = blobs  # type: ignore[assignment]
@@ -195,61 +213,46 @@ def create_app(
         app.state.blobs = _blobs
         _stop = asyncio.Event()
 
-        def _ingest_cycle() -> int:
-            nonlocal lease
-            assert lease is not None
-            if not lease.valid():
-                # Lost it (stalled past its expiry): stop writing until it
-                # is ours again.
-                try:
-                    fresh = lease_mod.acquire(dd.root, mode="server", wait=0.0)
-                except (lease_mod.LeaseBusy, lease_mod.ServedByServer):
-                    _log.error("not ingesting: the repo's ingest lease is held elsewhere")
-                    return 0
-                info = lease.info
-                lease.release()
-                lease = app.state.lease = fresh
-                if info.get("url"):
-                    lease.set_url(info["url"], info.get("mode", "server"))
-            return ingest_all(dd, _db, _blobs)
+        def _maintenance() -> None:
+            mark_crashed(_db)
+            alerts_core.maintenance_cycle(_db, alert_webhook)
 
-        # Background log ingestion — every 2 s.
-        async def _wal_ingestion_loop():
-            while not _stop.is_set():
-                try:
-                    # Off the event loop: ingestion is blocking file +
-                    # SQLite work, and running it inline stalls every
-                    # in-flight request for the length of a cycle.
-                    count = await asyncio.to_thread(_ingest_cycle)
-                    if count > 0:
-                        _log.debug("log ingestion: %d ops", count)
-                except Exception:  # noqa: BLE001
-                    _log.exception("log ingestion cycle failed")
-                try:
-                    await asyncio.wait_for(_stop.wait(), timeout=INGEST_INTERVAL)
-                    break  # stop was set
-                except asyncio.TimeoutError:
-                    pass  # normal — loop again
-
-        # Stale-run reaping + alert delivery — every 5s.
+        # Crashed/stale-run reaping + alert delivery.
         async def _maintenance_loop():
             while not _stop.is_set():
                 try:
-                    await asyncio.to_thread(
-                        alerts_core.maintenance_cycle, _db, alert_webhook,
-                    )
+                    await asyncio.to_thread(_maintenance)
                 except Exception:  # noqa: BLE001
                     _log.exception("maintenance cycle failed")
                 try:
-                    await asyncio.wait_for(_stop.wait(), timeout=5.0)
+                    await asyncio.wait_for(_stop.wait(), timeout=MAINTENANCE_INTERVAL)
                     break
                 except asyncio.TimeoutError:
                     pass
 
+        # A daemon server (``cairn server --daemon``) exits once idle.
+        async def _idle_loop(timeout: float):
+            while not _stop.is_set():
+                try:
+                    await asyncio.wait_for(_stop.wait(), timeout=min(30.0, timeout / 4))
+                    break
+                except asyncio.TimeoutError:
+                    pass
+                activity = app.state.activity
+                idle = time.monotonic() - activity["last"]
+                if activity["in_flight"] == 0 and idle > timeout:
+                    _log.warning("cairn: idle for %.0f s; the daemon server exits", idle)
+                    shutdown = getattr(app.state, "request_shutdown", None)
+                    if shutdown is not None:
+                        shutdown()
+                    return
+
         tasks: list[asyncio.Task] = []
         if background_tasks:
-            tasks.append(asyncio.create_task(_wal_ingestion_loop()))
             tasks.append(asyncio.create_task(_maintenance_loop()))
+            idle_timeout = getattr(app.state, "idle_timeout", None)
+            if idle_timeout:
+                tasks.append(asyncio.create_task(_idle_loop(float(idle_timeout))))
 
         try:
             yield
@@ -257,8 +260,6 @@ def create_app(
             _stop.set()
             for task in tasks:
                 task.cancel()
-            if app.state.lease is not None:
-                app.state.lease.release()
             if owns_db:
                 _db.close()
 
@@ -280,10 +281,17 @@ def create_app(
     # per-client limit on redeem attempts. See routes/shares.py.
     app.state.share_scopes = ScopeCache()
     app.state.share_redeem_limiter = shares.RateLimiter()
+    # See _Activity; ``idle_timeout`` (seconds) and ``request_shutdown`` (a
+    # callable stopping the HTTP server) are set by ``cairn server --daemon``.
+    app.state.activity = {"last": time.monotonic(), "in_flight": 0}
+    app.state.idle_timeout = None
+    app.state.request_shutdown = None
+    app.state.daemon = False
 
     # No page or API response may leak its URL (a share link's secret sits in
     # one) to another origin through the Referer header.
     app.add_middleware(_NoReferrer)
+    app.add_middleware(_Activity, state=app.state)
     app.add_middleware(_JsonGZip)
 
     app.add_middleware(
@@ -324,6 +332,7 @@ def create_app(
         project_docs.router,
         runs.router,
         sequences.router,
+        series_buckets.router,
         artifacts.router,
         query.router,
         logs.router,
@@ -344,7 +353,7 @@ def create_app(
         app.include_router(router, dependencies=[Depends(require("read"))])
 
     # Write-role routers (uniformly mutating — no read-only routes inside).
-    for router in (ingest.router, import_export.router):
+    for router in (ingest.router, records.router, import_export.router, admin.router):
         app.include_router(router, dependencies=[Depends(require("write"))])
 
     if mount_ui:

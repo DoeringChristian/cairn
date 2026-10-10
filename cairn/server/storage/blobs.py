@@ -28,8 +28,26 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 
+def fsync_dir(path: Path) -> None:
+    """Make a rename/creation in ``path`` durable (no-op where directories
+    cannot be opened, i.e. Windows)."""
+    if os.name == "nt":
+        return
+    try:
+        fd = os.open(path, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
 class BlobStore:
-    """File-system backed content-addressable store."""
+    """File-system backed content-addressable store. Writes are durable
+    before they return: data fsynced, renamed into place, directory fsynced."""
 
     def __init__(self, root: Path):
         self.root = Path(root)
@@ -80,6 +98,8 @@ class BlobStore:
         try:
             with os.fdopen(tmp_fd, "wb") as fh:
                 fh.write(data)
+                fh.flush()
+                os.fsync(fh.fileno())
             os.replace(tmp_name, blob_path)
         except BaseException:
             try:
@@ -87,7 +107,43 @@ class BlobStore:
             except OSError:
                 pass
             raise
+        fsync_dir(blob_dir)
         return len(data)
+
+    def incoming(self) -> BinaryIO:
+        """A temp file on the store's filesystem to stream an upload into;
+        ``commit_incoming`` moves it into place once its hash is known."""
+        tmp_dir = self.root / ".incoming"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        return tempfile.NamedTemporaryFile(dir=tmp_dir, prefix="up-", suffix=".tmp", delete=False)
+
+    def commit_incoming(self, tmp_path: str | Path, digest: str) -> bool:
+        """Move a fully written, fsynced upload (whose sha256 is ``digest``)
+        into place; False when the blob was stored already (the upload is
+        dropped, the stored copy refreshed as by ``touch``)."""
+        for _ in range(10):
+            if self.touch(digest):
+                os.unlink(tmp_path)
+                return False
+            blob_dir = self.dir_for(digest)
+            try:
+                blob_dir.mkdir(parents=True, exist_ok=True)
+                os.replace(tmp_path, self.path_for(digest))
+            except OSError as exc:  # a concurrent gc removed the directory
+                if exc.errno not in (errno.ENOENT, errno.EINVAL):
+                    raise
+                continue
+            fsync_dir(blob_dir)
+            return True
+        raise OSError(errno.EAGAIN, f"could not store blob {digest}")
+
+    def verify(self, digest: str) -> bool:
+        """Whether the stored bytes still hash to ``digest`` (fsck's scrub)."""
+        h = hashlib.sha256()
+        with self.open_stream(digest) as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(chunk)
+        return h.hexdigest() == digest
 
     def touch(self, digest: str) -> bool:
         """Mark an existing blob as just written (its mtime); False if absent.

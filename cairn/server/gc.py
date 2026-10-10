@@ -2,7 +2,7 @@
 
 Blobs are content-addressed and shared, so deleting a run (or a report, an
 artifact version) never deletes its blobs on the spot. ``collect`` does it
-for the whole repo, as the ingest-lease holder (``cairn gc``, and the server
+for the whole repo, on the server serving it (``cairn gc``, and the server
 in the background after it deleted runs):
 
 * **Mark**: every hash referenced anywhere — ``sequences.artifact_hash``,
@@ -11,7 +11,7 @@ in the background after it deleted runs):
   ``report_assets.hash``, ``cairn-asset:<hash>`` in report and template
   sources, the ``diff_hash`` of every run's source manifest
   (``sources/<run>/manifest.json``), and every hash named in the part of a
-  run log not ingested yet — then, transitively, what those blobs name: a
+  legacy (0.5) run log still waiting — then, transitively, what those blobs name: a
   figure's ``source_hash``, a table's ``media_hashes``, a gallery's items
   (and their metadata), a version manifest's files (and their ``meta``).
 * **Sweep**: delete every stored blob that is not marked AND whose file is
@@ -38,7 +38,7 @@ from .artifact_refs import GALLERY_MIME, MANIFEST_MIME
 from .storage.blobs import BlobStore
 from .storage.datadir import DataDir
 from .storage.db import Database
-from .wal_ingest import pending_hashes
+from .legacy_wal_import import pending_hashes
 
 log = logging.getLogger(__name__)
 
@@ -150,7 +150,7 @@ def collect(
     grace_seconds: float = GRACE_SECONDS, now: float | None = None,
 ) -> dict[str, Any]:
     """Delete the unreferenced blobs older than ``grace_seconds`` (and their
-    ``artifacts`` rows). The caller holds the repo's ingest lease.
+    ``artifacts`` rows). Only the server serving the repo calls this.
 
     Returns ``{"deleted": n, "freed_bytes": n, "kept": n, "dry_run": bool}``;
     with ``dry_run`` nothing is deleted and the counts are what would be.

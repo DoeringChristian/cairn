@@ -9,7 +9,13 @@ import sqlite3
 
 from .metric_stats import fill_monotonic
 
-SCHEMA_VERSION = 2  # Bumped from 1 (DuckDB) to 2 (SQLite). Breaking change.
+#: 1: DuckDB; 2: SQLite (cairn <= 0.5); 3: server ingestion (cairn 0.6:
+#: ``ingest_progress``). A database written by a newer schema is refused.
+SCHEMA_VERSION = 3
+
+#: The release a schema version came with: names the automatic backup taken
+#: before migrating an older database (``cairn-<ts>-pre-<release>.db``).
+SCHEMA_RELEASE = {3: "0.6"}
 
 SCHEMA_SQL: list[str] = [
     """
@@ -380,13 +386,11 @@ SCHEMA_SQL: list[str] = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_run_links_used ON run_links(used_run_id)",
-    # ── Run-log ingestion ───────────────────────────────────────────────
-    # How far each run log in ``wals/`` has been applied: the byte offset
-    # just past the last complete line ingested, committed in the same
-    # transaction as that line's ops (exactly once, restart-safe; see
-    # wal_ingest.py). ``path`` is the file name inside ``wals/``.
-    # ``finished`` = the last record applied was the run's ``finish`` (a
-    # worker's log: its ``detach``).
+    # ── Legacy run-log import (cairn <= 0.5) ────────────────────────────
+    # How far each 0.5 run log in ``wals/`` had been applied: the byte offset
+    # just past the last complete line ingested. Read (and advanced) only by
+    # the one-time import of pending legacy logs at upgrade
+    # (legacy_wal_import.py), so nothing is applied twice.
     """
     CREATE TABLE IF NOT EXISTS wal_progress (
         path          TEXT PRIMARY KEY,
@@ -394,12 +398,28 @@ SCHEMA_SQL: list[str] = [
         "offset"      INTEGER NOT NULL,
         finished      INTEGER NOT NULL DEFAULT 0,
         updated_at    TEXT NOT NULL,
-        -- 1: a worker's log (``cairn.Run(primary=False)``), which never
-        -- changes its run's status.
         worker        INTEGER NOT NULL DEFAULT 0
     )
     """,
-    "CREATE INDEX IF NOT EXISTS idx_wal_progress_run ON wal_progress(run_id)",
+    # ── Server ingestion (cairn 0.6) ─────────────────────────────────────
+    # How far each uploaded run log has been applied: ``applied_seq`` is the
+    # highest record sequence number applied, committed in the SAME
+    # transaction as that record's ops (exactly once; see
+    # cairn/server/record_apply.py). ``log`` is ``main`` or an attached
+    # process's label. ``worker``: the log opened with ``join`` (an attached
+    # process: it never changes the run's status). ``finished``: the last
+    # record applied was the run's ``finish`` (a worker's: its ``detach``).
+    """
+    CREATE TABLE IF NOT EXISTS ingest_progress (
+        run_id        TEXT NOT NULL,
+        log           TEXT NOT NULL,
+        applied_seq   INTEGER NOT NULL,
+        worker        INTEGER NOT NULL DEFAULT 0,
+        finished      INTEGER NOT NULL DEFAULT 0,
+        updated_at    TEXT NOT NULL,
+        PRIMARY KEY (run_id, log)
+    )
+    """,
     # ── Alerts, metric definitions, sweeps ─────────────────────────────
     # Ids are client-generated TEXT everywhere so a replayed WAL op is an
     # INSERT OR IGNORE, never a duplicate row.
@@ -734,8 +754,44 @@ def _number_existing_runs(con: sqlite3.Connection, renumber: bool = False) -> No
     )
 
 
+class SchemaTooNew(RuntimeError):
+    """The database was written by a newer cairn (downgrades are refused)."""
+
+
+def stored_schema_version(con: sqlite3.Connection) -> int | None:
+    """The schema version a database records; None for a new (empty) one."""
+    has_table = con.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_version'"
+    ).fetchone()
+    if not has_table:
+        return None
+    row = con.execute("SELECT MAX(version) FROM schema_version").fetchone()
+    return int(row[0]) if row and row[0] is not None else None
+
+
+def needs_migration(con: sqlite3.Connection) -> bool:
+    """Whether opening this database would migrate existing data (an older
+    schema version). A new, empty database is not "existing data".
+
+    Raises:
+        SchemaTooNew: A newer cairn wrote it.
+    """
+    version = stored_schema_version(con)
+    if version is not None and version > SCHEMA_VERSION:
+        raise SchemaTooNew(
+            f"this database has schema version {version}, newer than this cairn's "
+            f"({SCHEMA_VERSION}); upgrade cairn instead of opening it with an older one"
+        )
+    return version is not None and version < SCHEMA_VERSION
+
+
 def apply_migrations(con: sqlite3.Connection) -> int:
-    """Run schema DDL idempotently; return current schema version."""
+    """Run schema DDL idempotently; return current schema version.
+
+    Raises:
+        SchemaTooNew: A newer cairn wrote the database.
+    """
+    needs_migration(con)  # refuses a downgrade before touching anything
     _drop_old_registry(con)
     renumber = _drop_old_run_series(con)
     for stmt in SCHEMA_SQL:
