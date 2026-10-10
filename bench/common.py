@@ -70,7 +70,7 @@ def _venv_python(name: str, packages: list[str], env_var: str) -> str:
 
 def mlflow_python() -> str:
     return _venv_python(
-        "venv-mlflow", ["mlflow", "psutil", "httpx", "psycopg2-binary", "pillow", "numpy"],
+        "venv-mlflow", ["mlflow", "psutil", "httpx", "psycopg2-binary", "psycopg[binary]", "pillow", "numpy"],
         "BENCH_MLFLOW_PYTHON",
     )
 
