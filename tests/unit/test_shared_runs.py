@@ -277,14 +277,14 @@ def test_labels_are_unique_among_live_processes(repo, ing):
     assert ing.points(run.id, "x") == [{"step": 1, "scalar_value": 3.0}]
 
 
-def test_duplicate_points_first_ingested_wins(repo, ing):
+def test_duplicate_points_first_applied_wins(repo, ing):
     run = _primary(repo)
     w = _worker(repo, run.id, "rank1")
     run.track(1.0, "loss", step=0)
+    run.finish()  # the primary's log is uploaded (and applied) first
     w.track(2.0, "loss", step=0)
     w.finish()
-    run.finish()
-    ing.ingest()  # the primary's log sorts (and is ingested) first
+    ing.ingest()
     assert ing.points(run.id, "loss") == [{"step": 0, "scalar_value": 1.0}]
 
 
