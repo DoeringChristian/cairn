@@ -1,0 +1,97 @@
+{
+  "machine": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "cpu": "Apple M5 Pro",
+    "cpus": 18,
+    "memory_gb": 64.0,
+    "python": "3.13.13",
+    "disk_free_gb": 960.1,
+    "bench_root": "/private/tmp/claude-501/-Users-doeringc-workspace-cairn/a4b710e7-a868-4de6-aeef-f2b898ba3507/scratchpad/bench-f",
+    "cairn_checkout": "/Users/doeringc/workspace/cairn",
+    "cairn_python": "/Users/doeringc/workspace/cairn/.venv/bin/python",
+    "cairn_commit": "335bdc7d",
+    "cairn_branch": "dev/0.6",
+    "cairn_dirty": false,
+    "cairn_version": "0.5.0",
+    "harness_commit": "335bdc7d",
+    "time": "2026-10-13T10:58:00+0200"
+  },
+  "systems": [
+    "cairn-http",
+    "mlflow"
+  ],
+  "argv": [
+    "/Users/doeringc/workspace/cairn/faults/__main__.py",
+    "unreachable_30s",
+    "--systems",
+    "cairn-http,mlflow",
+    "--duration",
+    "20",
+    "--out",
+    "bench/results/quick/faults-unreachable_30s.json"
+  ],
+  "scenarios": {
+    "unreachable_30s": [
+      {
+        "system": "cairn-http",
+        "fault_at_step": 979,
+        "recovery_s": null,
+        "client_wal_left_after_finish": 1,
+        "before_sync": {
+          "present": 4840,
+          "lost": 5160,
+          "lost_accepted": 5160
+        },
+        "sync_s": 0.46944662497844547,
+        "sync_output": "d6256624003d825caec9157853a40778: replayed 23 op(s) -> http://127.0.0.1:4580\nsync complete: 23 op(s) replayed\n",
+        "client_raised": 0,
+        "client_first_errors": [],
+        "client_error": null,
+        "finish_error": null,
+        "client_killed": false,
+        "loop_blocked_s": 0.49932325002737343,
+        "max_step_ms": 499.32325002737343,
+        "steps_over_100ms": 1,
+        "finish_s": 0.0020591659704223275,
+        "steps_logged": 2000,
+        "loop_s": 19.990946125006303,
+        "expected": 10000,
+        "present": 10000,
+        "lost": 0,
+        "lost_accepted": 0,
+        "duplicated": 0,
+        "corrupted": 0,
+        "reordered": 0,
+        "readable": true,
+        "final_status": "completed",
+        "wall_s": 341.73337224998977
+      },
+      {
+        "system": "mlflow",
+        "fault_at_step": 927,
+        "recovery_s": 0.1527393750147894,
+        "client_raised": 0,
+        "client_first_errors": [],
+        "client_error": null,
+        "finish_error": null,
+        "client_killed": false,
+        "loop_blocked_s": 30.906409083050676,
+        "max_step_ms": 30767.849207972176,
+        "steps_over_100ms": 2,
+        "finish_s": 0.011482583940960467,
+        "steps_logged": 2000,
+        "loop_s": 44.84097291599028,
+        "expected": 10000,
+        "present": 10000,
+        "lost": 0,
+        "lost_accepted": 0,
+        "duplicated": 0,
+        "corrupted": 0,
+        "reordered": 0,
+        "readable": true,
+        "final_status": "FINISHED",
+        "wall_s": 50.28158595901914
+      }
+    ]
+  }
+}

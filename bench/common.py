@@ -35,7 +35,7 @@ from typing import Any, Iterator
 import httpx
 import psutil
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent  # the harness (bench/, faults/)
 
 
 def bench_root() -> Path:
@@ -48,7 +48,67 @@ def bench_root() -> Path:
 
 # ---------------------------------------------------------------- interpreters
 
+# The cairn under test: a checkout (``--cairn PATH`` / ``BENCH_CAIRN``) whose
+# ``.venv`` runs the clients, ``cairn server``/``ui`` and ``cairn sync``, or an
+# interpreter given directly (``BENCH_CAIRN_PYTHON``). Default: the
+# interpreter running the harness (this checkout's ``uv run`` environment).
+CAIRN_CHECKOUT = REPO_ROOT
 CAIRN_PY = sys.executable
+
+
+def configure_cairn(checkout: str | Path | None = None, python: str | None = None) -> None:
+    """Point the suites at another cairn checkout (or interpreter).
+
+    ``checkout``'s ``.venv`` is created with ``uv sync --extra ui`` when it
+    does not exist. Workers and servers then import that checkout's cairn:
+    the harness itself reaches them through ``harness_path()``, a directory
+    holding only ``bench``/``faults``, so the harness checkout's own
+    ``cairn`` package never shadows the one under test."""
+    global CAIRN_CHECKOUT, CAIRN_PY
+    checkout = checkout or os.environ.get("BENCH_CAIRN") or None
+    python = python or os.environ.get("BENCH_CAIRN_PYTHON") or None
+    if checkout:
+        CAIRN_CHECKOUT = Path(checkout).expanduser().resolve()
+        if not (CAIRN_CHECKOUT / "cairn").is_dir():
+            raise SystemExit(f"{CAIRN_CHECKOUT} is not a cairn checkout (no cairn/ package)")
+        if not python:
+            py = CAIRN_CHECKOUT / ".venv" / "bin" / "python"
+            if not py.exists():
+                r = subprocess.run(["uv", "sync", "--project", str(CAIRN_CHECKOUT), "--extra", "ui"])
+                if r.returncode != 0:
+                    subprocess.run(["uv", "sync", "--project", str(CAIRN_CHECKOUT)], check=True)
+            python = str(py)
+    if python:
+        CAIRN_PY = python
+    os.environ["BENCH_CAIRN_PYTHON"] = CAIRN_PY  # child orchestrators inherit the choice
+    os.environ["BENCH_CAIRN"] = str(CAIRN_CHECKOUT)
+
+
+def cairn_bin(name: str = "cairn") -> str:
+    """A console script of the cairn under test (``cairn``)."""
+    return str(Path(CAIRN_PY).parent / name)
+
+
+def harness_path() -> Path:
+    """A directory with only ``bench`` and ``faults`` (symlinks): the
+    ``PYTHONPATH`` of every spawned process, so workers import the harness
+    but the cairn installed in their own interpreter."""
+    d = bench_root() / "harness-path"
+    d.mkdir(parents=True, exist_ok=True)
+    for pkg in ("bench", "faults"):
+        link = d / pkg
+        if link.is_symlink() and link.resolve() == (REPO_ROOT / pkg).resolve():
+            continue
+        if link.is_symlink() or link.exists():
+            link.unlink()
+        link.symlink_to(REPO_ROOT / pkg)
+    return d
+
+
+def cairn_site_packages() -> str:
+    r = subprocess.run([CAIRN_PY, "-c", "import site; print(site.getsitepackages()[0])"],
+                       capture_output=True, text=True, check=True)
+    return r.stdout.strip()
 
 
 def _venv_python(name: str, packages: list[str], env_var: str) -> str:
@@ -70,7 +130,7 @@ def _venv_python(name: str, packages: list[str], env_var: str) -> str:
 
 def mlflow_python() -> str:
     return _venv_python(
-        "venv-mlflow", ["mlflow", "psutil", "httpx", "psycopg2-binary", "pillow", "numpy"],
+        "venv-mlflow", ["mlflow", "psutil", "httpx", "psycopg2-binary", "psycopg[binary]", "pillow", "numpy"],
         "BENCH_MLFLOW_PYTHON",
     )
 
@@ -79,10 +139,7 @@ def profiling_python() -> str:
     """An interpreter that sees cairn's environment plus ``yappi`` (a venv
     whose .pth adds cairn's site-packages as a site dir)."""
     py = _venv_python("venv-prof", ["yappi"], "BENCH_PROF_PYTHON")
-    base = Path(CAIRN_PY).resolve().parent.parent
-    site = next((base / "lib").glob("python3*/site-packages"), None)
-    if site is None:  # CAIRN_PY is a base interpreter, not a venv's
-        site = Path(next(p for p in sys.path if p.endswith("site-packages")))
+    site = cairn_site_packages()  # the cairn under test's environment
     own = next((Path(py).parent.parent / "lib").glob("python3*/site-packages"))
     (own / "zz_cairn_base.pth").write_text(f"import site; site.addsitedir({str(site)!r})\n")
     return py
@@ -113,7 +170,13 @@ def isolated_env(work: Path, **extra: str) -> dict[str, str]:
         CAIRN_CACHE_DIR=str(work / "cairn-cache"),
         CAIRN_WAL_DIR=str(work / "cairn-wal"),
         MLFLOW_DISABLE_AGENT_HINT="1",
-        PYTHONPATH=str(REPO_ROOT),
+        PYTHONPATH=str(harness_path()),
+        CAIRN_AGENT_DIR=str(work / "cairn-agent"),
+        CAIRN_DIR=str(work / "cairn-runs"),  # 0.6: run-owned dirs (default ./.cairn/runs)
+        XDG_CONFIG_HOME=str(home / ".config"),
+        XDG_STATE_HOME=str(home / ".local" / "state"),
+        XDG_CACHE_HOME=str(home / ".cache"),
+        XDG_DATA_HOME=str(home / ".local" / "share"),
         PYTHONUNBUFFERED="1",
         PLAYWRIGHT_BROWSERS_PATH=str(bench_root() / "pw-browsers"),
     )
@@ -211,10 +274,10 @@ def cairn_server(repo: Path, work: Path, port: int | None = None, *, ui: bool = 
     port = port or free_port(4510, 4539)
     env = isolated_env(work)
     if ui:
-        cmd = [str(Path(CAIRN_PY).parent / "cairn"), "ui", "--repo", str(repo), "--port", str(port),
+        cmd = [cairn_bin(), "ui", "--repo", str(repo), "--port", str(port),
                "--no-auth", "--no-open-browser"]
     else:
-        cmd = [str(Path(CAIRN_PY).parent / "cairn"), "server", "--repo", str(repo), "--port", str(port),
+        cmd = [cairn_bin(), "server", "--repo", str(repo), "--port", str(port),
                "--host", "127.0.0.1", "--no-auth"]
     s = Server("cairn", f"http://127.0.0.1:{port}", port, None, repo, cmd, env,
                work / f"cairn-server-{port}.log", "/api/health")
@@ -416,10 +479,20 @@ def machine_info() -> dict[str, Any]:
         "python": sys.version.split()[0],
         "disk_free_gb": round(disk.free / 2**30, 1),
         "bench_root": str(bench_root()),
-        "cairn_commit": subprocess.run(["git", "-C", str(REPO_ROOT), "rev-parse", "--short", "HEAD"],
-                                       capture_output=True, text=True).stdout.strip(),
+        "cairn_checkout": str(CAIRN_CHECKOUT),
+        "cairn_python": CAIRN_PY,
+        "cairn_commit": _git(CAIRN_CHECKOUT, "rev-parse", "--short", "HEAD"),
+        "cairn_branch": _git(CAIRN_CHECKOUT, "rev-parse", "--abbrev-ref", "HEAD"),
+        "cairn_dirty": bool(_git(CAIRN_CHECKOUT, "status", "--porcelain", "--untracked-files=no", "--", "cairn")),
+        "cairn_version": subprocess.run([CAIRN_PY, "-c", "import importlib.metadata as m; print(m.version('cairn-track'))"],
+                                        capture_output=True, text=True).stdout.strip(),
+        "harness_commit": _git(REPO_ROOT, "rev-parse", "--short", "HEAD"),
         "time": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     }
+
+
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True).stdout.strip()
 
 
 def write_json(path: Path, obj: Any) -> None:
@@ -439,9 +512,19 @@ def servers_stopped(*servers: Server) -> Iterator[None]:
                 pass
 
 
+def work_cwd() -> Path:
+    """The working directory of spawned processes: never a checkout (``-m``
+    puts the cwd first on ``sys.path``, so a checkout's ``cairn/`` would
+    shadow the cairn under test)."""
+    d = bench_root() / "cwd"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 def run_workers(argv_list: list[list[str]], env: dict[str, str], timeout: float,
-                cwd: Path = REPO_ROOT) -> list[dict[str, Any]]:
+                cwd: Path | None = None) -> list[dict[str, Any]]:
     """Start worker processes at once, wait, return each one's last JSON line."""
+    cwd = cwd or work_cwd()
     procs = [subprocess.Popen(a, env=env, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
              for a in argv_list]
     out = []

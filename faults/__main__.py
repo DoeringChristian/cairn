@@ -19,7 +19,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", required=True)
     ap.add_argument("--duration", type=float, default=None, help="seconds of logging per case (default 40)")
     ap.add_argument("--keep", action="store_true", help="keep the scenario data under BENCH_ROOT")
+    ap.add_argument("--cairn", metavar="CHECKOUT", help="cairn checkout under test (its .venv; default: this one)")
+    ap.add_argument("--cairn-python", metavar="PY", help="interpreter with the cairn under test installed")
     args = ap.parse_args(argv)
+    c.configure_cairn(args.cairn, args.cairn_python)
     if args.duration:
         from . import scenarios as sc
 

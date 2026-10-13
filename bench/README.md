@@ -5,7 +5,38 @@ today, side by side with MLflow, without changing cairn. The fault-injection
 suite lives in [`faults/`](../faults/README.md); the findings are in
 [`REPORT.md`](REPORT.md).
 
-## Running
+## Re-running against another cairn checkout (one command)
+
+```bash
+export BENCH_ROOT=/some/scratch/dir      # optional; default $TMPDIR/cairn-bench
+uv run python -m bench.suite --cairn /path/to/cairn-checkout --postgres
+```
+
+This runs every benchmark (`python -m bench all`, lab scale with the
+overrides in `bench/suite.py::DEFAULT_SET`, i.e. the sizes `REPORT.md` was
+measured at), then the whole fault suite (`python -m faults all`), and writes
+`bench.json`, `faults.json` and `tables.md` (the report's tables) to
+`bench/results/<cairn commit>-<date>/` (`--out-dir` to choose). Run it from
+*this* checkout (the harness); `--cairn` only selects the cairn under test:
+its `.venv/bin/python` runs the clients, `cairn server`/`cairn ui` and
+`cairn sync` (the venv is created with `uv sync --extra ui` if missing).
+`--cairn-python PY` names an interpreter instead. Spawned processes see the
+harness through a directory holding only `bench/` and `faults/` and run in a
+scratch cwd, so the harness checkout's own `cairn/` never shadows the one under
+test. The checkout, its commit and cairn's version are recorded under
+`machine` in every result file. Other flags: `--skip-bench`, `--skip-faults`,
+`--scale quick`, `--set KEY=JSON` (replaces the defaults), `--backends`,
+`--fault-duration`.
+
+Both `python -m bench` and `python -m faults` take the same `--cairn` /
+`--cairn-python` flags for single scenarios.
+
+After the 0.6 merge expect to adapt `systems.py` for `cairn-local` (0.6 has no
+client-side DB writing: `cairn.Run(repo=<dir>)` goes through a server) and the
+fault suite's client-log paths (`CAIRN_DIR` run dirs instead of
+`CAIRN_WAL_DIR`; every process already gets `CAIRN_DIR=<work>/cairn-runs`).
+
+## Running single scenarios
 
 ```bash
 export BENCH_ROOT=/some/scratch/dir      # data, servers, helper venvs (default: $TMPDIR/cairn-bench)
@@ -21,8 +52,8 @@ needs podman — the suite starts `podman machine` if it is stopped and runs
 size of the scale (`--set lag_secs=5 --set 'api_runs=[100]'`), `--keep` to keep
 the data under `$BENCH_ROOT/runs/`.
 
-Isolation: every process gets `HOME=$BENCH_ROOT/home`, its own
-`CAIRN_CACHE_DIR`/`CAIRN_WAL_DIR`, no inherited `CAIRN_*`/`MLFLOW_*` variables
+Isolation: every process gets `HOME=$BENCH_ROOT/home` (and `XDG_*` under it), its own
+`CAIRN_CACHE_DIR`/`CAIRN_WAL_DIR`/`CAIRN_AGENT_DIR`/`CAIRN_DIR`, no inherited `CAIRN_*`/`MLFLOW_*` variables
 and `BROWSER=true`; servers bind 127.0.0.1 on ports 4500–4599 (cairn 4510–4539,
 MLflow 4540–4569, fault proxy 4580–4589, Postgres 4590). cairn servers run with
 `--no-auth` (and `cairn ui --no-open-browser`); the UI is driven by headless

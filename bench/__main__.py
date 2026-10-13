@@ -32,7 +32,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--set", action="append", default=[], metavar="KEY=JSON",
                     help="override a scale entry, e.g. --set lag_secs=5 --set 'api_runs=[100]'")
     ap.add_argument("--keep", action="store_true", help="keep the scenario's data under BENCH_ROOT")
+    ap.add_argument("--cairn", metavar="CHECKOUT", help="cairn checkout under test (its .venv; default: this one)")
+    ap.add_argument("--cairn-python", metavar="PY", help="interpreter with the cairn under test installed")
     args = ap.parse_args(argv)
+    c.configure_cairn(args.cairn, args.cairn_python)
 
     backends = [b for b in args.backends.split(",") if b]
     if args.postgres and "mlflow-postgres" not in backends:
