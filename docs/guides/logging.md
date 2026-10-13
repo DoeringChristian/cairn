@@ -166,7 +166,7 @@ Tags and notes can also be edited in the UI, or from Python after the run has fi
 
 Every run has a 128-bit hex ID generated on the client (`run.id`, 32 characters). The UI shows the
 first six characters. `run.url` is the run's page in the viewer, the URL `cairn open` prints:
-the paired UI port of a `cairn server --ui` (not the ingest port the run writes to), the `cairn ui`
+the paired UI port of a `cairn server --ui` (not the ingest port the run uploads to), the `cairn ui`
 running over a local repo, or, with none running, the URL the page will have once
 `cairn ui --repo PATH` starts.
 

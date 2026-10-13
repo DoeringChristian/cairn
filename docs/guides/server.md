@@ -1,78 +1,70 @@
 # Server, auth and deployment
 
-cairn stores everything in one repo directory, `.cairn/`. You can write to it
-directly, or run a server in front of it so that other machines can log runs
+cairn stores everything in one repo directory, `.cairn/`, and one server
+process at a time owns it. On your own machine that server starts by itself
+in the background; run one explicitly so that other machines can log runs
 and browse them. This page covers the server commands, the ways a run reaches
 the repo, authentication, and running cairn for a team.
 
 ## Where runs are written
 
-| Mode | How you select it | What happens | Use it for |
-|---|---|---|---|
-| Local | `repo="./.cairn"` (or any path), or nothing: `./.cairn` is the default | Each run appends to its own log in `.cairn/wals/`; the repo's one ingester applies the logs to the database | One machine, or many processes and nodes on a shared filesystem (Slurm, Ray, NFS) |
-| Server | `repo="cairn://host:4300"` | The SDK sends everything over HTTP to a `cairn server` | Logging from other machines |
+A run never writes the repo itself. It writes its own run directory,
+`./.cairn/runs/<run_id>/` (`CAIRN_DIR`), and a background uploader sends it
+to a server over HTTP. The server is the only process that writes the
+repo's database and blob store. See
+[Run directories, syncing and backup](run-directories.md) for the details.
 
-Both share one on-disk format, so a repo written locally can be served
-later without migration. How `repo` is resolved when you don't pass it
-(`cairn.configure`, `CAIRN_REPO`, the config file) is described in
+| Target | How you select it | Which server receives the run | Use it for |
+|---|---|---|---|
+| Local repo | `repo="./.cairn"` (or any path), or nothing: `./.cairn` is the default | The repo's own server on this machine, started in the background when none runs | One machine |
+| Server | `repo="cairn://host:4300"` | That server | Logging from other machines and clusters |
+
+Both store the same repo format, so a repo written locally can be served to
+the network later without migration. How `repo` is resolved when you don't
+pass it (`cairn.configure`, `CAIRN_REPO`, the config file) is described in
 [Configuration](../reference/configuration.md).
 
-### Local repos: run logs and the ingest lease
+### Local repos
 
 ```python
-run = cairn.Run(project="sweep", repo="/shared/nfs/.cairn")
+run = cairn.Run(project="mnist", repo="./.cairn")
 ```
 
-A run on a local repo never touches SQLite. It appends every write to its
-own log, `.cairn/wals/<run_id>.wal.jsonl` (one JSON record per line, synced
-to disk), and stores images, files and other blobs in the repo's
-content-addressed store. Hundreds of processes can log to one repo at once
-without contending for the database.
+A `cairn.Run` (through its uploader), `cairn.Reader`, CLI command or
+`cairn ui` on a local repo uses the server registered in `<repo>/server.json`
+when one is running. Otherwise `cairn ui` serves the repo itself, and the
+others start a server in the background (`cairn server --repo <repo>
+--daemon`: loopback only, a free port, exits after 30 minutes without
+requests). You don't start anything yourself.
 
-Exactly one process at a time writes the database: the holder of the repo's
-**ingest lease**, the file `.cairn/ingest.lease`. It applies the logs and
-makes every other write (edits from the UI or the CLI, sweep claims, garbage
-collection):
-
-- `cairn ui` and `cairn server` hold the lease for as long as they run, and
-  ingest the logs every 2 seconds. The lease names their URL, so readers and
-  CLI commands on the repo send their writes to them.
-- Without a server, a `cairn.Reader`, a CLI command, a sweep agent or a run
-  that needs an answer takes the lease for a moment, ingests what is
-  pending, does its writes and releases it.
-
-A record is applied exactly once: each log's read position is stored in the
-database in the same transaction as the records it covers, so a crash or a
-restart of the ingester continues where it stopped. Once a run's final
-record (its finish) is ingested, its log file is deleted.
-
-A run whose log gets no new record (heartbeats included, every 10 seconds)
-for 5 minutes without having finished is marked `crashed`, and an alert is
-raised. If records arrive later (the process was only paused, or a node's
-filesystem caught up), it is `running` again.
-
-The lease is a plain file, so it works on NFS: it is created atomically,
-renewed every few seconds, and taken over when its holder stops renewing it
-(at once when the holder was a process on the same machine that died).
+The server keeps its database on a local disk: it refuses a repo on a
+network filesystem (NFS, SMB, sshfs, Lustre, GPFS, ...), where SQLite's
+locking and `fsync` are not reliable (`CAIRN_ALLOW_NETWORK_DB=1` overrides
+this at your own risk). Machines that share no local disk with the repo log
+to its server over HTTP.
 
 ### Clusters / SLURM
 
-Point every job at the same repo on the shared filesystem:
+Run a server on a machine the compute nodes can reach and whose disk holds
+the repo, e.g. the login node, and point every job at it:
 
-```python
-run = cairn.Run(project="sweep", repo="/shared/nfs/.cairn")
+```bash
+cairn server --repo /local/disk/.cairn --ui     # on the login node
 ```
 
-- Each process writes its own run log; nothing is locked while training.
-- For a live view while jobs run, start `cairn ui --repo /shared/nfs/.cairn`
-  (or `cairn server --ui`) on one machine, e.g. the login node. It holds the
-  lease and ingests the logs every 2 seconds.
-- Sweeps need someone to hand out trials: with a server, every
-  `cairn agent` claims trials from it. Without one, agents take the lease in
-  turn for each claim, which is fine on one machine; across nodes, prefer a
-  server (`repo="cairn://login-node:4300"`).
-- Without any server, `cairn.Reader` or a CLI command catches up on the logs
-  when you read.
+```python
+run = cairn.Run(project="sweep", repo="cairn://login-node:4300")
+```
+
+- Each job writes its own run directory (under its working directory, or
+  `CAIRN_DIR`, e.g. node-local scratch); nothing is locked while training,
+  and `track()` never waits on the network.
+- The uploader on each node sends the run directories to the server, and
+  keeps doing so if a job is killed.
+- Sweeps: every `cairn agent` claims trials from the server.
+- If the nodes cannot reach a server, log with `CAIRN_UPLOADER=off` and
+  upload later with `cairn sync --server URL` (see
+  [Working without a server](run-directories.md#working-without-a-server)).
 - For one run across many processes (every rank of a distributed job), give
   them all the same `CAIRN_RUN_ID` and use `label="auto"`: rank 0 creates
   the run, the other ranks join it and write logs of their own. See
@@ -84,30 +76,31 @@ Recipes for common launchers, in the repository's
 [`examples/`](https://github.com/DoeringChristian/cairn/tree/main/examples)
 (see [Examples](../examples.md#distributed-runners)). Each logs every process
 of a job into one run: the processes share a run id (`CAIRN_RUN_ID`, or one
-broadcast by rank 0), and each gets a label from its rank. **Shared FS**
-means a local repo on a filesystem every node mounts (NFS, Lustre); **HTTP**
-means `CAIRN_REPO=cairn://host:4300` plus `CAIRN_TOKEN`, for machines that
-share no filesystem with the repo. Most recipes work either way; the column
-says what the example sets up.
+broadcast by rank 0), and each gets a label from its rank. **Local repo**
+means `CAIRN_REPO` is a path, which works for the processes of one machine;
+**HTTP** means `CAIRN_REPO=cairn://host:4300` plus `CAIRN_TOKEN`, which is
+what a job across several nodes needs (a repo on a filesystem every node
+mounts, such as NFS or Lustre, cannot be served). The column says what the
+example sets up.
 
 | Runner | Recipe | Mode | How ranks map to cairn |
 |---|---|---|---|
-| torchrun | [`torchrun_ddp.py`](https://github.com/DoeringChristian/cairn/blob/main/examples/torchrun_ddp.py) | Shared FS or HTTP | `label="auto"` reads `RANK`; the id from `CAIRN_RUN_ID` |
-| torchrun, no launch variable | [`torchrun_attach.py`](https://github.com/DoeringChristian/cairn/blob/main/examples/torchrun_attach.py) | Shared FS or HTTP | rank 0 creates the run and broadcasts `run.id`; the others `cairn.attach(run_id, label=f"rank{rank}")` |
-| Accelerate | [`accelerate_ddp.py`](https://github.com/DoeringChristian/cairn/blob/main/examples/accelerate_ddp.py) | Shared FS or HTTP | `label="auto"` reads `RANK` (set by `accelerate launch`) |
-| DeepSpeed | [`deepspeed_ddp.py`](https://github.com/DoeringChristian/cairn/blob/main/examples/deepspeed_ddp.py) | Shared FS or HTTP | `label="auto"` reads `RANK` (set by `deepspeed`); multi-node: `CAIRN_*` in `.deepspeed_env` |
-| SLURM (`srun`) | [Several processes, one run](runs.md#several-processes-one-run) | Shared FS | `label="auto"` reads `SLURM_PROCID` |
+| torchrun | [`torchrun_ddp.py`](https://github.com/DoeringChristian/cairn/blob/main/examples/torchrun_ddp.py) | Local repo or HTTP | `label="auto"` reads `RANK`; the id from `CAIRN_RUN_ID` |
+| torchrun, no launch variable | [`torchrun_attach.py`](https://github.com/DoeringChristian/cairn/blob/main/examples/torchrun_attach.py) | Local repo or HTTP | rank 0 creates the run and broadcasts `run.id`; the others `cairn.attach(run_id, label=f"rank{rank}")` |
+| Accelerate | [`accelerate_ddp.py`](https://github.com/DoeringChristian/cairn/blob/main/examples/accelerate_ddp.py) | Local repo or HTTP | `label="auto"` reads `RANK` (set by `accelerate launch`) |
+| DeepSpeed | [`deepspeed_ddp.py`](https://github.com/DoeringChristian/cairn/blob/main/examples/deepspeed_ddp.py) | Local repo or HTTP | `label="auto"` reads `RANK` (set by `deepspeed`); multi-node: `CAIRN_*` in `.deepspeed_env` |
+| SLURM (`srun`) | [Several processes, one run](runs.md#several-processes-one-run) | HTTP | `label="auto"` reads `SLURM_PROCID` |
 | SkyPilot | [`skypilot/`](https://github.com/DoeringChristian/cairn/tree/main/examples/skypilot) | HTTP | `label="auto"` reads `SKYPILOT_NODE_RANK`; a managed spot job resumes its run after a recovery |
 | Modal | [`modal_app.py`](https://github.com/DoeringChristian/cairn/blob/main/examples/modal_app.py) | HTTP (a Modal Secret holds `CAIRN_REPO`/`CAIRN_TOKEN`) | one run per function call |
 | SageMaker | [`sagemaker_job.py`](https://github.com/DoeringChristian/cairn/blob/main/examples/sagemaker_job.py) | HTTP (the estimator's `environment=`) | the host's index in `SM_HOSTS`: `label=f"rank{rank}"`, `primary=(rank == 0)` |
 | Azure ML | [`azureml_job.yml`](https://github.com/DoeringChristian/cairn/blob/main/examples/azureml_job.yml) | HTTP (`environment_variables`) | `distribution: pytorch` sets `RANK`; runs `torchrun_ddp.py` |
-| A later job | [`cluster_eval_attach.py`](https://github.com/DoeringChristian/cairn/blob/main/examples/cluster_eval_attach.py) | Shared FS or HTTP | `cairn.attach(run_id, label="eval")` on the finished run; its status stays |
+| A later job | [`cluster_eval_attach.py`](https://github.com/DoeringChristian/cairn/blob/main/examples/cluster_eval_attach.py) | Local repo or HTTP | `cairn.attach(run_id, label="eval")` on the finished run; its status stays |
 
 On clouds (SkyPilot, Modal, SageMaker, Azure ML) the nodes share no POSIX
 filesystem with the repo, so they log over HTTP to a server they can reach.
 Object-store bucket mounts (gcsfuse, s3fs, SkyPilot's `MOUNT` mode) cannot
-hold a local repo: its run logs are appended and synced line by line and its
-lease needs an atomic file create. Keep checkpoints and datasets there.
+hold a repo, since its server needs a local disk. Keep checkpoints and
+datasets there.
 
 ### Server mode and connection loss
 
@@ -115,37 +108,25 @@ lease needs an atomic file create. Keep checkpoints and datasets there.
 run = cairn.Run(project="mnist", repo="cairn://192.168.1.42:4300")
 ```
 
-When a run starts, the SDK checks `http://host:port/api/health` and logs a
-warning if the server does not answer. Every write is first appended to a local
-log (by default in the user cache directory, `…/cairn/wal/`; set
-`CAIRN_WAL_DIR` to move it, e.g. to node-local scratch). Each write is sent
-once. If the server times out, is unreachable or answers with a 5xx error, the
-SDK stops sending for a while (1 second at first, doubling up to 30), keeps
-appending to the log, and then replays the backlog in order. Training never
-waits on a slow or unreachable server: metrics go out in batches of at most
-5000 points, and a backlog beyond 100,000 points waits in the log on disk,
-not in memory.
+A run on a server logs to its run directory like any other run, and the
+uploader sends it. When the server is slow, unreachable or restarting,
+training goes on: the uploader backs off (1 second at first, doubling up to
+60, or what the server's `Retry-After` says) and retries as long as the run
+directory exists. Every record is applied exactly once, however often it is
+sent.
 
-`run.finish()` sends what is left, riding out a short outage, and is bounded
-by `timeout` (the `Run` argument, 10 seconds by default). It sends buffered
-metrics for up to `timeout` seconds, then the backlog and the final status
-for up to `timeout` more. Whatever is still unsent then stays in the log, and
-a warning says so. A write the server
-rejects for good (a 4xx error other than 401, 403, 408, 425 or 429) is not
-retried. It is moved to `<run_id>.dead.jsonl` next to the log, so the writes
-behind it still go through, and it is kept there.
-
-Replay what a run could not send (and list rejected writes) later:
+`run.finish()` waits up to `CAIRN_FINISH_TIMEOUT` seconds (default 30) for
+the server to confirm everything, then prints a notice if records are still
+pending; the uploader keeps sending them in the background. To upload in the
+foreground (or to another server), use `cairn sync`:
 
 ```bash
-cairn sync     # replays every pending run log to the server it was meant for
+cairn sync                   # every run directory in ./.cairn (CAIRN_DIR)
+cairn sync --server URL      # upload them to this server instead
+cairn sync --clean           # then delete the finished, fully confirmed ones
 ```
 
-A log that names no server goes to the one you pass
-(`cairn sync --server URL`). For a local repo, `cairn sync --repo PATH`
-also ingests its pending run logs (see
-[Local repos](#local-repos-run-logs-and-the-ingest-lease)) when no server is
-serving the repo to do it.
+See [Run directories, syncing and backup](run-directories.md).
 
 ## `cairn ui` and `cairn server`
 
@@ -171,17 +152,20 @@ cairn server --ui                         # ...and serve the UI on :4301
 cairn server --repo /data/.cairn --port 5000 --ui --ui-port 8080
 ```
 
-Both hold the repo's ingest lease while they run, so one repo has one
-server: a second `cairn ui` or `cairn server` on it refuses to start and
-names the one that runs (open that one's URL instead).
+One repo has one server: the one serving it holds `<repo>/server.lock` and
+registers its URL in `<repo>/server.json`. A second `cairn server` on the
+repo refuses to start and names the one that runs. `cairn ui` on a repo that
+is already served (by a `cairn server`, another `cairn ui`, or the
+background server a Reader, CLI command or run started) opens that server's
+viewer and returns.
 
 While running, the server:
 
-- ingests the runs' logs every 2 seconds, and marks a local run `crashed`
-  when its log has had no new record for 5 minutes;
-- marks a run logged over HTTP as `killed` when it has sent no heartbeat
-  for 120 seconds (the SDK sends one every 10 seconds);
-- raises an alert for each, and delivers alerts to the webhook, if one is set;
+- applies uploaded run records as they arrive (a record is visible once the
+  server has confirmed it);
+- marks a run `crashed` when its primary's log has had no record applied for
+  5 minutes (the SDK records a heartbeat every 10 seconds);
+- raises an alert for it, and delivers alerts to the webhook, if one is set;
 - collects unreferenced blobs in the background after runs are deleted
   (see [Garbage collection](#garbage-collection)).
 
@@ -465,19 +449,20 @@ A repo is one directory:
 | `cairn.db` (+ `cairn.db-wal`, `cairn.db-shm`) | The SQLite database: runs, metrics, config, reports, tokens |
 | `artifacts/` | Artifact bytes, stored by content hash |
 | `sources/`, `logs/` | Source snapshots and captured output, per run |
-| `wals/` | Logs of local runs not fully ingested yet (a finished run's log is deleted once ingested) |
+| `runs/` | [Run directories](run-directories.md#the-run-directory) of runs whose `CAIRN_DIR` is this directory (the default `./.cairn` is both); the uploader's input, not part of the repo's data |
+| `backups/`, `quarantine/` | Database backups (`cairn backup`, and the automatic one before an upgrade) and corrupt blobs moved aside by `cairn fsck --repair` |
+| `wals/` | Only in a repo upgraded from 0.5: its run logs, renamed `*.imported` once imported |
 | `auth/` | `local.token` and `authorized_keys` |
 | `cache/` | Artifacts a `cairn.Reader` downloaded from a server; safe to delete |
-| `version`, `ingest.lease`, `servers.json` | Layout version, the [ingest lease](#local-repos-run-logs-and-the-ingest-lease) and running viewers |
+| `version`, `server.json`, `server.lock`, `server.log`, `servers.json` | Layout version, the server serving the repo (its URL, lock and the background server's output) and running viewers |
 
-The database runs in SQLite's WAL journal mode, so copying `cairn.db` while
-something writes to it can give you an inconsistent copy. Either:
-
-- stop `cairn server`/`cairn ui` and any running jobs, then copy the whole
-  directory; or
-- keep them running, take a consistent copy of the database with the `sqlite3`
-  command-line tool (`sqlite3 .cairn/cairn.db ".backup backup/cairn.db"`), and
-  copy the other directories next to it.
+Copying `cairn.db` while the server writes it can give you an inconsistent
+copy. Use `cairn backup` instead: the server writes a consistent copy of the
+database to `<repo>/backups/` while it keeps running (`--to PATH` also
+downloads it). The blobs in `artifacts/` never change once written, so copy
+them with any file tool. `cairn fsck` checks a repo's database against its
+blobs. See [Backups](run-directories.md#backups) and
+[`cairn fsck`](run-directories.md#checking-a-repo-cairn-fsck).
 
 To back up or move individual runs, export them as [run
 archives](import-export.md#run-archives).
@@ -494,10 +479,9 @@ cairn gc                # delete it
 cairn gc --server cairn://host:4300
 ```
 
-It runs as the repo's ingest-lease holder (on the server serving the repo,
-or in the command itself). It deletes a blob only when nothing names it — no
-run's series, artifact version or entry, report image, source snapshot diff,
-nor a run log record not ingested yet, also not through a gallery, table,
+It runs on the server serving the repo. It deletes a blob only when nothing
+names it — no run's series, artifact version or entry, report image, source
+snapshot diff, nor a 0.5 run log not imported yet, also not through a gallery, table,
 figure or artifact manifest that is itself kept — and its file is older than
 24 hours, so blobs a running job just stored are never touched. It prints
 the number of blobs and bytes freed. A server also runs it in the background
@@ -509,20 +493,18 @@ Every command that reads or changes data works on a local repo as well as on
 a server, and finds its target the way `cairn.Run` does: `--repo PATH|URL` or
 `--server URL`, then `CAIRN_REPO`/`CAIRN_SERVER`, then the config file, then
 `./.cairn` (see [Configuration](../reference/configuration.md#resolution-order)).
-A local repo needs no server: the command takes the repo's ingest lease,
-catches up on pending run logs and runs the server's own code over it
-in-process. When a `cairn server` or `cairn ui` is serving that repo (it
-holds the lease), the command goes through that server instead.
+On a local repo the command talks to the server serving it, and starts one in
+the background when none runs (see [Local repos](#local-repos)).
 
 ```bash
 cairn list                                   # ./.cairn, or whatever is configured
-cairn list --repo /shared/nfs/.cairn         # a local repo, no server needed
+cairn list --repo ~/exp/.cairn               # a local repo (its server starts if needed)
 cairn list --server cairn://gpubox:4300      # a server
 ```
 
 | Command | Does |
 |---|---|
-| `cairn ping` | A server: its `/api/health` response. A local repo: its path, layout and schema versions, its project, run, series, point, artifact and report counts, its size, run logs not fully ingested yet, and the server serving it |
+| `cairn ping` | A server: its `/api/health` response. A local repo: its path, layout and schema versions, its project, run, series, point, artifact and report counts, its size, 0.5 run logs not imported yet, and the server serving it (started if none is) |
 | `cairn list` | Lists runs, newest first (see below); also reads a `.zip` run archive (`--repo runs.zip`) |
 | `cairn open RUN_ID [--no-browser]` | Prints the run's UI URL and opens it. Against the ingest port of `cairn server --ui` the URL uses the UI port. For a local repo it is the URL of the `cairn ui` serving it; with none running, it prints the URL the run will have and the `cairn ui --repo …` command to start one |
 | `cairn rm RUN_ID...` | Deletes runs and their data |
@@ -531,7 +513,9 @@ cairn list --server cairn://gpubox:4300      # a server
 | `cairn export` | Writes metrics to JSON, CSV or Parquet ([Import and export](import-export.md#exporting-metrics)) |
 | `cairn artifact ...` | The [artifact registry](artifacts.md#from-the-command-line) |
 | `cairn report ...` | [Reports](../ui/reports.md#from-the-command-line) and their share links |
-| `cairn sync` | Replays run logs (see [above](#server-mode-and-connection-loss)) |
+| `cairn sync [PATHS] [--server URL] [--clean]` | Uploads run directories in the foreground, and deletes the confirmed ones with `--clean` (see [Run directories](run-directories.md#working-without-a-server)) |
+| `cairn backup [--to PATH]` | Makes a consistent copy of the database in `<repo>/backups/` (see [Backups](run-directories.md#backups)) |
+| `cairn fsck [--repair]` | Checks the database, the blobs and this machine's run directories (see [`cairn fsck`](run-directories.md#checking-a-repo-cairn-fsck)) |
 | `cairn gc [--dry-run]` | Deletes stored blobs nothing references (see [Garbage collection](#garbage-collection)) |
 | `cairn configure --server URL` or `--repo PATH` | Saves the default target to the config file (setting one removes the other) |
 

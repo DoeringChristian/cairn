@@ -62,10 +62,10 @@ run.version   # 3: the third ungrouped "train" without a job type
   next number of their series in the repo they are imported into; the number
   they had where they were exported is not kept.
 
-Over HTTP the server returns the version when the run is created. On a local
-repo the number is assigned when the run's log is ingested: the first read of
-`run.version` catches up on the repo's logs (like `ArtifactVersion.wait()`),
-and it is known from then on. Repos numbered before the job type was part of
+The server assigns the number when it applies the run's creation record: the
+first read of `run.version` flushes the run's log and waits up to 5 seconds
+for the upload, and the number is known from then on (None while the server
+cannot be reached). Repos numbered before the job type was part of
 the key are renumbered once, per series in creation order, when a newer cairn
 first opens them.
 

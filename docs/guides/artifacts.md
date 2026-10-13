@@ -167,8 +167,10 @@ model.load_state_dict(ckpt.get())
 The reference is resolved **now**, and the exact version (not the alias) is recorded as an input of
 the run, with a `role` (default `"input"`). Using the same version again records nothing new.
 `use_artifact` returns the `ArtifactVersion`; call `.get()` for a logged object or `.download()`
-for files. On a local repo it first catches up on pending run logs (yours included), so a
-version another run logged before it finished is found.
+for files. The ref is resolved on the server, so a version another run logged is found once the
+server has applied it. A version this run logged itself is waited for (up to 10 seconds) while
+it is still on its way. Passing an `ArtifactVersion` instead of a ref records it without asking
+the server, which also works while the server is unreachable.
 
 ## Reading a version: `cairn.ArtifactVersion`
 
@@ -214,21 +216,20 @@ cairn.log_artifact("model.onnx", "exported", type="model", project="cifar10",
                    aliases=["production"])
 ```
 
-## Pending versions on a local repo
+## Pending versions
 
-A run on a [local repo](../getting-started.md#local-mode-default) only logs the new version; its
-number (and `latest`) is assigned when the repo ingests the run's log. So `log_artifact` returns a
+A run only records the new version in its [run directory](run-directories.md); its number (and
+`latest`) is assigned when the server applies that record. So `log_artifact` returns a
 **pending** `ArtifactVersion` at once: `version` is None and the read methods raise. `wait()` blocks
-until it is registered (within ~2 seconds under a running `cairn ui`/`cairn server`; without one
-it catches up itself) and fills in `version`, `aliases` and the rest:
+until the server has registered it and fills in `version`, `aliases` and the rest:
 
 ```python
 v = run.log_artifact(model.state_dict(), "ckpt").wait()
 print(v.ref)          # ckpt:v3
 ```
 
-`wait(timeout=...)` raises `TimeoutError` when it takes longer. Against a server the version is
-registered at once and `wait()` returns immediately.
+`wait(timeout=...)` raises `TimeoutError` when it takes longer, for example while the server
+cannot be reached.
 
 ## Lineage
 

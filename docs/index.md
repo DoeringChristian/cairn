@@ -2,8 +2,8 @@
 
 cairn is an open-source, local-first ML experiment tracker. You log metrics, media, configs and
 artifacts from Python, then browse, compare and report on them in a web UI. There is no account
-and no required server: by default a run writes straight into a `./.cairn/` directory next to
-your code.
+and nothing to set up: by default a run writes into `./.cairn/` next to your code, and a server
+for that repo starts on its own in the background.
 
 ```python
 import cairn
@@ -25,10 +25,12 @@ cairn ui      # opens the viewer on http://localhost:4301
 ## Highlights
 
 - **Local-first.** A repo is a directory with a SQLite database and a content-addressed blob
-  store. You don't need a server to log, and a repo you log to locally can be served later
-  without migration.
-- **Cluster-safe.** Every local run writes its own append-only log file; one ingester applies them.
-  Hundreds of jobs can write to one repo on NFS without contending for the database.
+  store. A repo you log to locally can be served to the network later without migration.
+- **Nothing lost on a crash or an outage.** Each run writes only its own
+  [run directory](guides/run-directories.md): a checksummed record log, synced every 100 ms.
+  A separate uploader sends it to the server exactly once, keeps going after the training
+  process is killed, and retries while the server is down. `cairn sync` uploads it later,
+  from any machine.
 - **Cross-device.** Run `cairn server` on one machine and log to it from others with
   `repo="cairn://host:4300"`.
 - **Rich media.** Images (with boxes, masks, colormaps and HDR/EXR), galleries, audio, video,

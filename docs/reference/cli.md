@@ -14,7 +14,8 @@ The `cairn` command is installed with `cairn-track`. Run `cairn --help`, or
 | `cairn list` | List runs (with their [version](../guides/organising-runs.md#versions)) with filters, sorting, config and metric columns, as a table, JSON or CSV | [Server](../guides/server.md#listing-runs) |
 | `cairn ping`, `open` | Check a server or a local repo; open a run in the viewer | [Server](../guides/server.md#client-commands) |
 | `cairn rm`, `archive`, `unarchive` | Delete, archive or unarchive runs | [Server](../guides/server.md#client-commands) |
-| `cairn sync` | Replay run logs that never reached their server, or a local repo's WAL logs | [Server](../guides/server.md#server-mode-and-connection-loss) |
+| `cairn sync` | Upload run directories in the foreground (`--server URL` to another server); `--clean` deletes the confirmed ones | [Run directories](../guides/run-directories.md#working-without-a-server) |
+| `cairn backup`, `fsck` | Back the database up online; check the database, blobs and run directories | [Run directories](../guides/run-directories.md#backups) |
 | `cairn export` | Write a run's or a project's metrics to JSON, CSV or Parquet | [Import and export](../guides/import-export.md#exporting-metrics) |
 | `cairn export-runs`, `import-runs` | Move whole runs between repos as run archives (ZIP) | [Import and export](../guides/import-export.md#run-archives) |
 | `cairn import-tb` | Import TensorBoard event files | [Integrations](../guides/integrations.md#importing-tensorboard-logs) |
@@ -27,7 +28,7 @@ The `cairn` command is installed with `cairn-track`. Run `cairn --help`, or
 
 Every command that reads or changes data takes `--repo` (a local `.cairn/`
 path, or a `cairn://host:port` / `http(s)://` URL) and `--server URL`, and
-works on a local repo without a server as well as on a server. Without
+works on a local repo (through its server, started when needed) as well as on a server. Without
 either option the target is `CAIRN_REPO` or `CAIRN_SERVER`, then the config
 file, then `./.cairn`; see
 [Configuration](configuration.md#resolution-order). `cairn list`

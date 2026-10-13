@@ -212,7 +212,7 @@ capture the rendered cards, which takes a browser, so they are only in the UI.
 
 ## From the command line
 
-`cairn report` works on a server or on a local repo without one (see
+`cairn report` works on a server or on a local repo (through its server, started when needed; see
 [Client commands](../guides/server.md#client-commands)). A report is named by
 its id alone (the last part of its URL, `/p/<project>/reports/<id>`).
 
@@ -240,9 +240,8 @@ agents write reports. From Python, `cairn.Reader().reports(project)` lists repor
 
 `ls` and `shares` take `--format table|json`. Share links need a server with
 authentication on and the write role (see [Sharing](sharing.md)): against a
-`--no-auth` server or a local repo the share commands stop with an error that
-says so. For a local repo, serve it with `cairn ui --repo PATH` (auth is on by
-default) and run them again; they then go through that server.
+`--no-auth` server the share commands stop with an error that says so. A local
+repo's background server has auth on, so they work there too.
 
 ## Templates
 

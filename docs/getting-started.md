@@ -1,7 +1,7 @@
 # Getting started
 
 This page walks you through installing cairn, logging a first run and opening it in the UI. It
-then covers the three ways to store data (local, WAL and server), how cairn picks a destination,
+then covers where runs go (a local repo or a server), how cairn picks a destination,
 and how to turn tracking off.
 
 ## Install
@@ -85,35 +85,36 @@ Authentication is on by default. On startup `cairn ui` prints a reusable access 
 `<repo>/auth/local.token`) and a one-time login link. When it opens the browser for you, it uses
 that link, so you are already logged in. For throwaway local work you can pass `--no-auth`.
 
-While `cairn ui` (or `cairn server`) holds a repo, a `cairn.Run` pointed at that same directory
-switches to HTTP and sends its data through the running server. It authenticates with
-`auth/local.token`, so you don't have to configure anything.
+If a server already serves the repo (for example the one your run started in the background),
+`cairn ui` opens its viewer instead of starting another. Runs, `cairn.Reader` and CLI commands on
+that repo use the same server and authenticate with `auth/local.token`, so you don't have to
+configure anything.
 
-## Local, WAL and server modes
+## Local repo and server
 
-All three modes write the same on-disk format, so you can switch between them without migrating.
+Wherever a run's data ends up, the run itself only writes its own run directory,
+`./.cairn/runs/<run_id>/` (set `CAIRN_DIR` to move it). A background uploader sends that
+directory to a server, which is the only process that writes the repo's database. Logging never
+waits on the network, and a run that cannot reach its server keeps its directory until it can.
+See [Run directories, syncing and backup](guides/run-directories.md).
 
-### Local mode (default)
-
-The run appends everything it logs to its own file in the repo,
-`.cairn/wals/<run_id>.wal.jsonl`, and never writes the SQLite database
-itself. This works the same on one machine and on a cluster (Slurm, Ray,
-Dask, many processes on NFS): concurrent jobs never contend for the
-database.
+### Local repo (default)
 
 ```python
-run = cairn.Run("my-project", repo="./.cairn")
-run = cairn.Run("sweep", repo="/shared/nfs/.cairn")   # many jobs, one repo
+run = cairn.Run("my-project")                     # ./.cairn
+run = cairn.Run("my-project", repo="~/exp/.cairn")
 ```
 
-The logs are applied to the database by the repo's one ingester: a
-`cairn ui` or `cairn server` running on the repo (every 2 seconds, so you get
-a live view), else `cairn.Reader` or a CLI command when you read. What needs
-an answer at once — `use_artifact`, resuming or forking a run, sweep claims —
-catches up first, through that server or by itself. `log_artifact` returns
-right away; its version number is assigned when the log is ingested, and
-`.wait()` blocks until it is. See
-[Server, auth and deployment](guides/server.md#local-repos-run-logs-and-the-ingest-lease).
+With a local repo, the receiving server is the repo's own, on this machine. If none is running,
+the uploader (or a `cairn.Reader` or a CLI command) starts one in the background; it listens on
+loopback only and exits after 30 minutes without requests. `cairn ui` with no server running
+serves the repo itself, in the foreground.
+
+`log_artifact` returns right away; the version number is assigned when the server applies the
+record, and `.wait()` blocks until it has.
+
+The repo must be on a local disk: the server refuses one on a network filesystem such as NFS. To
+log from several machines, use a server.
 
 ### Server mode: log across machines
 
@@ -136,9 +137,9 @@ or set the `CAIRN_TOKEN` environment variable. See [Server, auth and
 deployment](guides/server.md) for tokens, roles, `cairn login --ssh` and running behind other
 hosts.
 
-In server mode each run first writes every event to a client-side log and replays the backlog
-when the server comes back. If a process exits with events still unsent, `cairn sync` replays
-them later. `CAIRN_WAL_DIR` moves these logs, for example to node-local scratch.
+If the server is unreachable, the run goes on and the uploader keeps retrying in the background,
+also after the training process has exited. `cairn sync` uploads run directories in the
+foreground, and `cairn sync --server URL` sends them to a server of your choice.
 
 ### Viewing a remote server locally
 
@@ -164,8 +165,8 @@ the token is never placed in a URL.
 4. The `repo` key (then `server`) in the config file.
 5. `./.cairn` in the current working directory.
 
-A value starting with `cairn://` or `http(s)://` means server mode. Anything else is a filesystem
-path and means local mode.
+A value starting with `cairn://` or `http(s)://` names a server. Anything else is a filesystem
+path and names a local repo.
 
 The config file is `config.toml` in your user config directory: `~/.config/cairn/` on Linux,
 `~/Library/Application Support/cairn/` on macOS. `cairn configure --server URL` writes it. See

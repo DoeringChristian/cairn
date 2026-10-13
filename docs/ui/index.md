@@ -21,7 +21,7 @@ cairn ui --repo path/to/.cairn --port 8080
 | `--verbose` | off | Show the HTTP server's info and access logs. |
 | `--alert-webhook URL` | none | Post alerts to an ntfy topic, a Slack or Discord webhook, or any JSON webhook (local repos only; env `CAIRN_ALERT_WEBHOOK`). |
 
-To run an ingest server and the UI together, use `cairn server --ui`; the UI then listens on the ingest port + 1 (`--ui-port` overrides it). If a `cairn server` already holds the repo, `cairn ui` refuses to start: open the server's UI URL instead.
+To run a network server and the UI together, use `cairn server --ui`; the UI then listens on the server's port + 1 (`--ui-port` overrides it). If a server already serves the repo (a `cairn server`, another `cairn ui`, or the background server that runs, Readers and CLI commands start), `cairn ui` opens that server's viewer and returns instead of starting another.
 
 ### Logging in
 

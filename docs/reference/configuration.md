@@ -39,8 +39,15 @@ A token cannot be set through `configure`; use `CAIRN_TOKEN` or `cairn login`.
 | `CAIRN_MODE` | SDK | `enabled` or `disabled` |
 | `CAIRN_RUN_ID` | SDK | The ID of the run a `cairn.Run()` creates (or, with `primary=False`, joins) when `run_id=` is not passed: give every process of a distributed job the same one (see [Several processes, one run](../guides/runs.md#several-processes-one-run)). Make one with `cairn.new_run_id()`. |
 | `CAIRN_ARTIFACT_DIR` | SDK, `Reader` | Where `ArtifactVersion.download()` and `.file()` write by default: `<dir>/<name>-v<N>/`. Default: `./artifacts`. |
-| `CAIRN_WAL_DIR` | SDK | Where server-mode runs keep their local write-ahead log. Default: `<CAIRN_CACHE_DIR>/wal`, i.e. `<user cache dir>/cairn/wal` (e.g. `~/.cache/cairn/wal` on Linux, `~/Library/Caches/cairn/wal` on macOS). Point it at node-local scratch on a cluster. |
-| `CAIRN_CACHE_DIR` | SDK | Root of cairn's per-user caches: server-mode runs' local logs (`wal/`, unless `CAIRN_WAL_DIR` is set), unsent data (`pending/`) and the Reader's blob cache (`reader/`). Default: `<user cache dir>/cairn`. |
+| `CAIRN_DIR` | SDK, `cairn sync`, `cairn fsck` | Where runs write their [run directories](../guides/run-directories.md) (`<dir>/runs/<run_id>/`). Default: `./.cairn` in the working directory. |
+| `CAIRN_SYNC_INTERVAL_MS` | SDK | How often a run writes and `fsync`s its record log (group commit), in milliseconds. Default: `100`. |
+| `CAIRN_FINISH_TIMEOUT` | SDK | Seconds `run.finish()` waits for the server to confirm every record before printing a notice and returning. Default: `30`. |
+| `CAIRN_UPLOADER` | SDK | `off` (or `0`, `false`, `no`): runs do not start or use the background uploader; upload their directories with `cairn sync`. Default: `on`. |
+| `CAIRN_AGENT_DIR` | SDK, uploader | The uploader daemon's state (lock, pid, log, registered run directories). Default: `$XDG_STATE_HOME/cairn/agent`, i.e. `~/.local/state/cairn/agent`. |
+| `CAIRN_AGENT_IDLE_EXIT` | uploader | Seconds the uploader daemon stays up with nothing to upload. Default: `600`. |
+| `CAIRN_SERVER_IDLE_TIMEOUT` | `cairn server --daemon` | Seconds without requests before a local repo's background server exits. Default: `1800`. |
+| `CAIRN_ALLOW_NETWORK_DB` | `cairn server`, `cairn ui` | `1`: serve a repo on a network filesystem (NFS, SMB, ...) anyway, at your own risk. |
+| `CAIRN_CACHE_DIR` | `Reader` | Root of cairn's per-user caches (the Reader's blob cache). Default: `<user cache dir>/cairn`. |
 | `CAIRN_ALERT_WEBHOOK` | `cairn server`, `cairn ui` | Same as `--alert-webhook`: the URL alerts are posted to |
 | `CAIRN_UI_DIST` | `cairn ui`, `cairn server --ui` | Serve the web UI from this build directory instead of the installed `cairn-ui` package. It must contain `index.html` and `assets/`; if it doesn't, no UI is served (there is no fallback). |
 | `CAIRN_SWEEP_ID`, `CAIRN_TRIAL_ID` | SDK | Set by `cairn agent` for each trial's command. A `cairn.Run()` that sees them joins that sweep trial (see [Sweeps](../guides/sweeps.md)). You don't set these yourself. |

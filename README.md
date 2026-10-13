@@ -2,11 +2,11 @@
 
 An open-source ML experiment tracker. Two ways to use it:
 
-**Local mode** (default): log to `./.cairn/`. No server required. Each run appends to its own log file and never touches the database, so it is safe for NFS/Slurm/Ray with hundreds of concurrent writers. A `cairn ui` on the repo ingests the logs every 2 s (live view); without one, `cairn.Reader` and the CLI catch up when you read.
+**Local repo** (default): log to `./.cairn/`. Nothing to set up: the repo's server starts on its own in the background, on this machine.
 
-**Server mode** (cross-device): run `cairn server` on one machine, point SDK clients at it via `repo="cairn://host:port"`.
+**Server** (cross-device): run `cairn server` on one machine, point SDK clients at it via `repo="cairn://host:port"`.
 
-Both modes share the same on-disk format — a repo created locally can later be served without any migration.
+Either way a run writes only its own run directory, `./.cairn/runs/<id>/` (a checksummed record log, synced every 100 ms), and a background uploader sends it to the server exactly once, keeps going after the training process is killed, and retries while the server is down. `cairn sync` uploads run directories later, from any machine. The server is the only writer of the database. A repo created locally can later be served without any migration.
 
 **Documentation:** the full guide lives in [`docs/`](docs/index.md) — start with
 [Getting started](docs/getting-started.md), then the [guides](docs/guides/index.md),
@@ -77,7 +77,7 @@ file, so you can be logged into several servers on one host at once.
 
 ## Concurrent / distributed training
 
-For Slurm clusters, Ray, Dask, or any setup with multiple concurrent writers on a shared filesystem:
+For Slurm clusters, Ray, Dask, or any setup with many concurrent runs, run `cairn server` on a machine with a local disk the jobs can reach (the server refuses a repo on NFS), and log to it over HTTP:
 
 ```python
 import cairn
@@ -85,11 +85,11 @@ import cairn
 run = cairn.Run(
     project="sweep",
     name="lr-search",
-    repo="/shared/nfs/.cairn",   # every run writes its own log: no SQLite contention
+    repo="cairn://login-node:4300",   # each run writes its own run directory and uploads it
 )
 ```
 
-Each run writes to its own `.cairn/wals/{run_id}.wal.jsonl` file. Exactly one process (the holder of `.cairn/ingest.lease`, normally `cairn ui`/`cairn server`) applies the logs to the database; the server does it every 2s for live preview. See `examples/` for integration with ProcessPoolExecutor, submitit, Ray Tune, Dask, Fabric, and Kubernetes.
+Each run writes `./.cairn/runs/<run_id>/` (`CAIRN_DIR`, e.g. node-local scratch) and the uploader on its node sends it; nothing on the training path waits for the network. On one machine, a local repo works the same way. See [Run directories, syncing and backup](docs/guides/run-directories.md) and `examples/` for integration with ProcessPoolExecutor, submitit, Ray Tune, Dask, Fabric, and Kubernetes.
 
 ## Server mode — cross-device logging
 
@@ -155,11 +155,12 @@ The SDK picks a destination in this order:
 5. `./.cairn/` in the current working directory
 
 The `repo=` parameter accepts:
-- A filesystem path: `/path/to/.cairn` or `./.cairn` → local mode
-- A URL: `cairn://host:port` → HTTP server mode
+- A filesystem path: `/path/to/.cairn` or `./.cairn` → a local repo
+- A URL: `cairn://host:port` → a server
 
-A local repo that a running `cairn server` or `cairn ui` holds is written through
-that server automatically (authenticated by the repo's `auth/local.token`).
+A local repo is served by one server on this machine: the running `cairn server`
+or `cairn ui`, else one started in the background (authenticated by the repo's
+`auth/local.token`).
 
 ## Disabled mode
 
@@ -234,8 +235,8 @@ reader.runs("sweep").where("last(val.acc) > 0.9 and config.opt == 'adam'").list(
 
 ## Command line
 
-Every command that reads or changes data works on a local repo without a
-server and on a server alike, and finds its target like `cairn.Run`:
+Every command that reads or changes data works on a local repo (through its
+server, started when needed) and on a server alike, and finds its target like `cairn.Run`:
 `--repo PATH|URL` or `--server URL`, else `CAIRN_REPO`/`CAIRN_SERVER`, the
 config file, `./.cairn`.
 
@@ -250,7 +251,9 @@ cairn artifact versions sweep/model       # ls, versions, get, alias, tag, rm, l
 cairn report ls                           # ls, show, export, rm, share, shares, unshare
 cairn diff RUN_ID                         # the working directory vs. a run's source snapshot
 cairn viewer ls --project P               # custom viewers: init, add, dev, publish, ls
-cairn sync                                # replay run logs that never arrived
+cairn sync [--clean]                      # upload run directories now; --clean deletes confirmed ones
+cairn backup                              # online copy of the database in <repo>/backups/
+cairn fsck                                # check the database, blobs and run directories
 cairn configure --server URL              # save the default server (or --repo) to the config file
 ```
 

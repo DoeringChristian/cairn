@@ -39,7 +39,7 @@ a keyword:
 | `system_metrics_include_per_core` | `False` | Also record per-core CPU utilisation. |
 | `source_root`, `source_include`, `source_exclude`, `source_max_file_size_mb` | auto, defaults, defaults, `1.0` | What the source snapshot contains. |
 | `created_at` | now | Override the creation time, for example when importing historical runs. |
-| `timeout` | `10.0` | HTTP timeout in seconds (server mode), also how long `finish()` keeps sending what is left (see [Server mode](server.md#server-mode-and-connection-loss)). |
+| `timeout` | `10.0` | HTTP timeout in seconds of the reads a run needs from the server (resuming a run that is not on this machine, resolving an artifact ref, sweeps). How long `finish()` waits for the upload is `CAIRN_FINISH_TIMEOUT` (see [Run directories](run-directories.md#the-uploader)). |
 
 `group` and `job_type` are shown on the run page (Overview, next to each other), and in the runs
 table and the workspace you can filter and group by them (group, then job type). They are also
@@ -55,8 +55,8 @@ A run is `running` until it finishes. It ends with one of these statuses:
 |---|---|
 | `completed` | `run.finish()`, leaving a `with` block normally, or a normal interpreter exit |
 | `failed` | an exception leaves the `with` block, or an unhandled exception ends the script |
-| `killed` | the process receives SIGINT (Ctrl+C) or SIGTERM, or a run logged to a server stops sending heartbeats |
-| `crashed` | a run on a local repo whose log got no new record for 5 minutes without finishing (the process died, e.g. `kill -9` or a node failure); it is `running` again if records arrive later |
+| `killed` | the process receives SIGINT (Ctrl+C) or SIGTERM |
+| `crashed` | the server applied no new record of the run for 5 minutes and it did not finish (the process died, e.g. `kill -9` or a node failure); it is `running` again if records arrive later |
 | `stopped` | a stop was requested from the UI (see below) |
 
 ```python
@@ -71,10 +71,10 @@ finally:
 ```
 
 If you never call `finish()`, cairn finishes the run when the interpreter exits. The run sends a
-heartbeat every 10 seconds. On a local repo the ingester marks a run `crashed` when its log has had
-no new record for 5 minutes and no finish, which covers `kill -9` and lost nodes; a later record
-makes it `running` again. A `cairn server` that runs log to over HTTP marks one `killed` when it
-hasn't heard from it for 2 minutes.
+heartbeat every 10 seconds. The server marks a run `crashed` when it has applied no new record of
+the run's primary for 5 minutes and no finish, which covers `kill -9` and lost nodes; a later
+record makes it `running` again. Records a killed process had already written to its
+[run directory](run-directories.md) are still uploaded.
 
 After `finish()` the run is closed. Tracking into it raises `RuntimeError`, so to add data later,
 [resume it](#resume-rewind-and-fork).
@@ -116,9 +116,9 @@ run = cairn.Run("cifar10", resume=ckpt["cairn_run"], rewind_to=ckpt["step"])
 ```
 
 !!! note
-    On a local repo, resuming, rewinding or forking first catches up on the run's log (through
-    the `cairn ui`/`cairn server` serving the repo, or by itself), so a run that just finished
-    in another process can be continued at once.
+    Resuming, rewinding or forking reads the run from its [run directory](run-directories.md)
+    when it is on this machine, so a run that just finished in another process can be continued
+    at once, even before it is uploaded. Otherwise the run is read from the server.
 
 ## Several processes, one run
 
@@ -146,16 +146,17 @@ What each process may do:
   detaches it; the run stays `running` until the primary finishes, then has the primary's
   status (`completed`, `failed`, `killed`, `stopped`), whatever the workers do before or after.
 - **Only the primary keeps the run alive.** A run whose primary went silent becomes `crashed`
-  (or `killed`, over HTTP), however busy its workers are; a silent worker changes nothing.
+  however busy its workers are; a silent worker changes nothing.
 - **A stop request reaches every process**: `run.should_stop`, `on_stop` callbacks and
   `stop_mode` work in workers as in the primary.
 - **Labels name the processes.** A labelled process's [system metrics](#system-metrics-logs-and-code)
   are `system.<label>.*` (e.g. `system.rank1.gpu.0.util_percent`); an unlabelled primary keeps
   `system.*`.
   Each captured console line carries its process's label, and line numbers count per process.
-  Labels use `A-Z a-z 0-9 _ -` and must be unique among the run's live processes: on a local repo
-  a second live process with a taken label raises `ValueError` (checked with a file lock, so it
-  is reliable on one machine but not on every network filesystem); over HTTP they are not checked.
+  Labels use `A-Z a-z 0-9 _ -` (not `main`, which names the primary's log) and must be unique
+  among the run's live processes: on one machine a second live process with a taken label raises
+  `ValueError` (checked with a lock on the label's log in the run directory); processes on
+  different machines are not checked.
 - **Two processes logging the same series at the same step**: the point that is stored first
   wins and the other is dropped, with a [run alert](#alerts). Give per-process metrics their own names (`rank1.loss`) and log
   run-wide metrics from rank 0 only; synchronising them is up to your code.
@@ -220,14 +221,14 @@ with cairn.attach(train_run_id, label="eval") as run:
 To publish figures for a finished run, and replace them when you fix the script that makes
 them, put them in the summary: see [Media in the summary](#media-in-the-summary).
 
-A worker may start before its primary. On a local repo it starts logging at once; its records
-wait until the primary's run exists, then apply in order. Over HTTP, and on a local repo when
-you leave out `project`, a worker waits up to two minutes for the run to appear, then raises
-`LookupError`.
+A worker may start before its primary. With `project` given it starts logging at once; the
+server holds its records until the primary's run exists, then applies them in order. Without
+`project`, a worker waits up to two minutes for the run to appear (on the server, or in the run
+directory on this machine), then raises `LookupError`.
 
-On a local repo every process writes its own log: `.cairn/wals/<run_id>.wal.jsonl` for an
-unlabelled process and `.cairn/wals/<run_id>~<label>.wal.jsonl` for a labelled one. A worker's
-log ends with a *detach* record instead of a finish, and is deleted once ingested.
+Every process writes its own log in the run directory: `log/` for the primary and
+`procs/<label>/log/` for a worker, each uploaded on its own. A worker's log ends with a *detach*
+record instead of a finish.
 
 | wandb | cairn |
 |---|---|
@@ -265,7 +266,7 @@ for epoch in range(epochs):
 (as it is when the run is read). Once a run called it, its value wins over the step-based one.
 It is cheap to call every iteration: at most one value per second is sent, always the newest (a
 held value goes out with the next heartbeat or at `finish()`). A disabled run accepts both as
-no-ops. Both work on a local repo (records in the run's log) and against a server.
+no-ops. Both are records in the run's log, like everything else the run logs.
 
 **The ETA rule.** Progress is sampled with the client's wall times: for steps, each point batch
 gives (the newest wall time of its points, the highest step so far); for `run.progress`, each call
@@ -333,7 +334,7 @@ series and the step:
 - **A duplicate step.** A series keeps one point per step: the first one written. Tracking a
   second, different point at a step the series already has (`run.track(x, "loss", 5)` twice,
   two processes logging one series, a resumed run logging steps again) drops the later point.
-  The alert (also a warning in the log of the process that ingests the run) names the first step
+  The alert (also a warning in the server's log) names the first step
   that was dropped; later duplicates of that series are not reported again. A copy of a point
   the client re-sent after a network error is not a duplicate.
 - **Points of a summary media key** that another process tracked (see
@@ -426,8 +427,8 @@ Each media value is ONE value with no step, named by its key's dotted path
   the Workspace tab; media renders only there. The runs table has no column for it.
 - **A name is either a tracked series or a summary media value.** `run.summary` with media under a
   name that has tracked points, or `run.track` under a summary media key, raises `ValueError`.
-  (A write that slips past that check from another process at the same time is dropped at
-  ingestion and raises a run [alert](#alerts).)
+  (A write that slips past that check from another process at the same time is dropped when the
+  server applies it and raises a run [alert](#alerts).)
 - `Reader(...).run(id).summary` returns a `MediaRef` for each media value (a gallery: a list of
   them), and so does `run.media("showcase.loss_landscape")`. `RunEditor.set_summary` takes media
   too.

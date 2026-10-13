@@ -29,4 +29,6 @@ logged a run yet, start with [Getting started](../getting-started.md).
 - [Notebooks](notebooks.md): a run page, the project workspace or a report inline in Jupyter
   and marimo.
 - [Import and export](import-export.md): TensorBoard import, CSV/Parquet export, archives.
+- [Run directories, syncing and backup](run-directories.md): where runs write, the uploader,
+  working offline, `cairn sync`, `cairn backup`, `cairn fsck` and upgrading from 0.5.
 - [Server, auth and deployment](server.md): `cairn server`, tokens and remote access.

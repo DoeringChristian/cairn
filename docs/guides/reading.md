@@ -23,9 +23,9 @@ cairn.Reader("runs.zip")                  # a run archive exported from the UI
 
 | Target | How it reads |
 |---|---|
-| Local `.cairn/` directory | Opens the SQLite database directly. Without a server on the repo it first ingests the pending [run logs](server.md#local-repos-run-logs-and-the-ingest-lease) (taking the repo's ingest lease for a moment), so runs show up without a running server. With a `cairn ui`/`cairn server` on the repo it only reads, at most ~2 seconds behind. |
+| Local `.cairn/` directory | Reads over HTTP from the server serving the repo, and starts one in the background when none runs (see [Local repos](server.md#local-repos)). It sees what the server has applied: records a run has not uploaded yet are not there. |
 | Server | Reads over HTTP. Sends `CAIRN_TOKEN`, else the token `cairn login` saved for that server, if there is one. Downloaded artifact bytes are cached by hash (see `cache` and `cache_dir` below). |
-| `.zip` archive | Unpacks the archive into a temporary repo, which is deleted by `close()`. Runs read this way cannot be edited. |
+| `.zip` archive | Unpacks the archive into a temporary repo and reads it through a temporary server of its own; both go away on `close()`. Runs read this way cannot be edited. |
 
 Keyword arguments:
 
@@ -38,7 +38,7 @@ Keyword arguments:
 `Reader` is a context manager. Use `with cairn.Reader(...) as reader:`, or call
 `reader.close()` when you are done.
 
-The CLI reads the same targets in the same order, with or without a server:
+The CLI reads the same targets in the same order:
 
 ```bash
 cairn list --project mnist -c metrics.val.loss      # the runs, as filter()/sort() select them
@@ -77,8 +77,8 @@ only = reader.runs("mnist").filter(name="base").get()   # exactly one, else Look
 ```
 
 A query is evaluated by one evaluator, the server's, so it returns the same
-runs in the same order on a local repo and on a server (a local repo runs the
-same code in-process).
+runs in the same order on a local repo and on a server (a local repo is read
+through its own server too).
 
 ### Order
 

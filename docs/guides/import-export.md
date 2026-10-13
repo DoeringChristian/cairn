@@ -32,7 +32,7 @@ cairn import-runs runs.zip                        # into the configured repo or 
 cairn import-runs runs.zip --repo ~/other/.cairn --project baselines
 ```
 
-Both work on a local repo without a server, and on a server (`--server URL`;
+Both work on a local repo (through its server, started when needed) and on a server (`--server URL`;
 see [Client commands](server.md#client-commands)). `export-runs` writes the
 archive the UI's **Export** downloads. `import-runs` prints each run's new id,
 original id and name (`--format json` for a list). `--project P` puts the

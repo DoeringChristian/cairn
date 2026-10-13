@@ -29,8 +29,8 @@ viewers/hist/
   README.md           # the logging snippet
 ```
 
-Start the UI, then serve the folder live to it. `cairn viewer dev` needs a running server: with a
-local repo it finds the `cairn ui` serving that repo; otherwise pass `--server URL`.
+Start the UI, then serve the folder live to it. `cairn viewer dev` sends files to a server: with a
+local repo, the server serving it (started when none runs); otherwise pass `--server URL`.
 
 ```bash
 cairn ui --repo .cairn                      # http://localhost:4301
@@ -344,9 +344,9 @@ Series) stores `viewer_version: N` in the card's settings.
 ### Live development
 
 `cairn viewer dev` scans the folder every `--interval` seconds and sends changed files to the
-server. It needs a running `cairn ui` or `cairn server` and write access: a local repo
-(`--repo`, `CAIRN_REPO`, `./.cairn`) that a `cairn ui` serves connects to that server, as every
-command does; with no server on it, the command refuses. Each complete change bumps the source's revision, and open cards reload their frames
+server. It needs write access on the target's server: a local repo
+(`--repo`, `CAIRN_REPO`, `./.cairn`) connects to the server serving it, as every command does,
+and starts one when none runs. Each complete change bumps the source's revision, and open cards reload their frames
 (the UI polls the viewer list every 2 s while a dev source exists). While the dev source lives it
 wins over the published viewer of the same name in every card that does not pin a version. An invalid manifest is reported in the command's output and the last valid one stays
 in use. Ctrl-C removes the source; otherwise it expires 30 s after the command stops. Dev sources
@@ -505,5 +505,5 @@ blob URLs, and load its own files through `asset()`.
 | Manifest errors | `cairn viewer publish` refuses the folder; `cairn viewer dev` prints the error and keeps the last valid manifest; `cairn viewer ls` shows `[error: …]`. |
 | A vendored library fails with a bare import | Map that package in `imports`, or vendor again with `--external PKG` (for `three`, the host's three is used). |
 | Blank pictures in paused frames or exports | A WebGL canvas is cleared after drawing: give `snapshot()` a callback that draws first, or create the renderer with `preserveDrawingBuffer: true`. |
-| `cairn viewer dev` changes don't show | The command needs a running server with write access (a `cairn ui` on the same local repo, or `--server URL`), and `--project` must be the project of the run you are looking at. |
+| `cairn viewer dev` changes don't show | The command needs write access on the server (the one serving the local repo, or `--server URL`), and `--project` must be the project of the run you are looking at. |
 | WebGL on a plain-HTTP LAN address | WebGL works; only WebGPU needs a secure context (HTTPS or localhost). |
