@@ -38,13 +38,16 @@ the finish) is a record in its log. Each record is framed with its length
 and CRC checksums, so a log cut off by a crash is read up to the last
 complete record, and nothing after a damaged record is trusted.
 
-Records are written in groups: the run appends to a buffer, and a flusher
-writes and `fsync`s it at most every 100 ms (`CAIRN_SYNC_INTERVAL_MS`). It
-also flushes at once on `finish()`, at interpreter exit and on SIGTERM/SIGINT. A blob is written and synced before the record that names
-it. `track()` never waits on the network.
+Every record is written to the file (handed to the OS) before `track()`
+returns; a flusher `fsync`s the file at most every 100 ms
+(`CAIRN_SYNC_INTERVAL_MS`), and at once on `finish()`, at interpreter exit
+and on SIGTERM/SIGINT. A blob is written and synced before the record that
+names it. `track()` never waits on the network or the disk's fsync.
 
-So a `kill -9` of the training process loses at most the last flush
-interval of records, and everything already on disk is still uploaded.
+So a `kill -9` (or any crash) of the training process loses nothing it
+logged, and the uploader still uploads all of it. A power loss or OS crash
+loses at most the last ~100 ms. If the disk is full, records stay in memory
+and are written once there is space again; `track()` does not raise.
 
 ## The uploader
 

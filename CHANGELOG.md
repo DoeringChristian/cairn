@@ -52,9 +52,11 @@ retries on its own, also after the training process is gone.
 - **Run directories** (`run.json`, a record log in `log/`, `blobs/<sha256>`,
   `procs/<label>/` for attached processes, `acked`, `FINISHED`). The log is
   CRC-framed, so a torn tail after a crash is read up to the last complete
-  record. Group commit: records are written and `fsync`ed at most every
+  record. Every record reaches the OS before `track()` returns, so a killed
+  process loses nothing it logged; group commit `fsync`s at most every
   100 ms (`CAIRN_SYNC_INTERVAL_MS`), and at once on `finish()`, at exit and
-  on SIGTERM/SIGINT; a blob is synced before the record that names it.
+  on SIGTERM/SIGINT, so a power loss loses at most that much. A blob is
+  synced before the record that names it.
   `track()` never waits on the network.
 - **Uploader daemon**, one per user and machine, started by the first run
   (`python -m cairn sync --daemon`, state in `CAIRN_AGENT_DIR`, default
