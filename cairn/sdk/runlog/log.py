@@ -3,9 +3,11 @@
 ``LogWriter`` owns a log directory (``log/`` of a run directory, or
 ``procs/<label>/log/``) for as long as it is open: an exclusive advisory lock
 on ``log/.lock`` keeps every other writer out. ``append`` only encodes the
-record into memory; a flusher thread writes and fsyncs everything appended
-at most every ``CAIRN_SYNC_INTERVAL_MS`` (default 100 ms), and ``flush`` /
-``close`` do so at once.
+record and hands it to the OS at once (so a killed process loses nothing it
+appended); a flusher thread fsyncs at most every ``CAIRN_SYNC_INTERVAL_MS``
+(default 100 ms), so a power loss loses at most that much, and ``flush`` /
+``close`` fsync at once. A write the OS refuses (disk full) keeps the record
+in memory; the flusher retries it, and ``append`` never raises for it.
 
 ``LogReader`` reads a log any time, also while its writer appends: a frame
 still being written reads as the (retryable) end.
@@ -228,7 +230,8 @@ class LogWriter:
             raise
         self._lock = threading.RLock()  # appends
         self._io = threading.Lock()  # writes + fsync
-        self._pending: list[bytes] = []
+        self._pending: list[bytes] = []  # payloads the OS refused (disk full), in order
+        self._retired: list[Any] = []  # full segments' files, closed after their fsync
         self._in_hook = False
         self._closed = False
         self._error: BaseException | None = None
@@ -297,7 +300,21 @@ class LogWriter:
         payload = codec.encode_payload(codec.make_record(seq, op, time.time(), fields))
         self._pending.append(payload)
         self.last_seq = seq
+        self._write_pending()
         return seq
+
+    def _write_pending(self) -> None:
+        """Hand the pending records to the OS one by one (under ``_lock``); on
+        an error (disk full) the rest stay pending for the flusher to retry."""
+        while self._pending:
+            try:
+                self._write(self._pending[0])
+            except OSError as exc:
+                if self._error is None:
+                    log.error("cairn: cannot write the run log %s: %s", self.dir, exc)
+                self._error = exc
+                return
+            self._pending.pop(0)
 
     def append_from_hook(self, op: str, fields: dict[str, Any]) -> int:
         """``append`` for the ``before_commit`` hook (which runs under the lock)."""
@@ -319,10 +336,18 @@ class LogWriter:
             with self._lock:
                 if not self._closed:
                     self._drain_hook()
-                payloads, self._pending = self._pending, []
+                self._write_pending()
+                if self._pending:
+                    raise self._error or OSError(f"cannot write the run log {self.dir}")
+                self._error = None
                 upto = self.last_seq
-            if payloads:
-                self._write(payloads)
+                fh, retired, self._retired = self._fh, self._retired, []
+            if upto > self.durable_seq:
+                # Outside the append lock: appends go on while the disk syncs.
+                for old in retired:
+                    fsync_file(old.fileno())
+                    old.close()
+                fsync_file(fh.fileno())
                 self.durable_seq = upto
                 if self._on_commit is not None:
                     try:
@@ -331,27 +356,24 @@ class LogWriter:
                         log.debug("on_commit hook failed", exc_info=True)
         return self.durable_seq
 
-    def _write(self, payloads: list[bytes]) -> None:
-        chunk: list[bytes] = []
-        size = self._size
-        for p in payloads:
-            frame = codec.encode_frame(p, self._kind)
-            if size + len(frame) > self._segment_bytes and size > codec.HEADER_LEN:
-                self._fh.write(b"".join(chunk))
-                self._fh.flush()
-                fsync_file(self._fh.fileno())
-                self._fh.close()
-                chunk = []
-                self._new_segment(self._index + 1)
-                size = self._size
-                frame = codec.encode_frame(p, self._kind)
-            chunk.append(frame)
-            size += len(frame)
-        if chunk:
-            self._fh.write(b"".join(chunk))
-        self._fh.flush()
-        fsync_file(self._fh.fileno())
-        self._size = size
+    def _write(self, payload: bytes) -> None:
+        """Write one frame to the OS (no fsync), rolling the segment when it is
+        full (under ``_lock``). All or nothing: a failed write is cut off again."""
+        frame = codec.encode_frame(payload, self._kind)
+        if self._size + len(frame) > self._segment_bytes and self._size > codec.HEADER_LEN:
+            self._retired.append(self._fh)  # fsynced and closed by the next flush
+            self._new_segment(self._index + 1)
+            frame = codec.encode_frame(payload, self._kind)
+        fd = self._fh.fileno()
+        view = memoryview(frame)
+        try:
+            while view:
+                view = view[os.write(fd, view):]
+        except OSError:
+            os.ftruncate(fd, self._size)
+            os.lseek(fd, self._size, os.SEEK_SET)
+            raise
+        self._size += len(frame)
 
     def _loop(self) -> None:
         while not self._stop.wait(self._interval):

@@ -133,8 +133,9 @@ class RunWriter:
     # ---- data ------------------------------------------------------------------
 
     def add_point(self, point: dict[str, Any]) -> None:
-        with self._acc_lock:
-            self._points.append(point)
+        # Its own record, handed to the OS now: a killed process loses no
+        # point whose track() returned.
+        self.log.append("batch", {"run_id": self.run_id, "points": [point]})
 
     def add_line(self, line: dict[str, Any]) -> None:
         with self._acc_lock:

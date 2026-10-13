@@ -50,12 +50,15 @@ def test_append_is_buffered_and_committed_within_the_interval(tmp_path) -> None:
         w.close()
 
 
-def test_flush_is_immediate(tmp_path) -> None:
+def test_append_reaches_the_os_and_flush_is_immediate(tmp_path) -> None:
+    """An appended record is in the file at once (a killed process loses
+    nothing); ``flush`` fsyncs it now instead of at the next interval."""
     w = LogWriter(tmp_path / "log", interval=60)
     try:
         for i in range(5):
             w.append("x", {"i": i})
-        assert _durable(tmp_path / "log") == []
+        assert _durable(tmp_path / "log") == [1, 2, 3, 4, 5]
+        assert w.durable_seq == 0
         assert w.flush() == 5
         assert _durable(tmp_path / "log") == [1, 2, 3, 4, 5]
     finally:

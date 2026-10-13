@@ -43,6 +43,10 @@ class HandlerRegistry:
     def find_handler(self, obj: Any) -> TypeHandler | None:
         if isinstance(obj, _TypeWrapper):
             return self.find_by_type(obj.object_type)
+        if type(obj) in (float, int, bool):
+            # The common case, without asking every handler first (several
+            # import matplotlib/plotly/ffmpeg in can_handle: ~0.5 s once).
+            return self.find_by_type("scalar")
         for handler in reversed(self._handlers):
             try:
                 if handler.can_handle(obj):
