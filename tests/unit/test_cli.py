@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
@@ -188,19 +187,6 @@ def test_export_without_run_id_is_a_usage_error(tmp_path):
     assert "RUN_ID" in result.output
 
 
-def test_sync_nothing_to_do(tmp_path, monkeypatch):
-    runner = CliRunner()
-    # Empty WAL dir + empty spill (sync scans the WAL dir).
-    from cairn.sdk import transport as t_mod
-
-    monkeypatch.setenv("CAIRN_WAL_DIR", str(tmp_path / "wal"))
-    monkeypatch.setattr(t_mod, "default_spill_dir", lambda: tmp_path / "spill")
-    monkeypatch.setattr(cli, "default_spill_dir", lambda: tmp_path / "spill")
-    result = runner.invoke(cli.main, ["sync"])
-    assert result.exit_code == 0
-    assert "nothing to sync" in result.output
-
-
 def test_ping_unreachable_exits_nonzero(monkeypatch):
     monkeypatch.setenv("CAIRN_SERVER", "http://127.0.0.1:1")  # port 1 ≈ refused
     runner = CliRunner()
@@ -258,43 +244,6 @@ def test_diff_against_local_snapshot(tmp_path, monkeypatch):
     # Unknown run id → exit 1.
     result_missing = runner.invoke(cli.main, ["diff", "nope", "--repo", str(repo)])
     assert result_missing.exit_code == 1
-
-
-def test_sync_scans_and_replays_orphaned_wals(live_server, monkeypatch, tmp_path):
-    """`cairn sync` reconstructs orphaned per-run logs from the WAL dir
-    and drains them to each log's recorded target (the old command scanned a
-    different directory and could not replay the WAL at all)."""
-    import json as _json
-
-    from cairn.sdk.wal import WriteAheadLog
-
-    monkeypatch.setenv("CAIRN_WAL_DIR", str(tmp_path / "wal"))
-    monkeypatch.setenv("CAIRN_SERVER", live_server)
-
-    # A run the server knows, with an orphaned un-acked batch in the WAL.
-    import httpx
-
-    with httpx.Client(base_url=live_server, timeout=5.0) as c:
-        rid = c.post("/api/runs", json={"project": "sync"}).json()["run_id"]
-    wal = WriteAheadLog(rid, tmp_path / "wal", target=live_server)
-    wal.append(
-        "batch",
-        {"run_id": rid, "points": [{
-            "name": "loss", "step": 0,
-            "wall_time": "2026-01-01T00:00:00+00:00",
-            "object_type": "scalar", "scalar_value": 0.5,
-        }]},
-    )
-    wal.close()
-
-    runner = CliRunner()
-    result = runner.invoke(cli.main, ["sync"])
-    assert result.exit_code == 0, result.output
-    assert "replayed" in result.output
-
-    with httpx.Client(base_url=live_server, timeout=5.0) as c:
-        pts = c.get(f"/api/runs/{rid}/sequences/loss").json()["points"]
-    assert len(pts) == 1 and pts[0]["scalar_value"] == 0.5
 
 
 def test_http_errors_are_one_line_not_tracebacks(live_server, monkeypatch):
@@ -473,23 +422,6 @@ def test_empty_exports_warn(live_server, monkeypatch, tmp_path):
     result = CliRunner().invoke(cli.main, ["export", "--project", "nope", "--format", "csv", "--out", str(tmp_path / "b.csv")])
     assert result.exit_code == 0, result.output
     assert "no run of project 'nope' matches" in result.output
-
-
-def test_sync_against_a_down_server_fails_and_keeps_the_log(monkeypatch, tmp_path):
-    """A WAL whose server is unreachable used to print `replayed 0 op(s)`
-    and `nothing to sync` with exit 0 although every op was still pending."""
-    from cairn.sdk.wal import WriteAheadLog
-
-    monkeypatch.setenv("CAIRN_WAL_DIR", str(tmp_path / "wal"))
-    monkeypatch.setattr(cli, "default_spill_dir", lambda: tmp_path / "spill")
-    wal = WriteAheadLog("r1", tmp_path / "wal", target="http://127.0.0.1:1")
-    wal.append("params", {"run_id": "r1", "params": {"a": 1}})
-    wal.close()
-    result = CliRunner().invoke(cli.main, ["sync"])
-    assert result.exit_code == 1, result.output
-    assert "r1: FAILED after 0 op(s)" in result.output
-    assert "sync incomplete" in result.output
-    assert (tmp_path / "wal" / "r1.wal.jsonl").exists()
 
 
 def test_login_to_an_auth_off_server_saves_nothing(live_server):

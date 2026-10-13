@@ -23,8 +23,14 @@ _real_create_app = _app_mod.create_app
 
 
 def _create_app_with_ingest(*args, **kwargs):
+    from fastapi import Depends
+
+    from cairn.server.auth import require_role
+
     app = _real_create_app(*args, **kwargs)
-    app.include_router(standin_server.ingest_router())
+    # Write role, like the real upload routes.
+    app.include_router(standin_server.ingest_router(),
+                       dependencies=[Depends(require_role("write"))])
     return app
 
 

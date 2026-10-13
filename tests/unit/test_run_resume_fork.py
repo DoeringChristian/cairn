@@ -1,5 +1,5 @@
 """Resume, fork and rewind (C1): the ops, the routes, and the SDK on every
-write path — HTTP, LocalTransport direct, LocalTransport WAL (replayed)."""
+write path: a server URL and a local repo (both through the run directory)."""
 
 from __future__ import annotations
 
@@ -13,7 +13,6 @@ from cairn.server.storage.blobs import BlobStore
 from cairn.server.storage.datadir import DataDir
 from cairn.server.storage.db import Database
 from cairn.server.wal_ingest import ingest_all
-from cairn.sdk.transport import Transport
 
 QUIET = dict(
     capture_source=False, capture_stdout=False, capture_env=False,
@@ -193,18 +192,18 @@ def test_routes_resume_rewind_fork(client):
 
 
 class _Http:
-    def __init__(self, client):
-        self.client = client
+    def __init__(self, app, url):
+        self.app = app
+        self.url = url
 
     def run(self, **kw):
-        t = Transport("http://testserver", client=self.client, max_retries=1)
-        return cairn.Run(project="p", transport=t, **QUIET, **kw)
+        return cairn.Run(project="p", server=self.url, **QUIET, **kw)
 
     def drain(self):
         pass
 
     def rows(self, sql, params=()):
-        return self.client.app.state.db.read_columns(sql, list(params))
+        return self.app.state.db.read_columns(sql, list(params))
 
     def close(self):
         pass
@@ -240,7 +239,7 @@ class _Local:
 @pytest.fixture(params=["http", "local"])
 def backend(request, tmp_path):
     if request.param == "http":
-        return _Http(request.getfixturevalue("client"))
+        return _Http(request.getfixturevalue("app"), request.getfixturevalue("live_server"))
     return _Local(tmp_path / ".cairn")
 
 

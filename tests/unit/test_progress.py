@@ -8,6 +8,7 @@ import itertools
 import json
 import sqlite3
 import sys
+import time
 import types
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -16,7 +17,6 @@ from unittest.mock import MagicMock
 import pytest
 
 import cairn
-from cairn.sdk.transport import Transport
 from cairn.server import progress
 from cairn.server.storage.migrations import apply_migrations
 from tests.conftest import ingest_repo
@@ -267,28 +267,35 @@ def test_disabled_run_accepts_progress():
 def test_http_total_steps_and_progress(live_server):
     import httpx
 
-    t = Transport(live_server, max_retries=1, backoff_base=0.001, backoff_cap=0.001)
-    run = cairn.Run("p", transport=t, total_steps=100, **_RUN_KW)
+    run = cairn.Run("p", server=live_server, total_steps=100, **_RUN_KW)
     for s in range(25):
         run.track(0.5, "loss", s)
     run.finish()
-    run2 = cairn.Run("p", transport=t, **_RUN_KW)
+    run2 = cairn.Run("p", server=live_server, **_RUN_KW)
     run2.progress(3, total=12)
     with httpx.Client(base_url=live_server) as c:
         p = c.get(f"/api/runs/{run.id}").json()["run"]["progress"]
         assert (p["unit"], p["current"], p["total"]) == ("step", 25, 100)
-        listed = {r["id"]: r for r in c.get("/api/runs", params={"project": "p"}).json()["runs"]}
-        assert listed[run.id]["progress"]["fraction"] == pytest.approx(0.25)
-        p2 = listed[run2.id]["progress"]
+
+        def listed() -> dict:
+            return {r["id"]: r for r in c.get("/api/runs", params={"project": "p"}).json()["runs"]}
+
+        # run2's records reach the server at its next group commit.
+        deadline = time.monotonic() + 10
+        while (listed().get(run2.id) or {}).get("progress") is None:
+            assert time.monotonic() < deadline
+            time.sleep(0.05)
+        rows = listed()
+        assert rows[run.id]["progress"]["fraction"] == pytest.approx(0.25)
+        p2 = rows[run2.id]["progress"]
         assert (p2["unit"], p2["current"], p2["total"]) == ("progress", 3, 12)
-        assert "total_steps" not in listed[run2.id]
+        assert "total_steps" not in rows[run2.id]
         r = c.post(f"/api/runs/{run2.id}/total-steps", json={"total_steps": 0})
         assert r.status_code == 400
         r = c.post(f"/api/runs/{run2.id}/progress", json={"value": -1})
         assert r.status_code == 400
         assert c.post("/api/runs/nope/progress", json={"value": 1}).status_code == 404
     run2.finish()
-    t.close()
 
 
 # ---- integrations ------------------------------------------------------------------

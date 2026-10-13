@@ -120,8 +120,8 @@ def test_rename_and_delete_keys_replay_from_the_runs_log(tmp_path):
     repo = tmp_path / ".cairn"
     with cairn.Run(project="p", name="orig", repo=repo, **_RUN_KW) as run:
         run.config(lr=0.1, hparams={"wd": 0.01})
-        run._transport.rename_run(run.id, "log-renamed")
-        run._transport.delete_keys(run.id, "params", ["hparams"])
+        run._writer.rename_run(run.id, "log-renamed")
+        run._writer.delete_keys(run.id, "params", ["hparams"])
         run_id = run.id
     # The Reader ingests the log before reading; a second time is a no-op.
     for _ in range(2):

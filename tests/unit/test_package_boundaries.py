@@ -201,7 +201,8 @@ _TRACKING_ROOTS = (
     REPO / "cairn" / "sdk" / "run.py",
     REPO / "cairn" / "sdk" / "reader.py",
     REPO / "cairn" / "sdk" / "transport.py",
-    REPO / "cairn" / "sdk" / "wal.py",
+    REPO / "cairn" / "sdk" / "runlog",
+    REPO / "cairn" / "uploader",
     REPO / "cairn" / "sdk" / "handlers",
     REPO / "cairn" / "server",
 )
