@@ -188,7 +188,7 @@ def init_cmd(path: Path) -> None:
     is the repo's server for a moment (a repo a server serves already is
     initialized).
     """
-    from .server.registration import RepoServed, ServerLock
+    from .server.registration import RepoServed, ServerLock, remove_info, write_starting
     from .server.startup import StartupError, open_repo_database
     from .server.storage.migrations import SchemaTooNew
 
@@ -197,7 +197,11 @@ def init_cmd(path: Path) -> None:
     dd = DataDir(repo)
     try:
         with ServerLock(dd.root):
-            open_repo_database(dd).close()
+            write_starting(dd.root)
+            try:
+                open_repo_database(dd).close()
+            finally:
+                remove_info(dd.root)
     except RepoServed:
         already = True
     except (StartupError, SchemaTooNew) as exc:
@@ -329,12 +333,20 @@ def _take_repo(dd: DataDir) -> tuple[Any, Database, BlobStore]:
     except RepoServed as exc:
         click.echo(f"ERROR: {exc}", err=True)
         sys.exit(1)
+    from .server.registration import remove_info, write_starting
+
+    write_starting(dd.root)
     blobs = BlobStore(dd.artifacts_dir)
     try:
         db = open_repo_database(dd, blobs)
     except (StartupError, SchemaTooNew) as exc:
+        remove_info(dd.root)
         lock.release()
         raise click.ClickException(str(exc)) from None
+    except BaseException:
+        remove_info(dd.root)
+        lock.release()
+        raise
     return lock, db, blobs
 
 
@@ -802,10 +814,13 @@ def _open_running_viewer(root: Path, open_browser: bool) -> bool:
     none does. Raises when the one serving it has no viewer."""
     import httpx
 
-    from .endpoint import live_server
+    from .endpoint import EndpointUnavailable, wait_existing
     from .server.registration import read_info
 
-    ep = live_server(root)
+    try:
+        ep = wait_existing(root)
+    except EndpointUnavailable as exc:
+        raise click.ClickException(str(exc)) from None
     info = read_info(root) if ep is not None else None
     if ep is None or info is None:
         return False

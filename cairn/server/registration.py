@@ -6,7 +6,10 @@ server process at a time serves a repo. It holds an exclusive ``flock`` on
 local filesystem, where ``flock`` is reliable; see ``startup.py``); a second
 server on the same repo finds the lock held and exits, naming the first.
 
-Once listening, the server advertises itself in ``<repo>/server.json``
+While it starts (migration with its backup, the 0.5 log import: minutes on
+a big repo) ``server.json`` says ``{"pid", "host", "state": "starting"}``, so
+clients wait for it rather than start another. Once listening, the server
+advertises itself in ``<repo>/server.json``
 (written atomically, mode 0600, as it holds a token)::
 
     {"pid", "host", "url", "ui_url", "token", "daemon", "started_at", "version"}
@@ -98,6 +101,50 @@ def is_locked(root: Path) -> bool:
     return False
 
 
+def write_starting(root: Path) -> None:
+    """Advertise that this process (holding the repo's lock) is starting to
+    serve it — migrating, backing up, importing 0.5 logs — and is not
+    listening yet (``server.json`` without a ``url``). Clients wait for it
+    instead of starting another server (``cairn/endpoint.py``)."""
+    _write(Path(root), {
+        "pid": os.getpid(),
+        "host": socket.gethostname(),
+        "state": "starting",
+        "started_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+
+def read_starting(root: Path) -> dict[str, Any] | None:
+    """The ``server.json`` of a live process of this host still starting to
+    serve ``root`` (see ``write_starting``), else None."""
+    info = _read_raw(Path(root))
+    if info is None or info.get("state") != "starting" or info.get("host") != socket.gethostname():
+        return None
+    pid = info.get("pid")
+    if not isinstance(pid, int) or not psutil.pid_exists(pid):
+        return None
+    return info
+
+
+def _read_raw(root: Path) -> dict[str, Any] | None:
+    try:
+        info = json.loads((root / INFO_NAME).read_text())
+    except (OSError, ValueError):
+        return None
+    return info if isinstance(info, dict) else None
+
+
+def _write(root: Path, info: dict[str, Any]) -> None:
+    path = root / INFO_NAME
+    tmp = path.with_name(f".{INFO_NAME}.{os.getpid()}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        json.dump(info, fh)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, path)
+
+
 def write_info(
     root: Path,
     *,
@@ -119,25 +166,15 @@ def write_info(
         "started_at": datetime.now(timezone.utc).isoformat(),
         "version": __version__,
     }
-    path = Path(root) / INFO_NAME
-    tmp = path.with_name(f".{INFO_NAME}.{os.getpid()}.tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as fh:
-        json.dump(info, fh)
-        fh.flush()
-        os.fsync(fh.fileno())
-    os.replace(tmp, path)
+    _write(Path(root), info)
     return info
 
 
 def read_info(root: Path, *, live_only: bool = True) -> dict[str, Any] | None:
     """The repo's ``server.json``, or None (none, unreadable, or — with
     ``live_only`` — written by a process of this host that is gone)."""
-    try:
-        info = json.loads((Path(root) / INFO_NAME).read_text())
-    except (OSError, ValueError):
-        return None
-    if not isinstance(info, dict) or not isinstance(info.get("url"), str):
+    info = _read_raw(Path(root))
+    if info is None or not isinstance(info.get("url"), str):
         return None
     if live_only and info.get("host") == socket.gethostname():
         pid = info.get("pid")
@@ -148,7 +185,7 @@ def read_info(root: Path, *, live_only: bool = True) -> dict[str, Any] | None:
 
 def remove_info(root: Path) -> None:
     """Drop ``server.json`` if this process wrote it."""
-    info = read_info(root, live_only=False)
+    info = _read_raw(Path(root))
     if info is not None and info.get("pid") == os.getpid():
         try:
             (Path(root) / INFO_NAME).unlink()

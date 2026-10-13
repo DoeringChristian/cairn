@@ -59,11 +59,9 @@ def _env_rank_main(target: str, run_id: str, rank: int, joined: list, token: str
         # Create the run only once every worker has joined (local repos: a
         # worker joins at once and its log waits for the run). Over HTTP a
         # worker's join waits for the run instead: start a little later.
-        if target.startswith("cairn://"):
-            time.sleep(1.5)
-        else:
-            for ev in joined:
-                assert ev.wait(60), "a worker never joined"
+        # Every target is a server now (a local repo's is started on
+        # demand): a worker's join waits for the run, so start a little later.
+        time.sleep(1.5)
     run = cairn.Run(
         project="shared", label="auto", repo=target, capture_source=False,
         system_metrics_interval=0.1,
@@ -177,9 +175,7 @@ def _wait_ingested(repo: Path, timeout: float = 30.0) -> None:
 def test_env_launch_on_a_local_repo(tmp_path):
     repo = tmp_path / ".cairn"
     run_id, codes = _launch_env(str(repo))
-    logs = _wals(repo)
-    assert f"{run_id}~rank0.wal.jsonl" in logs and f"{run_id}~rank1.wal.jsonl" in logs
-    _check(str(repo), run_id, codes, primary_label="rank0")  # the Reader ingests
+    _check(str(repo), run_id, codes, primary_label="rank0")
     assert _wals(repo) == []
 
 

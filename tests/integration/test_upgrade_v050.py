@@ -18,6 +18,7 @@ and the runs readable over HTTP.
 from __future__ import annotations
 
 import json
+import os
 import math
 import sqlite3
 import tarfile
@@ -28,7 +29,10 @@ import pytest
 import cairn
 from cairn.endpoint import live_server, local_endpoint
 
-FIXTURE = Path(__file__).parent.parent / "fixtures" / "repo-v0.5.0.tar.gz"
+#: ``CAIRN_V050_FIXTURE``: a tarball freshly made by ``make_v050_repo.py``
+#: under the v0.5.0 tag, instead of the committed one.
+FIXTURE = Path(os.environ.get("CAIRN_V050_FIXTURE")
+               or Path(__file__).parent.parent / "fixtures" / "repo-v0.5.0.tar.gz")
 
 #: Columns whose value is the moment of ingestion, not logged data: where
 #: ``expected.json`` holds a value 0.5 stamped while ingesting the PENDING
