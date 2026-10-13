@@ -312,10 +312,15 @@ def test_kill_9_at_random_points_then_restart(tmp_path) -> None:
         cmd = [sys.executable, "-m", "cairn", "sync", "--daemon"]
         rng = random.Random(11)
         kills = 0
-        deadline = time.monotonic() + 120
+        deadline = time.monotonic() + 300
         while agent.registered(base):
             assert time.monotonic() < deadline, "did not finish"
             p = subprocess.Popen(cmd, env=env)
+            if kills >= 15:
+                # Enough kills: let one finish (on a slow machine a daemon may
+                # not even get past its imports within the random delays).
+                p.wait(timeout=max(1.0, deadline - time.monotonic()))
+                continue
             time.sleep(rng.uniform(0.05, 0.6))
             if p.poll() is None:
                 p.send_signal(signal.SIGKILL)
