@@ -430,6 +430,7 @@ def test_http_workers(live_server):
     w.track(5.0, "rank1.only", step=3)
     w.finish(status="failed")
     run.track(2.0, "loss", step=0)
+    run._writer.flush()  # commit now: the test hook uploads at every commit
     assert cairn.Reader(repo=url).run(rid).status == "running"
     run.finish(status="completed")
     r = cairn.Reader(repo=url).run(rid)

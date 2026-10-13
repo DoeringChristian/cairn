@@ -302,6 +302,7 @@ class Run:
         self._tags: list[str] = list(tags or [])
 
         # Bookkeeping
+        self._logged_names: set[str] = set()
         self._finished = False
         self._writer: RunWriter | None = None
         self._step_counters: dict[str, int] = {}
@@ -1123,6 +1124,7 @@ class Run:
         if self._finished:
             raise RuntimeError("Run has already been finished")
         draft = self._draft(artifact, name, type, metadata, description)
+        self._logged_names.add(draft.name)
         return self._log_draft(draft, aliases, step, created_by_run=self._run_id, tags=tags)
 
     def _draft(
@@ -1213,8 +1215,19 @@ class Run:
             # server needed.
             self._writer.record_artifact_input(self._run_id, ref.id, role)
             return ref
+        # A version this run logged may still be on its way to the server:
+        # commit now and give the upload a moment before calling it missing.
+        self._writer.flush()
+        deadline = time.monotonic() + 10.0
         try:
-            info = self._reads.api().resolve_artifact(self._project_id, ref)
+            while True:
+                try:
+                    info = self._reads.api().resolve_artifact(self._project_id, ref)
+                    break
+                except LookupError:
+                    if time.monotonic() > deadline or not self._logged_artifact(ref):
+                        raise
+                    time.sleep(0.1)
         except ServerUnavailable as exc:
             raise ServerUnavailable(
                 f"use_artifact({ref!r}) resolves the ref on the server, which cannot be "
@@ -1222,6 +1235,11 @@ class Run:
             ) from None
         self._writer.record_artifact_input(self._run_id, info["id"], role)
         return ArtifactVersion(info, self._reader_backend)
+
+    def _logged_artifact(self, ref: str) -> bool:
+        """Whether this run logged (in this process) the family ``ref`` names."""
+        name = ref.split("/")[-1].split(":")[0]
+        return name in self._logged_names
 
     def use_run(self, run: Any, *, role: str | None = None) -> None:
         """Record that this run used another run directly ("v used u"),
@@ -1751,7 +1769,7 @@ def _repo_ref(repo: str | None) -> Any:
     """What ``run_page_url`` reads a local repo's root from."""
     from types import SimpleNamespace
 
-    return SimpleNamespace(data_dir=SimpleNamespace(root=Path(repo))) if repo else None
+    return SimpleNamespace(repo_root=Path(repo)) if repo else None
 
 
 def _sdk_version() -> str | None:

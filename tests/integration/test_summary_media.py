@@ -16,6 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import cairn
+from tests.conftest import ingest_repo
 from cairn.sdk.gallery import GALLERY_MIME
 from cairn.sdk.reader import MediaRef
 from cairn.server import gc, ingest_ops
@@ -157,6 +158,7 @@ def test_showcase_rerun_from_a_second_process_replaces_media_only(tmp_path):
             env = {**os.environ, "BROWSER": "true", "PYTHONPATH": str(REPO_ROOT)}
             subprocess.run([sys.executable, "-c", _ATTACH, str(repo), rid, str(value)],
                            check=True, timeout=120, env=env)
+            ingest_repo(repo)  # what the uploader daemon does (off in tests)
             land = [r for r in _rows(db, rid) if r[0] == "showcase.loss_landscape"]
             assert len(land) == 1
             hashes.append(land[0][2])

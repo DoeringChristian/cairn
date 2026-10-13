@@ -154,7 +154,9 @@ def test_auto_finish_on_interpreter_exit(tmp_path):
         """
     )
     subprocess.check_call([sys.executable, "-c", script])
+    from tests.conftest import ingest_repo
 
+    ingest_repo(repo)  # what the uploader daemon does (off in tests)
     db, _ = _inspect(repo)
     try:
         rows = db.read_columns("SELECT id, status FROM runs")
