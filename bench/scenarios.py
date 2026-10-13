@@ -212,7 +212,7 @@ def lag(scale: str, backends: list[str], work: Path) -> dict[str, Any]:
                         for i in range(cfg["lag_load_clients"]):
                             a = sysm.worker_args(project="lag", name=f"load{i}", metrics=10, steps=10**7,
                                                  seed=i + 1, deadline=cfg["lag_secs"])
-                            loaders.append(subprocess.Popen(_worker_cmd(sysm, a), env=env, cwd=c.REPO_ROOT,
+                            loaders.append(subprocess.Popen(_worker_cmd(sysm, a), env=env, cwd=c.work_cwd(),
                                                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
                     with c.RssSampler(lambda: sysm.server.pid) as rs:
                         res = c.run_workers([_worker_cmd(sysm, probe)], env, cfg["lag_secs"] * 4 + 120)[0]
@@ -494,11 +494,11 @@ def _ui(sysm: System, key: str, proj: str, ids: list[str], work: Path) -> list[d
             {"page": "workspace", "url": f"{sysm.read_url}/#/experiments/{exp}/runs?compareRunsMode=CHART",
              "selector": ".js-plotly-plot, canvas"},
         ]
-    args = {"pages": pages, "reps": 3, "shots": str(work / f"ui-{proj}")}
+    args = {"pages": pages, "reps": 3, "shots": str(c.bench_root() / "shots" / f"{key}-{proj}")}
     py = c.playwright_python()
     env = c.isolated_env(work)
     with c.RssSampler(lambda: sysm.server.pid) as rs:
-        r = subprocess.run([py, "-m", "bench.ui_probe", json.dumps(args)], env=env, cwd=c.REPO_ROOT,
+        r = subprocess.run([py, "-m", "bench.ui_probe", json.dumps(args)], env=env, cwd=c.work_cwd(),
                            capture_output=True, text=True, timeout=1800)
     try:
         rows = json.loads(r.stdout.strip().splitlines()[-1])

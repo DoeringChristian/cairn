@@ -104,7 +104,7 @@ class Case:
             a["backend"] = "mlflow"
         out = open(self.work / f"worker-{name}.out", "w")  # noqa: SIM115
         p = subprocess.Popen([self.sysm.python, "-m", "bench.worker", json.dumps(a)], env=self.env,
-                             cwd=c.REPO_ROOT, stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
+                             cwd=c.work_cwd(), stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
         self.procs.append((p, prog, a))
 
     def wait_workers(self, timeout: float) -> list[dict]:
@@ -192,7 +192,7 @@ def _sync_leftovers(case: Case, rid: str | None, w: dict, row: dict[str, Any]) -
     row["before_sync"] = {k: v for k, v in _verify_row(case, w, rid).items()
                           if k in ("lost", "lost_accepted", "present")}
     t0 = time.monotonic()
-    r = subprocess.run([str(Path(c.CAIRN_PY).parent / "cairn"), "sync", "--server", case.sysm.read_url],
+    r = subprocess.run([c.cairn_bin(), "sync", "--server", case.sysm.read_url],
                        env=case.env, capture_output=True, text=True, timeout=300)
     row["sync_s"] = time.monotonic() - t0
     row["sync_output"] = (r.stdout + r.stderr)[-300:]
@@ -530,7 +530,7 @@ def torn_writes(system: str, work: Path, seeds: int = 8) -> dict[str, Any]:
             try:
                 if sync:
                     env = c.isolated_env(root, CAIRN_WAL_DIR=str(root / "cairn-wal"))
-                    r = subprocess.run([str(Path(c.CAIRN_PY).parent / "cairn"), "sync", "--server", srv.url],
+                    r = subprocess.run([c.cairn_bin(), "sync", "--server", srv.url],
                                        env=env, capture_output=True, text=True, timeout=300)
                     res["sync_rc"] = r.returncode
                     res["sync_tail"] = (r.stdout + r.stderr)[-200:]
