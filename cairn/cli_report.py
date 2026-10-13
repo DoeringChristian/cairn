@@ -100,6 +100,94 @@ def report_export(report_id: str, fmt: str, out: Path, repo: str | None, server:
     click.echo(f"exported to {out}")
 
 
+def _state_path(file: Path) -> Path:
+    """Where ``pull``/``push`` remember which report a file is: a hidden
+    ``.<name>.cairn.json`` next to it (id, project, the ``updated_at`` seen)."""
+    return file.with_name(f".{file.name}.cairn.json")
+
+
+def _read_state(file: Path) -> dict[str, Any] | None:
+    try:
+        return json.loads(_state_path(file).read_text())
+    except (FileNotFoundError, ValueError):
+        return None
+
+
+def _write_state(file: Path, report_id: str, project: str, updated_at: str) -> None:
+    _state_path(file).write_text(json.dumps(
+        {"id": report_id, "project": project, "updated_at": updated_at}, indent=2) + "\n")
+
+
+@report_group.command("pull")
+@click.argument("report_id")
+@click.option("-o", "--out", type=click.Path(dir_okay=False, path_type=Path), required=True,
+              help="File to write.")
+@target_options
+def report_pull(report_id: str, out: Path, repo: str | None, server: str | None) -> None:
+    """Write a report's markdown source to a file, and remember its version
+    so a later `cairn report push` of the file can refuse to overwrite
+    someone else's edit."""
+    with open_api(repo, server) as api:
+        report = _report(api, report_id)
+    out.write_text((report.get("payload") or {}).get("source") or "")
+    _write_state(out, report["id"], report["project_id"], report["updated_at"])
+    click.echo(f"pulled {report['id']} to {out}")
+
+
+@report_group.command("push")
+@click.argument("file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--project", default=None,
+              help="Project of a new report (needed when FILE was never pulled or pushed).")
+@click.option("--id", "report_id", default=None,
+              help="Update this report (default: the one FILE was pulled from or pushed to).")
+@click.option("--name", default=None,
+              help="Report name (default: kept on update; FILE's first heading or name on create).")
+@click.option("--force", is_flag=True,
+              help="Overwrite the report even if it changed since FILE was pulled or pushed.")
+@target_options
+def report_push(file: Path, project: str | None, report_id: str | None, name: str | None,
+                force: bool, repo: str | None, server: str | None) -> None:
+    """Create or update a report from a markdown file.
+
+    \b
+    A file that was pulled (or pushed before) updates its report; the update
+    is refused when the report changed since then (someone edited it in the
+    UI), unless --force. Otherwise --project creates a new report.
+    """
+    source = file.read_text()
+    state = _read_state(file)
+    report_id = report_id or (state or {}).get("id")
+    with open_api(repo, server) as api:
+        if report_id is None:
+            if project is None:
+                raise click.UsageError("a new report needs --project (or --id to update one)")
+            title = name or next(
+                (ln.lstrip("#").strip() for ln in source.splitlines() if ln.startswith("# ")),
+                file.stem,
+            )
+            created = api.post(f"/api/projects/{project}/reports",
+                               json={"name": title, "payload": {"source": source}}).json()
+            current = _report(api, created["id"])
+            _write_state(file, current["id"], current["project_id"], current["updated_at"])
+            click.echo(f"created {current['id']} in {current['project_id']}")
+            return
+        current = _report(api, report_id)
+        body: dict[str, Any] = {"payload": {"source": source}}
+        if name is not None:
+            body["name"] = name
+        if not force and state and state.get("id") == report_id:
+            body["expected_updated_at"] = state.get("updated_at")
+        resp = api._client.put(_base(api, current), json=body)
+        if resp.status_code == 409:
+            raise click.ClickException(
+                f"report {report_id} changed since {file} was pulled (at {state['updated_at']}, "
+                f"now {resp.json()['updated_at']}): pull it again and merge, or push --force"
+            )
+        resp.raise_for_status()
+        _write_state(file, report_id, current["project_id"], resp.json()["updated_at"])
+    click.echo(f"updated {report_id}")
+
+
 @report_group.command("rm")
 @click.argument("report_id")
 @target_options

@@ -65,6 +65,27 @@ class Project:
 
 
 @dataclass(frozen=True)
+class Report:
+    """A report, as ``Reader.report`` and ``Reader.reports`` return it.
+
+    Attributes:
+        id: Report id (the last part of its URL, ``/p/<project>/reports/<id>``).
+        project: The id of its project.
+        name: Display name.
+        updated_at: Last change, as an ISO 8601 string. ``cairn report push``
+            compares it to refuse overwriting someone else's edit.
+        source: The markdown source (None in ``Reader.reports`` listings;
+            ``Reader.report`` fills it).
+    """
+
+    id: str
+    project: str
+    name: str
+    updated_at: str
+    source: str | None = None
+
+
+@dataclass(frozen=True)
 class GitInfo:
     """Git state recorded when a run started (see ``Run.git``).
 
@@ -1533,6 +1554,8 @@ class RunQuery:
 @runtime_checkable
 class _Backend(Protocol):
     def list_projects(self) -> list[dict[str, Any]]: ...
+    def list_reports(self, project: str | None) -> list[dict[str, Any]]: ...
+    def get_report(self, report_id: str) -> dict[str, Any]: ...
     def query_runs(self, spec: dict[str, Any]) -> tuple[list[dict[str, Any]], int]: ...
     def get_run(self, run_id: str) -> dict[str, Any]: ...
     def get_docs(self, run_id: str) -> dict[str, Any]: ...
@@ -1681,6 +1704,20 @@ class _HttpBackend(_RegistryWrites):
 
     def list_projects(self) -> list[dict[str, Any]]:
         return self._get("/api/projects")["projects"]
+
+    def list_reports(self, project: str | None) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        while True:
+            params: dict[str, Any] = {"limit": 1000, "offset": len(rows)}
+            if project is not None:
+                params["project"] = project
+            page = self._get("/api/reports", params)
+            rows += page["reports"]
+            if not page["reports"] or len(rows) >= page["total"]:
+                return rows
+
+    def get_report(self, report_id: str) -> dict[str, Any]:
+        return self._get(f"/api/reports/{report_id}")
 
     def query_runs(self, spec: dict[str, Any]) -> tuple[list[dict[str, Any]], int]:
         """The shared evaluator, on the server (``POST /api/runs/query``)."""
@@ -2024,6 +2061,34 @@ class Reader:
             active_run_count=r.get("active_run_count", 0),
             last_run_at=r.get("last_run_at"),
         ) for r in rows]
+
+    def reports(self, project: str | None = None) -> list[Report]:
+        """List reports, newest change first (``source`` is not loaded).
+
+        Args:
+            project: Only this project's reports (name or id); default all.
+        """
+        return [Report(id=r["id"], project=r["project_id"], name=r["name"],
+                       updated_at=r["updated_at"])
+                for r in self._backend.list_reports(project)]
+
+    def report(self, report_id: str) -> Report:
+        """One report by id, with its markdown source.
+
+        Raises:
+            LookupError: No such report.
+        """
+        import httpx
+
+        try:
+            r = self._backend.get_report(report_id)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                raise LookupError(f"report {report_id} not found") from None
+            raise
+        return Report(id=r["id"], project=r["project_id"], name=r["name"],
+                      updated_at=r["updated_at"],
+                      source=(r.get("payload") or {}).get("source") or "")
 
     def runs(self, project: str | None = None, *, archived: bool | None = False) -> RunQuery:
         """Start a lazy run query (see ``RunQuery`` for order and filters).

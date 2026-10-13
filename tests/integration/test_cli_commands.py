@@ -376,6 +376,45 @@ def test_reports(target, tmp_path):
     assert result.exit_code == 1 and f"report {rid} not found" in result.output
 
 
+def test_report_push_pull(target, tmp_path):
+    ids = _seed(target)
+    rid = ids["report"]
+    md = tmp_path / "r.md"
+    assert target.run("report", "pull", rid, "-o", str(md)).output.strip() == f"pulled {rid} to {md}"
+    md.write_text("# Findings\n\nLoss falls fast.\n")
+    assert target.run("report", "push", str(md)).output.strip() == f"updated {rid}"
+    assert target.run("report", "show", rid).output == "# Findings\n\nLoss falls fast.\n"
+
+    # Someone edits it elsewhere: a push of the stale file is refused, --force wins.
+    other = tmp_path / "other.md"
+    target.run("report", "pull", rid, "-o", str(other))
+    import time
+
+    time.sleep(0.01)  # a later updated_at
+    other.write_text("# Findings\n\nEdited elsewhere.\n")
+    target.run("report", "push", str(other))
+    md.write_text("# Findings\n\nMine.\n")
+    result = target.run("report", "push", str(md), ok=False)
+    assert result.exit_code == 1 and "changed since" in result.output
+    target.run("report", "push", str(md), "--force")
+    assert target.run("report", "show", rid).output == "# Findings\n\nMine.\n"
+
+    # A new file creates a report, named after its first heading.
+    new = tmp_path / "new.md"
+    new.write_text("# Ablation\n\nText.\n")
+    assert target.run("report", "push", str(new), ok=False).exit_code != 0  # no --project
+    out = target.run("report", "push", str(new), "--project", "proj").output
+    new_id = out.split()[1]
+    reader = cairn.Reader(repo=target.repo)
+    try:
+        assert {r.name for r in reader.reports("proj")} == {"Findings", "Ablation"}
+        assert reader.report(new_id).source == "# Ablation\n\nText.\n"
+        with pytest.raises(LookupError):
+            reader.report("nope")
+    finally:
+        reader.close()
+
+
 def test_report_shares_on_an_auth_server(tmp_path):
     from cairn.server import auth
     from cairn.server.storage.db import Database

@@ -222,10 +222,21 @@ cairn report show 3f2a9c1d0b7e6a55      # the markdown source, to stdout
 cairn report export 3f2a9c1d0b7e6a55 -o findings.md
 cairn report rm 3f2a9c1d0b7e6a55        # with its comments, images and share links
 
+cairn report pull 3f2a9c1d0b7e6a55 -o findings.md   # the source, and remembers its version
+cairn report push findings.md                       # updates that report
+cairn report push ablation.md --project my-proj     # creates a new one (named by its first # heading)
+
 cairn report share 3f2a9c1d0b7e6a55 --expires 7d   # prints the link, once
 cairn report shares 3f2a9c1d0b7e6a55               # the links' ids and state
 cairn report unshare 3f2a9c1d0b7e6a55 9c4e1f20a3b85d77
 ```
+
+`pull` and `push` keep a hidden `.<file>.cairn.json` next to the file (the report's id,
+project and the version pulled). `push` refuses to overwrite a report that changed since
+(edited in the UI or pushed by someone else) and says so; pull again and merge, or pass
+`--force`. `--id` pushes to another report, `--name` renames it. This is how scripts and
+agents write reports. From Python, `cairn.Reader().reports(project)` lists reports and
+`.report(id).source` reads one.
 
 `ls` and `shares` take `--format table|json`. Share links need a server with
 authentication on and the write role (see [Sharing](sharing.md)): against a
