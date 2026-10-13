@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.6.0 — unreleased
+## 0.6.0 — 2026-10-13
 
 Data integrity first: a run writes only its own run directory, a separate
 uploader sends it to the server exactly once, and the server is the only
