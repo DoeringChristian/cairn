@@ -1,0 +1,46 @@
++ /Users/doeringc/workspace/cairn/.venv/bin/python -m bench all --scale quick --out bench/results/quick/bench.json --cairn-python /Users/doeringc/workspace/cairn/.venv/bin/python --set storage_points=200000 --set lag_secs=30 --postgres
+[throughput] scalar cairn-local N=1 {'metrics': 10, 'steps': 2000}
+   -> {'client_pts_per_s': 22359.921023126786, 'e2e_pts_per_s': 12499.284868124041, 'blocked_s_max': 0.7440242919838056, 'error': None}
+[throughput] scalar cairn-local N=4 {'metrics': 10, 'steps': 1000}
+   -> {'client_pts_per_s': 53940.378267264845, 'e2e_pts_per_s': 24699.145098428042, 'blocked_s_max': 0.6634659999981523, 'error': None}
+[throughput] scalar cairn-local N=16 {'metrics': 10, 'steps': 1000}
+   -> {'client_pts_per_s': 147278.24604330867, 'e2e_pts_per_s': 82632.35697527275, 'blocked_s_max': 0.970794792054221, 'error': None}
+[throughput] scalar cairn-http N=1 {'metrics': 10, 'steps': 2000}
+   -> {'client_pts_per_s': 24643.90961220814, 'e2e_pts_per_s': 24468.941148501082, 'blocked_s_max': 0.5512587920529768, 'error': None}
+[throughput] scalar cairn-http N=4 {'metrics': 10, 'steps': 1000}
+   -> {'client_pts_per_s': 43447.47573698844, 'e2e_pts_per_s': 43147.87868977526, 'blocked_s_max': 0.6586845410056412, 'error': None}
+[throughput] scalar cairn-http N=16 {'metrics': 10, 'steps': 1000}
+   -> {'client_pts_per_s': 80834.09501673361, 'e2e_pts_per_s': 80576.85473804396, 'blocked_s_max': 0.9433947919169441, 'error': None}
+[throughput] scalar mlflow-sqlite N=1 {'metrics': 10, 'steps': 2000}
+   -> {'client_pts_per_s': 1166.0202262687267, 'e2e_pts_per_s': 1163.7071001001004, 'blocked_s_max': 0.583393999026157, 'error': None}
+[throughput] scalar mlflow-sqlite N=4 {'metrics': 10, 'steps': 1000}
+   -> {'client_pts_per_s': 2814.6958035056978, 'e2e_pts_per_s': 2803.9301951680086, 'blocked_s_max': 3.444662541616708, 'error': None}
+[throughput] scalar mlflow-sqlite N=16 {'metrics': 10, 'steps': 1000}
+   -> {'client_pts_per_s': 3247.5850587864375, 'e2e_pts_per_s': 3227.54032999681, 'blocked_s_max': 35.65947799291462, 'error': None}
+[throughput] scalar mlflow-sqlite-async N=1 {'metrics': 10, 'steps': 2000}
+   -> {'client_pts_per_s': 2502.2730545500385, 'e2e_pts_per_s': 2490.9282985357063, 'blocked_s_max': 0, 'error': None}
+[throughput] scalar mlflow-sqlite-async N=4 {'metrics': 10, 'steps': 1000}
+   -> {'client_pts_per_s': 1563.3180702930842, 'e2e_pts_per_s': 1555.5402006914567, 'blocked_s_max': 0, 'error': None}
+[throughput] scalar mlflow-sqlite-async N=16 {'metrics': 10, 'steps': 1000}
+   -> {'client_pts_per_s': None, 'e2e_pts_per_s': None, 'blocked_s_max': None, 'error': None}
+[throughput] scalar mlflow-postgres N=1 {'metrics': 10, 'steps': 2000}
+   -> {'client_pts_per_s': 1105.52439223135, 'e2e_pts_per_s': 1093.332743695216, 'blocked_s_max': 0, 'error': None}
+[throughput] scalar mlflow-postgres N=4 {'metrics': 10, 'steps': 1000}
+   -> {'client_pts_per_s': 3213.433351155652, 'e2e_pts_per_s': 3182.654775361011, 'blocked_s_max': 0, 'error': None}
+[throughput] scalar mlflow-postgres N=16 {'metrics': 10, 'steps': 1000}
+   -> {'client_pts_per_s': 3509.6562548274655, 'e2e_pts_per_s': 3483.841510309097, 'blocked_s_max': 0.2915482489624992, 'error': None}
+[throughput] media cairn-local N=1 {'metrics': 10, 'steps': 300, 'media_every': 3, 'media_px': 256}
+   -> {'client_pts_per_s': 3014.6517080681106, 'e2e_pts_per_s': 1904.9769942237872, 'blocked_s_max': 0.5837323339655995, 'error': None}
+[throughput] media cairn-local N=4 {'metrics': 10, 'steps': 300, 'media_every': 3, 'media_px': 256}
+   -> {'client_pts_per_s': 10412.915115738, 'e2e_pts_per_s': 7845.077803941499, 'blocked_s_max': 0.678551165969111, 'error': None}
+[throughput] media cairn-http N=1 {'metrics': 10, 'steps': 300, 'media_every': 3, 'media_px': 256}
+   -> {'client_pts_per_s': 2297.7961714852113, 'e2e_pts_per_s': 2287.4856708902475, 'blocked_s_max': 0.5610429169610143, 'error': None}
+[throughput] media cairn-http N=4 {'metrics': 10, 'steps': 300, 'media_every': 3, 'media_px': 256}
+   -> {'client_pts_per_s': 6853.899490154056, 'e2e_pts_per_s': 6826.5941680695605, 'blocked_s_max': 0.6812271249946207, 'error': None}
+[throughput] media mlflow-sqlite N=1 {'metrics': 10, 'steps': 300, 'media_every': 3, 'media_px': 256}
+   -> {'client_pts_per_s': 1070.826390997045, 'e2e_pts_per_s': 1067.261265645905, 'blocked_s_max': 0.11601958400569856, 'error': None}
+[throughput] media mlflow-sqlite N=4 {'metrics': 10, 'steps': 300, 'media_every': 3, 'media_px': 256}
+   -> {'client_pts_per_s': 2046.0447451212674, 'e2e_pts_per_s': 2010.2204913544479, 'blocked_s_max': 1.5241123759187758, 'error': None}
+[throughput] media mlflow-sqlite-async N=1 {'metrics': 10, 'steps': 300, 'media_every': 3, 'media_px': 256}
+   -> {'client_pts_per_s': 2237.7621692451235, 'e2e_pts_per_s': 2222.107826286003, 'blocked_s_max': 0, 'error': None}
+[throughput] media mlflow-sqlite-async N=4 {'metrics': 10, 'steps': 300, 'media_every': 3, 'media_px': 256}

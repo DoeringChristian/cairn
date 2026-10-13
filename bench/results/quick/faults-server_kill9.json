@@ -1,0 +1,90 @@
+{
+  "machine": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "cpu": "Apple M5 Pro",
+    "cpus": 18,
+    "memory_gb": 64.0,
+    "python": "3.13.13",
+    "disk_free_gb": 960.4,
+    "bench_root": "/private/tmp/claude-501/-Users-doeringc-workspace-cairn/a4b710e7-a868-4de6-aeef-f2b898ba3507/scratchpad/bench-f",
+    "cairn_checkout": "/Users/doeringc/workspace/cairn",
+    "cairn_python": "/Users/doeringc/workspace/cairn/.venv/bin/python",
+    "cairn_commit": "335bdc7d",
+    "cairn_branch": "dev/0.6",
+    "cairn_dirty": false,
+    "cairn_version": "0.5.0",
+    "harness_commit": "335bdc7d",
+    "time": "2026-10-13T10:56:10+0200"
+  },
+  "systems": [
+    "cairn-http",
+    "mlflow"
+  ],
+  "argv": [
+    "/Users/doeringc/workspace/cairn/faults/__main__.py",
+    "server_kill9",
+    "--systems",
+    "cairn-http,mlflow",
+    "--duration",
+    "20",
+    "--out",
+    "bench/results/quick/faults-server_kill9.json"
+  ],
+  "scenarios": {
+    "server_kill9": [
+      {
+        "system": "cairn-http",
+        "fault_at_step": 973,
+        "recovery_s": 4.6245839999755844,
+        "client_wal_left_after_finish": 0,
+        "client_raised": 0,
+        "client_first_errors": [],
+        "client_error": null,
+        "finish_error": null,
+        "client_killed": false,
+        "loop_blocked_s": 9.015680541982874,
+        "max_step_ms": 9015.680541982874,
+        "steps_over_100ms": 1,
+        "finish_s": 0.006326374947093427,
+        "steps_logged": 2000,
+        "loop_s": 19.991958874976262,
+        "expected": 10000,
+        "present": 10000,
+        "lost": 0,
+        "lost_accepted": 0,
+        "duplicated": 0,
+        "corrupted": 0,
+        "reordered": 0,
+        "readable": true,
+        "final_status": "completed",
+        "wall_s": 21.351534708985128
+      },
+      {
+        "system": "mlflow",
+        "fault_at_step": 916,
+        "recovery_s": 2.2751071250531822,
+        "client_raised": 0,
+        "client_first_errors": [],
+        "client_error": null,
+        "finish_error": null,
+        "client_killed": false,
+        "loop_blocked_s": 12.99566112505272,
+        "max_step_ms": 12995.66112505272,
+        "steps_over_100ms": 1,
+        "finish_s": 0.010128665948286653,
+        "steps_logged": 2000,
+        "loop_s": 26.507642499986105,
+        "expected": 10000,
+        "present": 10000,
+        "lost": 0,
+        "lost_accepted": 0,
+        "duplicated": 0,
+        "corrupted": 0,
+        "reordered": 0,
+        "readable": true,
+        "final_status": "FINISHED",
+        "wall_s": 48.314338834024966
+      }
+    ]
+  }
+}
