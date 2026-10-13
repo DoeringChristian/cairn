@@ -114,7 +114,14 @@ Not run: `partition_30s`, `slow_server`, `disk_full`, `torn_writes`,
 | server unreachable 30 s (RST) | 5160 lost until `cairn sync` | **0 lost without sync**, blocked 0.6 s*, recovery 0.6 s | n/a (no network) | 0 lost, blocked 30.9 s |
 | partition 30 s (black hole) | not run | **0 lost without sync**, blocked 0.6 s*, recovery 2.2 s | n/a | 0 lost, blocked **34.8 s** |
 | slow server (+250 ms/chunk) | not run | **0 lost**, 2000/2000 steps at full rate, blocked 0.7 s* | n/a | 0 lost, but only 27 of 2000 steps logged in 20 s (blocked 20.6 s) |
-| client kill -9 at t=10 s | **60 lost after ack** (sync: nothing to sync) | **30 lost after ack** (no sync and after sync) | **30 lost after ack** | 0 lost |
+| client kill -9 at t=10 s | **60 lost after ack** (sync: nothing to sync) | 0 lost, no sync needed (726a9cde; 30 lost before it) | 0 lost (726a9cde; 30 before) | 0 lost |
+
+**Fixed in 726a9cde:** the run log now hands every record to the OS before `track()` returns (fsync stays
+batched every 100 ms), so a killed process loses nothing it logged; a power loss still loses at most the
+last ~100 ms. Re-run of `client_kill9` (cairn-http and cairn-local): 0 lost, 0 duplicated, complete 0.04 s
+after the kill without `cairn sync` (`bench/results/quick-0.6/client_kill9-726a9cde.json`). Cost: `track()`
+of a scalar 5.7 µs → 11.4 µs (176k → 88k points/s in one process, no upload). The first `track()` of a
+scalar no longer imports every handler's dependencies (0.55 s → 0.1 ms).
 | server disk full (64 MB volume, released at t=25 s) | not run | **0 lost without sync**, blocked 0.9 s*, recovery 8.9 s, server stayed up | **0 lost**, recovery 8.7 s | 0 lost, blocked **31.8 s** |
 | 8 clients × 8 runs, flat out | not run | 0 lost / 0 dup of 80,000, max blocked 0.9 s* | 0 / 0 of 80,000, 0.9 s* | 0 / 0 of 80,000, max blocked **20.3 s** |
 | 2 processes, 1 run | not run | 0 lost / 0 dup (2 × 10,000) | 0 / 0 | 0 / 0 |
