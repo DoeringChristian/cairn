@@ -14,7 +14,7 @@ Usage::
     python examples/cluster_eval_attach.py --demo
 
     # the evaluation job alone, against the repo the training run lives in
-    CAIRN_REPO=/shared/nfs/.cairn python examples/cluster_eval_attach.py <run id>
+    CAIRN_REPO=cairn://<server>:4300 CAIRN_TOKEN=... python examples/cluster_eval_attach.py <run id>
     # e.g. as a SLURM job after the training job:
     sbatch --dependency=afterok:<train job> --wrap \\
         "python examples/cluster_eval_attach.py <run id>"
@@ -23,9 +23,9 @@ Usage::
 The model is the training run's ``log_model`` artifact,
 ``run-<run id>-model.json:latest``; pass ``--model <ref>`` for another one.
 
-Shared filesystem or HTTP: the evaluation job needs the same repo as the
-training run: the same directory (NFS, Lustre) or the same server
-(``CAIRN_REPO=cairn://<server>:4300`` plus ``CAIRN_TOKEN``).
+The evaluation job needs the same server as the training run
+(``CAIRN_REPO=cairn://<server>:4300`` plus ``CAIRN_TOKEN``); on one machine,
+the same local repo works too.
 
 Requirements: none beyond cairn.
 """

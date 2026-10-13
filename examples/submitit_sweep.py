@@ -4,17 +4,17 @@ Uses submitit.AutoExecutor with cluster="local" so the example works on any
 machine without a Slurm scheduler.  Each trial creates its own cairn.Run
 against a shared .cairn repo.
 
-**On a real Slurm cluster**: change ``cluster="local"`` to ``cluster="slurm"``
-and point ``repo=`` to an NFS-mounted directory visible to all nodes. Each
-Slurm job writes its own run log — no SQLite contention even with hundreds
-of concurrent jobs.  Run ``cairn server --repo <nfs path>/.cairn --ui`` on the
-login/head node to ingest the logs and serve the UI (ingest on :4300, UI on :4301).
-
-If your cluster does NOT have a shared filesystem, use Cairn's HTTP transport
-instead — point jobs at the server's ingest port (default 4300; auth is on by
-default, so also set ``CAIRN_TOKEN`` to the token the server prints)::
+**On a real Slurm cluster**: change ``cluster="local"`` to ``cluster="slurm"``,
+run ``cairn server --ui`` on the login/head node (uploads on :4300, UI on
+:4301) and point the jobs at it (auth is on by default, so also set
+``CAIRN_TOKEN`` to the token the server prints)::
 
     cairn.configure(repo="cairn://head-node:4300")
+
+Each job writes its own run directory (``./.cairn/runs/<id>/``) and uploads it
+in the background, so hundreds of concurrent jobs never contend. A job whose
+node cannot reach the server keeps its directory; ``cairn sync --server URL``
+uploads it later.
 
 Install submitit first::
 

@@ -424,6 +424,7 @@ def test_http_workers(live_server):
     run = cairn.Run("p", repo=url, run_id=rid, **QUIET)
     with pytest.raises(ValueError, match="exists"):
         cairn.Run("p", repo=url, run_id=rid, **QUIET)
+    run._writer.flush()  # the server has the run before a worker's log arrives
     w = cairn.attach(rid, "rank1", repo=url, system_metrics=False, capture_output=False)
     assert w.project == "p"
     w.track(1.0, "loss", step=0)

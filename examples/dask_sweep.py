@@ -6,13 +6,10 @@ Demonstrates two deployment modes:
    All workers share the filesystem — every run writes its own log.
 
 2. **SSHCluster** (multi-machine): workers on remote hosts.
-   Requires a shared filesystem (NFS) mounted at the same path on all
-   nodes. Workers write their run logs to the shared .cairn/ directory.
-
-   If you don't have a shared filesystem, use Cairn's HTTP transport
-   instead — run ``cairn server --ui`` on the head node and point workers at
-   its ingest port (default 4300; auth is on by default, so also set
-   ``CAIRN_TOKEN`` to the token the server prints)::
+   Run ``cairn server --ui`` on the head node and point workers at its
+   upload port (default 4300; auth is on by default, so also set
+   ``CAIRN_TOKEN`` to the token the server prints); each worker writes its
+   own run directory and uploads it in the background::
 
        cairn.configure(repo="cairn://head-node:4300")
 

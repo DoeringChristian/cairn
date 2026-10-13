@@ -1501,8 +1501,8 @@ def gc_cmd(dry_run: bool, repo: str | None, server: str | None) -> None:
     Blobs are shared between runs, reports and artifact versions, so deleting
     those never deletes blobs on the spot. This deletes every blob no run,
     artifact version, report or pending run log names and that is older than
-    a day, as the repo's ingest-lease holder (the server serving the repo, or
-    this command under the lease). A server also does it on its own after
+    a day, on the server that serves the repo (started for a local repo if
+    none runs). A server also does it on its own after
     runs are deleted.
     """
     with open_api(repo, server) as api:

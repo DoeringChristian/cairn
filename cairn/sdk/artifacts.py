@@ -562,9 +562,9 @@ class ArtifactVersion:
         return self._backend_obj
 
     def wait(self, timeout: float | None = None) -> ArtifactVersion:
-        """Block until the repo has registered this version (its run's log
-        is ingested: within ~2 s under a running ``cairn ui``/``cairn
-        server``, else this process catches up itself), then fill in
+        """Block until the server has registered this version (once the
+        logging run's directory has uploaded it, normally within a second of
+        its group commit; later if the server was unreachable), then fill in
         ``version``, ``aliases`` and the rest. Returns at once for a version
         that is not pending. Returns ``self``.
 

@@ -2,7 +2,7 @@
 
 Up to 0.5 every local ``cairn.Run`` appended its writes to
 ``<repo>/wals/<run_id>[~<label>].wal.jsonl`` (one JSON record per line) and
-whichever process held the repo's ingest lease applied them to the database.
+whichever process held the repo's ingest lease (0.5) applied them to the database.
 0.6 has no client-side ingestion: runs upload to the server. A repo upgraded
 from 0.5 may still hold logs that were not (fully) applied; the server
 imports them once, at startup (``import_legacy_logs``), with the 0.5 ingester

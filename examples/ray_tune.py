@@ -9,10 +9,8 @@ writes its own log, so this works out of the box.
 
 **Multi-machine Ray cluster**: workers run on different nodes.
 
-  - With shared filesystem (NFS): pass the NFS-mounted .cairn/ path as
-    ``repo=``. Workers write their run logs to the shared directory.
-
-  - Without shared filesystem: use Cairn's HTTP transport instead::
+  Run a cairn server on the head node and point the trainables at it (each
+  worker writes its own run directory and uploads it in the background)::
 
         # On the head node (ingest on :4300, UI on :4301):
         cairn server --ui

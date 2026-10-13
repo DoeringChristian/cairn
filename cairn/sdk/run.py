@@ -1201,9 +1201,9 @@ class Run:
             The ``ArtifactVersion`` (``.get()`` for a logged object,
             ``.download()`` for files).
 
-        On a local repo the repo first catches up on every pending log (on
-        the server that serves it, or here), so a version logged by another
-        run that has finished logging is found.
+        The ref is resolved on the server. A version this run logged itself
+        is waited for (up to 10 s) while its upload is on the way; one logged
+        by another run is found once that run's directory has uploaded it.
 
         Raises:
             LookupError: No such artifact, alias or version.

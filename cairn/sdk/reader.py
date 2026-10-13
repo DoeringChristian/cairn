@@ -1588,8 +1588,7 @@ class _Backend(Protocol):
 
 def _edit(backend: Any, method: str, *args: Any) -> Any:
     """Call a registry write on a writer transport for the backend's target
-    (``open_writer``: the server holding the repo, or the repo under its
-    ingest lease)."""
+    (``open_writer``: the server of the backend's repo or URL)."""
     from .connect import open_writer
 
     t = open_writer(backend.edit_target)[0]
