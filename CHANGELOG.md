@@ -1,5 +1,138 @@
 # Changelog
 
+## 0.6.0 — unreleased
+
+Data integrity first: a run writes only its own run directory, a separate
+uploader sends it to the server exactly once, and the server is the only
+writer of the database. Upgrading a 0.5 repo is automatic and lossless. See
+[Run directories, syncing and backup](docs/guides/run-directories.md).
+
+Phase 0 measured the 0.5 design against MLflow (`bench/REPORT.md`, partial,
+`quick` scale): a `kill -9` of a cairn-http client lost 60 points that
+`track()` had already returned for, and during a 30 s server outage 5160
+points stayed in the client log until a manual `cairn sync`. 0.6 closes both:
+records are on disk (group commit) before they count, and the uploader
+retries on its own, also after the training process is gone.
+
+### Breaking
+
+- **Runs no longer write the repo.** A run writes `$CAIRN_DIR/runs/<id>/`
+  (default `./.cairn/runs/<id>/`) and nothing else; the uploader sends it to
+  the server, local or remote. There is no client-side ingestion, no ingest
+  lease and no `<repo>/wals/` any more.
+- **A repo is served by one server, on a local disk.** `cairn.Reader`, every
+  CLI command and `cairn ui` talk HTTP only; on a local repo they use the
+  repo's server and start one in the background when none runs. The server
+  refuses a repo on a network filesystem (NFS, SMB, sshfs, Lustre, GPFS,
+  Ceph, ...); `CAIRN_ALLOW_NETWORK_DB=1` overrides at your own risk. Jobs on
+  several nodes log to a server over HTTP instead of sharing a repo on NFS.
+- **`cairn sync`** uploads run directories: `cairn sync [PATHS] [--server
+  URL] [--clean]`. It no longer takes `--repo` and no longer replays the 0.5
+  client logs.
+- **`CAIRN_WAL_DIR` is gone**, with the client log of server-mode runs in the
+  user cache directory (`…/cairn/wal/`) and its rejected-writes file
+  (`<run_id>.dead.jsonl`). Logs a 0.5 server-mode run left there are not
+  imported: replay them with cairn 0.5's `cairn sync` before upgrading.
+  `CAIRN_CACHE_DIR` now only holds the Reader's blob cache.
+- **`timeout`** (the `Run` argument) is now only the HTTP timeout of the
+  reads a run makes; how long `finish()` waits for the upload is
+  `CAIRN_FINISH_TIMEOUT`.
+- **`log_artifact` always returns a pending version** (`version` None until
+  the server applies the record; `.wait()`), also against a server.
+- **Runs are `crashed`, not `killed`, when they go silent**: a run whose
+  primary log had no record applied for 5 minutes, on a server as on a local
+  repo. The 120 s heartbeat timeout (`killed`) now only applies to runs
+  written through the direct HTTP write routes, which the SDK no longer
+  uses.
+- **Schema version 3** (`ingest_progress`). A database from a newer cairn is
+  refused.
+
+### Added
+
+- **Run directories** (`run.json`, a record log in `log/`, `blobs/<sha256>`,
+  `procs/<label>/` for attached processes, `acked`, `FINISHED`). The log is
+  CRC-framed, so a torn tail after a crash is read up to the last complete
+  record. Group commit: records are written and `fsync`ed at most every
+  100 ms (`CAIRN_SYNC_INTERVAL_MS`), and at once on `finish()`, at exit and
+  on SIGTERM/SIGINT; a blob is synced before the record that names it.
+  `track()` never waits on the network.
+- **Uploader daemon**, one per user and machine, started by the first run
+  (`python -m cairn sync --daemon`, state in `CAIRN_AGENT_DIR`, default
+  `~/.local/state/cairn/agent`). Uploads each run directory exactly once per
+  (run, log, record), blobs first; keeps uploading after the training
+  process is killed; backs off from 1 s to 60 s and honours `Retry-After`;
+  exits after 10 minutes with nothing to do (`CAIRN_AGENT_IDLE_EXIT`).
+  `CAIRN_UPLOADER=off` leaves run directories for `cairn sync`.
+- **`finish()` waits for the upload**, up to `CAIRN_FINISH_TIMEOUT` seconds
+  (default 30), and prints how many records are still pending if the server
+  has not confirmed them.
+- **Working offline.** A run that cannot reach its server keeps logging to
+  its directory. `cairn sync` uploads directories in the foreground (to the
+  server each one names, or `--server URL`); `cairn sync --clean` then
+  deletes the finished runs the server confirmed completely and never
+  anything unconfirmed. Run directories are kept after upload otherwise.
+- **Background server for local repos**: `cairn server --repo <repo>
+  --daemon` (loopback, free port, auth on, `--idle-timeout`, default
+  `CAIRN_SERVER_IDLE_TIMEOUT` = 1800 s), registered in `<repo>/server.json`
+  with `<repo>/server.lock` and output in `<repo>/server.log`. Clients reuse
+  it, wait for one that is still starting instead of starting a second, and
+  start it when none runs. `cairn ui` on a served repo opens that server's
+  viewer. `POST /api/server/shutdown` stops a background server.
+- **Upload protocol**: `GET`/`POST /api/ingest/runs/{run_id}/logs/{log}`
+  (`applied_seq`; records applied in one transaction with the progress,
+  duplicates ignored; 409 for a gap or `missing_blobs`, 503 + `Retry-After`
+  when busy or waiting for the run, 413 over 8 MiB, gzip accepted) and
+  `HEAD`/`PUT /api/blobs/{sha256}` (hash checked on upload).
+- **`cairn backup [--to PATH]`**: an online, consistent copy of the
+  database in `<repo>/backups/` (`POST /api/admin/backup`), optionally
+  downloaded.
+- **`cairn fsck [--repair] [--runs-dir DIR]`**: SQLite integrity check,
+  missing, corrupt and orphan blobs, orphan artifact rows, upload progress of
+  deleted runs, 0.5 logs not imported yet, and this machine's run
+  directories against what the server applied (`POST /api/admin/fsck`).
+  `--repair` quarantines corrupt blobs in `<repo>/quarantine/`, drops
+  artifact rows of missing blobs and rewinds `acked` so lost records are
+  uploaded again.
+- **Downsampled scalar series**:
+  `GET /api/runs/{id}/series/{name}?x=step&buckets=N&from=&to=` returns per
+  bucket the first and last step, min, max, last value and point count (up
+  to 10,000 buckets).
+- **`cairn report pull` / `push`**: write a report's source to a file and
+  create or update a report from one, refusing to overwrite a report that
+  changed since the pull (`--force`). `cairn.Reader().reports(project)` and
+  `.report(id)` read reports from Python.
+- **`cairn ping`** on a local repo reports 0.5 run logs not imported yet and
+  the server serving the repo.
+
+### Changed
+
+- **Lossless upgrade from 0.5.** The first 0.6 server to open a 0.5 repo
+  backs the database up to `<repo>/backups/cairn-<UTC time>-pre-0.6.db`,
+  migrates the schema additively, imports the 0.5 run logs still pending in
+  `<repo>/wals/` exactly once (with the 0.5 ingester) and renames them
+  `*.imported`. Nothing is deleted. Tested against a repo written by the
+  released v0.5.0 code.
+- **Resume, rewind and fork** read the run from its directory when it is on
+  this machine, else from the server. A process that continues a run whose
+  log may exist elsewhere (a resume on another machine) writes a log under a
+  fresh name, so its records never collide with ones the server applied.
+- **Several processes, one run**: each process's log is uploaded on its own;
+  a worker started before its primary has its records held by the server
+  until the run exists. Label uniqueness is checked with a lock on the
+  label's log on the same machine.
+- **`cairn gc`** runs on the server serving the repo.
+- **`cairn viewer dev`** and the report share commands work on a local repo
+  through its server (started when needed).
+
+### Removed
+
+- The 0.5 write paths, without shims: `LocalTransport` / `RepoTransport`
+  (runs and CLI writing the database in-process), the HTTP client's
+  write-ahead log, spill files and dead-letter file, `MetricBuffer`, the
+  ingest lease (`<repo>/ingest.lease`) and the client-side ingester, and the
+  Reader's direct SQLite reads.
+- `POST /api/ingest/pending`.
+
 ## 0.5.0 — 2026-10-09
 
 Run management as in wandb: runs organised by name, group and job type, a
