@@ -173,6 +173,7 @@ markers = [
     "media: tests that require media extras (matplotlib/plotly/imageio/soundfile)",
     "network: tests that use real network sockets",
     "slow: slow tests (perf benchmarks)",
+    "real_daemons: local repos are served by real daemon subprocesses, not in-process test servers",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning:pynvml",

@@ -43,7 +43,6 @@ from .artifacts import Artifact, ArtifactVersion, draft_from_shorthand
 from .buffer import MetricBuffer
 from .connect import open_transport
 from .gallery import GalleryItem, resolve_gallery
-from .local import LocalTransport, RepoTransport
 from .run_ids import auto_label, check_label, check_run_id, env_run_id, new_run_id
 from .scope import Scope
 from .summary_media import check_summary_names, media_paths, upload_media
@@ -246,7 +245,7 @@ class Run:
         source_max_file_size_mb: float = 1.0,
         timeout: float = 10.0,
         registry: HandlerRegistry | None = None,
-        transport: Transport | LocalTransport | None = None,
+        transport: Transport | None = None,
         mode: str | None = None,
         on_stop: Callable[["Run"], Any] | None = None,
         stop_mode: str = "interrupt",
@@ -1280,9 +1279,9 @@ class Run:
 
     def _viewer_source(self) -> tuple[str | None, str | None]:
         """``(server, repo_path)``: where the run page renders from."""
-        if self._server.startswith("file://"):
-            root = getattr(getattr(self._transport, "data_dir", None), "root", None)
-            return None, (str(root) if root is not None else None)
+        root = getattr(self._transport, "repo_root", None)
+        if root is not None:
+            return None, str(root)
         return self._server, None
 
     def display(self, tab: str = "workspace", height: int = 720) -> Any:
@@ -1799,11 +1798,10 @@ def log_draft(
 
 def backend_for_transport(transport: Any) -> Any:
     """A Reader backend over the same target as a writer transport."""
-    from .reader import _HttpBackend, _LocalBackend
+    from .reader import _HttpBackend
 
-    if isinstance(transport, (LocalTransport, RepoTransport)):
-        return _LocalBackend(transport.data_dir.root)
-    return _HttpBackend(transport.server_url, token=getattr(transport, "token", None))
+    return _HttpBackend(transport.server_url, token=getattr(transport, "token", None),
+                        repo_path=getattr(transport, "repo_root", None))
 
 
 def configure(**kwargs: Any) -> None:

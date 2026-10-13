@@ -1,6 +1,6 @@
 """Stopping a run from the UI: ``POST /api/runs/{id}/stop`` sets
-``stop_requested``; the heartbeat hands it back on every write path (HTTP,
-LocalTransport direct, LocalTransport WAL) and the SDK run ends "stopped"."""
+``stop_requested``; the heartbeat hands it back (also to a run whose log is
+uploaded: its heartbeat record) and the SDK run ends "stopped"."""
 
 from __future__ import annotations
 
@@ -10,13 +10,7 @@ import time
 import pytest
 
 import cairn
-from cairn.sdk.local import LocalTransport
 from cairn.sdk.transport import Transport
-from cairn.server import ingest_ops
-from cairn.server.storage.blobs import BlobStore
-from cairn.server.storage.datadir import DataDir
-from cairn.server.storage.db import Database
-from cairn.server.wal_ingest import ingest_all
 
 
 def test_http_stop_route_and_heartbeat(client):
@@ -48,23 +42,20 @@ def test_http_transport_heartbeat_returns_flag(live_server):
         t.close()
 
 
-def test_local_heartbeat_reads_flag(tmp_path):
-    repo = tmp_path / ".cairn"
-    t = LocalTransport(repo)
-    rid = t.create_run({"project": "p", "run_id": "a" * 32})["run_id"]
-    try:
-        dd = DataDir(repo)
-        db = Database.open(dd.db_path)
-        ingest_all(dd, db, BlobStore(dd.artifacts_dir))  # the run is live
-        assert t.heartbeat(rid) is None
-        ts = ingest_ops.request_stop(db, rid)
-        assert t.heartbeat(rid) == ts
-        t.finish_run(rid, "stopped")
-    finally:
-        t.close()
-    ingest_all(dd, db, BlobStore(dd.artifacts_dir))  # the rest of the log
-    row = db.read_columns("SELECT status, stop_requested FROM runs WHERE id = ?", [rid])[0]
-    db.close()
+def test_uploaded_heartbeat_keeps_the_stop_request(client):
+    rid = "a" * 32
+    url = f"/api/ingest/runs/{rid}/logs/main"
+    client.post(url, json={"from_seq": 1, "records": [
+        {"seq": 1, "op": "create_run", "payload": {"project": "p", "run_id": rid}},
+    ]})
+    ts = client.post(f"/api/runs/{rid}/stop").json()["stop_requested"]
+    client.post(url, json={"from_seq": 2, "records": [
+        {"seq": 2, "op": "heartbeat", "payload": {"run_id": rid}},
+        {"seq": 3, "op": "finish", "payload": {"run_id": rid, "status": "stopped"}},
+    ]})
+    row = client.app.state.db.read_columns(
+        "SELECT status, stop_requested FROM runs WHERE id = ?", [rid],
+    )[0]
     assert row == {"status": "stopped", "stop_requested": ts}
 
 
@@ -76,14 +67,14 @@ def _run(repo, **kw) -> cairn.Run:
 
 
 def _request_stop(repo, rid):
-    """What the UI's Stop button does, through the repo's lease holder."""
-    from cairn.sdk.local import RepoTransport
+    """What the UI's Stop button does, through the repo's server."""
+    from cairn.sdk.connect import open_writer
 
-    rt = RepoTransport(repo)
+    t, _url = open_writer(repo)
     try:
-        return rt.under_lease(lambda db: ingest_ops.request_stop(db, rid))
+        return t.post_json(f"/api/runs/{rid}/stop", {}).json()["stop_requested"]
     finally:
-        rt.close()
+        t.close()
 
 
 def _wait(pred, timeout=5.0):

@@ -103,22 +103,11 @@ def viewer_ls(project: str, all_versions: bool, repo: str | None) -> None:
 
 def _list(project: str, all_versions: bool, repo: str | None) -> list[dict[str, Any]]:
     from .sdk.connect import open_writer
-    from .sdk.local import RepoTransport
-    from .server.custom_viewers import builtin_viewers, published_viewers
     from .server.routes._common import slugify
 
     transport, _url = open_writer(repo)
     try:
-        http: Any = transport
-        if isinstance(transport, RepoTransport):
-            http = transport.served_by()
-            if http is None:
-                # The same list a server answers with: built-ins first.
-                builtins = [v.entry() for v in builtin_viewers().values()]
-                return builtins + transport.under_lease(
-                    lambda db: published_viewers(db, slugify(project), all_versions=all_versions),
-                )
-        resp = http.get(
+        resp = transport.get(
             f"/api/projects/{slugify(project)}/viewers",
             params={"all_versions": "1"} if all_versions else None,
         )
@@ -134,30 +123,19 @@ def _list(project: str, all_versions: bool, repo: str | None) -> list[dict[str, 
 @click.option("--interval", default=0.5, show_default=True, help="Seconds between folder scans.")
 def viewer_dev(folder: Path, project: str, repo: str | None, interval: float) -> None:
     """Serve FOLDER live to a running server: every change reloads the viewer
-    in open cards. Needs a running ``cairn ui``/``cairn server`` (write
-    access): a local repo that a ``cairn ui`` serves connects to that server.
+    in open cards, on the target's server (write access; a local repo's
+    server is started when none serves it).
     The dev source disappears ~30 s after this stops. It is never part of a
     report or share link."""
     import httpx
 
     from .sdk.connect import open_writer
     from .sdk.custom_viewers import DevSync
-    from .sdk.local import RepoTransport
     from .server.routes._common import slugify
     from .server.viewer_manifest import ManifestError
 
     transport, url = open_writer(repo)
-    if isinstance(transport, RepoTransport):
-        served = transport.served_by()
-        if served is None:
-            transport.close()
-            raise click.ClickException(
-                "`cairn viewer dev` needs a running server: start `cairn ui` on this repo (or pass --server URL)"
-            )
-        url = served.server_url
-        token = served.token
-    else:
-        token = getattr(transport, "token", None)
+    token = getattr(transport, "token", None)
     transport.close()
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     client = httpx.Client(base_url=url, headers=headers, timeout=30.0)

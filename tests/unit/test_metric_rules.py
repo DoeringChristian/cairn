@@ -13,11 +13,9 @@ import cairn
 def _final_metric(db, run_id, name):
     return resolved_values(db, [run_id])[run_id].get(name)
 from cairn.server import ingest_ops
-from cairn.server.storage.blobs import BlobStore
 from cairn.server.storage.datadir import DataDir
 from cairn.server.storage.db import Database
 from cairn.server.metric_rules import project_rules, resolved_values
-from cairn.server.wal_ingest import ingest_all
 from cairn.sdk.transport import Transport
 
 QUIET = dict(
@@ -124,7 +122,6 @@ def test_sdk_local(tmp_path):
     dd = DataDir(repo)
     db = Database.open(dd.db_path)
     try:
-        ingest_all(dd, db, BlobStore(dd.artifacts_dir))  # applies the run's log
         assert _rules(db, run.id) == EXPECTED
     finally:
         db.close()
@@ -256,7 +253,6 @@ def test_filters_use_the_resolved_final_value(tmp_path):
     dd = DataDir(repo)
     db = Database.open(dd.db_path)
     try:
-        ingest_all(dd, db, BlobStore(dd.artifacts_dir))
         rid = next(r.id for r in q if r.name == "ruled")
         assert _final_metric(db, rid, "loss") == 1.0
         assert _final_metric(db, rid, "val.acc") == 0.5

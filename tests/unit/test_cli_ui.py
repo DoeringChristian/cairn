@@ -174,8 +174,9 @@ def test_cairn_ui_standalone(fresh_repo: Path):
 
 
 @pytest.mark.slow
-def test_cairn_ui_errors_when_server_running(fresh_repo: Path):
-    """Starting `cairn ui` on a repo held by `cairn server` must fail fast."""
+def test_cairn_ui_errors_when_the_running_server_has_no_viewer(fresh_repo: Path):
+    """`cairn ui` on a repo an ingest-only `cairn server` serves fails fast:
+    that server is the repo's one server, and it has no viewer."""
     ingest_port = _free_port()
     ui_port_server = _free_port()
     while ui_port_server == ingest_port:
@@ -223,10 +224,45 @@ def test_cairn_ui_errors_when_server_running(fresh_repo: Path):
         )
         assert r.returncode != 0
         combined = (r.stdout or "") + (r.stderr or "")
-        assert "already served" in combined
+        assert "without the viewer" in combined
     finally:
         server_proc.send_signal(signal.SIGINT)
         server_proc.wait(timeout=10)
+
+
+@pytest.mark.slow
+def test_cairn_ui_reuses_a_running_viewer(fresh_repo: Path):
+    """`cairn ui` on a repo a `cairn server --ui` serves opens that viewer
+    (a one-time login link) and returns; a second server is refused."""
+    port, ui_port = _free_port(), _free_port()
+    while ui_port == port:
+        ui_port = _free_port()
+    server_proc = subprocess.Popen(
+        [sys.executable, "-m", "cairn", "server", "--repo", str(fresh_repo), "--host",
+         "127.0.0.1", "--port", str(port), "--ui-port", str(ui_port), "--ui"],
+        cwd=str(REPO_ROOT), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+    )
+    try:
+        assert _wait_ready(f"http://127.0.0.1:{port}/api/health")
+        deadline = time.time() + 10
+        while not (fresh_repo / "server.json").exists() and time.time() < deadline:
+            time.sleep(0.05)
+        r = subprocess.run(
+            [sys.executable, "-m", "cairn", "ui", "--repo", str(fresh_repo), "--no-open-browser"],
+            cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=20,
+        )
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert f"localhost:{ui_port}" in r.stdout and "/login?otp=" in r.stdout
+        second = subprocess.run(
+            [sys.executable, "-m", "cairn", "server", "--repo", str(fresh_repo), "--host",
+             "127.0.0.1", "--port", str(_free_port())],
+            cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=20,
+        )
+        assert second.returncode == 1 and "already served" in second.stdout + second.stderr
+    finally:
+        server_proc.send_signal(signal.SIGINT)
+        server_proc.wait(timeout=10)
+    assert not (fresh_repo / "server.json").exists()
 
 
 def test_cairn_ui_remote_repo_selects_local_proxy(monkeypatch):

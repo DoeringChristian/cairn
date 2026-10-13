@@ -19,7 +19,6 @@ import cairn
 from cairn.sdk.transport import Transport
 from cairn.server import progress
 from cairn.server.storage.migrations import apply_migrations
-from tests.conftest import ingest_repo
 
 _RUN_KW = {
     "capture_source": False,
@@ -127,20 +126,12 @@ def test_migration_adds_progress_columns(tmp_path):
     con.close()
 
 
-# ---- local runs (the run log) ------------------------------------------------------
+# ---- local runs (through the repo's server) ------------------------------------------------------
 
 
 def _local_progress(repo, run_id):
-    from cairn.sdk.local import RepoTransport
-    from cairn.server.routes._common import api_run_row
-
-    rt = RepoTransport(repo)
-    try:
-        rows = rt.under_lease(
-            lambda db: db.read_columns("SELECT * FROM runs WHERE id = ?", [run_id]))
-    finally:
-        rt.close()
-    return api_run_row(rows[0])["progress"]
+    with cairn.Reader(repo) as reader:
+        return reader.run(run_id)._raw["progress"]
 
 
 def test_local_total_steps_from_max_logged_step(tmp_path):
@@ -244,11 +235,7 @@ def test_progress_ops_are_exactly_once(tmp_path):
     repo = tmp_path / ".cairn"
     with cairn.Run("p", repo=repo, total_steps=10, **_RUN_KW) as run:
         run.track(1.0, "loss", 4)
-        ingest_repo(repo)
-        ingest_repo(repo)
         run.progress(1, total=2)
-    ingest_repo(repo)
-    ingest_repo(repo)
     p = _local_progress(repo, run.id)
     assert (p["current"], p["total"]) == (1, 2)
 

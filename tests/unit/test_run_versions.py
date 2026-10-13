@@ -7,13 +7,16 @@ import io
 import sqlite3
 
 import cairn
-from cairn.sdk.local import LocalTransport
-from cairn.server import wal_ingest
+import json
+
+from fastapi.testclient import TestClient
+
+from cairn.server import legacy_wal_import, record_apply
+from cairn.server.app import create_app
 from cairn.server.storage.blobs import BlobStore
 from cairn.server.storage.datadir import DataDir
 from cairn.server.storage.db import Database
 from cairn.server.storage.migrations import apply_migrations
-from cairn.server.wal_ingest import ingest_all
 
 QUIET = {"capture_source": False, "capture_stdout": False, "capture_env": False,
          "capture_system_metrics": False}
@@ -153,91 +156,88 @@ def test_import_takes_the_next_number(client):
     assert _version(client, imported[0]["new_id"]) == 3
 
 
-# ---- local repo (run logs) --------------------------------------------------
+# ---- uploaded run logs ----------------------------------------------------
 
 
-class _Ingester:
-    def __init__(self, repo):
-        self.dd = DataDir(repo)
-        self.db = Database.open(self.dd.db_path)
-        self.blobs = BlobStore(self.dd.artifacts_dir)
-
-    def ingest(self) -> int:
-        return ingest_all(self.dd, self.db, self.blobs)
-
-    def versions(self) -> dict[str, int | None]:
-        return {r["id"]: r["version"] for r in self.db.read_columns("SELECT id, version FROM runs")}
-
-    def counter(self, name: str) -> int:
-        return self.db.read_one(
-            "SELECT last_version FROM run_series WHERE name = ? AND grouped = 0", [name],
-        )[0]
-
-    def close(self) -> None:
-        self.db.close()
+def _versions(db) -> dict[str, int | None]:
+    return {r["id"]: r["version"] for r in db.read_columns("SELECT id, version FROM runs")}
 
 
-def test_log_create_is_numbered_once_under_a_restart_mid_ingest(tmp_path, monkeypatch):
-    """The ingester dies while applying the second run's create (after it
-    took a number): the rollback takes the counter back with it, so after the
-    restart the runs are 1 and 2, not 1 and 3. A restarted ingester never
-    re-applies an ingested create."""
-    repo = tmp_path / ".cairn"
+def _counter(db, name: str) -> int:
+    return db.read_one(
+        "SELECT last_version FROM run_series WHERE name = ? AND grouped = 0", [name],
+    )[0]
+
+
+def _create_records(rid: str, name: str, **extra) -> list[dict]:
+    return [
+        {"seq": 1, "op": "create_run", "payload": {"project": "p", "run_id": rid, "name": name, **extra}},
+        {"seq": 2, "op": "rename_run", "payload": {"run_id": rid, "name": name}},  # no new number
+    ]
+
+
+def test_upload_is_numbered_once_when_the_apply_fails_mid_batch(tmp_path, monkeypatch):
+    """The server fails while applying the second run's create (after it
+    took a number): the batch's transaction rolls back with the counter, so
+    once the uploader retries the runs are 1 and 2, not 1 and 3; a replayed
+    batch is not applied again."""
     ids = ["1" * 32, "2" * 32]
-    for rid in ids:
-        t = LocalTransport(repo)
-        t.create_run({"project": "p", "run_id": rid, "name": "train"})
-        t.rename_run(rid, "train")  # same name: no new number
-        t.close()
-
-    real = wal_ingest._apply_record
+    real = record_apply._apply_record
     calls = {"n": 0}
 
     def dying(*a, **kw):
         calls["n"] += 1
-        if calls["n"] == 3:  # the second log's create, after the first's
+        if calls["n"] == 3:  # the second run's create
             raise sqlite3.OperationalError("simulated crash before commit")
         return real(*a, **kw)
 
-    first = _Ingester(repo)
-    monkeypatch.setattr(wal_ingest, "_apply_record", dying)
-    first.ingest()
-    monkeypatch.setattr(wal_ingest, "_apply_record", real)
-    first.close()  # the restart
+    app = create_app(data_dir=tmp_path / ".cairn")
+    with TestClient(app, raise_server_exceptions=False) as client:
+        def upload(rid: str) -> int:
+            return client.post(f"/api/ingest/runs/{rid}/logs/main", json={
+                "from_seq": 1, "records": _create_records(rid, "train"),
+            }).status_code
 
-    second = _Ingester(repo)
-    second.ingest()
-    assert sorted(second.versions().values()) == [1, 2]
-    assert second.counter("train") == 2
-    second.ingest()
-    assert second.counter("train") == 2
-    second.close()
+        monkeypatch.setattr(record_apply, "_apply_record", dying)
+        assert upload(ids[0]) == 200
+        assert upload(ids[1]) == 500
+        monkeypatch.setattr(record_apply, "_apply_record", real)
+        assert upload(ids[1]) == 200
+        db = app.state.db
+        assert sorted(_versions(db).values()) == [1, 2]
+        assert _counter(db, "train") == 2
+        assert upload(ids[0]) == 200 and upload(ids[1]) == 200  # replays
+        assert _counter(db, "train") == 2
+        r = client.post(f"/api/ingest/runs/{ids[0]}/logs/main", json={
+            "from_seq": 3,
+            "records": [{"seq": 3, "op": "rename_run", "payload": {"run_id": ids[0], "name": "eval"}}],
+        })
+        assert r.json() == {"applied_seq": 3}
+        assert client.post(f"/api/ingest/runs/{'3' * 32}/logs/main", json={
+            "from_seq": 1, "records": _create_records("3" * 32, "train"),
+        }).status_code == 200
+        v = _versions(db)
+        assert v["3" * 32] == 3 and v[ids[0]] == 1
+        assert _counter(db, "train") == 3 and _counter(db, "eval") == 1
 
-    t = LocalTransport(repo)
-    t.create_run({"project": "p", "run_id": "3" * 32, "name": "train"})
-    t.rename_run(ids[0], "eval")
-    t.close()
-    third = _Ingester(repo)
-    third.ingest()
-    v = third.versions()
-    assert v["3" * 32] == 3 and v[ids[0]] == 1
-    assert third.counter("train") == 3 and third.counter("eval") == 1
-    third.close()
 
-
-def test_waiting_logs_are_numbered_in_creation_order(tmp_path):
-    """Logs ingested together are applied in the order their runs were
-    created, not by file name (the random run id): the later run, whose id
-    sorts first, still gets the higher version."""
-    repo = tmp_path / ".cairn"
+def test_waiting_legacy_logs_are_numbered_in_creation_order(tmp_path):
+    """0.5 run logs imported together are applied in the order their runs
+    were created, not by file name (the random run id): the later run, whose
+    id sorts first, still gets the higher version."""
+    dd = DataDir(tmp_path / ".cairn")
+    wals = dd.root / "wals"
+    wals.mkdir()
     for rid, created in (("9" * 32, "2026-10-08T10:00:00+00:00"), ("1" * 32, "2026-10-08T10:00:01+00:00")):
-        t = LocalTransport(repo)
-        t.create_run({"project": "p", "run_id": rid, "name": "train", "created_at": created})
-        t.close()
-    ing = _Ingester(repo)
-    ing.ingest()
-    assert ing.versions() == {"9" * 32: 1, "1" * 32: 2}
-    ing.close()
+        (wals / f"{rid}.wal.jsonl").write_text(json.dumps({"seq": 1, "op": "create_run", "payload": {
+            "project": "p", "project_id": "p", "run_id": rid, "name": "train", "created_at": created,
+        }}) + "\n")
+    db = Database.open(dd.db_path)
+    try:
+        legacy_wal_import.import_legacy_logs(dd, db, BlobStore(dd.artifacts_dir))
+        assert _versions(db) == {"9" * 32: 1, "1" * 32: 2}
+    finally:
+        db.close()
 
 
 def test_sdk_run_version_on_a_local_repo(tmp_path):

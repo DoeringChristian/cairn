@@ -21,7 +21,7 @@ import cairn
 from cairn import cli, config
 from cairn.server.app import create_app
 from cairn.server.storage.datadir import DataDir
-from tests.conftest import _find_free_port, ingest_repo
+from tests.conftest import _find_free_port
 
 QUIET = dict(capture_source=False, capture_stdout=False, capture_env=False,
              capture_system_metrics=False)
@@ -133,8 +133,10 @@ def test_ping(target):
         assert health["repo"] == str(target.root.resolve())
         assert (health["projects"], health["runs"], health["series"], health["points"]) == (2, 4, 1, 3)
         assert health["artifact_versions"] == 3 and health["reports"] == 1
-        assert health["schema_version"] == 2 and health["layout_version"] == "3"
-        assert health["served_by"] is None and health["pending_wal_logs"] == 0
+        assert health["schema_version"] == 3 and health["layout_version"] == "3"
+        # Answered by the repo's server (started for the command).
+        assert health["served_by"].startswith("http://127.0.0.1:")
+        assert health["pending_legacy_logs"] == 0
     else:
         assert "version" in health and "uptime_sec" in health
 
@@ -367,8 +369,8 @@ def test_reports(target, tmp_path):
 
     result = target.run("report", "share", rid, ok=False)
     assert result.exit_code == 1
-    assert ("is a local repo: share links need a server with auth" if target.kind == "local"
-            else "runs without auth (--no-auth)") in result.output
+    # The test servers (a local repo's too) run without auth.
+    assert "runs without auth (--no-auth)" in result.output
 
     assert target.run("report", "rm", rid).output.strip() == f"deleted {rid}"
     result = target.run("report", "show", rid, ok=False)
@@ -457,34 +459,28 @@ def test_missing_local_repo_is_one_line(tmp_path):
 
 
 def test_a_served_local_repo_is_reached_through_its_server(tmp_path):
-    """Writes to a repo whose ingest lease a live `cairn ui` holds go to that
-    server; `open` finds its viewer."""
-    import os
-    import time
-
+    """Commands on a repo a live `cairn ui` serves (registered in its
+    server.json) go to that server; `open` finds its viewer."""
     from cairn import viewer
     from cairn.cli_target import open_api
-    from cairn.server.storage import lease as lease_mod
+    from cairn.server.registration import remove_info, write_info
 
     if not viewer.is_available():
         pytest.skip("cairn-ui viewer not installed")
     root = tmp_path / "cairn"
     with cairn.Run("proj", name="r", repo=str(root), **QUIET) as run:
         rid = run.id
-    ingest_repo(root)
+    # The test server that served the run stops: the repo is free again.
+    from tests.conftest import _SERVERS
+
+    _SERVERS.stop_repo(root)
     app = create_app(data_dir=root, mount_ui=True, background_tasks=False)
     with _serve(app) as url:
         port = int(url.rsplit(":", 1)[1])
-        dd = DataDir(root)
-        # The lease as `cairn ui` in another process holds it.
-        lease_mod.lease_path(dd.root).write_text(json.dumps({
-            "host": lease_mod.hostname(), "pid": os.getppid(), "token": "t" * 32,
-            "mode": "ui", "url": url, "expires_at": time.time() + 120,
-        }))
-        dd.add_live_server("ui", host="127.0.0.1", port=port)
+        write_info(root, url=url, token=None, ui_url=url)
         try:
             with open_api(str(root), None) as api:
-                assert not api.in_process and api.base == url
+                assert api.base == url
             result = CliRunner().invoke(cli.main, ["archive", rid, "--repo", str(root)])
             assert result.exit_code == 0, result.output
             result = CliRunner().invoke(cli.main, ["open", rid, "--repo", str(root), "--no-browser"])
@@ -493,22 +489,7 @@ def test_a_served_local_repo_is_reached_through_its_server(tmp_path):
             health = json.loads(CliRunner().invoke(cli.main, ["ping", "--repo", str(root)]).output)
             assert health["served_by"] == url and health["archived_runs"] == 1
         finally:
-            dd.remove_live_server()
-            lease_mod.lease_path(dd.root).unlink()
-
-
-def test_sync_ingests_a_local_repos_run_logs(tmp_path):
-    root = tmp_path / "walrepo" / ".cairn"
-    with cairn.Run("proj", name="w", repo=str(root), **QUIET) as run:
-        run.track(1.0, name="loss", step=0)
-    assert list((root / "wals").glob("*.wal.jsonl"))
-    result = CliRunner().invoke(cli.main, ["sync", "--repo", str(root)])
-    assert result.exit_code == 0, result.output
-    assert "ingested" in result.output and "sync complete" in result.output
-    health = json.loads(CliRunner().invoke(cli.main, ["ping", "--repo", str(root)]).output)
-    assert (health["runs"], health["points"]) == (1, 1)
-    result = CliRunner().invoke(cli.main, ["sync", "--repo", str(root)])
-    assert "nothing to sync" in result.output
+            remove_info(root)
 
 
 def test_sync_replays_server_logs_to_the_target_server(tmp_path):

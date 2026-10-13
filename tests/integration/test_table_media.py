@@ -12,12 +12,7 @@ import pytest
 
 import cairn
 from cairn.sdk.handlers.table import TableHandler
-from cairn.sdk.local import LocalTransport
 from cairn.sdk.transport import Transport
-from cairn.server.storage.blobs import BlobStore
-from cairn.server.storage.datadir import DataDir
-from cairn.server.storage.db import Database
-from cairn.server.wal_ingest import ingest_all
 
 QUIET = dict(capture_source=False, capture_stdout=False, capture_env=False, capture_system_metrics=False)
 
@@ -43,19 +38,12 @@ def backend(request, tmp_path, monkeypatch):
         t = Transport(live, max_retries=1, backoff_base=0.001, backoff_cap=0.001)
         yield t, live.replace("http://", "cairn://"), t.close
         return
+    from cairn.sdk.connect import open_writer
+
     repo = tmp_path / ".cairn"
-    t = LocalTransport(repo)
-
-    def finish():
-        t.close()
-        dd = DataDir(repo)
-        db = Database.open(dd.db_path)
-        try:
-            ingest_all(dd, db, BlobStore(dd.artifacts_dir))
-        finally:
-            db.close()
-
-    yield t, repo, finish
+    monkeypatch.setenv("CAIRN_WAL_DIR", str(tmp_path / "wal"))
+    t, _url = open_writer(repo)
+    yield t, repo, t.close
 
 
 def test_media_cells_roundtrip_through_every_backend(backend):

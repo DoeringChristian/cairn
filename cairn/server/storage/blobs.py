@@ -25,7 +25,7 @@ import shutil
 import tempfile
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import BinaryIO
 
 
 def fsync_dir(path: Path) -> None:

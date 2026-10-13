@@ -4,9 +4,14 @@ The two server commands:
 
 * `cairn server [--repo PATH]` — runs the ingest tracking API. `--ui`
   additionally launches the paired UI viewer; one Ctrl+C stops both.
-* `cairn ui [--repo PATH|cairn://HOST:PORT]` — standalone UI over a
-  local repo, or a loopback UI/proxy connected to a remote tracking server.
-  Local mode acquires the repo write-lock in `mode="ui"`.
+* `cairn ui [--repo PATH|cairn://HOST:PORT]` — the viewer of a local repo
+  (its running server's, else a server started here), or a loopback
+  UI/proxy connected to a remote tracking server.
+
+A repo is served by one server process, the only one that opens its
+database (`server/registration.py`); `cairn server --daemon` is the
+background server Readers and CLI commands start on their own
+(`cairn/endpoint.py`).
 
 Every command that reads or writes data takes `--repo`/`--server` and works
 on a local repo or a server alike; see `cairn/cli_target.py` for how the
@@ -35,14 +40,14 @@ import click
 from . import config as _config
 from . import viewer as _viewer
 from .cli_target import (
-    Api, explicit, is_repo, open_api, reader_location, require_repo, resolve, target_options,
+    Api, explicit, open_api, reader_location, resolve, target_options,
 )
 from .sdk.transport import Transport, default_spill_dir
 
 from .server import auth as _auth
 from .server.app import create_app
 from .server.storage.blobs import BlobStore
-from .server.storage.datadir import DataDir, default_data_dir
+from .server.storage.datadir import DataDir
 from .server.storage.db import Database
 
 
@@ -179,21 +184,24 @@ def init_cmd(path: Path) -> None:
     """Create a local Cairn repo at PATH/.cairn (default: CWD).
 
     After `cairn init` you can log runs with `cairn.Run(project=...)`
-    or start the viewer with `cairn ui`.
+    or start the viewer with `cairn ui`. Creating the database, this command
+    is the repo's server for a moment (a repo a server serves already is
+    initialized).
     """
-    from .server.storage import lease as lease_mod
+    from .server.registration import RepoServed, ServerLock
+    from .server.startup import StartupError, open_repo_database
+    from .server.storage.migrations import SchemaTooNew
 
     repo = (path / ".cairn").resolve()
     already = repo.exists() and (repo / "cairn.db").exists()
     dd = DataDir(repo)
-    # `Database.open` runs migrations idempotently, so init is safe to
-    # re-run on an existing repo. Only the ingest-lease holder writes the
-    # database: a repo a server serves is initialized already.
     try:
-        with lease_mod.acquire(dd.root, mode="cli"):
-            Database.open(dd.db_path).close()
-    except lease_mod.ServedByServer:
-        pass
+        with ServerLock(dd.root):
+            open_repo_database(dd).close()
+    except RepoServed:
+        already = True
+    except (StartupError, SchemaTooNew) as exc:
+        raise click.ClickException(str(exc)) from None
     if already:
         click.echo(f"Cairn repo already initialized at {repo}")
     else:
@@ -201,28 +209,6 @@ def init_cmd(path: Path) -> None:
 
 
 # ---------- server (ingest by default; optional paired UI) -----------------
-
-
-def _hold_lease(dd: DataDir, mode: str, url: str) -> Any:
-    """Take the repo's ingest lease for this server's lifetime, or exit when
-    another live server holds it (waits for a brief holder: a CLI command or
-    Reader catching up)."""
-    from .server.storage import lease as lease_mod
-
-    try:
-        return lease_mod.acquire(dd.root, mode=mode, url=url, wait=60.0)
-    except lease_mod.ServedByServer as exc:
-        holder = exc.holder
-        click.echo(
-            f"ERROR: the repo {dd.root} is already served by `cairn {holder.get('mode')}` "
-            f"(pid {holder.get('pid')} on {holder.get('host')}) at "
-            f"{lease_mod.server_url(holder)}: open that instead of starting another one.",
-            err=True,
-        )
-        sys.exit(1)
-    except lease_mod.LeaseBusy as exc:
-        click.echo(f"ERROR: {exc}; try again in a moment.", err=True)
-        sys.exit(1)
 
 
 def _find_free_port(host: str, start: int, max_attempts: int = 20) -> int:
@@ -322,6 +308,80 @@ def _uvicorn_logging(verbose: bool) -> dict[str, object]:
     return {"log_level": "info" if verbose else "warning", "access_log": verbose}
 
 
+def _loopback_url(host: str, port: int) -> str:
+    """How this machine reaches a server bound to ``host``:``port``."""
+    if host in ("0.0.0.0", "::", "", "localhost") or host.startswith("127."):
+        return f"http://127.0.0.1:{port}"
+    return f"http://[{host}]:{port}" if ":" in host else f"http://{host}:{port}"
+
+
+def _take_repo(dd: DataDir) -> tuple[Any, Database, BlobStore]:
+    """This process becomes the repo's one server: its lock (exit when
+    another server holds it), then its database opened for serving
+    (``server/startup.py``: local filesystem, migration with backup,
+    integrity check, legacy run-log import)."""
+    from .server.registration import RepoServed, ServerLock
+    from .server.startup import StartupError, open_repo_database
+    from .server.storage.migrations import SchemaTooNew
+
+    try:
+        lock = ServerLock(dd.root).acquire()
+    except RepoServed as exc:
+        click.echo(f"ERROR: {exc}", err=True)
+        sys.exit(1)
+    blobs = BlobStore(dd.artifacts_dir)
+    try:
+        db = open_repo_database(dd, blobs)
+    except (StartupError, SchemaTooNew) as exc:
+        lock.release()
+        raise click.ClickException(str(exc)) from None
+    return lock, db, blobs
+
+
+def _register_when_started(servers: list[Any], dd: DataDir, **info: Any) -> None:
+    """Write ``<repo>/server.json`` once every uvicorn is listening."""
+    from .server.registration import write_info
+
+    def _wait() -> None:
+        while not all(s.started for s in servers):
+            if any(s.should_exit for s in servers):
+                return
+            threading.Event().wait(0.02)
+        write_info(dd.root, **info)
+
+    threading.Thread(target=_wait, name="cairn-register", daemon=True).start()
+
+
+def _run_uvicorns(servers: list[Any], sockets: list[Any] | None = None) -> None:
+    """Run the first server in this thread (Ctrl+C stops all), the rest in
+    background threads; return once they stopped."""
+    def _sigint(_sig, _frame):
+        for s in servers:
+            s.should_exit = True
+
+    signal.signal(signal.SIGINT, _sigint)
+    signal.signal(signal.SIGTERM, _sigint)
+    threads: list[threading.Thread] = []
+    for s in servers[1:]:
+        t = threading.Thread(target=s.run, name=f"uvicorn-{id(s)}", daemon=True)
+        t.start()
+        threads.append(t)
+    try:
+        if sockets is not None:
+            servers[0].run(sockets=sockets)
+        else:
+            servers[0].run()
+    finally:
+        for s in servers:
+            s.should_exit = True
+        for t in threads:
+            t.join(timeout=10)
+
+
+#: Seconds a daemon server stays up without requests (``CAIRN_SERVER_IDLE_TIMEOUT``).
+DAEMON_IDLE_TIMEOUT = 1800.0
+
+
 @main.command("server")
 @click.option("--host", default="0.0.0.0", show_default=True)
 @click.option("--port", default=4300, show_default=True, type=int,
@@ -367,6 +427,20 @@ def _uvicorn_logging(verbose: bool) -> dict[str, object]:
     help="Post alerts (run.alert(), failed/killed runs) to this URL: an ntfy topic, "
          "a Slack or Discord webhook, or any JSON webhook. Env: CAIRN_ALERT_WEBHOOK.",
 )
+@click.option(
+    "--daemon",
+    is_flag=True,
+    help="Run as the repo's background server (what Readers, CLI commands and `cairn ui` "
+         "start on their own): loopback only, a free port, the viewer when installed, "
+         "registered in <repo>/server.json; exits after --idle-timeout seconds without requests.",
+)
+@click.option(
+    "--idle-timeout",
+    default=None,
+    type=float,
+    help="With --daemon: seconds without requests before it exits. "
+         f"Default: CAIRN_SERVER_IDLE_TIMEOUT, else {DAEMON_IDLE_TIMEOUT:.0f}.",
+)
 def server_cmd(
     host: str,
     port: int,
@@ -378,8 +452,20 @@ def server_cmd(
     no_auth: bool,
     verbose: bool,
     alert_webhook: str | None,
+    daemon: bool,
+    idle_timeout: float | None,
 ) -> None:
-    """Start the Cairn tracking server (ingest-only unless `--ui`)."""
+    """Start the Cairn tracking server (ingest-only unless `--ui`).
+
+    The server is the only process that opens the repo's database: one per
+    repo (a second one exits, naming the first). It registers itself in
+    `<repo>/server.json`, where Readers, CLI commands and `cairn ui` on this
+    machine find it.
+    """
+    if daemon:
+        _serve_daemon(repo, no_auth=no_auth, verbose=verbose, alert_webhook=alert_webhook,
+                      idle_timeout=idle_timeout)
+        return
     import uvicorn
 
     if ui and not _viewer.is_available():
@@ -401,15 +487,7 @@ def server_cmd(
     ui_port = _find_free_port(host, ui_port or port + 1) if ui else (ui_port or port + 1)
 
     dd = DataDir(repo)
-    # Hold the repo's ingest lease for our lifetime: this process is the
-    # repo's one writer. The URL in it (the UI port if any, else the ingest
-    # port) is where readers and CLI commands on the repo send their writes.
-    lease = _hold_lease(dd, "server", f"http://127.0.0.1:{ui_port if ui else port}")
-
-    # One Database, shared by both apps (single shared SQLite connection
-    # per file in this process, so both FastAPI apps must share the same one.
-    db = Database.open(dd.db_path)
-    blobs = BlobStore(dd.artifacts_dir)
+    lock, db, blobs = _take_repo(dd)
 
     auth_enabled = not no_auth
     local_token = None
@@ -482,51 +560,79 @@ def server_cmd(
     if open_browser and browser_url is not None and host in ("0.0.0.0", "127.0.0.1", "localhost"):
         _open_browser_soon(browser_url)
 
-    servers: list[uvicorn.Server] = []
-    threads: list[threading.Thread] = []
-
-    ingest_config = uvicorn.Config(
+    servers: list[uvicorn.Server] = [uvicorn.Server(uvicorn.Config(
         app=ingest_app, host=host, port=port, lifespan="on", **_uvicorn_logging(verbose)
-    )
-    ingest_server = uvicorn.Server(ingest_config)
-    servers.append(ingest_server)
-
+    ))]
     if ui_app is not None:
-        ui_config = uvicorn.Config(
+        servers.append(uvicorn.Server(uvicorn.Config(
             app=ui_app, host=host, port=ui_port, lifespan="on", **_uvicorn_logging(verbose)
-        )
-        ui_server = uvicorn.Server(ui_config)
-        servers.append(ui_server)
-
-    def _sigint(_sig, _frame):
-        for s in servers:
-            s.should_exit = True
-
-    signal.signal(signal.SIGINT, _sigint)
-
-    # Run all-but-first uvicorns in background threads; the first one in the
-    # main thread so Ctrl+C propagates naturally. (uvicorn.Server.run() installs
-    # its own handlers, but our earlier signal.signal() wins since it's set on
-    # the main thread last.)
-    for s in servers[1:]:
-        t = threading.Thread(target=s.run, name=f"uvicorn-{id(s)}", daemon=True)
-        t.start()
-        threads.append(t)
-
+        )))
+        dd.add_live_server("server", host="127.0.0.1", port=ui_port)
+    _register_when_started(
+        servers, dd, url=_loopback_url(host, port), token=local_token,
+        ui_url=_loopback_url(host, ui_port) if ui_app is not None else None,
+    )
     try:
-        servers[0].run()
+        _run_uvicorns(servers)
     finally:
-        for s in servers:
-            s.should_exit = True
-        for t in threads:
-            t.join(timeout=10)
+        from .server.registration import remove_info
+
         if advertiser is not None:
             advertiser.stop()
+        remove_info(dd.root)
+        dd.remove_live_server()
         db.close()
-        lease.release()
+        lock.release()
 
 
-# ---------- ui (standalone UI over a local repo) ----------------------------
+def _serve_daemon(
+    repo: Path | None, *, no_auth: bool, verbose: bool, alert_webhook: str | None,
+    idle_timeout: float | None,
+) -> None:
+    """``cairn server --daemon``: see its help."""
+    import uvicorn
+
+    repo = (repo or _default_repo()).expanduser().resolve()
+    dd = DataDir(repo)
+    lock, db, blobs = _take_repo(dd)
+    auth_enabled = not no_auth
+    token = _auth.ensure_local_token(db, dd.root) if auth_enabled else None
+    with_ui = _viewer.is_available()
+    app = create_app(
+        db=db, blobs=blobs, data_dir_obj=dd, mount_ui=with_ui,
+        auth_enabled=auth_enabled, alert_webhook=alert_webhook,
+    )
+    if idle_timeout is None:
+        idle_timeout = float(os.environ.get("CAIRN_SERVER_IDLE_TIMEOUT") or DAEMON_IDLE_TIMEOUT)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(
+        app=app, host="127.0.0.1", port=port, lifespan="on", **_uvicorn_logging(verbose),
+    ))
+    app.state.daemon = True
+    app.state.idle_timeout = idle_timeout
+    app.state.request_shutdown = lambda: setattr(server, "should_exit", True)
+    url = f"http://127.0.0.1:{port}"
+    _register_when_started([server], dd, url=url, token=token,
+                           ui_url=url if with_ui else None, daemon=True)
+    if with_ui:
+        dd.add_live_server("daemon", host="127.0.0.1", port=port)
+    click.echo(f"cairn daemon server for {dd.root} at {url} (pid {os.getpid()}, "
+               f"idle exit after {idle_timeout:.0f} s)")
+    try:
+        _run_uvicorns([server], sockets=[sock])
+    finally:
+        from .server.registration import remove_info
+
+        remove_info(dd.root)
+        dd.remove_live_server()
+        db.close()
+        lock.release()
+
+
+# ---------- ui (the viewer of a local repo or a remote server) --------------
 
 
 @main.command("ui")
@@ -573,23 +679,28 @@ def ui_cmd(
     verbose: bool,
     alert_webhook: str | None,
 ) -> None:
-    """Serve the Cairn viewer over a local repo or remote Cairn server.
+    """Open the Cairn viewer of a local repo or a remote Cairn server.
+
+    A local repo: when a server already serves it (a `cairn server`, another
+    `cairn ui`, or the background server Readers and CLI commands start),
+    its viewer is opened and this command returns. Otherwise this starts the
+    repo's server with the viewer here, in the foreground (Ctrl+C stops it).
 
     A remote `--repo cairn://HOST:PORT` keeps the page on loopback (a browser
     secure context) while proxying relative API requests to the server. Its
     token (`CAIRN_TOKEN`, else the one `cairn login HOST:PORT` saved)
     authenticates server-side; without one, log in through the browser. `--no-auth` applies only to local-repo mode.
     """
-    # First, before resolving the target, acquiring a repo lock or registering a
-    # live server — so a missing viewer cannot leave any of that behind.
+    # First, before resolving the target, taking the repo or starting a
+    # server — so a missing viewer cannot leave any of that behind.
     if not _viewer.is_available():
         raise click.ClickException(_viewer.NOT_INSTALLED_HINT)
 
     import uvicorn
 
     target = _config.resolve_target(repo=repo or str(_default_repo()))
-    port = _find_free_port(host, port)
     if not target.is_local:
+        port = _find_free_port(host, port)
         from .server.proxy import create_proxy_app
 
         if host not in ("127.0.0.1", "localhost"):
@@ -621,30 +732,18 @@ def ui_cmd(
         )
         if open_browser and host in ("0.0.0.0", "127.0.0.1", "localhost"):
             _open_browser_soon(f"http://localhost:{port}/")
-        uv_config = uvicorn.Config(
+        uv_server = uvicorn.Server(uvicorn.Config(
             app=app, host=host, port=port, lifespan="on", **_uvicorn_logging(verbose)
-        )
-        uv_server = uvicorn.Server(uv_config)
-
-        def _proxy_sigint(_sig, _frame):
-            uv_server.should_exit = True
-
-        signal.signal(signal.SIGINT, _proxy_sigint)
-        uv_server.run()
+        ))
+        _run_uvicorns([uv_server])
         return
 
     repo_path = _ensure_repo(Path(target.location))
+    if _open_running_viewer(repo_path, open_browser):
+        return
+    port = _find_free_port(host, port)
     dd = DataDir(repo_path)
-    lease = _hold_lease(dd, "ui", f"http://127.0.0.1:{port}")
-
-    # Best-effort: advertise our actual URL in the repo dir (`servers.json`)
-    # so notebook-side `CardElement._resolve_server()` can auto-discover us
-    # regardless of which port we landed on (this port may have
-    # auto-incremented past the CLI default).
-    dd.add_live_server("ui", host="127.0.0.1", port=port)
-
-    db = Database.open(dd.db_path)
-    blobs = BlobStore(dd.artifacts_dir)
+    lock, db, blobs = _take_repo(dd)
     auth_enabled = not no_auth
     app = create_app(
         db=db,
@@ -678,72 +777,64 @@ def ui_cmd(
     if open_browser and host in ("0.0.0.0", "127.0.0.1", "localhost"):
         _open_browser_soon(browser_url)
 
-    uv_config = uvicorn.Config(
+    uv_server = uvicorn.Server(uvicorn.Config(
         app=app, host=host, port=port, lifespan="on", **_uvicorn_logging(verbose)
-    )
-    uv_server = uvicorn.Server(uv_config)
-
-    def _sigint(_sig, _frame):
-        uv_server.should_exit = True
-
-    signal.signal(signal.SIGINT, _sigint)
+    ))
+    # Advertise our actual URL in the repo dir (`servers.json`) so
+    # notebook-side `CardElement._resolve_server()` can auto-discover us
+    # regardless of which port we landed on.
+    dd.add_live_server("ui", host="127.0.0.1", port=port)
+    loop_url = _loopback_url(host, port)
+    _register_when_started([uv_server], dd, url=loop_url, token=local_token, ui_url=loop_url)
     try:
-        uv_server.run()
+        _run_uvicorns([uv_server])
     finally:
-        db.close()
+        from .server.registration import remove_info
+
+        remove_info(dd.root)
         dd.remove_live_server()
-        lease.release()
+        db.close()
+        lock.release()
+
+
+def _open_running_viewer(root: Path, open_browser: bool) -> bool:
+    """Open the viewer of the server already serving ``root``; False when
+    none does. Raises when the one serving it has no viewer."""
+    import httpx
+
+    from .endpoint import live_server
+    from .server.registration import read_info
+
+    ep = live_server(root)
+    info = read_info(root) if ep is not None else None
+    if ep is None or info is None:
+        return False
+    ui_url = (info.get("ui_url") or "").rstrip("/")
+    if not ui_url:
+        raise click.ClickException(
+            f"{root} is served by pid {info.get('pid')} at {ep.url} without the viewer: "
+            "stop it and run `cairn ui`, or start it as `cairn server --ui`"
+        )
+    browser_url = f"{ui_url}/"
+    if ep.token:
+        try:
+            resp = httpx.post(f"{ep.url}/api/auth/login-link", headers=ep.headers(), timeout=5.0)
+            resp.raise_for_status()
+            browser_url = f"{ui_url}/login?otp={resp.json()['otp']}"
+        except (httpx.HTTPError, KeyError, ValueError):
+            pass  # the viewer's login form still works
+    click.echo(
+        f"\n  Cairn UI (already serving {root}, pid {info.get('pid')}):\n"
+        f"    {ui_url.replace('127.0.0.1', 'localhost', 1)}\n"
+    )
+    if browser_url != f"{ui_url}/":
+        click.echo(f"  One-time login link: {browser_url}\n")
+    if open_browser:
+        _open_browser_soon(browser_url)
+    return True
 
 
 # ---------- client commands -------------------------------------------------
-
-
-def _repo_health(root: Path) -> dict[str, Any]:
-    """A local repo's state: where it is, its layout and schema versions, what
-    it holds, and whether a server is serving it."""
-    from . import __version__
-    from .cli_target import serving_url
-    from .sdk.reader import _LocalBackend
-
-    dd = DataDir(root)
-    # As a Reader opens it: caught up on pending run logs, unless a server
-    # serves the repo (then read-only).
-    backend = _LocalBackend(dd.root)
-    db = backend._db
-    try:
-        def count(sql: str) -> int:
-            return int((db.read_one(sql) or (0,))[0])
-
-        (schema,) = db.read_one("SELECT version FROM schema_version") or (None,)
-        health: dict[str, Any] = {
-            "status": "ok",
-            "repo": str(dd.root),
-            "version": __version__,
-            "layout_version": (dd.root / "version").read_text().strip(),
-            "schema_version": schema,
-            "projects": count("SELECT COUNT(*) FROM projects"),
-            "runs": count("SELECT COUNT(*) FROM runs"),
-            "running_runs": count("SELECT COUNT(*) FROM runs WHERE status = 'running'"),
-            "crashed_runs": count("SELECT COUNT(*) FROM runs WHERE status = 'crashed'"),
-            "archived_runs": count("SELECT COUNT(*) FROM runs WHERE archived_at IS NOT NULL"),
-            "series": count("SELECT COUNT(*) FROM (SELECT 1 FROM sequences GROUP BY run_id, name)"),
-            "points": count("SELECT COUNT(*) FROM sequences"),
-            "artifacts": count("SELECT COUNT(*) FROM artifacts"),
-            "artifact_versions": count("SELECT COUNT(*) FROM artifact_versions"),
-            "reports": count("SELECT COUNT(*) FROM reports"),
-        }
-    finally:
-        backend.close()
-    size = dd.db_path.stat().st_size
-    for f in dd.artifacts_dir.rglob("*"):
-        if f.is_file():
-            size += f.stat().st_size
-    wal_dir = dd.root / "wals"
-    health["size_bytes"] = size
-    health["pending_wal_logs"] = len(list(wal_dir.glob("*.wal.jsonl"))) if wal_dir.is_dir() else 0
-    served = serving_url(dd.root)
-    health["served_by"] = served[0] if served else None
-    return health
 
 
 @main.command("ping")
@@ -753,14 +844,17 @@ def ping_cmd(repo: str | None, server: str | None) -> None:
 
     A local repo reports its path, layout and schema versions, how many
     projects, runs, series, points, artifacts and reports it holds, its size,
-    WAL logs not ingested yet, and the server serving it (if any).
+    0.5 run logs not imported yet, and the server serving it (started if
+    none is).
     """
     target = resolve(repo, server)
-    if target.is_local:
-        click.echo(json.dumps(_repo_health(require_repo(target.location)), indent=2))
-        return
-    with Api(target) as api:
-        click.echo(json.dumps(api.get("/api/health").json(), indent=2))
+    with open_api(repo, server) as api:
+        if target.is_local:
+            body = api.get("/api/admin/repo").json()
+            body["served_by"] = api.base
+        else:
+            body = api.get("/api/health").json()
+    click.echo(json.dumps(body, indent=2))
 
 
 _FILTER_HELP = (
@@ -1405,6 +1499,151 @@ def gc_cmd(dry_run: bool, repo: str | None, server: str | None) -> None:
     )
 
 
+@main.command("backup")
+@click.option(
+    "--to", "to", default=None, type=click.Path(dir_okay=True, path_type=Path),
+    help="Also download the backup to this file (or into this directory).",
+)
+@target_options
+def backup_cmd(to: Path | None, repo: str | None, server: str | None) -> None:
+    """Back the repo's database up, online: a consistent copy made by its
+    server (SQLite's backup API) in `<repo>/backups/`, and with `--to` a
+    download of it. Blobs (`<repo>/artifacts/`) are immutable files: copy
+    them with any file tool (rsync)."""
+    with open_api(repo, server) as api:
+        made = api.post("/api/admin/backup").json()
+        click.echo(f"{api.label}: backup {made['path']} ({made['size_bytes'] / 1e6:.1f} MB)")
+        if to is not None:
+            dest = to / made["name"] if to.is_dir() else to
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            tmp = dest.with_name(f".{dest.name}.part")
+            with api._client.stream("GET", f"/api/admin/backups/{made['name']}") as resp:
+                resp.raise_for_status()
+                with open(tmp, "wb") as fh:
+                    for chunk in resp.iter_bytes():
+                        fh.write(chunk)
+                    fh.flush()
+                    os.fsync(fh.fileno())
+            os.replace(tmp, dest)
+            click.echo(f"downloaded to {dest}")
+
+
+def _read_acked(path: Path) -> tuple[dict[str, int], str] | None:
+    """A run dir's ``acked`` file as ``({log: seq}, format)`` (see the
+    architecture spec's server decisions), or None when there is none."""
+    try:
+        text = path.read_text().strip()
+    except OSError:
+        return None
+    if not text:
+        return {}, "json"
+    try:
+        data = json.loads(text)
+    except ValueError:
+        data = None
+    if isinstance(data, int) and not isinstance(data, bool):
+        return {"main": data}, "int"
+    if isinstance(data, dict):
+        return {str(k): int(v) for k, v in data.items() if isinstance(v, int)}, "json"
+    acked: dict[str, int] = {}
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[1].isdigit():
+            acked[parts[0]] = int(parts[1])
+    return acked, "lines"
+
+
+def _write_acked(path: Path, acked: dict[str, int], fmt: str) -> None:
+    if fmt == "int":
+        text = str(acked.get("main", 0))
+    elif fmt == "lines":
+        text = "".join(f"{log} {seq}\n" for log, seq in sorted(acked.items()))
+    else:
+        text = json.dumps(acked)
+    tmp = path.with_name(f".{path.name}.tmp")
+    with open(tmp, "w") as fh:
+        fh.write(text)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, path)
+
+
+def _check_run_dirs(api: Any, runs_dir: Path, repair: bool) -> list[str]:
+    """Local run dirs whose ``acked`` is ahead of the server's ``applied_seq``
+    (the server lost acknowledged records); with ``repair``, ``acked`` is set
+    back so the uploader sends them again. Returns the problems found."""
+    problems: list[str] = []
+    for run_dir in sorted(p for p in runs_dir.iterdir() if p.is_dir()):
+        read = _read_acked(run_dir / "acked")
+        if read is None:
+            continue
+        acked, fmt = read
+        changed = False
+        for log_name, seq in sorted(acked.items()):
+            applied = api.get(f"/api/ingest/runs/{run_dir.name}/logs/{log_name}").json()["applied_seq"]
+            if seq > applied:
+                problems.append(
+                    f"{run_dir}: log {log_name} acked through {seq}, the server has {applied}"
+                )
+                if repair:
+                    acked[log_name] = applied
+                    changed = True
+        if changed:
+            _write_acked(run_dir / "acked", acked, fmt)
+    return problems
+
+
+@main.command("fsck")
+@click.option("--repair", is_flag=True,
+              help="Apply the safe repairs: quarantine corrupt blobs, drop artifact rows of "
+                   "nothing, rewind run dirs' `acked` so lost records are uploaded again.")
+@click.option(
+    "--runs-dir", default=None, type=click.Path(file_okay=False, path_type=Path),
+    help="Run directories to check against the server. Default: $CAIRN_DIR/runs (./.cairn/runs).",
+)
+@target_options
+def fsck_cmd(repair: bool, runs_dir: Path | None, repo: str | None, server: str | None) -> None:
+    """Check the repo: the database (integrity_check) against the blob store
+    (missing, corrupt and orphan blobs) and the run directories on this
+    machine against what the server applied. Exit status 1 when a problem
+    was found (and, with --repair, not repaired)."""
+    with open_api(repo, server) as api:
+        report = api.post("/api/admin/fsck", params={"repair": "true" if repair else "false"}).json()
+        runs_dir = runs_dir or Path(os.environ.get("CAIRN_DIR") or Path.cwd() / ".cairn") / "runs"
+        run_problems = _check_run_dirs(api, runs_dir, repair) if runs_dir.is_dir() else []
+    click.echo(f"{api.label}:")
+    click.echo(f"  database: {'ok' if report['integrity'] == ['ok'] else '; '.join(report['integrity'])}")
+    click.echo(f"  blobs stored: {report['blobs_stored']}")
+    for key, label in (("missing_blobs", "missing blob"), ("corrupt_blobs", "corrupt blob")):
+        for h in report[key]:
+            click.echo(f"  {label}: {h}")
+    if report["orphan_blobs"]:
+        click.echo(f"  {report['orphan_blobs']} unreferenced blob(s) (`cairn gc` deletes them after a day)")
+    if report["orphan_rows"]:
+        click.echo(f"  {report['orphan_rows']} artifact row(s) of blobs that are gone")
+    for row in report["stray_progress"]:
+        click.echo(f"  ingest progress of deleted run {row['run_id']} (log {row['log']})")
+    for name in report["legacy_logs"]:
+        click.echo(f"  0.5 run log not imported yet: {name}")
+    for line in run_problems:
+        click.echo(f"  {line}")
+    if repair and report.get("repaired"):
+        rep = report["repaired"]
+        if rep.get("quarantined_blobs"):
+            click.echo(f"  repaired: {len(rep['quarantined_blobs'])} corrupt blob(s) moved to quarantine/")
+        if rep.get("deleted_orphan_rows"):
+            click.echo(f"  repaired: dropped {rep['deleted_orphan_rows']} artifact row(s)")
+    if run_problems and repair:
+        click.echo("  repaired: run dirs rewound; the uploader (`cairn sync`) sends the records again")
+    remaining = (
+        report["integrity"] != ["ok"] or bool(report["missing_blobs"])
+        or (not repair and (bool(report["corrupt_blobs"]) or bool(run_problems)))
+    )
+    if remaining:
+        raise SystemExit(1)
+    click.echo("  ok" if report["ok"] and not run_problems else "  repaired")
+
+
 @main.command("sync")
 @target_options
 def sync_cmd(repo: str | None, server: str | None) -> None:
@@ -1414,39 +1653,13 @@ def sync_cmd(repo: str | None, server: str | None) -> None:
     * Server-mode runs keep a write-ahead log on this machine (CAIRN_WAL_DIR).
       Each log not fully delivered is replayed, in order, to the server
       recorded in it (a log without one goes to the target server).
-    * A local target: the run logs in the repo's wals/ directory are
-      ingested now (under the repo's ingest lease), unless a server is
-      serving the repo (it ingests them itself).
     * A server target: requests the SDK spilled to disk are sent to it.
     """
-    from .cli_target import serving_url
     from .sdk.wal import WriteAheadLog, default_wal_dir
 
     target = resolve(repo, server)
     replayed = 0
     failed = 0
-
-    # A local target without a repo only matters when it was named: with
-    # nothing configured, sync still replays the server-mode logs.
-    if target.is_local and (explicit(repo, server) or is_repo(target.location)):
-        root = require_repo(target.location)
-        served = serving_url(root)
-        if served is not None:
-            click.echo(f"{root}: served by {served[0]}, which ingests its run logs itself")
-        else:
-            from .sdk.local import RepoTransport
-            from .server.wal_ingest import ingest_all
-
-            rt = RepoTransport(root)
-            try:
-                n = rt.under_lease(
-                    lambda db: ingest_all(rt.data_dir, db, rt.blobs), catch_up_first=False,
-                )
-            finally:
-                rt.close()
-            if n:
-                click.echo(f"{root}: ingested {n} op(s) from its run logs")
-            replayed += n
 
     wal_dir = default_wal_dir()
     for wal_path in sorted(wal_dir.glob("*.wal.jsonl")) if wal_dir.exists() else []:

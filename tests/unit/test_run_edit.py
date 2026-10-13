@@ -3,15 +3,10 @@ delete-keys ops on every write path."""
 
 from __future__ import annotations
 
-import json
-import os
-import time
 
 import pytest
 
 import cairn
-from cairn.server.storage import lease as lease_mod
-from cairn.server.storage.datadir import DataDir
 
 _RUN_KW = dict(
     capture_source=False,
@@ -72,37 +67,26 @@ def test_edit_over_http(live_server):
     _edit_and_check(repo, _seed(repo))
 
 
-def test_edit_local_repo_held_by_a_server_goes_over_http(tmp_path, live_server):
-    # The live_server app serves tmp_path/"cairn"; claim it the way `cairn ui` does.
-    served = "cairn://" + live_server.removeprefix("http://")
-    run_id = _seed(served)
-    dd = DataDir(tmp_path / "cairn")
-    # The lease as a server in another live process holds it.
-    lease_mod.lease_path(dd.root).write_text(json.dumps({
-        "host": lease_mod.hostname(), "pid": os.getppid(), "token": "t" * 32,
-        "mode": "ui", "url": live_server, "expires_at": time.time() + 60,
-    }))
-    with cairn.Reader(dd.root) as reader:
-        with reader.run(run_id).edit() as e:
-            from cairn.sdk.transport import Transport
+def test_edit_local_repo_goes_to_its_server(tmp_path):
+    from cairn.server.registration import read_info
 
-            assert isinstance(e._transport.served_by(), Transport)
+    repo = tmp_path / ".cairn"
+    run_id = _seed(repo)
+    with cairn.Reader(repo) as reader:
+        with reader.run(run_id).edit() as e:
+            assert e._transport.server_url == read_info(repo.resolve())["url"]
             e.rename("via-server")
-    with cairn.Reader(served) as reader:
+    with cairn.Reader(repo) as reader:
         assert reader.run(run_id).name == "via-server"
 
 
 def test_edit_zip_reader_raises(tmp_path):
-    import zipfile
-
-    from cairn.server.run_archive import write_archive
-
     repo = tmp_path / ".cairn"
     run_id = _seed(repo)
     zip_path = tmp_path / "run.zip"
-    with cairn.Reader(repo) as reader, zipfile.ZipFile(zip_path, "w") as zf:
-        b = reader._backend
-        write_archive(b._db, b._blobs, b._dd, [run_id], zf)
+    with cairn.Reader(repo) as reader:
+        resp = reader._backend._client.post("/api/export", json={"run_ids": [run_id]})
+        zip_path.write_bytes(resp.content)
     with cairn.Reader(zip_path) as reader:
         with pytest.raises(ValueError, match="exported archive"):
             reader.run(run_id).edit()

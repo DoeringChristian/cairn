@@ -9,18 +9,14 @@ the run exists.
 
 from __future__ import annotations
 
-import json
-import os
 import time
 
 import pytest
 
 import cairn
 from cairn.sdk import run_ids
-from cairn.sdk.local import LocalTransport
 from cairn.sdk.run import _resolve_process
-from cairn.server import ingest_ops, wal_ingest
-from cairn.server.storage.blobs import BlobStore
+from cairn.server import ingest_ops
 from cairn.server.storage.datadir import DataDir
 from cairn.server.storage.db import Database
 
@@ -40,15 +36,11 @@ def _clean_env(monkeypatch):
 
 
 class _Repo:
-    """The ingester's side of a repo (what the lease holder runs)."""
+    """The server's side of a repo: its database, read directly."""
 
     def __init__(self, repo):
         self.dd = DataDir(repo)
         self.db = Database.open(self.dd.db_path)
-        self.blobs = BlobStore(self.dd.artifacts_dir)
-
-    def ingest(self) -> int:
-        return wal_ingest.ingest_all(self.dd, self.db, self.blobs)
 
     def status(self, rid):
         return self.db.read_one("SELECT status FROM runs WHERE id = ?", [rid])[0]
@@ -58,9 +50,6 @@ class _Repo:
             "SELECT step, scalar_value FROM sequences WHERE run_id = ? AND name = ? ORDER BY step",
             [rid, name],
         )
-
-    def logs(self):
-        return sorted(p.name for p in wal_ingest.wal_dir(self.dd).glob("*.wal.jsonl"))
 
     def close(self):
         self.db.close()
@@ -108,7 +97,6 @@ def test_run_id_argument_and_env(repo, monkeypatch, ing):
     explicit = cairn.new_run_id()
     with _primary(repo, run_id=explicit) as run:
         assert run.id == explicit
-    ing.ingest()
     assert ing.status(rid) == ing.status(env_id) == ing.status(explicit) == "completed"
 
 
@@ -118,13 +106,12 @@ def test_malformed_run_id_is_refused(repo, bad):
         _primary(repo, run_id=bad)
 
 
-def test_a_taken_id_is_refused_pending_or_ingested(repo, ing):
+def test_a_taken_id_is_refused(repo, ing):
     rid = cairn.new_run_id()
     with _primary(repo, run_id=rid):
         pass
     with pytest.raises(ValueError, match="exists"):  # its log is not ingested yet
         _primary(repo, run_id=rid)
-    ing.ingest()
     with pytest.raises(ValueError, match="exists"):
         _primary(repo, run_id=rid)
 
@@ -132,11 +119,9 @@ def test_a_taken_id_is_refused_pending_or_ingested(repo, ing):
 def test_resume_keeps_its_semantics_with_the_env_id(repo, monkeypatch, ing):
     with _primary(repo) as first:
         rid = first.id
-    ing.ingest()
     monkeypatch.setenv("CAIRN_RUN_ID", rid)
     with _primary(repo, resume=rid) as again:
         assert again.id == rid
-    ing.ingest()
     assert ing.status(rid) == "completed"
     with pytest.raises(ValueError, match="CAIRN_RUN_ID"):
         _primary(repo, resume=cairn.new_run_id())
@@ -174,7 +159,7 @@ def test_attach_is_run_with_primary_false(repo, ing):
 # ---- workers: what they record, what they never change -----------------------
 
 
-def test_worker_data_lands_in_the_run_and_its_log_is_deleted(repo, ing):
+def test_worker_data_lands_in_the_run(repo, ing):
     with _primary(repo, name="shared") as run:
         rid = run.id
         with _worker(repo, rid, "rank1") as w:
@@ -182,14 +167,10 @@ def test_worker_data_lands_in_the_run_and_its_log_is_deleted(repo, ing):
             w.config(rank1={"batch": 8})
             w.summary(rank1_best=0.5)
         run.track(0.5, "loss", step=0)
-    assert ing.logs() == [f"{rid}.wal.jsonl", f"{rid}~rank1.wal.jsonl"]
-    ing.ingest()
-    assert ing.logs() == []
     assert ing.status(rid) == "completed"
     assert ing.points(rid, "rank1.loss") == [{"step": 0, "scalar_value": 1.5}]
     docs = ingest_ops.run_docs(ing.db, rid)
     assert docs == {"config": {"rank1": {"batch": 8}}, "summary": {"rank1_best": 0.5}}
-    assert ing.db.read_one("SELECT COUNT(*) FROM wal_progress") == (0,)
 
 
 def test_worker_exception_and_finish_never_change_the_status(repo, ing):
@@ -200,10 +181,8 @@ def test_worker_exception_and_finish_never_change_the_status(repo, ing):
         raise RuntimeError("worker died")
     w2 = _worker(repo, rid, "rank2")
     w2.finish(status="killed")
-    ing.ingest()
     assert ing.status(rid) == "running"
     run.finish()
-    ing.ingest()
     assert ing.status(rid) == "completed"
 
 
@@ -212,25 +191,20 @@ def test_primary_failure_stands_when_workers_detach_later(repo, ing):
     rid = run.id
     w = _worker(repo, rid, "rank1")
     run.finish(status="failed", exit_code=1)
-    ing.ingest()
     assert ing.status(rid) == "failed"
     w.track(2.0, "late", step=0)
     w.finish()
-    ing.ingest()
     assert ing.status(rid) == "failed"
     assert ing.points(rid, "late") == [{"step": 0, "scalar_value": 2.0}]
-    assert ing.logs() == []
 
 
 def test_attach_to_a_finished_run_keeps_its_status(repo, ing):
     with _primary(repo) as run:
         run.track(0.1, "loss", step=9)
-    ing.ingest()
     with cairn.attach(run.id, "eval", repo=repo, system_metrics=False,
                       capture_output=False) as ev:
         assert ev.project == "p"  # looked up: the run is ingested
         ev.track(0.9, "eval.acc", step=9)
-    ing.ingest()
     assert ing.status(run.id) == "completed"
     assert ing.points(run.id, "eval.acc") == [{"step": 9, "scalar_value": 0.9}]
 
@@ -241,49 +215,6 @@ def test_worker_without_project_reads_it_from_the_primarys_log(repo, ing):
     assert w.project == "my-proj"
     w.finish()
     run.finish()
-
-
-def test_worker_project_must_match_the_run(repo, ing):
-    with _primary(repo) as run:
-        pass
-    ing.ingest()
-    with pytest.raises(ValueError, match="project"):
-        _worker(repo, run.id, "rank1", project="other")
-
-
-def test_join_waits_for_a_run_it_cannot_find(repo, monkeypatch):
-    monkeypatch.setattr(LocalTransport, "JOIN_WAIT", 0.3)
-    t0 = time.monotonic()
-    with pytest.raises(LookupError):
-        cairn.attach(cairn.new_run_id(), "rank1", repo=repo)
-    assert time.monotonic() - t0 >= 0.3
-
-
-def test_labels_are_unique_among_live_processes(repo, ing):
-    run = _primary(repo)
-    w = _worker(repo, run.id, "rank1")
-    with pytest.raises(ValueError, match="in use"):
-        _worker(repo, run.id, "rank1")
-    w.finish()
-    # Detached: the label is free again (the old log is ingested first).
-    again = _worker(repo, run.id, "rank1")
-    again.track(3.0, "x", step=1)
-    again.finish()
-    run.finish()
-    ing.ingest()
-    assert ing.logs() == []
-    assert ing.points(run.id, "x") == [{"step": 1, "scalar_value": 3.0}]
-
-
-def test_duplicate_points_first_ingested_wins(repo, ing):
-    run = _primary(repo)
-    w = _worker(repo, run.id, "rank1")
-    run.track(1.0, "loss", step=0)
-    w.track(2.0, "loss", step=0)
-    w.finish()
-    run.finish()
-    ing.ingest()  # the primary's log sorts (and is ingested) first
-    assert ing.points(run.id, "loss") == [{"step": 0, "scalar_value": 1.0}]
 
 
 # ---- system metrics and console lines -----------------------------------------
@@ -297,7 +228,6 @@ def test_system_metrics_are_named_by_label(repo, ing):
     run.finish()
     labelled = _primary(repo, label="rank0", **sysm)
     labelled.finish()
-    ing.ingest()
 
     def names(rid):
         return {r["name"] for r in ing.db.read_columns(
@@ -319,7 +249,6 @@ def test_console_lines_carry_their_label(repo, ing, capsys):
                   capture_system_metrics=False)
     print("from rank1")
     w.finish()
-    ing.ingest()
     rows = ing.db.read_columns(
         "SELECT label, line_no, content FROM log_lines WHERE run_id = ? ORDER BY wall_time",
         [run.id],
@@ -363,86 +292,6 @@ def test_logs_route_label_filter_and_labels(client):
 # ---- the ingester ----------------------------------------------------------
 
 
-def test_worker_log_waits_for_its_run(repo, ing):
-    rid = cairn.new_run_id()
-    w = _worker(repo, rid, "rank1", project="p")  # before the primary exists
-    w.track(1.0, "a", step=0)
-    w.track(2.0, "a", step=1)
-    w.finish()
-    assert ing.ingest() == 0
-    assert ing.db.read_one("SELECT COUNT(*) FROM runs") == (0,)
-    assert ing.db.read_one("SELECT COUNT(*) FROM wal_progress") == (0,)
-    assert not wal_ingest.has_pending(ing.dd, ing.db)  # nothing it can do yet
-    assert ing.logs() == [f"{rid}~rank1.wal.jsonl"]
-
-    run = _primary(repo, run_id=rid)
-    assert wal_ingest.has_pending(ing.dd, ing.db)
-    ing.ingest()
-    assert ing.points(rid, "a") == [{"step": 0, "scalar_value": 1.0},
-                                    {"step": 1, "scalar_value": 2.0}]
-    assert ing.logs() == [f"{rid}.wal.jsonl"]  # the worker's: detached and deleted
-    run.finish()
-    ing.ingest()
-    assert ing.status(rid) == "completed" and ing.logs() == []
-
-
-def _write_log(path, records):
-    with open(path, "a") as fh:
-        fh.writelines(
-            json.dumps({"seq": i, "op": op, "payload": payload}) + "\n"
-            for i, (op, payload) in enumerate(records, 1)
-        )
-
-
-def test_worker_log_cannot_change_the_lifecycle(repo, ing):
-    with _primary(repo) as run:
-        pass
-    ing.ingest()
-    rid = run.id
-    path = wal_ingest.log_path(ing.dd, rid, "rogue")
-    _write_log(path, [
-        ("join", {"run_id": rid, "label": "rogue"}),
-        ("finish", {"run_id": rid, "status": "failed"}),
-        ("resume_run", {"run_id": rid}),
-        ("heartbeat", {"run_id": rid}),
-        ("batch", {"run_id": rid, "points": [{"name": "y", "step": 0, "object_type": "scalar",
-                                             "wall_time": "2026-01-01T00:00:00+00:00",
-                                             "scalar_value": 4.0}]}),
-        ("detach", {"run_id": rid}),
-    ])
-    ing.ingest()
-    assert ing.status(rid) == "completed"
-    assert ing.points(rid, "y") == [{"step": 0, "scalar_value": 4.0}]
-    assert not path.exists()
-
-
-def test_crashed_only_from_the_primarys_liveness(repo, ing):
-    run = _primary(repo)
-    w = _worker(repo, run.id, "rank1")
-    w.track(1.0, "x", step=0)
-    ing.ingest()
-    primary_log = wal_ingest.log_path(ing.dd, run.id)
-    worker_log = wal_ingest.log_path(ing.dd, run.id, "rank1")
-    old = time.time() - wal_ingest.STALE_SECONDS - 5
-
-    os.utime(worker_log, (old, old))  # a silent worker: the run is alive
-    assert wal_ingest.mark_crashed(ing.db, ing.dd) == []
-    assert ing.status(run.id) == "running"
-
-    os.utime(primary_log, (old, old))  # a silent primary: crashed, busy worker or not
-    os.utime(worker_log, None)
-    assert wal_ingest.mark_crashed(ing.db, ing.dd) == [run.id]
-    assert ing.status(run.id) == "crashed"
-
-    w.track(2.0, "x", step=1)  # a worker's records do not revive it
-    ing.ingest()
-    assert ing.status(run.id) == "crashed"
-    w.finish()
-    run.finish()  # its primary's do (a finish here)
-    ing.ingest()
-    assert ing.status(run.id) == "completed"
-
-
 # ---- stop requests -----------------------------------------------------------
 
 
@@ -450,7 +299,6 @@ def test_stop_request_reaches_workers(repo, ing, monkeypatch):
     monkeypatch.setattr(cairn.Run, "_HEARTBEAT_INTERVAL", 0.05)
     run = _primary(repo, stop_mode="flag")
     w = _worker(repo, run.id, "rank1", stop_mode="flag")
-    ing.ingest()
     ingest_ops.request_stop(ing.db, run.id)
     deadline = time.monotonic() + 5
     while not (run.should_stop and w.should_stop) and time.monotonic() < deadline:
@@ -458,17 +306,14 @@ def test_stop_request_reaches_workers(repo, ing, monkeypatch):
     assert run.should_stop and w.should_stop
     w.finish()
     run.finish("stopped")
-    ing.ingest()
     assert ing.status(run.id) == "stopped"
 
 
 def test_a_finished_runs_old_stop_request_is_not_for_a_late_worker(repo, ing, monkeypatch):
     monkeypatch.setattr(cairn.Run, "_HEARTBEAT_INTERVAL", 0.05)
     run = _primary(repo, stop_mode="flag")
-    ing.ingest()
     ingest_ops.request_stop(ing.db, run.id)
     run.finish("stopped")
-    ing.ingest()
     w = _worker(repo, run.id, "eval", stop_mode="flag")
     time.sleep(0.3)
     assert not w.should_stop
@@ -533,8 +378,7 @@ def test_auto_label_end_to_end(repo, ing, monkeypatch):
     assert (w.id, w._label, w._primary) == (rid, "rank1", False)
     w.finish()
     run.finish()
-    ing.ingest()
-    assert ing.status(rid) == "completed" and ing.logs() == []
+    assert ing.status(rid) == "completed"
 
 
 def test_disabled_mode_takes_the_id(monkeypatch):

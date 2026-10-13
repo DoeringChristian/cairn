@@ -1,6 +1,6 @@
 """Hyperparameter sweeps, independent of HTTP (like ``ingest_ops``).
 
-The sweep routes and the direct-mode ``LocalTransport`` both call these.
+The sweep routes call these.
 User errors raise ``ValueError`` (bad space / body) or ``LookupError``
 (unknown sweep / trial); callers map them to status codes.
 

@@ -4,6 +4,9 @@
 * ``POST /api/admin/backup`` — an online backup into ``<repo>/backups/``;
   ``GET /api/admin/backups/{name}`` downloads one (``cairn backup --to``).
 * ``POST /api/admin/fsck?repair=`` — ``integrity.fsck`` (``cairn fsck``).
+* ``POST /api/auth/login-link`` — a single-use OTP for a browser login URL
+  (``/login?otp=...``), minted for the caller's token: how ``cairn ui`` opens a
+  running server's viewer logged in.
 * ``POST /api/server/shutdown`` — stop a daemon server (``cairn server
   --daemon``, e.g. the one a ``Reader`` of an archive started); 409 for any
   other server, which is stopped where it was started.
@@ -19,7 +22,7 @@ import anyio.to_thread
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 
-from .. import integrity
+from .. import auth, integrity
 from ._common import get_blobs, get_data_dir, get_db
 
 router = APIRouter(prefix="/api", tags=["admin"])
@@ -62,3 +65,11 @@ def shutdown(request: Request) -> dict[str, Any]:
         )
     shutdown_fn()
     return {"stopping": True}
+
+
+@router.post("/auth/login-link")
+def login_link(request: Request) -> dict[str, Any]:
+    principal = auth.principal_from_request(request)
+    if principal is None or principal.share is not None:
+        raise HTTPException(status_code=409, detail="this server runs without auth: open it directly")
+    return {"otp": auth.create_otp(get_db(request), principal.token_id)}

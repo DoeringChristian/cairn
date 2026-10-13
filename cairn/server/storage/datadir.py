@@ -1,7 +1,7 @@
 """Data directory layout and the live-server advertisement (``servers.json``).
 
-Which process writes the database is decided by the ingest lease
-(``storage/lease.py``), not here.
+Which process writes the database: the one server serving the repo
+(``server/registration.py``), not decided here.
 """
 
 from __future__ import annotations

@@ -14,13 +14,11 @@ from fastapi.testclient import TestClient
 
 import cairn
 from cairn import cli
-from cairn.sdk.local import LocalTransport
 from cairn.server import gc, ingest_ops
 from cairn.server.app import create_app
 from cairn.server.storage.blobs import BlobStore
 from cairn.server.storage.datadir import DataDir
 from cairn.server.storage.db import Database
-from tests.conftest import ingest_repo
 
 QUIET = {"capture_source": False, "capture_stdout": False, "capture_env": False,
          "capture_system_metrics": False}
@@ -90,7 +88,6 @@ def test_every_reference_site_is_marked(tmp_path):
         art.add(b"payload-bytes", "x.bin")
         run.log_artifact(art)
         rid = run.id
-    ingest_repo(root)
     r = _Repo(root)
     try:
         # A report asset and a source diff (manifest on disk).
@@ -105,11 +102,15 @@ def test_every_reference_site_is_marked(tmp_path):
         diff, _ = r.blobs.put(b"diff --git")
         src = r.dd.run_source_dir(rid)
         (src / "manifest.json").write_text(json.dumps({"files": [], "diff_hash": diff}))
-        # A record not ingested yet names a blob.
-        t = LocalTransport(root)
-        t.create_run({"project": "p", "run_id": "9" * 32})
-        pending = t.upload_artifact(b"pending-bytes", "text/plain")
-        t.close()
+        # A record of a 0.5 run log still waiting to be imported names a blob.
+        pending, _ = r.blobs.put(b"pending-bytes")
+        wals = root / "wals"
+        wals.mkdir(exist_ok=True)
+        (wals / ("9" * 32 + "~w.wal.jsonl")).write_text(
+            json.dumps({"seq": 1, "op": "join", "payload": {"run_id": "9" * 32}}) + "\n"
+            + json.dumps({"seq": 2, "op": "artifact_meta", "payload": {
+                "hash": pending, "mime_type": "text/plain", "size_bytes": 13}}) + "\n"
+        )
         everything = set(r.blobs.iter_digests())
         _age_all(r.blobs)
         marked = gc.mark(r.db, r.dd, r.blobs)
@@ -127,7 +128,6 @@ def test_deleting_a_run_frees_its_blobs_and_the_server_collects(tmp_path):
         rid = run.id
     with cairn.Run("p", repo=root, **QUIET) as keep:
         keep.track(cairn.Image(np.zeros((4, 4, 3), np.uint8)), "img", 0)
-    ingest_repo(root)
     blobs = BlobStore(DataDir(root).artifacts_dir)
     _age_all(blobs)
     before = set(blobs.iter_digests())

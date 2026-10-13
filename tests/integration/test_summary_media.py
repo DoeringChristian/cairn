@@ -24,7 +24,6 @@ from cairn.server.app import create_app
 from cairn.server.storage.blobs import BlobStore
 from cairn.server.storage.datadir import DataDir
 from cairn.server.storage.db import Database
-from tests.conftest import ingest_repo
 
 QUIET = {"capture_source": False, "capture_stdout": False, "capture_env": False,
          "capture_system_metrics": False}
@@ -78,7 +77,6 @@ def _rows(db: Database, run_id: str) -> list[tuple]:
 def test_local_round_trip_nested_and_gallery(tmp_path):
     repo = tmp_path / ".cairn"
     rid = _train(repo)
-    ingest_repo(repo)
     run = cairn.Reader(repo=str(repo)).run(rid)
 
     summary = run.summary
@@ -105,7 +103,6 @@ def test_local_round_trip_nested_and_gallery(tmp_path):
 def test_overwrite_replaces_and_delete_removes(tmp_path):
     repo = tmp_path / ".cairn"
     rid = _train(repo)
-    ingest_repo(repo)
     db = _db(repo)
     try:
         before = {r[0]: r[2] for r in _rows(db, rid)}
@@ -153,7 +150,6 @@ run.finish()
 def test_showcase_rerun_from_a_second_process_replaces_media_only(tmp_path):
     repo = tmp_path / ".cairn"
     rid = _train(repo)
-    ingest_repo(repo)
     db = _db(repo)
     try:
         loss_before = db.read("SELECT step, scalar_value FROM sequences WHERE run_id = ? AND name = 'loss'", [rid])
@@ -162,7 +158,6 @@ def test_showcase_rerun_from_a_second_process_replaces_media_only(tmp_path):
             env = {**os.environ, "BROWSER": "true", "PYTHONPATH": str(REPO_ROOT)}
             subprocess.run([sys.executable, "-c", _ATTACH, str(repo), rid, str(value)],
                            check=True, timeout=120, env=env)
-            ingest_repo(repo)
             land = [r for r in _rows(db, rid) if r[0] == "showcase.loss_landscape"]
             assert len(land) == 1
             hashes.append(land[0][2])
@@ -187,7 +182,6 @@ def test_a_name_is_tracked_or_summary_media_not_both(tmp_path):
         with pytest.raises(ValueError, match="'fig' is a summary media value"):
             run.track([cairn.Image(_img(0.5))], "fig", step=1)
         rid = run.id
-    ingest_repo(repo)
     # Another process: the stored series are checked.
     attached = cairn.attach(rid, label="eval", repo=str(repo), system_metrics=False, capture_output=False)
     try:
@@ -237,7 +231,6 @@ def test_non_json_non_media_names_the_summary(tmp_path):
 def test_catalogue_series_and_overview_shape(tmp_path):
     repo = tmp_path / ".cairn"
     rid = _train(repo)
-    ingest_repo(repo)
     with TestClient(create_app(data_dir=repo, mount_ui=False)) as client:
         cat = {s["name"]: s for s in client.get(f"/api/runs/{rid}/sequences").json()["sequences"]}
         assert cat["showcase.loss_landscape"] == {
@@ -319,7 +312,6 @@ def test_gc_keeps_current_summary_media_and_frees_replaced(tmp_path):
     with cairn.Run(project="sm", repo=str(repo), **QUIET) as run:
         run.summary(fig=cairn.Image(_img(0.3)), gal=[cairn.Image(_img(0.4)), cairn.Image(_img(0.6))])
         rid = run.id
-    ingest_repo(repo)
     with cairn.Reader(repo=str(repo)).run(rid).edit() as e:
         e.set_summary(fig=cairn.Image(_img(0.7)))
     dd = DataDir(repo)
@@ -374,7 +366,6 @@ def test_duplicate_step_from_a_local_run_becomes_an_alert(tmp_path):
         run.track(1.0, "acc", step=5)
         run.track(2.0, "acc", step=5)
         rid = run.id
-    ingest_repo(repo)
     db = _db(repo)
     try:
         assert db.read("SELECT title FROM alerts WHERE run_id = ?", [rid]) == [("Duplicate step in 'acc'",)]

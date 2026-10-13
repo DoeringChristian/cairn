@@ -42,20 +42,22 @@ def viewer_base(t: Any, server: str) -> str | None:
 
 def local_viewer(root: Path) -> str | None:
     """The base URL of a running viewer over the local repo at `root`: a
-    `cairn ui` listed in its `servers.json`, or the `cairn server --ui`
-    holding its ingest lease. None when none is running (or none answers)."""
+    server registered in its `server.json` (when it serves the viewer) or a
+    viewer listed in its `servers.json`. None when none is running (or none
+    answers)."""
     import httpx
 
-    from ..server.storage import lease as lease_mod
+    from ..server.registration import read_info
     from ..server.storage.datadir import read_live_servers
 
-    candidates = [
+    candidates = []
+    info = read_info(root)
+    if info is not None and info.get("ui_url"):
+        candidates.append(str(info["ui_url"]))
+    candidates += [
         f"http://{e['host']}:{e['port']}" for e in read_live_servers(root)
         if e.get("host") and isinstance(e.get("port"), int)
     ]
-    holder = lease_mod.read_lease(root)
-    if holder and holder.get("url") and lease_mod.is_live(holder):
-        candidates.append(lease_mod.server_url(holder))
     for url in dict.fromkeys(candidates):
         try:
             with httpx.Client(base_url=url, timeout=2.0) as c:
@@ -73,15 +75,14 @@ def run_page_url(transport: Any, server: str, path: str) -> str:
     """The URL of the page at ``path`` (``/p/<project>/r/<id>``), as
     ``cairn open`` prints it.
 
-    A local repo (``server`` is ``file://<root>``): the viewer running over it,
+    A local repo (the transport's ``repo_root``): the viewer running over it,
     else the URL it will have once ``cairn ui`` starts on its default port. A
     server: its viewer (the paired UI port of a ``cairn server --ui`` ingest
     port), else the server itself.
     """
-    if server.startswith("file://"):
-        root = getattr(getattr(transport, "data_dir", None), "root", None)
-        base = local_viewer(Path(root)) if root is not None else None
-        base = base or f"http://localhost:{UI_DEFAULT_PORT}"
+    root = getattr(transport, "repo_root", None)
+    if root is not None:
+        base = local_viewer(Path(root)) or f"http://localhost:{UI_DEFAULT_PORT}"
     else:
         # A short probe of its own: the run's transport retries a server that
         # is down, and asking for a URL must not stall the training loop.

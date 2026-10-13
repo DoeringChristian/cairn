@@ -1,5 +1,5 @@
 """Resume, fork and rewind (C1): the ops, the routes, and the SDK on every
-write path — HTTP, LocalTransport direct, LocalTransport WAL (replayed)."""
+write path — a server by URL and a local repo (through its server)."""
 
 from __future__ import annotations
 
@@ -9,10 +9,8 @@ import pytest
 
 import cairn
 from cairn.server import artifact_registry_ops, ingest_ops
-from cairn.server.storage.blobs import BlobStore
 from cairn.server.storage.datadir import DataDir
 from cairn.server.storage.db import Database
-from cairn.server.wal_ingest import ingest_all
 from cairn.sdk.transport import Transport
 
 QUIET = dict(
@@ -219,12 +217,7 @@ class _Local:
         return cairn.Run(project="p", repo=self.repo, **QUIET, **kw)
 
     def drain(self):
-        dd = DataDir(self.repo)
-        db = Database.open(dd.db_path)
-        try:
-            ingest_all(dd, db, BlobStore(dd.artifacts_dir))
-        finally:
-            db.close()
+        pass
 
     def rows(self, sql, params=()):
         db = Database.open(DataDir(self.repo).db_path)

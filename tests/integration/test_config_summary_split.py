@@ -12,11 +12,9 @@ import pytest
 
 from cairn.server.storage.blobs import BlobStore
 from cairn.server.storage.db import Database
-from tests.conftest import ingest_repo
 
 
 def _inspect(repo):
-    ingest_repo(repo)  # apply the run's log, as a server or Reader would
     return Database(repo / "cairn.db"), BlobStore(repo / "blobs")
 
 
@@ -211,8 +209,8 @@ def test_the_deprecated_item_setter_is_gone(tmp_path):
 
 
 # --- the HTTP path -------------------------------------------------------
-# Everything above runs through LocalTransport. The server route and the
-# read-back are a separate limb and were once separately broken.
+# The server route and the read-back are a separate limb and were once
+# separately broken.
 
 
 def _new_run(client) -> str:
@@ -253,14 +251,12 @@ def test_summary_for_an_unknown_run_is_a_404(client):
 
 
 # --- log ingestion -----------------------------------------------------------
-# A local run's log is applied by the ingester; an op the dispatcher does not
-# know would be dropped in silence.
+# A run's uploaded log is applied by the ingester; an op the dispatcher does
+# not know would be dropped in silence.
 
 
 def test_log_ingestion_restores_both_channels(tmp_path):
-    import json as _json
-
-    from cairn.server import wal_ingest
+    from cairn.server import record_apply
     from cairn.server.storage.datadir import DataDir
 
     repo = tmp_path / ".cairn"
@@ -269,18 +265,13 @@ def test_log_ingestion_restores_both_channels(tmp_path):
     db = Database.open(repo / "cairn.db")   # .open() runs migrations; Database() does not
     blobs = BlobStore(repo / "blobs")
 
-    (repo / "wals").mkdir()
-    wal_path = repo / "wals" / "r1.wal.jsonl"
     ops = [
         {"seq": 1, "op": "create_run", "payload": {"run_id": "r1", "project": "split"}},
         {"seq": 2, "op": "params", "payload": {"run_id": "r1", "params": {"lr": 3e-4}}},
         {"seq": 3, "op": "summary", "payload": {"run_id": "r1", "summary": {"acc": 0.9}}},
     ]
-    wal_path.write_text("\n".join(_json.dumps(o) for o in ops) + "\n")
-
     try:
-        processed = wal_ingest.ingest_log(db, data_dir, blobs, wal_path)
-        assert processed == 3
+        assert record_apply.apply_records(db, data_dir, blobs, "r1", "main", 1, ops) == 3
         assert _keys(db, "params", "r1") == {"lr": "0.0003"}
         assert _keys(db, "summary", "r1") == {"acc": "0.9"}
     finally:

@@ -31,12 +31,6 @@ def _base(api: Api, report: dict[str, Any]) -> str:
 def _require_share_server(api: Api) -> None:
     """Share links are redeemed by a server with auth on; say so before asking
     one that cannot have them."""
-    if api.in_process:
-        raise click.ClickException(
-            f"{api.local_root} is a local repo: share links need a server with auth "
-            f"to redeem them. Serve it with `cairn ui --repo {api.local_root}` (auth is "
-            "on by default) and run this again"
-        )
     session = api.get("/api/auth/session").json()
     if session.get("auth_enabled") is False:
         raise click.ClickException(

@@ -29,6 +29,10 @@ os.environ["BROWSER"] = "true"
 # inherited by subprocesses too.
 os.environ["CAIRN_CACHE_DIR"] = tempfile.mkdtemp(prefix="cairn-test-cache-")
 
+# A daemon server a test's subprocess starts (a CLI command, a script) must
+# not outlive the test run by the default 30 min.
+os.environ.setdefault("CAIRN_SERVER_IDLE_TIMEOUT", "20")
+
 
 @pytest.fixture
 def data_dir(tmp_path) -> DataDir:
@@ -115,14 +119,104 @@ def live_server(app):
         thread.join(timeout=10)
 
 
-def ingest_repo(repo) -> None:
-    """Apply a local repo's pending run logs now, under its ingest lease (what
-    a server's background loop, a Reader or a CLI command does)."""
-    from cairn.sdk.local import RepoTransport
-    from cairn.server.wal_ingest import ingest_all
+class _RepoServers:
+    """In-process servers for the local repos a test touches.
 
-    rt = RepoTransport(repo)
+    ``cairn.endpoint`` starts a daemon server (a subprocess) for a local
+    repo nobody serves. Tests replace that with a uvicorn in a thread of the
+    test process, registered in the repo's ``server.json`` exactly like a
+    daemon (no auth), and stopped when the test ends; tests of the real
+    daemon (``test_endpoint.py``) opt out with ``real_daemons``.
+    """
+
+    def __init__(self) -> None:
+        self.running: list[tuple[Path, uvicorn.Server, threading.Thread]] = []
+
+    def start(self, root: Path):
+        from cairn.server.registration import write_info
+
+        app = create_app(data_dir=root, mount_ui=False)
+        port = _find_free_port()
+        server = uvicorn.Server(uvicorn.Config(
+            app=app, host="127.0.0.1", port=port, log_level="warning", lifespan="on",
+        ))
+        # Like a daemon: it stops on request (an archive Reader's close) and
+        # takes its server.json along.
+        app.state.daemon = True
+        app.state.request_shutdown = lambda: setattr(server, "should_exit", True)
+
+        def run() -> None:
+            try:
+                server.run()
+            finally:
+                (root / "server.json").unlink(missing_ok=True)
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        deadline = time.time() + 10
+        while time.time() < deadline and not server.started:
+            if not thread.is_alive():
+                raise RuntimeError(f"the test server for {root} failed to start")
+            time.sleep(0.01)
+        url = f"http://127.0.0.1:{port}"
+        write_info(root, url=url, token=None)
+        self.running.append((root, server, thread))
+        return None
+
+    def stop_repo(self, root: Path) -> None:
+        """Stop the test server of ``root`` (the repo is free again)."""
+        root = Path(root).resolve()
+        for i, (r, server, thread) in enumerate(self.running):
+            if Path(r).resolve() == root:
+                server.should_exit = True
+                thread.join(timeout=10)
+                (r / "server.json").unlink(missing_ok=True)
+                del self.running[i]
+                return
+
+    def stop_from(self, index: int) -> None:
+        """Stop the servers started since ``len(self.running)`` was ``index``."""
+        for root, server, thread in reversed(self.running[index:]):
+            server.should_exit = True
+            thread.join(timeout=10)
+            (root / "server.json").unlink(missing_ok=True)
+        del self.running[index:]
+
+
+_SERVERS = _RepoServers()
+
+import cairn.endpoint as _endpoint  # noqa: E402
+
+_REAL_START_SERVER = _endpoint.start_server
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _repo_servers_session():
+    """Local repos are served in-process during tests (see ``_RepoServers``);
+    servers started by module- or session-scoped fixtures stop at the end."""
+    import cairn.endpoint
+
+    real = cairn.endpoint.start_server
+    cairn.endpoint.start_server = _SERVERS.start
     try:
-        rt.under_lease(lambda db: ingest_all(rt.data_dir, db, rt.blobs), catch_up_first=False)
+        yield _SERVERS
     finally:
-        rt.close()
+        cairn.endpoint.start_server = real
+        _SERVERS.stop_from(0)
+
+
+@pytest.fixture(autouse=True)
+def repo_servers(request, monkeypatch, _repo_servers_session):
+    """The in-process servers a test started stop when it ends. Tests marked
+    ``real_daemons`` get real daemon subprocesses instead."""
+    if "real_daemons" in request.keywords:
+        import cairn.endpoint
+
+        monkeypatch.setattr(cairn.endpoint, "start_server", _REAL_START_SERVER)
+        yield None
+        return
+    mark = len(_SERVERS.running)
+    try:
+        yield _SERVERS
+    finally:
+        _SERVERS.stop_from(mark)

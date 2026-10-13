@@ -71,7 +71,7 @@ def next_version(
 
 
 #: Every optional ``create_run`` field, as the create body / WAL payload
-#: spells it. LocalTransport and the WAL replay forward exactly these keys, so
+#: spells it. Run-log records and the WAL replay forward exactly these keys, so
 #: a new field is added here, to ``create_run``'s signature, and to
 #: ``CreateRunRequest``.
 CREATE_RUN_FIELDS: tuple[str, ...] = (

@@ -116,6 +116,9 @@ class Transport:
         token: str | None = None,
     ):
         self.server_url = server_url.rstrip("/")
+        #: The local repo this server serves, when it was reached through one
+        #: (``connect.open_writer``); None for a server named by URL.
+        self.repo_root: Path | None = None
         self.timeout = timeout
         self.spill_dir = Path(spill_dir) if spill_dir is not None else default_spill_dir()
         self.max_retries = max_retries
@@ -677,10 +680,6 @@ class Transport:
             "GET", f"/api/projects/{project_id}/artifact-families/by-name/{quote(name, safe='')}",
         )
         self._registry_request("DELETE", f"/api/artifact-families/{fam['id']}")
-
-    def ingest_pending(self) -> int:
-        """Have the server apply every pending run log of its repo now."""
-        return int(self._request("POST", "/api/ingest/pending").json().get("ops", 0))
 
     def download_artifact_bytes(self, digest: str) -> bytes:
         """Download raw artifact bytes by hash."""

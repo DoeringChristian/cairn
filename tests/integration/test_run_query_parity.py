@@ -1,16 +1,15 @@
 """Run selection: one spec, one evaluator, identical answers on a local repo
-and a server. Every test runs against both backends on the same seeded runs
-(same ids, so even the id tie-break is comparable) and asserts the exact id
-sequence."""
+(its auto-started server) and a server named by URL. Every test runs against
+both on the same seeded runs (same ids, so even the id tie-break is
+comparable) and asserts the exact id sequence."""
 
 from __future__ import annotations
 
 import pytest
 
 import cairn
-from cairn.sdk.local import RepoTransport
+from cairn.sdk.connect import open_writer
 from cairn.sdk.transport import Transport
-from cairn.server import ingest_ops
 from cairn.server.query_resolver import parse_query_params, resolve
 from cairn.server.storage.db import Database
 
@@ -58,9 +57,11 @@ def backend(request, tmp_path_factory):
     """``(reader, resolve_latest(params) -> run id)`` over the seeded runs."""
     tmp = tmp_path_factory.mktemp(request.param)
     if request.param == "local":
+        import httpx
+
         repo = tmp / ".cairn"
-        t = RepoTransport(repo)
-        _seed(t, lambda rid: ingest_ops.set_archived(t.database(), rid, True))
+        t, url = open_writer(repo)
+        _seed(t, lambda rid: httpx.post(f"{url}/api/runs/{rid}/archive").raise_for_status())
         t.close()
         db = Database.open(repo / "cairn.db")
         reader = cairn.Reader(repo)

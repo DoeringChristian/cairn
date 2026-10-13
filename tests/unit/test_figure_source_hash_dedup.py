@@ -12,7 +12,7 @@ so all figure cards in a run without kaleido would render the *same*
 interactive source.
 
 This test drives the exact path that broke: ``FigureHandler.serialize``
--> ``RepoTransport.upload_artifact`` (source blob, then primary PNG) for
+-> ``Transport.upload_artifact`` (source blob, then primary PNG) for
 two distinct figures, then asserts both the primary-artifact hashes and
 their stored ``source_hash`` metadata stay distinct.
 """
@@ -24,10 +24,12 @@ import json
 import pytest
 
 from cairn.sdk.handlers.figure import FigureHandler
-from cairn.sdk.local import RepoTransport
+from cairn.sdk.connect import open_writer
+from cairn.sdk.transport import Transport
+from cairn.server.storage.db import Database
 
 
-def _log_figure(transport: RepoTransport, handler: FigureHandler, fig) -> dict:
+def _log_figure(transport: Transport, handler: FigureHandler, fig) -> dict:
     """Mirror cairn.sdk.run.Run.track's figure dual-storage path."""
     blob, meta = handler.serialize(fig)
     source_blob = meta.pop("_source_blob", None)
@@ -53,9 +55,10 @@ def test_two_distinct_figures_without_kaleido_stay_distinct(tmp_path):
     if _kaleido_available():
         pytest.skip("kaleido installed — degraded no-kaleido path not exercised")
 
-    transport = RepoTransport(tmp_path / ".cairn")
+    transport, _url = open_writer(tmp_path / ".cairn")
+    db = Database.open(tmp_path / ".cairn" / "cairn.db")
     try:
-        rid = transport.create_run({"project": "p"})["run_id"]
+        transport.create_run({"project": "p"})
         handler = FigureHandler()
 
         fig1 = go.Figure(data=[go.Scatter(x=[1, 2, 3], y=[1, 4, 9])])
@@ -76,10 +79,10 @@ def test_two_distinct_figures_without_kaleido_stay_distinct(tmp_path):
 
         # And each artifacts-table row must keep *its own* source_hash, not
         # silently inherit the first figure's via ON CONFLICT DO UPDATE.
-        row1 = transport.database().read_columns(
+        row1 = db.read_columns(
             "SELECT metadata FROM artifacts WHERE hash = ?", [r1["digest"]]
         )[0]
-        row2 = transport.database().read_columns(
+        row2 = db.read_columns(
             "SELECT metadata FROM artifacts WHERE hash = ?", [r2["digest"]]
         )[0]
         meta1 = json.loads(row1["metadata"])

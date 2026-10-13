@@ -15,7 +15,6 @@ import cairn
 from cairn.server.storage.blobs import BlobStore
 from cairn.server.storage.datadir import DataDir
 from cairn.server.storage.db import Database
-from tests.conftest import ingest_repo
 
 
 @pytest.fixture(autouse=True)
@@ -29,7 +28,6 @@ def _reset_capture_state():
 
 def _inspect(repo: Path):
     """Ingest the repo's logs, then open it to verify what was written."""
-    ingest_repo(repo)
     db = Database.open(DataDir(repo).db_path)
     blobs = BlobStore(DataDir(repo).artifacts_dir)
     return db, blobs
