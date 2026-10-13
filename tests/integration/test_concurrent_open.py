@@ -63,6 +63,12 @@ def test_processes_open_a_fresh_repo_concurrently(tmp_path: Path):
     errors = {i: err for i, err in results.items() if err}
     assert not errors, errors
 
+    # The runs wrote only their run directories: upload them (the uploader's
+    # job; MERGE NOTE: with the server half, the auto-started local server).
+    from tests import standin_server
+
+    standin_server.sync_repo(repo)
+    standin_server.close_all()
     con = sqlite3.connect(repo / "cairn.db")
     try:
         assert con.execute("PRAGMA journal_mode").fetchone()[0] == "wal"

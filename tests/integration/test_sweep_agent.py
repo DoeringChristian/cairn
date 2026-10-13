@@ -40,8 +40,19 @@ def _cli(*args: str, env: dict | None = None) -> subprocess.CompletedProcess:
     )
 
 
-@pytest.fixture(params=["direct", "server"])
-def repo(request, tmp_path):
+#: MERGE NOTE (client branch): a local repo's trial runs reach it through the
+#: auto-started local server (spec §5), part of the server half of 0.6. At the
+#: merge: drop this mark.
+_DIRECT = pytest.param("direct", marks=pytest.mark.skip(
+    reason="needs the 0.6 server half (local server auto-start); see MERGE NOTE"))
+
+
+@pytest.fixture(params=[_DIRECT, "server"])
+def repo(request, tmp_path, monkeypatch):
+    # The trials' runs upload through the background uploader (finish waits
+    # for it), which then exits soon.
+    monkeypatch.setenv("CAIRN_UPLOADER", "on")
+    monkeypatch.setenv("CAIRN_AGENT_IDLE_EXIT", "5")
     if request.param == "server":
         return request.getfixturevalue("live_server").replace("http://", "cairn://")
     return str(tmp_path / ".cairn")
@@ -162,6 +173,21 @@ def test_cancel_ends_the_running_trial(repo, tmp_path):
         while not any(t["run_id"] for t in sw.trials):
             assert time.monotonic() < deadline and agent.poll() is None
             time.sleep(0.1)
+        # 0.6: the run reaches the server through the uploader, a moment after
+        # it joined the trial; a cancel before that has no run to stop yet
+        # (OPEN: let the server stop a trial's run when it appears).
+        run_id = next(t["run_id"] for t in sw.trials if t["run_id"])
+        reader = cairn.Reader(repo=repo)
+        try:
+            while True:
+                try:
+                    reader.run(run_id)
+                    break
+                except Exception:  # noqa: BLE001 - not uploaded yet
+                    assert time.monotonic() < deadline
+                    time.sleep(0.1)
+        finally:
+            reader.close()
         cancelled = _cli("sweep", "cancel", sweep_id, "--repo", repo)
         assert cancelled.returncode == 0 and "cancelled" in cancelled.stdout, cancelled.stderr
         out, err = agent.communicate(timeout=60)

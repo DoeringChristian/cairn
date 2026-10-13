@@ -234,6 +234,35 @@ class RunDir:
                 return False
         return True
 
+    def remove_if_complete(self) -> bool:
+        """Delete the directory if it is ``complete()``, holding every log's
+        lock meanwhile so no process (a resume) can start writing it between
+        the check and the deletion. Returns whether it was deleted."""
+        import shutil
+
+        from .log import try_lock
+
+        if not self.complete():
+            return False
+        fds = []
+        try:
+            for ref in self.logs():
+                fd = try_lock(ref.log_dir / LOCK_NAME)
+                if fd is None:
+                    return False  # a writer started after all
+                fds.append(fd)
+            # Re-check under the locks (a log may have grown in between).
+            logs = self.logs()
+            if len(logs) != len(fds) or any(
+                ref.finished() is None or ref.last_seq() > ref.acked() for ref in logs
+            ):
+                return False
+            shutil.rmtree(self.path)
+            return True
+        finally:
+            for fd in fds:
+                os.close(fd)
+
 
 def iter_run_dirs(base: Path) -> list[RunDir]:
     """The run directories under ``base``: a ``.cairn`` dir (its ``runs/``),

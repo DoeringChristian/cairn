@@ -382,3 +382,43 @@ def test_503_waiting_for_the_run_is_retried_later(tmp_path) -> None:
     assert info.value.retry_after == 0.5 and not info.value.rejected
     drive(ds, client_for(fake))
     fake.assert_exactly_once("r1", "main", rd.log().last_seq())
+
+
+def test_a_crashed_writers_torn_tail_is_uploaded_up_to_the_tear(tmp_path) -> None:
+    """A writer that died mid-frame leaves a torn tail: the daemon uploads
+    every whole record before it, then counts the directory as settled. A
+    resume later truncates the tear and continues the same seq space."""
+    from cairn.sdk.runlog.log import segment_paths
+
+    served = FakeIngest().serve()
+    try:
+        rd = make_run(tmp_path / "cd", server=served.url, finish=False, blobs=0)
+        last = rd.log().last_seq()
+        seg = segment_paths(rd.log().log_dir)[-1]
+        with open(seg, "ab") as fh:  # half a frame: a length, no payload
+            fh.write((1000).to_bytes(8, "little") + b"\x00\x01")
+        base = tmp_path / "agent"
+        agent.register(rd.path, base)
+        d = agent.Daemon(base)
+        for _ in range(20):
+            d.once()
+            if not agent.registered(base):
+                break
+        assert not agent.registered(base)
+        served.fake.assert_exactly_once("r1", "main", last)
+
+        # The run resumes in place: the tear goes, seqs continue.
+        w = RunWriter(rd, "r1")
+        w.resume_run()
+        w.finish("completed", 0)
+        w.close()
+        assert rd.log().last_seq() == last + 2
+        sync_paths([rd], client_for=lambda _rd: client_for_url(served.url))
+        served.fake.assert_exactly_once("r1", "main", last + 2)
+        assert rd.complete()
+    finally:
+        served.close()
+
+
+def client_for_url(url: str) -> IngestClient:
+    return IngestClient(url)

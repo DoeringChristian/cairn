@@ -286,3 +286,54 @@ def test_signal_finishes_the_run_durably(tmp_path) -> None:
     points = [pt["step"] for r in recs if r["op"] == "batch" for pt in r["points"]]
     assert points == list(range(50))
     assert recs[-1]["op"] == "finish" and recs[-1]["status"] == "killed"
+
+
+def _script_records(tmp_path, body: str) -> tuple[subprocess.CompletedProcess, list[dict]]:
+    code = textwrap.dedent("""
+        import os, signal, cairn
+        run = cairn.Run("p", capture_system_metrics=False, capture_source=False,
+                        capture_stdout=False)
+        print(run.id, flush=True)
+        for i in range(50):
+            run.track(float(i), "loss", i)
+    """) + textwrap.dedent(body)
+    env = {**os.environ, "CAIRN_DIR": str(tmp_path / "cd"), "CAIRN_UPLOADER": "off",
+           "CAIRN_REPO": str(tmp_path / "repo"), "CAIRN_AGENT_DIR": str(tmp_path / "ag"),
+           # A long interval: only the exit path can have committed the points.
+           "CAIRN_SYNC_INTERVAL_MS": "60000"}
+    p = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True)
+    run_id = p.stdout.split()[0]
+    return p, scan(tmp_path / "cd" / "runs" / run_id / "log").records
+
+
+def _points(recs: list[dict]) -> list[int]:
+    return [pt["step"] for r in recs if r["op"] == "batch" for pt in r["points"]]
+
+
+def test_sigint_finishes_the_run_durably(tmp_path) -> None:
+    p, recs = _script_records(tmp_path, "os.kill(os.getpid(), signal.SIGINT)\n")
+    assert p.returncode != 0 and "KeyboardInterrupt" in p.stderr
+    assert _points(recs) == list(range(50))
+    assert recs[-1]["op"] == "finish" and recs[-1]["status"] == "killed"
+
+
+def test_interpreter_exit_finishes_the_run(tmp_path) -> None:
+    """No finish() call: the atexit hook records 'completed' and commits."""
+    p, recs = _script_records(tmp_path, "")
+    assert p.returncode == 0, p.stderr
+    assert _points(recs) == list(range(50))
+    assert recs[-1]["op"] == "finish" and recs[-1]["status"] == "completed"
+
+
+def test_unhandled_exception_finishes_the_run_failed(tmp_path) -> None:
+    p, recs = _script_records(tmp_path, "raise RuntimeError('boom')\n")
+    assert p.returncode == 1 and "boom" in p.stderr
+    assert _points(recs) == list(range(50))
+    assert recs[-1]["op"] == "finish" and recs[-1]["status"] == "failed"
+
+
+def test_sigterm_with_a_long_interval_still_commits(tmp_path) -> None:
+    p, recs = _script_records(tmp_path, "os.kill(os.getpid(), signal.SIGTERM)\n")
+    assert p.returncode == -15, p.stderr
+    assert _points(recs) == list(range(50))
+    assert recs[-1]["status"] == "killed"

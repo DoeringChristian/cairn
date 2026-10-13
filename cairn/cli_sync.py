@@ -3,7 +3,6 @@ background uploader every ``cairn.Run`` starts on demand)."""
 
 from __future__ import annotations
 
-import shutil
 import sys
 from pathlib import Path
 
@@ -77,8 +76,7 @@ def sync_cmd(paths: tuple[Path, ...], clean: bool, server: str | None, daemon: b
     if clean:
         removed = 0
         for rd in dirs:
-            if rd.complete():
-                shutil.rmtree(rd.path)
+            if rd.remove_if_complete():
                 removed += 1
             else:
                 reason = "still being written" if rd.live() else (
