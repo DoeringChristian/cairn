@@ -15,7 +15,6 @@ from cairn.server import ingest_ops
 from cairn.server.storage.blobs import BlobStore
 from cairn.server.storage.datadir import DataDir
 from cairn.server.storage.db import Database
-from cairn.server.wal_ingest import ingest_all
 
 
 def test_http_stop_route_and_heartbeat(client):
@@ -44,28 +43,22 @@ def _run(repo, **kw) -> cairn.Run:
 
 
 def _request_stop(repo, rid):
-    """What the UI's Stop button does, through the repo's lease holder (once
-    the server has the run: its log is uploaded at the group commit)."""
-    from cairn.sdk.local import RepoTransport
-    from cairn.server.storage.datadir import DataDir as _DD
-    from cairn.server.storage.db import Database as _DB
+    """What the UI's Stop button does: ``POST /api/runs/{id}/stop`` to the
+    repo's server, once the server has the run (uploaded at the group commit)."""
+    from cairn.endpoint import resolve_endpoint
 
-    def known() -> bool:
-        path = _DD(repo).db_path
-        if not path.exists():
-            return False
-        db = _DB.open_readonly(path)
-        try:
-            return bool(db.read_columns("SELECT 1 FROM runs WHERE id = ?", [rid]))
-        finally:
-            db.close()
-
-    _wait(known)
-    rt = RepoTransport(repo)
+    ep = resolve_endpoint(repo=repo)
+    t = Transport(ep.url, token=ep.token)
     try:
-        return rt.under_lease(lambda db: ingest_ops.request_stop(db, rid))
+        def known() -> bool:
+            return t._client.get(f"/api/runs/{rid}").status_code == 200
+
+        _wait(known)
+        r = t._client.post(f"/api/runs/{rid}/stop")
+        r.raise_for_status()
+        return r.json()
     finally:
-        rt.close()
+        t.close()
 
 
 def _wait(pred, timeout=5.0):

@@ -489,6 +489,8 @@ def test_python_sweep_cancel_stops_the_running_trial(tmp_path, monkeypatch):
     started = threading.Event()
 
     def train(config, run):
+        # A cancel reaches the runs the server has: upload this one first.
+        run._writer.flush()
         started.set()
         while not run.should_stop:
             time.sleep(0.01)

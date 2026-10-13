@@ -15,7 +15,6 @@ from fastapi.testclient import TestClient
 
 from cairn.server.app import create_app
 from tests import standin_server
-create_app = _create_app_with_ingest
 from cairn.server.storage.blobs import BlobStore
 from cairn.server.storage.datadir import DataDir
 from cairn.server.storage.db import Database
@@ -228,6 +227,14 @@ def repo_servers(request, monkeypatch, _repo_servers_session):
         monkeypatch.setattr(cairn.endpoint, "start_server", _REAL_START_SERVER)
         yield None
         return
+    if not getattr(request.module, "STANDIN", True):
+        # Modules testing the client on its own: no server comes up for a repo.
+        import cairn.endpoint
+
+        def offline(root):
+            raise cairn.endpoint.EndpointUnavailable(f"no server is serving {root} (test)")
+
+        monkeypatch.setattr(cairn.endpoint, "start_server", offline)
     mark = len(_SERVERS.running)
     try:
         yield _SERVERS

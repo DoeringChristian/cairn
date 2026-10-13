@@ -14,6 +14,7 @@ import time
 import pytest
 
 import cairn
+from tests.conftest import ingest_repo
 from cairn.sdk import run_ids
 from cairn.sdk.run import _resolve_process
 from cairn.server import ingest_ops
@@ -299,6 +300,7 @@ def test_stop_request_reaches_workers(repo, ing, monkeypatch):
     monkeypatch.setattr(cairn.Run, "_HEARTBEAT_INTERVAL", 0.05)
     run = _primary(repo, stop_mode="flag")
     w = _worker(repo, run.id, "rank1", stop_mode="flag")
+    ingest_repo(repo)  # the server has the run once its log is uploaded
     ingest_ops.request_stop(ing.db, run.id)
     deadline = time.monotonic() + 5
     while not (run.should_stop and w.should_stop) and time.monotonic() < deadline:
@@ -312,6 +314,7 @@ def test_stop_request_reaches_workers(repo, ing, monkeypatch):
 def test_a_finished_runs_old_stop_request_is_not_for_a_late_worker(repo, ing, monkeypatch):
     monkeypatch.setattr(cairn.Run, "_HEARTBEAT_INTERVAL", 0.05)
     run = _primary(repo, stop_mode="flag")
+    ingest_repo(repo)
     ingest_ops.request_stop(ing.db, run.id)
     run.finish("stopped")
     w = _worker(repo, run.id, "eval", stop_mode="flag")

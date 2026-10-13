@@ -167,6 +167,9 @@ def test_records_apply_with_the_ingest_code(env) -> None:
     run.finish()
 
     ingest(env / "repo", [RunDir.for_run(other.id), RunDir.for_run(run.id)])
+    from tests.conftest import _SERVERS
+
+    _SERVERS.start(env / "repo")  # read back through a server, like any Reader
     reader = cairn.Reader(repo=env / "repo")
     r = reader.run(run.id)
     assert r.config == {"lr": 1e-3}

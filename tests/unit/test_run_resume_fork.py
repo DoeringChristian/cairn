@@ -12,7 +12,7 @@ from cairn.server import artifact_registry_ops, ingest_ops
 from cairn.server.storage.blobs import BlobStore
 from cairn.server.storage.datadir import DataDir
 from cairn.server.storage.db import Database
-from cairn.server.wal_ingest import ingest_all
+from tests.conftest import ingest_repo
 
 QUIET = dict(
     capture_source=False, capture_stdout=False, capture_env=False,
@@ -218,12 +218,7 @@ class _Local:
         return cairn.Run(project="p", repo=self.repo, **QUIET, **kw)
 
     def drain(self):
-        dd = DataDir(self.repo)
-        db = Database.open(dd.db_path)
-        try:
-            ingest_all(dd, db, BlobStore(dd.artifacts_dir))
-        finally:
-            db.close()
+        ingest_repo(self.repo)
 
     def rows(self, sql, params=()):
         db = Database.open(DataDir(self.repo).db_path)

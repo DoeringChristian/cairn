@@ -16,11 +16,8 @@ import cairn
 from cairn.server import alerts as alerts_core
 from cairn.server import ingest_ops
 from cairn.server.app import create_app
-from cairn.server.storage.blobs import BlobStore
 from cairn.server.storage.datadir import DataDir
 from cairn.server.storage.db import Database
-from cairn.server.wal_ingest import ingest_all
-from tests.conftest import ingest_repo
 
 
 def _alerts(db, run_id=None):
@@ -85,7 +82,7 @@ def test_other_finishes_do_not_alert(client, status):
     assert _alerts(client.app.state.db, rid) == []
 
 
-# ---- legacy (0.5) run logs ---------------------------------------------------
+# ---- uploaded run logs --------------------------------------------------------
 
 
 def _alert(title, alert_id, level="info"):
@@ -93,21 +90,19 @@ def _alert(title, alert_id, level="info"):
             "created_at": "2024-01-01T00:00:00+00:00"}
 
 
-def test_local_run_log_alerts_apply_once(tmp_path):
-    repo = tmp_path / ".cairn"
-    dd = DataDir(repo)
-    from tests.legacy_wal import LegacyLog
-
+def test_uploaded_run_log_alerts_apply_once(client):
     rid = "b" * 32
-    t = LegacyLog(repo, rid)
-    t.create()
-    t.write("alert", {"run_id": rid, **_alert("hi", "a1")})
-    db = Database.open(dd.db_path)
-    ingest_all(dd, db, BlobStore(dd.artifacts_dir))  # the run is still live
-    t.finish("failed", exit_code=1)
-    ingest_all(dd, db, BlobStore(dd.artifacts_dir))  # only the rest
-    rows = _alerts(db, rid)
-    db.close()
+    url = f"/api/ingest/runs/{rid}/logs/main"
+    first = [
+        {"seq": 1, "op": "create_run", "payload": {"project": "p", "run_id": rid}},
+        {"seq": 2, "op": "alert", "payload": {"run_id": rid, **_alert("hi", "a1")}},
+    ]
+    assert client.post(url, json={"from_seq": 1, "records": first}).json() == {"applied_seq": 2}
+    # The uploader did not see the answer and sends it again, with the rest.
+    rest = first + [{"seq": 3, "op": "finish",
+                     "payload": {"run_id": rid, "status": "failed", "exit_code": 1}}]
+    assert client.post(url, json={"from_seq": 1, "records": rest}).json() == {"applied_seq": 3}
+    rows = _alerts(client.app.state.db, rid)
     assert sorted(a["level"] for a in rows) == ["error", "info"]
 
 
@@ -128,7 +123,6 @@ def test_sdk_run_alert_and_failure(tmp_path):
                 run.alert("x", level="critical")
             rid = run.id
             raise RuntimeError("boom")
-    ingest_repo(repo)
     db = Database.open(DataDir(repo).db_path)
     try:
         rows = _alerts(db, rid)
@@ -157,11 +151,11 @@ def test_reap_stale_runs_kills_and_alerts_once(tmp_path):
         ingest_ops.create_run(db, project="p", run_id="fresh")
         db.write("UPDATE runs SET last_heartbeat = '2000-01-01T00:00:00+00:00' WHERE id = 'stale'")
         ingest_ops.create_run(db, project="p", run_id="logged")
-        # A local run's log decides its liveness, not its heartbeat.
+        # An uploaded run's log decides its liveness, not its heartbeat.
         db.write("UPDATE runs SET last_heartbeat = '2000-01-01T00:00:00+00:00' WHERE id = 'logged'")
         db.write(
-            'INSERT INTO wal_progress (path, run_id, "offset", finished, updated_at) '
-            "VALUES ('logged.wal.jsonl', 'logged', 0, 0, 'x')"
+            "INSERT INTO ingest_progress (run_id, log, applied_seq, updated_at) "
+            "VALUES ('logged', 'main', 1, '2999-01-01T00:00:00+00:00')"
         )
 
         assert alerts_core.reap_stale_runs(db) == ["stale"]
