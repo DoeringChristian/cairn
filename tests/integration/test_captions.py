@@ -1,5 +1,5 @@
 """Captions are per-point metadata: identical bytes logged twice keep their
-own captions, on HTTP, LocalTransport direct and LocalTransport WAL."""
+own captions, through a server URL and a local repo."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ import numpy as np
 import pytest
 
 import cairn
-from cairn.sdk.transport import Transport
 
 
 @pytest.fixture(params=["http", "local"])
@@ -17,10 +16,7 @@ def backend(request, tmp_path, monkeypatch):
     """Yields ``(run_kwargs, reader_repo)``."""
     if request.param == "http":
         live_server = request.getfixturevalue("live_server")
-        monkeypatch.setenv("CAIRN_WAL_DIR", str(tmp_path / "wal"))
-        t = Transport(live_server, max_retries=1, backoff_base=0.001, backoff_cap=0.001)
-        yield {"transport": t}, live_server.replace("http://", "cairn://")
-        t.close()
+        yield {"server": live_server}, live_server.replace("http://", "cairn://")
     else:
         repo = tmp_path / ".cairn"
         yield {"repo": repo}, repo

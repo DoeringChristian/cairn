@@ -1,5 +1,5 @@
 """Resume, fork and rewind (C1): the ops, the routes, and the SDK on every
-write path — a server by URL and a local repo (through its server)."""
+write path: a server URL and a local repo (both through the run directory)."""
 
 from __future__ import annotations
 
@@ -9,9 +9,10 @@ import pytest
 
 import cairn
 from cairn.server import artifact_registry_ops, ingest_ops
+from cairn.server.storage.blobs import BlobStore
 from cairn.server.storage.datadir import DataDir
 from cairn.server.storage.db import Database
-from cairn.sdk.transport import Transport
+from cairn.server.wal_ingest import ingest_all
 
 QUIET = dict(
     capture_source=False, capture_stdout=False, capture_env=False,
@@ -191,18 +192,18 @@ def test_routes_resume_rewind_fork(client):
 
 
 class _Http:
-    def __init__(self, client):
-        self.client = client
+    def __init__(self, app, url):
+        self.app = app
+        self.url = url
 
     def run(self, **kw):
-        t = Transport("http://testserver", client=self.client, max_retries=1)
-        return cairn.Run(project="p", transport=t, **QUIET, **kw)
+        return cairn.Run(project="p", server=self.url, **QUIET, **kw)
 
     def drain(self):
         pass
 
     def rows(self, sql, params=()):
-        return self.client.app.state.db.read_columns(sql, list(params))
+        return self.app.state.db.read_columns(sql, list(params))
 
     def close(self):
         pass
@@ -217,7 +218,12 @@ class _Local:
         return cairn.Run(project="p", repo=self.repo, **QUIET, **kw)
 
     def drain(self):
-        pass
+        dd = DataDir(self.repo)
+        db = Database.open(dd.db_path)
+        try:
+            ingest_all(dd, db, BlobStore(dd.artifacts_dir))
+        finally:
+            db.close()
 
     def rows(self, sql, params=()):
         db = Database.open(DataDir(self.repo).db_path)
@@ -233,7 +239,7 @@ class _Local:
 @pytest.fixture(params=["http", "local"])
 def backend(request, tmp_path):
     if request.param == "http":
-        return _Http(request.getfixturevalue("client"))
+        return _Http(request.getfixturevalue("app"), request.getfixturevalue("live_server"))
     return _Local(tmp_path / ".cairn")
 
 

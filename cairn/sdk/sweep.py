@@ -322,8 +322,12 @@ def _work(
                     continue
                 break
             params = trial["params"]
-            # The run shares the worker's client (its server).
-            run = Run(project, sweep_id=sweep_id, transport=transport, **{
+            # The run belongs where the sweep lives.
+            where: dict[str, Any] = (
+                {"repo": transport.repo_root} if getattr(transport, "repo_root", None)
+                else {"server": transport.server_url}
+            )
+            run = Run(project, sweep_id=sweep_id, **where, **{
                 **run_kwargs, "name": run_kwargs.get("name") or trial["name"],
             })
             transport.report_trial(sweep_id, trial["id"], run_id=run.id, status="running")

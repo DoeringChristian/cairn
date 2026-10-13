@@ -28,7 +28,6 @@ def repo(request, tmp_path, monkeypatch):
     if request.param == "local":
         return str(tmp_path / ".cairn")
     live = request.getfixturevalue("live_server")
-    monkeypatch.setenv("CAIRN_WAL_DIR", str(tmp_path / "wal"))
     return live.replace("http://", "cairn://")
 
 
@@ -365,10 +364,12 @@ def test_local_version_is_pending_until_wait(tmp_path):
         assert [r.id for r in back.used_by()] == [run.id]
 
 
-def test_http_version_wait_returns_at_once(live_server, tmp_path, monkeypatch):
-    monkeypatch.setenv("CAIRN_WAL_DIR", str(tmp_path / "wal"))
+def test_server_version_is_pending_until_uploaded(live_server):
+    """A run only writes its directory: the server numbers a version when it
+    applies the record, and ``wait`` returns then."""
     with cairn.Run("p", repo=live_server.replace("http://", "cairn://"), **QUIET) as run:
         v = run.log_artifact(b"x", "blob")
+        assert v.wait(timeout=10) is v
         assert not v.pending and v.version == 1
         assert v.wait(timeout=0) is v
 

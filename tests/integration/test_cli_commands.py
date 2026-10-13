@@ -1,6 +1,6 @@
 """The data commands of the CLI on BOTH targets: a local repo (no server)
 and a live server. Every test runs with HOME, the XDG dirs, the config file,
-the WAL and spill dirs and the working directory inside tmp_path, so the
+the run directories and the working directory inside tmp_path, so the
 user's config and caches are never read or written."""
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ import cairn
 from cairn import cli, config
 from cairn.server.app import create_app
 from cairn.server.storage.datadir import DataDir
-from tests.conftest import _find_free_port
+from tests.conftest import _find_free_port, ingest_repo
 
 QUIET = dict(capture_source=False, capture_stdout=False, capture_env=False,
              capture_system_metrics=False)
@@ -35,8 +35,7 @@ def _isolated(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
     monkeypatch.setenv("XDG_CACHE_HOME", str(home / ".cache"))
     monkeypatch.setattr(config, "config_file_path", lambda: tmp_path / "config.toml")
-    monkeypatch.setattr(cli, "default_spill_dir", lambda: tmp_path / "spill")
-    monkeypatch.setenv("CAIRN_WAL_DIR", str(tmp_path / "wal"))
+    monkeypatch.setenv("CAIRN_DIR", str(tmp_path / "rundirs"))
     for var in ("CAIRN_REPO", "CAIRN_SERVER", "CAIRN_TOKEN", "CAIRN_ARTIFACT_DIR"):
         monkeypatch.delenv(var, raising=False)
     cwd = tmp_path / "cwd"
@@ -133,10 +132,8 @@ def test_ping(target):
         assert health["repo"] == str(target.root.resolve())
         assert (health["projects"], health["runs"], health["series"], health["points"]) == (2, 4, 1, 3)
         assert health["artifact_versions"] == 3 and health["reports"] == 1
-        assert health["schema_version"] == 3 and health["layout_version"] == "3"
-        # Answered by the repo's server (started for the command).
-        assert health["served_by"].startswith("http://127.0.0.1:")
-        assert health["pending_legacy_logs"] == 0
+        assert health["schema_version"] == 2 and health["layout_version"] == "3"
+        assert health["served_by"] is None and health["pending_wal_logs"] == 0
     else:
         assert "version" in health and "uptime_sec" in health
 
@@ -369,8 +366,8 @@ def test_reports(target, tmp_path):
 
     result = target.run("report", "share", rid, ok=False)
     assert result.exit_code == 1
-    # The test servers (a local repo's too) run without auth.
-    assert "runs without auth (--no-auth)" in result.output
+    assert ("is a local repo: share links need a server with auth" if target.kind == "local"
+            else "runs without auth (--no-auth)") in result.output
 
     assert target.run("report", "rm", rid).output.strip() == f"deleted {rid}"
     result = target.run("report", "show", rid, ok=False)
@@ -459,28 +456,34 @@ def test_missing_local_repo_is_one_line(tmp_path):
 
 
 def test_a_served_local_repo_is_reached_through_its_server(tmp_path):
-    """Commands on a repo a live `cairn ui` serves (registered in its
-    server.json) go to that server; `open` finds its viewer."""
+    """Writes to a repo whose ingest lease a live `cairn ui` holds go to that
+    server; `open` finds its viewer."""
+    import os
+    import time
+
     from cairn import viewer
     from cairn.cli_target import open_api
-    from cairn.server.registration import remove_info, write_info
+    from cairn.server.storage import lease as lease_mod
 
     if not viewer.is_available():
         pytest.skip("cairn-ui viewer not installed")
     root = tmp_path / "cairn"
     with cairn.Run("proj", name="r", repo=str(root), **QUIET) as run:
         rid = run.id
-    # The test server that served the run stops: the repo is free again.
-    from tests.conftest import _SERVERS
-
-    _SERVERS.stop_repo(root)
+    ingest_repo(root)
     app = create_app(data_dir=root, mount_ui=True, background_tasks=False)
     with _serve(app) as url:
         port = int(url.rsplit(":", 1)[1])
-        write_info(root, url=url, token=None, ui_url=url)
+        dd = DataDir(root)
+        # The lease as `cairn ui` in another process holds it.
+        lease_mod.lease_path(dd.root).write_text(json.dumps({
+            "host": lease_mod.hostname(), "pid": os.getppid(), "token": "t" * 32,
+            "mode": "ui", "url": url, "expires_at": time.time() + 120,
+        }))
+        dd.add_live_server("ui", host="127.0.0.1", port=port)
         try:
             with open_api(str(root), None) as api:
-                assert api.base == url
+                assert not api.in_process and api.base == url
             result = CliRunner().invoke(cli.main, ["archive", rid, "--repo", str(root)])
             assert result.exit_code == 0, result.output
             result = CliRunner().invoke(cli.main, ["open", rid, "--repo", str(root), "--no-browser"])
@@ -489,28 +492,36 @@ def test_a_served_local_repo_is_reached_through_its_server(tmp_path):
             health = json.loads(CliRunner().invoke(cli.main, ["ping", "--repo", str(root)]).output)
             assert health["served_by"] == url and health["archived_runs"] == 1
         finally:
-            remove_info(root)
+            dd.remove_live_server()
+            lease_mod.lease_path(dd.root).unlink()
 
 
-def test_sync_replays_server_logs_to_the_target_server(tmp_path):
-    """A log that names no server goes to the target server; with a local
-    target it is reported, not dropped."""
-    from cairn.sdk.wal import WriteAheadLog
+def test_sync_uploads_run_directories_logged_while_the_server_was_down(tmp_path):
+    """A run logs into its directory with its server down; `cairn sync
+    --server URL --clean` uploads it (once) and then removes the directory."""
+    from cairn.sdk.runlog.rundir import RunDir
 
+    with cairn.Run("proj", name="offline", server="http://127.0.0.1:9", **QUIET) as run:
+        run.config(a=1)
+        for step in range(5):
+            run.track(float(step), name="loss", step=step)
+    rd = RunDir.for_run(run.id)
+    assert rd.exists() and rd.log().acked() == 0
     with _serve(create_app(data_dir=tmp_path / "srv", mount_ui=False)) as url:
         import httpx
 
-        rid = httpx.post(f"{url}/api/runs", json={"project": "s"}).json()["run_id"]
-        wal = WriteAheadLog(rid, tmp_path / "wal")  # no target recorded
-        wal.append("params", {"run_id": rid, "params": {"a": 1}})
-        wal.close()
-        result = CliRunner().invoke(cli.main, ["sync"])
-        assert result.exit_code == 1
-        assert "names no server" in result.output and "--server URL" in result.output
-        result = CliRunner().invoke(cli.main, ["sync", "--server", url])
+        for _ in range(2):  # the second sync sends nothing again
+            result = CliRunner().invoke(cli.main, ["sync", str(rd.path), "--server", url])
+            assert result.exit_code == 0, result.output
+            assert f"{run.id}: uploaded" in result.output
+        body = httpx.get(f"{url}/api/runs/{run.id}").json()
+        assert body["run"]["status"] == "completed" and body["config_doc"] == {"a": 1}
+        pts = httpx.get(f"{url}/api/runs/{run.id}/sequences/loss").json()["points"]
+        assert [p["step"] for p in pts] == [0, 1, 2, 3, 4]
+        result = CliRunner().invoke(cli.main, ["sync", str(rd.path), "--server", url, "--clean"])
         assert result.exit_code == 0, result.output
-        assert f"{rid}: replayed 1 op(s) -> {url}" in result.output
-        assert httpx.get(f"{url}/api/runs/{rid}").json()["config_doc"] == {"a": 1}
+        assert "removed 1 run directory" in result.output
+    assert not rd.path.exists()
 
 
 def test_configure_sets_one_target(tmp_path):

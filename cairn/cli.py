@@ -40,9 +40,9 @@ import click
 from . import config as _config
 from . import viewer as _viewer
 from .cli_target import (
-    Api, explicit, open_api, reader_location, resolve, target_options,
+    Api, explicit, open_api, reader_location, require_repo, resolve, target_options,
 )
-from .sdk.transport import Transport, default_spill_dir
+from .sdk.transport import Transport
 
 from .server import auth as _auth
 from .server.app import create_app
@@ -1659,96 +1659,6 @@ def fsck_cmd(repair: bool, runs_dir: Path | None, repo: str | None, server: str 
     click.echo("  ok" if report["ok"] and not run_problems else "  repaired")
 
 
-@main.command("sync")
-@target_options
-def sync_cmd(repo: str | None, server: str | None) -> None:
-    """Replay run logs that have not reached their repo or server.
-
-    \b
-    * Server-mode runs keep a write-ahead log on this machine (CAIRN_WAL_DIR).
-      Each log not fully delivered is replayed, in order, to the server
-      recorded in it (a log without one goes to the target server).
-    * A server target: requests the SDK spilled to disk are sent to it.
-    """
-    from .sdk.wal import WriteAheadLog, default_wal_dir
-
-    target = resolve(repo, server)
-    replayed = 0
-    failed = 0
-
-    wal_dir = default_wal_dir()
-    for wal_path in sorted(wal_dir.glob("*.wal.jsonl")) if wal_dir.exists() else []:
-        run_id = wal_path.name.removesuffix(".wal.jsonl")
-        wal = WriteAheadLog(run_id, wal_dir)
-        if not wal.has_pending:
-            wal.close()
-            continue
-        dest = wal.target or (None if target.is_local else target.location)
-        if dest is None:
-            wal.close()
-            failed += 1
-            click.echo(
-                f"{run_id}: FAILED: the log names no server; replay it with "
-                "`cairn sync --server URL`",
-                err=True,
-            )
-            continue
-        t = Transport(dest, wal=wal, max_retries=2, backoff_base=0.2, backoff_cap=0.5)
-        try:
-            n = t.drain_wal()
-            replayed += n
-            if wal.has_pending:
-                # drain_wal stops at the first op that fails to send (and
-                # logs why), leaving the rest pending.
-                failed += 1
-                click.echo(
-                    f"{run_id}: FAILED after {n} op(s) -> {dest}; the rest are kept for retry",
-                    err=True,
-                )
-            else:
-                click.echo(f"{run_id}: replayed {n} op(s) -> {dest}")
-                wal.cleanup()
-        except Exception as exc:  # noqa: BLE001 - keep draining other runs
-            failed += 1
-            click.echo(f"{run_id}: FAILED ({exc}) — kept for retry", err=True)
-        finally:
-            t.close()
-
-    # Spill dir: requests the transport gave up on and wrote to disk. They
-    # carry no server, so they go to the target server.
-    spill = default_spill_dir()
-    if spill.exists() and any(spill.iterdir()):
-        if target.is_local:
-            click.echo(
-                f"requests spilled to {spill} wait for a server; send them with "
-                "`cairn sync --server URL`",
-                err=True,
-            )
-        else:
-            t = Transport(target.location, max_retries=2, backoff_base=0.2, backoff_cap=0.5)
-            try:
-                replayed += t.drain_spill()
-            finally:
-                t.close()
-
-    # Ops a server rejected (4xx) are set aside, never replayed: say where.
-    for dead in sorted(wal_dir.glob("*.dead.jsonl")) if wal_dir.exists() else []:
-        with dead.open() as f:
-            n = sum(1 for _ in f)
-        click.echo(f"{dead.name.removesuffix('.dead.jsonl')}: {n} op(s) rejected by the "
-                   f"server, kept in {dead}", err=True)
-
-    if replayed == 0 and failed == 0:
-        click.echo("nothing to sync")
-    elif failed:
-        raise click.ClickException(
-            f"sync incomplete: {replayed} op(s) replayed, {failed} run(s) failed; "
-            "run `cairn sync` again once the server is reachable"
-        )
-    else:
-        click.echo(f"sync complete: {replayed} op(s) replayed")
-
-
 @main.command("configure")
 @click.option("--server", default=None, help="Server URL.")
 @click.option("--repo", default=None, help="A local .cairn/ directory (or a server URL).")
@@ -2313,3 +2223,9 @@ from .cli_report import report_group as _report_group  # noqa: E402
 
 main.add_command(_artifact_group)
 main.add_command(_report_group)
+
+# `cairn sync` (and the background uploader, `cairn sync --daemon`) live in
+# their own module (cairn/cli_sync.py).
+from .cli_sync import sync_cmd as _sync_cmd  # noqa: E402
+
+main.add_command(_sync_cmd)

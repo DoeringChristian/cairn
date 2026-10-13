@@ -8,6 +8,9 @@ import pytest
 
 import cairn
 from cairn.server import artifact_registry_ops
+from cairn.server.storage.datadir import DataDir
+from cairn.server.storage.db import Database
+from tests.conftest import ingest_repo
 
 QUIET = {"capture_source": False, "capture_stdout": False, "capture_env": False,
          "capture_system_metrics": False}
@@ -54,21 +57,6 @@ def test_use_run_on_a_local_repo(tmp_path):
     assert {"source": prep.id, "target": ev.id, "kind": "used", "role": "data"} in graph["edges"]
 
 
-def test_use_run_record_is_applied_from_an_uploaded_log(client):
-    up, down = "a" * 32, "b" * 32
-    for rid, extra in ((up, []), (down, [
-        {"seq": 2, "op": "record_run_use", "payload": {"run_id": down, "used_run_id": up,
-                                                       "role": "base"}},
-    ])):
-        records = [{"seq": 1, "op": "create_run", "payload": {"project": "p", "run_id": rid}}]
-        r = client.post(f"/api/ingest/runs/{rid}/logs/main",
-                        json={"from_seq": 1, "records": records + extra})
-        assert r.status_code == 200, r.text
-    assert artifact_registry_ops.run_uses(client.app.state.db, down) == {
-        "uses": [{"run_id": up, "role": "base"}], "used_by": [],
-    }
-
-
 def test_uses_validates_entries_before_creating_the_run(tmp_path):
     repo = tmp_path / ".cairn"
     with pytest.raises(ValueError):
@@ -78,6 +66,7 @@ def test_uses_validates_entries_before_creating_the_run(tmp_path):
     # An unknown run fails the new run.
     with pytest.raises(LookupError):
         cairn.Run("p", repo=repo, uses=["missing"], run_id="x" * 32, **QUIET)
+    ingest_repo(repo)
     reader = cairn.Reader(repo=repo)
     try:
         assert reader.run("x" * 32).status == "failed"

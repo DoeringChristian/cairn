@@ -1,6 +1,6 @@
 """Stopping a run from the UI: ``POST /api/runs/{id}/stop`` sets
-``stop_requested``; the heartbeat hands it back (also to a run whose log is
-uploaded: its heartbeat record) and the SDK run ends "stopped"."""
+``stop_requested``; the heartbeat hands it back on every write path (HTTP,
+the run's server) and the SDK run ends "stopped"."""
 
 from __future__ import annotations
 
@@ -11,6 +11,11 @@ import pytest
 
 import cairn
 from cairn.sdk.transport import Transport
+from cairn.server import ingest_ops
+from cairn.server.storage.blobs import BlobStore
+from cairn.server.storage.datadir import DataDir
+from cairn.server.storage.db import Database
+from cairn.server.wal_ingest import ingest_all
 
 
 def test_http_stop_route_and_heartbeat(client):
@@ -31,34 +36,6 @@ def test_http_stop_route_and_heartbeat(client):
     assert client.post("/api/runs/nope/stop").status_code == 404
 
 
-def test_http_transport_heartbeat_returns_flag(live_server):
-    t = Transport(live_server)
-    try:
-        rid = t.create_run({"project": "p"})["run_id"]
-        assert t.heartbeat(rid) is None
-        t.post_json(f"/api/runs/{rid}/stop", {})
-        assert t.heartbeat(rid)
-    finally:
-        t.close()
-
-
-def test_uploaded_heartbeat_keeps_the_stop_request(client):
-    rid = "a" * 32
-    url = f"/api/ingest/runs/{rid}/logs/main"
-    client.post(url, json={"from_seq": 1, "records": [
-        {"seq": 1, "op": "create_run", "payload": {"project": "p", "run_id": rid}},
-    ]})
-    ts = client.post(f"/api/runs/{rid}/stop").json()["stop_requested"]
-    client.post(url, json={"from_seq": 2, "records": [
-        {"seq": 2, "op": "heartbeat", "payload": {"run_id": rid}},
-        {"seq": 3, "op": "finish", "payload": {"run_id": rid, "status": "stopped"}},
-    ]})
-    row = client.app.state.db.read_columns(
-        "SELECT status, stop_requested FROM runs WHERE id = ?", [rid],
-    )[0]
-    assert row == {"status": "stopped", "stop_requested": ts}
-
-
 def _run(repo, **kw) -> cairn.Run:
     return cairn.Run(
         project="p", repo=repo, capture_source=False, capture_stdout=False,
@@ -67,14 +44,28 @@ def _run(repo, **kw) -> cairn.Run:
 
 
 def _request_stop(repo, rid):
-    """What the UI's Stop button does, through the repo's server."""
-    from cairn.sdk.connect import open_writer
+    """What the UI's Stop button does, through the repo's lease holder (once
+    the server has the run: its log is uploaded at the group commit)."""
+    from cairn.sdk.local import RepoTransport
+    from cairn.server.storage.datadir import DataDir as _DD
+    from cairn.server.storage.db import Database as _DB
 
-    t, _url = open_writer(repo)
+    def known() -> bool:
+        path = _DD(repo).db_path
+        if not path.exists():
+            return False
+        db = _DB.open_readonly(path)
+        try:
+            return bool(db.read_columns("SELECT 1 FROM runs WHERE id = ?", [rid]))
+        finally:
+            db.close()
+
+    _wait(known)
+    rt = RepoTransport(repo)
     try:
-        return t.post_json(f"/api/runs/{rid}/stop", {}).json()["stop_requested"]
+        return rt.under_lease(lambda db: ingest_ops.request_stop(db, rid))
     finally:
-        t.close()
+        rt.close()
 
 
 def _wait(pred, timeout=5.0):

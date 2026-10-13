@@ -18,7 +18,6 @@ from fastapi.testclient import TestClient
 import cairn
 from cairn.sdk.gallery import GALLERY_MIME
 from cairn.sdk.reader import MediaRef
-from cairn.sdk.transport import Transport
 from cairn.server import gc, ingest_ops
 from cairn.server.app import create_app
 from cairn.server.storage.blobs import BlobStore
@@ -269,16 +268,8 @@ def test_catalogue_series_and_overview_shape(tmp_path):
 # ---- HTTP -------------------------------------------------------------------
 
 
-@pytest.fixture
-def transport(live_server, tmp_path, monkeypatch):
-    monkeypatch.setenv("CAIRN_WAL_DIR", str(tmp_path / "wal"))
-    t = Transport(live_server, max_retries=1, backoff_base=0.001, backoff_cap=0.001)
-    yield t
-    t.close()
-
-
-def test_http_round_trip_overwrite_and_attach(transport, live_server):
-    run = cairn.Run(project="sm-http", transport=transport, **QUIET)
+def test_http_round_trip_overwrite_and_attach(live_server):
+    run = cairn.Run(project="sm-http", server=live_server, **QUIET)
     try:
         run.track(1.0, "loss", step=0)
         run.summary(showcase=_showcase(0.9))

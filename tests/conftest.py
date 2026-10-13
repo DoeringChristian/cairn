@@ -14,6 +14,8 @@ import uvicorn
 from fastapi.testclient import TestClient
 
 from cairn.server.app import create_app
+from tests import standin_server
+create_app = _create_app_with_ingest
 from cairn.server.storage.blobs import BlobStore
 from cairn.server.storage.datadir import DataDir
 from cairn.server.storage.db import Database
@@ -32,6 +34,17 @@ os.environ["CAIRN_CACHE_DIR"] = tempfile.mkdtemp(prefix="cairn-test-cache-")
 # A daemon server a test's subprocess starts (a CLI command, a script) must
 # not outlive the test run by the default 30 min.
 os.environ.setdefault("CAIRN_SERVER_IDLE_TIMEOUT", "20")
+
+# Run directories ($CAIRN_DIR) and the uploader's state (registry, lock) go
+# to temp dirs too, never ./.cairn of the checkout or ~/.local/state. The
+# background uploader is off unless a test turns it on (CAIRN_UPLOADER=on):
+# runs stay in their directories, uploaded by the test itself.
+# INTEGRATION NOTE (0.6 merge): tests that log with cairn.Run and read back
+# with the Reader need the upload step (an auto-started local server, or an
+# explicit in-process sync); decide here whether to turn the uploader on.
+os.environ.setdefault("CAIRN_DIR", tempfile.mkdtemp(prefix="cairn-test-rundirs-"))
+os.environ["CAIRN_AGENT_DIR"] = tempfile.mkdtemp(prefix="cairn-test-agent-")
+os.environ.setdefault("CAIRN_UPLOADER", "off")
 
 
 @pytest.fixture
@@ -220,3 +233,18 @@ def repo_servers(request, monkeypatch, _repo_servers_session):
         yield _SERVERS
     finally:
         _SERVERS.stop_from(mark)
+
+
+@pytest.fixture(autouse=True)
+def _upload_on_commit(request, monkeypatch):
+    """Runs upload at every group commit, in-process, to the repo's (test)
+    server: tests read back right after logging. A module sets
+    ``STANDIN = False`` to test the client on its own."""
+    if getattr(request.module, "STANDIN", True):
+        standin_server.install(monkeypatch)
+    yield
+
+
+def ingest_repo(repo) -> None:
+    """Upload a local repo's pending run directories now."""
+    standin_server.sync_repo(repo)

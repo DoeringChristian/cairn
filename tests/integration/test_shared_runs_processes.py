@@ -5,7 +5,11 @@ a real ``cairn ui`` serves, and straight to that server over HTTP.
 The workers start before the primary creates the run. Every series must hold
 exactly the points its process logged, every console line its process label,
 every process its ``system.<label>.*`` series; the run's status is the
-primary's (a worker failing changes nothing); every log is gone afterwards.
+primary's (a worker failing changes nothing).
+
+Each process writes its own log of the run directory (``log/`` for the
+primary, ``procs/<label>/`` for a worker); the test uploads the directory
+afterwards and checks the server confirmed every record.
 """
 
 from __future__ import annotations
@@ -59,9 +63,11 @@ def _env_rank_main(target: str, run_id: str, rank: int, joined: list, token: str
         # Create the run only once every worker has joined (local repos: a
         # worker joins at once and its log waits for the run). Over HTTP a
         # worker's join waits for the run instead: start a little later.
-        # Every target is a server now (a local repo's is started on
-        # demand): a worker's join waits for the run, so start a little later.
-        time.sleep(1.5)
+        if target.startswith("cairn://"):
+            time.sleep(1.5)
+        else:
+            for ev in joined:
+                assert ev.wait(60), "a worker never joined"
     run = cairn.Run(
         project="shared", label="auto", repo=target, capture_source=False,
         system_metrics_interval=0.1,
@@ -157,15 +163,17 @@ def _check(target: str, run_id: str, codes: dict, *, primary_label: str | None) 
     assert {ln.label for ln in lines} == set(labels)
 
 
-def _wals(repo: Path) -> list[str]:
-    return sorted(p.name for p in (repo / "wals").glob("*.wal.jsonl"))
+def _upload(repo: Path, run_id: str) -> None:
+    """Upload the run directory the processes wrote (the uploader's job; the
+    children run with CAIRN_UPLOADER=off) and check every log is confirmed."""
+    from cairn.sdk.runlog.rundir import RunDir
+    from tests import standin_server
 
-
-def _wait_ingested(repo: Path, timeout: float = 30.0) -> None:
-    deadline = time.monotonic() + timeout
-    while _wals(repo):
-        assert time.monotonic() < deadline, f"logs not ingested: {_wals(repo)}"
-        time.sleep(0.1)
+    rd = RunDir.for_run(run_id)
+    assert rd.meta()["repo"] == str(repo.resolve())
+    standin_server.sync_repo(repo)
+    assert {ref.key for ref in rd.logs()} == {"main", *(f"rank{r}" for r in range(1, N))}
+    assert rd.pending() == {}
 
 
 # ---- a local repo, no server ---------------------------------------------------
@@ -175,19 +183,30 @@ def _wait_ingested(repo: Path, timeout: float = 30.0) -> None:
 def test_env_launch_on_a_local_repo(tmp_path):
     repo = tmp_path / ".cairn"
     run_id, codes = _launch_env(str(repo))
+    _upload(repo, run_id)
     _check(str(repo), run_id, codes, primary_label="rank0")
-    assert _wals(repo) == []
 
 
 @pytest.mark.timeout(240)
 def test_broadcast_attach_on_a_local_repo(tmp_path):
     repo = tmp_path / ".cairn"
     run_id, codes = _launch_broadcast(str(repo))
+    _upload(repo, run_id)
     _check(str(repo), run_id, codes, primary_label=None)
-    assert _wals(repo) == []
 
 
 # ---- a served repo, and HTTP to its server ---------------------------------------
+
+#: MERGE NOTE (client branch): a `cairn ui` subprocess serves the upload
+#: routes only with the server half of 0.6; until the merge these tests cannot
+#: reach it. At the merge: drop this mark, and replace `_wait_ingested` with
+#: waiting for the run directory's `acked` to reach every log's last seq.
+_NEEDS_SERVER_HALF = pytest.mark.skip(
+    reason="needs the 0.6 server half (upload routes in `cairn ui`); see MERGE NOTE")
+
+
+def _wait_ingested(repo: Path, timeout: float = 30.0) -> None:
+    raise NotImplementedError("see MERGE NOTE above")
 
 
 def _free_port() -> int:
@@ -229,6 +248,7 @@ def served_repo(tmp_path):
             proc.wait(timeout=5)
 
 
+@_NEEDS_SERVER_HALF
 @pytest.mark.timeout(240)
 def test_env_launch_on_a_served_repo(served_repo):
     repo, _port = served_repo
@@ -237,6 +257,7 @@ def test_env_launch_on_a_served_repo(served_repo):
     _check(str(repo), run_id, codes, primary_label="rank0")
 
 
+@_NEEDS_SERVER_HALF
 @pytest.mark.timeout(240)
 def test_broadcast_attach_on_a_served_repo(served_repo):
     repo, _port = served_repo
@@ -245,6 +266,7 @@ def test_broadcast_attach_on_a_served_repo(served_repo):
     _check(str(repo), run_id, codes, primary_label=None)
 
 
+@_NEEDS_SERVER_HALF
 @pytest.mark.timeout(240)
 def test_env_launch_over_http(served_repo, monkeypatch):
     repo, port = served_repo

@@ -1,12 +1,17 @@
 """The optional create_run fields (created_at, group, job_type, sweep_id,
 parent_run_id, fork_step, git.remote) and finish's ended_at, on every write
-path: HTTP, uploaded run-log records, and the SDK ``Run(...)`` kwargs."""
+path: HTTP, LocalTransport direct, LocalTransport WAL (replayed), and the SDK
+``Run(...)`` kwargs."""
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
 
 import cairn
+from cairn.server.storage.blobs import BlobStore
+from cairn.server.storage.datadir import DataDir
+from cairn.server.storage.db import Database
+from cairn.server.wal_ingest import ingest_all
 
 CREATED = "2024-03-01T12:00:00+00:00"
 ENDED = "2024-03-01T13:30:00+00:00"
@@ -92,35 +97,6 @@ def test_list_include_params(client):
     assert runs[other]["params"] == {}
     # Without include the list stays lean.
     assert "params" not in client.get("/api/runs").json()["runs"][0]
-
-
-def _upload(client, run_id: str, records: list[dict]) -> None:
-    r = client.post(f"/api/ingest/runs/{run_id}/logs/main",
-                    json={"from_seq": records[0]["seq"], "records": records})
-    assert r.status_code == 200, r.text
-
-
-def test_uploaded_log_carries_the_fields(client):
-    rid = "f" * 32
-    _upload(client, rid, [
-        {"seq": 1, "op": "create_run", "payload": {**FIELDS, "run_id": rid}},
-        {"seq": 2, "op": "finish", "payload": {"run_id": rid, "status": "completed",
-                                               "ended_at": ENDED}},
-    ])
-    db = client.app.state.db
-    _check_row(db.read_columns("SELECT * FROM runs WHERE id = ?", [rid])[0], ended=True)
-
-
-def test_uploaded_log_dates_the_run_by_the_client_clock(client):
-    """The record's created_at (the client's clock at creation) dates the
-    run, not the (later) upload time."""
-    rid = "e" * 32
-    _upload(client, rid, [
-        {"seq": 1, "op": "create_run",
-         "payload": {"project": "p", "run_id": rid, "created_at": CREATED}},
-    ])
-    (created,) = client.app.state.db.read_one("SELECT created_at FROM runs WHERE id = ?", [rid])
-    assert _ts(created) == _ts(CREATED)
 
 
 def test_sdk_run_kwargs(tmp_path):

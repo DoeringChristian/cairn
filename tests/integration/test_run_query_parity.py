@@ -92,8 +92,7 @@ def backend(request, tmp_path_factory):
     while time.time() < deadline and not server.started:
         time.sleep(0.02)
     url = f"http://127.0.0.1:{port}"
-    t = Transport(url, max_retries=1, backoff_base=0.001, backoff_cap=0.001,
-                  spill_dir=tmp / "spill")
+    t = Transport(url, max_retries=1, backoff_base=0.001, backoff_cap=0.001)
     _seed(t, lambda rid: httpx.post(f"{url}/api/runs/{rid}/archive").raise_for_status())
     t.close()
     reader = cairn.Reader(url.replace("http://", "cairn://"), cache=False)

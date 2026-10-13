@@ -16,7 +16,7 @@ from cairn.server import ingest_ops
 from cairn.server.storage.datadir import DataDir
 from cairn.server.storage.db import Database
 from cairn.server.metric_rules import project_rules, resolved_values
-from cairn.sdk.transport import Transport
+from tests.conftest import ingest_repo
 
 QUIET = dict(
     capture_source=False, capture_stdout=False, capture_env=False,
@@ -61,13 +61,13 @@ class Head:
 def _spy(run):
     """Count the rules the run sends, still forwarding them."""
     sent = []
-    real = run._transport.set_metric_rule
+    real = run._writer.set_metric_rule
 
     def spy(run_id, name, x, summary):
         sent.append((name, x, summary))
         real(run_id, name, x, summary)
 
-    run._transport.set_metric_rule = spy
+    run._writer.set_metric_rule = spy
     return sent
 
 
@@ -103,13 +103,15 @@ EXPECTED = [
 ]
 
 
-def test_sdk_over_http(client):
-    t = Transport("http://testserver", client=client, max_retries=1)
-    with cairn.Run(project="p", transport=t, **QUIET) as run:
+def test_sdk_over_http(app, live_server):
+    import httpx
+
+    with cairn.Run(project="p", server=live_server, **QUIET) as run:
         assert _scenario(run) == SENT
-    db = client.app.state.db
+    db = app.state.db
     assert _rules(db, run.id) == EXPECTED
-    values = client.get(f"/api/runs/{run.id}").json()["run"]["values"]
+    with httpx.Client(base_url=live_server) as c:
+        values = c.get(f"/api/runs/{run.id}").json()["run"]["values"]
     assert values["loss"] == 1.0
     assert values["model.acc"] == pytest.approx(0.2)
     assert values["val.f1"] == 0.5
@@ -119,6 +121,7 @@ def test_sdk_local(tmp_path):
     repo = tmp_path / ".cairn"
     with cairn.Run(project="p", repo=repo, **QUIET) as run:
         assert _scenario(run) == SENT
+    ingest_repo(repo)  # uploads the run's directory
     dd = DataDir(repo)
     db = Database.open(dd.db_path)
     try:
