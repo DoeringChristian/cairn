@@ -60,6 +60,8 @@ class RunWriter:
         self._points: deque[dict[str, Any]] = deque()
         self._lines: deque[dict[str, Any]] = deque()
         self._acc_lock = threading.Lock()
+        #: (project, artifact name) -> the type this process logged it with.
+        self._family_types: dict[tuple[str, str], Any] = {}
         self.log = LogWriter(self.ref.log_dir, before_commit=self._drain)
         if log_name is not None:
             # Named under the log's lock, before its first record.
@@ -191,8 +193,10 @@ class RunWriter:
         so this returns None (``ArtifactVersion.wait`` blocks until then).
 
         Raises:
-            ValueError: A bad name, alias or tag (checked here; a family's
-                type is checked by the server, which drops a mismatch).
+            ValueError: A bad name, alias or tag, or a type differing from
+                the type this process logged the family with (checked here;
+                against versions logged elsewhere, the server checks the
+                type and drops a mismatch).
         """
         from ...server import artifact_registry_ops as rules
 
@@ -200,6 +204,13 @@ class RunWriter:
         for alias in body.get("aliases") or []:
             rules.validate_user_alias(alias)
         rules.validate_tags(body.get("tags"))
+        key = (project_id, body["name"])
+        known = self._family_types.get(key)
+        if known is not None and body.get("type") != known:
+            raise ValueError(
+                f"artifact {body['name']!r} has type {known!r}, not {body.get('type')!r}"
+            )
+        self._family_types[key] = body.get("type")
         self.record("create_artifact_version", {"project_id": project_id, **body})
 
     def record_artifact_input(self, run_id: str, artifact_version_id: str, role: str) -> None:

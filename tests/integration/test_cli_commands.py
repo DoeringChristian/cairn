@@ -1,6 +1,6 @@
 """The data commands of the CLI on BOTH targets: a local repo (no server)
 and a live server. Every test runs with HOME, the XDG dirs, the config file,
-the WAL and spill dirs and the working directory inside tmp_path, so the
+the run directories and the working directory inside tmp_path, so the
 user's config and caches are never read or written."""
 
 from __future__ import annotations
@@ -35,8 +35,7 @@ def _isolated(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
     monkeypatch.setenv("XDG_CACHE_HOME", str(home / ".cache"))
     monkeypatch.setattr(config, "config_file_path", lambda: tmp_path / "config.toml")
-    monkeypatch.setattr(cli, "default_spill_dir", lambda: tmp_path / "spill")
-    monkeypatch.setenv("CAIRN_WAL_DIR", str(tmp_path / "wal"))
+    monkeypatch.setenv("CAIRN_DIR", str(tmp_path / "rundirs"))
     for var in ("CAIRN_REPO", "CAIRN_SERVER", "CAIRN_TOKEN", "CAIRN_ARTIFACT_DIR"):
         monkeypatch.delenv(var, raising=False)
     cwd = tmp_path / "cwd"
@@ -497,39 +496,32 @@ def test_a_served_local_repo_is_reached_through_its_server(tmp_path):
             lease_mod.lease_path(dd.root).unlink()
 
 
-def test_sync_ingests_a_local_repos_run_logs(tmp_path):
-    root = tmp_path / "walrepo" / ".cairn"
-    with cairn.Run("proj", name="w", repo=str(root), **QUIET) as run:
-        run.track(1.0, name="loss", step=0)
-    assert list((root / "wals").glob("*.wal.jsonl"))
-    result = CliRunner().invoke(cli.main, ["sync", "--repo", str(root)])
-    assert result.exit_code == 0, result.output
-    assert "ingested" in result.output and "sync complete" in result.output
-    health = json.loads(CliRunner().invoke(cli.main, ["ping", "--repo", str(root)]).output)
-    assert (health["runs"], health["points"]) == (1, 1)
-    result = CliRunner().invoke(cli.main, ["sync", "--repo", str(root)])
-    assert "nothing to sync" in result.output
+def test_sync_uploads_run_directories_logged_while_the_server_was_down(tmp_path):
+    """A run logs into its directory with its server down; `cairn sync
+    --server URL --clean` uploads it (once) and then removes the directory."""
+    from cairn.sdk.runlog.rundir import RunDir
 
-
-def test_sync_replays_server_logs_to_the_target_server(tmp_path):
-    """A log that names no server goes to the target server; with a local
-    target it is reported, not dropped."""
-    from cairn.sdk.wal import WriteAheadLog
-
+    with cairn.Run("proj", name="offline", server="http://127.0.0.1:9", **QUIET) as run:
+        run.config(a=1)
+        for step in range(5):
+            run.track(float(step), name="loss", step=step)
+    rd = RunDir.for_run(run.id)
+    assert rd.exists() and rd.log().acked() == 0
     with _serve(create_app(data_dir=tmp_path / "srv", mount_ui=False)) as url:
         import httpx
 
-        rid = httpx.post(f"{url}/api/runs", json={"project": "s"}).json()["run_id"]
-        wal = WriteAheadLog(rid, tmp_path / "wal")  # no target recorded
-        wal.append("params", {"run_id": rid, "params": {"a": 1}})
-        wal.close()
-        result = CliRunner().invoke(cli.main, ["sync"])
-        assert result.exit_code == 1
-        assert "names no server" in result.output and "--server URL" in result.output
-        result = CliRunner().invoke(cli.main, ["sync", "--server", url])
+        for _ in range(2):  # the second sync sends nothing again
+            result = CliRunner().invoke(cli.main, ["sync", str(rd.path), "--server", url])
+            assert result.exit_code == 0, result.output
+            assert f"{run.id}: uploaded" in result.output
+        body = httpx.get(f"{url}/api/runs/{run.id}").json()
+        assert body["run"]["status"] == "completed" and body["config_doc"] == {"a": 1}
+        pts = httpx.get(f"{url}/api/runs/{run.id}/sequences/loss").json()["points"]
+        assert [p["step"] for p in pts] == [0, 1, 2, 3, 4]
+        result = CliRunner().invoke(cli.main, ["sync", str(rd.path), "--server", url, "--clean"])
         assert result.exit_code == 0, result.output
-        assert f"{rid}: replayed 1 op(s) -> {url}" in result.output
-        assert httpx.get(f"{url}/api/runs/{rid}").json()["config_doc"] == {"a": 1}
+        assert "removed 1 run directory" in result.output
+    assert not rd.path.exists()
 
 
 def test_configure_sets_one_target(tmp_path):

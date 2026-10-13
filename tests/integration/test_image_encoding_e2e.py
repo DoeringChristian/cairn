@@ -8,24 +8,12 @@ import numpy as np
 import pytest
 
 import cairn
-from cairn.sdk.transport import Transport
-from cairn.sdk.wal import INLINE_ARTIFACT_MAX
+from cairn.sdk.runlog.rundir import RunDir
 
 
 @pytest.fixture
-def wal_dir(tmp_path, monkeypatch):
-    """Run builds its own WAL over any injected transport (run.py:249-253); this
-    redirects it (and its artifact spill files) from the user cache into tmp_path."""
-    path = tmp_path / "wal"
-    monkeypatch.setenv("CAIRN_WAL_DIR", str(path))
-    return path
-
-
-@pytest.fixture
-def transport(live_server, wal_dir):
-    t = Transport(live_server, max_retries=1, backoff_base=0.001, backoff_cap=0.001)
-    yield t
-    t.close()
+def server(live_server):
+    return live_server
 
 
 @pytest.fixture
@@ -36,13 +24,13 @@ def reader(live_server):
         yield c
 
 
-def _run(transport):
+def _run(server):
     return cairn.Run(project="exr", name="r", capture_source=False, capture_stdout=False,
-                     capture_env=False, capture_system_metrics=False, transport=transport)
+                     capture_env=False, capture_system_metrics=False, server=server)
 
 
-def test_image_encoding_from_track_to_artifact_route(transport, reader):
-    run = _run(transport)
+def test_image_encoding_from_track_to_artifact_route(server, reader):
+    run = _run(server)
     arr = np.random.default_rng(0).random((16, 24, 3)).astype(np.float32)
     try:
         run.track(arr, name="default", step=0)
@@ -71,15 +59,14 @@ def test_image_encoding_from_track_to_artifact_route(transport, reader):
     assert json.loads(gray_meta)["encoding"] == "exr:piz:float"
 
 
-def test_exr_larger_than_the_wal_inline_limit_spills_to_a_file(transport, reader, wal_dir):
-    run = _run(transport)
-    # 512x512x3 half EXR, stored uncompressed => ~1.5 MB, past the 1 MB inline cap.
+def test_a_large_exr_is_a_blob_of_the_run_directory(server, reader):
+    run = _run(server)
+    # 512x512x3 half EXR, stored uncompressed => ~1.5 MB: a blob file, not a record.
     arr = np.random.default_rng(1).random((512, 512, 3)).astype(np.float32)
     try:
         run.track(cairn.Image(arr, encoding="exr:none"), name="big", step=0)
-        # Assert before finish(): a fully-acked WAL is cleanup()ed there, spills and all.
-        spills = list(wal_dir.glob(f"{run.id}.artifact.*.bin"))
-        assert spills and spills[0].stat().st_size > INLINE_ARTIFACT_MAX
+        blobs = list(RunDir.for_run(run.id).blobs_dir.iterdir())
+        assert blobs and max(b.stat().st_size for b in blobs) > 1 << 20
     finally:
         run.finish()
     point = reader.get(f"/api/runs/{run.id}/sequences/big").json()["points"][0]

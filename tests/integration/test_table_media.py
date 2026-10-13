@@ -12,12 +12,6 @@ import pytest
 
 import cairn
 from cairn.sdk.handlers.table import TableHandler
-from cairn.sdk.local import LocalTransport
-from cairn.sdk.transport import Transport
-from cairn.server.storage.blobs import BlobStore
-from cairn.server.storage.datadir import DataDir
-from cairn.server.storage.db import Database
-from cairn.server.wal_ingest import ingest_all
 
 QUIET = dict(capture_source=False, capture_stdout=False, capture_env=False, capture_system_metrics=False)
 
@@ -35,37 +29,22 @@ def _log(run):
 
 
 @pytest.fixture(params=["http", "local"])
-def backend(request, tmp_path, monkeypatch):
-    """Yields ``(transport, reader_repo, finish)`` for the two write paths."""
+def backend(request, tmp_path):
+    """Yields ``(run kwargs, reader_repo)`` for a server URL and a local repo."""
     if request.param == "http":
         live = request.getfixturevalue("live_server")
-        monkeypatch.setenv("CAIRN_WAL_DIR", str(tmp_path / "wal"))
-        t = Transport(live, max_retries=1, backoff_base=0.001, backoff_cap=0.001)
-        yield t, live.replace("http://", "cairn://"), t.close
-        return
+        return {"server": live}, live.replace("http://", "cairn://")
     repo = tmp_path / ".cairn"
-    t = LocalTransport(repo)
-
-    def finish():
-        t.close()
-        dd = DataDir(repo)
-        db = Database.open(dd.db_path)
-        try:
-            ingest_all(dd, db, BlobStore(dd.artifacts_dir))
-        finally:
-            db.close()
-
-    yield t, repo, finish
+    return {"repo": repo}, repo
 
 
 def test_media_cells_roundtrip_through_every_backend(backend):
-    transport, repo, finish = backend
-    run = cairn.Run(project="tm", transport=transport, **QUIET)
+    run_kwargs, repo = backend
+    run = cairn.Run(project="tm", **run_kwargs, **QUIET)
     try:
         _log(run)
     finally:
         run.finish()
-    finish()
 
     reader = cairn.Reader(repo=repo)
     try:
@@ -100,15 +79,12 @@ def test_dataframe_media_cells(tmp_path):
         reader.close()
 
 
-def test_export_carries_media_cells(live_server, tmp_path, monkeypatch):
+def test_export_carries_media_cells(live_server, tmp_path):
     import httpx
 
-    monkeypatch.setenv("CAIRN_WAL_DIR", str(tmp_path / "wal"))
-    t = Transport(live_server, max_retries=1, backoff_base=0.001, backoff_cap=0.001)
-    run = cairn.Run(project="tm", transport=t, **QUIET)
+    run = cairn.Run(project="tm", server=live_server, **QUIET)
     _log(run)
     run.finish()
-    t.close()
     with httpx.Client(base_url=live_server, timeout=10.0) as http:
         point = http.get(f"/api/runs/{run.id}/sequences/preds").json()["points"][0]
         hashes = json.loads(point["artifact_metadata"])["media_hashes"]

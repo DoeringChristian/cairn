@@ -6,7 +6,6 @@ import pytest
 from PIL import Image as PILImage
 
 import cairn
-from cairn.sdk.transport import Transport
 
 
 @pytest.fixture(autouse=True)
@@ -19,10 +18,9 @@ def _reset_cairn_state():
 
 
 @pytest.fixture
-def transport(live_server):
-    t = Transport(live_server, max_retries=1, backoff_base=0.001, backoff_cap=0.001)
-    yield t
-    t.close()
+def server(live_server):
+    """The run's server (its records reach it at every group commit)."""
+    return live_server
 
 
 @pytest.fixture
@@ -33,7 +31,7 @@ def reader(live_server):
         yield c
 
 
-def test_basic_run_lifecycle(transport, reader):
+def test_basic_run_lifecycle(server, reader):
     run = cairn.Run(
         project="test-proj",
         name="r1",
@@ -41,7 +39,7 @@ def test_basic_run_lifecycle(transport, reader):
         capture_stdout=False,
         capture_env=False,
         capture_system_metrics=False,
-        transport=transport,
+        server=server,
     )
     try:
         run.config(hparams={"lr": 0.01, "batch": 32})
@@ -66,14 +64,14 @@ def test_basic_run_lifecycle(transport, reader):
     assert [p["step"] for p in acc_pts] == [0, 1]
 
 
-def test_track_image_uploads_artifact(transport, reader):
+def test_track_image_uploads_artifact(server, reader):
     run = cairn.Run(
         project="p",
         capture_source=False,
         capture_stdout=False,
         capture_env=False,
         capture_system_metrics=False,
-        transport=transport,
+        server=server,
     )
     try:
         img = PILImage.new("RGB", (4, 4), (0, 128, 255))
@@ -84,7 +82,7 @@ def test_track_image_uploads_artifact(transport, reader):
     assert points[0]["artifact_hash"] and points[0]["object_type"] == "image"
 
 
-def test_context_manager_records_failed_on_exception(transport, reader):
+def test_context_manager_records_failed_on_exception(server, reader):
     with pytest.raises(RuntimeError):
         with cairn.Run(
             project="p",
@@ -92,7 +90,7 @@ def test_context_manager_records_failed_on_exception(transport, reader):
             capture_stdout=False,
             capture_env=False,
             capture_system_metrics=False,
-            transport=transport,
+            server=server,
         ) as run:
             run_id = run.id
             run.track(0.1, name="loss", step=0)
@@ -101,14 +99,14 @@ def test_context_manager_records_failed_on_exception(transport, reader):
     assert status == "failed"
 
 
-def test_nested_run_raises(transport):
+def test_nested_run_raises(server):
     run = cairn.Run(
         project="p",
         capture_source=False,
         capture_stdout=False,
         capture_env=False,
         capture_system_metrics=False,
-        transport=transport,
+        server=server,
     )
     try:
         with pytest.raises(RuntimeError, match="Nested"):
@@ -118,23 +116,25 @@ def test_nested_run_raises(transport):
                 capture_stdout=False,
                 capture_env=False,
                 capture_system_metrics=False,
-                transport=transport,
+                server=server,
             )
     finally:
         run.finish()
 
 
-def test_log_artifact(transport, reader):
+def test_log_artifact(server, reader):
     run = cairn.Run(
         project="p",
         capture_source=False,
         capture_stdout=False,
         capture_env=False,
         capture_system_metrics=False,
-        transport=transport,
+        server=server,
     )
     try:
         version = run.log_artifact(cairn.Text("hello world" * 200), "readme")
+        # Numbered by the server once the record is uploaded.
+        version.wait(timeout=10)
         assert (version.ref, version.aliases) == ("readme:v1", ["latest"])
     finally:
         run.finish()
@@ -142,14 +142,14 @@ def test_log_artifact(transport, reader):
     assert [o["name"] for o in outputs] == ["readme"]
 
 
-def test_tags_and_notes(transport, reader):
+def test_tags_and_notes(server, reader):
     run = cairn.Run(
         project="p",
         capture_source=False,
         capture_stdout=False,
         capture_env=False,
         capture_system_metrics=False,
-        transport=transport,
+        server=server,
     )
     try:
         run.set_tags(["exp", "ablation"])
@@ -163,14 +163,14 @@ def test_tags_and_notes(transport, reader):
     assert row["notes"] == "test run"
 
 
-def test_prefixed_names_are_separate_series(transport, reader):
+def test_prefixed_names_are_separate_series(server, reader):
     run = cairn.Run(
         project="p",
         capture_source=False,
         capture_stdout=False,
         capture_env=False,
         capture_system_metrics=False,
-        transport=transport,
+        server=server,
     )
     try:
         for i in range(3):

@@ -8,7 +8,6 @@ import httpx
 import pytest
 
 import cairn
-from cairn.sdk.transport import Transport
 
 
 @pytest.fixture(autouse=True)
@@ -22,14 +21,13 @@ def _reset():
 
 @pytest.mark.slow
 def test_10k_scalars_fast(live_server):
-    transport = Transport(live_server, max_retries=1, timeout=60.0)
     run = cairn.Run(
         project="perf",
         capture_source=False,
         capture_stdout=False,
         capture_env=False,
         capture_system_metrics=False,
-        transport=transport,
+        server=live_server,
     )
     t0 = time.monotonic()
     try:

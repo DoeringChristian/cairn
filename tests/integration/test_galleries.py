@@ -11,15 +11,11 @@ import pytest
 
 import cairn
 from cairn.sdk.gallery import GALLERY_MIME
-from cairn.sdk.transport import Transport
 
 
 @pytest.fixture
-def transport(live_server, tmp_path, monkeypatch):
-    monkeypatch.setenv("CAIRN_WAL_DIR", str(tmp_path / "wal"))
-    t = Transport(live_server, max_retries=1, backoff_base=0.001, backoff_cap=0.001)
-    yield t
-    t.close()
+def server(live_server):
+    return live_server
 
 
 @pytest.fixture
@@ -30,9 +26,9 @@ def http(live_server):
         yield c
 
 
-def _run(transport):
+def _run(server):
     return cairn.Run(project="gallery", name="r", capture_source=False, capture_stdout=False,
-                     capture_env=False, capture_system_metrics=False, transport=transport)
+                     capture_env=False, capture_system_metrics=False, server=server)
 
 
 def _images():
@@ -40,9 +36,9 @@ def _images():
     return [rng.random((8, 8, 3)).astype(np.float32) for _ in range(3)]
 
 
-def test_list_of_images_is_one_gallery_point(transport, http, live_server):
+def test_list_of_images_is_one_gallery_point(server, http, live_server):
     a, b, c = _images()
-    run = _run(transport)
+    run = _run(server)
     try:
         run.track([cairn.Image(a), cairn.Image(b), cairn.Image(c, encoding="exr")], name="samples", step=0)
         run.scope(step=1).track([cairn.Image(a)], "sc.samples")
@@ -65,8 +61,8 @@ def test_list_of_images_is_one_gallery_point(transport, http, live_server):
     assert len(back.media("sc.samples", step=1)) == 1
 
 
-def test_export_carries_the_gallery_images(transport, http):
-    run = _run(transport)
+def test_export_carries_the_gallery_images(server, http):
+    run = _run(server)
     try:
         run.track([cairn.Image(x) for x in _images()], name="samples", step=0)
     finally:
@@ -82,9 +78,9 @@ def test_export_carries_the_gallery_images(transport, http):
 
 
 @pytest.mark.media
-def test_export_carries_figure_gallery_sources(transport, http):
+def test_export_carries_figure_gallery_sources(server, http):
     go = pytest.importorskip("plotly.graph_objects")
-    run = _run(transport)
+    run = _run(server)
     try:
         run.track([cairn.Figure(go.Figure(go.Scatter(y=[i, 1, 2]))) for i in range(2)], name="figs", step=0)
     finally:
