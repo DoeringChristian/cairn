@@ -268,6 +268,9 @@ class Server:
     def rss(self) -> int:
         return tree_rss(self.proc.pid) if self.proc else 0
 
+    def alive(self) -> bool:
+        return self.proc is not None and self.proc.poll() is None
+
 
 def cairn_server(repo: Path, work: Path, port: int | None = None, *, ui: bool = False) -> Server:
     """``cairn server`` (or ``cairn ui`` with ``ui=True``) over ``repo``, no auth."""
@@ -282,6 +285,123 @@ def cairn_server(repo: Path, work: Path, port: int | None = None, *, ui: bool = 
     s = Server("cairn", f"http://127.0.0.1:{port}", port, None, repo, cmd, env,
                work / f"cairn-server-{port}.log", "/api/health")
     return s
+
+
+#: Bearer tokens of servers that run with auth (a local repo's auto-started
+#: server), by base URL; ``headers(url)`` for the orchestrator's reads.
+AUTH: dict[str, str] = {}
+
+
+def headers(url: str) -> dict[str, str]:
+    for base, tok in AUTH.items():
+        if url.startswith(base):
+            return {"Authorization": f"Bearer {tok}"}
+    return {}
+
+
+class LocalRepoServer(Server):
+    """0.6 local deployment: a repo directory served by its auto-started
+    daemon server. ``start()`` triggers the auto-start exactly as a client
+    would (``cairn.endpoint.resolve_endpoint(repo=...)`` in the cairn under
+    test: ``cairn server --repo R --daemon``, loopback, a free port, auth on),
+    then reads ``<repo>/server.json``. Runs logging to ``repo=R`` find that
+    server; after a kill the uploader starts a new one by itself (new port),
+    so readers call ``refresh()``."""
+
+    def refresh(self) -> bool:
+        try:
+            info = json.loads((self.storage / "server.json").read_text())
+        except (OSError, ValueError):
+            return False
+        if not info.get("url"):
+            return False
+        try:
+            os.kill(int(info["pid"]), 0)
+        except (OSError, KeyError, ValueError, TypeError):
+            return False
+        self.url = info["url"].rstrip("/")
+        self.port = int(self.url.rsplit(":", 1)[1])
+        self._pid = int(info["pid"])
+        if info.get("token"):
+            AUTH[self.url] = info["token"]
+        return True
+
+    @property
+    def pid(self) -> int | None:
+        return getattr(self, "_pid", None)
+
+    def alive(self) -> bool:
+        return self.pid is not None and psutil.pid_exists(self.pid)
+
+    def start(self, timeout: float | None = None) -> float:
+        t0 = time.monotonic()
+        self.storage.mkdir(parents=True, exist_ok=True)
+        code = ("import sys; from cairn.endpoint import resolve_endpoint; "
+                "print(resolve_endpoint(repo=sys.argv[1]).url)")
+        r = subprocess.run([CAIRN_PY, "-c", code, str(self.storage)], env=self.env, cwd=work_cwd(),
+                           capture_output=True, text=True, timeout=timeout or 120)
+        if r.returncode != 0 or not self.refresh():
+            raise RuntimeError(f"local server did not start: {(r.stdout + r.stderr)[-400:]}")
+        wait_http(self.url + self.health, 30)
+        return time.monotonic() - t0
+
+    def kill9(self) -> None:
+        if self.refresh() and self.pid:
+            try:
+                os.killpg(self.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                try:
+                    os.kill(self.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            _wait_gone(self.pid, 10)
+        self._pid = None
+
+    def stop(self) -> None:
+        if self.refresh() and self.pid:
+            try:
+                os.kill(self.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            if not _wait_gone(self.pid, 20):
+                self.kill9()
+        self._pid = None
+
+    def rss(self) -> int:
+        return tree_rss(self.pid) if self.pid else 0
+
+
+def _wait_gone(pid: int, timeout: float) -> bool:
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < timeout:
+        try:
+            if psutil.Process(pid).status() == psutil.STATUS_ZOMBIE:
+                return True
+        except psutil.NoSuchProcess:
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def local_repo_server(repo: Path, work: Path) -> LocalRepoServer:
+    return LocalRepoServer("cairn", "", 0, None, repo, [], isolated_env(work),
+                           work / "cairn-local-server.log", "/api/health")
+
+
+def stop_uploaders(work: Path) -> None:
+    """Stop the 0.6 uploader daemon of ``work`` (its ``CAIRN_AGENT_DIR``)."""
+    pidf = work / "cairn-agent" / "agent.pid"
+    try:
+        pid = int(pidf.read_text().strip())
+    except (OSError, ValueError):
+        return
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.kill(pid, sig)
+        except ProcessLookupError:
+            return
+        if _wait_gone(pid, 5):
+            return
 
 
 def mlflow_server(store: str, work: Path, port: int | None = None, *, workers: int | None = None) -> Server:

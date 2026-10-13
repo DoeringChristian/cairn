@@ -1,10 +1,15 @@
 """Fault scenarios. Each takes a system kind and returns one result row.
 
 Systems (columns):
-  cairn-http   ``cairn.Run`` over HTTP to a ``cairn server`` (the central-server deployment)
+  cairn-http   0.6: ``cairn.Run(repo="cairn://…")``: the run writes its run
+               directory, the uploader daemon sends it to a ``cairn server``
   mlflow       MLflow client to an ``mlflow server`` (SQLite backend store)
-  cairn-local  ``cairn.Run`` writing its log into a local repo; a ``cairn server``
-               on the repo ingests and serves reads
+  cairn-local  0.6: ``cairn.Run(repo=<dir>)``: same, to the repo's
+               auto-started local daemon server (restarted by the uploader
+               itself after a kill)
+
+cairn rows record what arrived through the uploader daemon alone
+(``before_sync``) and, separately, after a manual ``cairn sync``.
 
 The training loop is ``bench.worker`` at ``RATE`` steps/s x ``METRICS``
 metrics (deterministic values), with a progress file holding the last step
@@ -132,11 +137,19 @@ class Case:
             out.append(res)
         return out
 
+    def _follow(self) -> None:
+        """cairn-local: the auto-started server may have been restarted (by
+        the uploader) on another port."""
+        srv = self.sysm.server
+        if isinstance(srv, c.LocalRepoServer) and srv.refresh():
+            self.sysm.read_url = srv.url
+
     def run_id_of(self, name: str, timeout: float = 30.0) -> str | None:
         from bench.scenarios import _discover
 
         t0 = time.monotonic()
         while time.monotonic() - t0 < timeout:
+            self._follow()
             rid = _discover(self.sysm, "faults", name)
             if rid:
                 return rid
@@ -144,9 +157,11 @@ class Case:
         return None
 
     def readback(self, run_id: str, prefix: str = "m") -> dict[str, list[tuple[int, float]]]:
+        self._follow()
         return rb.points(self.sysm.read_kind, self.sysm.read_url, run_id, _names(prefix))
 
     def status(self, run_id: str) -> str | None:
+        self._follow()
         if self.sysm.read_kind == "mlflow":
             return rb.mlflow_status(self.sysm.read_url, run_id)
         return rb.cairn_status(self.sysm.read_url, run_id)
@@ -174,26 +189,34 @@ class Case:
                     os.killpg(p.pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
+        c.stop_uploaders(self.work)
         if self.proxy:
             self.proxy.close()
         self.sysm.server.stop()
 
 
 def _sync_leftovers(case: Case, rid: str | None, w: dict, row: dict[str, Any]) -> None:
-    """cairn-http: when the run ended with data still in its client WAL, record
-    the state before, then run ``cairn sync`` (the documented recovery) and let
-    the caller verify after."""
-    if case.system != "cairn-http" or not rid:
-        return
-    wals = list((case.work / "cairn-wal").glob("*.wal.jsonl"))
-    row["client_wal_left_after_finish"] = len(wals)
-    if not wals:
+    """cairn (0.6): record what the uploader daemon delivered on its own
+    (``before_sync``), then run ``cairn sync`` over the run directories (the
+    manual recovery) and let the caller verify after."""
+    if not case.system.startswith("cairn") or not rid:
         return
     row["before_sync"] = {k: v for k, v in _verify_row(case, w, rid).items()
-                          if k in ("lost", "lost_accepted", "present")}
+                          if k in ("lost", "lost_accepted", "present", "duplicated", "corrupted")}
+    pend = []
+    for meta in (case.work / "cairn-runs" / "runs").glob("*/run.json"):
+        d = meta.parent
+        try:
+            acked = json.loads((d / "acked").read_text())
+        except (OSError, ValueError):
+            acked = None
+        pend.append({"run": d.name, "acked": acked, "finished": (d / "FINISHED").exists()})
+    row["run_dirs_before_sync"] = pend
+    cmd = [c.cairn_bin(), "sync", str(case.work / "cairn-runs")]
+    if case.system == "cairn-http":
+        cmd += ["--server", case.sysm.read_url]
     t0 = time.monotonic()
-    r = subprocess.run([c.cairn_bin(), "sync", "--server", case.sysm.read_url],
-                       env=case.env, capture_output=True, text=True, timeout=300)
+    r = subprocess.run(cmd, env=case.env, capture_output=True, text=True, timeout=300, cwd=c.work_cwd())
     row["sync_s"] = time.monotonic() - t0
     row["sync_output"] = (r.stdout + r.stderr)[-300:]
 
@@ -253,9 +276,9 @@ def _live(system: str, work: Path, *, proxy: bool, fault: Callable[[Case], None]
         row["recovery_s"] = case.wait_complete(rid, upto, since=t_restore) if rid else None
         w = case.wait_workers(DURATION * 6)[0]
         rid = rid or w.get("run_id")
-        # let a cairn-local ingester / cairn replay finish
+        # let the uploader daemon finish (its backoff reaches 60 s)
         if rid:
-            case.wait_complete(rid, w.get("progress_last", -1), timeout=60)
+            case.wait_complete(rid, w.get("progress_last", -1), timeout=90)
         _sync_leftovers(case, rid, w, row)
         row.update(_client_summary(w))
         row.update(_verify_row(case, w, rid))
@@ -272,7 +295,9 @@ def server_kill9(system: str, work: Path) -> dict[str, Any]:
         case.sysm.server.kill9()
 
     def restore(case: Case) -> None:
-        case.sysm.server.start()
+        # cairn-local: nothing; the uploader daemon starts the repo's server again
+        if case.system != "cairn-local":
+            case.sysm.server.start()
 
     return _live(system, work, proxy=False, fault=fault, restore=restore, fault_len=5.0)
 
@@ -321,8 +346,8 @@ def slow_server(system: str, work: Path) -> dict[str, Any]:
 
 
 def client_kill9(system: str, work: Path) -> dict[str, Any]:
-    """kill -9 the training process mid-run; then (cairn-http) ``cairn sync``
-    replays what its local log still holds."""
+    """kill -9 the training process mid-run; the uploader daemon sends what
+    the run directory holds; then (cairn) ``cairn sync``."""
     case = Case(system, work)
     row: dict[str, Any] = {"system": system}
     try:
@@ -335,9 +360,8 @@ def client_kill9(system: str, work: Path) -> dict[str, Any]:
         w = case.wait_workers(30)[0]
         rid = case.run_id_of("w")
         row["killed_at_step"] = w["progress_last"]
-        # what arrives on its own (cairn-local: the ingester's next cycles)
-        row["complete_without_sync_s"] = case.wait_complete(rid, w["progress_last"], timeout=15, since=t_kill) if rid else None
-        row["before_sync"] = _verify_row(case, w, rid)
+        # what arrives on its own (the uploader daemon)
+        row["complete_without_sync_s"] = case.wait_complete(rid, w["progress_last"], timeout=60, since=t_kill) if rid else None
         _sync_leftovers(case, rid, w, row)
         row.update(_client_summary(w))
         row.update(_verify_row(case, w, rid))
@@ -409,7 +433,7 @@ def disk_full(system: str, work: Path) -> dict[str, Any]:
         vol.release()
         t_rel = time.monotonic()
         rid = case.run_id_of("w", 30)
-        row["server_alive_at_release"] = case.sysm.server.proc is not None and case.sysm.server.proc.poll() is None
+        row["server_alive_at_release"] = case.sysm.server.alive()
         row["recovery_s"] = case.wait_complete(rid, upto, since=t_rel, timeout=90) if rid else None
         w = case.wait_workers(DURATION * 6)[0]
         rid = rid or w.get("run_id")
@@ -418,7 +442,7 @@ def disk_full(system: str, work: Path) -> dict[str, Any]:
         _sync_leftovers(case, rid, w, row)
         row.update(_client_summary(w))
         row.update(_verify_row(case, w, rid))
-        row["server_alive_at_end"] = case.sysm.server.proc is not None and case.sysm.server.proc.poll() is None
+        row["server_alive_at_end"] = case.sysm.server.alive()
         try:
             text = case.sysm.server.log_path.read_text(errors="replace")
             errs: dict[str, int] = {}
@@ -484,13 +508,18 @@ def torn_writes(system: str, work: Path, seeds: int = 8) -> dict[str, Any]:
     def run_base(name: str, *, kill_server_after: float | None = None,
                  rate: float = 0) -> tuple[Case, dict, str | None]:
         case = Case(system, work / name)
+        case.env["CAIRN_FINISH_TIMEOUT"] = "3"
         case.start_server()
         case.spawn("w", steps=steps, rate=rate)
         if kill_server_after is not None:
             time.sleep(kill_server_after)
             case.sysm.server.kill9()
         w = case.wait_workers(600)[0]
-        return case, w, w.get("run_id")
+        rid = w.get("run_id")
+        if rid and kill_server_after is None and system != "mlflow":
+            case.wait_complete(rid, w.get("last_step", -1), timeout=60)
+        c.stop_uploaders(case.work)  # nothing may write the state being copied
+        return case, w, rid
 
     def check_with_server(base_case: Case, rel: str, rid: str, last: int, *, sync: bool = False,
                           control: bool = False):
@@ -529,12 +558,11 @@ def torn_writes(system: str, work: Path, seeds: int = 8) -> dict[str, Any]:
                 return res
             try:
                 if sync:
-                    env = c.isolated_env(root, CAIRN_WAL_DIR=str(root / "cairn-wal"))
-                    r = subprocess.run([c.cairn_bin(), "sync", "--server", srv.url],
-                                       env=env, capture_output=True, text=True, timeout=300)
+                    env = c.isolated_env(root, CAIRN_UPLOADER="off")
+                    r = subprocess.run([c.cairn_bin(), "sync", str(root / "cairn-runs"), "--server", srv.url],
+                                       env=env, capture_output=True, text=True, timeout=300, cwd=c.work_cwd())
                     res["sync_rc"] = r.returncode
                     res["sync_tail"] = (r.stdout + r.stderr)[-200:]
-                time.sleep(2.5)  # one ingest cycle (cairn-local)
                 kind = "mlflow" if system == "mlflow" else "cairn"
                 got = rb.points(kind, srv.url, rid, _names())
                 v = rb.verify(got, _names(), range(0, last + 1))
@@ -564,37 +592,26 @@ def torn_writes(system: str, work: Path, seeds: int = 8) -> dict[str, Any]:
 
     try:
         if system == "cairn-local":
-            # 1) the run's own log, not yet ingested: no server holds the repo while it logs
-            case = Case(system, work / "log")
-            case.spawn("w", steps=steps, rate=0, extra={"finish": False})
-            w = case.wait_workers(600)[0]
-            rid = w.get("run_id")
-            logs = list((case.work / "repo" / "wals").glob("*.wal.jsonl"))
-            out["run_log_files"] = [p.name for p in logs]
-            if logs and rid:
-                rel = str(logs[0].relative_to(case.work))
-                out["targets"]["run_log"] = check_with_server(case, rel, rid, w["last_step"])
-                out["targets"]["run_log_untruncated_control"] = check_with_server(
-                    case, rel, rid, w["last_step"], control=True)
-            case.close()
-            # 2) the database, after ingestion and a clean stop
-            case, w, rid = run_base("db")
-            case.wait_complete(rid, w["last_step"], timeout=60)
-            case.sysm.server.stop()
-            out["targets"]["database"] = check_with_server(case, "repo/cairn.db", rid, w["last_step"])
-            _wal_target(case, "repo/cairn.db-wal", rid, w["last_step"])
-            case.close()
+            out["na"] = ("same files as cairn-http (run directory log segment + the server's cairn.db); "
+                         "measured there")
+            return out
         elif system == "cairn-http":
-            # 1) the client's write-ahead log with pending entries: the server is
-            #    killed 1 s in, the run keeps logging and finish() gives up
+            # 1) the run directory's log segment with records the server never
+            #    acked: the server is killed 3 s in, the run keeps logging and
+            #    finish() gives up after 3 s; the uploader is stopped; each trial
+            #    truncates the segment, starts a server on the copy and runs
+            #    `cairn sync` on the copy's run directory
             case, w, rid = run_base("wal", kill_server_after=3.0, rate=200)
-            wals = list((case.work / "cairn-wal").glob("*.wal.jsonl"))
-            out["wal_pending_files"] = [p.name for p in wals]
-            if wals and rid:
-                rel = str(wals[0].relative_to(case.work))
-                out["targets"]["client_wal"] = check_with_server(case, rel, rid, w["last_step"], sync=True)
-                # control: the same, untruncated
-                out["targets"]["client_wal_untruncated_control"] = check_with_server(
+            segs = sorted((case.work / "cairn-runs" / "runs").glob("*/log/*.seg"))
+            out["run_log_segments"] = [str(p.relative_to(case.work)) for p in segs]
+            try:
+                out["acked_at_copy"] = json.loads(next((case.work / "cairn-runs" / "runs").glob("*/acked")).read_text())
+            except (StopIteration, OSError, ValueError):
+                out["acked_at_copy"] = None
+            if segs and rid:
+                rel = str(segs[0].relative_to(case.work))
+                out["targets"]["run_log"] = check_with_server(case, rel, rid, w["last_step"], sync=True)
+                out["targets"]["run_log_untruncated_control"] = check_with_server(
                     case, rel, rid, w["last_step"], sync=True, control=True)
             case.close()
             # 2) the server database after a clean stop

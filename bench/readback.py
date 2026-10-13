@@ -13,13 +13,14 @@ from typing import Any
 
 import httpx
 
+from .common import headers
 from .worker import value
 
 
 def cairn_points(url: str, run_id: str, timeout: float = 120.0) -> dict[str, list[tuple[int, float]]]:
     out: dict[str, list[tuple[int, float]]] = {}
     since = 0
-    with httpx.Client(base_url=url, timeout=timeout) as c:
+    with httpx.Client(base_url=url, timeout=timeout, headers=headers(url)) as c:
         while True:
             r = c.get(f"/api/runs/{run_id}/updates", params={"since": since})
             r.raise_for_status()
@@ -34,7 +35,7 @@ def cairn_points(url: str, run_id: str, timeout: float = 120.0) -> dict[str, lis
 
 def cairn_status(url: str, run_id: str) -> str | None:
     try:
-        r = httpx.get(f"{url}/api/runs/{run_id}", timeout=30)
+        r = httpx.get(f"{url}/api/runs/{run_id}", timeout=30, headers=headers(url))
         if r.status_code != 200:
             return None
         return r.json()["run"]["status"]

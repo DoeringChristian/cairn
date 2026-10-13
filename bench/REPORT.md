@@ -92,6 +92,102 @@ Not run: `partition_30s`, `slow_server`, `disk_full`, `torn_writes`,
 6. **Neither system marks a killed run as crashed.** cairn shows `running`, MLflow `RUNNING`. The 0.4 crash detection did not trigger within the test window.
 7. **MLflow's async logging is fragile under load.** With 16 clients it failed, and with media and 4 clients it hung. This argues against copying its unbounded in-memory queue design.
 
+## 0.6 vs 0.5 vs MLflow (quick scale, 20 s fault cases)
+
+* cairn under test: 0.6 architecture, commit `5e4fb6be` (dev/0.6, `cairn/` clean): run directories with
+  group commit every 100 ms, the uploader daemon (`cairn sync --daemon`), the server as the only writer.
+* `cairn-http`: run → uploader → a `cairn server` the harness starts. `cairn-local`: run → uploader → the
+  repo's auto-started local server (the harness triggers the auto-start like a client; after a server
+  `kill -9` the uploader starts it again by itself).
+* "no sync" = what arrived through the uploader daemon alone (waiting up to 90 s for its backoff);
+  "after sync" = after a manual `cairn sync` of the run directories.
+* MLflow (SQLite) numbers for `server_kill9`, `unreachable_30s` and `client_kill9` are reused from the
+  section above; the other five scenarios were run now (they ran in parallel with the cairn fault cases,
+  so MLflow's timings are slightly pessimistic; point counts are unaffected).
+* Raw data: `bench/results/quick-0.6/` (`faults-*.json`, `throughput*.json`, `fault-tables.md`).
+
+### Faults: lost / duplicated points
+
+| fault | 0.5 cairn-http | 0.6 cairn-http | 0.6 cairn-local | MLflow |
+|---|---|---|---|---|
+| server kill -9, restart after 5 s | 0 lost, loop blocked 9.0 s, recovery 4.6 s | **0 lost**, blocked 0.5 s*, recovery 2.7 s | **0 lost**, blocked 0.6 s*, recovery 0.6 s (uploader restarted the server) | 0 lost, blocked 13.0 s, recovery 2.3 s |
+| server unreachable 30 s (RST) | 5160 lost until `cairn sync` | **0 lost without sync**, blocked 0.6 s*, recovery 0.6 s | n/a (no network) | 0 lost, blocked 30.9 s |
+| partition 30 s (black hole) | not run | **0 lost without sync**, blocked 0.6 s*, recovery 2.2 s | n/a | 0 lost, blocked **34.8 s** |
+| slow server (+250 ms/chunk) | not run | **0 lost**, 2000/2000 steps at full rate, blocked 0.7 s* | n/a | 0 lost, but only 27 of 2000 steps logged in 20 s (blocked 20.6 s) |
+| client kill -9 at t=10 s | **60 lost after ack** (sync: nothing to sync) | **30 lost after ack** (no sync and after sync) | **30 lost after ack** | 0 lost |
+| server disk full (64 MB volume, released at t=25 s) | not run | **0 lost without sync**, blocked 0.9 s*, recovery 8.9 s, server stayed up | **0 lost**, recovery 8.7 s | 0 lost, blocked **31.8 s** |
+| 8 clients × 8 runs, flat out | not run | 0 lost / 0 dup of 80,000, max blocked 0.9 s* | 0 / 0 of 80,000, 0.9 s* | 0 / 0 of 80,000, max blocked **20.3 s** |
+| 2 processes, 1 run | not run | 0 lost / 0 dup (2 × 10,000) | 0 / 0 | 0 / 0 |
+
+No scenario duplicated, corrupted or reordered a point on any system. Every cairn run ended `completed`
+except the killed ones (`running`, see below).
+
+\* The 0.5–0.9 s "loop blocked" on every cairn row is a single step: the **first** `track()` of a float
+takes ~0.55 s because the type-handler lookup imports matplotlib, plotly, imageio-ffmpeg, multiprocessing
+and ~1,000 other modules (see the findings). It is not network blocking: no other step exceeded 100 ms.
+
+### Torn writes (truncate at 8 seeded random offsets, on copies)
+
+| system | truncated file | trials | server failed to start | trials with loss | points lost | corrupt | dup |
+|---|---|---|---|---|---|---|---|
+| 0.6 cairn-http | run directory log segment (unacked tail; then `cairn sync`) | 8 | 0 | 8 | 52,305 | 0 | 0 |
+| 0.6 cairn-http | same, untruncated (control) | 1 | 0 | 0 | 0 | 0 | 0 |
+| 0.6 cairn-http | server `cairn.db` | 8 | **8** | – | – | – | – |
+| MLflow | `mlflow.db` | 8 | **8** | – | – | – | – |
+
+The run log behaves as specified: the reader keeps the valid prefix, `cairn sync` uploads it, nothing is
+corrupted or duplicated, and the loss is exactly the unacked records past the cut (the server had acked 2,335
+of the 10,000 points; a cut before the acked offset loses all 7,665 unacked, a later cut fewer). A truncated
+SQLite database is unrecoverable for both systems (`database disk image is malformed`, the server does not
+start); that is what `cairn backup` is for. (`cairn-local` uses the same two files; not measured twice.)
+
+### Throughput (scalar and media)
+
+| variant | clients | 0.5 cairn-http e2e pts/s | 0.6 cairn-http e2e pts/s | 0.5 cairn-local e2e | 0.6 cairn-local e2e | MLflow (SQLite) e2e |
+|---|---|---|---|---|---|---|
+| scalar | 1 | 24,469 | 20,580 | 12,499 | 20,233 | 1,164 |
+| scalar | 4 | 43,148 | 30,991 | 24,699 | 29,223 | 2,804 |
+| scalar | 16 | 80,577 | 55,827 | 82,632 | 49,927 | 3,228 |
+| media | 1 | 2,287 | 1,898 | 1,905 | 1,924 | 1,067 |
+| media | 4 | 6,827 | 2,908 | 7,845 | 2,937 | 2,010 |
+
+`e2e` = points ÷ (slowest client's loop + `finish()` + time until every point is readable). In 0.6
+`finish()` waits for the uploader's ack, so client and e2e rates are equal (visible 0.01–0.03 s after
+finish): the 0.5 cairn-local ingest lag is gone. Caveats: at quick scale a client's whole loop is
+0.7–2.5 s, of which ~0.55 s is the first-`track()` import above, so these numbers mostly measure fixed
+costs. The steady-state `track()` cost is 0.06–0.09 ms per step of 10 scalars (p50). With 4–16 clients
+the `finish()` wait (0.5–1.7 s) is the one per-machine uploader draining every run; that is where 0.6 loses
+to 0.5 at 16 clients and with media (4 clients: 2,900 vs 6,800 pts/s).
+
+### What still loses data, and why
+
+1. **Client `kill -9` still loses acknowledged points: 30 in 0.6 (60 in 0.5).** The acceptance target
+   (0 lost after `track()` returned) is not met. The cause is the design in spec §2, not the uploader:
+   `track()` appends to an in-process buffer and returns; the group-commit thread writes and fsyncs at most
+   every 100 ms (`CAIRN_SYNC_INTERVAL_MS`). A `kill -9` loses whatever is still in that buffer: up to 100 ms
+   of logging, here 6 steps × 5 metrics. Everything that reached the segment was uploaded with no sync
+   needed. A reproducer (no server needed):
+
+   ```bash
+   CAIRN_DIR=$(mktemp -d) CAIRN_UPLOADER=off python -c "
+   import cairn, os
+   r = cairn.Run('p', repo='cairn://127.0.0.1:1', capture_source=False, capture_stdout=False,
+                 capture_env=False, capture_system_metrics=False)
+   for s in range(1000): r.track(float(s), name='x', step=s)
+   os.kill(os.getpid(), 9)"
+   # cairn.sdk.runlog.log.scan(<CAIRN_DIR>/runs/<id>/log) -> last_seq 1 (create_run only):
+   # all 1000 returned track() calls are gone
+   ```
+
+   To get 0, the record has to reach the OS before `track()` returns: a `write()` of the frame per
+   call (it survives `kill -9`; fsync can stay batched for power loss), or `track()` blocking until the next
+   group commit. This is a product decision; it was not changed here.
+2. **A killed run stays `running`.** No crash detection fired in either cairn system within the test
+   window (about 70 s after the kill), same as 0.5 and MLflow.
+3. Server-side faults (kill -9, outage, partition, slow link, disk full, concurrency) lose nothing in 0.6,
+   with **no manual `cairn sync`**, and never block the training loop. MLflow also loses nothing but blocks
+   the loop for the whole outage (31–35 s), or slows it 75× on a slow link.
+
 ## Re-running everything (one command)
 
 From this checkout (the harness), against any cairn checkout:

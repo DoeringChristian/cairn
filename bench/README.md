@@ -31,10 +31,9 @@ test. The checkout, its commit and cairn's version are recorded under
 Both `python -m bench` and `python -m faults` take the same `--cairn` /
 `--cairn-python` flags for single scenarios.
 
-After the 0.6 merge expect to adapt `systems.py` for `cairn-local` (0.6 has no
-client-side DB writing: `cairn.Run(repo=<dir>)` goes through a server) and the
-fault suite's client-log paths (`CAIRN_DIR` run dirs instead of
-`CAIRN_WAL_DIR`; every process already gets `CAIRN_DIR=<work>/cairn-runs`).
+The harness targets the 0.6 architecture (run directories under
+`CAIRN_DIR=<work>/cairn-runs`, the uploader daemon under
+`CAIRN_AGENT_DIR=<work>/cairn-agent`, stopped at the end of every case).
 
 ## Running single scenarios
 
@@ -69,8 +68,8 @@ and a profiling one (`$BENCH_ROOT/venv-prof`: yappi + cairn's site-packages).
 
 | backend | what it is |
 |---|---|
-| `cairn-local` | `cairn.Run(repo=<dir>)`: the run appends its own log (`wals/<run>.wal.jsonl`); a `cairn server` on the repo holds the ingest lease, ingests every 2 s and serves the reads |
-| `cairn-http` | `cairn.Run(repo="cairn://…")` → `cairn server` over HTTP (client WAL in `CAIRN_WAL_DIR`) |
+| `cairn-local` | 0.6: `cairn.Run(repo=<dir>)`: the run writes `$CAIRN_DIR/runs/<id>/`, the uploader daemon sends it to the repo's auto-started local server (`cairn server --daemon`, auth on; the harness triggers the auto-start like a client and reads `<repo>/server.json`) |
+| `cairn-http` | 0.6: `cairn.Run(repo="cairn://…")`: the same run directory and uploader, to a `cairn server` the harness starts |
 | `mlflow-sqlite` | `mlflow server` (SQLite backend store, `--artifacts-destination`, proxied artifacts); client `mlflow.log_metrics(dict, step)` per step (one REST call), `mlflow.log_image` |
 | `mlflow-sqlite-async` | same server; the client logs with `synchronous=False` (MLflow's async logging queue) |
 | `mlflow-postgres` | `mlflow server` over Postgres 16 in podman |

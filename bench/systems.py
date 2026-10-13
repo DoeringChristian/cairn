@@ -5,9 +5,11 @@
 ``read_kind``), the server processes to sample, and how to measure storage.
 
 Backends:
-  cairn-local    the run writes its own log in the repo (``LocalTransport``);
-                 a ``cairn server`` on the repo ingests every 2 s and serves reads
-  cairn-http     the run logs to a ``cairn server`` over HTTP (``cairn://``)
+  cairn-local    0.6: ``cairn.Run(repo=<dir>)``; the run writes its run directory
+                 (``$CAIRN_DIR/runs/<id>``), the uploader daemon sends it to the
+                 repo's auto-started local server (``cairn server --daemon``)
+  cairn-http     0.6: ``cairn.Run(repo="cairn://…")``; same run directory and
+                 uploader, to a ``cairn server`` started by the harness
   mlflow-sqlite  ``mlflow server`` with a SQLite backend store, proxied artifacts
   mlflow-sqlite-async  same server; the client logs with ``synchronous=False``
   mlflow-postgres      ``mlflow server`` over Postgres 16 (podman)
@@ -76,7 +78,8 @@ class System:
             db = sum(c.dir_size(p) for p in repo.glob("cairn.db*")) if any(repo.glob("cairn.db*")) else 0
             if not db:
                 db = sum(c.dir_size(p) for p in repo.glob("*.db*"))
-            return {"db": db, "blobs": c.dir_size(repo / "artifacts"), "logs": c.dir_size(repo / "wals"),
+            return {"db": db, "blobs": c.dir_size(repo / "artifacts"),
+                    "logs": c.dir_size(repo / "wals") + c.dir_size(self.work / "cairn-runs"),
                     "total": c.dir_size(repo)}
         if self.pg_db:
             pg = postgres()
@@ -90,7 +93,7 @@ def make_system(backend: str, work: Path, *, ui: bool = False) -> System:
     work.mkdir(parents=True, exist_ok=True)
     if backend.startswith("cairn"):
         repo = work / "repo"
-        srv = c.cairn_server(repo, work, ui=ui)
+        srv = c.local_repo_server(repo, work) if backend == "cairn-local" else c.cairn_server(repo, work, ui=ui)
         target = str(repo) if backend == "cairn-local" else srv.url.replace("http://", "cairn://")
         return System(backend, work, srv, target, c.CAIRN_PY, srv.url, "cairn")
     if backend == "mlflow-postgres":
@@ -118,10 +121,15 @@ def make_system(backend: str, work: Path, *, ui: bool = False) -> System:
 def system(backend: str, work: Path, *, ui: bool = False) -> Iterator[System]:
     s = make_system(backend, work, ui=ui)
     s.extra["startup_s"] = s.server.start()
+    if s.backend == "cairn-local":  # the auto-started server's port is known only now
+        s.read_url = s.server.url
     try:
         yield s
     finally:
-        s.server.stop()
+        try:
+            c.stop_uploaders(work)
+        finally:
+            s.server.stop()
 
 
 # ---------------------------------------------------------------- read helpers
@@ -129,7 +137,8 @@ def system(backend: str, work: Path, *, ui: bool = False) -> Iterator[System]:
 def cairn_counts(url: str, project: str) -> tuple[int, dict[str, int]]:
     """(total scalar points, {run_id: points}) of a project, from metric stats."""
     r = httpx.get(f"{url}/api/runs", params={"project": project, "include": "stats", "limit": 1000,
-                                               "archived": "all"}, timeout=120)
+                                               "archived": "all"}, timeout=120,
+                  headers=c.headers(url))
     if r.status_code != 200:
         return 0, {}
     per = {}

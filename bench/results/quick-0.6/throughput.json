@@ -1,0 +1,302 @@
+{
+  "machine": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "cpu": "Apple M5 Pro",
+    "cpus": 18,
+    "memory_gb": 64.0,
+    "python": "3.13.13",
+    "disk_free_gb": 959.3,
+    "bench_root": "/private/tmp/claude-501/-Users-doeringc-workspace-cairn/a4b710e7-a868-4de6-aeef-f2b898ba3507/scratchpad/bench06",
+    "cairn_checkout": "/Users/doeringc/workspace/cairn",
+    "cairn_python": "/Users/doeringc/workspace/cairn/.venv/bin/python",
+    "cairn_commit": "83883ca4",
+    "cairn_branch": "dev/0.6",
+    "cairn_dirty": false,
+    "cairn_version": "0.6.0",
+    "harness_commit": "83883ca4",
+    "time": "2026-10-13T11:43:27+0200"
+  },
+  "scale": "quick",
+  "backends": [
+    "cairn-local",
+    "cairn-http"
+  ],
+  "notes": [],
+  "argv": [
+    "/Users/doeringc/workspace/cairn/bench/__main__.py",
+    "throughput",
+    "--scale",
+    "quick",
+    "--backends",
+    "cairn-local,cairn-http",
+    "--out",
+    "/private/tmp/claude-501/-Users-doeringc-workspace-cairn/a4b710e7-a868-4de6-aeef-f2b898ba3507/scratchpad/bench06/out/throughput-06.json"
+  ],
+  "sizes": {
+    "tp_clients": [
+      1,
+      4,
+      16
+    ],
+    "tp_single": {
+      "metrics": 10,
+      "steps": 2000
+    },
+    "tp_multi": {
+      "metrics": 10,
+      "steps": 1000
+    },
+    "media_clients": [
+      1,
+      4
+    ],
+    "media": {
+      "metrics": 10,
+      "steps": 300,
+      "media_every": 3,
+      "media_px": 256
+    },
+    "lag_secs": 15,
+    "lag_rate": 20,
+    "lag_load_clients": 4,
+    "storage_points": 200000,
+    "storage_images": 100,
+    "api_runs": [
+      1000
+    ],
+    "api_series_points": 200000,
+    "api_wide_metrics": 1000,
+    "api_reps": 10,
+    "deadline": 300
+  },
+  "scenarios": {
+    "throughput": {
+      "rows": [
+        {
+          "variant": "scalar",
+          "backend": "cairn-local",
+          "n_clients": 1,
+          "metrics": 10,
+          "steps": 2000,
+          "error": "NoSuchProcess: process no longer exists (pid=67483)"
+        },
+        {
+          "variant": "scalar",
+          "backend": "cairn-local",
+          "n_clients": 4,
+          "metrics": 10,
+          "steps": 1000,
+          "error": "UnsupportedProtocol: Request URL is missing an 'http://' or 'https://' protocol."
+        },
+        {
+          "variant": "scalar",
+          "backend": "cairn-local",
+          "n_clients": 16,
+          "metrics": 10,
+          "steps": 1000,
+          "error": "UnsupportedProtocol: Request URL is missing an 'http://' or 'https://' protocol."
+        },
+        {
+          "variant": "scalar",
+          "backend": "cairn-http",
+          "n_clients": 1,
+          "metrics": 10,
+          "steps": 2000,
+          "clients": 1,
+          "failed_clients": 0,
+          "points": 20000,
+          "media": 0,
+          "media_raw_mb": 0.0,
+          "client_wall_s": 0.9660727500449866,
+          "client_pts_per_s": 20702.374639041078,
+          "media_mb_per_s": 0.0,
+          "loop_s_max": 0.680179417016916,
+          "finish_s_max": 0.28589333302807063,
+          "step_p50_ms": 0.06354204379022121,
+          "step_max_ms": 542.3826250480488,
+          "blocked_s_max": 0.5423826250480488,
+          "client_rss_peak_mb": 261.109375,
+          "client_cpu_s_max": 0.901956,
+          "errors": 0,
+          "first_errors": [],
+          "orchestrator_wall_s": 1.434649167000316,
+          "visible_after_finish_s": 0.005724166985601187,
+          "e2e_pts_per_s": 20580.431620540417,
+          "server_rss_peak_mb": 88.59375,
+          "server_startup_s": 0.40771708299871534,
+          "storage": {
+            "db": 4599808,
+            "blobs": 0,
+            "logs": 2399625,
+            "total": 4599820
+          }
+        },
+        {
+          "variant": "scalar",
+          "backend": "cairn-http",
+          "n_clients": 4,
+          "metrics": 10,
+          "steps": 1000,
+          "clients": 4,
+          "failed_clients": 0,
+          "points": 40000,
+          "media": 0,
+          "media_raw_mb": 0.0,
+          "client_wall_s": 1.284304125001654,
+          "client_pts_per_s": 31145.270984743187,
+          "media_mb_per_s": 0.0,
+          "loop_s_max": 0.8200527919689193,
+          "finish_s_max": 0.4654452499235049,
+          "step_p50_ms": 0.06668746937066317,
+          "step_max_ms": 747.5771659519523,
+          "blocked_s_max": 0.7475771659519523,
+          "client_rss_peak_mb": 258.96875,
+          "client_cpu_s_max": 1.0469309999999998,
+          "errors": 0,
+          "first_errors": [],
+          "orchestrator_wall_s": 1.8941863339859992,
+          "visible_after_finish_s": 0.00639212504029274,
+          "e2e_pts_per_s": 30991.025191790886,
+          "server_rss_peak_mb": 87.53125,
+          "server_startup_s": 0.38896845804993063,
+          "storage": {
+            "db": 8986624,
+            "blobs": 0,
+            "logs": 4757557,
+            "total": 8986636
+          }
+        },
+        {
+          "variant": "scalar",
+          "backend": "cairn-http",
+          "n_clients": 16,
+          "metrics": 10,
+          "steps": 1000,
+          "clients": 16,
+          "failed_clients": 0,
+          "points": 160000,
+          "media": 0,
+          "media_raw_mb": 0.0,
+          "client_wall_s": 2.8426257498795167,
+          "client_pts_per_s": 56285.988405889,
+          "media_mb_per_s": 0.0,
+          "loop_s_max": 1.580995750031434,
+          "finish_s_max": 1.2894844999536872,
+          "step_p50_ms": 0.08993747178465128,
+          "step_max_ms": 1493.8567499630153,
+          "blocked_s_max": 1.4938567499630153,
+          "client_rss_peak_mb": 261.03125,
+          "client_cpu_s_max": 1.324675,
+          "errors": 0,
+          "first_errors": [],
+          "orchestrator_wall_s": 3.6854132909793407,
+          "visible_after_finish_s": 0.023351749987341464,
+          "e2e_pts_per_s": 55827.374781355735,
+          "server_rss_peak_mb": 88.09375,
+          "server_startup_s": 0.4460022080456838,
+          "storage": {
+            "db": 34889728,
+            "blobs": 0,
+            "logs": 19029774,
+            "total": 34889740
+          }
+        },
+        {
+          "variant": "media",
+          "backend": "cairn-local",
+          "n_clients": 1,
+          "metrics": 10,
+          "steps": 300,
+          "media_every": 3,
+          "media_px": 256,
+          "error": "UnsupportedProtocol: Request URL is missing an 'http://' or 'https://' protocol."
+        },
+        {
+          "variant": "media",
+          "backend": "cairn-local",
+          "n_clients": 4,
+          "metrics": 10,
+          "steps": 300,
+          "media_every": 3,
+          "media_px": 256,
+          "error": "UnsupportedProtocol: Request URL is missing an 'http://' or 'https://' protocol."
+        },
+        {
+          "variant": "media",
+          "backend": "cairn-http",
+          "n_clients": 1,
+          "metrics": 10,
+          "steps": 300,
+          "media_every": 3,
+          "media_px": 256,
+          "clients": 1,
+          "failed_clients": 0,
+          "points": 3000,
+          "media": 100,
+          "media_raw_mb": 18.75,
+          "client_wall_s": 1.5542586251394823,
+          "client_pts_per_s": 1930.1806993226587,
+          "media_mb_per_s": 12.063629370766616,
+          "loop_s_max": 1.444839958101511,
+          "finish_s_max": 0.10941866703797132,
+          "step_p50_ms": 0.1193750649690628,
+          "step_max_ms": 618.9723750576377,
+          "blocked_s_max": 0.6189723750576377,
+          "client_rss_peak_mb": 260.09375,
+          "client_cpu_s_max": 1.2816779999999999,
+          "errors": 0,
+          "first_errors": [],
+          "orchestrator_wall_s": 2.0452200421132147,
+          "visible_after_finish_s": 0.026569166919216514,
+          "e2e_pts_per_s": 1897.7399151700927,
+          "server_rss_peak_mb": 86.09375,
+          "server_startup_s": 0.4055047919973731,
+          "storage": {
+            "db": 7249920,
+            "blobs": 19712532,
+            "logs": 26182493,
+            "total": 26962464
+          }
+        },
+        {
+          "variant": "media",
+          "backend": "cairn-http",
+          "n_clients": 4,
+          "metrics": 10,
+          "steps": 300,
+          "media_every": 3,
+          "media_px": 256,
+          "clients": 4,
+          "failed_clients": 0,
+          "points": 12000,
+          "media": 400,
+          "media_raw_mb": 75.0,
+          "client_wall_s": 4.119919916964136,
+          "client_pts_per_s": 2912.6779747802707,
+          "media_mb_per_s": 18.20423734237669,
+          "loop_s_max": 2.4596181251108646,
+          "finish_s_max": 1.7006105419714004,
+          "step_p50_ms": 0.1220625126734376,
+          "step_max_ms": 770.6923329969868,
+          "blocked_s_max": 0.7706923329969868,
+          "client_rss_peak_mb": 260.28125,
+          "client_cpu_s_max": 1.4631480000000001,
+          "errors": 0,
+          "first_errors": [],
+          "orchestrator_wall_s": 4.653797000064515,
+          "visible_after_finish_s": 0.005957541987299919,
+          "e2e_pts_per_s": 2908.4722266690196,
+          "server_rss_peak_mb": 111.40625,
+          "server_startup_s": 0.4039882499491796,
+          "storage": {
+            "db": 27750400,
+            "blobs": 78849896,
+            "logs": 104729459,
+            "total": 106600308
+          }
+        }
+      ],
+      "wall_s": 35.90248883306049
+    }
+  }
+}

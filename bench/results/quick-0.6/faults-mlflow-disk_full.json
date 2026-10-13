@@ -1,0 +1,100 @@
+{
+  "machine": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "cpu": "Apple M5 Pro",
+    "cpus": 18,
+    "memory_gb": 64.0,
+    "python": "3.13.13",
+    "disk_free_gb": 959.3,
+    "bench_root": "/private/tmp/claude-501/-Users-doeringc-workspace-cairn/a4b710e7-a868-4de6-aeef-f2b898ba3507/scratchpad/bench06",
+    "cairn_checkout": "/Users/doeringc/workspace/cairn",
+    "cairn_python": "/Users/doeringc/workspace/cairn/.venv/bin/python",
+    "cairn_commit": "5e4fb6be",
+    "cairn_branch": "dev/0.6",
+    "cairn_dirty": false,
+    "cairn_version": "0.5.0",
+    "harness_commit": "5e4fb6be",
+    "time": "2026-10-13T11:34:10+0200"
+  },
+  "systems": [
+    "mlflow"
+  ],
+  "argv": [
+    "/Users/doeringc/workspace/cairn/faults/__main__.py",
+    "disk_full",
+    "--systems",
+    "mlflow",
+    "--duration",
+    "20",
+    "--out",
+    "/private/tmp/claude-501/-Users-doeringc-workspace-cairn/a4b710e7-a868-4de6-aeef-f2b898ba3507/scratchpad/bench06/out/faults-mlflow-disk_full.json"
+  ],
+  "scenarios": {
+    "disk_full": [
+      {
+        "system": "mlflow",
+        "volume_mb": 64,
+        "free_before_bytes": 1499136,
+        "free_at_release_bytes": 24576,
+        "server_alive_at_release": true,
+        "recovery_s": 0.049821792053990066,
+        "client_raised": 0,
+        "client_first_errors": [],
+        "client_error": null,
+        "finish_error": null,
+        "client_killed": false,
+        "loop_blocked_s": 31.750750334002078,
+        "max_step_ms": 30031.96958405897,
+        "steps_over_100ms": 4,
+        "finish_s": 0.9557046670233831,
+        "steps_logged": 2000,
+        "loop_s": 47.68565462494735,
+        "expected": 10000,
+        "present": 10000,
+        "lost": 0,
+        "lost_accepted": 0,
+        "duplicated": 0,
+        "corrupted": 0,
+        "reordered": 0,
+        "readable": true,
+        "final_status": "FINISHED",
+        "server_alive_at_end": true,
+        "server_log_errors": [
+          [
+            "(sqlite3.OperationalError) database or disk is full",
+            12
+          ],
+          [
+            "(Background on this error at: https://sqlalche.me/e/21/e3q8)",
+            8
+          ],
+          [
+            "|   File \"/private/tmp/claude-501/-Users-doeringc-workspace-cairn/a4b710e7-a868-4de6-aeef-f2b898ba3507/scratchpad/bench06/venv-mlflow/lib/python3.13/site-packag",
+            6
+          ],
+          [
+            "|     await self.app(scope, receive_or_disconnect, send_no_error)",
+            6
+          ],
+          [
+            "File \"/private/tmp/claude-501/-Users-doeringc-workspace-cairn/a4b710e7-a868-4de6-aeef-f2b898ba3507/scratchpad/bench06/venv-mlflow/lib/python3.13/site-packages/s",
+            6
+          ],
+          [
+            "await self.app(scope, receive_or_disconnect, send_no_error)",
+            6
+          ],
+          [
+            "/private/tmp/claude-501/-Users-doeringc-workspace-cairn/a4b710e7-a868-4de6-aeef-f2b898ba3507/scratchpad/bench06/venv-mlflow/lib/python3.13/site-packages/mlflow/",
+            4
+          ],
+          [
+            "sqlite3.OperationalError: database or disk is full",
+            4
+          ]
+        ],
+        "wall_s": 57.48647062503733
+      }
+    ]
+  }
+}

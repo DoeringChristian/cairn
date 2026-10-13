@@ -118,7 +118,8 @@ def throughput(scale: str, backends: list[str], work: Path) -> dict[str, Any]:
 def _discover(sysm: System, project: str, name: str) -> str | None:
     try:
         if sysm.read_kind == "cairn":
-            r = httpx.get(f"{sysm.read_url}/api/runs", params={"project": project, "limit": 100}, timeout=10)
+            r = httpx.get(f"{sysm.read_url}/api/runs", params={"project": project, "limit": 100}, timeout=10,
+                         headers=c.headers(sysm.read_url))
             for run in r.json().get("runs", []):
                 if run.get("display_name") == name:
                     return run["id"]

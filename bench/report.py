@@ -141,14 +141,18 @@ def faults(name: str, rows: list[dict]) -> str:
     tr = []
     for r in rows:
         if r.get("na"):
-            tr.append([r["system"], "n/a: " + r["na"]] + [""] * 9)
+            tr.append([r["system"], "n/a: " + r["na"]] + [""] * 11)
             continue
-        tr.append([r["system"], r.get("expected"), r.get("lost"), r.get("lost_accepted"), r.get("duplicated"),
+        bs = r.get("before_sync") or {}
+        tr.append([r["system"], r.get("expected"), bs.get("lost", r.get("lost")),
+                   bs.get("lost_accepted", r.get("lost_accepted")), r.get("lost"), r.get("lost_accepted"),
+                   r.get("duplicated"),
                    r.get("corrupted"), r.get("reordered"),
                    f"{r.get('client_raised')}" + (" + crash" if r.get("client_error") else ""),
                    f(r.get("loop_blocked_s"), 1), f(r.get("recovery_s"), 1),
                    f"{r.get('final_status')}" + (f"; {r['error'][:60]}" if r.get("error") else "")])
-    return table(["system", "expected pts", "lost", "lost after ack'd", "dup", "corrupt", "reordered",
+    return table(["system", "expected pts", "lost (no sync)", "lost after ack'd (no sync)",
+                  "lost (after `cairn sync`)", "lost after ack'd (after sync)", "dup", "corrupt", "reordered",
                   "raised (calls)", "loop blocked s", "recovery s", "final status"], tr)
 
 
@@ -160,7 +164,8 @@ def main() -> None:
         d = json.loads(Path(p).read_text())
         machine = machine or d.get("machine")
         if "systems" in d:
-            fl.update(d["scenarios"])
+            for k, v in d["scenarios"].items():
+                fl.setdefault(k, []).extend(v)
         else:
             for k, v in d["scenarios"].items():
                 bench[f"{k} ({d.get('scale')})"] = v

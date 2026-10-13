@@ -18,11 +18,16 @@ and detaches it afterwards.
 
 ## Systems (columns)
 
-* `cairn-http` — `cairn.Run(repo="cairn://…")` to a `cairn server`: the central-server deployment.
+* `cairn-http` — 0.6: `cairn.Run(repo="cairn://…")` writes its run directory
+  (`$CAIRN_DIR/runs/<id>/`, group commit every 100 ms); the uploader daemon
+  (`cairn sync --daemon`, started by the run) sends it to a `cairn server`.
 * `mlflow` — MLflow client (synchronous `log_metrics` per step, default retry
   settings) to `mlflow server` on SQLite.
-* `cairn-local` — `cairn.Run` writing its log into a local repo, a `cairn
-  server` on the repo ingesting it (the "server" of the server faults).
+* `cairn-local` — 0.6: `cairn.Run(repo=<dir>)`: the same run directory and
+  uploader, to the repo's auto-started local server (`cairn server --daemon`,
+  auth on, found through `<repo>/server.json`). The harness triggers the
+  auto-start the way a client does, to know the read URL; after a server
+  `kill -9` the *uploader* starts it again (the harness does not).
 
 ## The training loop
 
@@ -43,9 +48,11 @@ a progress file. Values are deterministic (`m{j}` at step `s` = `s*1000 + j +
   step being logged at that moment is readable;
 * **final status** — the run's status afterwards.
 
-For cairn-http, a run that ended with data still in its client WAL gets
-`cairn sync` (the documented recovery); the row keeps the pre-sync loss in
-`before_sync`.
+For cairn, the row first records what arrived through the uploader daemon on
+its own (`before_sync`, after waiting up to 90 s for its backoff), then runs
+`cairn sync` over the run directories (the manual recovery) and verifies
+again. Every case stops its uploader daemon (`$CAIRN_AGENT_DIR/agent.pid`) and
+any auto-started server at the end.
 
 ## Scenarios
 
@@ -55,9 +62,9 @@ For cairn-http, a run that ended with data still in its client WAL gets
 | `unreachable_30s` | a TCP proxy between client and server resets every connection and refuses new ones for 30 s |
 | `partition_30s` | the proxy black-holes traffic for 30 s (connections hang; clients hit their timeouts) |
 | `slow_server` | the proxy adds 250 ms per forwarded chunk, both directions, for the whole run |
-| `client_kill9` | `kill -9` the training process at t=10 s (then `cairn sync` for cairn-http) |
+| `client_kill9` | `kill -9` the training process at t=10 s (the uploader keeps sending; then `cairn sync`) |
 | `disk_full` | the server's storage (cairn-local: the whole repo) on a 64 MB volume filled to ~1.5 MB free; scalars + a 128² image every 10 steps; the filler is deleted at t=25 s |
-| `torn_writes` | on copies: truncate a file at 8 seeded random offsets, restart a server on the copy, read. cairn-local: the run's unapplied log and `cairn.db`; cairn-http: the client WAL with pending entries (then `cairn sync`) and `cairn.db`; mlflow: `mlflow.db`. Reports server start, reads, `PRAGMA quick_check`, lost/corrupt points |
+| `torn_writes` | on copies: truncate a file at 8 seeded random offsets, restart a server on the copy, read. cairn-http: the run directory's log segment with unacked records (server killed 3 s in, uploader stopped; then `cairn sync` on the copy) and `cairn.db`; cairn-local: n/a (same files); mlflow: `mlflow.db`. Reports server start, reads, `PRAGMA quick_check`, lost/corrupt points |
 | `concurrent` | 8 clients on 8 runs flat out; 2 processes on one run (cairn: second process `primary=False, label=`; MLflow: both `start_run(run_id=)`), different metric names |
 
 Not covered (yet): packet loss/reordering on the link, disk full on the

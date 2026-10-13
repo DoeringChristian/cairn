@@ -1,0 +1,74 @@
+{
+  "machine": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "cpu": "Apple M5 Pro",
+    "cpus": 18,
+    "memory_gb": 64.0,
+    "python": "3.13.13",
+    "disk_free_gb": 959.3,
+    "bench_root": "/private/tmp/claude-501/-Users-doeringc-workspace-cairn/a4b710e7-a868-4de6-aeef-f2b898ba3507/scratchpad/bench06",
+    "cairn_checkout": "/Users/doeringc/workspace/cairn",
+    "cairn_python": "/Users/doeringc/workspace/cairn/.venv/bin/python",
+    "cairn_commit": "83883ca4",
+    "cairn_branch": "dev/0.6",
+    "cairn_dirty": false,
+    "cairn_version": "0.6.0",
+    "harness_commit": "83883ca4",
+    "time": "2026-10-13T11:39:21+0200"
+  },
+  "systems": [
+    "mlflow"
+  ],
+  "argv": [
+    "/Users/doeringc/workspace/cairn/faults/__main__.py",
+    "concurrent",
+    "--systems",
+    "mlflow",
+    "--duration",
+    "20",
+    "--out",
+    "/private/tmp/claude-501/-Users-doeringc-workspace-cairn/a4b710e7-a868-4de6-aeef-f2b898ba3507/scratchpad/bench06/out/faults-mlflow-concurrent.json"
+  ],
+  "scenarios": {
+    "concurrent": [
+      {
+        "system": "mlflow",
+        "eight_runs": {
+          "lost": 0,
+          "duplicated": 0,
+          "corrupted": 0,
+          "reordered": 0,
+          "expected": 80000,
+          "raised": 0,
+          "unreadable": 0,
+          "max_loop_blocked_s": 20.324743918841705
+        },
+        "same_run_two_processes": {
+          "a": {
+            "expected": 10000,
+            "lost": 0,
+            "duplicated": 0,
+            "corrupted": 0,
+            "reordered": 0,
+            "readable": true,
+            "final_status": "FINISHED",
+            "raised": 0,
+            "error": null
+          },
+          "b": {
+            "expected": 10000,
+            "lost": 0,
+            "duplicated": 0,
+            "corrupted": 0,
+            "reordered": 0,
+            "readable": true,
+            "final_status": "FINISHED",
+            "raised": 0,
+            "error": null
+          }
+        },
+        "wall_s": 63.19766258401796
+      }
+    ]
+  }
+}

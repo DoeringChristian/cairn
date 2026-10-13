@@ -1,0 +1,63 @@
+{
+  "machine": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "cpu": "Apple M5 Pro",
+    "cpus": 18,
+    "memory_gb": 64.0,
+    "python": "3.13.13",
+    "disk_free_gb": 959.3,
+    "bench_root": "/private/tmp/claude-501/-Users-doeringc-workspace-cairn/a4b710e7-a868-4de6-aeef-f2b898ba3507/scratchpad/bench06",
+    "cairn_checkout": "/Users/doeringc/workspace/cairn",
+    "cairn_python": "/Users/doeringc/workspace/cairn/.venv/bin/python",
+    "cairn_commit": "5e4fb6be",
+    "cairn_branch": "dev/0.6",
+    "cairn_dirty": false,
+    "cairn_version": "0.5.0",
+    "harness_commit": "5e4fb6be",
+    "time": "2026-10-13T11:33:39+0200"
+  },
+  "systems": [
+    "mlflow"
+  ],
+  "argv": [
+    "/Users/doeringc/workspace/cairn/faults/__main__.py",
+    "slow_server",
+    "--systems",
+    "mlflow",
+    "--duration",
+    "20",
+    "--out",
+    "/private/tmp/claude-501/-Users-doeringc-workspace-cairn/a4b710e7-a868-4de6-aeef-f2b898ba3507/scratchpad/bench06/out/faults-mlflow-slow_server.json"
+  ],
+  "scenarios": {
+    "slow_server": [
+      {
+        "system": "mlflow",
+        "added_latency_ms_per_chunk": 250,
+        "client_raised": 0,
+        "client_first_errors": [],
+        "client_error": null,
+        "finish_error": null,
+        "client_killed": false,
+        "loop_blocked_s": 20.576827626908198,
+        "max_step_ms": 768.7273749615997,
+        "steps_over_100ms": 27,
+        "finish_s": 1.522813000017777,
+        "steps_logged": 27,
+        "loop_s": 20.57813212496694,
+        "achieved_steps_per_s": 1.3120724386467304,
+        "target_steps_per_s": 100,
+        "expected": 135,
+        "present": 135,
+        "lost": 0,
+        "lost_accepted": 0,
+        "duplicated": 0,
+        "corrupted": 0,
+        "reordered": 0,
+        "readable": true,
+        "final_status": "FINISHED",
+        "wall_s": 30.57796074997168
+      }
+    ]
+  }
+}

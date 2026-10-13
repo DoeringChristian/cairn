@@ -1,0 +1,789 @@
+{
+  "machine": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "cpu": "Apple M5 Pro",
+    "cpus": 18,
+    "memory_gb": 64.0,
+    "python": "3.13.13",
+    "disk_free_gb": 959.5,
+    "bench_root": "/private/tmp/claude-501/-Users-doeringc-workspace-cairn/a4b710e7-a868-4de6-aeef-f2b898ba3507/scratchpad/bench06",
+    "cairn_checkout": "/Users/doeringc/workspace/cairn",
+    "cairn_python": "/Users/doeringc/workspace/cairn/.venv/bin/python",
+    "cairn_commit": "5e4fb6be",
+    "cairn_branch": "dev/0.6",
+    "cairn_dirty": false,
+    "cairn_version": "0.5.0",
+    "harness_commit": "5e4fb6be",
+    "time": "2026-10-13T11:32:13+0200"
+  },
+  "systems": [
+    "cairn-http",
+    "cairn-local"
+  ],
+  "argv": [
+    "/Users/doeringc/workspace/cairn/faults/__main__.py",
+    "all",
+    "--systems",
+    "cairn-http,cairn-local",
+    "--duration",
+    "20",
+    "--out",
+    "/private/tmp/claude-501/-Users-doeringc-workspace-cairn/a4b710e7-a868-4de6-aeef-f2b898ba3507/scratchpad/bench06/out/faults-cairn06.json"
+  ],
+  "scenarios": {
+    "server_kill9": [
+      {
+        "system": "cairn-http",
+        "fault_at_step": 978,
+        "recovery_s": 2.6989796670386568,
+        "before_sync": {
+          "present": 10000,
+          "lost": 0,
+          "lost_accepted": 0,
+          "duplicated": 0,
+          "corrupted": 0
+        },
+        "run_dirs_before_sync": [
+          {
+            "run": "4b72b2e411af17085d9eea90f736aaf1",
+            "acked": {
+              "main": 186
+            },
+            "finished": true
+          }
+        ],
+        "sync_s": 0.38033691700547934,
+        "sync_output": "4b72b2e411af17085d9eea90f736aaf1: uploaded\n",
+        "client_raised": 0,
+        "client_first_errors": [],
+        "client_error": null,
+        "finish_error": null,
+        "client_killed": false,
+        "loop_blocked_s": 0.5420914579881355,
+        "max_step_ms": 542.0914579881355,
+        "steps_over_100ms": 1,
+        "finish_s": 0.060535917058587074,
+        "steps_logged": 2000,
+        "loop_s": 19.990862332982942,
+        "expected": 10000,
+        "present": 10000,
+        "lost": 0,
+        "lost_accepted": 0,
+        "duplicated": 0,
+        "corrupted": 0,
+        "reordered": 0,
+        "readable": true,
+        "final_status": "completed",
+        "wall_s": 21.74739629193209
+      },
+      {
+        "system": "cairn-local",
+        "fault_at_step": 979,
+        "recovery_s": 0.560815625009127,
+        "before_sync": {
+          "present": 10000,
+          "lost": 0,
+          "lost_accepted": 0,
+          "duplicated": 0,
+          "corrupted": 0
+        },
+        "run_dirs_before_sync": [
+          {
+            "run": "2e327c3ae968ebfe09ee9c75178abcba",
+            "acked": {
+              "main": 188
+            },
+            "finished": true
+          }
+        ],
+        "sync_s": 0.3918185420334339,
+        "sync_output": "2e327c3ae968ebfe09ee9c75178abcba: uploaded\n",
+        "client_raised": 0,
+        "client_first_errors": [],
+        "client_error": null,
+        "finish_error": null,
+        "client_killed": false,
+        "loop_blocked_s": 0.5695913339732215,
+        "max_step_ms": 569.5913339732215,
+        "steps_over_100ms": 1,
+        "finish_s": 0.11837837495841086,
+        "steps_logged": 2000,
+        "loop_s": 19.992155249929056,
+        "expected": 10000,
+        "present": 10000,
+        "lost": 0,
+        "lost_accepted": 0,
+        "duplicated": 0,
+        "corrupted": 0,
+        "reordered": 0,
+        "readable": true,
+        "final_status": "completed",
+        "wall_s": 22.26088920806069
+      }
+    ],
+    "unreachable_30s": [
+      {
+        "system": "cairn-http",
+        "fault_at_step": 976,
+        "recovery_s": 0.5645372910657898,
+        "before_sync": {
+          "present": 10000,
+          "lost": 0,
+          "lost_accepted": 0,
+          "duplicated": 0,
+          "corrupted": 0
+        },
+        "run_dirs_before_sync": [
+          {
+            "run": "aa609ba8b5ddce0e5dc96de6b2a5e934",
+            "acked": {
+              "main": 188
+            },
+            "finished": true
+          }
+        ],
+        "sync_s": 0.3707524170167744,
+        "sync_output": "aa609ba8b5ddce0e5dc96de6b2a5e934: uploaded\n",
+        "client_raised": 0,
+        "client_first_errors": [],
+        "client_error": null,
+        "finish_error": null,
+        "client_killed": false,
+        "loop_blocked_s": 0.6071428749710321,
+        "max_step_ms": 607.1428749710321,
+        "steps_over_100ms": 1,
+        "finish_s": 7.670500291977078,
+        "steps_logged": 2000,
+        "loop_s": 19.992405291995965,
+        "expected": 10000,
+        "present": 10000,
+        "lost": 0,
+        "lost_accepted": 0,
+        "duplicated": 0,
+        "corrupted": 0,
+        "reordered": 0,
+        "readable": true,
+        "final_status": "completed",
+        "wall_s": 41.87796220800374
+      },
+      {
+        "system": "cairn-local",
+        "na": "no network between the run and its repo",
+        "wall_s": 1.1708005331456661e-05
+      }
+    ],
+    "partition_30s": [
+      {
+        "system": "cairn-http",
+        "fault_at_step": 976,
+        "recovery_s": 2.1511374580441043,
+        "before_sync": {
+          "present": 10000,
+          "lost": 0,
+          "lost_accepted": 0,
+          "duplicated": 0,
+          "corrupted": 0
+        },
+        "run_dirs_before_sync": [
+          {
+            "run": "57cde18e5eb87a18e6c2829a71f5b14a",
+            "acked": {
+              "main": 188
+            },
+            "finished": true
+          }
+        ],
+        "sync_s": 0.3977212910540402,
+        "sync_output": "57cde18e5eb87a18e6c2829a71f5b14a: uploaded\n",
+        "client_raised": 0,
+        "client_first_errors": [],
+        "client_error": null,
+        "finish_error": null,
+        "client_killed": false,
+        "loop_blocked_s": 0.61031749995891,
+        "max_step_ms": 610.31749995891,
+        "steps_over_100ms": 1,
+        "finish_s": 19.798031290993094,
+        "steps_logged": 2000,
+        "loop_s": 19.991195583017543,
+        "expected": 10000,
+        "present": 10000,
+        "lost": 0,
+        "lost_accepted": 0,
+        "duplicated": 0,
+        "corrupted": 0,
+        "reordered": 0,
+        "readable": true,
+        "final_status": "completed",
+        "wall_s": 43.446572624961846
+      },
+      {
+        "system": "cairn-local",
+        "na": "no network between the run and its repo",
+        "wall_s": 1.2040953151881695e-05
+      }
+    ],
+    "slow_server": [
+      {
+        "system": "cairn-http",
+        "added_latency_ms_per_chunk": 250,
+        "client_raised": 0,
+        "client_first_errors": [],
+        "client_error": null,
+        "finish_error": null,
+        "client_killed": false,
+        "loop_blocked_s": 0.6582571669714525,
+        "max_step_ms": 658.2571669714525,
+        "steps_over_100ms": 1,
+        "finish_s": 1.172040042001754,
+        "steps_logged": 2000,
+        "loop_s": 19.99040133296512,
+        "achieved_steps_per_s": 100.04801637983651,
+        "target_steps_per_s": 100,
+        "expected": 10000,
+        "present": 10000,
+        "lost": 0,
+        "lost_accepted": 0,
+        "duplicated": 0,
+        "corrupted": 0,
+        "reordered": 0,
+        "readable": true,
+        "final_status": "completed",
+        "wall_s": 22.3871927090222
+      },
+      {
+        "system": "cairn-local",
+        "na": "no network between the run and its repo",
+        "wall_s": 6.209011189639568e-06
+      }
+    ],
+    "client_kill9": [
+      {
+        "system": "cairn-http",
+        "killed_at_step": 977,
+        "complete_without_sync_s": null,
+        "before_sync": {
+          "present": 4860,
+          "lost": 30,
+          "lost_accepted": 30,
+          "duplicated": 0,
+          "corrupted": 0
+        },
+        "run_dirs_before_sync": [
+          {
+            "run": "da2178d0804224e0eeb95f199785da0a",
+            "acked": {
+              "main": 88
+            },
+            "finished": false
+          }
+        ],
+        "sync_s": 0.32292841700837016,
+        "sync_output": "da2178d0804224e0eeb95f199785da0a: uploaded\n",
+        "client_raised": 0,
+        "client_first_errors": [],
+        "client_error": null,
+        "finish_error": null,
+        "client_killed": true,
+        "loop_blocked_s": null,
+        "max_step_ms": null,
+        "steps_over_100ms": null,
+        "finish_s": null,
+        "steps_logged": 978,
+        "loop_s": null,
+        "expected": 4890,
+        "present": 4860,
+        "lost": 30,
+        "lost_accepted": 30,
+        "duplicated": 0,
+        "corrupted": 0,
+        "reordered": 0,
+        "readable": true,
+        "final_status": "running",
+        "wall_s": 71.30604091694113
+      },
+      {
+        "system": "cairn-local",
+        "killed_at_step": 977,
+        "complete_without_sync_s": null,
+        "before_sync": {
+          "present": 4860,
+          "lost": 30,
+          "lost_accepted": 30,
+          "duplicated": 0,
+          "corrupted": 0
+        },
+        "run_dirs_before_sync": [
+          {
+            "run": "faf110d8efa07d7eaa1cf347f054baf3",
+            "acked": {
+              "main": 88
+            },
+            "finished": false
+          }
+        ],
+        "sync_s": 0.4885795839363709,
+        "sync_output": "faf110d8efa07d7eaa1cf347f054baf3: uploaded\n",
+        "client_raised": 0,
+        "client_first_errors": [],
+        "client_error": null,
+        "finish_error": null,
+        "client_killed": true,
+        "loop_blocked_s": null,
+        "max_step_ms": null,
+        "steps_over_100ms": null,
+        "finish_s": null,
+        "steps_logged": 978,
+        "loop_s": null,
+        "expected": 4890,
+        "present": 4860,
+        "lost": 30,
+        "lost_accepted": 30,
+        "duplicated": 0,
+        "corrupted": 0,
+        "reordered": 0,
+        "readable": true,
+        "final_status": "running",
+        "wall_s": 71.7393156249309
+      }
+    ],
+    "disk_full": [
+      {
+        "system": "cairn-http",
+        "volume_mb": 64,
+        "free_before_bytes": 1499136,
+        "free_at_release_bytes": 0,
+        "server_alive_at_release": true,
+        "recovery_s": 8.889830625033937,
+        "before_sync": {
+          "present": 10000,
+          "lost": 0,
+          "lost_accepted": 0,
+          "duplicated": 0,
+          "corrupted": 0
+        },
+        "run_dirs_before_sync": [
+          {
+            "run": "469221a7783ea0e8a120f02fa5c66607",
+            "acked": {
+              "main": 574
+            },
+            "finished": true
+          }
+        ],
+        "sync_s": 0.396967584034428,
+        "sync_output": "469221a7783ea0e8a120f02fa5c66607: uploaded\n",
+        "client_raised": 0,
+        "client_first_errors": [],
+        "client_error": null,
+        "finish_error": null,
+        "client_killed": false,
+        "loop_blocked_s": 0.8912436250830069,
+        "max_step_ms": 891.2436250830069,
+        "steps_over_100ms": 1,
+        "finish_s": 12.7292707079323,
+        "steps_logged": 2000,
+        "loop_s": 19.991029665921815,
+        "expected": 10000,
+        "present": 10000,
+        "lost": 0,
+        "lost_accepted": 0,
+        "duplicated": 0,
+        "corrupted": 0,
+        "reordered": 0,
+        "readable": true,
+        "final_status": "completed",
+        "server_alive_at_end": true,
+        "server_log_errors": [],
+        "wall_s": 39.98560274997726
+      },
+      {
+        "system": "cairn-local",
+        "volume_mb": 64,
+        "free_before_bytes": 1499136,
+        "free_at_release_bytes": 36864,
+        "server_alive_at_release": true,
+        "recovery_s": 8.662287750048563,
+        "before_sync": {
+          "present": 10000,
+          "lost": 0,
+          "lost_accepted": 0,
+          "duplicated": 0,
+          "corrupted": 0
+        },
+        "run_dirs_before_sync": [
+          {
+            "run": "f149986ae762fa577fb6b1e50ae530d5",
+            "acked": {
+              "main": 577
+            },
+            "finished": true
+          }
+        ],
+        "sync_s": 0.38004654098767787,
+        "sync_output": "f149986ae762fa577fb6b1e50ae530d5: uploaded\n",
+        "client_raised": 0,
+        "client_first_errors": [],
+        "client_error": null,
+        "finish_error": null,
+        "client_killed": false,
+        "loop_blocked_s": 0.566435833927244,
+        "max_step_ms": 566.435833927244,
+        "steps_over_100ms": 1,
+        "finish_s": 12.458794500096701,
+        "steps_logged": 2000,
+        "loop_s": 19.992225916008465,
+        "expected": 10000,
+        "present": 10000,
+        "lost": 0,
+        "lost_accepted": 0,
+        "duplicated": 0,
+        "corrupted": 0,
+        "reordered": 0,
+        "readable": true,
+        "final_status": "completed",
+        "server_alive_at_end": true,
+        "wall_s": 39.90722820907831
+      }
+    ],
+    "torn_writes": [
+      {
+        "system": "cairn-http",
+        "targets": {
+          "run_log": [
+            {
+              "offset": 924283,
+              "size": 1210201,
+              "server_started": true,
+              "sync_rc": 0,
+              "sync_tail": "818fe7d5ce69b4ae2f338251a6bc0ebb: uploaded\n",
+              "expected": 10000,
+              "present": 7595,
+              "lost": 2405,
+              "lost_accepted": null,
+              "duplicated": 0,
+              "corrupted": 0,
+              "reordered": 0,
+              "readable": true
+            },
+            {
+              "offset": 245053,
+              "size": 1210201,
+              "server_started": true,
+              "sync_rc": 0,
+              "sync_tail": "818fe7d5ce69b4ae2f338251a6bc0ebb: uploaded\n",
+              "expected": 10000,
+              "present": 2335,
+              "lost": 7665,
+              "lost_accepted": null,
+              "duplicated": 0,
+              "corrupted": 0,
+              "reordered": 0,
+              "readable": true
+            },
+            {
+              "offset": 15710,
+              "size": 1210201,
+              "server_started": true,
+              "sync_rc": 0,
+              "sync_tail": "818fe7d5ce69b4ae2f338251a6bc0ebb: uploaded\n",
+              "expected": 10000,
+              "present": 2335,
+              "lost": 7665,
+              "lost_accepted": null,
+              "duplicated": 0,
+              "corrupted": 0,
+              "reordered": 0,
+              "readable": true
+            },
+            {
+              "offset": 190093,
+              "size": 1210201,
+              "server_started": true,
+              "sync_rc": 0,
+              "sync_tail": "818fe7d5ce69b4ae2f338251a6bc0ebb: uploaded\n",
+              "expected": 10000,
+              "present": 2335,
+              "lost": 7665,
+              "lost_accepted": null,
+              "duplicated": 0,
+              "corrupted": 0,
+              "reordered": 0,
+              "readable": true
+            },
+            {
+              "offset": 73245,
+              "size": 1210201,
+              "server_started": true,
+              "sync_rc": 0,
+              "sync_tail": "818fe7d5ce69b4ae2f338251a6bc0ebb: uploaded\n",
+              "expected": 10000,
+              "present": 2335,
+              "lost": 7665,
+              "lost_accepted": null,
+              "duplicated": 0,
+              "corrupted": 0,
+              "reordered": 0,
+              "readable": true
+            },
+            {
+              "offset": 176031,
+              "size": 1210201,
+              "server_started": true,
+              "sync_rc": 0,
+              "sync_tail": "818fe7d5ce69b4ae2f338251a6bc0ebb: uploaded\n",
+              "expected": 10000,
+              "present": 2335,
+              "lost": 7665,
+              "lost_accepted": null,
+              "duplicated": 0,
+              "corrupted": 0,
+              "reordered": 0,
+              "readable": true
+            },
+            {
+              "offset": 206405,
+              "size": 1210201,
+              "server_started": true,
+              "sync_rc": 0,
+              "sync_tail": "818fe7d5ce69b4ae2f338251a6bc0ebb: uploaded\n",
+              "expected": 10000,
+              "present": 2335,
+              "lost": 7665,
+              "lost_accepted": null,
+              "duplicated": 0,
+              "corrupted": 0,
+              "reordered": 0,
+              "readable": true
+            },
+            {
+              "offset": 743724,
+              "size": 1210201,
+              "server_started": true,
+              "sync_rc": 0,
+              "sync_tail": "818fe7d5ce69b4ae2f338251a6bc0ebb: uploaded\n",
+              "expected": 10000,
+              "present": 6090,
+              "lost": 3910,
+              "lost_accepted": null,
+              "duplicated": 0,
+              "corrupted": 0,
+              "reordered": 0,
+              "readable": true
+            }
+          ],
+          "run_log_untruncated_control": [
+            {
+              "offset": 1210201,
+              "size": 1210201,
+              "server_started": true,
+              "sync_rc": 0,
+              "sync_tail": "818fe7d5ce69b4ae2f338251a6bc0ebb: uploaded\n",
+              "expected": 10000,
+              "present": 10000,
+              "lost": 0,
+              "lost_accepted": null,
+              "duplicated": 0,
+              "corrupted": 0,
+              "reordered": 0,
+              "readable": true
+            }
+          ],
+          "database": [
+            {
+              "offset": 1848566,
+              "size": 2519040,
+              "quick_check": "error: database disk image is malformed",
+              "server_started": false,
+              "start_error": "http://127.0.0.1:4511/api/health did not come up in 30s",
+              "server_log_tail": "storage/db.py\", line 167, in open\n    db = cls(path)\n  File \"/Users/doeringc/workspace/cairn/cairn/server/storage/db.py\", line 139, in __init__\n    self._conn.execute(\"PRAGMA journal_mode=WAL\")\n    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^\nsqlite3.DatabaseError: database disk image is malformed\n"
+            },
+            {
+              "offset": 490106,
+              "size": 2519040,
+              "quick_check": "error: database disk image is malformed",
+              "server_started": false,
+              "start_error": "http://127.0.0.1:4511/api/health did not come up in 30s",
+              "server_log_tail": "storage/db.py\", line 167, in open\n    db = cls(path)\n  File \"/Users/doeringc/workspace/cairn/cairn/server/storage/db.py\", line 139, in __init__\n    self._conn.execute(\"PRAGMA journal_mode=WAL\")\n    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^\nsqlite3.DatabaseError: database disk image is malformed\n"
+            },
+            {
+              "offset": 31421,
+              "size": 2519040,
+              "quick_check": "error: database disk image is malformed",
+              "server_started": false,
+              "start_error": "http://127.0.0.1:4511/api/health did not come up in 30s",
+              "server_log_tail": "storage/db.py\", line 167, in open\n    db = cls(path)\n  File \"/Users/doeringc/workspace/cairn/cairn/server/storage/db.py\", line 139, in __init__\n    self._conn.execute(\"PRAGMA journal_mode=WAL\")\n    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^\nsqlite3.DatabaseError: database disk image is malformed\n"
+            },
+            {
+              "offset": 380186,
+              "size": 2519040,
+              "quick_check": "error: database disk image is malformed",
+              "server_started": false,
+              "start_error": "http://127.0.0.1:4511/api/health did not come up in 30s",
+              "server_log_tail": "storage/db.py\", line 167, in open\n    db = cls(path)\n  File \"/Users/doeringc/workspace/cairn/cairn/server/storage/db.py\", line 139, in __init__\n    self._conn.execute(\"PRAGMA journal_mode=WAL\")\n    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^\nsqlite3.DatabaseError: database disk image is malformed\n"
+            },
+            {
+              "offset": 2442039,
+              "size": 2519040,
+              "quick_check": "error: database disk image is malformed",
+              "server_started": false,
+              "start_error": "http://127.0.0.1:4511/api/health did not come up in 30s",
+              "server_log_tail": "storage/db.py\", line 167, in open\n    db = cls(path)\n  File \"/Users/doeringc/workspace/cairn/cairn/server/storage/db.py\", line 139, in __init__\n    self._conn.execute(\"PRAGMA journal_mode=WAL\")\n    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^\nsqlite3.DatabaseError: database disk image is malformed\n"
+            },
+            {
+              "offset": 146490,
+              "size": 2519040,
+              "quick_check": "error: database disk image is malformed",
+              "server_started": false,
+              "start_error": "http://127.0.0.1:4511/api/health did not come up in 30s",
+              "server_log_tail": "storage/db.py\", line 167, in open\n    db = cls(path)\n  File \"/Users/doeringc/workspace/cairn/cairn/server/storage/db.py\", line 139, in __init__\n    self._conn.execute(\"PRAGMA journal_mode=WAL\")\n    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^\nsqlite3.DatabaseError: database disk image is malformed\n"
+            },
+            {
+              "offset": 352062,
+              "size": 2519040,
+              "quick_check": "error: database disk image is malformed",
+              "server_started": false,
+              "start_error": "http://127.0.0.1:4511/api/health did not come up in 30s",
+              "server_log_tail": "storage/db.py\", line 167, in open\n    db = cls(path)\n  File \"/Users/doeringc/workspace/cairn/cairn/server/storage/db.py\", line 139, in __init__\n    self._conn.execute(\"PRAGMA journal_mode=WAL\")\n    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^\nsqlite3.DatabaseError: database disk image is malformed\n"
+            },
+            {
+              "offset": 412811,
+              "size": 2519040,
+              "quick_check": "error: database disk image is malformed",
+              "server_started": false,
+              "start_error": "http://127.0.0.1:4511/api/health did not come up in 30s",
+              "server_log_tail": "storage/db.py\", line 167, in open\n    db = cls(path)\n  File \"/Users/doeringc/workspace/cairn/cairn/server/storage/db.py\", line 139, in __init__\n    self._conn.execute(\"PRAGMA journal_mode=WAL\")\n    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^\nsqlite3.DatabaseError: database disk image is malformed\n"
+            }
+          ]
+        },
+        "run_log_segments": [
+          "cairn-runs/runs/818fe7d5ce69b4ae2f338251a6bc0ebb/log/000000.seg"
+        ],
+        "acked_at_copy": {
+          "main": 19
+        },
+        "db_files": {
+          "repo/cairn.db-wal": null,
+          "repo/cairn.db": 2519040
+        },
+        "summary": {
+          "run_log": {
+            "trials": 8,
+            "server_failed_to_start": 0,
+            "unreadable": 0,
+            "quick_check_failed": 0,
+            "with_loss": 8,
+            "points_lost_total": 52305,
+            "corrupted_total": 0,
+            "duplicated_total": 0
+          },
+          "run_log_untruncated_control": {
+            "trials": 1,
+            "server_failed_to_start": 0,
+            "unreadable": 0,
+            "quick_check_failed": 0,
+            "with_loss": 0,
+            "points_lost_total": 0,
+            "corrupted_total": 0,
+            "duplicated_total": 0
+          },
+          "database": {
+            "trials": 8,
+            "server_failed_to_start": 8,
+            "unreadable": 0,
+            "quick_check_failed": 8,
+            "with_loss": 0,
+            "points_lost_total": 0,
+            "corrupted_total": 0,
+            "duplicated_total": 0
+          }
+        },
+        "wall_s": 261.865546541987
+      },
+      {
+        "system": "cairn-local",
+        "targets": {},
+        "na": "same files as cairn-http (run directory log segment + the server's cairn.db); measured there",
+        "wall_s": 8.174998220056295e-05
+      }
+    ],
+    "concurrent": [
+      {
+        "system": "cairn-http",
+        "eight_runs": {
+          "lost": 0,
+          "duplicated": 0,
+          "corrupted": 0,
+          "reordered": 0,
+          "expected": 80000,
+          "raised": 0,
+          "unreadable": 0,
+          "max_loop_blocked_s": 0.8879271249752492
+        },
+        "same_run_two_processes": {
+          "a": {
+            "expected": 10000,
+            "lost": 0,
+            "duplicated": 0,
+            "corrupted": 0,
+            "reordered": 0,
+            "readable": true,
+            "final_status": "completed",
+            "raised": 0,
+            "error": null
+          },
+          "b": {
+            "expected": 10000,
+            "lost": 0,
+            "duplicated": 0,
+            "corrupted": 0,
+            "reordered": 0,
+            "readable": true,
+            "final_status": "completed",
+            "raised": 0,
+            "error": null
+          }
+        },
+        "wall_s": 17.64243966701906
+      },
+      {
+        "system": "cairn-local",
+        "eight_runs": {
+          "lost": 0,
+          "duplicated": 0,
+          "corrupted": 0,
+          "reordered": 0,
+          "expected": 80000,
+          "raised": 0,
+          "unreadable": 0,
+          "max_loop_blocked_s": 0.8584569579688832
+        },
+        "same_run_two_processes": {
+          "a": {
+            "expected": 10000,
+            "lost": 0,
+            "duplicated": 0,
+            "corrupted": 0,
+            "reordered": 0,
+            "readable": true,
+            "final_status": "completed",
+            "raised": 0,
+            "error": null
+          },
+          "b": {
+            "expected": 10000,
+            "lost": 0,
+            "duplicated": 0,
+            "corrupted": 0,
+            "reordered": 0,
+            "readable": true,
+            "final_status": "completed",
+            "raised": 0,
+            "error": null
+          }
+        },
+        "wall_s": 17.824590708944015
+      }
+    ]
+  }
+}
