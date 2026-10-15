@@ -73,7 +73,7 @@ run = cairn.Run(project="sweep", repo="cairn://login-node:4300")
 ### Distributed runners
 
 Recipes for common launchers, in the repository's
-[`examples/`](https://github.com/DoeringChristian/cairn/tree/main/examples)
+[`examples/`](https://github.com/DoeringChristian/cairn-track/tree/main/examples)
 (see [Examples](../examples.md#distributed-runners)). Each logs every process
 of a job into one run: the processes share a run id (`CAIRN_RUN_ID`, or one
 broadcast by rank 0), and each gets a label from its rank. **Local repo**
@@ -85,16 +85,16 @@ example sets up.
 
 | Runner | Recipe | Mode | How ranks map to cairn |
 |---|---|---|---|
-| torchrun | [`torchrun_ddp.py`](https://github.com/DoeringChristian/cairn/blob/main/examples/torchrun_ddp.py) | Local repo or HTTP | `label="auto"` reads `RANK`; the id from `CAIRN_RUN_ID` |
-| torchrun, no launch variable | [`torchrun_attach.py`](https://github.com/DoeringChristian/cairn/blob/main/examples/torchrun_attach.py) | Local repo or HTTP | rank 0 creates the run and broadcasts `run.id`; the others `cairn.attach(run_id, label=f"rank{rank}")` |
-| Accelerate | [`accelerate_ddp.py`](https://github.com/DoeringChristian/cairn/blob/main/examples/accelerate_ddp.py) | Local repo or HTTP | `label="auto"` reads `RANK` (set by `accelerate launch`) |
-| DeepSpeed | [`deepspeed_ddp.py`](https://github.com/DoeringChristian/cairn/blob/main/examples/deepspeed_ddp.py) | Local repo or HTTP | `label="auto"` reads `RANK` (set by `deepspeed`); multi-node: `CAIRN_*` in `.deepspeed_env` |
+| torchrun | [`torchrun_ddp.py`](https://github.com/DoeringChristian/cairn-track/blob/main/examples/torchrun_ddp.py) | Local repo or HTTP | `label="auto"` reads `RANK`; the id from `CAIRN_RUN_ID` |
+| torchrun, no launch variable | [`torchrun_attach.py`](https://github.com/DoeringChristian/cairn-track/blob/main/examples/torchrun_attach.py) | Local repo or HTTP | rank 0 creates the run and broadcasts `run.id`; the others `cairn.attach(run_id, label=f"rank{rank}")` |
+| Accelerate | [`accelerate_ddp.py`](https://github.com/DoeringChristian/cairn-track/blob/main/examples/accelerate_ddp.py) | Local repo or HTTP | `label="auto"` reads `RANK` (set by `accelerate launch`) |
+| DeepSpeed | [`deepspeed_ddp.py`](https://github.com/DoeringChristian/cairn-track/blob/main/examples/deepspeed_ddp.py) | Local repo or HTTP | `label="auto"` reads `RANK` (set by `deepspeed`); multi-node: `CAIRN_*` in `.deepspeed_env` |
 | SLURM (`srun`) | [Several processes, one run](runs.md#several-processes-one-run) | HTTP | `label="auto"` reads `SLURM_PROCID` |
-| SkyPilot | [`skypilot/`](https://github.com/DoeringChristian/cairn/tree/main/examples/skypilot) | HTTP | `label="auto"` reads `SKYPILOT_NODE_RANK`; a managed spot job resumes its run after a recovery |
-| Modal | [`modal_app.py`](https://github.com/DoeringChristian/cairn/blob/main/examples/modal_app.py) | HTTP (a Modal Secret holds `CAIRN_REPO`/`CAIRN_TOKEN`) | one run per function call |
-| SageMaker | [`sagemaker_job.py`](https://github.com/DoeringChristian/cairn/blob/main/examples/sagemaker_job.py) | HTTP (the estimator's `environment=`) | the host's index in `SM_HOSTS`: `label=f"rank{rank}"`, `primary=(rank == 0)` |
-| Azure ML | [`azureml_job.yml`](https://github.com/DoeringChristian/cairn/blob/main/examples/azureml_job.yml) | HTTP (`environment_variables`) | `distribution: pytorch` sets `RANK`; runs `torchrun_ddp.py` |
-| A later job | [`cluster_eval_attach.py`](https://github.com/DoeringChristian/cairn/blob/main/examples/cluster_eval_attach.py) | Local repo or HTTP | `cairn.attach(run_id, label="eval")` on the finished run; its status stays |
+| SkyPilot | [`skypilot/`](https://github.com/DoeringChristian/cairn-track/tree/main/examples/skypilot) | HTTP | `label="auto"` reads `SKYPILOT_NODE_RANK`; a managed spot job resumes its run after a recovery |
+| Modal | [`modal_app.py`](https://github.com/DoeringChristian/cairn-track/blob/main/examples/modal_app.py) | HTTP (a Modal Secret holds `CAIRN_REPO`/`CAIRN_TOKEN`) | one run per function call |
+| SageMaker | [`sagemaker_job.py`](https://github.com/DoeringChristian/cairn-track/blob/main/examples/sagemaker_job.py) | HTTP (the estimator's `environment=`) | the host's index in `SM_HOSTS`: `label=f"rank{rank}"`, `primary=(rank == 0)` |
+| Azure ML | [`azureml_job.yml`](https://github.com/DoeringChristian/cairn-track/blob/main/examples/azureml_job.yml) | HTTP (`environment_variables`) | `distribution: pytorch` sets `RANK`; runs `torchrun_ddp.py` |
+| A later job | [`cluster_eval_attach.py`](https://github.com/DoeringChristian/cairn-track/blob/main/examples/cluster_eval_attach.py) | Local repo or HTTP | `cairn.attach(run_id, label="eval")` on the finished run; its status stays |
 
 On clouds (SkyPilot, Modal, SageMaker, Azure ML) the nodes share no POSIX
 filesystem with the repo, so they log over HTTP to a server they can reach.

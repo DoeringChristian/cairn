@@ -1,6 +1,6 @@
 # Examples
 
-The `examples/` directory of the [cairn repository](https://github.com/DoeringChristian/cairn/tree/main/examples)
+The `examples/` directory of the [cairn repository](https://github.com/DoeringChristian/cairn-track/tree/main/examples)
 holds runnable scripts. Most of them log synthetic data, so they run in seconds
 on any machine and need no GPU or dataset.
 

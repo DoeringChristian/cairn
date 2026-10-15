@@ -37,7 +37,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-CAIRN_PIP = "cairn-track @ git+https://github.com/DoeringChristian/cairn"
+CAIRN_PIP = "cairn-track @ git+https://github.com/DoeringChristian/cairn-track"
 
 
 def train() -> None:

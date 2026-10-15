@@ -10,7 +10,7 @@ cairn is distributed as the `cairn-track` package and installed from its git rep
 needs Python 3.10 or newer.
 
 ```bash
-pip install "cairn-track[ui] @ git+https://github.com/DoeringChristian/cairn"
+pip install "cairn-track[ui] @ git+https://github.com/DoeringChristian/cairn-track"
 ```
 
 The base package (without `[ui]`) holds the tracker, the reader, the CLI and the HTTP API. It

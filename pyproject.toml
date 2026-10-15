@@ -125,7 +125,7 @@ dev = [
 cairn = "cairn.cli:main"
 
 [project.urls]
-Repository = "https://github.com/DoeringChristian/cairn"
+Repository = "https://github.com/DoeringChristian/cairn-track"
 
 # cairn-ui lives in its own repository, consumed here as a git submodule at
 # `vendor/cairn-ui` (pinned commit); in dev it resolves editable from that

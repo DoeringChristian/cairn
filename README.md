@@ -20,9 +20,9 @@ cairn is not on PyPI; install it from this repository (Python 3.10+):
 
 ```bash
 # tracking, the CLI and the HTTP API
-pip install "cairn-track @ git+https://github.com/DoeringChristian/cairn"
+pip install "cairn-track @ git+https://github.com/DoeringChristian/cairn-track"
 # ...plus the browser viewer
-pip install "cairn-track[ui] @ git+https://github.com/DoeringChristian/cairn"
+pip install "cairn-track[ui] @ git+https://github.com/DoeringChristian/cairn-track"
 ```
 
 The base install carries no browser assets and needs no Node — which is the
@@ -40,7 +40,7 @@ Optional extras:
 - `cairn-track[discovery]` — zeroconf/mDNS server discovery on the LAN
 - `cairn-track[docs]` — MkDocs, to build the documentation site
 
-Combine extras as usual: `"cairn-track[ui,media,export] @ git+https://github.com/DoeringChristian/cairn"`.
+Combine extras as usual: `"cairn-track[ui,media,export] @ git+https://github.com/DoeringChristian/cairn-track"`.
 
 ## Quick start — local mode
 
@@ -349,7 +349,7 @@ The browser viewer ([cairn-ui](https://github.com/DoeringChristian/cairn-ui))
 is vendored as a git submodule under `vendor/`. Clone with submodules:
 
 ```bash
-git clone --recurse-submodules https://github.com/DoeringChristian/cairn
+git clone --recurse-submodules https://github.com/DoeringChristian/cairn-track
 # already cloned? pull the submodules in:
 git submodule update --init --recursive
 ```

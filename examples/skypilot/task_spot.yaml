@@ -36,7 +36,7 @@ secrets:
   CAIRN_TOKEN:  # `--secret CAIRN_TOKEN` passes your local $CAIRN_TOKEN
 
 setup: |
-  pip install "cairn-track @ git+https://github.com/DoeringChristian/cairn"
+  pip install "cairn-track @ git+https://github.com/DoeringChristian/cairn-track"
 
 run: |
   CHECKPOINT_DIR=/checkpoints/$CAIRN_RUN_ID python train.py

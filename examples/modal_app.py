@@ -37,7 +37,7 @@ import modal
 image = (
     modal.Image.debian_slim(python_version="3.12")
     .apt_install("git")
-    .pip_install("cairn-track @ git+https://github.com/DoeringChristian/cairn")
+    .pip_install("cairn-track @ git+https://github.com/DoeringChristian/cairn-track")
 )
 app = modal.App("cairn-example", image=image)
 
