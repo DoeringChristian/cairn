@@ -4,6 +4,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from cairn.backend import report_workspaces as core
 from ._common import get_db, get_blobs
+from ..report_execution import require_notebooks
 
 router = APIRouter(prefix='/api', tags=['reports'])
 
@@ -58,6 +59,7 @@ def update(ident: str, body: Edit, request: Request):
 
 @router.post('/report-workspaces/{ident}/build', status_code=202)
 def build(ident: str, body: Build, request: Request):
+    require_notebooks(request)
     from cairn.reports.preparation import submit
     return _call(submit, request.app.state.storage, ident, **body.model_dump())
 

@@ -63,10 +63,27 @@ jobs:
           cd /tmp
           /tmp/clean/bin/cairn --help
           /tmp/clean/bin/python - <<'PYCODE'
+          import asyncio, tempfile
+          from pathlib import Path
+          import httpx
           from cairn import viewer
           from cairn.server.app import create_app
           assert viewer.is_available()
-          create_app(mount_ui=True)
+          async def smoke():
+              with tempfile.TemporaryDirectory() as repo:
+                  app = create_app(data_dir=Path(repo), mount_ui=True, auth_enabled=False)
+                  async with app.router.lifespan_context(app):
+                      assert app.state.notebooks is None
+                      async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                                   base_url='http://wheel.test') as client:
+                          assert (await client.get('/')).status_code == 200
+                          assert (await client.get('/api/health')).status_code == 200
+                          assert (await client.get('/api/reports')).status_code == 200
+                          response = await client.post('/api/report-workspaces/missing/build',
+                                                       json={'expected_revision': 1})
+                          assert response.status_code == 503
+                          assert 'cairn-track[reports]' in response.json()['detail']
+          asyncio.run(smoke())
           PYCODE
 
   deployed-storage:

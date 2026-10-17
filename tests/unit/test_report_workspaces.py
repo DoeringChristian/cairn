@@ -166,7 +166,7 @@ def test_edit_during_build_prevents_publication(fresh_db,blob_store):
 
 def test_publication_and_version_delete_share_artifact_family_lock(fresh_db,blob_store,monkeypatch):
     """Pause publication after validation while deletion tries to remove its bytes."""
-    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError
     import threading
     db,blobs=fresh_db,blob_store
     candidate=version(db,blobs)

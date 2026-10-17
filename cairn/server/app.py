@@ -62,6 +62,7 @@ from .routes import (
     viewers,
 )
 from .ui_mount import mount_viewer
+from .report_execution import execution_services, UNAVAILABLE
 from cairn.backend.storage.blobs import BlobStore
 from cairn.backend.storage.datadir import DataDir, default_data_dir
 from cairn.backend.storage.db import Database
@@ -229,8 +230,7 @@ def create_app(
         app.state.server_id = auth_core.server_id(dd.root)
         app.state.db = _db
         app.state.blobs = _blobs
-        from cairn.reports.notebook import NotebookManager
-        app.state.notebooks = NotebookManager(app.state.storage)
+        app.state.notebooks = None
         _stop = asyncio.Event()
 
         def _maintenance() -> None:
@@ -269,16 +269,21 @@ def create_app(
 
         tasks: list[asyncio.Task] = []
         report_worker = None
-        if background_tasks:
-            from cairn.reports.worker import Worker
-            report_worker = Worker(dd.root, database_url=database_url, blob_root=blob_root)
-            report_worker.start()
-            tasks.append(asyncio.create_task(_maintenance_loop()))
-            idle_timeout = getattr(app.state, "idle_timeout", None)
-            if idle_timeout:
-                tasks.append(asyncio.create_task(_idle_loop(float(idle_timeout))))
-
         try:
+            services = execution_services()
+            if services is not None:
+                NotebookManager, Worker = services
+                app.state.notebooks = NotebookManager(app.state.storage)
+                if background_tasks:
+                    report_worker = Worker(dd.root, database_url=database_url, blob_root=blob_root)
+                    report_worker.start()
+            else:
+                _log.info(UNAVAILABLE)
+            if background_tasks:
+                tasks.append(asyncio.create_task(_maintenance_loop()))
+                idle_timeout = getattr(app.state, "idle_timeout", None)
+                if idle_timeout:
+                    tasks.append(asyncio.create_task(_idle_loop(float(idle_timeout))))
             yield
         finally:
             _stop.set()
@@ -286,7 +291,8 @@ def create_app(
                 task.cancel()
             if report_worker is not None:
                 await asyncio.to_thread(report_worker.close)
-            await asyncio.to_thread(app.state.notebooks.close)
+            if app.state.notebooks is not None:
+                await asyncio.to_thread(app.state.notebooks.close)
             if owns_db:
                 _db.close()
 

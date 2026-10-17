@@ -191,7 +191,8 @@ def test_failed_upgrade_rolls_back_ddl_rows_and_version(conn, failure):
         with pytest.raises(sqlite3.DatabaseError, match='not authorized'):
             apply_migrations(conn)
     finally:
-        conn.set_authorizer(None)
+        # Disabling with None is supported only from Python 3.11 onward.
+        conn.set_authorizer(lambda *_: sqlite3.SQLITE_OK)
     assert not conn.in_transaction
     assert _snapshot(conn) == before
     apply_migrations(conn)
